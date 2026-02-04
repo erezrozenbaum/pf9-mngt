@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import List
 
 import psycopg2
+from psycopg2.extras import Json
 
 DB_HOST = os.getenv("PF9_DB_HOST", "localhost")
 DB_PORT = int(os.getenv("PF9_DB_PORT", "5432"))
@@ -38,6 +39,7 @@ AUTO_SNAPSHOT_INTERVAL_MINUTES = int(os.getenv("AUTO_SNAPSHOT_INTERVAL_MINUTES",
 POLICY_ASSIGN_CONFIG = os.getenv("POLICY_ASSIGN_CONFIG", "/app/snapshots/snapshot_policy_rules.json")
 POLICY_ASSIGN_MERGE = os.getenv("POLICY_ASSIGN_MERGE_EXISTING", "true").lower() in ("true", "1", "yes")
 POLICY_ASSIGN_DRY_RUN = os.getenv("POLICY_ASSIGN_DRY_RUN", "false").lower() in ("true", "1", "yes")
+POLICY_ASSIGN_SYNC_POLICY_SETS = os.getenv("POLICY_ASSIGN_SYNC_POLICY_SETS", "true").lower() in ("true", "1", "yes")
 AUTO_SNAPSHOT_MAX_NEW = os.getenv("AUTO_SNAPSHOT_MAX_NEW")
 AUTO_SNAPSHOT_DRY_RUN = os.getenv("AUTO_SNAPSHOT_DRY_RUN", "false").lower() in ("true", "1", "yes")
 
@@ -55,6 +57,85 @@ def get_db_connection():
         user=DB_USER,
         password=DB_PASSWORD,
     )
+
+
+def load_rules() -> List[dict]:
+    try:
+        with open(POLICY_ASSIGN_CONFIG, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception as e:
+        log(f"Failed to load rules from {POLICY_ASSIGN_CONFIG}: {e}")
+        return []
+
+
+def sync_policy_sets_from_rules():
+    """Create/update snapshot_policy_sets based on rules file."""
+    rules = load_rules()
+    if not rules:
+        return
+
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            for rule in rules:
+                policies = rule.get("policies") or []
+                if not policies:
+                    continue
+
+                retention = rule.get("retention") or {}
+                if not retention:
+                    retention = {p: 7 for p in policies}
+
+                match = rule.get("match") or {}
+                tenant_name = None
+                is_global = True
+                if isinstance(match.get("tenant_name"), str):
+                    tenant_name = match.get("tenant_name")
+                    is_global = False
+
+                name = rule.get("name") or "policy-set"
+                description = rule.get("description")
+                priority = int(rule.get("priority", 0))
+
+                cur.execute(
+                    """
+                    INSERT INTO snapshot_policy_sets
+                        (name, description, is_global, tenant_id, tenant_name,
+                         policies, retention_map, priority, is_active,
+                         created_by, updated_by)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true, %s, %s)
+                    ON CONFLICT (name, tenant_id) DO UPDATE SET
+                        description = EXCLUDED.description,
+                        is_global = EXCLUDED.is_global,
+                        tenant_name = EXCLUDED.tenant_name,
+                        policies = EXCLUDED.policies,
+                        retention_map = EXCLUDED.retention_map,
+                        priority = EXCLUDED.priority,
+                        is_active = true,
+                        updated_at = now(),
+                        updated_by = EXCLUDED.updated_by
+                    """,
+                    (
+                        name,
+                        description,
+                        is_global,
+                        None,
+                        tenant_name,
+                        Json(policies),
+                        Json(retention),
+                        priority,
+                        "scheduler",
+                        "scheduler",
+                    ),
+                )
+        conn.commit()
+        conn.close()
+        log("Policy sets synced from rules.")
+    except Exception as e:
+        log(f"Failed to sync policy sets: {e}")
 
 
 def fetch_active_policies() -> List[str]:
@@ -78,6 +159,8 @@ def fetch_active_policies() -> List[str]:
 
 
 def run_policy_assign():
+    if POLICY_ASSIGN_SYNC_POLICY_SETS:
+        sync_policy_sets_from_rules()
     args = [
         "python",
         "snapshots/p9_snapshot_policy_assign.py",
