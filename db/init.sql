@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS images (
 CREATE TABLE IF NOT EXISTS snapshots (
     id            TEXT PRIMARY KEY,
     name          TEXT,
+    description   TEXT,
     volume_id     TEXT REFERENCES volumes(id),
     size_gb       INTEGER,
     status        TEXT,
@@ -301,6 +302,7 @@ CREATE TABLE IF NOT EXISTS snapshots_history (
     id           BIGSERIAL PRIMARY KEY,
     snapshot_id  TEXT NOT NULL,
     name         TEXT,
+    description  TEXT,
     volume_id    TEXT,
     size_gb      INTEGER,
     status       TEXT,
