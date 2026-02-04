@@ -1590,6 +1590,11 @@ def upsert_routers(conn, routers, run_id=None):
     if not routers:
         return 0
     now = _now_utc()
+
+    # Validate project references to prevent FK violations
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM projects")
+        valid_project_ids = {row[0] for row in cur.fetchall()}
     
     # STEP 1: Detect and record deletions first
     current_router_ids = []
@@ -1617,6 +1622,11 @@ def upsert_routers(conn, routers, run_id=None):
 
         name = r.get("name")
         project_id = _clean_project_id(r.get("project_id"))
+        if project_id and project_id not in valid_project_ids:
+            print(
+                f"[DB] Warning: Router {name or rid} references non-existent project {project_id}, setting to NULL"
+            )
+            project_id = None
 
         # Build change hash for history tracking
         hash_data = {
