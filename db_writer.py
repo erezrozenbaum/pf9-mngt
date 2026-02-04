@@ -2411,6 +2411,17 @@ def write_role_assignments(conn, assignments_data, run_id=None):
     main_values = []
     now = _now_utc()
 
+    # Load valid IDs to avoid FK violations
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM projects")
+        valid_projects = {row[0] for row in cur.fetchall()}
+        cur.execute("SELECT id FROM domains")
+        valid_domains = {row[0] for row in cur.fetchall()}
+        cur.execute("SELECT id FROM roles")
+        valid_roles = {row[0] for row in cur.fetchall()}
+        cur.execute("SELECT id FROM users")
+        valid_users = {row[0] for row in cur.fetchall()}
+
     for assignment in assignments_data:
         # Extract assignment details from Keystone API response
         role = assignment.get("role", {})
@@ -2436,7 +2447,17 @@ def write_role_assignments(conn, assignments_data, run_id=None):
         
         inherited = assignment.get("scope", {}).get("OS-INHERIT:inherited_to", "projects") == "projects"
 
+        # Validate foreign keys; null invalid project/domain to avoid FK errors
+        if project_id and project_id not in valid_projects:
+            project_id = None
+            project_name = None
+        if domain_id and domain_id not in valid_domains:
+            domain_id = None
+            domain_name = None
+
         # Skip invalid assignments
+        if (role_id and role_id not in valid_roles) or (user_id and user_id not in valid_users):
+            continue
         if not role_id or not (user_id or group_id) or not (project_id or domain_id):
             continue
 

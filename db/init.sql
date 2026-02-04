@@ -473,7 +473,7 @@ CREATE TABLE IF NOT EXISTS role_assignments (
         (project_id IS NULL AND domain_id IS NOT NULL)
     ),
     -- Unique constraint to prevent duplicate assignments
-    UNIQUE(role_id, COALESCE(user_id, ''), COALESCE(project_id, ''), COALESCE(domain_id, ''), COALESCE(group_id, ''))
+    UNIQUE(role_id, user_id, project_id, domain_id, group_id)
 );
 CREATE INDEX IF NOT EXISTS idx_role_assignments_user_id ON role_assignments(user_id);
 CREATE INDEX IF NOT EXISTS idx_role_assignments_role_id ON role_assignments(role_id);
