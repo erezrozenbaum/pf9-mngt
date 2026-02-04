@@ -235,3 +235,13 @@ SELECT
     actual_time,
     change_description
 FROM v_comprehensive_changes;
+
+CREATE OR REPLACE VIEW v_most_changed_resources AS
+SELECT
+    resource_type,
+    resource_id,
+    resource_name,
+    COUNT(*) AS change_count,
+    MAX(recorded_at) AS last_change
+FROM v_recent_changes
+GROUP BY resource_type, resource_id, resource_name;
