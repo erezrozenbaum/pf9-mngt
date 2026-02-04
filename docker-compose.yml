@@ -117,7 +117,7 @@ services:
       PF9_REGION_NAME: ${PF9_REGION_NAME:-region-one}
       PF9_USERNAME: ${PF9_USERNAME}
       PF9_PASSWORD: ${PF9_PASSWORD}
-      PF9_DB_HOST: ${PF9_DB_HOST:-db}
+      PF9_DB_HOST: db
       PF9_DB_PORT: ${PF9_DB_PORT:-5432}
       PF9_DB_NAME: ${PF9_DB_NAME:-pf9_mgmt}
       PF9_DB_USER: ${PF9_DB_USER:-pf9}
