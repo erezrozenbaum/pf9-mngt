@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import '../styles/SnapshotPolicyManager.css';
+import type { FC } from 'react';
 
 interface PolicySet {
   id: number;
@@ -60,7 +60,7 @@ interface SnapshotRun {
   trigger_source: string;
 }
 
-export const SnapshotPolicyManager: React.FC = () => {
+const SnapshotPolicyManager: FC = () => {
   const [activeTab, setActiveTab] = useState<'policies' | 'assignments' | 'runs'>('policies');
   const [policySets, setPolicySets] = useState<PolicySet[]>([]);
   const [assignments, setAssignments] = useState<SnapshotAssignment[]>([]);
@@ -122,7 +122,7 @@ export const SnapshotPolicyManager: React.FC = () => {
       });
 
       if (!res.ok) throw new Error('Failed to delete policy');
-      setPolicySets(policySets.filter(p => p.id !== policyId));
+      setPolicySets(policySets.filter((p: PolicySet) => p.id !== policyId));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete policy');
     }
@@ -138,7 +138,7 @@ export const SnapshotPolicyManager: React.FC = () => {
       });
 
       if (!res.ok) throw new Error('Failed to delete assignment');
-      setAssignments(assignments.filter(a => a.volume_id !== volumeId));
+      setAssignments(assignments.filter((a: SnapshotAssignment) => a.volume_id !== volumeId));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete assignment');
     }
@@ -206,7 +206,7 @@ export const SnapshotPolicyManager: React.FC = () => {
                 {policySets.length === 0 ? (
                   <p className="empty-message">No policy sets found</p>
                 ) : (
-                  policySets.map(policy => (
+                  policySets.map((policy: PolicySet) => (
                     <div key={policy.id} className="policy-card">
                       <div className="policy-header">
                         <h3>{policy.name}</h3>
