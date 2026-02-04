@@ -757,12 +757,13 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     id BIGSERIAL PRIMARY KEY,
     role VARCHAR(50) NOT NULL,
     resource VARCHAR(100) NOT NULL, -- 'servers', 'volumes', 'users', etc.
-    permission VARCHAR(20) NOT NULL, -- 'read', 'write', 'admin'
+    action VARCHAR(50) NOT NULL, -- 'read', 'write', 'admin'
+    conditions JSONB,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role);
 CREATE INDEX IF NOT EXISTS idx_role_permissions_resource ON role_permissions(resource);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_role_permissions_unique ON role_permissions(role, resource, permission);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_role_permissions_unique ON role_permissions(role, resource, action);
 
 -- Authentication audit log
 CREATE TABLE IF NOT EXISTS auth_audit_log (
@@ -782,7 +783,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_audit_log_timestamp ON auth_audit_log(timest
 CREATE INDEX IF NOT EXISTS idx_auth_audit_log_action ON auth_audit_log(action);
 
 -- Insert default role permissions
-INSERT INTO role_permissions (role, resource, permission) VALUES
+INSERT INTO role_permissions (role, resource, action) VALUES
 -- Viewer permissions (read-only access to most resources)
 ('viewer', 'servers', 'read'),
 ('viewer', 'volumes', 'read'),
@@ -864,4 +865,4 @@ INSERT INTO role_permissions (role, resource, permission) VALUES
 ('superadmin', 'snapshot_exclusions', 'admin'),
 ('superadmin', 'snapshot_runs', 'admin'),
 ('superadmin', 'snapshot_records', 'admin')
-ON CONFLICT (role, resource, permission) DO NOTHING;
+ON CONFLICT (role, resource, action) DO NOTHING;
