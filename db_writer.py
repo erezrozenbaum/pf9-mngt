@@ -1294,6 +1294,11 @@ def upsert_networks(conn, networks, run_id=None):
     if not networks:
         return 0
     now = _now_utc()
+
+    # Validate project references to prevent FK violations
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM projects")
+        valid_project_ids = {row[0] for row in cur.fetchall()}
     
     # STEP 1: Detect and record deletions first
     current_network_ids = []
@@ -1316,6 +1321,11 @@ def upsert_networks(conn, networks, run_id=None):
 
         name = n.get("name")
         project_id = _clean_project_id(n.get("project_id"))
+        if project_id and project_id not in valid_project_ids:
+            print(
+                f"[DB] Warning: Network {name or nid} references non-existent project {project_id}, setting to NULL"
+            )
+            project_id = None
         is_shared = bool(n.get("shared"))
         is_external = bool(n.get("router:external"))
 
