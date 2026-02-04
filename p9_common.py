@@ -219,6 +219,49 @@ def get_domain_scoped_session(domain_name):
         return None, None
 
 
+def get_project_scoped_session(project_id):
+    """
+    Authenticate with project scope for a specific project.
+    Returns (session, token) tuple or (None, None) on failure.
+    """
+    session = _new_session()
+    auth_url = CFG["KEYSTONE_URL"].rstrip("/") + "/auth/tokens"
+
+    payload = {
+        "auth": {
+            "identity": {
+                "methods": ["password"],
+                "password": {
+                    "user": {
+                        "name": CFG["USERNAME"],
+                        "domain": {"name": CFG["USER_DOMAIN"]},
+                        "password": CFG["PASSWORD"],
+                    }
+                },
+            },
+            "scope": {
+                "project": {"id": project_id}
+            },
+        }
+    }
+
+    try:
+        r = session.post(auth_url, json=payload, timeout=CFG["REQUEST_TIMEOUT"])
+        r.raise_for_status()
+        token = r.headers["X-Subject-Token"]
+        body = r.json()
+        
+        # Extract endpoints from catalog for this project scope
+        catalog = body.get("token", {}).get("catalog", [])
+        _extract_endpoints_from_catalog(catalog)
+        
+        session.headers.update({"X-Auth-Token": token})
+        return session, token
+    except Exception as e:
+        log_error("keystone", f"Failed to authenticate with project scope for {project_id}: {e}")
+        return None, None
+
+
 def get_session_best_scope():
     """
     Authenticate with Keystone and return:
@@ -651,6 +694,54 @@ def cinder_list_snapshots_for_volume(
         "snapshots",
         extra_params={"all_tenants": "1", "volume_id": volume_id},
     )
+
+
+def cinder_create_snapshot(
+    session: requests.Session,
+    project_id: str,
+    volume_id: str,
+    name: str = None,
+    description: str = None,
+    force: bool = True,
+    metadata: dict = None,
+):
+    """
+    Create a Cinder snapshot.
+    Returns snapshot dict or raises exception on error.
+    """
+    _require_cinder()
+    url = f"{CINDER_ENDPOINT}/snapshots"
+    payload = {
+        "snapshot": {
+            "volume_id": volume_id,
+            "force": force,
+        }
+    }
+    if name:
+        payload["snapshot"]["name"] = name
+    if description:
+        payload["snapshot"]["description"] = description
+    if metadata:
+        payload["snapshot"]["metadata"] = metadata
+
+    data = http_json(session, "POST", url, json=payload)
+    return data.get("snapshot", {})
+
+
+def cinder_delete_snapshot(
+    session: requests.Session, project_id: str, snapshot_id: str
+):
+    """
+    Delete a Cinder snapshot.
+    Returns None on success, error string on failure.
+    """
+    _require_cinder()
+    url = f"{CINDER_ENDPOINT}/snapshots/{snapshot_id}"
+    try:
+        session.delete(url, timeout=CFG["REQUEST_TIMEOUT"])
+        return None
+    except Exception as e:
+        return str(e)
 
 
 # --------------------------------------------------------------------

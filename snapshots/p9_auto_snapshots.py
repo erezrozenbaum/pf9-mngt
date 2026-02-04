@@ -301,23 +301,31 @@ def select_volumes_for_policy(volumes, policy_name: str):
     return selected
 
 
-def build_snapshot_name(volume, policy_name: str, server_name: str | None = None) -> str:
+def build_snapshot_name(volume, policy_name: str, server_name: str | None = None, tenant_name: str | None = None) -> str:
     """
     Name pattern:
 
-      auto-<policy>-<serverName>-<volumeName>-<YYYYMMDD-HHMMSS>
+      auto-<tenant>-<policy>-<serverName>-<volumeName>-<YYYYMMDD-HHMMSS>
 
     serverName part is omitted if there's no attached server.
+    tenant part is included if provided.
     """
     vol_label = _sanitize_name_part(volume.get("name") or volume.get("id"))
     srv_label = _sanitize_name_part(server_name) if server_name else ""
+    tenant_label = _sanitize_name_part(tenant_name) if tenant_name else ""
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
-    if srv_label:
-        base = f"{policy_name}-{srv_label}-{vol_label}"
+    if tenant_label:
+        if srv_label:
+            base = f"{tenant_label}-{policy_name}-{srv_label}-{vol_label}"
+        else:
+            base = f"{tenant_label}-{policy_name}-{vol_label}"
     else:
-        base = f"{policy_name}-{vol_label}"
+        if srv_label:
+            base = f"{policy_name}-{srv_label}-{vol_label}"
+        else:
+            base = f"{policy_name}-{vol_label}"
 
     return f"auto-{base}-{ts}"
 
@@ -421,6 +429,7 @@ def process_volume(
     policy_name: str,
     dry_run: bool,
     primary_server_name: str | None = None,
+    tenant_name: str | None = None,
 ):
     """
     Create one snapshot for this volume and clean old ones.
@@ -451,7 +460,7 @@ def process_volume(
         dry_run=dry_run,
     )
 
-    snap_name = build_snapshot_name(volume, policy_name, primary_server_name)
+    snap_name = build_snapshot_name(volume, policy_name, primary_server_name, tenant_name)
     snap_desc = f"Auto snapshot ({policy_name}) created by p9_auto_snapshots"
 
     print(f"    Create snapshot: {snap_name}")
@@ -459,28 +468,14 @@ def process_volume(
         return None, None, deleted_ids, None
 
     # Decide which project/session to actually use for CREATE
+    # Use admin session with all_tenants=1 for all operations
+    # Specify target project in the create payload so snapshot lands in correct tenant
     target_project_id = volume_project_id if volume_project_id != "UNKNOWN" else admin_project_id
-    snapshot_project_id_used = admin_project_id
-    tenant_session = admin_session
-
-    if target_project_id != admin_project_id:
-        try:
-            tenant_session = get_project_scoped_session(target_project_id)
-            snapshot_project_id_used = target_project_id
-        except Exception as e:
-            # Can't scope to that project; fall back to admin project
-            warn = (
-                f"get_project_scoped_session failed for project {target_project_id}: "
-                f"{type(e).__name__}: {e}; falling back to admin project {admin_project_id}"
-            )
-            print("      WARNING:", warn)
-            log_error("auto_snapshots/project_scope", warn)
-            tenant_session = admin_session
-            snapshot_project_id_used = admin_project_id
+    snapshot_project_id_used = target_project_id
 
     try:
         snap = cinder_create_snapshot(
-            tenant_session,
+            admin_session,
             snapshot_project_id_used,
             volume_id=vol_id,
             name=snap_name,
@@ -498,12 +493,12 @@ def process_volume(
             f"      OK, snapshot id={sid} "
             f"(project={snapshot_project_id_used}, original_project={volume_project_id})"
         )
-        return sid, snapshot_project_id_used, deleted_ids, None
+        return sid, snapshot_project_id_used, deleted_ids, None, snap_name
     except Exception as e:
         msg = f"Failed to create snapshot for volume {vol_id}: {type(e).__name__}: {e}"
         print("      ERROR:", msg)
         log_error("auto_snapshots/create", msg)
-        return None, snapshot_project_id_used, deleted_ids, msg
+        return None, snapshot_project_id_used, deleted_ids, msg, snap_name
 
 
 def _build_metadata_maps(session):
@@ -813,13 +808,14 @@ def main():
 
         primary_server_name = attached_server_names_list[0] if attached_server_names_list else None
 
-        sid, sid_project, deleted_ids, err_msg = process_volume(
+        sid, sid_project, deleted_ids, err_msg, snap_name = process_volume(
             session,
             admin_project_id,
             v,
             policy_name,
             dry_run=dry_run,
             primary_server_name=primary_server_name,
+            tenant_name=tenant_name,
         )
         if sid:
             created_count += 1
@@ -839,7 +835,7 @@ def main():
         if db_conn and run_id:
             action = "created" if sid else ("skipped" if not err_msg else "failed")
             create_snapshot_record(
-                db_conn, run_id, action, sid, sid or "", vol_id, vol_name,
+                db_conn, run_id, action, sid, snap_name or "", vol_id, vol_name,
                 volume_project_id, tenant_name, volume_project_id, tenant_name,
                 attached_server_ids.split(", ")[0] if attached_server_ids else None,
                 primary_server_name, policy_name, v.get("size"), retention,
@@ -888,7 +884,7 @@ def main():
         final_status = "completed" if not ERRORS else "partial"
         if dry_run:
             final_status = "dry_run_completed"
-        error_summary = "; ".join(ERRORS) if ERRORS else None
+        error_summary = "; ".join([f"{e.get('area', 'unknown')}: {e.get('msg', 'no message')}" for e in ERRORS]) if ERRORS else None
         finish_snapshot_run(
             db_conn, run_id, final_status, len(run_rows), created_count,
             deleted_total, len([r for r in run_rows if r["status"] == "ERROR"]),
