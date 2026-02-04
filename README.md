@@ -312,19 +312,6 @@ docker stats
 - **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)**: Quick commands and examples
 - **[SECURITY_CHECKLIST.md](docs/SECURITY_CHECKLIST.md)**: Security assessment and hardening
 
-## 🚨 Known Issues
-
-### VM-Level Monitoring (Requires PF9 Engineering Support)
-- **Issue**: Libvirt exporters cannot connect to libvirtd daemon
-- **Impact**: Host monitoring works ✅, VM metrics unavailable ❌
-- **Status**: Workaround in progress - investigating libvirt socket permissions
-
-### Security Considerations
-- **CORS Policy**: Currently allows all origins (development mode)
-- **Authentication**: Admin endpoints lack authentication
-- **Database**: Uses default credentials (change in production)
-- **See**: [SECURITY_CHECKLIST.md](docs/SECURITY_CHECKLIST.md) for complete assessment
-
 ## 🆘 Troubleshooting
 
 ### Common Issues
