@@ -1,0 +1,65 @@
+.snapshot-compliance {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.compliance-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.compliance-filters {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.compliance-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #cfd6e6;
+}
+
+.compliance-filters input,
+.compliance-filters select {
+  background: #0f141d;
+  border: 1px solid #2a3444;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #e8edf7;
+}
+
+.compliance-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.summary-card {
+  background: #0f141d;
+  border: 1px solid #2a3444;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #e8edf7;
+  font-weight: 600;
+}
+
+.summary-card.ok {
+  border-color: #1f7a3a;
+  color: #b9f5c8;
+}
+
+.summary-card.warn {
+  border-color: #7a3a1f;
+  color: #f5d1b9;
+}
+
+.compliance-table th,
+.compliance-table td {
+  white-space: nowrap;
+}

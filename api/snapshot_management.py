@@ -1108,3 +1108,93 @@ def setup_snapshot_routes(app, get_db_connection):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to create snapshot record: {str(e)}"
             )
+
+    # ========================================================================
+    # Snapshot Compliance Report
+    # ========================================================================
+
+    @app.get("/snapshot/compliance")
+    async def get_snapshot_compliance(
+        days: int = 2,
+        tenant_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        policy: Optional[str] = None,
+        current_user: User = Depends(get_current_user),
+        _has_permission: bool = Depends(require_permission("snapshot_records", "read"))
+    ):
+        """Get snapshot compliance status per volume+policy"""
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+
+            query = """
+                WITH policy_assignments AS (
+                    SELECT a.*, jsonb_array_elements_text(a.policies) AS policy_name
+                    FROM snapshot_assignments a
+                    WHERE a.auto_snapshot = true
+                ), last_snaps AS (
+                    SELECT volume_id, policy_name, MAX(openstack_created_at) AS last_snapshot_at
+                    FROM snapshot_records
+                    WHERE action IN ('created', 'create')
+                      AND (status IS NULL OR status NOT IN ('failed', 'error'))
+                    GROUP BY volume_id, policy_name
+                )
+                SELECT
+                    p.volume_id,
+                    p.volume_name,
+                    p.tenant_id,
+                    p.tenant_name,
+                    p.project_id,
+                    p.project_name,
+                    p.vm_id,
+                    p.vm_name,
+                    p.policy_name,
+                    (p.retention_map->>p.policy_name)::int AS retention_days,
+                    ls.last_snapshot_at,
+                    CASE
+                        WHEN ls.last_snapshot_at IS NOT NULL
+                         AND ls.last_snapshot_at >= NOW() - (%s || ' days')::interval
+                        THEN true ELSE false
+                    END AS compliant
+                FROM policy_assignments p
+                LEFT JOIN last_snaps ls
+                  ON ls.volume_id = p.volume_id AND ls.policy_name = p.policy_name
+                WHERE 1=1
+            """
+            params = [days]
+
+            if tenant_id:
+                query += " AND p.tenant_id = %s"
+                params.append(tenant_id)
+            if project_id:
+                query += " AND p.project_id = %s"
+                params.append(project_id)
+            if policy:
+                query += " AND p.policy_name = %s"
+                params.append(policy)
+
+            query += " ORDER BY compliant ASC, last_snapshot_at DESC NULLS LAST"
+
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+
+            compliant_count = sum(1 for r in rows if r.get("compliant"))
+            noncompliant_count = len(rows) - compliant_count
+
+            return {
+                "rows": rows,
+                "count": len(rows),
+                "summary": {
+                    "compliant": compliant_count,
+                    "noncompliant": noncompliant_count,
+                    "days": days,
+                },
+            }
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve compliance report: {str(e)}"
+            )

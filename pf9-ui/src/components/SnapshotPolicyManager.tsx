@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import type { FC } from 'react';
+import SnapshotComplianceReport from './SnapshotComplianceReport';
 
 interface PolicySet {
   id: number;
@@ -61,7 +62,7 @@ interface SnapshotRun {
 }
 
 const SnapshotPolicyManager: FC = () => {
-  const [activeTab, setActiveTab] = useState<'policies' | 'assignments' | 'runs'>('policies');
+  const [activeTab, setActiveTab] = useState<'policies' | 'assignments' | 'runs' | 'compliance'>('policies');
   const [policySets, setPolicySets] = useState<PolicySet[]>([]);
   const [assignments, setAssignments] = useState<SnapshotAssignment[]>([]);
   const [runs, setRuns] = useState<SnapshotRun[]>([]);
@@ -168,6 +169,12 @@ const SnapshotPolicyManager: FC = () => {
           onClick={() => setActiveTab('runs')}
         >
           Execution Runs
+        </button>
+        <button
+          className={`tab-btn ${activeTab === 'compliance' ? 'active' : ''}`}
+          onClick={() => setActiveTab('compliance')}
+        >
+          Compliance
         </button>
       </div>
 
@@ -376,6 +383,10 @@ const SnapshotPolicyManager: FC = () => {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === 'compliance' && (
+          <SnapshotComplianceReport />
         )}
       </div>
     </div>
