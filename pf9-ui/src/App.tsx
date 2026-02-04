@@ -3,6 +3,8 @@ import "./App.css";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
 import { ThemeToggle } from "./components/ThemeToggle";
 import UserManagement from "./components/UserManagement";
+import SnapshotPolicyManager from "./components/SnapshotPolicyManager";
+import SnapshotAuditTrail from "./components/SnapshotAuditTrail";
 
 const API_BASE = "http://localhost:8000";
 
@@ -2242,6 +2244,22 @@ const App: React.FC = () => {
             onClick={() => setActiveTab("monitoring")}
           >
             Monitoring
+          </button>
+          <button
+            className={
+              activeTab === "snapshot-policies" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+            }
+            onClick={() => setActiveTab("snapshot-policies")}
+          >
+            📸 Snapshot Policies
+          </button>
+          <button
+            className={
+              activeTab === "snapshot-audit" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+            }
+            onClick={() => setActiveTab("snapshot-audit")}
+          >
+            📋 Snapshot Audit
           </button>
             </div>
             <ThemeToggle />
@@ -4550,6 +4568,14 @@ const App: React.FC = () => {
                 </>
               )}
             </div>
+          )}
+
+          {activeTab === "snapshot-policies" && (
+            <SnapshotPolicyManager />
+          )}
+
+          {activeTab === "snapshot-audit" && (
+            <SnapshotAuditTrail />
           )}
 
           {/* Empty states for details */}
