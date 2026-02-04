@@ -243,11 +243,16 @@ async def rbac_middleware(request: Request, call_next):
 
     return await call_next(request)
 
+# Import snapshot management routes
+from snapshot_management import setup_snapshot_routes
+
 # Startup event
 @app.on_event("startup")
 async def startup_event():
     """Initialize authentication system on startup"""
     initialize_default_admin()
+    # Setup snapshot management routes
+    setup_snapshot_routes(app, get_db_connection)
     print(f"PF9 Management API started - Authentication: {'Enabled' if ENABLE_AUTHENTICATION else 'Disabled'}")
 
 # =====================================================================
