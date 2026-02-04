@@ -498,7 +498,7 @@ docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "
 
 **Included in Git** (safe for version control):
 - `.env.template` - Template without credentials
-- `snapshot_policy_rules.json` - Policy configuration
+- `snapshots/snapshot_policy_rules.json` - Policy configuration
 - `package.json`, `tsconfig.json` - Build configuration
 
 ### Customer Data Masking

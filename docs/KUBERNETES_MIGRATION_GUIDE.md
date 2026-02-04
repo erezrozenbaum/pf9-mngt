@@ -322,8 +322,8 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 
 **Current Scripts to Migrate**:
 - `host_metrics_collector.py` - Collects Prometheus metrics from PF9 hosts
-- `p9_auto_snapshots_no_email.py` - Manages VM snapshots
-- `p9_snapshot_policy_assign.py` - Assigns snapshot policies
+- `snapshots/p9_auto_snapshots.py` - Manages VM snapshots
+- `snapshots/p9_snapshot_policy_assign.py` - Assigns snapshot policies
 - `cleanup_snapshots.py` - Cleanup automation
 
 **Migration Strategy**:
@@ -1488,7 +1488,7 @@ spec:
 host_metrics_collector.py
 
 # Run daily at 2 AM
-p9_auto_snapshots_no_email.py
+snapshots/p9_auto_snapshots.py
 
 # Run weekly
 cleanup_snapshots.py
@@ -1560,7 +1560,7 @@ spec:
           containers:
           - name: snapshot-policy
             image: company-registry.azurecr.io/pf9-tools:latest
-            command: ["python", "p9_auto_snapshots_no_email.py"]
+            command: ["python", "snapshots/p9_auto_snapshots.py"]
             
             envFrom:
             - secretRef:
@@ -3055,7 +3055,7 @@ async def track_metrics(request: Request, call_next):
 1. Create Redis deployment
 2. Refactor host scripts for CronJobs
    - [ ] host_metrics_collector.py → CronJob compatible
-   - [ ] p9_auto_snapshots_no_email.py → CronJob compatible
+   - [ ] snapshots/p9_auto_snapshots.py → CronJob compatible
    - [ ] cleanup_snapshots.py → CronJob compatible
 3. Deploy CronJobs
 4. Set up Prometheus scraping
@@ -3065,7 +3065,7 @@ async def track_metrics(request: Request, call_next):
 
 **Code Changes**:
 - [ ] host_metrics_collector.py: Replace file cache with Redis (2-4 hours)
-- [ ] p9_auto_snapshots_no_email.py: Add Kubernetes environment support (1-2 hours)
+- [ ] snapshots/p9_auto_snapshots.py: Add Kubernetes environment support (1-2 hours)
 - [ ] cleanup_snapshots.py: Add Kubernetes environment support (1-2 hours)
 
 **Effort**: 2 engineers × 1 week

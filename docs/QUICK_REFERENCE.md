@@ -115,16 +115,16 @@ PF9_ENABLE_DB=1 python pf9_rvtools.py
 ### Snapshot Management
 ```bash
 # Automatic policy assignment based on rules
-python p9_snapshot_policy_assign.py
+python snapshots/p9_snapshot_policy_assign.py
 
 # Run automated snapshots (respects metadata policies)
-python p9_auto_snapshots_no_email.py
+python snapshots/p9_auto_snapshots.py
 
 # Dry-run mode (safe testing)
-python p9_auto_snapshots_no_email.py --dry-run
+python snapshots/p9_auto_snapshots.py --dry-run
 
 # Generate comprehensive compliance report
-python p9_snapshot_compliance_report.py
+python snapshots/p9_snapshot_compliance_report.py
 
 # Input: Platform9_RVTools_*.xlsx
 # Output: Platform9_Snapshot_Compliance_Report_*.xlsx
@@ -232,10 +232,10 @@ cd C:\pf9-mngt
 python pf9_rvtools.py
 
 # Snapshot automation
-python p9_auto_snapshots_no_email.py --policy daily_5 --dry-run
+python snapshots/p9_auto_snapshots.py --policy daily_5 --dry-run
 
 # Compliance reporting
-python p9_snapshot_compliance_report.py --input latest_export.xlsx
+python snapshots/p9_snapshot_compliance_report.py --input latest_export.xlsx
 ```
 
 ### Windows Task Scheduler Setup
@@ -384,22 +384,22 @@ python pf9_rvtools.py --dry-run
 ### Snapshot Automation
 ```bash
 # Run daily snapshots (dry run first)
-python p9_auto_snapshots_no_email.py --policy daily_5 --dry-run
+python snapshots/p9_auto_snapshots.py --policy daily_5 --dry-run
 
 # Execute daily snapshots (max 200 new)
-python p9_auto_snapshots_no_email.py --policy daily_5 --max-new 200
+python snapshots/p9_auto_snapshots.py --policy daily_5 --max-new 200
 
 # Monthly snapshots (1st of month)
-python p9_auto_snapshots_no_email.py --policy monthly_1st
+python snapshots/p9_auto_snapshots.py --policy monthly_1st
 
 # Monthly snapshots (15th of month)
-python p9_auto_snapshots_no_email.py --policy monthly_15th
+python snapshots/p9_auto_snapshots.py --policy monthly_15th
 
 # Check snapshot policies on volumes
-python p9_snapshot_policy_assign.py --config snapshot_policy_rules.json --dry-run
+python snapshots/p9_snapshot_policy_assign.py --config snapshots/snapshot_policy_rules.json --dry-run
 
 # Apply snapshot policies
-python p9_snapshot_policy_assign.py --config snapshot_policy_rules.json
+python snapshots/p9_snapshot_policy_assign.py --config snapshots/snapshot_policy_rules.json
 ```
 
 ### Compliance Reporting

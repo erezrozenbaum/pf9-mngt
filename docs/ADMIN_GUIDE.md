@@ -404,9 +404,9 @@ inventory_runs  -- Audit trail for data collection
 
 ### Python Scripts (8 Core Scripts)
 1. **pf9_rvtools.py** - Main inventory collection (542 lines)
-2. **p9_auto_snapshots_no_email.py** - Automated snapshot management (754 lines)
-3. **p9_snapshot_compliance_report.py** - Compliance reporting (749 lines)
-4. **p9_snapshot_policy_assign.py** - Policy management (454 lines)
+2. **snapshots/p9_auto_snapshots.py** - Automated snapshot management (754 lines)
+3. **snapshots/p9_snapshot_compliance_report.py** - Compliance reporting (749 lines)
+4. **snapshots/p9_snapshot_policy_assign.py** - Policy management (454 lines)
 5. **p9_common.py** - Shared utilities and API clients (376 lines)
 6. **db_writer.py** - Database operations (1113 lines)
 7. **test_db_write.py** - Database testing utilities
@@ -534,8 +534,8 @@ Python scripts can run independently without Docker services:
 # Scripts automatically load .env file and continue without database
 cd C:\pf9-mngt
 python pf9_rvtools.py                    # Inventory collection
-python p9_auto_snapshots_no_email.py     # Snapshot automation
-python p9_snapshot_compliance_report.py  # Compliance reporting
+python snapshots/p9_auto_snapshots.py     # Snapshot automation
+python snapshots/p9_snapshot_compliance_report.py  # Compliance reporting
 ```
 
 **Features when running standalone**:
