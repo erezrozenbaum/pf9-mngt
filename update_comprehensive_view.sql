@@ -222,3 +222,16 @@ SELECT 'snapshot'::text AS resource_type,
 FROM snapshots_history sh
 
 ORDER BY recorded_at DESC;
+
+CREATE OR REPLACE VIEW v_recent_changes AS
+SELECT
+    resource_type,
+    resource_id,
+    resource_name,
+    change_hash,
+    recorded_at,
+    project_name,
+    domain_name,
+    actual_time,
+    change_description
+FROM v_comprehensive_changes;
