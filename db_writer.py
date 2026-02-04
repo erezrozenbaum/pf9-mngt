@@ -1728,6 +1728,13 @@ def upsert_ports(conn, ports, run_id=None):
     if not ports:
         return 0
     now = _now_utc()
+
+    # Validate project/network references to prevent FK violations
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM projects")
+        valid_project_ids = {row[0] for row in cur.fetchall()}
+        cur.execute("SELECT id FROM networks")
+        valid_network_ids = {row[0] for row in cur.fetchall()}
     
     # STEP 1: Detect and record deletions first
     current_port_ids = []
@@ -1751,6 +1758,16 @@ def upsert_ports(conn, ports, run_id=None):
         name = p.get("name")
         network_id = p.get("network_id")
         project_id = _clean_project_id(p.get("project_id"))
+        if project_id and project_id not in valid_project_ids:
+            print(
+                f"[DB] Warning: Port {name or pid} references non-existent project {project_id}, setting to NULL"
+            )
+            project_id = None
+        if network_id and network_id not in valid_network_ids:
+            print(
+                f"[DB] Warning: Port {name or pid} references non-existent network {network_id}, setting to NULL"
+            )
+            network_id = None
         device_id = p.get("device_id")
         device_owner = p.get("device_owner")
         mac_address = p.get("mac_address")
