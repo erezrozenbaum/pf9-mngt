@@ -311,15 +311,13 @@ docker stats
 - **[ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)**: Comprehensive administration guide
 - **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)**: Quick commands and examples
 - **[SECURITY_CHECKLIST.md](docs/SECURITY_CHECKLIST.md)**: Security assessment and hardening
-- **[PF9_ENGINEERING_REQUEST.txt](PF9_ENGINEERING_REQUEST.txt)**: Current VM monitoring support request
 
 ## 🚨 Known Issues
 
 ### VM-Level Monitoring (Requires PF9 Engineering Support)
 - **Issue**: Libvirt exporters cannot connect to libvirtd daemon
 - **Impact**: Host monitoring works ✅, VM metrics unavailable ❌
-- **Status**: Support ticket open with Platform9 engineering
-- **Details**: See [PF9_ENGINEERING_REQUEST.txt](PF9_ENGINEERING_REQUEST.txt)
+- **Status**: Workaround in progress - investigating libvirt socket permissions
 
 ### Security Considerations
 - **CORS Policy**: Currently allows all origins (development mode)
