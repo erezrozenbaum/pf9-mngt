@@ -1,0 +1,6 @@
+dn: dc=ccc,dc=co,dc=il
+objectClass: top
+objectClass: dcObject
+objectClass: organization
+o: Triple C
+dc: ccc

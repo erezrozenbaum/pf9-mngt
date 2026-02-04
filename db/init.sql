@@ -601,6 +601,9 @@ CREATE TABLE IF NOT EXISTS deletions_history (
     resource_name TEXT,
     deleted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     run_id       BIGINT REFERENCES inventory_runs(id),
+    project_name TEXT,
+    domain_name  TEXT,
+    last_seen_before_deletion TIMESTAMPTZ,
     reason       TEXT,
     raw_json     JSONB
 );
