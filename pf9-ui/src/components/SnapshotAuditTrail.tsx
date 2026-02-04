@@ -45,7 +45,7 @@ export const SnapshotAuditTrail: React.FC = () => {
   const [tenants, setTenants] = useState<string[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
 
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('auth_token');
 
   useEffect(() => {
     loadRecords();
