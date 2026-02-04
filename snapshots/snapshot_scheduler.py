@@ -64,6 +64,7 @@ def load_rules() -> List[dict]:
         with open(POLICY_ASSIGN_CONFIG, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
+            log(f"Loaded {len(data)} rule(s) from {POLICY_ASSIGN_CONFIG}")
             return data
         return []
     except Exception as e:
@@ -210,6 +211,8 @@ def main():
     if not SCHEDULER_ENABLED:
         log("Snapshot scheduler disabled. Exiting.")
         return
+
+    log("Snapshot scheduler starting...")
 
     next_policy_assign = 0
     next_auto_snapshots = 0
