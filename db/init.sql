@@ -615,6 +615,143 @@ CREATE INDEX IF NOT EXISTS idx_user_roles_username ON user_roles(username);
 CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role);
 CREATE INDEX IF NOT EXISTS idx_user_roles_active ON user_roles(is_active);
 
+-- =====================================================================
+-- SNAPSHOT MANAGEMENT TABLES
+-- =====================================================================
+
+-- Snapshot policy sets (global and tenant-specific)
+CREATE TABLE IF NOT EXISTS snapshot_policy_sets (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_global BOOLEAN DEFAULT false,
+    tenant_id TEXT,  -- NULL for global policies, specific tenant_id for tenant policies
+    tenant_name TEXT,
+    policies JSONB NOT NULL,  -- Array of policy names like ["daily_5", "weekly_4"]
+    retention_map JSONB NOT NULL,  -- {"daily_5": 5, "weekly_4": 28, ...}
+    priority INTEGER DEFAULT 0,  -- Higher priority = applied first
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    created_by VARCHAR(255),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    updated_by VARCHAR(255),
+    CONSTRAINT unique_global_policy_name UNIQUE NULLS NOT DISTINCT (name, tenant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_policy_sets_tenant ON snapshot_policy_sets(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_policy_sets_global ON snapshot_policy_sets(is_global);
+CREATE INDEX IF NOT EXISTS idx_snapshot_policy_sets_active ON snapshot_policy_sets(is_active);
+
+-- Snapshot policy assignments (which volumes get which policies)
+CREATE TABLE IF NOT EXISTS snapshot_assignments (
+    id BIGSERIAL PRIMARY KEY,
+    volume_id TEXT NOT NULL,
+    volume_name TEXT,
+    tenant_id TEXT NOT NULL,
+    tenant_name TEXT,
+    project_id TEXT NOT NULL,
+    project_name TEXT,
+    vm_id TEXT,  -- Attached VM (can be NULL for unattached volumes)
+    vm_name TEXT,
+    policy_set_id BIGINT REFERENCES snapshot_policy_sets(id) ON DELETE CASCADE,
+    auto_snapshot BOOLEAN DEFAULT true,
+    policies JSONB NOT NULL,  -- ["daily_5", "weekly_4"]
+    retention_map JSONB NOT NULL,  -- {"daily_5": 5, "weekly_4": 28}
+    assignment_source VARCHAR(50) DEFAULT 'manual',  -- 'manual', 'rule-based', 'api'
+    matched_rules JSONB,  -- Store which rules matched for audit
+    created_at TIMESTAMPTZ DEFAULT now(),
+    created_by VARCHAR(255),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    updated_by VARCHAR(255),
+    last_verified_at TIMESTAMPTZ,
+    CONSTRAINT unique_volume_assignment UNIQUE (volume_id)
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_assignments_volume ON snapshot_assignments(volume_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_assignments_tenant ON snapshot_assignments(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_assignments_project ON snapshot_assignments(project_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_assignments_vm ON snapshot_assignments(vm_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_assignments_policy_set ON snapshot_assignments(policy_set_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_assignments_auto_snapshot ON snapshot_assignments(auto_snapshot);
+
+-- Snapshot exclusions (volumes explicitly excluded from snapshots)
+CREATE TABLE IF NOT EXISTS snapshot_exclusions (
+    id BIGSERIAL PRIMARY KEY,
+    volume_id TEXT NOT NULL,
+    volume_name TEXT,
+    tenant_id TEXT,
+    tenant_name TEXT,
+    project_id TEXT,
+    project_name TEXT,
+    exclusion_reason TEXT,
+    exclusion_source VARCHAR(50) DEFAULT 'manual',  -- 'manual', 'metadata-tag', 'api'
+    created_at TIMESTAMPTZ DEFAULT now(),
+    created_by VARCHAR(255),
+    expires_at TIMESTAMPTZ,  -- Optional expiration for temporary exclusions
+    CONSTRAINT unique_volume_exclusion UNIQUE (volume_id)
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_exclusions_volume ON snapshot_exclusions(volume_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_exclusions_tenant ON snapshot_exclusions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_exclusions_expires ON snapshot_exclusions(expires_at);
+
+-- Snapshot runs (execution tracking)
+CREATE TABLE IF NOT EXISTS snapshot_runs (
+    id BIGSERIAL PRIMARY KEY,
+    run_type VARCHAR(50) NOT NULL,  -- 'daily_5', 'weekly_4', 'monthly_1st', 'manual'
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ,
+    status VARCHAR(50) DEFAULT 'running',  -- 'running', 'completed', 'failed', 'partial'
+    total_volumes INTEGER DEFAULT 0,
+    snapshots_created INTEGER DEFAULT 0,
+    snapshots_deleted INTEGER DEFAULT 0,
+    snapshots_failed INTEGER DEFAULT 0,
+    volumes_skipped INTEGER DEFAULT 0,
+    dry_run BOOLEAN DEFAULT false,
+    triggered_by VARCHAR(255),  -- User or system that triggered
+    trigger_source VARCHAR(50) DEFAULT 'scheduled',  -- 'scheduled', 'manual', 'api'
+    execution_host VARCHAR(255),
+    error_summary TEXT,
+    raw_logs TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_runs_started_at ON snapshot_runs(started_at);
+CREATE INDEX IF NOT EXISTS idx_snapshot_runs_run_type ON snapshot_runs(run_type);
+CREATE INDEX IF NOT EXISTS idx_snapshot_runs_status ON snapshot_runs(status);
+CREATE INDEX IF NOT EXISTS idx_snapshot_runs_trigger_source ON snapshot_runs(trigger_source);
+
+-- Snapshot records (individual snapshot creation/deletion events)
+CREATE TABLE IF NOT EXISTS snapshot_records (
+    id BIGSERIAL PRIMARY KEY,
+    snapshot_run_id BIGINT REFERENCES snapshot_runs(id) ON DELETE CASCADE,
+    action VARCHAR(50) NOT NULL,  -- 'created', 'deleted', 'failed', 'skipped'
+    snapshot_id TEXT,  -- OpenStack snapshot ID (NULL for skipped/failed)
+    snapshot_name TEXT,
+    volume_id TEXT NOT NULL,
+    volume_name TEXT,
+    tenant_id TEXT NOT NULL,
+    tenant_name TEXT,
+    project_id TEXT NOT NULL,
+    project_name TEXT,
+    vm_id TEXT,
+    vm_name TEXT,
+    policy_name VARCHAR(100),  -- Which policy this snapshot belongs to
+    size_gb INTEGER,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    deleted_at TIMESTAMPTZ,  -- For cleanup tracking
+    retention_days INTEGER,  -- How many days to keep
+    status VARCHAR(50) DEFAULT 'pending',  -- 'pending', 'available', 'error', 'deleted'
+    error_message TEXT,
+    openstack_created_at TIMESTAMPTZ,  -- Timestamp from OpenStack
+    raw_snapshot_json JSONB  -- Full OpenStack snapshot object
+);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_run ON snapshot_records(snapshot_run_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_volume ON snapshot_records(volume_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_tenant ON snapshot_records(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_project ON snapshot_records(project_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_vm ON snapshot_records(vm_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_snapshot ON snapshot_records(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_action ON snapshot_records(action);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_policy ON snapshot_records(policy_name);
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_created_at ON snapshot_records(created_at);
+
 -- Role permissions matrix
 CREATE TABLE IF NOT EXISTS role_permissions (
     id BIGSERIAL PRIMARY KEY,
@@ -659,6 +796,11 @@ INSERT INTO role_permissions (role, resource, permission) VALUES
 ('viewer', 'flavors', 'read'),
 ('viewer', 'images', 'read'),
 ('viewer', 'hypervisors', 'read'),
+('viewer', 'snapshot_policy_sets', 'read'),
+('viewer', 'snapshot_assignments', 'read'),
+('viewer', 'snapshot_exclusions', 'read'),
+('viewer', 'snapshot_runs', 'read'),
+('viewer', 'snapshot_records', 'read'),
 
 -- Operator permissions (read + limited write operations)
 ('operator', 'servers', 'read'),
@@ -674,6 +816,11 @@ INSERT INTO role_permissions (role, resource, permission) VALUES
 ('operator', 'images', 'read'),
 ('operator', 'hypervisors', 'read'),
 ('operator', 'history', 'read'),
+('operator', 'snapshot_policy_sets', 'read'),
+('operator', 'snapshot_assignments', 'write'),
+('operator', 'snapshot_exclusions', 'write'),
+('operator', 'snapshot_runs', 'read'),
+('operator', 'snapshot_records', 'read'),
 
 -- Admin permissions (full access except user management)
 ('admin', 'servers', 'admin'),
@@ -690,6 +837,11 @@ INSERT INTO role_permissions (role, resource, permission) VALUES
 ('admin', 'hypervisors', 'admin'),
 ('admin', 'history', 'admin'),
 ('admin', 'audit', 'read'),
+('admin', 'snapshot_policy_sets', 'admin'),
+('admin', 'snapshot_assignments', 'admin'),
+('admin', 'snapshot_exclusions', 'admin'),
+('admin', 'snapshot_runs', 'admin'),
+('admin', 'snapshot_records', 'admin'),
 
 -- Super Admin permissions (everything including user management)
 ('superadmin', 'servers', 'admin'),
@@ -706,5 +858,10 @@ INSERT INTO role_permissions (role, resource, permission) VALUES
 ('superadmin', 'hypervisors', 'admin'),
 ('superadmin', 'history', 'admin'),
 ('superadmin', 'audit', 'admin'),
-('superadmin', 'users', 'admin')
+('superadmin', 'users', 'admin'),
+('superadmin', 'snapshot_policy_sets', 'admin'),
+('superadmin', 'snapshot_assignments', 'admin'),
+('superadmin', 'snapshot_exclusions', 'admin'),
+('superadmin', 'snapshot_runs', 'admin'),
+('superadmin', 'snapshot_records', 'admin')
 ON CONFLICT (role, resource, permission) DO NOTHING;
