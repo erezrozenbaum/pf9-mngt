@@ -63,10 +63,14 @@ import argparse
 import os
 import re
 import sys
+import json
+import socket
 from datetime import datetime, timezone
 from collections import defaultdict
 
 import pandas as pd
+import psycopg2
+from psycopg2.extras import Json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -85,6 +89,120 @@ from p9_common import (
     nova_servers_all,
     get_project_scoped_session,
 )
+
+# Database constants
+ENABLE_DB = os.getenv("ENABLE_DB", "true").lower() in ("true", "yes", "1")
+DB_HOST = os.getenv("PF9_DB_HOST", "localhost")
+DB_PORT = int(os.getenv("PF9_DB_PORT", "5432"))
+DB_NAME = os.getenv("PF9_DB_NAME", os.getenv("POSTGRES_DB", "pf9_mgmt"))
+DB_USER = os.getenv("PF9_DB_USER", os.getenv("POSTGRES_USER", "pf9"))
+DB_PASSWORD = os.getenv("PF9_DB_PASSWORD", os.getenv("POSTGRES_PASSWORD", ""))
+
+
+# ============================================================================
+# Database Helpers
+# ============================================================================
+
+def get_db_connection():
+    """Connect to PostgreSQL database for snapshot logging."""
+    try:
+        return psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+        )
+    except Exception as e:
+        print(f"[DB] Connection failed: {e}")
+        return None
+
+
+def start_snapshot_run(conn, run_type: str, dry_run: bool, trigger_source: str = "manual"):
+    """Create snapshot_runs record and return run_id."""
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO snapshot_runs 
+                (run_type, dry_run, triggered_by, trigger_source, execution_host, status)
+                VALUES (%s, %s, %s, %s, %s, 'running')
+                RETURNING id, started_at
+                """,
+                (run_type, dry_run, "system", trigger_source, socket.gethostname())
+            )
+            run_id, started_at = cur.fetchone()
+        conn.commit()
+        return run_id
+    except Exception as e:
+        print(f"[DB] Error starting snapshot run: {e}")
+        return None
+
+
+def finish_snapshot_run(conn, run_id: int, status: str, total_volumes: int, 
+                       snapshots_created: int, snapshots_deleted: int, 
+                       snapshots_failed: int, volumes_skipped: int, 
+                       error_summary: str = None):
+    """Update snapshot_runs with completion status and stats."""
+    if not conn or not run_id:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE snapshot_runs
+                SET finished_at = now(),
+                    status = %s,
+                    total_volumes = %s,
+                    snapshots_created = %s,
+                    snapshots_deleted = %s,
+                    snapshots_failed = %s,
+                    volumes_skipped = %s,
+                    error_summary = %s
+                WHERE id = %s
+                """,
+                (status, total_volumes, snapshots_created, snapshots_deleted,
+                 snapshots_failed, volumes_skipped, error_summary, run_id)
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] Error finishing snapshot run: {e}")
+
+
+def create_snapshot_record(conn, run_id: int, action: str, snapshot_id: str, 
+                          snapshot_name: str, volume_id: str, volume_name: str,
+                          tenant_id: str, tenant_name: str, project_id: str,
+                          project_name: str, vm_id: str, vm_name: str,
+                          policy_name: str, size_gb: int, retention_days: int,
+                          status: str, error_message: str = None, 
+                          openstack_created_at: datetime = None,
+                          raw_snapshot_json: dict = None):
+    """Create snapshot_records entry for audit trail."""
+    if not conn or not run_id:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO snapshot_records
+                (snapshot_run_id, action, snapshot_id, snapshot_name, volume_id,
+                 volume_name, tenant_id, tenant_name, project_id, project_name,
+                 vm_id, vm_name, policy_name, size_gb, retention_days, status,
+                 error_message, openstack_created_at, raw_snapshot_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (run_id, action, snapshot_id, snapshot_name, volume_id,
+                 volume_name, tenant_id, tenant_name, project_id, project_name,
+                 vm_id, vm_name, policy_name, size_gb, retention_days, status,
+                 error_message, openstack_created_at, Json(raw_snapshot_json) if raw_snapshot_json else None)
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] Error creating snapshot record: {e}")
+
+
 
 
 # --------------------------------------------------------------------
@@ -503,6 +621,19 @@ def main():
         f"snapshot_run_{policy_name}_{ts_utc}.xlsx",
     )
 
+    # Initialize database connection and start run tracking
+    db_conn = None
+    run_id = None
+    if ENABLE_DB:
+        try:
+            db_conn = get_db_connection()
+            if db_conn:
+                run_id = start_snapshot_run(db_conn, policy_name, dry_run)
+                print(f"[DB] Snapshot run started with ID: {run_id}")
+        except Exception as e:
+            print(f"[DB] Failed to initialize database: {e}")
+            db_conn = None
+
     # Day-of-month gating for monthly policies
     today = datetime.now()
     if policy_name == "monthly_1st" and today.day != 1:
@@ -511,6 +642,10 @@ def main():
             "nothing to do."
         )
         print(f"  Finished at (UTC): {now_utc_str()}")
+        if db_conn and run_id:
+            finish_snapshot_run(db_conn, run_id, "skipped", 0, 0, 0, 0, 0,
+                              "Skipped due to day-of-month gating")
+            db_conn.close()
         if report_xlsx:
             os.makedirs(report_dir, exist_ok=True)
             summary = {
@@ -538,6 +673,10 @@ def main():
             "nothing to do."
         )
         print(f"  Finished at (UTC): {now_utc_str()}")
+        if db_conn and run_id:
+            finish_snapshot_run(db_conn, run_id, "skipped", 0, 0, 0, 0, 0,
+                              "Skipped due to day-of-month gating")
+            db_conn.close()
         if report_xlsx:
             os.makedirs(report_dir, exist_ok=True)
             summary = {
@@ -696,6 +835,17 @@ def main():
             status = "OK"
             note = "Snapshot created" if sid else "No snapshot created"
 
+        # Log to database if enabled
+        if db_conn and run_id:
+            action = "created" if sid else ("skipped" if not err_msg else "failed")
+            create_snapshot_record(
+                db_conn, run_id, action, sid, sid or "", vol_id, vol_name,
+                volume_project_id, tenant_name, volume_project_id, tenant_name,
+                attached_server_ids.split(", ")[0] if attached_server_ids else None,
+                primary_server_name, policy_name, v.get("size"), retention,
+                status, err_msg, raw_snapshot_json=v
+            )
+
         run_rows.append(
             {
                 "timestamp_utc": now_utc_str(),
@@ -732,6 +882,21 @@ def main():
     print(f"  Snapshots deleted: {deleted_total}")
     print(f"  Errors logged:     {len(ERRORS)}")
     print(f"  Finished at (UTC): {now_utc_str()}")
+
+    # Finalize database run tracking
+    if db_conn and run_id:
+        final_status = "completed" if not ERRORS else "partial"
+        if dry_run:
+            final_status = "dry_run_completed"
+        error_summary = "; ".join(ERRORS) if ERRORS else None
+        finish_snapshot_run(
+            db_conn, run_id, final_status, len(run_rows), created_count,
+            deleted_total, len([r for r in run_rows if r["status"] == "ERROR"]),
+            len([r for r in run_rows if r["status"] == "OK" and not r["created_snapshot_id"]]),
+            error_summary
+        )
+        db_conn.close()
+        print(f"[DB] Snapshot run {run_id} finalized with status: {final_status}")
 
     if report_xlsx:
         os.makedirs(report_dir, exist_ok=True)
