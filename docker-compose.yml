@@ -133,7 +133,7 @@ services:
       AUTO_SNAPSHOT_DRY_RUN: ${AUTO_SNAPSHOT_DRY_RUN:-false}
     depends_on:
       - db
-    restart: unless-stopped
+    restart: "no"
 
   # LDAP Directory Service for Authentication
   ldap:

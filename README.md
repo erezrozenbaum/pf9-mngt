@@ -221,21 +221,32 @@ Comprehensive OpenStack inventory with RVTools-compatible exports:
 - User descriptions and metadata
 
 ### 3. Snapshot Management
+**⚠️ PARTIAL FUNCTIONALITY** — Full cross-tenant support coming in ~1 month
+
 **Automated Creation** (`snapshots/p9_auto_snapshots.py`):
-- Policy-driven volume snapshots
-- Multi-policy support per volume
-- SLA compliance enforcement
-- Retention management
+- Policy-driven volume snapshots with retention management
+- Multi-policy support per volume (daily, weekly, monthly patterns)
+- SLA compliance enforcement with automatic cleanup
+- Audit trail for all snapshot operations
+- **Status**: ✅ Fully functional; snapshots currently in service domain pending tenant access
 
 **Policy Assignment** (`snapshots/p9_snapshot_policy_assign.py`):
-- JSON-driven rule engine
-- Volume property matching
-- Bulk policy assignment
+- Opt-out rule engine (all volumes tagged unless excluded)
+- Volume property matching (tenant, domain, size, bootable, metadata)
+- Bulk metadata assignment across thousands of volumes
+- **Status**: ✅ Fully functional; policies sync automatically every 60 minutes
 
 **Compliance Reporting** (`snapshots/p9_snapshot_compliance_report.py`):
-- Detailed SLA analysis
-- Tenant/Domain aggregation
-- Policy adherence tracking
+- Real-time SLA analysis and compliance dashboard
+- Tenant/Domain aggregation views
+- Policy adherence tracking with detailed records
+- **Status**: ✅ Fully functional; accessible via UI and REST API
+
+**Snapshot Storage Location** ⚠️
+- **Current**: Snapshots created in service domain (security boundary limitation)
+- **Planned**: Snapshots in original tenant projects (when admin cross-tenant access available)
+- **Timeline**: Expected within ~1 month when platform admin roles assigned to each tenant
+- **See**: [Snapshot Automation Guide](docs/SNAPSHOT_AUTOMATION.md) for details and timeline
 
 ### 3. Real-Time Monitoring
 **Host Metrics** (`host_metrics_collector.py`):
