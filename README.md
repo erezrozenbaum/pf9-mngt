@@ -186,13 +186,13 @@ pip install requests openpyxl psycopg2-binary
 python pf9_rvtools.py
 
 # Generate compliance report
-python p9_snapshot_compliance_report.py
+python snapshots/p9_snapshot_compliance_report.py
 
 # Assign snapshot policies
-python p9_snapshot_policy_assign.py
+python snapshots/p9_snapshot_policy_assign.py
 
 # Run automated snapshots
-python p9_auto_snapshots_no_email.py
+python snapshots/p9_auto_snapshots.py
 ```
 
 ## 📊 Core Components
@@ -221,18 +221,18 @@ Comprehensive OpenStack inventory with RVTools-compatible exports:
 - User descriptions and metadata
 
 ### 3. Snapshot Management
-**Automated Creation** (`p9_auto_snapshots_no_email.py`):
+**Automated Creation** (`snapshots/p9_auto_snapshots.py`):
 - Policy-driven volume snapshots
 - Multi-policy support per volume
 - SLA compliance enforcement
 - Retention management
 
-**Policy Assignment** (`p9_snapshot_policy_assign.py`):
+**Policy Assignment** (`snapshots/p9_snapshot_policy_assign.py`):
 - JSON-driven rule engine
 - Volume property matching
 - Bulk policy assignment
 
-**Compliance Reporting** (`p9_snapshot_compliance_report.py`):
+**Compliance Reporting** (`snapshots/p9_snapshot_compliance_report.py`):
 - Detailed SLA analysis
 - Tenant/Domain aggregation
 - Policy adherence tracking
@@ -302,7 +302,7 @@ docker stats
 - **[docker-compose.yml](docker-compose.yml)**: Service orchestration
 - **[.env.template](.env.template)**: Environment configuration template
 - **[db/init.sql](db/init.sql)**: Database schema with 19+ tables
-- **[snapshot_policy_rules.json](snapshot_policy_rules.json)**: Automatic policy assignment rules
+- **[snapshot_policy_rules.json](snapshots/snapshot_policy_rules.json)**: Automatic policy assignment rules
 - **[startup.ps1](startup.ps1)**: Complete automation script
 
 ## 📚 Documentation
@@ -353,14 +353,14 @@ Scripts automatically load `.env` file and work independently:
 python pf9_rvtools.py
 
 # Automated snapshot management  
-python p9_auto_snapshots_no_email.py --policy daily_5 --dry-run
-python p9_auto_snapshots_no_email.py --policy daily_5
+python snapshots/p9_auto_snapshots.py --policy daily_5 --dry-run
+python snapshots/p9_auto_snapshots.py --policy daily_5
 
 # Compliance reporting
-python p9_snapshot_compliance_report.py --input latest_export.xlsx --output compliance.xlsx
+python snapshots/p9_snapshot_compliance_report.py --input latest_export.xlsx --output compliance.xlsx
 
 # Policy assignment
-python p9_snapshot_policy_assign.py --config snapshot_policy_rules.json --dry-run
+python snapshots/p9_snapshot_policy_assign.py --config snapshots/snapshot_policy_rules.json --dry-run
 ```
 
 ### Full Stack with Web UI (Docker Required)
@@ -540,9 +540,11 @@ pf9-mngt/
 ├── cleanup_snapshots.py    # Database cleanup utilities (NEW)  
 ├── metrics_cache.json     # Persistent metrics storage (NEW)
 ├── pf9_rvtools.py          # Main inventory collection script
-├── p9_auto_snapshots_no_email.py    # Snapshot automation
-├── p9_snapshot_compliance_report.py # Compliance reporting  
-├── p9_snapshot_policy_assign.py     # Policy management
+├── snapshots/              # Snapshot tooling
+│   ├── p9_auto_snapshots.py            # Snapshot automation
+│   ├── p9_snapshot_compliance_report.py # Compliance reporting
+│   ├── p9_snapshot_policy_assign.py     # Policy management
+│   └── snapshot_policy_rules.json       # Policy assignment rules
 ├── p9_common.py            # Shared utilities
 └── docker-compose.yml      # Container orchestration with monitoring
 ```

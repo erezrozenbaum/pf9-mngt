@@ -8,21 +8,25 @@ Automatically assign Cinder volume metadata for snapshot automation:
   snapshot_policies   = "daily_5,monthly_1st"
   retention_<policy>  = "<number>"   (e.g. retention_daily_5 = "5")
 
-Decision is based on a JSON rules file (see snapshot_policy_rules.json).
+Decision is based on a JSON rules file (see snapshots/snapshot_policy_rules.json).
 Works across ALL tenants using admin/service project scope.
 
 Usage examples:
 
   # Dry run (see what would be updated, no writes)
-  python p9_snapshot_policy_assign.py --config snapshot_policy_rules.json --dry-run
+  python snapshots/p9_snapshot_policy_assign.py --config snapshots/snapshot_policy_rules.json --dry-run
 
   # Real run, merge new policies with existing ones
-  python p9_snapshot_policy_assign.py --config snapshot_policy_rules.json --merge-existing
+  python snapshots/p9_snapshot_policy_assign.py --config snapshots/snapshot_policy_rules.json --merge-existing
 """
 
 import argparse
 import json
+import os
+import sys
 from typing import Any, Dict, List, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from p9_common import (
     CFG,
@@ -292,14 +296,18 @@ def update_volume_metadata(
 
 
 def main():
+    default_rules_path = os.path.join(os.path.dirname(__file__), "snapshot_policy_rules.json")
+
     parser = argparse.ArgumentParser(
         description="Assign snapshot metadata (auto_snapshot, snapshot_policies, retention_*) "
         "to Cinder volumes based on rules."
     )
     parser.add_argument(
         "--config",
-        default="snapshot_policy_rules.json",
-        help="Path to rules JSON (default: snapshot_policy_rules.json)",
+        default=default_rules_path,
+        help=(
+            "Path to rules JSON (default: snapshots/snapshot_policy_rules.json)"
+        ),
     )
     parser.add_argument(
         "--dry-run",

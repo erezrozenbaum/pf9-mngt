@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-p9_auto_snapshots_no_email.py
+p9_auto_snapshots.py
 
 Automatic Cinder volume snapshots for Platform9/OpenStack.
 
@@ -27,16 +27,16 @@ Usage examples
 
 Dry-run, no changes:
 
-  python p9_auto_snapshots_no_email.py --policy daily_5 --dry-run
+  python snapshots/p9_auto_snapshots.py --policy daily_5 --dry-run
 
 Real run, once per day, max 200 new snapshots:
 
-  python p9_auto_snapshots_no_email.py --policy daily_5 --max-new 200
+  python snapshots/p9_auto_snapshots.py --policy daily_5 --max-new 200
 
 Monthly policies (script is day-aware):
 
-  python p9_auto_snapshots_no_email.py --policy monthly_1st
-  python p9_auto_snapshots_no_email.py --policy monthly_15th
+  python snapshots/p9_auto_snapshots.py --policy monthly_1st
+  python snapshots/p9_auto_snapshots.py --policy monthly_15th
 
 Scheduling (Windows Task Scheduler):
 
@@ -52,7 +52,7 @@ Scheduling (Windows Task Scheduler):
 
 Run report (per execution):
 
-  python p9_auto_snapshots_no_email.py --policy daily_5 --report-xlsx
+  python snapshots/p9_auto_snapshots.py --policy daily_5 --report-xlsx
 
 This will write snapshot_run_<policy>_<timestamp>.xlsx in the chosen report directory.
 """
@@ -62,10 +62,13 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from collections import defaultdict
 
 import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from p9_common import (
     CFG,
@@ -87,6 +90,7 @@ from p9_common import (
 # --------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------
+
 
 def _parse_int(value, default: int) -> int:
     try:
@@ -446,6 +450,7 @@ def _build_metadata_maps(session):
 # Main
 # --------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Automatic volume snapshot tool for Platform9/OpenStack (Cinder)."
@@ -490,7 +495,7 @@ def main():
     dry_run = args.dry_run
     max_new = args.max_new
     report_xlsx = args.report_xlsx
-    report_dir = args.report_dir or CFG.get("OUTPUT_DIR", r"C:\Reports\Platform9")
+    report_dir = args.report_dir or CFG.get("OUTPUT_DIR", r"C:\\Reports\\Platform9")
 
     ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
     report_path = os.path.join(
