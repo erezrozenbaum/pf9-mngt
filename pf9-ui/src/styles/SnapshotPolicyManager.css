@@ -1,0 +1,415 @@
+/**
+ * Snapshot Policy Manager Styles
+ */
+
+.snapshot-policy-manager {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.snapshot-policy-manager h1 {
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 24px;
+  color: var(--text-primary);
+}
+
+/* Alert Styles */
+.alert {
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-weight: 500;
+}
+
+.alert-error {
+  background-color: #fee;
+  color: #c00;
+  border: 1px solid #fcc;
+}
+
+/* Tab Navigation */
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.tab-btn {
+  padding: 12px 20px;
+  border: none;
+  background: none;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.2s;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.tab-btn.active {
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
+}
+
+/* Tab Content */
+.tab-content {
+  animation: fadeIn 0.2s;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Sections */
+.policy-sets-section,
+.assignments-section,
+.runs-section {
+  background: var(--card-bg);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.section-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+/* Buttons */
+.btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-dark);
+}
+
+.btn-secondary {
+  background-color: var(--secondary-color);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  background-color: var(--secondary-dark);
+}
+
+.btn-danger {
+  background-color: #e74c3c;
+  color: white;
+}
+
+.btn-danger:hover {
+  background-color: #c0392b;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  margin-left: 8px;
+}
+
+.badge.global {
+  background-color: #e3f2fd;
+  color: #1976d2;
+}
+
+.badge.tenant {
+  background-color: #f3e5f5;
+  color: #7b1fa2;
+}
+
+.badge.inactive {
+  background-color: #ffebee;
+  color: #c62828;
+}
+
+.badge.enabled {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge.disabled {
+  background-color: #f5f5f5;
+  color: #616161;
+}
+
+.badge.status-completed {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+}
+
+.badge.status-in_progress {
+  background-color: #fff3e0;
+  color: #e65100;
+}
+
+.badge.status-failed {
+  background-color: #ffebee;
+  color: #c62828;
+}
+
+.badge.status-partial {
+  background-color: #fff9c4;
+  color: #f57f17;
+}
+
+/* Policy Cards */
+.policy-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 20px;
+}
+
+.policy-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  transition: all 0.2s;
+}
+
+.policy-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.policy-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.policy-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.policy-card > p {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin: 8px 0 12px 0;
+}
+
+.policy-details {
+  background: var(--card-bg);
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.policy-details div {
+  margin-bottom: 8px;
+}
+
+.policy-details ul {
+  margin: 4px 0 0 20px;
+  padding: 0;
+}
+
+.policy-details li {
+  margin-bottom: 4px;
+}
+
+.policy-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Forms */
+.policy-form {
+  background: var(--bg-secondary);
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  border: 1px solid var(--border-color);
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 14px;
+  background: var(--card-bg);
+  color: var(--text-primary);
+}
+
+.form-group input[type="checkbox"] {
+  margin-right: 6px;
+}
+
+.form-group label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+}
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+/* Tables */
+.table-container {
+  overflow-x: auto;
+}
+
+.assignments-table,
+.runs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.assignments-table thead,
+.runs-table thead {
+  background: var(--bg-secondary);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.assignments-table th,
+.runs-table th {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.assignments-table td,
+.runs-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.assignments-table tbody tr:hover,
+.runs-table tbody tr:hover {
+  background: var(--bg-secondary);
+}
+
+.empty-cell {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 24px !important;
+  font-style: italic;
+}
+
+.empty-message {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 40px 20px;
+  font-size: 16px;
+}
+
+/* Loader */
+.loader {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .snapshot-policy-manager {
+    padding: 16px;
+  }
+
+  .section-header {
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .tabs {
+    flex-wrap: wrap;
+  }
+
+  .policy-list {
+    grid-template-columns: 1fr;
+  }
+
+  .table-container {
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .assignments-table,
+  .runs-table {
+    font-size: 12px;
+  }
+
+  .assignments-table th,
+  .runs-table th,
+  .assignments-table td,
+  .runs-table td {
+    padding: 8px;
+  }
+}
