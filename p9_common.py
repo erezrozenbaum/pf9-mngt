@@ -637,6 +637,22 @@ def cinder_snapshots_all(session: requests.Session, project_id: str):
     return paginate(session, url, "snapshots", extra_params={"all_tenants": "1"})
 
 
+def cinder_list_snapshots_for_volume(
+    session: requests.Session, project_id: str, volume_id: str
+):
+    """
+    Fetch snapshots for a specific volume (all tenants, detailed).
+    """
+    _require_cinder()
+    url = f"{CINDER_ENDPOINT}/snapshots/detail"
+    return paginate(
+        session,
+        url,
+        "snapshots",
+        extra_params={"all_tenants": "1", "volume_id": volume_id},
+    )
+
+
 # --------------------------------------------------------------------
 # Glance helpers
 # --------------------------------------------------------------------
