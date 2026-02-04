@@ -252,7 +252,7 @@ async def startup_event():
     """Initialize authentication system on startup"""
     initialize_default_admin()
     # Setup snapshot management routes
-    setup_snapshot_routes(app, get_db_connection)
+    setup_snapshot_routes(app, db_conn)
     print(f"PF9 Management API started - Authentication: {'Enabled' if ENABLE_AUTHENTICATION else 'Disabled'}")
 
 # =====================================================================

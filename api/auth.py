@@ -446,42 +446,34 @@ async def require_authentication(user: User = Depends(get_current_user)) -> User
     return user
 
 def require_permission(resource: str, permission: str):
-    """Decorator to require specific permission"""
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Find user parameter in kwargs or from dependency injection
-            user = kwargs.get('user') or kwargs.get('current_user')
-            request = kwargs.get('request')
-            
-            if not user and request:
-                # Try to extract user from request if not in kwargs
-                try:
-                    user = await get_current_user(await security(request))
-                except:
-                    user = None
-            
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required"
-                )
-            
-            if not has_permission(user.username, resource, permission):
-                log_auth_event(
-                    user.username, "permission_denied", False,
-                    getattr(request, 'client', {}).get('host') if request else None,
-                    request.headers.get('user-agent') if request else None,
-                    resource, request.url.path if request else None
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Insufficient permissions for {resource}:{permission}"
-                )
-            
-            return await func(*args, **kwargs)
-        return wrapper
-    return decorator
+    """FastAPI dependency to require specific permission"""
+    async def dependency(
+        current_user: User = Depends(get_current_user),
+        request: Request = None
+    ) -> bool:
+        user = current_user
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required"
+            )
+
+        if not has_permission(user.username, resource, permission):
+            log_auth_event(
+                user.username, "permission_denied", False,
+                request.client.host if request and request.client else None,
+                request.headers.get('user-agent') if request else None,
+                resource, request.url.path if request else None
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions for {resource}:{permission}"
+            )
+
+        return True
+
+    return dependency
 
 # Initialize default admin user on startup
 def initialize_default_admin():
