@@ -1,0 +1,151 @@
+services:
+  db:
+    image: postgres:16
+    container_name: pf9_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pf9_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@pf9-mgmt.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-change_this_admin_password}
+    ports:
+      - "8080:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  pf9_api:
+    build:
+      context: ./api
+    container_name: pf9_api
+    environment:
+      PF9_DB_HOST: db
+      PF9_DB_PORT: "5432"
+      PF9_DB_NAME: ${POSTGRES_DB}
+      PF9_DB_USER: ${POSTGRES_USER}
+      PF9_DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # === Platform9 / OpenStack auth (non-secret fields) ===
+      PF9_AUTH_URL: ${PF9_AUTH_URL}
+      PF9_USER_DOMAIN: ${PF9_USER_DOMAIN:-Default}
+      PF9_PROJECT_NAME: ${PF9_PROJECT_NAME:-service}
+      PF9_PROJECT_DOMAIN: ${PF9_PROJECT_DOMAIN:-Default}
+      PF9_REGION_NAME: ${PF9_REGION_NAME:-region-one}
+      PF9_USERNAME: ${PF9_USERNAME}
+      PF9_PASSWORD: ${PF9_PASSWORD}
+
+      # === LDAP Authentication Configuration ===
+      LDAP_SERVER: ldap
+      LDAP_PORT: "389"
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}
+      LDAP_USER_DN: ${LDAP_USER_DN:-ou=users,dc=pf9mgmt,dc=local}
+      LDAP_GROUP_DN: ${LDAP_GROUP_DN:-ou=groups,dc=pf9mgmt,dc=local}
+
+      # === JWT Configuration ===
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-30}
+
+      # === Authentication Control ===
+      ENABLE_AUTHENTICATION: ${ENABLE_AUTHENTICATION:-true}
+      DEFAULT_ADMIN_USER: ${DEFAULT_ADMIN_USER:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - ldap
+    restart: unless-stopped
+
+  pf9_ui:
+    build:
+      context: ./pf9-ui
+    container_name: pf9_ui
+    ports:
+      - "5173:5173"
+    depends_on:
+      - pf9_api
+    restart: unless-stopped
+
+  pf9_monitoring:
+    build:
+      context: ./monitoring
+    container_name: pf9_monitoring
+    environment:
+      # Comma-separated list of PF9 host IPs to scrape metrics from
+      PF9_HOSTS: ${PF9_HOSTS:-localhost}
+      # Cache TTL in seconds for metrics collection
+      METRICS_CACHE_TTL: ${METRICS_CACHE_TTL:-60}
+    ports:
+      - "8001:8001"
+    volumes:
+      - "./metrics_cache.json:/tmp/metrics_cache.json:ro"
+    depends_on:
+      - pf9_api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # LDAP Directory Service for Authentication
+  ldap:
+    image: osixia/openldap:latest
+    container_name: pf9_ldap
+    environment:
+      LDAP_ORGANISATION: "${LDAP_ORGANISATION:-Platform9 Management}"
+      LDAP_DOMAIN: "${LDAP_DOMAIN:-pf9mgmt.local}"
+      LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD}"
+      LDAP_CONFIG_PASSWORD: "${LDAP_CONFIG_PASSWORD}"
+      LDAP_READONLY_USER: "${LDAP_READONLY_USER:-true}"
+      LDAP_READONLY_USER_PASSWORD: "${LDAP_READONLY_PASSWORD}"
+      LDAP_TLS_VERIFY_CLIENT: "never"
+    ports:
+      - "${LDAP_PORT:-389}:389"
+      - "${LDAP_SSL_PORT:-636}:636"
+    volumes:
+      - ldap_data:/var/lib/ldap
+      - ldap_config:/etc/ldap/slapd.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}", "-s", "base"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # LDAP Administration Interface (Optional - can be disabled in production)
+  phpldapadmin:
+    image: osixia/phpldapadmin:latest
+    container_name: pf9_ldap_admin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: ldap
+      PHPLDAPADMIN_HTTPS: "false"
+    ports:
+      - "${LDAP_ADMIN_PORT:-8081}:80"
+    depends_on:
+      - ldap
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  pgadmin_data:
+  ldap_data:
+  ldap_config:
+
+

@@ -1,0 +1,18 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+asyncpg==0.29.0
+psycopg2-binary==2.9.7
+python-dotenv==1.0.1
+pydantic==2.9.2
+pydantic-settings==2.6.1
+requests==2.32.3
+paramiko==3.4.0
+aiofiles==24.1.0
+slowapi==0.1.9
+
+# Authentication and Authorization dependencies
+python-ldap==3.4.3
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+python-dateutil==2.8.2

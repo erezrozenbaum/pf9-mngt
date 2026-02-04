@@ -1,0 +1,67 @@
+# Environment files (contains credentials)
+.env
+.env.local
+.env.*.local
+
+# Secret files (contains passwords)
+secrets/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Runtime state files (generated at runtime)
+p9_rvtools_state.json
+metrics_cache.json
+monitoring/cache/metrics_cache.json
+
+# Excel/CSV exports (generated outputs)
+*.xlsx
+CSV_exports/
+*_RVTools_*.xlsx
+*_Snapshot_Compliance_*.xlsx
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker volumes
+postgres_data/
+
+# Node modules (for pf9-ui)
+node_modules/
+pf9-ui/dist/
+pf9-ui/node_modules/
+
+# Keep important JSON config files
+!package.json
+!tsconfig.json
+!tsconfig.*.json
+!snapshot_policy_rules.json
+!eslint.config.js

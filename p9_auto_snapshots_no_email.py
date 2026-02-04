@@ -1,0 +1,753 @@
+#!/usr/bin/env python3
+"""
+p9_auto_snapshots_no_email.py
+
+Automatic Cinder volume snapshots for Platform9/OpenStack.
+
+Snapshot behavior is driven entirely by **volume metadata**.
+
+Recommended model (multi-policy, per-volume):
+
+  auto_snapshot          = "true" / "yes" / "1"  (string, case-insensitive)
+
+  snapshot_policies      = "daily_5,monthly_1st,monthly_15th"
+
+  retention_daily_5      = "5"   # keep last 5 daily snapshots (≈5 days)
+  retention_monthly_1st  = "1"   # keep last 1 snapshot taken under monthly_1st
+  retention_monthly_15th = "1"   # keep last 1 snapshot taken under monthly_15th
+
+Legacy model (still supported):
+
+  snapshot_policy        = "daily" / "weekly" / "monthly" / ...
+  retention              = "7"    # keep last N snapshots created by this tool
+
+-----------------------
+Usage examples
+-----------------------
+
+Dry-run, no changes:
+
+  python p9_auto_snapshots_no_email.py --policy daily_5 --dry-run
+
+Real run, once per day, max 200 new snapshots:
+
+  python p9_auto_snapshots_no_email.py --policy daily_5 --max-new 200
+
+Monthly policies (script is day-aware):
+
+  python p9_auto_snapshots_no_email.py --policy monthly_1st
+  python p9_auto_snapshots_no_email.py --policy monthly_15th
+
+Scheduling (Windows Task Scheduler):
+
+  - Schedule **once per day**:
+      02:00 → daily_5
+      02:10 → monthly_1st
+      02:20 → monthly_15th
+
+  - The script will **only do work** for:
+      daily_5          → every day
+      monthly_1st      → only when day == 1
+      monthly_15th     → only when day == 15
+
+Run report (per execution):
+
+  python p9_auto_snapshots_no_email.py --policy daily_5 --report-xlsx
+
+This will write snapshot_run_<policy>_<timestamp>.xlsx in the chosen report directory.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+from datetime import datetime, timezone
+from collections import defaultdict
+
+import pandas as pd
+
+from p9_common import (
+    CFG,
+    ERRORS,
+    log_error,
+    now_utc_str,
+    get_session_best_scope,
+    cinder_volumes_all,
+    cinder_list_snapshots_for_volume,
+    cinder_create_snapshot,
+    cinder_delete_snapshot,
+    list_domains_all,
+    list_projects_all,
+    nova_servers_all,
+    get_project_scoped_session,
+)
+
+
+# --------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------
+
+def _parse_int(value, default: int) -> int:
+    try:
+        return int(str(value))
+    except Exception:
+        return default
+
+
+def _sanitize_name_part(s: str) -> str:
+    """
+    Make a safe piece for snapshot name:
+      - strip
+      - spaces -> '_'
+      - other weird chars -> '-'
+      - truncate to 40 chars
+    """
+    if s is None:
+        return ""
+    s = str(s).strip()
+    if not s:
+        return ""
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^A-Za-z0-9_.-]", "-", s)
+    return s[:40]
+
+
+def _volume_policies_for(volume) -> list[str]:
+    """
+    Return a list of policy names configured for this volume, in lowercase.
+
+    Supports:
+      - NEW: metadata.snapshot_policies = "policy1,policy2"
+      - LEGACY: metadata.snapshot_policy = "policy"
+    """
+    meta = volume.get("metadata") or {}
+
+    policies: list[str] = []
+
+    # New multi-policy field
+    multi = meta.get("snapshot_policies")
+    if isinstance(multi, str) and multi.strip():
+        for p in multi.split(","):
+            p = p.strip()
+            if p:
+                policies.append(p.lower())
+    elif isinstance(multi, (list, tuple)):
+        for p in multi:
+            s = str(p).strip()
+            if s:
+                policies.append(s.lower())
+
+    # Legacy single-policy fallback
+    if not policies:
+        single = meta.get("snapshot_policy")
+        if single:
+            policies.append(str(single).strip().lower())
+
+    return policies
+
+
+def select_volumes_for_policy(volumes, policy_name: str):
+    """
+    Filter volumes that should be processed for the given policy.
+
+    Criteria:
+      - metadata.auto_snapshot == "true"/"yes"/"1" (case-insensitive)
+      - metadata.snapshot_policies contains policy_name
+        OR legacy metadata.snapshot_policy == policy_name
+      - status is not deleting/error, etc.
+    """
+    selected = []
+    target = policy_name.lower()
+
+    for v in volumes:
+        meta = v.get("metadata") or {}
+        auto_flag = str(meta.get("auto_snapshot", "")).lower()
+        status = str(v.get("status") or "").lower()
+
+        if auto_flag not in ("true", "yes", "1"):
+            continue
+        if status in ("error", "deleting"):
+            continue
+
+        policies = _volume_policies_for(v)
+        if target not in policies:
+            continue
+
+        selected.append(v)
+
+    return selected
+
+
+def build_snapshot_name(volume, policy_name: str, server_name: str | None = None) -> str:
+    """
+    Name pattern:
+
+      auto-<policy>-<serverName>-<volumeName>-<YYYYMMDD-HHMMSS>
+
+    serverName part is omitted if there's no attached server.
+    """
+    vol_label = _sanitize_name_part(volume.get("name") or volume.get("id"))
+    srv_label = _sanitize_name_part(server_name) if server_name else ""
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+    if srv_label:
+        base = f"{policy_name}-{srv_label}-{vol_label}"
+    else:
+        base = f"{policy_name}-{vol_label}"
+
+    return f"auto-{base}-{ts}"
+
+
+def _retention_for_volume_and_policy(
+    volume,
+    policy_name: str,
+    default: int = 7,
+) -> int:
+    """
+    Determine the retention value for a given volume + policy.
+
+    Priority:
+      1) retention_<policy_name>
+      2) snapshot_retention_<policy_name>
+      3) retention
+      4) default (7)
+    """
+    meta = volume.get("metadata") or {}
+    key1 = f"retention_{policy_name}"
+    key2 = f"snapshot_retention_{policy_name}"
+
+    raw = (
+        meta.get(key1)
+        or meta.get(key2)
+        or meta.get("retention")
+        or default
+    )
+    return _parse_int(raw, default)
+
+
+def cleanup_old_snapshots_for_volume(
+    session,
+    admin_project_id: str,
+    volume,
+    policy_name: str,
+    dry_run: bool,
+):
+    """
+    Deletes old snapshots created by this tool for the given volume,
+    based on per-policy retention metadata (fallback: 7).
+
+    NOTE:
+      - We always use the admin/service project id for listing & deleting.
+      - cinder_snapshots_all() in p9_common uses all_tenants=1, so
+        we see all tenants' snapshots.
+    """
+    retention = _retention_for_volume_and_policy(volume, policy_name, default=7)
+    vol_id = volume["id"]
+
+    try:
+        snaps = cinder_list_snapshots_for_volume(session, admin_project_id, vol_id)
+    except Exception as e:
+        msg = f"Failed to list snapshots for volume {vol_id}: {type(e).__name__}: {e}"
+        print("    WARNING:", msg)
+        log_error("auto_snapshots/list", msg)
+        return []
+
+    # keep only snapshots created by this tool + matching policy
+    ours = []
+    for s in snaps:
+        smeta = s.get("metadata") or {}
+        if smeta.get("created_by") != "p9_auto_snapshots":
+            continue
+        if smeta.get("policy") != policy_name:
+            continue
+        ours.append(s)
+
+    if len(ours) <= retention:
+        return []
+
+    ours_sorted = sorted(
+        ours,
+        key=lambda s: s.get("created_at") or "",
+        reverse=True,
+    )
+    to_delete = ours_sorted[retention:]
+
+    deleted_ids: list[str] = []
+    for s in to_delete:
+        sid = s["id"]
+        sname = s.get("name") or sid
+        print(f"    Cleanup: delete old snapshot {sid} ({sname}) for volume {vol_id}")
+        if dry_run:
+            continue
+        err = cinder_delete_snapshot(session, admin_project_id, sid)
+        if err:
+            msg = f"Failed to delete snapshot {sid}: {err}"
+            print("      ERROR:", msg)
+            log_error("auto_snapshots/delete", msg)
+        else:
+            deleted_ids.append(sid)
+
+    return deleted_ids
+
+
+def process_volume(
+    admin_session,
+    admin_project_id: str,
+    volume,
+    policy_name: str,
+    dry_run: bool,
+    primary_server_name: str | None = None,
+):
+    """
+    Create one snapshot for this volume and clean old ones.
+    Returns (created_snapshot_id or None, created_snapshot_project_id,
+             deleted_ids, error_message_or_None).
+
+    We:
+      - List & delete snapshots via admin_session (all_tenants=1).
+      - Try to create snapshot in the **volume's tenant project** using a
+        per-project session. If that fails (Keystone forbids project scoping),
+        we fall back to creating it in the admin project.
+    """
+    vol_id = volume["id"]
+    vol_name = volume.get("name") or vol_id
+    volume_project_id = (
+        volume.get("os-vol-tenant-attr:tenant_id")
+        or volume.get("project_id")
+        or "UNKNOWN"
+    )
+
+    print(f"  Volume {vol_id} ({vol_name}), project={volume_project_id}")
+
+    deleted_ids = cleanup_old_snapshots_for_volume(
+        admin_session,
+        admin_project_id,
+        volume,
+        policy_name,
+        dry_run=dry_run,
+    )
+
+    snap_name = build_snapshot_name(volume, policy_name, primary_server_name)
+    snap_desc = f"Auto snapshot ({policy_name}) created by p9_auto_snapshots"
+
+    print(f"    Create snapshot: {snap_name}")
+    if dry_run:
+        return None, None, deleted_ids, None
+
+    # Decide which project/session to actually use for CREATE
+    target_project_id = volume_project_id if volume_project_id != "UNKNOWN" else admin_project_id
+    snapshot_project_id_used = admin_project_id
+    tenant_session = admin_session
+
+    if target_project_id != admin_project_id:
+        try:
+            tenant_session = get_project_scoped_session(target_project_id)
+            snapshot_project_id_used = target_project_id
+        except Exception as e:
+            # Can't scope to that project; fall back to admin project
+            warn = (
+                f"get_project_scoped_session failed for project {target_project_id}: "
+                f"{type(e).__name__}: {e}; falling back to admin project {admin_project_id}"
+            )
+            print("      WARNING:", warn)
+            log_error("auto_snapshots/project_scope", warn)
+            tenant_session = admin_session
+            snapshot_project_id_used = admin_project_id
+
+    try:
+        snap = cinder_create_snapshot(
+            tenant_session,
+            snapshot_project_id_used,
+            volume_id=vol_id,
+            name=snap_name,
+            description=snap_desc,
+            metadata={
+                "created_by": "p9_auto_snapshots",
+                "policy": policy_name,
+                "original_project_id": volume_project_id,
+                "original_volume_id": vol_id,
+            },
+            force=True,
+        )
+        sid = snap.get("id")
+        print(
+            f"      OK, snapshot id={sid} "
+            f"(project={snapshot_project_id_used}, original_project={volume_project_id})"
+        )
+        return sid, snapshot_project_id_used, deleted_ids, None
+    except Exception as e:
+        msg = f"Failed to create snapshot for volume {vol_id}: {type(e).__name__}: {e}"
+        print("      ERROR:", msg)
+        log_error("auto_snapshots/create", msg)
+        return None, snapshot_project_id_used, deleted_ids, msg
+
+
+def _build_metadata_maps(session):
+    """
+    Fetch domains, projects and servers and build helper maps so the
+    run report can include tenant name, domain name and attached VMs.
+    """
+    domains = list_domains_all(session)
+    projects = list_projects_all(session)
+    servers = nova_servers_all(session)
+
+    domain_name_by_id = {d.get("id"): d.get("name") for d in (domains or [])}
+    project_name_by_id = {p.get("id"): p.get("name") for p in (projects or [])}
+    project_domain_by_id = {}
+    for p in projects or []:
+        pid = p.get("id")
+        did = p.get("domain_id") or (p.get("domain") or {}).get("id")
+        if pid and did:
+            project_domain_by_id[pid] = did
+
+    # volume_id -> server names / ids / ips
+    vol_to_srv_names = defaultdict(list)
+    vol_to_srv_ids = defaultdict(list)
+    vol_to_srv_ips = defaultdict(list)
+
+    for srv in servers or []:
+        sid = srv.get("id")
+        sname = srv.get("name")
+        attachments = srv.get("os-extended-volumes:volumes_attached") or []
+        addresses = srv.get("addresses") or {}
+
+        ips = []
+        for net_name, addr_list in addresses.items():
+            for a in addr_list or []:
+                addr = a.get("addr")
+                if addr:
+                    ips.append(addr)
+
+        for att in attachments:
+            vid = att.get("id") or att.get("volumeId") or att.get("volume_id")
+            if not vid:
+                continue
+            if sname and sname not in vol_to_srv_names[vid]:
+                vol_to_srv_names[vid].append(sname)
+            if sid and sid not in vol_to_srv_ids[vid]:
+                vol_to_srv_ids[vid].append(sid)
+            for ip in ips:
+                if ip not in vol_to_srv_ips[vid]:
+                    vol_to_srv_ips[vid].append(ip)
+
+    return (
+        domain_name_by_id,
+        project_name_by_id,
+        project_domain_by_id,
+        vol_to_srv_names,
+        vol_to_srv_ids,
+        vol_to_srv_ips,
+    )
+
+
+# --------------------------------------------------------------------
+# Main
+# --------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Automatic volume snapshot tool for Platform9/OpenStack (Cinder)."
+    )
+    parser.add_argument(
+        "--policy",
+        default="daily_5",
+        help=(
+            "Snapshot policy name to process (matches volume metadata "
+            "snapshot_policies / snapshot_policy). "
+            "Examples: daily_5, monthly_1st, monthly_15th."
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Do not create/delete anything, just print actions.",
+    )
+    parser.add_argument(
+        "--max-new",
+        type=int,
+        default=200,
+        help="Maximum number of NEW snapshots to create in this run (default: 200).",
+    )
+    parser.add_argument(
+        "--report-xlsx",
+        action="store_true",
+        help="Write a per-run Excel report with summary and per-volume actions.",
+    )
+    parser.add_argument(
+        "--report-dir",
+        default=None,
+        help=(
+            "Directory to store run reports. "
+            "Defaults to CFG['OUTPUT_DIR'] or C:\\Reports\\Platform9."
+        ),
+    )
+
+    args = parser.parse_args()
+
+    policy_name = args.policy
+    dry_run = args.dry_run
+    max_new = args.max_new
+    report_xlsx = args.report_xlsx
+    report_dir = args.report_dir or CFG.get("OUTPUT_DIR", r"C:\Reports\Platform9")
+
+    ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
+    report_path = os.path.join(
+        report_dir,
+        f"snapshot_run_{policy_name}_{ts_utc}.xlsx",
+    )
+
+    # Day-of-month gating for monthly policies
+    today = datetime.now()
+    if policy_name == "monthly_1st" and today.day != 1:
+        print(
+            f"[SKIP] Policy 'monthly_1st' but today is {today.strftime('%Y-%m-%d')}; "
+            "nothing to do."
+        )
+        print(f"  Finished at (UTC): {now_utc_str()}")
+        if report_xlsx:
+            os.makedirs(report_dir, exist_ok=True)
+            summary = {
+                "policy": policy_name,
+                "dry_run": dry_run,
+                "run_timestamp_utc": now_utc_str(),
+                "total_volumes_processed": 0,
+                "new_snapshots": 0,
+                "snapshots_deleted": 0,
+                "errors": len(ERRORS),
+                "note": "Skipped due to day-of-month gating",
+            }
+            with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
+                pd.DataFrame([summary]).to_excel(
+                    writer, sheet_name="Summary", index=False
+                )
+                pd.DataFrame().to_excel(
+                    writer, sheet_name="Actions", index=False
+                )
+            print(f"  Run report written: {report_path}")
+        return
+    if policy_name == "monthly_15th" and today.day != 15:
+        print(
+            f"[SKIP] Policy 'monthly_15th' but today is {today.strftime('%Y-%m-%d')}; "
+            "nothing to do."
+        )
+        print(f"  Finished at (UTC): {now_utc_str()}")
+        if report_xlsx:
+            os.makedirs(report_dir, exist_ok=True)
+            summary = {
+                "policy": policy_name,
+                "dry_run": dry_run,
+                "run_timestamp_utc": now_utc_str(),
+                "total_volumes_processed": 0,
+                "new_snapshots": 0,
+                "snapshots_deleted": 0,
+                "errors": len(ERRORS),
+                "note": "Skipped due to day-of-month gating",
+            }
+            with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
+                pd.DataFrame([summary]).to_excel(
+                    writer, sheet_name="Summary", index=False
+                )
+                pd.DataFrame().to_excel(
+                    writer, sheet_name="Actions", index=False
+                )
+            print(f"  Run report written: {report_path}")
+        return
+
+    print(f"[1/4] Auth (Keystone)...")
+    session, token, body, scope_mode, sys_scope_error = get_session_best_scope()
+    token_info = body.get("token", {})
+    scoped_project = token_info.get("project", {})
+
+    print(f"      Auth scope: {scope_mode}")
+    if sys_scope_error:
+        print(f"      SYSTEM scope failed earlier: {sys_scope_error}")
+    if scope_mode == "project":
+        print(
+            f"      Project scope: {scoped_project.get('name')} "
+            f"({scoped_project.get('id')})"
+        )
+
+    admin_project_id = scoped_project.get("id")
+    if not admin_project_id:
+        raise RuntimeError(
+            "No scoped project_id from Keystone token. "
+            "Make sure PROJECT_NAME/PROJECT_DOMAIN are set in CFG."
+        )
+
+    print(f"[2/4] Fetching volumes (all tenants via admin project {admin_project_id})...")
+    try:
+        volumes = cinder_volumes_all(session, admin_project_id)
+    except Exception as e:
+        raise SystemExit(
+            f"Failed to list volumes from Cinder: {type(e).__name__}: {e}"
+        )
+
+    print(f"      Total volumes: {len(volumes)}")
+
+    # Extra metadata maps for richer report (tenant/domain/VM/IP)
+    (
+        domain_name_by_id,
+        project_name_by_id,
+        project_domain_by_id,
+        vol_to_srv_names,
+        vol_to_srv_ids,
+        vol_to_srv_ips,
+    ) = _build_metadata_maps(session)
+
+    # Filter by policy + metadata flags
+    selected = select_volumes_for_policy(volumes, policy_name)
+    print(
+        f"[3/4] Volumes matching policy '{policy_name}' and auto_snapshot=true: "
+        f"{len(selected)}"
+    )
+    if not selected:
+        print("      Nothing to do.")
+        print(f"  Finished at (UTC): {now_utc_str()}")
+
+        if report_xlsx:
+            os.makedirs(report_dir, exist_ok=True)
+            summary = {
+                "policy": policy_name,
+                "dry_run": dry_run,
+                "run_timestamp_utc": now_utc_str(),
+                "total_volumes_processed": 0,
+                "new_snapshots": 0,
+                "snapshots_deleted": 0,
+                "errors": len(ERRORS),
+                "note": "No volumes matched policy/auto_snapshot=true",
+            }
+            with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
+                pd.DataFrame([summary]).to_excel(
+                    writer, sheet_name="Summary", index=False
+                )
+                pd.DataFrame().to_excel(
+                    writer, sheet_name="Actions", index=False
+                )
+            print(f"  Run report written: {report_path}")
+        return
+
+    created_count = 0
+    deleted_total = 0
+    run_rows = []
+
+    print(
+        f"[4/4] Processing volumes (max new snapshots this run: {max_new}, "
+        f"dry_run={dry_run})"
+    )
+
+    for idx, v in enumerate(selected, start=1):
+        if not dry_run and created_count >= max_new:
+            print(
+                f"Reached max-new limit ({max_new}); skipping remaining volumes."
+            )
+            break
+
+        print(f"\n[{idx}/{len(selected)}]")
+
+        vol_id = v["id"]
+        vol_name = v.get("name") or vol_id
+        volume_project_id = (
+            v.get("os-vol-tenant-attr:tenant_id")
+            or v.get("project_id")
+            or "UNKNOWN"
+        )
+        meta = v.get("metadata") or {}
+        auto_flag = str(meta.get("auto_snapshot", "")).lower() in ("true", "yes", "1")
+        configured_policies = ",".join(_volume_policies_for(v))
+        retention = _retention_for_volume_and_policy(v, policy_name, default=7)
+
+        tenant_name = project_name_by_id.get(volume_project_id, "")
+        domain_id = project_domain_by_id.get(volume_project_id, "")
+        domain_name = domain_name_by_id.get(domain_id, "")
+
+        attached_server_names_list = vol_to_srv_names.get(vol_id, [])
+        attached_server_names = ", ".join(attached_server_names_list)
+        attached_server_ids = ", ".join(vol_to_srv_ids.get(vol_id, []))
+        attached_ips = ", ".join(vol_to_srv_ips.get(vol_id, []))
+
+        primary_server_name = attached_server_names_list[0] if attached_server_names_list else None
+
+        sid, sid_project, deleted_ids, err_msg = process_volume(
+            session,
+            admin_project_id,
+            v,
+            policy_name,
+            dry_run=dry_run,
+            primary_server_name=primary_server_name,
+        )
+        if sid:
+            created_count += 1
+        deleted_total += len(deleted_ids)
+
+        if dry_run:
+            status = "DRY_RUN"
+            note = "Dry run; no changes applied"
+        elif err_msg:
+            status = "ERROR"
+            note = err_msg
+        else:
+            status = "OK"
+            note = "Snapshot created" if sid else "No snapshot created"
+
+        run_rows.append(
+            {
+                "timestamp_utc": now_utc_str(),
+                "policy": policy_name,
+                "dry_run": dry_run,
+                "project_id": volume_project_id,
+                "tenant_name": tenant_name,
+                "domain_id": domain_id,
+                "domain_name": domain_name,
+                "volume_id": vol_id,
+                "volume_name": vol_name,
+                "volume_size_gb": v.get("size"),
+                "volume_status": v.get("status"),
+                "auto_snapshot": auto_flag,
+                "configured_policies": configured_policies,
+                "retention_for_policy": retention,
+                "attached_servers": attached_server_names,
+                "attached_server_ids": attached_server_ids,
+                "attached_ips": attached_ips,
+                "primary_server_name": primary_server_name or "",
+                "created_snapshot_id": sid or "",
+                "created_snapshot_project_id": sid_project or "",
+                "deleted_snapshot_ids": ",".join(deleted_ids),
+                "deleted_snapshots_count": len(deleted_ids),
+                "status": status,
+                "note": note,
+            }
+        )
+
+    print("\nSummary:")
+    print(f"  Policy:            {policy_name}")
+    print(f"  Dry run:           {dry_run}")
+    print(f"  New snapshots:     {created_count}")
+    print(f"  Snapshots deleted: {deleted_total}")
+    print(f"  Errors logged:     {len(ERRORS)}")
+    print(f"  Finished at (UTC): {now_utc_str()}")
+
+    if report_xlsx:
+        os.makedirs(report_dir, exist_ok=True)
+        summary = {
+            "policy": policy_name,
+            "dry_run": dry_run,
+            "run_timestamp_utc": now_utc_str(),
+            "total_volumes_processed": len(run_rows),
+            "new_snapshots": created_count,
+            "snapshots_deleted": deleted_total,
+            "errors": len([r for r in run_rows if r["status"] == "ERROR"]),
+        }
+        with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
+            pd.DataFrame([summary]).to_excel(
+                writer, sheet_name="Summary", index=False
+            )
+            pd.DataFrame(run_rows).to_excel(
+                writer, sheet_name="Actions", index=False
+            )
+        print(f"Run report written: {report_path}")
+
+
+if __name__ == "__main__":
+    main()
