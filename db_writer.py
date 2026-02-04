@@ -1924,6 +1924,15 @@ def upsert_floating_ips(conn, floatingips, run_id=None):
     if not floatingips:
         return 0
     now = _now_utc()
+
+    # Validate references to prevent FK violations
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM projects")
+        valid_project_ids = {row[0] for row in cur.fetchall()}
+        cur.execute("SELECT id FROM ports")
+        valid_port_ids = {row[0] for row in cur.fetchall()}
+        cur.execute("SELECT id FROM routers")
+        valid_router_ids = {row[0] for row in cur.fetchall()}
     
     # STEP 1: Detect and record deletions first
     current_fip_ids = []
@@ -1950,6 +1959,22 @@ def upsert_floating_ips(conn, floatingips, run_id=None):
         project_id = _clean_project_id(fip.get("project_id"))
         router_id = fip.get("router_id")
         status = fip.get("status")
+
+        if project_id and project_id not in valid_project_ids:
+            print(
+                f"[DB] Warning: Floating IP {floating_ip or fid} references non-existent project {project_id}, setting to NULL"
+            )
+            project_id = None
+        if port_id and port_id not in valid_port_ids:
+            print(
+                f"[DB] Warning: Floating IP {floating_ip or fid} references non-existent port {port_id}, setting to NULL"
+            )
+            port_id = None
+        if router_id and router_id not in valid_router_ids:
+            print(
+                f"[DB] Warning: Floating IP {floating_ip or fid} references non-existent router {router_id}, setting to NULL"
+            )
+            router_id = None
 
         # Build change hash for history tracking
         hash_data = {
