@@ -379,9 +379,9 @@ def create_user_session(username: str, role: str, token: str, ip_address: str = 
         
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO user_sessions (username, token_hash, expires_at, ip_address, user_agent)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (username, token_hash, expires_at, ip_address, user_agent))
+                INSERT INTO user_sessions (username, role, token_hash, expires_at, ip_address, user_agent)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (username, role, token_hash, expires_at, ip_address, user_agent))
             conn.commit()
     except Exception as e:
         print(f"Error creating session: {e}")
