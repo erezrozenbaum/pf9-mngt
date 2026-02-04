@@ -579,6 +579,22 @@ CREATE INDEX IF NOT EXISTS idx_roles_history_role_id ON roles_history(role_id);
 CREATE INDEX IF NOT EXISTS idx_roles_history_recorded_at ON roles_history(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_roles_history_change_hash ON roles_history(role_id, change_hash);
 
+-- Deletions history
+CREATE TABLE IF NOT EXISTS deletions_history (
+    id           BIGSERIAL PRIMARY KEY,
+    resource_type TEXT NOT NULL,
+    resource_id  TEXT NOT NULL,
+    resource_name TEXT,
+    deleted_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    run_id       BIGINT REFERENCES inventory_runs(id),
+    reason       TEXT,
+    raw_json     JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_deletions_history_resource_type ON deletions_history(resource_type);
+CREATE INDEX IF NOT EXISTS idx_deletions_history_resource_id ON deletions_history(resource_id);
+CREATE INDEX IF NOT EXISTS idx_deletions_history_deleted_at ON deletions_history(deleted_at);
+CREATE INDEX IF NOT EXISTS idx_deletions_history_run_id ON deletions_history(run_id);
+
 -- =====================================================================
 -- AUTHENTICATION AND AUTHORIZATION TABLES
 -- =====================================================================
