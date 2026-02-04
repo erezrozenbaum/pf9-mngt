@@ -70,7 +70,7 @@ const SnapshotPolicyManager: FC = () => {
   const [showCreatePolicy, setShowCreatePolicy] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<PolicySet | null>(null);
 
-  const token = localStorage.getItem('token');
+  const token = localStorage.getItem('auth_token');
 
   useEffect(() => {
     loadData();
