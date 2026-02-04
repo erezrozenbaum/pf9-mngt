@@ -309,7 +309,7 @@ CREATE TABLE IF NOT EXISTS snapshots_history (
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_history_snapshot_id ON snapshots_history(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_history_recorded_at ON snapshots_history(recorded_at);
-CREATE INDEX IF NOT EXISTS idx_snapshots_history_change_hash ON snapshots_history(snapshot_id, change_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshots_history_change_hash ON snapshots_history(snapshot_id, change_hash);
 
 -- Networks history
 CREATE TABLE IF NOT EXISTS networks_history (
@@ -561,7 +561,7 @@ CREATE TABLE IF NOT EXISTS users_history (
 );
 CREATE INDEX IF NOT EXISTS idx_users_history_user_id ON users_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_users_history_recorded_at ON users_history(recorded_at);
-CREATE INDEX IF NOT EXISTS idx_users_history_change_hash ON users_history(user_id, change_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_history_change_hash ON users_history(user_id, change_hash);
 
 -- Roles history
 CREATE TABLE IF NOT EXISTS roles_history (
@@ -577,7 +577,7 @@ CREATE TABLE IF NOT EXISTS roles_history (
 );
 CREATE INDEX IF NOT EXISTS idx_roles_history_role_id ON roles_history(role_id);
 CREATE INDEX IF NOT EXISTS idx_roles_history_recorded_at ON roles_history(recorded_at);
-CREATE INDEX IF NOT EXISTS idx_roles_history_change_hash ON roles_history(role_id, change_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_roles_history_change_hash ON roles_history(role_id, change_hash);
 
 -- Deletions history
 CREATE TABLE IF NOT EXISTS deletions_history (

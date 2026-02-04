@@ -423,7 +423,7 @@ def main():
     projects = list_projects_all(session)
     
     # Keystone - User Management (NEW)
-    print("    🔑 Collecting users and roles across all domains...")
+    print("    [KEY] Collecting users and roles across all domains...")
     users           = get_all_users_multi_domain()
     roles           = list_roles_all(session)
     role_assignments = list_role_assignments_all(session)
@@ -431,10 +431,10 @@ def main():
     
     # If no role assignments were collected, try to infer them
     if len(role_assignments) == 0:
-        print("    🔍 No role assignments collected, attempting to infer roles...")
+        print("    [INFO] No role assignments collected, attempting to infer roles...")
         role_assignments = infer_user_roles_from_data(users, projects, roles)
     
-    print(f"    ✅ Found {len(users)} users, {len(roles)} roles, {len(role_assignments)} role assignments, {len(groups)} groups")
+    print(f"    [OK] Found {len(users)} users, {len(roles)} roles, {len(role_assignments)} role assignments, {len(groups)} groups")
 
     # Nova
     servers      = nova_servers_all(session)
@@ -512,7 +512,7 @@ def main():
             n_projects     = upsert_projects(conn, projects, run_id=run_id)
             
             # User Management Data (NEW)
-            print("    💾 Writing user management data...")
+            print("    [INFO] Writing user management data...")
             n_users        = write_users(conn, users, run_id=run_id)
             n_roles        = write_roles(conn, roles, run_id=run_id) 
             n_assignments  = write_role_assignments(conn, role_assignments, run_id=run_id)
