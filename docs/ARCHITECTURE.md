@@ -1,0 +1,570 @@
+# Platform9 Management System - Architecture Guide
+
+## System Overview
+
+The Platform9 Management System is a **microservices-based enterprise platform** designed for comprehensive OpenStack infrastructure management. The architecture follows modern cloud-native principles with containerized services, API-driven design, and real-time monitoring capabilities.
+
+## 🏗️ High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    Platform9 Management System                             │
+├──────────────┬──────────────┬──────────────┬──────────────┬─────────────────┤
+│  Frontend UI │  Backend API │  Monitoring  │   Database   │  Host Scripts   │
+│  React/TS    │   FastAPI    │   FastAPI    │ PostgreSQL16 │    Python       │
+│  Port: 5173  │  Port: 8000  │  Port: 8001  │ Port: 5432   │   Scheduled     │
+└──────────────┴──────────────┴──────────────┴──────────────┴─────────────────┘
+                                    │
+                       ┌─────────────────────────┐
+                       │      Platform9          │
+                       │   OpenStack APIs        │
+                       │ (Keystone, Nova,        │
+                       │ Neutron, Cinder,        │
+                       │ Glance) + Prometheus    │
+                       │ node_exporter (9388)    │
+                       └─────────────────────────┘
+```
+
+## 🎯 Core Design Principles
+
+### 1. **Microservices Architecture**
+- **Loosely coupled services** with well-defined responsibilities
+- **Independent deployability** and scaling
+- **Technology diversity** (React, FastAPI, PostgreSQL)
+- **Container-native design** with Docker Compose orchestration
+
+### 2. **API-First Design**
+- **RESTful APIs** with OpenAPI documentation
+- **Standardized error handling** and response formats
+- **Versioned endpoints** for backward compatibility
+- **Real-time data access** with caching strategies
+
+### 3. **Hybrid Deployment Model**
+- **Container services** for web components (UI, API, Database)
+- **Host-based scripts** for infrastructure access and monitoring
+- **Flexible deployment** supporting standalone or full-stack modes
+
+### 4. **Data-Driven Operations**
+- **PostgreSQL persistence** with comprehensive relational schema
+- **JSON metadata storage** for flexible resource attributes
+- **Historical tracking** with audit trails and change detection
+- **Cache-based performance** for real-time monitoring
+
+## 🔧 Component Architecture
+
+### Frontend UI Service
+**Technology**: React 19.2 + TypeScript + Vite
+**Port**: 5173
+**Responsibilities**:
+- Modern responsive web interface
+- Real-time data visualization
+- Administrative operations UI
+- Theme support (light/dark mode)
+
+```typescript
+// Component Structure
+src/
+├── App.tsx              # Main application component
+├── components/
+│   └── ThemeToggle.tsx  # Theme switching component
+├── hooks/
+│   └── useTheme.tsx     # Theme management hook
+└── assets/             # Static assets
+```
+
+**Key Features**:
+- **Type-safe development** with TypeScript
+- **Hot module replacement** via Vite
+- **Auto-refresh capabilities** for real-time data
+- **Advanced filtering and pagination**
+- **Administrative operation forms**
+
+### Backend API Service
+**Technology**: FastAPI + Python 3.11+
+**Port**: 8000
+**Responsibilities**:
+- RESTful API endpoints (40+ routes)
+- Database operations and queries
+- Platform9 integration proxy
+- Administrative operations
+- User management and role tracking
+- Historical analysis and audit trails
+
+```python
+# API Structure
+api/
+├── main.py              # FastAPI application and routes
+├── pf9_control.py       # Platform9 API integration
+├── requirements.txt     # Python dependencies
+└── Dockerfile          # Container configuration
+```
+
+**API Endpoints** (Selected from 40+ total):
+```python
+# Core Resource Management (19+ types)
+GET  /domains                    # List domains
+GET  /tenants                    # List projects/tenants  
+GET  /servers                    # List VMs with filtering
+GET  /volumes                    # List volumes with metadata
+GET  /snapshots                  # List snapshots
+GET  /networks                   # List networks
+GET  /subnets                    # List subnets
+GET  /ports                      # List ports
+GET  /floatingips                # List floating IPs
+GET  /flavors                    # List compute flavors
+GET  /images                     # List images
+GET  /hypervisors                # List hypervisors
+
+# User & Identity Management
+GET  /users                      # List users across domains
+GET  /users/{user_id}            # User details with roles
+GET  /roles                      # List roles
+GET  /role-assignments           # Role assignment tracking
+GET  /user-activity-summary      # Activity analytics
+
+# Administrative Operations  
+POST /admin/flavors              # Create compute flavors
+DEL  /admin/flavors/{id}         # Delete flavors
+POST /admin/networks             # Create networks
+DEL  /admin/networks/{id}        # Delete networks
+POST /admin/user-access-log      # Log user access
+
+# Historical & Audit Analysis
+GET  /history/recent-changes     # Recent infrastructure changes
+GET  /history/most-changed       # Most frequently changed resources
+GET  /history/by-timeframe       # Changes by time period
+GET  /history/resource/{type}/{id} # Resource-specific history
+GET  /audit/compliance-report    # Compliance analysis
+GET  /audit/change-patterns      # Change pattern analysis
+
+# System Health & Testing
+GET  /health                     # Service health check
+GET  /simple-test                # Basic functionality test
+```
+
+### Monitoring Service
+**Technology**: FastAPI + Prometheus Client + JSON Cache
+**Port**: 8001  
+**Responsibilities**:
+- Real-time metrics collection and caching
+- Host-based data aggregation
+- Auto-setup detection and management
+- UI integration with monitoring dashboard
+
+```python
+# Monitoring Structure
+monitoring/
+├── main.py              # FastAPI monitoring service (40+ endpoints total)
+├── prometheus_client.py # Prometheus integration
+├── models.py           # Data models for metrics
+├── requirements.txt    # Dependencies
+├── entrypoint.sh       # Container startup script
+├── Dockerfile          # Container configuration
+└── cache/
+    └── metrics_cache.json # Persistent cache storage
+```
+
+**Hybrid Collection Model**:
+```
+PF9 Compute Hosts → Host Collector → JSON Cache → Monitoring API → React UI
+     ↓                    ↓             ↓            ↓             ↓
+node_exporter:9388   host_metrics_   Persistent   FastAPI      Monitoring
+(✅ Working)         collector.py     JSON File    Service      Tab
+                     (Scheduled)                   (Port 8001)
+
+libvirt_exporter:9177 → [BLOCKED] → VM Metrics (Requires PF9 Engineering Support)
+(❌ Access Denied)
+```
+
+**Data Flow Architecture**:
+1. **Host Collection**: [host_metrics_collector.py](../host_metrics_collector.py) runs via Windows Task Scheduler every 30 minutes
+2. **Cache Storage**: Metrics stored in persistent JSON cache file (`/tmp/metrics_cache.json`)
+3. **API Service**: FastAPI monitoring service serves cached data with auto-setup detection
+4. **UI Integration**: React monitoring tab with auto-refresh and real-time updates
+
+**Monitoring Endpoints**:
+- `GET /` - Service status and version
+- `GET /health` - Health check endpoint  
+- `GET /auto-setup` - Auto-setup detection and instructions
+- `GET /metrics/vms` - VM metrics (currently limited due to libvirt access)
+- `GET /metrics/hosts` - Host resource metrics ✅
+- `GET /metrics/summary` - Overall infrastructure summary
+- `GET /alerts` - System alerts and notifications
+
+### Database Service
+**Technology**: PostgreSQL 16
+**Port**: 5432
+**Responsibilities**:
+- Persistent data storage
+- Relational data integrity
+- Historical tracking
+- Performance optimization
+
+#### Database Schema (19+ Tables with History Tracking)
+
+**Core Infrastructure Tables**:
+```sql
+-- Identity & Organization (3 tables)
+domains, projects, users
+
+-- Compute Resources (4 tables)
+servers, hypervisors, flavors, images
+
+-- Storage Resources (3 tables)  
+volumes, snapshots, volume_types
+
+-- Network Resources (7 tables)
+networks, subnets, ports, routers, floating_ips, 
+security_groups, security_group_rules
+
+-- Audit & History (2+ tables)
+deletions_history, inventory_runs
+-- Plus individual *_history tables for each resource type
+
+-- Advanced Views
+v_comprehensive_changes, v_volumes_full
+```
+
+**Enhanced Schema Features**:
+- **Comprehensive Foreign Keys**: Full referential integrity across all relationships
+- **JSONB Metadata Storage**: Flexible attribute storage with GIN indexing
+- **Historical Tracking**: Complete audit trail with change hash detection
+- **Composite Indexes**: Multi-column indexes for efficient filtering and sorting
+- **Timestamp Precision**: Accurate change attribution with millisecond precision
+- **Deletion Tracking**: Comprehensive deletion history across all resource types
+
+### Host-Based Scripts
+**Technology**: Python 3.11+
+**Deployment**: Windows host with Task Scheduler
+**Responsibilities**:
+- Infrastructure discovery and inventory
+- Real-time metrics collection  
+- Snapshot automation and policy management
+- Compliance reporting
+
+#### Core Scripts Architecture
+
+**1. Infrastructure Discovery** ([pf9_rvtools.py](../pf9_rvtools.py))
+```python
+# Main discovery workflow
+def main():
+    # 1. Authenticate with Platform9
+    session = get_session_best_scope()
+    
+    # 2. Collect all resource types (19+)
+    domains = list_domains_all(session)
+    projects = list_projects_all(session)  
+    servers = nova_servers_all(session)
+    # ... additional resources
+    
+    # 3. Database operations (optional)
+    if ENABLE_DB:
+        upsert_domains(conn, domains)
+        upsert_servers(conn, servers)
+        # ... store all resources
+        
+    # 4. Excel/CSV export
+    export_workbook(domains, projects, servers, ...)
+```
+
+**2. Real-Time Monitoring** ([host_metrics_collector.py](../host_metrics_collector.py))
+```python
+# Metrics collection workflow
+class HostMetricsCollector:
+    async def collect_all_metrics(self):
+        # 1. Collect host metrics (node_exporter:9388) ✅
+        host_metrics = await self.collect_host_metrics()
+        
+        # 2. Collect VM metrics (libvirt_exporter:9177) ❌
+        vm_metrics = await self.collect_vm_metrics()
+        
+        # 3. Cache results persistently
+        self.save_to_cache(host_metrics, vm_metrics)
+```
+
+**3. Snapshot Management** ([p9_auto_snapshots_no_email.py](../p9_auto_snapshots_no_email.py))
+```python
+# Policy-driven snapshot workflow
+def main():
+    # 1. Load volume metadata and policies
+    volumes = get_volumes_with_policies()
+    
+    # 2. Apply policy rules
+    for volume in volumes:
+        policies = parse_snapshot_policies(volume.metadata)
+        for policy in policies:
+            if should_create_snapshot(volume, policy):
+                create_snapshot(volume, policy)
+                
+    # 3. Cleanup old snapshots per retention
+    cleanup_expired_snapshots()
+```
+
+## 🔄 Data Flow Architecture
+
+### 1. Infrastructure Discovery Flow
+```mermaid
+graph TD
+    A[pf9_rvtools.py] --> B[Platform9 APIs]
+    B --> C[Resource Collection]
+    C --> D{Database Enabled?}
+    D -->|Yes| E[PostgreSQL Storage]
+    D -->|No| F[Excel/CSV Export]
+    E --> F
+    F --> G[RVTools-compatible Output]
+```
+
+### 2. Real-Time Monitoring Flow
+```mermaid
+graph TD
+    A[Task Scheduler] --> B[host_metrics_collector.py]
+    B --> C[PF9 Host:9388]
+    C --> D[Prometheus Metrics]
+    D --> E[JSON Cache File]
+    E --> F[Monitoring Service:8001]
+    F --> G[React UI:5173]
+```
+
+### 3. Web Interface Flow
+```mermaid
+graph TD
+    A[React UI] --> B[Backend API:8000]
+    B --> C{Operation Type}
+    C -->|Read| D[PostgreSQL Query]
+    C -->|Admin| E[Platform9 API Call]
+    C -->|Monitoring| F[Monitoring Service:8001]
+    D --> G[Filtered Response]
+    E --> G
+    F --> G
+    G --> A
+```
+
+## 🚀 Deployment Architecture
+
+### Docker Compose Stack
+```yaml
+# Service Dependencies
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   pf9_ui    │───▶│   pf9_api   │───▶│   pf9_db    │
+│  (React)    │    │  (FastAPI)  │    │(PostgreSQL)│
+└─────────────┘    └─────────────┘    └─────────────┘
+       │                   │                   │
+       └─────────┬─────────┴─────────┬─────────┘
+                 ▼                   ▼
+        ┌─────────────┐    ┌─────────────┐
+        │pf9_monitoring│    │ pf9_pgadmin │
+        │  (FastAPI)  │    │ (Database)  │
+        └─────────────┘    └─────────────┘
+```
+
+### Host Integration Points
+```
+┌─────────────────────────────────────────┐
+│              Windows Host               │
+│  ┌─────────────────────────────────────┐│
+│  │        Task Scheduler               ││
+│  │  • host_metrics_collector.py       ││
+│  │    (Every 30 minutes)              ││
+│  │  • pf9_rvtools.py                  ││
+│  │    (On demand / scheduled)         ││
+│  └─────────────────────────────────────┘│
+│  ┌─────────────────────────────────────┐│
+│  │        Docker Containers           ││
+│  │  • UI, API, Monitoring, Database   ││
+│  └─────────────────────────────────────┘│
+└─────────────────────────────────────────┘
+```
+
+## 📊 Performance Architecture
+
+### Caching Strategy
+**1. Database Query Optimization**:
+- Composite indexes on frequently filtered columns
+- JSONB GIN indexes for metadata queries
+- Connection pooling for concurrent requests
+
+**2. Monitoring Cache**:
+- File-based JSON cache for metrics data
+- 60-second TTL with configurable refresh
+- Persistent storage across container restarts
+
+**3. API Response Caching**:
+- Paginated responses with efficient offset/limit
+- Filtered queries with optimized WHERE clauses
+- Real-time data with minimal latency
+
+### Scalability Considerations
+**Horizontal Scaling**:
+- API service: Multiple container instances behind load balancer
+- Database: Read replicas for query scaling
+- Monitoring: Distributed collection with aggregation
+
+**Resource Optimization**:
+- Container resource limits and requests
+- Database connection pooling
+- Efficient query patterns with proper indexing
+
+## 🔒 Security Architecture
+
+### Authentication & Authorization
+**Current State**: ⚠️ **Development mode - requires hardening**
+- No authentication on administrative endpoints
+- Wide-open CORS policy allowing any origin
+- Default database credentials
+
+**Production Requirements**:
+- JWT-based authentication for admin operations
+- Role-based access control (RBAC)
+- Restricted CORS policy
+- HTTPS/TLS encryption
+- Secure credential management
+
+### Network Security
+**Current Topology**:
+```
+Internet → [No TLS] → Services
+              ↓
+        [HTTP Only]
+              ↓
+    Platform9 Cluster
+```
+
+**Recommended Topology**:
+```
+Internet → [Reverse Proxy + TLS] → [Internal Network] → Services
+                     ↓
+              [Certificate Management]
+                     ↓
+             [Encrypted Communication] 
+                     ↓
+            Platform9 Cluster (HTTPS)
+```
+
+## 🔧 Configuration Management
+
+### Environment Configuration
+**Required Environment Variables**:
+```bash
+# Platform9 Authentication
+PF9_USERNAME=service-account@company.com
+PF9_PASSWORD=secure-password
+PF9_AUTH_URL=https://cluster.platform9.com/keystone/v3
+PF9_USER_DOMAIN=Default
+PF9_PROJECT_NAME=service
+PF9_PROJECT_DOMAIN=Default
+PF9_REGION_NAME=region-one
+
+# Database Configuration
+POSTGRES_USER=pf9
+POSTGRES_PASSWORD=secure-db-password
+POSTGRES_DB=pf9_mgmt
+
+# Service Configuration
+PF9_DB_HOST=db
+PF9_ENABLE_DB=1
+PF9_OUTPUT_DIR=/reports
+```
+
+### Service Configuration Files
+- **[docker-compose.yml](../docker-compose.yml)**: Service orchestration
+- **[.env.template](../.env.template)**: Environment variable template
+- **[startup.ps1](../startup.ps1)**: Automated deployment script
+- **[snapshot_policy_rules.json](../snapshot_policy_rules.json)**: Policy assignment rules
+
+## 🔍 Monitoring & Observability
+
+### Application Metrics
+**Health Endpoints**:
+- `GET /health` - Service health status
+- `GET /simple-test` - Basic functionality verification
+- `docker-compose ps` - Container status
+
+**Performance Monitoring**:
+- Response time tracking via API logs
+- Database query performance monitoring
+- Resource utilization via Docker stats
+- Cache hit/miss ratios
+
+### Infrastructure Metrics
+**Host-Level Monitoring**:
+- CPU, Memory, Storage utilization
+- Network interface statistics
+- System load and process counts
+- Disk I/O performance
+
+**Application-Level Monitoring**:
+- API request/response times
+- Database connection pool status
+- Cache performance metrics
+- Error rates and patterns
+
+### Log Aggregation
+**Current Logging**:
+```bash
+# Container logs
+docker-compose logs pf9_api
+docker-compose logs pf9_monitoring
+docker-compose logs pf9_ui
+
+# Script execution logs  
+python pf9_rvtools.py > rvtools.log 2>&1
+python host_metrics_collector.py > metrics.log 2>&1
+```
+
+**Recommended Centralized Logging**:
+- Structured JSON logging
+- Log aggregation with ELK stack or similar
+- Audit trail for administrative operations
+- Error tracking and alerting
+
+## 🚧 Known Limitations & Future Enhancements
+
+### Current Limitations
+1. **VM-Level Monitoring**: Requires Platform9 engineering support for libvirt access
+2. **Security**: Development-mode configuration not production-ready
+3. **Authentication**: No user authentication or authorization
+4. **High Availability**: Single-instance services without failover
+5. **Backup Strategy**: Manual database backup procedures
+
+### Planned Enhancements
+1. **Security Hardening**: Authentication, HTTPS, secure defaults
+2. **High Availability**: Load balancers, service redundancy
+3. **Advanced Monitoring**: Alerting, dashboards, trend analysis
+4. **API Versioning**: Backward-compatible API evolution
+5. **Multi-Tenancy**: Tenant isolation and access controls
+
+## 📚 Architecture Decision Records
+
+### ADR-001: Microservices vs Monolith
+**Decision**: Microservices architecture
+**Rationale**: 
+- Independent scaling of UI, API, and monitoring components
+- Technology diversity (React, FastAPI, Python scripts)
+- Container-native deployment
+- Clear separation of concerns
+
+### ADR-002: Database Choice
+**Decision**: PostgreSQL over NoSQL
+**Rationale**:
+- Relational data with foreign key relationships
+- ACID compliance for data integrity
+- Strong JSON support via JSONB
+- Mature ecosystem and tooling
+
+### ADR-003: Hybrid Host-Container Model
+**Decision**: Critical scripts run on host, services in containers
+**Rationale**:
+- Host scripts need direct network access to PF9 infrastructure
+- Containers provide isolation for web services
+- Easier credential management for OpenStack APIs
+- Windows Task Scheduler integration for automation
+
+### ADR-004: Cache-Based Monitoring
+**Decision**: File-based JSON cache over database storage
+**Rationale**:
+- Persistent across container restarts
+- Simple implementation without database overhead
+- Fast read access for real-time UI updates
+- Easy debugging and monitoring
+
+This architecture provides a solid foundation for enterprise OpenStack management while maintaining flexibility for future enhancements and production hardening.

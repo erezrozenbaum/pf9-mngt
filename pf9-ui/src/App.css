@@ -1,0 +1,769 @@
+.pf9-app {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  padding: 20px;
+  background: linear-gradient(135deg, var(--color-background) 0%, var(--color-surface) 100%);
+  color: var(--color-text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  min-height: 100vh;
+}
+
+.pf9-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 16px 0;
+  border-bottom: 2px solid var(--color-border);
+  background: var(--color-surface);
+  margin: -20px -20px 20px -20px;
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.pf9-header h1 {
+  color: var(--color-text-primary);
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+.pf9-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.pf9-tab {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  margin-right: 4px;
+  box-shadow: var(--shadow-sm);
+}
+
+.pf9-tab:hover {
+  background: var(--color-primary-light);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.pf9-tab-active {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+  color: white;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+/* Enhanced Theme Toggle Styles */
+.theme-toggle {
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+}
+
+.theme-toggle:hover {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+  transform: rotate(180deg) scale(1.1);
+  box-shadow: var(--shadow-md);
+}
+
+.pf9-subtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+}
+
+.pf9-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+/* History and Audit Styles */
+.pf9-history-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pf9-history-controls {
+  padding: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.pf9-history-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pf9-history-controls select {
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+.pf9-history-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.pf9-history-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 15px;
+}
+
+.pf9-history-section h3 {
+  margin: 0 0 20px 0;
+  font-size: 18px;
+  color: var(--color-text-primary);
+  border-bottom: 2px solid var(--color-border);
+  padding-bottom: 12px;
+  font-weight: 600;
+  background: transparent;
+  position: relative;
+}
+
+.pf9-button-small {
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: white;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.pf9-button-small:hover {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  opacity: 0.8;
+}
+
+/* Audit Styles */
+.pf9-audit-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.pf9-audit-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.pf9-audit-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 15px;
+}
+
+.pf9-audit-section h3 {
+  margin: 0 0 20px 0;
+  font-size: 18px;
+  color: var(--color-text-primary);
+  border-bottom: 2px solid var(--color-border);
+  padding-bottom: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  position: relative;
+  z-index: 1;
+}
+
+.pf9-compliance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.pf9-compliance-card {
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 15px;
+  text-align: center;
+}
+
+.pf9-compliance-card h4 {
+  margin: 0 0 10px 0;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  position: relative;
+}
+
+/* Global header protection against overlays */
+h1, h2, h3, h4, h5, h6 {
+  background: transparent !important;
+  position: relative;
+  z-index: 10 !important;
+}
+
+/* Prevent any pseudo-elements from covering headers */
+h1::before, h1::after,
+h2::before, h2::after,
+h3::before, h3::after,
+h4::before, h4::after,
+h5::before, h5::after,
+h6::before, h6::after {
+  display: none !important;
+}
+
+/* Specific protection for section headers */
+.pf9-history-section h3,
+.pf9-audit-section h3,
+div h3,
+section h3 {
+  background: transparent !important;
+  z-index: 10 !important;
+  position: relative !important;
+}
+
+/* Ensure no overlays on monitoring sections */
+.pf9-app > *,
+.pf9-app > div > * {
+  position: relative;
+}
+
+/* Remove any potential overlays from before/after pseudo-elements */
+*::before, *::after {
+  z-index: -1 !important;
+}
+
+/* Dark mode specific fixes for white backgrounds */
+:root[data-theme="dark"] * {
+  /* Override any hardcoded white backgrounds in dark mode */
+}
+
+:root[data-theme="dark"] .pf9-table,
+:root[data-theme="dark"] .pf9-table th,
+:root[data-theme="dark"] .pf9-table td,
+:root[data-theme="dark"] table,
+:root[data-theme="dark"] th,
+:root[data-theme="dark"] td {
+  background-color: var(--color-surface-elevated) !important;
+  color: var(--color-text-primary) !important;
+}
+
+/* Aggressive dark mode table header fix */
+:root[data-theme="dark"] table,
+:root[data-theme="dark"] table *,
+:root[data-theme="dark"] thead,
+:root[data-theme="dark"] thead *,
+:root[data-theme="dark"] th,
+:root[data-theme="dark"] th * {
+  background: var(--color-surface-elevated) !important;
+  background-color: var(--color-surface-elevated) !important;
+  color: var(--color-text-primary) !important;
+}
+
+/* Remove any white backgrounds in dark mode */
+:root[data-theme="dark"] *[style*="background: white"],
+:root[data-theme="dark"] *[style*="background: #fff"],
+:root[data-theme="dark"] *[style*="background-color: white"],
+:root[data-theme="dark"] *[style*="background-color: #fff"],
+:root[data-theme="dark"] *[style*="background-color: #ffffff"] {
+  background: var(--color-surface-elevated) !important;
+  background-color: var(--color-surface-elevated) !important;
+}
+
+.pf9-compliance-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--color-primary);
+}
+
+.pf9-compliance-detail {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  margin-top: 4px;
+}
+
+.pf9-compliance-percentage {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin-left: 8px;
+}
+
+/* Enhanced animations and utilities */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideIn {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.pf9-table tbody tr {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.pf9-details-panel {
+  animation: slideIn 0.4s ease-out;
+}
+
+/* Professional scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
+}
+.pf9-badge-info {
+  background: var(--color-primary);
+  color: white;
+}
+
+.pf9-badge-warning {
+  background: var(--color-warning);
+  color: white;
+}
+
+/* Table hover effects */
+.pf9-table tr {
+  transition: background-color 0.2s ease;
+  cursor: pointer;
+}
+
+.pf9-table tr:hover {
+  background-color: var(--color-surface);
+}
+
+.pf9-table tr:nth-child(even) {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+:root[data-theme="dark"] .pf9-table tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Status badges */
+.pf9-status {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.pf9-status.active {
+  background: var(--color-success);
+  color: white;
+}
+
+.pf9-status.inactive {
+  background: var(--color-error);
+  color: white;
+}
+
+.pf9-status.pending {
+  background: var(--color-warning);
+  color: white;
+}
+
+.pf9-toolbar label {
+  display: inline-flex;
+  flex-direction: column;
+  margin-right: 8px;
+  gap: 2px;
+}
+
+.pf9-toolbar select,
+.pf9-toolbar input {
+  font-size: 13px;
+  padding: 8px 12px;
+  border: 2px solid var(--color-border);
+  background: var(--color-background);
+  color: var(--color-text-primary);
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.pf9-toolbar select:focus,
+.pf9-toolbar input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+}
+
+.pf9-export-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: white;
+  cursor: pointer;
+}
+
+.pf9-main {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.pf9-table-panel {
+  flex: 2;
+}
+
+.pf9-details-panel {
+  flex: 1;
+  border: 1px solid var(--color-border);
+  background: var(--color-card);
+  border-radius: 12px;
+  padding: 20px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  box-shadow: var(--shadow-sm);
+  margin-left: 16px;
+}
+
+.pf9-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.pf9-table th,
+.pf9-table td {
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px 12px;
+  color: var(--color-text-primary);
+  text-align: left;
+  vertical-align: middle;
+}
+
+/* Complete CSS reset for tables in dark mode */
+:root[data-theme="dark"] {
+  /* Force all elements to respect dark mode colors */
+}
+
+/* Nuclear option: Reset ALL table styling in dark mode */
+:root[data-theme="dark"] table {
+  all: unset !important;
+  display: table !important;
+  border-collapse: collapse !important;
+  width: 100% !important;
+}
+
+:root[data-theme="dark"] thead {
+  all: unset !important;
+  display: table-header-group !important;
+}
+
+:root[data-theme="dark"] tbody {
+  all: unset !important;
+  display: table-row-group !important;
+}
+
+:root[data-theme="dark"] tr {
+  all: unset !important;
+  display: table-row !important;
+}
+
+/* Simple but effective dark mode table header fix */
+[data-theme="dark"] .pf9-table th {
+  background-color: #374151 !important;
+  color: #F9FAFB !important;
+}
+
+/* Remove all the debug CSS */
+
+:root[data-theme="dark"] td {
+  all: unset !important;
+  display: table-cell !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  color: var(--color-text-primary) !important;
+  border-bottom: 1px solid var(--color-border) !important;
+  padding: 8px 12px !important;
+  text-align: left !important;
+  vertical-align: middle !important;
+}
+
+:root[data-theme="dark"] table,
+:root[data-theme="dark"] thead,
+:root[data-theme="dark"] tbody,
+:root[data-theme="dark"] tfoot,
+:root[data-theme="dark"] tr,
+:root[data-theme="dark"] th,
+:root[data-theme="dark"] td {
+  background: none !important;
+  background-color: transparent !important;
+  color: var(--color-text-primary) !important;
+}
+
+:root[data-theme="dark"] .pf9-table th {
+  background: var(--color-surface-elevated) !important;
+  background-color: var(--color-surface-elevated) !important;
+  color: var(--color-text-primary) !important;
+}
+
+/* Override browser defaults */
+:root[data-theme="dark"] * {
+  box-shadow: none !important;
+}
+
+:root[data-theme="dark"] *:not(.pf9-status):not(.pf9-badge):not(.pf9-button):not(button) {
+  background-color: inherit !important;
+}
+
+.pf9-table th {
+  background-color: var(--color-table-header);
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 2px solid var(--color-border);
+}
+
+/* Fix dark mode table headers */
+:root[data-theme="dark"] .pf9-table th {
+  background-color: var(--color-table-header) !important;
+}
+
+/* Specific dark mode override for table headers */
+:root[data-theme="dark"] .pf9-table th {
+  background-color: var(--color-surface-elevated) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.pf9-table tbody tr:hover {
+  background-color: var(--color-surface);
+  cursor: pointer;
+}
+
+.pf9-row-selected {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark)) !important;
+  color: white;
+  box-shadow: var(--shadow-md);
+}
+
+.pf9-row-selected:hover {
+  background: linear-gradient(135deg, var(--color-primary-dark), var(--color-primary)) !important;
+  transform: scale(1.02);
+}
+
+/* Enhanced Status Badges */
+.pf9-status {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid transparent;
+}
+
+.pf9-status.active {
+  background: linear-gradient(135deg, var(--color-status-active), #45a049);
+  color: white;
+  border-color: var(--color-status-active);
+}
+
+.pf9-status.inactive {
+  background: linear-gradient(135deg, var(--color-status-inactive), #d32f2f);
+  color: white;
+  border-color: var(--color-status-inactive);
+}
+
+.pf9-status.pending {
+  background: linear-gradient(135deg, var(--color-status-pending), #f57c00);
+  color: white;
+  border-color: var(--color-status-pending);
+}
+
+.pf9-status.building {
+  background: linear-gradient(135deg, var(--color-status-building), #1976d2);
+  color: white;
+  border-color: var(--color-status-building);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.pf9-empty {
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.pf9-error {
+  margin-top: 8px;
+  color: var(--color-error);
+}
+
+.pf9-loading {
+  margin-top: 8px;
+  color: #555;
+}
+
+.pf9-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.pf9-pagination button {
+  margin: 0 2px;
+  font-size: 12px;
+}
+
+
+/* === Layout tweaks: make portal wider and use full screen === */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+.pf9-root {
+  /* main shell around the whole app */
+  max-width: 1400px;      /* was effectively much narrower */
+  margin: 0 auto;
+  padding: 24px 32px 40px;
+}
+
+.pf9-main {
+  width: 100%;
+}
+
+.pf9-content-two-column {
+  /* make the list + details layout wider and more balanced */
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(280px, 1.2fr);
+  gap: 16px;
+}
+
+.pf9-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
+/* Generic cell helpers used in the new snapshot layout */
+.pf9-cell-title {
+  font-weight: 600;
+}
+
+.pf9-cell-subtle {
+  font-size: 0.75rem;
+  color: #666;
+}
+
+/* Row selection + deleted styling */
+.pf9-row-selected {
+  background-color: #e6f0ff;
+}
+
+.pf9-row-deleted {
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  opacity: 0.7;
+}
+
+/* Small badges (we’ll use this for Deleted) */
+.pf9-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.pf9-badge-deleted {
+  background-color: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c2c7;
+}
+
+.pf9-badge-success {
+  background-color: #d1f2eb;
+  color: #0f5132;
+  border: 1px solid #a3d9cc;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: bold;
+}
+
+.pf9-badge-default {
+  background-color: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: bold;
+}
+
+.pf9-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.85rem;
+}
+
+.pf9-list li {
+  margin-bottom: 0.2rem;
+}

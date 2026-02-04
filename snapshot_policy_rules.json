@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Exclude lab / playground tenants",
+    "priority": 10,
+    "match": {
+      "tenant_name": ["lab", "playground"]
+    },
+    "policies": [],
+    "auto_snapshot": false
+  },
+
+  {
+    "name": "Prod tenants - daily + 1st + 15th",
+    "priority": 20,
+    "match": {},
+    "policies": ["daily_5", "monthly_1st", "monthly_15th"],
+    "auto_snapshot": true,
+    "retention": {
+      "daily_5": 5,
+      "monthly_1st": 1,
+      "monthly_15th": 1
+    }
+  }
+
+ ]
+

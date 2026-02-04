@@ -1,0 +1,178 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Enhanced Light theme colors */
+  --color-primary: #1976D2;
+  --color-primary-dark: #1565C0;
+  --color-primary-light: #42A5F5;
+  --color-secondary: #424242;
+  --color-background: #F8F9FA;
+  --color-surface: #FFFFFF;
+  --color-surface-elevated: #F5F7FA;
+  --color-card: #FFFFFF;
+  --color-text-primary: #212121;
+  --color-text-secondary: #666666;
+  --color-border: #E0E0E0;
+  --color-border-light: #F5F5F5;
+  --color-success: #4CAF50;
+  --color-warning: #FF9800;
+  --color-error: #F44336;
+  --color-info: #2196F3;
+  
+  /* Table colors */
+  --color-table-header: #F5F7FA;
+  --color-table-row-even: #FBFBFB;
+  --color-table-row-hover: #E3F2FD;
+  --color-table-border: #E1E5E9;
+  
+  /* Status colors */
+  --color-status-active: #4CAF50;
+  --color-status-inactive: #F44336;
+  --color-status-pending: #FF9800;
+  --color-status-building: #2196F3;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+  --shadow-md: 0 3px 6px rgba(0,0,0,0.16), 0 3px 6px rgba(0,0,0,0.23);
+  --shadow-lg: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+  
+  /* Theme transition */
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Enhanced Dark theme colors */
+:root[data-theme="dark"] {
+  --color-primary: #90CAF9;
+  --color-primary-dark: #5C6BC0;
+  --color-primary-light: #BBDEFB;
+  --color-secondary: #B0B0B0;
+  --color-background: #0F1419;
+  --color-surface: #1A1D23;
+  --color-surface-elevated: #1F2937;
+  --color-card: #252A31;
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #B0BEC5;
+  --color-border: #37474F;
+  --color-border-light: #2C3E50;
+  --color-success: #66BB6A;
+  --color-warning: #FFA726;
+  --color-error: #EF5350;
+  --color-info: #42A5F5;
+  
+  /* Dark table colors */
+  --color-table-header: #1F2937;
+  --color-table-row-even: #1A202C;
+  --color-table-row-hover: #2D3748;
+  --color-table-border: #374151;
+  
+  /* Dark status colors */
+  --color-status-active: #10B981;
+  --color-status-inactive: #EF4444;
+  --color-status-pending: #F59E0B;
+  --color-status-building: #3B82F6;
+  
+  /* Dark shadows */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3), 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 3px 6px rgba(0,0,0,0.4), 0 3px 6px rgba(0,0,0,0.5);
+  --shadow-lg: 0 10px 20px rgba(0,0,0,0.5), 0 6px 6px rgba(0,0,0,0.6);
+}
+
+/* Global theme application */
+html, body {
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+}
+
+a {
+  font-weight: 500;
+  color: var(--color-primary);
+  text-decoration: inherit;
+}
+a:hover {
+  color: var(--color-primary);
+  opacity: 0.8;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  color: var(--color-text-primary);
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: var(--color-surface);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: var(--color-primary);
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: var(--color-text-primary);
+    background-color: var(--color-background);
+  }
+  a:hover {
+    color: var(--color-primary);
+    opacity: 0.8;
+  }
+  button {
+    background-color: var(--color-surface);
+  }
+}
+
+/* Dark mode form input visibility fixes */
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select {
+  background-color: var(--color-surface) !important;
+  color: var(--color-text-primary) !important;
+  border: 1px solid var(--color-border) !important;
+}
+
+:root[data-theme="dark"] input::placeholder {
+  color: var(--color-text-secondary) !important;
+  opacity: 0.8;
+}
+
+:root[data-theme="dark"] option {
+  background-color: var(--color-surface) !important;
+  color: var(--color-text-primary) !important;
+}
+
+:root[data-theme="dark"] label {
+  color: var(--color-text-primary) !important;
+}
+
+/* Specifically fix domain and tenant dropdowns */
+:root[data-theme="dark"] .pf9-controls select {
+  background-color: var(--color-surface) !important;
+  color: var(--color-text-primary) !important;
+  border: 1px solid var(--color-border) !important;
+}
