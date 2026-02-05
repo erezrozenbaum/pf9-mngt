@@ -3,6 +3,7 @@ import sys
 import asyncio
 import re
 import logging
+import json
 from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
 
@@ -478,8 +479,9 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
     # Define main UI tab resources (exclude internal/backend-only resources)
     MAIN_UI_RESOURCES = [
         'servers', 'volumes', 'snapshots', 'networks', 'subnets', 'ports',
-        'floatingips', 'domains', 'projects', 'flavors', 'images', 
-        'hypervisors', 'users', 'monitoring', 'history', 'audit'
+        'floatingips', 'domains', 'projects', 'flavors', 'images',
+        'hypervisors', 'users', 'monitoring', 'history', 'audit',
+        'api_metrics', 'system_logs'
     ]
     
     try:
@@ -717,8 +719,122 @@ def health(request: Request):
 @app.get("/metrics")
 @limiter.limit("30/minute")
 def get_metrics(request: Request):
-    """Get API performance metrics"""
+    """Get API performance metrics (public endpoint for monitoring tools)"""
     return performance_metrics.get_stats()
+
+
+@app.get("/api/metrics")
+@limiter.limit("30/minute")
+def get_api_metrics_authenticated(request: Request):
+    """Get API performance metrics (authenticated endpoint for UI)"""
+    try:
+        token = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+        if not token:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        username = payload.get("sub")
+
+        if not has_permission(username, "api_metrics", "read"):
+            raise HTTPException(status_code=403, detail="Insufficient permissions to view API metrics")
+
+        logger.info(
+            "API metrics accessed",
+            extra={"context": {"username": username, "endpoint": "/api/metrics"}}
+        )
+        return performance_metrics.get_stats()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error in /api/metrics", extra={"context": {"error": str(e)}})
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/logs")
+@limiter.limit("30/minute")
+def get_system_logs(
+    request: Request,
+    limit: int = Query(100, ge=1, le=1000),
+    level: Optional[str] = Query(None),
+    source: Optional[str] = Query(None)
+):
+    """
+    Get system logs (authenticated, Superadmin/Admin only)
+    
+    Query Parameters:
+    - limit: Number of recent logs to return (1-1000, default 100)
+    - level: Filter by log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    - source: Filter by source module
+    """
+    try:
+        token = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+        if not token:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        username = payload.get("sub")
+
+        if not has_permission(username, "system_logs", "read"):
+            raise HTTPException(status_code=403, detail="Only admins can view system logs")
+
+        logger.info(
+            "System logs accessed",
+            extra={"context": {"username": username, "limit": limit, "level": level}}
+        )
+
+        log_file = os.getenv("LOG_FILE", "pf9_api.log")
+        logs = []
+
+        if os.path.exists(log_file):
+            with open(log_file, 'r') as f:
+                lines = f.readlines()
+                lines = lines[-limit:] if len(lines) > limit else lines
+
+                for line in lines:
+                    try:
+                        log_entry = json.loads(line.strip())
+
+                        if level and log_entry.get("level") != level.upper():
+                            continue
+                        if source and log_entry.get("logger") != source:
+                            continue
+
+                        logs.append(log_entry)
+                    except json.JSONDecodeError:
+                        if level or source:
+                            continue
+                        logs.append({"raw": line.strip(), "timestamp": datetime.utcnow().isoformat()})
+
+        return {
+            "logs": logs[-limit:],
+            "total": len(logs),
+            "log_file": log_file,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Failed to read logs",
+            extra={"context": {"error": str(e)}}
+        )
+        raise HTTPException(status_code=500, detail="Failed to read system logs")
 
 
 @app.get("/simple-test")

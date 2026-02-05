@@ -17,10 +17,11 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Activity Monitoring**: User last-seen timestamps, account status, and authentication tracking
 - **Role Inference System**: Intelligent role assignment detection when API access is limited
 
-#### Modern React UI Features (14 Comprehensive Tabs)
+#### Modern React UI Features (16 Comprehensive Tabs)
 - **Infrastructure Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs
 - **Platform Tabs**: Domains, Projects, Flavors, Images, Hypervisors
 - **Management Tabs**: Users (with role assignments), History (change tracking), Audit (compliance), Monitoring (real-time metrics)
+- **Admin Tabs**: API Metrics, System Logs (Admin/Superadmin only)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
 
 #### Advanced Snapshot Management
@@ -36,6 +37,12 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Automated Collection**: Windows Task Scheduler every 30 minutes
 - **Cache-Based Storage**: Persistent metrics with container restart survival
 - **Integrated Dashboard**: Real-time monitoring tab with auto-refresh in React UI
+
+#### API Observability Endpoints
+- **Public Metrics**: `GET http://localhost:8000/metrics` (Prometheus/Grafana)
+- **Authenticated Metrics (UI)**: `GET http://localhost:8000/api/metrics`
+- **Authenticated Logs (UI)**: `GET http://localhost:8000/api/logs`
+- **RBAC**: `api_metrics:read`, `system_logs:read` (Admin/Superadmin)
 
 #### Enterprise Features
 - **Single-Command Deployment**: Complete automation via `startup.ps1`
