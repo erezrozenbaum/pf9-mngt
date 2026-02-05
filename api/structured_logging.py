@@ -24,6 +24,8 @@ class JSONFormatter(logging.Formatter):
             log_data["exception"] = self.formatException(record.exc_info)
         
         # Add extra fields
+        if hasattr(record, "context"):
+            log_data["context"] = record.context
         if hasattr(record, "user"):
             log_data["user"] = record.user
         if hasattr(record, "endpoint"):

@@ -7,7 +7,7 @@ import json
 import time
 import uuid
 from typing import Optional, List, Any, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -297,12 +297,17 @@ async def access_log_middleware(request: Request, call_next):
         "ip_address": request.client.host if request.client else None,
     }
 
+    message = (
+        f"{request.method} {request.url.path} "
+        f"{response.status_code} {duration_ms}ms"
+    )
+
     if response.status_code >= 500:
-        logger.error("Request failed", extra={"context": context})
+        logger.error(message, extra={"context": context})
     elif response.status_code >= 400:
-        logger.warning("Request warning", extra={"context": context})
+        logger.warning(message, extra={"context": context})
     else:
-        logger.info("Request completed", extra={"context": context})
+        logger.info(message, extra={"context": context})
 
     return response
 
@@ -805,7 +810,8 @@ def get_system_logs(
     request: Request,
     limit: int = Query(100, ge=1, le=1000),
     level: Optional[str] = Query(None),
-    source: Optional[str] = Query(None)
+    source: Optional[str] = Query(None),
+    log_file: Optional[str] = Query("all")
 ):
     """
     Get system logs (authenticated, Superadmin/Admin only)
@@ -814,6 +820,7 @@ def get_system_logs(
     - limit: Number of recent logs to return (1-1000, default 100)
     - level: Filter by log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     - source: Filter by source module
+    - log_file: Filter by log file (pf9_api, pf9_monitoring, all)
     """
     try:
         token = None
@@ -838,17 +845,44 @@ def get_system_logs(
             extra={"context": {"username": username, "limit": limit, "level": level}}
         )
 
-        log_file = os.getenv("LOG_FILE", "pf9_api.log")
-        logs = []
+        configured_log_file = os.getenv("LOG_FILE", "/app/logs/pf9_api.log")
+        log_dir = os.path.dirname(configured_log_file) or "/app/logs"
 
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                lines = f.readlines()
-                lines = lines[-limit:] if len(lines) > limit else lines
+        available_files = {
+            "pf9_api": os.path.join(log_dir, "pf9_api.log"),
+            "pf9_monitoring": os.path.join(log_dir, "pf9_monitoring.log"),
+        }
+
+        logs = []
+        read_errors = []
+
+        def parse_timestamp(ts: Optional[str]):
+            if not ts:
+                return None
+            try:
+                parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    return parsed.replace(tzinfo=timezone.utc)
+                return parsed
+            except Exception:
+                return None
+
+        selected_files = available_files
+        if log_file and log_file != "all":
+            selected_files = {log_file: available_files.get(log_file, "")}
+
+        for source_file, file_path in selected_files.items():
+            if not file_path or not os.path.exists(file_path):
+                continue
+
+            try:
+                with open(file_path, 'r') as f:
+                    lines = f.readlines()
 
                 for line in lines:
                     try:
                         log_entry = json.loads(line.strip())
+                        log_entry["source_file"] = source_file
 
                         if level and log_entry.get("level") != level.upper():
                             continue
@@ -859,12 +893,30 @@ def get_system_logs(
                     except json.JSONDecodeError:
                         if level or source:
                             continue
-                        logs.append({"raw": line.strip(), "timestamp": datetime.utcnow().isoformat()})
+                        logs.append({
+                            "raw": line.strip(),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "source_file": source_file
+                        })
+            except Exception as e:
+                read_errors.append({
+                    "file": source_file,
+                    "error": str(e)
+                })
+
+        logs.sort(
+            key=lambda entry: parse_timestamp(entry.get("timestamp"))
+            or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True
+        )
+        logs = logs[:limit]
 
         return {
-            "logs": logs[-limit:],
+            "logs": logs,
             "total": len(logs),
             "log_file": log_file,
+            "available_files": [key for key, path in available_files.items() if os.path.exists(path)],
+            "read_errors": read_errors,
             "timestamp": datetime.utcnow().isoformat()
         }
 

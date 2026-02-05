@@ -1,5 +1,8 @@
 import os
 import json
+import logging
+import time
+import uuid
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 
@@ -15,6 +18,59 @@ from prometheus_client import PrometheusClient
 from models import VMMetrics, HostMetrics, MetricsResponse
 
 app = FastAPI(title="PF9 Monitoring Service", version="1.0.0")
+
+LOG_FILE = os.getenv("LOG_FILE", "")
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if hasattr(record, "context"):
+            log_record["context"] = record.context
+        if record.exc_info:
+            log_record["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
+
+logger = logging.getLogger("pf9_monitoring")
+logger.setLevel(logging.INFO)
+logger.handlers.clear()
+
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(JsonFormatter())
+logger.addHandler(stream_handler)
+
+if LOG_FILE:
+    file_handler = logging.FileHandler(LOG_FILE)
+    file_handler.setFormatter(JsonFormatter())
+    logger.addHandler(file_handler)
+
+@app.middleware("http")
+async def monitoring_access_log(request: Request, call_next):
+    start_time = time.time()
+    request_id = str(uuid.uuid4())
+    response = await call_next(request)
+    duration_ms = round((time.time() - start_time) * 1000, 2)
+
+    logger.info(
+        f"{request.method} {request.url.path} {response.status_code} {duration_ms}ms",
+        extra={
+            "context": {
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "ip_address": request.client.host if request.client else None,
+            }
+        }
+    )
+
+    response.headers["X-Request-Id"] = request_id
+    return response
 
 # Security configuration
 ALLOWED_ORIGINS = [
@@ -50,8 +106,7 @@ prometheus_client = PrometheusClient(
 @app.on_event("startup")
 async def startup_event():
     """Initialize the application"""
-    print("PF9 Monitoring Service started")
-    print("Reading metrics from host-collected cache file at /tmp/metrics_cache.json")
+    logger.info("PF9 Monitoring Service started", extra={"context": {"cache": "/tmp/metrics_cache.json"}})
     
     # Ensure we have a cache file with some default data if none exists
     import os
@@ -66,9 +121,9 @@ async def startup_event():
         try:
             with open("/tmp/metrics_cache.json", "w") as f:
                 json.dump(default_cache, f)
-            print("Created default cache file")
+            logger.info("Created default cache file", extra={"context": {"path": "/tmp/metrics_cache.json"}})
         except Exception as e:
-            print(f"Could not create cache file: {e}")
+            logger.error("Could not create cache file", extra={"context": {"error": str(e)}})
 
 # Helper functions
 def load_cache_data() -> Dict[str, Any]:
@@ -85,7 +140,7 @@ def load_cache_data() -> Dict[str, Any]:
             "timestamp": None
         }
     except Exception as e:
-        print(f"Error loading cache: {e}")
+        logger.error("Error loading cache", extra={"context": {"error": str(e)}})
         return {
             "vms": [],
             "hosts": [],
@@ -104,6 +159,7 @@ async def read_root(request: Request):
 @limiter.limit("60/minute")
 async def health_check(request: Request):
     """Health check endpoint"""
+    logger.info("Health check", extra={"context": {"path": "/health"}})
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/auto-setup")
@@ -158,6 +214,7 @@ async def get_vm_metrics(
         
         return {"data": vms, "timestamp": cache_data.get("timestamp")}
     except Exception as e:
+        logger.error("Error fetching VM metrics", extra={"context": {"error": str(e)}})
         raise HTTPException(status_code=500, detail=f"Error fetching VM metrics: {str(e)}")
 
 @app.get("/metrics/hosts")
@@ -174,6 +231,7 @@ async def get_host_metrics(
         
         return {"data": hosts, "timestamp": cache_data.get("timestamp")}
     except Exception as e:
+        logger.error("Error fetching host metrics", extra={"context": {"error": str(e)}})
         raise HTTPException(status_code=500, detail=f"Error fetching host metrics: {str(e)}")
 
 @app.get("/metrics/alerts")
@@ -183,6 +241,7 @@ async def get_alerts():
         cache_data = load_cache_data()
         return {"alerts": cache_data.get("alerts", [])}
     except Exception as e:
+        logger.error("Error fetching alerts", extra={"context": {"error": str(e)}})
         raise HTTPException(status_code=500, detail=f"Error fetching alerts: {str(e)}")
 
 @app.get("/metrics/summary")
@@ -198,6 +257,7 @@ async def get_metrics_summary():
             "host_stats": {}
         })
     except Exception as e:
+        logger.error("Error fetching summary", extra={"context": {"error": str(e)}})
         raise HTTPException(status_code=500, detail=f"Error fetching summary: {str(e)}")
 
 @app.get("/metrics", response_model=MetricsResponse)

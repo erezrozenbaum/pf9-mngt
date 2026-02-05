@@ -10,12 +10,15 @@ interface LogEntry {
   exception?: string;
   stack_trace?: string;
   raw?: string;
+  source_file?: string;
 }
 
 interface LogsResponse {
   logs: LogEntry[];
   total: number;
   log_file: string;
+  available_files?: string[];
+  read_errors?: { file: string; error: string }[];
   timestamp: string;
 }
 
@@ -25,6 +28,9 @@ export const SystemLogsTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [logFile, setLogFile] = useState<string>('');
+  const [availableFiles, setAvailableFiles] = useState<string[]>([]);
+  const [logFileFilter, setLogFileFilter] = useState<string>('all');
+  const [readErrors, setReadErrors] = useState<{ file: string; error: string }[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [filter, setFilter] = useState<{ level?: string; source?: string }>({});
   const [limit, setLimit] = useState(100);
@@ -37,6 +43,7 @@ export const SystemLogsTab: React.FC = () => {
         params.append('limit', limit.toString());
         if (filter.level) params.append('level', filter.level);
         if (filter.source) params.append('source', filter.source);
+        if (logFileFilter) params.append('log_file', logFileFilter);
 
         const response = await fetch(`${API_BASE}/api/logs?${params}`, {
           headers: {
@@ -54,6 +61,8 @@ export const SystemLogsTab: React.FC = () => {
         const data: LogsResponse = await response.json();
         setLogs(data.logs);
         setLogFile(data.log_file);
+        setAvailableFiles(data.available_files || []);
+        setReadErrors(data.read_errors || []);
         setError(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch logs');
@@ -68,7 +77,7 @@ export const SystemLogsTab: React.FC = () => {
       const interval = setInterval(fetchLogs, 5000); // Refresh every 5 seconds
       return () => clearInterval(interval);
     }
-  }, [autoRefresh, filter, limit]);
+  }, [autoRefresh, filter, limit, logFileFilter]);
 
   const handleFilterChange = (key: string, value: string) => {
     setFilter((prev) => ({
@@ -183,6 +192,24 @@ export const SystemLogsTab: React.FC = () => {
           </label>
         </div>
 
+        <div className="system-logs-control-group">
+          <label>
+            Log File:
+            <select
+              value={logFileFilter}
+              onChange={(e) => setLogFileFilter(e.target.value)}
+              className="system-logs-select"
+            >
+              <option value="all">All</option>
+              {availableFiles.map((file) => (
+                <option key={file} value={file}>
+                  {file}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         <label className="system-logs-refresh-label">
           <input
             type="checkbox"
@@ -193,6 +220,19 @@ export const SystemLogsTab: React.FC = () => {
         </label>
       </div>
 
+      {readErrors.length > 0 && (
+        <div className="system-logs-error">
+          <strong>Log read issues:</strong>
+          <ul>
+            {readErrors.map((err) => (
+              <li key={err.file}>
+                {err.file}: {err.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Logs Table */}
       <div className="system-logs-logs-container">
         <table className="system-logs-table">
@@ -201,6 +241,7 @@ export const SystemLogsTab: React.FC = () => {
               <th className="system-logs-timestamp">Timestamp</th>
               <th className="system-logs-level">Level</th>
               <th className="system-logs-source">Source</th>
+              <th className="system-logs-file">File</th>
               <th className="system-logs-message">Message</th>
             </tr>
           </thead>
@@ -222,9 +263,46 @@ export const SystemLogsTab: React.FC = () => {
                     </span>
                   </td>
                   <td className="system-logs-source">{log.logger || 'system'}</td>
+                  <td className="system-logs-file">{log.source_file || 'pf9_api'}</td>
                   <td className="system-logs-message">
                     <div>
                       <strong>{log.message || log.raw || 'N/A'}</strong>
+
+                      {log.context && Object.keys(log.context).length > 0 && (
+                        <div className="system-logs-inline-context">
+                          {log.context.method && log.context.path && (
+                            <span className="system-logs-chip">
+                              {log.context.method} {log.context.path}
+                            </span>
+                          )}
+                          {typeof log.context.status_code !== 'undefined' && (
+                            <span className="system-logs-chip">
+                              status {log.context.status_code}
+                            </span>
+                          )}
+                          {typeof log.context.duration_ms !== 'undefined' && (
+                            <span className="system-logs-chip">
+                              {log.context.duration_ms}ms
+                            </span>
+                          )}
+                          {log.context.user && (
+                            <span className="system-logs-chip">
+                              user {log.context.user}
+                            </span>
+                          )}
+                          {log.context.ip_address && (
+                            <span className="system-logs-chip">
+                              ip {log.context.ip_address}
+                            </span>
+                          )}
+                          {log.context.request_id && (
+                            <span className="system-logs-chip">
+                              req {log.context.request_id.slice(0, 8)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
                       {log.context && Object.keys(log.context).length > 0 && (
                         <details className="system-logs-details">
                           <summary>Context</summary>
@@ -233,6 +311,7 @@ export const SystemLogsTab: React.FC = () => {
                           </pre>
                         </details>
                       )}
+
                       {log.exception && (
                         <details className="system-logs-details">
                           <summary>Exception</summary>

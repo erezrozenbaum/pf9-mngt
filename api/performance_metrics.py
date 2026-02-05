@@ -59,33 +59,79 @@ class PerformanceMetrics:
         total_requests = sum(self.request_count.values())
         uptime = (datetime.now() - self.start_time).total_seconds()
         
-        # Calculate average durations
-        avg_durations = {}
+        # Calculate duration stats per endpoint (seconds)
+        duration_stats = {}
         for endpoint, durations in self.request_duration.items():
-            if durations:
-                avg_durations[endpoint] = round(sum(durations) / len(durations) * 1000, 2)
-        
-        # Top slow endpoints
+            if not durations:
+                continue
+
+            sorted_durations = sorted(durations)
+            count = len(sorted_durations)
+            avg = sum(sorted_durations) / count
+            p50 = sorted_durations[count // 2]
+            p95 = sorted_durations[int(count * 0.95)] if count > 20 else None
+            p99 = sorted_durations[int(count * 0.99)] if count > 100 else None
+
+            duration_stats[endpoint] = {
+                "count": count,
+                "avg_duration": round(avg, 4),
+                "min_duration": round(sorted_durations[0], 4),
+                "max_duration": round(sorted_durations[-1], 4),
+                "p50": round(p50, 4),
+                "p95": round(p95, 4) if p95 is not None else None,
+                "p99": round(p99, 4) if p99 is not None else None,
+            }
+
+        # Top slow endpoints (avg duration > 1s)
         slow_endpoints = sorted(
-            avg_durations.items(),
-            key=lambda x: x[1],
+            [
+                (ep, stats)
+                for ep, stats in duration_stats.items()
+                if stats["avg_duration"] > 1.0
+            ],
+            key=lambda x: x[1]["avg_duration"],
             reverse=True
         )[:10]
-        
-        # Top used endpoints
-        top_endpoints = sorted(
+
+        # All endpoints (with counts and duration stats)
+        all_endpoints = sorted(
             self.request_count.items(),
             key=lambda x: x[1],
             reverse=True
-        )[:10]
+        )
+
+        # Top used endpoints
+        top_endpoints = all_endpoints[:10]
         
         return {
             "uptime_seconds": round(uptime, 2),
             "total_requests": total_requests,
             "requests_per_second": round(total_requests / uptime if uptime > 0 else 0, 2),
             "status_codes": dict(self.status_codes),
-            "top_endpoints": [{"endpoint": ep, "count": cnt} for ep, cnt in top_endpoints],
-            "slow_endpoints": [{"endpoint": ep, "avg_ms": ms} for ep, ms in slow_endpoints],
+            "top_endpoints": [
+                {
+                    "endpoint": ep,
+                    "count": cnt,
+                    **duration_stats.get(ep, {})
+                }
+                for ep, cnt in top_endpoints
+            ],
+            "endpoint_stats": [
+                {
+                    "endpoint": ep,
+                    "count": cnt,
+                    **duration_stats.get(ep, {})
+                }
+                for ep, cnt in all_endpoints
+            ],
+            "slow_endpoints": [
+                {
+                    "endpoint": ep,
+                    "avg_duration": stats["avg_duration"],
+                    "count": stats["count"],
+                }
+                for ep, stats in slow_endpoints
+            ],
             "recent_slow_requests": list(self.slow_requests)[-10:],
             "recent_errors": list(self.error_requests)[-10:],
         }
