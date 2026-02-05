@@ -326,22 +326,35 @@ if ($pythonExe) {
 if (-not $NoSchedule -and -not $SkipMetrics -and $pythonExe) {
     Write-Section "Step 6: Configuring Automated Metrics Collection"
     
-    Write-Info "Removing existing scheduled task (if any)..."
+    Write-Info "Removing existing scheduled tasks (if any)..."
     try {
         schtasks /delete /tn "PF9 Metrics Collection" /f 2>&1 | Out-Null
     } catch { }
+    try {
+        schtasks /delete /tn "PF9 RVTools Export" /f 2>&1 | Out-Null
+    } catch { }
 
-    Write-Info "Creating scheduled task for 30-minute intervals..."
+    Write-Info "Creating metrics collection task (every 30 minutes)..."
     $start = (Get-Date).AddMinutes(1).ToString("HH:mm")
-    $taskCmd = "cmd /c \"\"$pythonExe\" \"$ScriptDir\host_metrics_collector.py\" --once\""
+    $metricsCmd = "cmd /c \"\"$pythonExe\" \"$ScriptDir\host_metrics_collector.py\" --once\""
     
     try {
-        schtasks /create /tn "PF9 Metrics Collection" /sc minute /mo 30 /st $start /tr $taskCmd /ru $env:USERNAME /f 2>&1 | Out-Null
-        Write-Success "Scheduled task created successfully"
-        Write-Info "Metrics will be collected every 30 minutes"
+        schtasks /create /tn "PF9 Metrics Collection" /sc minute /mo 30 /st $start /tr $metricsCmd /ru $env:USERNAME /f 2>&1 | Out-Null
+        Write-Success "Metrics collection task created (every 30 minutes)"
     } catch {
-        Write-Warning "Could not create scheduled task (may need admin privileges)"
-        Write-Info "Metrics collection can be run manually with: python host_metrics_collector.py"
+        Write-Warning "Could not create metrics task (may need admin privileges)"
+        Write-Info "Run manually with: python host_metrics_collector.py"
+    }
+    
+    Write-Info "Creating RVTools export task (daily at 2 AM)..."
+    $rvtoolsCmd = "cmd /c \"\"$pythonExe\" \"$ScriptDir\pf9_rvtools.py\"\""
+    
+    try {
+        schtasks /create /tn "PF9 RVTools Export" /sc daily /st 02:00 /tr $rvtoolsCmd /ru $env:USERNAME /f 2>&1 | Out-Null
+        Write-Success "RVTools export task created (daily at 2:00 AM)"
+    } catch {
+        Write-Warning "Could not create RVTools task (may need admin privileges)"
+        Write-Info "Run manually with: python pf9_rvtools.py"
     }
 } else {
     Write-Section "Step 6: Metrics Collection (Skipped)"
@@ -490,9 +503,13 @@ Write-Host "  Restart service:  docker-compose restart <service>" -ForegroundCol
 Write-Host ""
 
 if ($pythonExe -and -not $SkipMetrics) {
-    Write-Host "Metrics Collection:" -ForegroundColor Cyan
-    Write-Host "  Scheduled Task:   PF9 Metrics Collection (every 30 minutes)" -ForegroundColor White
-    Write-Host "  Manual run:       python host_metrics_collector.py" -ForegroundColor White
+    Write-Host "Automated Tasks:" -ForegroundColor Cyan
+    Write-Host "  Metrics Collection:  Every 30 minutes (PF9 Metrics Collection)" -ForegroundColor White
+    Write-Host "  RVTools Export:      Daily at 2:00 AM (PF9 RVTools Export)" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Manual Execution:" -ForegroundColor Cyan
+    Write-Host "  Metrics:             python host_metrics_collector.py" -ForegroundColor White
+    Write-Host "  RVTools:             python pf9_rvtools.py" -ForegroundColor White
     Write-Host ""
 }
 
