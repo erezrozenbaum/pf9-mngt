@@ -4,6 +4,8 @@ import os
 from datetime import datetime, timezone
 
 import pandas as pd
+import psycopg2
+from psycopg2.extras import execute_values
 
 
 """
@@ -133,6 +135,92 @@ def parse_policies_from_metadata(meta: dict):
             policies.append(str(single).strip())
 
     return policies
+
+
+def get_db_connection():
+    """Get database connection using environment variables."""
+    return psycopg2.connect(
+        host=os.getenv("PF9_DB_HOST", "db"),
+        port=int(os.getenv("PF9_DB_PORT", "5432")),
+        database=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
+        user=os.getenv("PF9_DB_USER", "pf9"),
+        password=os.getenv("PF9_DB_PASSWORD", "")
+    )
+
+
+def write_compliance_to_db(vol_comp: pd.DataFrame, input_file: str, output_file: str, sla_days: int):
+    """Write compliance report data to database tables."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Count compliant vs non-compliant
+        compliant_count = int(vol_comp["is_compliant"].sum()) if not vol_comp.empty else 0
+        total_volumes = len(vol_comp)
+        noncompliant_count = total_volumes - compliant_count
+        
+        # Insert compliance report summary
+        cur.execute("""
+            INSERT INTO compliance_reports 
+            (report_date, input_file, output_file, sla_days, total_volumes, compliant_count, noncompliant_count)
+            VALUES (NOW(), %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (input_file, output_file, sla_days, total_volumes, compliant_count, noncompliant_count))
+        
+        report_id = cur.fetchone()[0]
+        
+        # Prepare compliance details data
+        if not vol_comp.empty:
+            details = []
+            for _, row in vol_comp.iterrows():
+                # Convert pandas NaT to None
+                last_snapshot_at = None
+                if pd.notna(row.get("last_snapshot_at")):
+                    last_snapshot_at = row["last_snapshot_at"]
+                
+                days_since = None
+                if pd.notna(row.get("days_since_last_snapshot")):
+                    days_since = float(row["days_since_last_snapshot"])
+                
+                details.append((
+                    report_id,
+                    row.get("volume_id"),
+                    row.get("volume_name"),
+                    row.get("tenant_id"),
+                    row.get("tenant_name"),
+                    row.get("project_id"),
+                    row.get("project_name"),
+                    row.get("domain_id"),
+                    row.get("domain_name"),
+                    row.get("vm_id"),
+                    row.get("vm_name"),
+                    row.get("policy"),
+                    int(row.get("retention_days", 0)) if pd.notna(row.get("retention_days")) else None,
+                    last_snapshot_at,
+                    days_since,
+                    bool(row.get("is_compliant", False)),
+                    row.get("status", "Unknown")
+                ))
+            
+            # Bulk insert compliance details
+            execute_values(cur, """
+                INSERT INTO compliance_details 
+                (report_id, volume_id, volume_name, tenant_id, tenant_name, project_id, project_name,
+                 domain_id, domain_name, vm_id, vm_name, policy_name, retention_days, last_snapshot_at,
+                 days_since_snapshot, is_compliant, compliance_status)
+                VALUES %s
+            """, details)
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        print(f"✅ Compliance data written to database (report ID: {report_id})")
+        return report_id
+        
+    except Exception as e:
+        print(f"⚠️  Failed to write to database: {e}")
+        return None
 
 
 def get_retention_for_policy(meta: dict, policy_name: str, default: int = 7) -> int:
@@ -646,8 +734,8 @@ def build_all_volumes_sheet(data: dict):
 def main(input_path: str | None = None, output_path: str | None = None):
     if input_path is None:
         # If not provided, pick the latest pf9_rvtools_*.xlsx from the
-        # default report directory C:\Reports\Platform9 (or current dir).
-        default_dir = r"C:\Reports\Platform9"
+        # default report directory /mnt/reports (which maps to C:\Reports\Platform9).
+        default_dir = "/mnt/reports"
         search_dir = default_dir if os.path.isdir(default_dir) else "."
         latest = None
         latest_mtime = None
@@ -713,6 +801,10 @@ def main(input_path: str | None = None, output_path: str | None = None):
         all_volumes.to_excel(writer, "AllVolumes", index=False)
 
     print("Done.")
+    
+    # Write compliance data to database
+    sla_days = int(os.getenv("COMPLIANCE_REPORT_SLA_DAYS", "2"))
+    write_compliance_to_db(vol_comp, input_path, output_path, sla_days)
 
 
 def _cli():

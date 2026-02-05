@@ -5,6 +5,8 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import UserManagement from "./components/UserManagement";
 import SnapshotPolicyManager from "./components/SnapshotPolicyManager";
 import SnapshotAuditTrail from "./components/SnapshotAuditTrail";
+import SnapshotMonitor from "./components/SnapshotMonitor";
+import SnapshotComplianceReport from "./components/SnapshotComplianceReport";
 import { APIMetricsTab } from "./components/APIMetricsTab";
 import { SystemLogsTab } from "./components/SystemLogsTab";
 
@@ -373,7 +375,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs";
+type ActiveTab = "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance";
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -2282,6 +2284,22 @@ const App: React.FC = () => {
               >
                 System Logs
               </button>
+              <button
+                className={
+                  activeTab === "snapshot_monitor" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+                }
+                onClick={() => setActiveTab("snapshot_monitor")}
+              >
+                Snapshot Monitor
+              </button>
+              <button
+                className={
+                  activeTab === "snapshot_compliance" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+                }
+                onClick={() => setActiveTab("snapshot_compliance")}
+              >
+                Snapshot Compliance
+              </button>
             </>
           )}
           <button
@@ -4032,6 +4050,16 @@ const App: React.FC = () => {
           {/* System Logs Section */}
           {activeTab === "system_logs" && (
             <SystemLogsTab />
+          )}
+
+          {/* Snapshot Monitor Section */}
+          {activeTab === "snapshot_monitor" && (
+            <SnapshotMonitor />
+          )}
+
+          {/* Snapshot Compliance Section */}
+          {activeTab === "snapshot_compliance" && (
+            <SnapshotComplianceReport />
           )}
 
           {/* Monitoring Section */}

@@ -466,7 +466,7 @@ def process_volume(
 
     deleted_ids = cleanup_old_snapshots_for_volume(
         admin_session,
-        admin_project_id,
+        admin_project_id,  # Use admin session project ID for list/delete operations
         volume,
         policy_name,
         dry_run=dry_run,
@@ -483,8 +483,8 @@ def process_volume(
     # The snapshot will be created in the authenticated session's project
     try:
         snap = cinder_create_snapshot(
-            admin_session,
-            admin_project_id,  # This is ignored when using project-scoped session
+            admin_session,  # Use the project-scoped session (renamed from admin_session in function args)
+            admin_project_id,  # Use the correct project ID (renamed from admin_project_id in function args)
             volume_id=vol_id,
             name=snap_name,
             description=snap_desc,
@@ -497,7 +497,15 @@ def process_volume(
             force=True,
         )
         sid = snap.get("id")
-        snapshot_created_in_project = snap.get("os-vol-tenant-attr:tenant_id") or snap.get("project_id") or "UNKNOWN"
+        
+        # Try multiple fields to find the project ID
+        snapshot_created_in_project = (
+            snap.get("os-extended-snapshot-attributes:project_id") or
+            snap.get("os-vol-tenant-attr:tenant_id") or 
+            snap.get("project_id") or 
+            snap.get("tenant_id") or
+            volume_project_id  # Fall back to the volume's project ID (should be correct)
+        )
         print(
             f"      OK, snapshot id={sid} created in project={snapshot_created_in_project}"
         )
@@ -597,6 +605,12 @@ def main():
         help="Maximum number of NEW snapshots to create in this run (default: 200).",
     )
     parser.add_argument(
+        "--max-size-gb",
+        type=int,
+        default=None,
+        help="Skip volumes larger than this size in GB (Platform9 API limitation workaround). Default: no limit.",
+    )
+    parser.add_argument(
         "--report-xlsx",
         action="store_true",
         help="Write a per-run Excel report with summary and per-volume actions.",
@@ -615,6 +629,7 @@ def main():
     policy_name = args.policy
     dry_run = args.dry_run
     max_new = args.max_new
+    max_size_gb = args.max_size_gb
     report_xlsx = args.report_xlsx
     report_dir = args.report_dir or CFG.get("OUTPUT_DIR", r"C:\\Reports\\Platform9")
 
@@ -777,6 +792,7 @@ def main():
 
     created_count = 0
     deleted_total = 0
+    skipped_count = 0
     run_rows = []
 
     print(
@@ -846,15 +862,65 @@ def main():
 
             vol_id = v["id"]
             vol_name = v.get("name") or vol_id
+            vol_size_gb = v.get("size", 0)
             volume_project_id = vol_project_id
             meta = v.get("metadata") or {}
-            auto_flag = str(meta.get("auto_snapshot", "")).lower() in ("true", "yes", "1")
-            configured_policies = ",".join(_volume_policies_for(v))
-            retention = _retention_for_volume_and_policy(v, policy_name, default=7)
-
+            
+            # Get tenant/domain info needed for all paths
             tenant_name = project_name_by_id.get(volume_project_id, "")
             domain_id = project_domain_by_id.get(volume_project_id, "")
             domain_name = domain_name_by_id.get(domain_id, "")
+            
+            # Check volume size limit (Platform9 API 413 workaround)
+            if max_size_gb and vol_size_gb > max_size_gb:
+                print(f"  Volume {vol_name} ({vol_id}), size={vol_size_gb}GB")
+                print(f"  [SKIP] Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB)")
+                print(f"         Skipping due to Platform9 API limitation (413 Request Entity Too Large)")
+                skipped_count += 1
+                
+                # Log to database as skipped
+                if db_conn and run_id:
+                    create_snapshot_record(
+                        db_conn, run_id, "skipped", None, "", vol_id, vol_name,
+                        volume_project_id, tenant_name, volume_project_id, tenant_name,
+                        None, None, policy_name, vol_size_gb, 0,
+                        "SKIPPED", f"Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB) - Platform9 API limitation", 
+                        raw_snapshot_json=v
+                    )
+                
+                # Add to run_rows for reporting
+                run_rows.append({
+                    "timestamp_utc": now_utc_str(),
+                    "policy": policy_name,
+                    "dry_run": dry_run,
+                    "project_id": volume_project_id,
+                    "tenant_name": tenant_name,
+                    "domain_id": domain_id,
+                    "domain_name": domain_name,
+                    "volume_id": vol_id,
+                    "volume_name": vol_name,
+                    "volume_size_gb": vol_size_gb,
+                    "volume_status": v.get("status"),
+                    "auto_snapshot": "N/A",
+                    "configured_policies": "N/A",
+                    "retention_for_policy": 0,
+                    "attached_servers": "",
+                    "attached_server_ids": "",
+                    "attached_ips": "",
+                    "primary_server_name": "",
+                    "created_snapshot_id": "",
+                    "created_snapshot_project_id": "",
+                    "deleted_snapshot_ids": "",
+                    "deleted_snapshots_count": 0,
+                    "status": "SKIPPED",
+                    "note": f"Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB)",
+                })
+                
+                continue
+            
+            auto_flag = str(meta.get("auto_snapshot", "")).lower() in ("true", "yes", "1")
+            configured_policies = ",".join(_volume_policies_for(v))
+            retention = _retention_for_volume_and_policy(v, policy_name, default=7)
 
             attached_server_names_list = vol_to_srv_names.get(vol_id, [])
             attached_server_names = ", ".join(attached_server_names_list)
@@ -865,7 +931,7 @@ def main():
 
             sid, sid_project, deleted_ids, err_msg, snap_name = process_volume(
                 project_session,  # Use project-scoped session instead of admin session
-                admin_project_id,
+                vol_project_id,   # Use the volume's project ID, not admin project ID
                 v,
                 policy_name,
                 dry_run=dry_run,
@@ -897,34 +963,34 @@ def main():
                 status, err_msg, raw_snapshot_json=v
             )
 
-        run_rows.append(
-            {
-                "timestamp_utc": now_utc_str(),
-                "policy": policy_name,
-                "dry_run": dry_run,
-                "project_id": volume_project_id,
-                "tenant_name": tenant_name,
-                "domain_id": domain_id,
-                "domain_name": domain_name,
-                "volume_id": vol_id,
-                "volume_name": vol_name,
-                "volume_size_gb": v.get("size"),
-                "volume_status": v.get("status"),
-                "auto_snapshot": auto_flag,
-                "configured_policies": configured_policies,
-                "retention_for_policy": retention,
-                "attached_servers": attached_server_names,
-                "attached_server_ids": attached_server_ids,
-                "attached_ips": attached_ips,
-                "primary_server_name": primary_server_name or "",
-                "created_snapshot_id": sid or "",
-                "created_snapshot_project_id": sid_project or "",
-                "deleted_snapshot_ids": ",".join(deleted_ids),
-                "deleted_snapshots_count": len(deleted_ids),
-                "status": status,
-                "note": note,
-            }
-        )
+            run_rows.append(
+                {
+                    "timestamp_utc": now_utc_str(),
+                    "policy": policy_name,
+                    "dry_run": dry_run,
+                    "project_id": volume_project_id,
+                    "tenant_name": tenant_name,
+                    "domain_id": domain_id,
+                    "domain_name": domain_name,
+                    "volume_id": vol_id,
+                    "volume_name": vol_name,
+                    "volume_size_gb": v.get("size"),
+                    "volume_status": v.get("status"),
+                    "auto_snapshot": auto_flag,
+                    "configured_policies": configured_policies,
+                    "retention_for_policy": retention,
+                    "attached_servers": attached_server_names,
+                    "attached_server_ids": attached_server_ids,
+                    "attached_ips": attached_ips,
+                    "primary_server_name": primary_server_name or "",
+                    "created_snapshot_id": sid or "",
+                    "created_snapshot_project_id": sid_project or "",
+                    "deleted_snapshot_ids": ",".join(deleted_ids),
+                    "deleted_snapshots_count": len(deleted_ids),
+                    "status": status,
+                    "note": note,
+                }
+            )
 
     print("\nSummary:")
     print(f"  Policy:            {policy_name}")
@@ -943,7 +1009,7 @@ def main():
         finish_snapshot_run(
             db_conn, run_id, final_status, len(run_rows), created_count,
             deleted_total, len([r for r in run_rows if r["status"] == "ERROR"]),
-            len([r for r in run_rows if r["status"] == "OK" and not r["created_snapshot_id"]]),
+            skipped_count,  # Use the actual skipped_count variable
             error_summary
         )
         db_conn.close()

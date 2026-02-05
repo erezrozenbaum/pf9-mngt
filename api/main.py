@@ -851,6 +851,7 @@ def get_system_logs(
         available_files = {
             "pf9_api": os.path.join(log_dir, "pf9_api.log"),
             "pf9_monitoring": os.path.join(log_dir, "pf9_monitoring.log"),
+            "snapshot_worker": os.path.join(log_dir, "snapshot_worker.log"),
         }
 
         logs = []
@@ -1589,6 +1590,169 @@ def snapshots(
         "page_size": page_size,
         "total": total,
         "items": rows,
+    }
+
+
+@app.get("/snapshot-runs")
+def snapshot_runs(
+    run_type: Optional[str] = None,
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+):
+    """Get snapshot run history with filtering and pagination."""
+    where: List[str] = []
+    params: List[Any] = []
+
+    if run_type:
+        where.append("run_type = %s")
+        params.append(run_type)
+    if status:
+        where.append("status = %s")
+        params.append(status)
+    if start_date:
+        where.append("started_at >= %s")
+        params.append(start_date)
+    if end_date:
+        where.append("started_at <= %s")
+        params.append(end_date)
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    offset = (page - 1) * page_size
+    limit = page_size
+
+    sql = f"""
+    WITH filtered AS (
+      SELECT
+        id,
+        run_type,
+        started_at,
+        finished_at,
+        status,
+        total_volumes,
+        snapshots_created,
+        snapshots_deleted,
+        snapshots_failed,
+        volumes_skipped,
+        dry_run,
+        triggered_by,
+        trigger_source,
+        execution_host,
+        error_summary
+      FROM snapshot_runs
+      {where_sql}
+    )
+    SELECT
+      *,
+      COUNT(*) OVER() AS total_count
+    FROM filtered
+    ORDER BY started_at DESC
+    LIMIT %s OFFSET %s
+    """
+    params.extend([limit, offset])
+
+    rows = run_query(sql, tuple(params))
+    total = 0
+    if rows:
+        total = rows[0].get("total_count", 0) or 0
+        for r in rows:
+            r.pop("total_count", None)
+
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "items": rows,
+    }
+
+
+@app.get("/snapshot/compliance")
+def snapshot_compliance(
+    days: int = Query(default=7, ge=1, le=365),
+    tenant_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    policy: Optional[str] = None,
+):
+    """Get snapshot compliance report from the latest compliance report run."""
+    # Get the latest compliance report
+    latest_report_sql = """
+    SELECT id, report_date, sla_days, total_volumes, compliant_count, noncompliant_count
+    FROM compliance_reports
+    ORDER BY report_date DESC
+    LIMIT 1
+    """
+    
+    latest_report = run_query(latest_report_sql)
+    if not latest_report:
+        return {
+            "rows": [],
+            "count": 0,
+            "summary": {
+                "compliant": 0,
+                "noncompliant": 0,
+                "days": days,
+                "last_report_date": None
+            }
+        }
+    
+    report = latest_report[0]
+    report_id = report['id']
+    
+    # Build query for compliance details
+    where_conditions = ["cd.report_id = %s"]
+    params = [report_id]
+    
+    if tenant_id:
+        where_conditions.append("cd.tenant_id = %s")
+        params.append(tenant_id)
+    if project_id:
+        where_conditions.append("cd.project_id = %s")
+        params.append(project_id)
+    if policy:
+        where_conditions.append("cd.policy_name LIKE %s")
+        params.append(f"%{policy}%")
+    
+    where_sql = " AND ".join(where_conditions)
+    
+    sql = f"""
+    SELECT 
+        cd.volume_id,
+        cd.volume_name,
+        cd.tenant_id,
+        cd.tenant_name,
+        cd.project_id,
+        cd.project_name,
+        cd.vm_id,
+        cd.vm_name,
+        cd.policy_name,
+        cd.retention_days,
+        cd.last_snapshot_at,
+        cd.days_since_snapshot,
+        cd.is_compliant as compliant,
+        cd.compliance_status
+    FROM compliance_details cd
+    WHERE {where_sql}
+    ORDER BY cd.is_compliant ASC, cd.tenant_name, cd.volume_name
+    """
+    
+    rows = run_query(sql, tuple(params))
+    
+    # Calculate summary from filtered results
+    compliant_count = sum(1 for r in rows if r.get('compliant'))
+    noncompliant_count = len(rows) - compliant_count
+    
+    return {
+        "rows": rows,
+        "count": len(rows),
+        "summary": {
+            "compliant": compliant_count,
+            "noncompliant": noncompliant_count,
+            "days": report['sla_days'],
+            "last_report_date": report['report_date'].isoformat() if report.get('report_date') else None
+        }
     }
 
 
