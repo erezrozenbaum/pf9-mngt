@@ -174,9 +174,9 @@ def run_policy_assign():
         args.append("--dry-run")
 
     log("Running policy assignment...")
-    result = subprocess.run(args, capture_output=True, text=True)
+    result = subprocess.run(args, text=True)
     if result.returncode != 0:
-        log(f"Policy assignment failed: {result.stderr.strip() or result.stdout.strip()}")
+        log(f"Policy assignment failed with return code {result.returncode}")
     else:
         log("Policy assignment completed.")
 
@@ -200,9 +200,9 @@ def run_auto_snapshots():
             args.append("--dry-run")
 
         log(f"Running auto snapshots for policy: {policy}")
-        result = subprocess.run(args, capture_output=True, text=True)
+        result = subprocess.run(args, text=True)
         if result.returncode != 0:
-            log(f"Auto snapshots failed for {policy}: {result.stderr.strip() or result.stdout.strip()}")
+            log(f"Auto snapshots failed for {policy} with return code {result.returncode}")
         else:
             log(f"Auto snapshots completed for {policy}.")
 
