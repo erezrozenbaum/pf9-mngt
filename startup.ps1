@@ -173,15 +173,44 @@ if ($allGood) {
     Write-Host "PF9 Management Portal is ready!" -ForegroundColor Green
     Write-Host ""
     Write-Host "Services:" -ForegroundColor Cyan
-    Write-Host "  • UI:         http://localhost:3000" -ForegroundColor White
+    Write-Host "  • UI:         http://localhost:5173" -ForegroundColor White
     Write-Host "  • API:        http://localhost:8000" -ForegroundColor White  
+    Write-Host "  • API Metrics: http://localhost:8000/metrics" -ForegroundColor White
     Write-Host "  • Monitoring: http://localhost:8001" -ForegroundColor White
     Write-Host "  • PgAdmin:    http://localhost:8080" -ForegroundColor White
     Write-Host ""
-    if ($scheduleSuccess) {
-        Write-Host "✓ Automatic metrics collection is active" -ForegroundColor Green
+    
+    # Start background metrics collector
+    Write-Host "Starting background metrics collector..." -ForegroundColor Cyan
+    $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if (-not $pythonExe) {
+        $pythonExe = (Get-Command python3 -ErrorAction SilentlyContinue).Source
+    }
+    
+    if ($pythonExe) {
+        # Kill any existing metrics collector
+        Get-Process | Where-Object {$_.ProcessName -match "python" -and $_.CommandLine -like "*host_metrics_collector*"} | Stop-Process -Force -ErrorAction SilentlyContinue
+        
+        # Start new collector in background
+        $logFile = "metrics_collector.log"
+        Start-Process -FilePath $pythonExe -ArgumentList "host_metrics_collector.py" -WindowStyle Hidden -RedirectStandardOutput $logFile -RedirectStandardError "${logFile}.err"
+        Start-Sleep -Seconds 2
+        
+        # Check if it started
+        $collectorRunning = Get-Process | Where-Object {$_.ProcessName -match "python" -and $_.CommandLine -like "*host_metrics_collector*"}
+        if ($collectorRunning) {
+            Write-Host "✓ Background metrics collector started (PID: $($collectorRunning.Id))" -ForegroundColor Green
+            Write-Host "  Logs: $logFile" -ForegroundColor Gray
+        } else {
+            Write-Host "⚠ Metrics collector did not start. Check $logFile for errors" -ForegroundColor Yellow
+            Write-Host "  Run manually: python host_metrics_collector.py" -ForegroundColor Yellow
+        }
     } else {
-        Write-Host "⚠ Run 'python host_metrics_collector.py' periodically for metrics" -ForegroundColor Yellow
+        Write-Host "⚠ Python not found. Please run manually: python host_metrics_collector.py" -ForegroundColor Yellow
+    }
+    
+    if ($scheduleSuccess) {
+        Write-Host "✓ Automatic metrics collection scheduled" -ForegroundColor Green
     }
     Write-Host ""
     Write-Host "To stop: .\startup.ps1 -StopOnly" -ForegroundColor Cyan

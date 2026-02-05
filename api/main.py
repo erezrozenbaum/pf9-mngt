@@ -30,6 +30,11 @@ from auth import (
 )
 from auth import has_permission, verify_token
 
+# Config validation and monitoring
+from config_validator import ConfigValidator
+from performance_metrics import PerformanceMetrics, PerformanceMiddleware
+from structured_logging import setup_logging
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -107,13 +112,22 @@ ALLOWED_ORIGINS = [
 ]
 ALLOWED_ORIGINS = [origin for origin in ALLOWED_ORIGINS if origin]  # Remove None values
 
+# Validate configuration on import
+ConfigValidator.validate_and_exit_on_error()
+
+# Setup structured logging
+logger = setup_logging(
+    log_level=os.getenv("LOG_LEVEL", "INFO"),
+    json_logs=os.getenv("JSON_LOGS", "false").lower() == "true",
+    log_file=os.getenv("LOG_FILE", None)
+)
+
 # Rate limiting
 limiter = Limiter(key_func=get_remote_address)
 security = HTTPBasic()
 
-# Configure logging
-logger = logging.getLogger("pf9_api")
-logging.basicConfig(level=logging.INFO)
+# Performance metrics
+performance_metrics = PerformanceMetrics()
 
 # Audit logging
 audit_logger = logging.getLogger("audit")
@@ -163,6 +177,9 @@ app = FastAPI(title=APP_NAME)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Performance monitoring middleware (add first to track all requests)
+app.add_middleware(PerformanceMiddleware, metrics=performance_metrics)
+
 # Security middleware
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "*"])
 
@@ -185,7 +202,7 @@ async def rbac_middleware(request: Request, call_next):
     path = request.url.path
     if (
         path.startswith("/auth") or
-        path in ["/health", "/openapi.json", "/docs", "/redoc", "/simple-test", "/test-users-db"]
+        path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/simple-test", "/test-users-db"]
     ):
         return await call_next(request)
 
@@ -695,6 +712,13 @@ async def get_audit_logs(
 @limiter.limit("60/minute")
 def health(request: Request):
     return {"status": "ok", "service": APP_NAME, "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/metrics")
+@limiter.limit("30/minute")
+def get_metrics(request: Request):
+    """Get API performance metrics"""
+    return performance_metrics.get_stats()
 
 
 @app.get("/simple-test")
