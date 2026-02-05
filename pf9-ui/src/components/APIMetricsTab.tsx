@@ -4,26 +4,35 @@ import '../styles/APIMetricsTab.css';
 interface Endpoint {
   endpoint: string;
   count: number;
-  avg_duration: number;
-  min_duration: number;
-  max_duration: number;
-  p50: number;
-  p95: number;
-  p99: number;
+  avg_duration?: number;
+  min_duration?: number;
+  max_duration?: number;
+  p50?: number;
+  p95?: number;
+  p99?: number;
+  avg_ms?: number;
 }
 
 interface SlowRequest {
-  endpoint: string;
-  duration: number;
+  endpoint?: string;
+  method?: string;
+  path?: string;
+  duration?: number;
+  duration_ms?: number;
   timestamp: string;
-  status_code: number;
+  status_code?: number;
+  status?: number;
 }
 
 interface ErrorRequest {
-  endpoint: string;
-  status_code: number;
+  endpoint?: string;
+  method?: string;
+  path?: string;
+  status_code?: number;
+  status?: number;
   timestamp: string;
-  duration: number;
+  duration?: number;
+  duration_ms?: number;
 }
 
 interface Metrics {
@@ -76,10 +85,28 @@ export const APIMetricsTab: React.FC = () => {
     }
   }, [autoRefresh]);
 
-  const formatDuration = (seconds: number) => {
+  const formatDurationSeconds = (seconds?: number) => {
+    if (seconds === undefined || seconds === null || Number.isNaN(seconds)) return '—';
     if (seconds < 0.001) return `${(seconds * 1000000).toFixed(0)}µs`;
     if (seconds < 1) return `${(seconds * 1000).toFixed(2)}ms`;
     return `${seconds.toFixed(2)}s`;
+  };
+
+  const formatDurationMs = (ms?: number) => {
+    if (ms === undefined || ms === null || Number.isNaN(ms)) return '—';
+    if (ms < 1) return `${(ms * 1000).toFixed(0)}µs`;
+    if (ms < 1000) return `${ms.toFixed(2)}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
+  };
+
+  const getEndpointLabel = (entry: { endpoint?: string; method?: string; path?: string }) => {
+    if (entry.endpoint) return entry.endpoint;
+    if (entry.method && entry.path) return `${entry.method} ${entry.path}`;
+    return '—';
+  };
+
+  const getStatusCode = (entry: { status_code?: number; status?: number }) => {
+    return entry.status_code ?? entry.status ?? 0;
   };
 
   const formatUptime = (seconds: number) => {
@@ -201,12 +228,12 @@ export const APIMetricsTab: React.FC = () => {
                 <tr key={ep.endpoint}>
                   <td className="api-metrics-endpoint">{ep.endpoint}</td>
                   <td>{ep.count.toLocaleString()}</td>
-                  <td>{formatDuration(ep.avg_duration)}</td>
-                  <td>{formatDuration(ep.min_duration)}</td>
-                  <td>{formatDuration(ep.max_duration)}</td>
-                  <td>{formatDuration(ep.p50)}</td>
-                  <td>{formatDuration(ep.p95)}</td>
-                  <td>{formatDuration(ep.p99)}</td>
+                  <td>{formatDurationSeconds(ep.avg_duration)}</td>
+                  <td>{formatDurationSeconds(ep.min_duration)}</td>
+                  <td>{formatDurationSeconds(ep.max_duration)}</td>
+                  <td>{formatDurationSeconds(ep.p50)}</td>
+                  <td>{formatDurationSeconds(ep.p95)}</td>
+                  <td>{formatDurationSeconds(ep.p99)}</td>
                 </tr>
               ))}
             </tbody>
@@ -230,8 +257,12 @@ export const APIMetricsTab: React.FC = () => {
               {metrics.slow_endpoints.map((ep) => (
                 <tr key={ep.endpoint} className="api-metrics-slow-row">
                   <td className="api-metrics-endpoint">{ep.endpoint}</td>
-                  <td className="api-metrics-duration">{formatDuration(ep.avg_duration)}</td>
-                  <td>{ep.count.toLocaleString()}</td>
+                  <td className="api-metrics-duration">
+                    {ep.avg_duration !== undefined
+                      ? formatDurationSeconds(ep.avg_duration)
+                      : formatDurationMs(ep.avg_ms)}
+                  </td>
+                  <td>{ep.count ? ep.count.toLocaleString() : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -255,9 +286,13 @@ export const APIMetricsTab: React.FC = () => {
             <tbody>
               {metrics.recent_slow_requests.map((req, idx) => (
                 <tr key={idx}>
-                  <td className="api-metrics-endpoint">{req.endpoint}</td>
-                  <td className="api-metrics-duration">{formatDuration(req.duration)}</td>
-                  <td>{req.status_code}</td>
+                  <td className="api-metrics-endpoint">{getEndpointLabel(req)}</td>
+                  <td className="api-metrics-duration">
+                    {req.duration !== undefined
+                      ? formatDurationSeconds(req.duration)
+                      : formatDurationMs(req.duration_ms)}
+                  </td>
+                  <td>{getStatusCode(req)}</td>
                   <td>{new Date(req.timestamp).toLocaleString()}</td>
                 </tr>
               ))}
@@ -282,9 +317,13 @@ export const APIMetricsTab: React.FC = () => {
             <tbody>
               {metrics.recent_errors.map((err, idx) => (
                 <tr key={idx} className="api-metrics-error-row">
-                  <td className="api-metrics-endpoint">{err.endpoint}</td>
-                  <td>{err.status_code}</td>
-                  <td className="api-metrics-duration">{formatDuration(err.duration)}</td>
+                  <td className="api-metrics-endpoint">{getEndpointLabel(err)}</td>
+                  <td>{getStatusCode(err)}</td>
+                  <td className="api-metrics-duration">
+                    {err.duration !== undefined
+                      ? formatDurationSeconds(err.duration)
+                      : formatDurationMs(err.duration_ms)}
+                  </td>
                   <td>{new Date(err.timestamp).toLocaleString()}</td>
                 </tr>
               ))}
