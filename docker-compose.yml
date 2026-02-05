@@ -141,7 +141,7 @@ services:
       AUTO_SNAPSHOT_DRY_RUN: ${AUTO_SNAPSHOT_DRY_RUN:-false}
     depends_on:
       - db
-    restart: "no"
+    restart: always
 
   # LDAP Directory Service for Authentication
   ldap:
