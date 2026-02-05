@@ -725,9 +725,19 @@ def cinder_volumes_all(session: requests.Session, project_id: str):
 def cinder_snapshots_all(session: requests.Session, project_id: str):
     """
     Fetch Cinder snapshots (all tenants, detailed).
+    
+    Note: When using project-scoped sessions, project_id should match
+    the token scope. We reconstruct the URL with the provided project_id.
     """
     _require_cinder()
-    url = f"{CINDER_ENDPOINT}/snapshots/detail"
+    
+    # Reconstruct the URL with the correct project_id
+    if CINDER_ENDPOINT:
+        base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
+        url = f"{base_url}/{project_id}/snapshots/detail"
+    else:
+        raise RuntimeError("CINDER_ENDPOINT not initialized")
+    
     return paginate(session, url, "snapshots", extra_params={"all_tenants": "1"})
 
 
@@ -736,9 +746,19 @@ def cinder_list_snapshots_for_volume(
 ):
     """
     Fetch snapshots for a specific volume (all tenants, detailed).
+    
+    Note: When using project-scoped sessions, project_id should match
+    the token scope. We reconstruct the URL with the provided project_id.
     """
     _require_cinder()
-    url = f"{CINDER_ENDPOINT}/snapshots/detail"
+    
+    # Reconstruct the URL with the correct project_id
+    if CINDER_ENDPOINT:
+        base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
+        url = f"{base_url}/{project_id}/snapshots/detail"
+    else:
+        raise RuntimeError("CINDER_ENDPOINT not initialized")
+    
     return paginate(
         session,
         url,
@@ -758,10 +778,25 @@ def cinder_create_snapshot(
 ):
     """
     Create a Cinder snapshot.
+    
+    Note: When using project-scoped sessions (e.g., service user auth),
+    the project_id parameter is critical - it should match the project
+    scope of the token in the session. We reconstruct the URL with the
+    provided project_id to ensure it matches the token scope.
+    
     Returns snapshot dict or raises exception on error.
     """
     _require_cinder()
-    url = f"{CINDER_ENDPOINT}/snapshots"
+    
+    # Reconstruct the URL with the correct project_id
+    # CINDER_ENDPOINT is like: https://api.example.com/cinder/v3/{admin_project_id}
+    # We need to replace the project_id part with the actual project for this operation
+    if CINDER_ENDPOINT:
+        base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
+        url = f"{base_url}/{project_id}/snapshots"
+    else:
+        raise RuntimeError("CINDER_ENDPOINT not initialized")
+    
     payload = {
         "snapshot": {
             "volume_id": volume_id,
@@ -784,10 +819,20 @@ def cinder_delete_snapshot(
 ):
     """
     Delete a Cinder snapshot.
+    
+    Note: When using project-scoped sessions, project_id should match
+    the token scope. We reconstruct the URL with the provided project_id.
     Returns None on success, error string on failure.
     """
     _require_cinder()
-    url = f"{CINDER_ENDPOINT}/snapshots/{snapshot_id}"
+    
+    # Reconstruct the URL with the correct project_id
+    if CINDER_ENDPOINT:
+        base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
+        url = f"{base_url}/{project_id}/snapshots/{snapshot_id}"
+    else:
+        raise RuntimeError("CINDER_ENDPOINT not initialized")
+    
     try:
         session.delete(url, timeout=CFG["REQUEST_TIMEOUT"])
         return None

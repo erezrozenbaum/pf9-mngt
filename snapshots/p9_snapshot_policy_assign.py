@@ -277,13 +277,27 @@ def update_volume_metadata(
     not the tenant's own project_id. This allows an admin token to
     update metadata across all tenants.
     """
-    url = f"{CFG['REGION_URL']}/cinder/v3/{project_id}/volumes/{volume_id}/metadata"
+    from p9_common import CINDER_ENDPOINT
+    
+    # CINDER_ENDPOINT is like: https://api.example.com/cinder/v3/c5857e314fa745239b2c85e42c3f7917
+    # We need to extract the base and replace project_id
+    if not CINDER_ENDPOINT:
+        msg = "CINDER_ENDPOINT not initialized"
+        print(f"    ERROR: {msg}")
+        log_error("policy_assign/metadata", msg)
+        return
+    
+    # Extract base URL from CINDER_ENDPOINT (remove the project_id at the end)
+    base = "/".join(CINDER_ENDPOINT.split("/")[:-1])
+    url = f"{base}/{project_id}/volumes/{volume_id}/metadata"
+    
     payload = {"metadata": new_meta}
     if dry_run:
         print(f"    DRY-RUN: would POST {url} payload={payload}")
         return
     try:
         http_json(session, "POST", url, json=payload)
+        print(f"    OK: Updated metadata")
     except Exception as e:
         msg = f"Failed to update metadata for volume {volume_id}: {type(e).__name__}: {e}"
         print("    ERROR:", msg)

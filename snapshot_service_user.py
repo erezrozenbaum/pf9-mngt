@@ -4,7 +4,7 @@ Snapshot Service User Management
 
 Manages a dedicated service user (snapshotsrv@ccc.co.il) that:
 1. Is created automatically in each tenant
-2. Has 'service' role with snapshot permissions
+2. Has 'admin' role for snapshot operations (service role has insufficient permissions)
 3. Uses an auto-generated, encrypted password stored in .env
 4. Enables snapshots to be created in the correct tenant, not in service domain
 
@@ -23,7 +23,7 @@ import requests
 
 # Service user details
 SERVICE_USER_EMAIL = "snapshotsrv@ccc.co.il"
-SERVICE_USER_ROLE = "service"  # Platform9 'service' role has snapshot permissions
+SERVICE_USER_ROLE = "admin"  # Admin role required for snapshot operations
 DEFAULT_DOMAIN = "Default"
 
 
@@ -236,7 +236,7 @@ def ensure_service_user(
     Steps:
     1. Check if user exists in default domain
     2. If not, create it with auto-generated password
-    3. Assign 'service' role to the project
+    3. Assign 'admin' role to the project
     4. Return user info
     """
     

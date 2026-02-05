@@ -31,6 +31,8 @@
 .pf9-tabs {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .pf9-tab {
