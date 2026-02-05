@@ -5,6 +5,8 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import UserManagement from "./components/UserManagement";
 import SnapshotPolicyManager from "./components/SnapshotPolicyManager";
 import SnapshotAuditTrail from "./components/SnapshotAuditTrail";
+import { APIMetricsTab } from "./components/APIMetricsTab";
+import { SystemLogsTab } from "./components/SystemLogsTab";
 
 const API_BASE = "http://localhost:8000";
 
@@ -371,7 +373,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring";
+type ActiveTab = "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs";
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -2255,14 +2257,32 @@ const App: React.FC = () => {
             Users
           </button>
           {authUser && (authUser.role === 'admin' || authUser.role === 'superadmin') && (
-            <button
-              className={
-                activeTab === "admin" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-              }
-              onClick={() => setActiveTab("admin")}
-            >
-              Admin
-            </button>
+            <>
+              <button
+                className={
+                  activeTab === "admin" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+                }
+                onClick={() => setActiveTab("admin")}
+              >
+                Admin
+              </button>
+              <button
+                className={
+                  activeTab === "api_metrics" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+                }
+                onClick={() => setActiveTab("api_metrics")}
+              >
+                API Metrics
+              </button>
+              <button
+                className={
+                  activeTab === "system_logs" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+                }
+                onClick={() => setActiveTab("system_logs")}
+              >
+                System Logs
+              </button>
+            </>
           )}
           <button
             className={
@@ -2358,9 +2378,14 @@ const App: React.FC = () => {
           ? "Infrastructure change tracking · timeline · audit trail"
           : activeTab === "monitoring"
           ? "Real-time VM and host metrics · resource usage · performance alerts"
-          : "Compliance reporting · audit logs · change analysis"}
+            : activeTab === "api_metrics"
+            ? "API performance metrics · latency · error rates"
+            : activeTab === "system_logs"
+            ? "Centralized system logs · filtering · diagnostics"
+            : "Compliance reporting · audit logs · change analysis"}
       </section>
 
+      {activeTab !== "api_metrics" && activeTab !== "system_logs" && (
       <section className="pf9-filters">
         <div className="pf9-filter-row">
           <label>
@@ -2422,6 +2447,7 @@ const App: React.FC = () => {
         {error && <div className="pf9-error">Error: {error}</div>}
         {loading && <div className="pf9-loading">Loading…</div>}
       </section>
+      )}
 
       <section className="pf9-main">
         <div className="pf9-table-panel">
@@ -3996,6 +4022,16 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* API Metrics Section */}
+          {activeTab === "api_metrics" && (
+            <APIMetricsTab />
+          )}
+
+          {/* System Logs Section */}
+          {activeTab === "system_logs" && (
+            <SystemLogsTab />
           )}
 
           {/* Monitoring Section */}

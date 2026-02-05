@@ -4,8 +4,9 @@
 
 ### Production-Ready Features (NEW ✨)
 - **Startup Config Validation**: Comprehensive environment variable validation on API startup with color-coded results
-- **API Performance Metrics**: Real-time performance monitoring with `/metrics` endpoint (p50/p95/p99 latencies, request tracking)
-- **Structured Logging**: JSON and colored console logging with context (user, endpoint, duration, IP address)
+- **API Performance Metrics**: Public `/metrics` + authenticated `/api/metrics` for UI (p50/p95/p99 latencies, request tracking)
+- **Structured Logging**: JSON + colored console logs, plus authenticated `/api/logs` endpoint for UI
+- **Admin UI Tabs**: New **API Metrics** and **System Logs** tabs (Admin/Superadmin only)
 - **Auto Metrics Collection**: Dual-redundancy collection (background process + scheduled task) with automatic startup
 
 ### Enterprise Authentication & Authorization
@@ -648,7 +649,12 @@ Real-time performance monitoring with FastAPI middleware that tracks every API r
 - ✅ Uptime tracking
 - ✅ **No authentication required** on `/metrics` endpoint
 
-**Metrics Endpoint**: `GET http://localhost:8000/metrics`
+**Metrics Endpoints**:
+- **Public** (for Prometheus/Grafana): `GET http://localhost:8000/metrics`
+- **Authenticated UI**: `GET http://localhost:8000/api/metrics`
+
+**RBAC Requirement**:
+- `api_metrics:read` (granted to Admin/Superadmin)
 
 **Response Structure**:
 ```json
@@ -717,6 +723,11 @@ app.add_middleware(PerformanceMiddleware, metrics=performance_metrics)
 @app.get("/metrics")
 async def get_metrics():
     return performance_metrics.get_stats()
+
+@app.get("/api/metrics")
+async def get_api_metrics_authenticated():
+  # Requires auth + api_metrics:read
+  return performance_metrics.get_stats()
 ```
 
 **Use Cases**:
@@ -749,6 +760,11 @@ LOG_LEVEL=INFO              # DEBUG, INFO, WARNING, ERROR, CRITICAL
 JSON_LOGS=true              # true=JSON, false=colored console
 LOG_FILE=/var/log/pf9.log  # Optional file output
 ```
+
+**System Logs Endpoint**:
+- **Authenticated UI**: `GET http://localhost:8000/api/logs`
+- **Query Params**: `limit`, `level`, `source`
+- **RBAC Requirement**: `system_logs:read` (Admin/Superadmin only)
 
 **JSON Log Format** (Production):
 ```json
