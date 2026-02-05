@@ -90,6 +90,17 @@ from p9_common import (
     get_project_scoped_session,
 )
 
+try:
+    from snapshot_service_user import (
+        ensure_service_user,
+        get_service_user_password,
+        SERVICE_USER_EMAIL,
+    )
+except ImportError:
+    print("[WARNING] snapshot_service_user module not available; service user management disabled")
+    ensure_service_user = None
+    SERVICE_USER_EMAIL = None
+
 # Database constants
 ENABLE_DB = os.getenv("ENABLE_DB", "true").lower() in ("true", "yes", "1")
 DB_HOST = os.getenv("PF9_DB_HOST", "localhost")
