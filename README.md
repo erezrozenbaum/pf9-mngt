@@ -50,14 +50,14 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Enhanced functionality**: Snapshot management, volume management, and other tools not available in standard Platform9 UI.
 - **Lower complexity**: Consistent workflows reduce manual steps and errors.
 
-## � Documentation
+## 📚 Documentation
 
 - **[LICENSE](LICENSE)** - MIT License
 
-## �🚀 System Architecture
+## 🚀 System Architecture
 
 **Enterprise microservices-based platform** with 8 containerized services plus host-based automation:
-- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 14 management tabs + admin panel
+- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 16 management tabs + admin panel
 - **Backend API** (FastAPI/Python) - Port 8000 - 40+ REST endpoints with RBAC middleware
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
 - **LDAP Admin** (phpLDAPadmin) - Port 8081 - Web-based LDAP management
@@ -102,8 +102,9 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Comprehensive Reporting**: Detailed compliance reports with tenant/domain aggregation
 
 ### Modern Web Management Interface
-- **React 19.2+ Dashboard**: 14 comprehensive management tabs (Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Admin, History, Audit, Monitoring)
-- **Role-Based UI**: Admin tab visible only to admin/superadmin roles
+- **React 19.2+ Dashboard**: 16 comprehensive management tabs (Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, History, Audit, Monitoring, Admin)
+- **Admin Observability Tabs**: API Metrics + System Logs (Admin/Superadmin only)
+- **Role-Based UI**: Admin-only tabs visible only to admin/superadmin roles
 - **Secure Login**: LDAP authentication with JWT token management
 - **Real-Time Data**: Auto-refresh capabilities with efficient pagination across all endpoints
 - **Advanced Filtering**: Multi-field filtering, sorting, and search across all 19+ resource types
@@ -117,6 +118,13 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Database Flexibility**: Excel/CSV generation works with or without PostgreSQL
 - **Windows Integration**: Full Task Scheduler automation support
 - **Docker Native**: Complete containerized deployment with docker-compose
+
+### API Observability
+- **Public Metrics**: `GET http://localhost:8000/metrics`
+- **Authenticated Metrics (UI)**: `GET http://localhost:8000/api/metrics`
+- **Authenticated Logs (UI)**: `GET http://localhost:8000/api/logs`
+   - Query params: `limit`, `level`, `source`, `log_file`
+   - Log sources: `pf9_api`, `pf9_monitoring` (use `log_file=all` to aggregate)
 
 ## 🚀 Quick Start
 
