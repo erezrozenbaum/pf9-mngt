@@ -100,13 +100,20 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
         }
       } catch (err) {
         console.warn('Permissions API not available:', err);
-        // Fallback to basic permissions
+        // Fallback to basic permissions matching actual UI resources
         setPermissions([
-          { id: 1, resource: 'snapshots', action: 'create', roles: ['admin', 'superadmin'] },
-          { id: 2, resource: 'snapshots', action: 'delete', roles: ['admin', 'superadmin'] },
-          { id: 3, resource: 'snapshots', action: 'view', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
-          { id: 4, resource: 'hosts', action: 'manage', roles: ['operator', 'admin', 'superadmin'] },
-          { id: 5, resource: 'users', action: 'manage', roles: ['superadmin'] }
+          { id: 1, resource: 'servers', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 2, resource: 'servers', action: 'admin', roles: ['admin', 'superadmin'] },
+          { id: 3, resource: 'volumes', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 4, resource: 'volumes', action: 'admin', roles: ['admin', 'superadmin'] },
+          { id: 5, resource: 'snapshots', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 6, resource: 'snapshots', action: 'write', roles: ['admin', 'superadmin'] },
+          { id: 7, resource: 'networks', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 8, resource: 'networks', action: 'write', roles: ['operator', 'admin', 'superadmin'] },
+          { id: 9, resource: 'users', action: 'admin', roles: ['superadmin'] },
+          { id: 10, resource: 'monitoring', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 11, resource: 'hypervisors', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 12, resource: 'flavors', action: 'write', roles: ['operator', 'admin', 'superadmin'] }
         ]);
       }
     } catch (error) {
@@ -334,46 +341,81 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const PermissionMatrix = () => {
-    const resources = ['snapshots', 'hosts', 'users', 'monitoring'];
-    const actions = ['view', 'create', 'update', 'delete', 'manage'];
+    // All actual resources from the UI tabs
+    // Only show permissions that actually exist in the data
+    // Sort permissions by resource, then by action
+    const sortedPermissions = [...permissions].sort((a, b) => {
+      if (a.resource !== b.resource) return a.resource.localeCompare(b.resource);
+      return a.action.localeCompare(b.action);
+    });
     
     return (
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse border">
+        <style>{`
+          .permission-checkbox {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #4b5563;
+            border-radius: 3px;
+            background-color: #1a1f2e;
+            cursor: pointer;
+            transition: all 0.2s ease;
+          }
+          
+          .permission-checkbox:checked {
+            background-color: #3b82f6;
+            border-color: #3b82f6;
+          }
+          
+          .permission-checkbox:checked::after {
+            content: '✓';
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+          }
+          
+          .permission-checkbox:disabled {
+            cursor: not-allowed;
+            opacity: 0.8;
+          }
+        `}</style>
+        <table className="w-full border-collapse border border-gray-700">
           <thead>
             <tr>
-              <th className="border p-2 bg-gray-50">Resource</th>
-              <th className="border p-2 bg-gray-50">Action</th>
+              <th className="border border-gray-700 p-2 bg-gray-800">Resource</th>
+              <th className="border border-gray-700 p-2 bg-gray-800">Action</th>
               {roles.map(role => (
-                <th key={role.id} className="border p-2 bg-gray-50 text-center">{role.name}</th>
+                <th key={role.id} className="border border-gray-700 p-2 bg-gray-800 text-center">{role.name}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {resources.map(resource => 
-              actions.map(action => {
-                const permission = permissions.find(p => p.resource === resource && p.action === action);
-                return (
-                  <tr key={`${resource}-${action}`}>
-                    <td className="border p-2">{resource}</td>
-                    <td className="border p-2">{action}</td>
-                    {roles.map(role => (
-                      <td key={role.id} className="border p-2 text-center">
-                        <input
-                          type="checkbox"
-                          checked={permission?.roles.includes(role.name) || false}
-                          onChange={(e) => {
-                            // Handle permission change
-                            console.log(`Toggle ${resource}:${action} for ${role.name}`);
-                          }}
-                          className="w-4 h-4"
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })
-            )}
+            {sortedPermissions.map((permission, idx) => (
+              <tr key={`${permission.resource}-${permission.action}-${idx}`}>
+                <td className="border border-gray-700 p-2">{permission.resource}</td>
+                <td className="border border-gray-700 p-2">{permission.action}</td>
+                {roles.map(role => (
+                  <td key={role.id} className="border border-gray-700 p-2 text-center">
+                    <input
+                      type="checkbox"
+                      checked={permission.roles.includes(role.name)}
+                      onChange={(e) => {
+                        // Handle permission change
+                        console.log(`Toggle ${permission.resource}:${permission.action} for ${role.name}`);
+                      }}
+                      className="permission-checkbox"
+                      disabled={true}  // Read-only for now
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

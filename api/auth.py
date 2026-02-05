@@ -100,28 +100,38 @@ class LDAPAuthenticator:
             
             # Try cn format first (our setup)
             try:
+                print(f"[AUTH] Trying CN format: {user_dn_cn}")
                 conn = ldap.initialize(self.server)
                 conn.protocol_version = ldap.VERSION3
                 conn.set_option(ldap.OPT_REFERRALS, 0)
                 conn.simple_bind_s(user_dn_cn, password)
                 conn.unbind_s()
+                print(f"[AUTH] CN format successful for {username}")
                 return True
-            except ldap.INVALID_CREDENTIALS:
+            except ldap.INVALID_CREDENTIALS as e:
+                print(f"[AUTH] CN format failed: {e}")
                 # Try uid format as fallback with a fresh connection
                 try:
+                    print(f"[AUTH] Trying UID format: {user_dn_uid}")
                     conn = ldap.initialize(self.server)
                     conn.protocol_version = ldap.VERSION3
                     conn.set_option(ldap.OPT_REFERRALS, 0)
                     conn.simple_bind_s(user_dn_uid, password)
                     conn.unbind_s()
+                    print(f"[AUTH] UID format successful for {username}")
                     return True
-                except ldap.INVALID_CREDENTIALS:
+                except ldap.INVALID_CREDENTIALS as e2:
+                    print(f"[AUTH] UID format also failed: {e2}")
                     return False
             
         except ldap.INVALID_CREDENTIALS:
+            print(f"[AUTH] Invalid credentials for {username}")
             return False
         except ldap.LDAPError as e:
-            print(f"LDAP Error: {e}")
+            print(f"[AUTH] LDAP Error: {e}")
+            return False
+        except Exception as e:
+            print(f"[AUTH] Unexpected error: {e}")
             return False
         except Exception as e:
             print(f"Authentication Error: {e}")

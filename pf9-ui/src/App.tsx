@@ -21,6 +21,8 @@ type AuthUser = {
 type LoginResponse = {
   access_token: string;
   token_type: string;
+  expires_in: number;
+  expires_at?: string;
   user: AuthUser;
 };
 
@@ -650,6 +652,7 @@ const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string>("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
@@ -657,18 +660,68 @@ const App: React.FC = () => {
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
     const user = localStorage.getItem('auth_user');
+    const expiresAt = localStorage.getItem('token_expires_at');
+    
     if (token && user && user !== 'undefined' && user !== 'null') {
       try {
+        // Check if token is expired
+        if (expiresAt) {
+          const expirationTime = new Date(expiresAt).getTime();
+          const now = new Date().getTime();
+          
+          if (now >= expirationTime) {
+            // Token expired, clear and force re-login
+            console.log('Session expired, please login again');
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('auth_user');
+            localStorage.removeItem('token_expires_at');
+            setLoginError('Your session has expired. Please login again.');
+            return;
+          }
+        }
+        
         setAuthToken(token);
         setAuthUser(JSON.parse(user));
+        setTokenExpiresAt(expiresAt);
         setIsAuthenticated(true);
       } catch (e) {
         // Clear invalid data
         localStorage.removeItem('auth_token');
         localStorage.removeItem('auth_user');
+        localStorage.removeItem('token_expires_at');
       }
     }
   }, []);
+
+  // Session timeout checker - runs every minute
+  useEffect(() => {
+    if (!isAuthenticated || !tokenExpiresAt) return;
+    
+    const checkExpiration = () => {
+      const expirationTime = new Date(tokenExpiresAt).getTime();
+      const now = new Date().getTime();
+      const timeUntilExpiry = expirationTime - now;
+      
+      // If less than 5 minutes until expiry, show warning
+      if (timeUntilExpiry > 0 && timeUntilExpiry < 5 * 60 * 1000) {
+        const minutesLeft = Math.floor(timeUntilExpiry / 60000);
+        console.warn(`Session expiring in ${minutesLeft} minutes`);
+      }
+      
+      // If expired, auto-logout
+      if (timeUntilExpiry <= 0) {
+        console.log('Session expired, logging out...');
+        handleLogout();
+        setLoginError('Your session has expired. Please login again.');
+      }
+    };
+    
+    // Check immediately and then every minute
+    checkExpiration();
+    const intervalId = setInterval(checkExpiration, 60000); // Check every minute
+    
+    return () => clearInterval(intervalId);
+  }, [isAuthenticated, tokenExpiresAt]);
 
   // Login handler
   const handleLogin = async (username: string, password: string) => {
@@ -688,9 +741,13 @@ const App: React.FC = () => {
 
       const data: LoginResponse = await response.json();
       
-      // Store auth data
+      // Store auth data including expiration time
       localStorage.setItem('auth_token', data.access_token);
       localStorage.setItem('auth_user', JSON.stringify(data.user));
+      if (data.expires_at) {
+        localStorage.setItem('token_expires_at', data.expires_at);
+        setTokenExpiresAt(data.expires_at);
+      }
       
       setAuthToken(data.access_token);
       setAuthUser(data.user);
@@ -719,8 +776,10 @@ const App: React.FC = () => {
     } finally {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_user');
+      localStorage.removeItem('token_expires_at');
       setAuthToken(null);
       setAuthUser(null);
+      setTokenExpiresAt(null);
       setIsAuthenticated(false);
     }
   };
