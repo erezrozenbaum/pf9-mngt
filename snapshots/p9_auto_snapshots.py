@@ -478,16 +478,12 @@ def process_volume(
     if dry_run:
         return None, None, deleted_ids, None
 
-    # Decide which project/session to actually use for CREATE
-    # Use admin session with all_tenants=1 for all operations
-    # Specify target project in the create payload so snapshot lands in correct tenant
-    target_project_id = volume_project_id if volume_project_id != "UNKNOWN" else admin_project_id
-    snapshot_project_id_used = target_project_id
-
+    # Use the session passed in (which should be project-scoped for service user)
+    # The snapshot will be created in the authenticated session's project
     try:
         snap = cinder_create_snapshot(
             admin_session,
-            snapshot_project_id_used,
+            admin_project_id,  # This is ignored when using project-scoped session
             volume_id=vol_id,
             name=snap_name,
             description=snap_desc,
@@ -500,16 +496,16 @@ def process_volume(
             force=True,
         )
         sid = snap.get("id")
+        snapshot_created_in_project = snap.get("os-vol-tenant-attr:tenant_id") or snap.get("project_id") or "UNKNOWN"
         print(
-            f"      OK, snapshot id={sid} "
-            f"(project={snapshot_project_id_used}, original_project={volume_project_id})"
+            f"      OK, snapshot id={sid} created in project={snapshot_created_in_project}"
         )
-        return sid, snapshot_project_id_used, deleted_ids, None, snap_name
+        return sid, snapshot_created_in_project, deleted_ids, None, snap_name
     except Exception as e:
         msg = f"Failed to create snapshot for volume {vol_id}: {type(e).__name__}: {e}"
         print("      ERROR:", msg)
         log_error("auto_snapshots/create", msg)
-        return None, snapshot_project_id_used, deleted_ids, msg, snap_name
+        return None, volume_project_id, deleted_ids, msg, snap_name
 
 
 def _build_metadata_maps(session):
@@ -787,67 +783,111 @@ def main():
         f"dry_run={dry_run})"
     )
 
-    for idx, v in enumerate(selected, start=1):
-        if not dry_run and created_count >= max_new:
-            print(
-                f"Reached max-new limit ({max_new}); skipping remaining volumes."
-            )
-            break
-
-        print(f"\n[{idx}/{len(selected)}]")
-
-        vol_id = v["id"]
-        vol_name = v.get("name") or vol_id
+    # Group volumes by project to use project-scoped service user sessions
+    volumes_by_project = defaultdict(list)
+    for v in selected:
         volume_project_id = (
             v.get("os-vol-tenant-attr:tenant_id")
             or v.get("project_id")
             or "UNKNOWN"
         )
-        meta = v.get("metadata") or {}
-        auto_flag = str(meta.get("auto_snapshot", "")).lower() in ("true", "yes", "1")
-        configured_policies = ",".join(_volume_policies_for(v))
-        retention = _retention_for_volume_and_policy(v, policy_name, default=7)
-
-        tenant_name = project_name_by_id.get(volume_project_id, "")
-        domain_id = project_domain_by_id.get(volume_project_id, "")
-        domain_name = domain_name_by_id.get(domain_id, "")
-
-        attached_server_names_list = vol_to_srv_names.get(vol_id, [])
-        attached_server_names = ", ".join(attached_server_names_list)
-        attached_server_ids = ", ".join(vol_to_srv_ids.get(vol_id, []))
-        attached_ips = ", ".join(vol_to_srv_ips.get(vol_id, []))
-
-        primary_server_name = attached_server_names_list[0] if attached_server_names_list else None
-
-        sid, sid_project, deleted_ids, err_msg, snap_name = process_volume(
-            session,
-            admin_project_id,
-            v,
-            policy_name,
-            dry_run=dry_run,
-            primary_server_name=primary_server_name,
-            tenant_name=tenant_name,
-        )
-        if sid:
-            created_count += 1
-        deleted_total += len(deleted_ids)
-
-        if dry_run:
-            status = "DRY_RUN"
-            note = "Dry run; no changes applied"
-        elif err_msg:
-            status = "ERROR"
-            note = err_msg
+        volumes_by_project[volume_project_id].append(v)
+    
+    print(f"      Volumes distributed across {len(volumes_by_project)} projects")
+    
+    # Process each project
+    for project_idx, (vol_project_id, project_volumes) in enumerate(volumes_by_project.items(), start=1):
+        project_name = project_name_by_id.get(vol_project_id, vol_project_id)
+        print(f"\n=== Project {project_idx}/{len(volumes_by_project)}: {project_name} ({vol_project_id}) ===")
+        print(f"    Volumes in this project: {len(project_volumes)}")
+        
+        # Ensure service user exists for this project (unless UNKNOWN or service domain)
+        project_session = session  # Default to admin session
+        if vol_project_id != "UNKNOWN" and vol_project_id != admin_project_id and ensure_service_user:
+            try:
+                print(f"    Ensuring service user exists in project...")
+                ensure_service_user(session, CFG["KEYSTONE_URL"], vol_project_id)
+                
+                # Get project-scoped session for service user
+                print(f"    Getting project-scoped session for service user...")
+                from p9_common import get_session
+                project_session = get_session(
+                    username=SERVICE_USER_EMAIL,
+                    password=get_service_user_password(),
+                    keystone_url=CFG["KEYSTONE_URL"],
+                    user_domain=CFG["USER_DOMAIN"],
+                    project_domain=CFG["PROJECT_DOMAIN"],
+                    project_id=vol_project_id,
+                    verify_tls=CFG["VERIFY_TLS"]
+                )
+                print(f"    ✓ Using service user session for project {project_name}")
+            except Exception as e:
+                print(f"    ⚠ Could not use service user for project {project_name}: {e}")
+                print(f"    Falling back to admin session (snapshots will be in service domain)")
+                project_session = session
+        elif vol_project_id == admin_project_id:
+            print(f"    Using admin session (service domain project)")
         else:
-            status = "OK"
-            note = "Snapshot created" if sid else "No snapshot created"
+            print(f"    Using admin session (UNKNOWN project)")
+    
+        # Process volumes in this project
+        for vol_idx, v in enumerate(project_volumes, start=1):
+            if not dry_run and created_count >= max_new:
+                print(
+                    f"Reached max-new limit ({max_new}); skipping remaining volumes."
+                )
+                break
 
-        # Log to database if enabled
-        if db_conn and run_id:
-            action = "created" if sid else ("skipped" if not err_msg else "failed")
-            create_snapshot_record(
-                db_conn, run_id, action, sid, snap_name or "", vol_id, vol_name,
-                volume_project_id, tenant_name, volume_project_id, tenant_name,
+            print(f"\n  Volume [{vol_idx}/{len(project_volumes)}]")
+
+            vol_id = v["id"]
+            vol_name = v.get("name") or vol_id
+            volume_project_id = vol_project_id
+            meta = v.get("metadata") or {}
+            auto_flag = str(meta.get("auto_snapshot", "")).lower() in ("true", "yes", "1")
+            configured_policies = ",".join(_volume_policies_for(v))
+            retention = _retention_for_volume_and_policy(v, policy_name, default=7)
+
+            tenant_name = project_name_by_id.get(volume_project_id, "")
+            domain_id = project_domain_by_id.get(volume_project_id, "")
+            domain_name = domain_name_by_id.get(domain_id, "")
+
+            attached_server_names_list = vol_to_srv_names.get(vol_id, [])
+            attached_server_names = ", ".join(attached_server_names_list)
+            attached_server_ids = ", ".join(vol_to_srv_ids.get(vol_id, []))
+            attached_ips = ", ".join(vol_to_srv_ips.get(vol_id, []))
+
+            primary_server_name = attached_server_names_list[0] if attached_server_names_list else None
+
+            sid, sid_project, deleted_ids, err_msg, snap_name = process_volume(
+                project_session,  # Use project-scoped session instead of admin session
+                admin_project_id,
+                v,
+                policy_name,
+                dry_run=dry_run,
+                primary_server_name=primary_server_name,
+                tenant_name=tenant_name,
+            )
+            if sid:
+                created_count += 1
+            deleted_total += len(deleted_ids)
+
+            if dry_run:
+                status = "DRY_RUN"
+                note = "Dry run; no changes applied"
+            elif err_msg:
+                status = "ERROR"
+                note = err_msg
+            else:
+                status = "OK"
+                note = "Snapshot created" if sid else "No snapshot created"
+
+            # Log to database if enabled
+            if db_conn and run_id:
+                action = "created" if sid else ("skipped" if not err_msg else "failed")
+                create_snapshot_record(
+                    db_conn, run_id, action, sid, snap_name or "", vol_id, vol_name,
+                    volume_project_id, tenant_name, volume_project_id, tenant_name,
                 attached_server_ids.split(", ")[0] if attached_server_ids else None,
                 primary_server_name, policy_name, v.get("size"), retention,
                 status, err_msg, raw_snapshot_json=v
