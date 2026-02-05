@@ -163,11 +163,29 @@ async def collect_host_metrics(self, session, host):
             return self.parse_host_metrics(text, host)
 ```
 
-**Automated Collection via Windows Task Scheduler**:
-- **Frequency**: Every 30 minutes 
-- **Setup**: Automated by [startup.ps1](../startup.ps1)
-- **Cache**: Persistent storage in `/tmp/metrics_cache.json`
-- **Status**: ✅ **Working reliably**
+**Automated Collection Methods** (Dual Approach):
+
+1. **Background Process** (Primary):
+   - **Auto-start**: Launched automatically by [startup.ps1](../startup.ps1) after services start
+   - **Process Type**: Continuous Python process running in hidden window
+   - **Collection Loop**: Runs continuously with configurable intervals
+   - **Logs**: Output written to `metrics_collector.log`
+   - **Process Management**: Old collectors auto-terminated before new start
+   - **Status Check**: PID displayed on successful startup
+   - **Fallback**: Manual start with `python host_metrics_collector.py`
+
+2. **Windows Task Scheduler** (Backup/Redundancy):
+   - **Frequency**: Every 30 minutes
+   - **Purpose**: Ensures collection continues if background process stops
+   - **Setup**: Automated by [startup.ps1](../startup.ps1)
+   - **Task Name**: "PF9 Metrics Collection"
+   - **Remove**: Run `.\startup.ps1 -StopOnly` to clean up
+
+**Storage & Persistence**:
+- **Cache**: Persistent storage in `metrics_cache.json` (workspace root)
+- **Docker Mount**: Cache file accessible to monitoring container
+- **Survives**: Container restarts, system reboots (with scheduled task)
+- **Status**: ✅ **Working reliably with dual collection**
 
 ### VM Metrics Collection (❌ Requires PF9 Engineering)
 **Libvirt exporter integration** (port 9177):
