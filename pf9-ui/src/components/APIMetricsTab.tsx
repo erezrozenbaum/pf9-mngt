@@ -41,6 +41,7 @@ interface Metrics {
   requests_per_second: number;
   status_codes: Record<string, number>;
   top_endpoints: Endpoint[];
+  endpoint_stats?: Endpoint[];
   slow_endpoints: Endpoint[];
   recent_slow_requests: SlowRequest[];
   recent_errors: ErrorRequest[];
@@ -52,6 +53,12 @@ export const APIMetricsTab: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [showAllEndpoints, setShowAllEndpoints] = useState(true);
+  const [endpointQuery, setEndpointQuery] = useState('');
+  const [methodFilter, setMethodFilter] = useState('ALL');
+  const [sortBy, setSortBy] = useState('count');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [selectedEndpoints, setSelectedEndpoints] = useState<string[]>([]);
 
   useEffect(() => {
     const fetchMetrics = async () => {
@@ -144,18 +151,160 @@ export const APIMetricsTab: React.FC = () => {
     .filter(([code]) => code.startsWith('4') || code.startsWith('5'))
     .reduce((sum, [, count]) => sum + count, 0);
 
+  const endpointsToShow = (showAllEndpoints && metrics.endpoint_stats && metrics.endpoint_stats.length > 0)
+    ? metrics.endpoint_stats
+    : metrics.top_endpoints;
+
+  const getSortValue = (ep: Endpoint) => {
+    switch (sortBy) {
+      case 'endpoint':
+        return ep.endpoint;
+      case 'count':
+        return ep.count ?? 0;
+      case 'avg':
+        return ep.avg_duration ?? -1;
+      case 'min':
+        return ep.min_duration ?? -1;
+      case 'max':
+        return ep.max_duration ?? -1;
+      case 'p50':
+        return ep.p50 ?? -1;
+      case 'p95':
+        return ep.p95 ?? -1;
+      case 'p99':
+        return ep.p99 ?? -1;
+      default:
+        return ep.count ?? 0;
+    }
+  };
+
+  const filteredEndpoints = endpointsToShow
+    .filter((ep) => {
+      if (!endpointQuery.trim()) return true;
+      return ep.endpoint.toLowerCase().includes(endpointQuery.trim().toLowerCase());
+    })
+    .filter((ep) => {
+      if (methodFilter === 'ALL') return true;
+      return ep.endpoint.startsWith(methodFilter + ' ');
+    })
+    .filter((ep) => {
+      if (selectedEndpoints.length === 0) return true;
+      return selectedEndpoints.includes(ep.endpoint);
+    })
+    .sort((a, b) => {
+      const aVal = getSortValue(a);
+      const bVal = getSortValue(b);
+
+      if (sortBy === 'endpoint') {
+        const result = String(aVal).localeCompare(String(bVal));
+        return sortDir === 'asc' ? result : -result;
+      }
+
+      const numA = typeof aVal === 'number' ? aVal : 0;
+      const numB = typeof bVal === 'number' ? bVal : 0;
+      return sortDir === 'asc' ? numA - numB : numB - numA;
+    });
+
   return (
     <div className="api-metrics-container">
       <div className="api-metrics-header">
         <h2>API Performance Metrics</h2>
-        <label className="api-metrics-refresh-label">
-          <input
-            type="checkbox"
-            checked={autoRefresh}
-            onChange={(e) => setAutoRefresh(e.target.checked)}
-          />
-          Auto-refresh (5s)
-        </label>
+        <div className="api-metrics-header-controls">
+          <label className="api-metrics-refresh-label">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+            />
+            Auto-refresh (5s)
+          </label>
+          <label className="api-metrics-refresh-label">
+            <input
+              type="checkbox"
+              checked={showAllEndpoints}
+              onChange={(e) => setShowAllEndpoints(e.target.checked)}
+            />
+            Show all endpoints
+          </label>
+        </div>
+      </div>
+
+      <div className="api-metrics-controls">
+        <div className="api-metrics-control">
+          <label>
+            Filter
+            <input
+              type="text"
+              placeholder="Search endpoint..."
+              value={endpointQuery}
+              onChange={(e) => setEndpointQuery(e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="api-metrics-control">
+          <label>
+            Endpoint picker
+            <select
+              multiple
+              value={selectedEndpoints}
+              onChange={(e) => {
+                const values = Array.from(e.target.selectedOptions).map((opt) => opt.value);
+                setSelectedEndpoints(values);
+              }}
+              className="api-metrics-multi"
+            >
+              {endpointsToShow.map((ep) => (
+                <option key={ep.endpoint} value={ep.endpoint}>
+                  {ep.endpoint}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="api-metrics-clear"
+            onClick={() => setSelectedEndpoints([])}
+            type="button"
+          >
+            Clear
+          </button>
+        </div>
+        <div className="api-metrics-control">
+          <label>
+            Method
+            <select value={methodFilter} onChange={(e) => setMethodFilter(e.target.value)}>
+              <option value="ALL">All</option>
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+              <option value="PATCH">PATCH</option>
+            </select>
+          </label>
+        </div>
+        <div className="api-metrics-control">
+          <label>
+            Sort by
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+              <option value="count">Count</option>
+              <option value="avg">Avg duration</option>
+              <option value="min">Min duration</option>
+              <option value="max">Max duration</option>
+              <option value="p50">p50</option>
+              <option value="p95">p95</option>
+              <option value="p99">p99</option>
+              <option value="endpoint">Endpoint</option>
+            </select>
+          </label>
+        </div>
+        <div className="api-metrics-control">
+          <label>
+            Order
+            <select value={sortDir} onChange={(e) => setSortDir(e.target.value as 'asc' | 'desc')}>
+              <option value="desc">Desc</option>
+              <option value="asc">Asc</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       {/* Summary Stats */}
@@ -207,9 +356,9 @@ export const APIMetricsTab: React.FC = () => {
       </div>
 
       {/* Top Endpoints */}
-      {metrics.top_endpoints.length > 0 && (
+      {filteredEndpoints.length > 0 && (
         <div className="api-metrics-section">
-          <h3>Top Endpoints by Request Count</h3>
+          <h3>{showAllEndpoints ? 'All Endpoints (Called)' : 'Top Endpoints by Request Count'}</h3>
           <table className="api-metrics-table">
             <thead>
               <tr>
@@ -224,7 +373,7 @@ export const APIMetricsTab: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {metrics.top_endpoints.map((ep) => (
+              {filteredEndpoints.map((ep) => (
                 <tr key={ep.endpoint}>
                   <td className="api-metrics-endpoint">{ep.endpoint}</td>
                   <td>{ep.count.toLocaleString()}</td>

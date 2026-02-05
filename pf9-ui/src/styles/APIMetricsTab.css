@@ -15,6 +15,65 @@
   border-bottom: 2px solid var(--color-border);
 }
 
+.api-metrics-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.api-metrics-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-sm);
+}
+
+.api-metrics-control label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.api-metrics-control input,
+.api-metrics-control select {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  min-width: 160px;
+}
+
+.api-metrics-control .api-metrics-multi {
+  min-width: 260px;
+  min-height: 120px;
+}
+
+.api-metrics-clear {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.api-metrics-control input:focus,
+.api-metrics-control select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.2);
+}
+
 .api-metrics-header h2 {
   margin: 0;
   color: var(--color-text-primary);

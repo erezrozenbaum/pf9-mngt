@@ -61,7 +61,7 @@ services:
       JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-30}
 
       # === Logging Configuration ===
-      LOG_FILE: /app/pf9_api.log
+      LOG_FILE: /app/logs/pf9_api.log
 
       # === Authentication Control ===
       ENABLE_AUTHENTICATION: ${ENABLE_AUTHENTICATION:-true}
@@ -72,6 +72,8 @@ services:
     depends_on:
       - db
       - ldap
+    volumes:
+      - ./logs:/app/logs
     restart: unless-stopped
 
   pf9_ui:
@@ -93,10 +95,13 @@ services:
       PF9_HOSTS: ${PF9_HOSTS:-localhost}
       # Cache TTL in seconds for metrics collection
       METRICS_CACHE_TTL: ${METRICS_CACHE_TTL:-60}
+      # Logging
+      LOG_FILE: /app/logs/pf9_monitoring.log
     ports:
       - "8001:8001"
     volumes:
       - "./metrics_cache.json:/tmp/metrics_cache.json:ro"
+      - "./logs:/app/logs"
     depends_on:
       - pf9_api
     restart: unless-stopped

@@ -42,6 +42,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Public Metrics**: `GET http://localhost:8000/metrics` (Prometheus/Grafana)
 - **Authenticated Metrics (UI)**: `GET http://localhost:8000/api/metrics`
 - **Authenticated Logs (UI)**: `GET http://localhost:8000/api/logs`
+  - Query params: `limit`, `level`, `source`, `log_file`
+  - Log sources: `pf9_api`, `pf9_monitoring` (use `log_file=all` to aggregate)
 - **RBAC**: `api_metrics:read`, `system_logs:read` (Admin/Superadmin)
 
 #### Enterprise Features

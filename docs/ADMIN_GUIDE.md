@@ -763,7 +763,8 @@ LOG_FILE=/var/log/pf9.log  # Optional file output
 
 **System Logs Endpoint**:
 - **Authenticated UI**: `GET http://localhost:8000/api/logs`
-- **Query Params**: `limit`, `level`, `source`
+- **Query Params**: `limit`, `level`, `source`, `log_file`
+- **Log Sources**: `pf9_api`, `pf9_monitoring` (use `log_file=all` to aggregate)
 - **RBAC Requirement**: `system_logs:read` (Admin/Superadmin only)
 
 **JSON Log Format** (Production):
