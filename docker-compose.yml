@@ -60,6 +60,9 @@ services:
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-30}
 
+      # === Logging Configuration ===
+      LOG_FILE: /app/pf9_api.log
+
       # === Authentication Control ===
       ENABLE_AUTHENTICATION: ${ENABLE_AUTHENTICATION:-true}
       DEFAULT_ADMIN_USER: ${DEFAULT_ADMIN_USER:-admin}
