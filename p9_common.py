@@ -262,6 +262,57 @@ def get_project_scoped_session(project_id):
         return None, None
 
 
+def get_service_user_session(project_id, username, password, user_domain="default"):
+    """
+    Authenticate with project scope using custom credentials (for service user).
+    
+    Args:
+        project_id: The project ID to scope to
+        username: Service user email/username
+        password: Service user password
+        user_domain: Domain of the service user (default: "default")
+    
+    Returns:
+        (session, token) tuple or (None, None) on failure
+    """
+    session = _new_session()
+    auth_url = CFG["KEYSTONE_URL"].rstrip("/") + "/auth/tokens"
+
+    payload = {
+        "auth": {
+            "identity": {
+                "methods": ["password"],
+                "password": {
+                    "user": {
+                        "name": username,
+                        "domain": {"id": user_domain},
+                        "password": password,
+                    }
+                },
+            },
+            "scope": {
+                "project": {"id": project_id}
+            },
+        }
+    }
+
+    try:
+        r = session.post(auth_url, json=payload, timeout=CFG["REQUEST_TIMEOUT"])
+        r.raise_for_status()
+        token = r.headers["X-Subject-Token"]
+        body = r.json()
+        
+        # Extract endpoints from catalog for this project scope
+        catalog = body.get("token", {}).get("catalog", [])
+        _extract_endpoints_from_catalog(catalog)
+        
+        session.headers.update({"X-Auth-Token": token})
+        return session, token
+    except Exception as e:
+        log_error("keystone", f"Failed to authenticate as {username} for project {project_id}: {e}")
+        return None, None
+
+
 def get_session_best_scope():
     """
     Authenticate with Keystone and return:

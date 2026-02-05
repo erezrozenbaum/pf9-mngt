@@ -80,6 +80,7 @@ from p9_common import (
     log_error,
     now_utc_str,
     get_session_best_scope,
+    get_service_user_session,
     cinder_volumes_all,
     cinder_list_snapshots_for_volume,
     cinder_create_snapshot,
@@ -809,9 +810,21 @@ def main():
                 ensure_service_user(session, CFG["KEYSTONE_URL"], vol_project_id)
                 
                 # Get project-scoped session for service user
-                print(f"    Getting project-scoped session for service user...")
-                project_session = get_project_scoped_session(vol_project_id)
-                print(f"    ✓ Using service user session for project {project_name}")
+                print(f"    Authenticating as service user for this project...")
+                service_password = get_service_user_password()
+                project_session, token = get_service_user_session(
+                    vol_project_id, 
+                    SERVICE_USER_EMAIL, 
+                    service_password,
+                    user_domain="default"
+                )
+                
+                if project_session:
+                    print(f"    ✓ Using service user session for project {project_name}")
+                else:
+                    print(f"    ⚠ Service user authentication failed")
+                    print(f"    Falling back to admin session (snapshots will be in service domain)")
+                    project_session = session
             except Exception as e:
                 print(f"    ⚠ Could not use service user for project {project_name}: {e}")
                 print(f"    Falling back to admin session (snapshots will be in service domain)")
