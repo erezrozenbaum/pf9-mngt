@@ -20,6 +20,7 @@ interface LogsResponse {
 }
 
 export const SystemLogsTab: React.FC = () => {
+  const API_BASE = 'http://localhost:8000';
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,13 +32,13 @@ export const SystemLogsTab: React.FC = () => {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('auth_token');
         const params = new URLSearchParams();
         params.append('limit', limit.toString());
         if (filter.level) params.append('level', filter.level);
         if (filter.source) params.append('source', filter.source);
 
-        const response = await fetch(`http://localhost:8000/api/logs?${params}`, {
+        const response = await fetch(`${API_BASE}/api/logs?${params}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
           },
