@@ -111,6 +111,10 @@ ALLOWED_ORIGINS = [origin for origin in ALLOWED_ORIGINS if origin]  # Remove Non
 limiter = Limiter(key_func=get_remote_address)
 security = HTTPBasic()
 
+# Configure logging
+logger = logging.getLogger("pf9_api")
+logging.basicConfig(level=logging.INFO)
+
 # Audit logging
 audit_logger = logging.getLogger("audit")
 audit_handler = logging.StreamHandler()
@@ -290,10 +294,14 @@ async def login(request: Request, login_data: LoginRequest):
     # Log successful login
     log_auth_event(login_data.username, "login", True, client_ip, user_agent)
     
+    # Calculate expiration timestamp
+    expires_at = datetime.utcnow() + access_token_expires
+    
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "expires_in": JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "expires_at": expires_at.isoformat() + "Z",  # ISO format for UI
         "refresh_token": None,  # For future implementation
         "user": {
             "username": login_data.username,
@@ -400,26 +408,134 @@ async def get_users(current_user: dict = Depends(get_current_user)):
 
 @app.get("/auth/roles")
 async def get_roles(current_user: dict = Depends(get_current_user)):
-    """Get all available roles"""
-    return [
-        {"id": 1, "name": "superadmin", "description": "Full system access", "userCount": 0},
-        {"id": 2, "name": "admin", "description": "Administrative access", "userCount": 0},
-        {"id": 3, "name": "operator", "description": "Operational access", "userCount": 0},
-        {"id": 4, "name": "viewer", "description": "Read-only access", "userCount": 0}
-    ]
+    """Get all available roles with actual user counts from LDAP users"""
+    logger.info("[/auth/roles] Endpoint called")
+    try:
+        logger.info("[/auth/roles] Calling ldap_auth.get_all_users()")
+        # Get all LDAP users with their roles
+        users = ldap_auth.get_all_users()
+        logger.info(f"[/auth/roles] Got {len(users)} users from LDAP: {[u.get('id') or u.get('username') for u in users]}")
+        
+        # Count roles from actual user data
+        role_counts = {"superadmin": 0, "admin": 0, "operator": 0, "viewer": 0}
+        logger.info(f"[/auth/roles] Initialized role_counts: {role_counts}")
+        
+        for user in users:
+            username = user.get('username') or user.get('id')
+            logger.info(f"[/auth/roles] Processing user: {username}")
+            # Get role from database for each user
+            role = get_user_role(username)
+            logger.info(f"[/auth/roles] User {username} has role: {role}")
+            
+            if not role:
+                role = 'viewer'  # Default role
+                logger.info(f"[/auth/roles] No role found, defaulting to viewer")
+            
+            if role in role_counts:
+                role_counts[role] += 1
+                logger.info(f"[/auth/roles] Incremented {role} count to {role_counts[role]}")
+        
+        logger.info(f"[/auth/roles] Final role_counts: {role_counts}")
+        return [
+            {"id": 1, "name": "superadmin", "description": "Full system access", "userCount": role_counts["superadmin"]},
+            {"id": 2, "name": "admin", "description": "Administrative access", "userCount": role_counts["admin"]},
+            {"id": 3, "name": "operator", "description": "Operational access", "userCount": role_counts["operator"]},
+            {"id": 4, "name": "viewer", "description": "Read-only access", "userCount": role_counts["viewer"]}
+        ]
+        
+    except Exception as e:
+        logger.error(f"[/auth/roles] EXCEPTION: {e}", exc_info=True)
+        import traceback
+        logger.error(f"[/auth/roles] Traceback: {traceback.format_exc()}")
+        # Return default structure with 0 counts if LDAP fails
+        return [
+            {"id": 1, "name": "superadmin", "description": "Full system access", "userCount": 0},
+            {"id": 2, "name": "admin", "description": "Administrative access", "userCount": 0},
+            {"id": 3, "name": "operator", "description": "Operational access", "userCount": 0},
+            {"id": 4, "name": "viewer", "description": "Read-only access", "userCount": 0}
+        ]
 
 @app.get("/auth/permissions")
 async def get_permissions(current_user: dict = Depends(get_current_user)):
-    """Get all permission definitions"""
-    return [
-        {"id": 1, "resource": "snapshots", "action": "create", "roles": ["admin", "superadmin"]},
-        {"id": 2, "resource": "snapshots", "action": "delete", "roles": ["admin", "superadmin"]},
-        {"id": 3, "resource": "snapshots", "action": "view", "roles": ["viewer", "operator", "admin", "superadmin"]},
-        {"id": 4, "resource": "hosts", "action": "manage", "roles": ["operator", "admin", "superadmin"]},
-        {"id": 5, "resource": "users", "action": "manage", "roles": ["superadmin"]},
-        {"id": 6, "resource": "monitoring", "action": "view", "roles": ["viewer", "operator", "admin", "superadmin"]},
-        {"id": 7, "resource": "monitoring", "action": "manage", "roles": ["admin", "superadmin"]}
+    """Get all permission definitions from database, filtered to main UI resources only"""
+    # Define main UI tab resources (exclude internal/backend-only resources)
+    MAIN_UI_RESOURCES = [
+        'servers', 'volumes', 'snapshots', 'networks', 'subnets', 'ports',
+        'floatingips', 'domains', 'projects', 'flavors', 'images', 
+        'hypervisors', 'users', 'monitoring', 'history', 'audit'
     ]
+    
+    try:
+        conn = db_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get permissions only for main UI resources
+        cur.execute("""
+            SELECT resource, action, array_agg(role ORDER BY 
+                CASE role 
+                    WHEN 'superadmin' THEN 1 
+                    WHEN 'admin' THEN 2 
+                    WHEN 'operator' THEN 3 
+                    WHEN 'viewer' THEN 4 
+                END
+            ) as roles
+            FROM role_permissions
+            WHERE resource = ANY(%s)
+            GROUP BY resource, action
+            ORDER BY resource, action
+        """, (MAIN_UI_RESOURCES,))
+        permissions = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        # If we got data from database, use it
+        if permissions and len(permissions) > 0:
+            return [
+                {
+                    "id": idx + 1,
+                    "resource": perm['resource'],
+                    "action": perm['action'],
+                    "roles": perm['roles']
+                }
+                for idx, perm in enumerate(permissions)
+            ]
+        else:
+            # Database is empty, return nothing so UI uses its fallback
+            raise Exception("No permissions in database")
+            
+    except Exception as e:
+        logger.error(f"Error getting permissions: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return comprehensive fallback permissions matching actual UI tabs
+        return [
+            {"id": 1, "resource": "servers", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 2, "resource": "servers", "action": "write", "roles": ["admin", "superadmin"]},
+            {"id": 3, "resource": "servers", "action": "admin", "roles": ["admin", "superadmin"]},
+            {"id": 4, "resource": "volumes", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 5, "resource": "volumes", "action": "write", "roles": ["admin", "superadmin"]},
+            {"id": 6, "resource": "volumes", "action": "admin", "roles": ["admin", "superadmin"]},
+            {"id": 7, "resource": "snapshots", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 8, "resource": "snapshots", "action": "write", "roles": ["admin", "superadmin"]},
+            {"id": 9, "resource": "snapshots", "action": "admin", "roles": ["admin", "superadmin"]},
+            {"id": 10, "resource": "networks", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 11, "resource": "networks", "action": "write", "roles": ["operator", "admin", "superadmin"]},
+            {"id": 12, "resource": "subnets", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 13, "resource": "ports", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 14, "resource": "floatingips", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 15, "resource": "domains", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 16, "resource": "projects", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 17, "resource": "flavors", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 18, "resource": "flavors", "action": "write", "roles": ["operator", "admin", "superadmin"]},
+            {"id": 19, "resource": "images", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 20, "resource": "hypervisors", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 21, "resource": "users", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 22, "resource": "users", "action": "admin", "roles": ["superadmin"]},
+            {"id": 23, "resource": "monitoring", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 24, "resource": "monitoring", "action": "write", "roles": ["admin", "superadmin"]},
+            {"id": 25, "resource": "history", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 26, "resource": "audit", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]}
+        ]
 
 @app.post("/auth/users")
 async def create_user(request: Request, user_data: dict, current_user: User = Depends(require_authentication)):
@@ -2892,7 +3008,7 @@ async def get_user_details(request: Request, user_id: str):
 
 @app.get("/roles")
 @limiter.limit("30/minute")
-async def get_roles(
+async def get_all_roles(
     request: Request,
     domain_id: Optional[str] = None,
     limit: int = Query(100, ge=1, le=1000),

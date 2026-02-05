@@ -6,13 +6,16 @@ The Platform9 Management System has evolved into a **comprehensive enterprise Op
 
 ## 🏗️ Architecture Summary
 
-### Microservices Architecture (5 Services + Host Automation)
+### Microservices Architecture (7 Core Services + Snapshot Worker + Host Automation)
 1. **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173
 2. **Backend API** (FastAPI/Python) - Port 8000  
 3. **Monitoring Service** (FastAPI/Python) - Port 8001
 4. **Database Service** (PostgreSQL 16) - Port 5432
 5. **Database Admin** (pgAdmin4) - Port 8080
-6. **Host Automation** (Python scripts via Windows Task Scheduler)
+6. **LDAP Server** (OpenLDAP) - Port 389
+7. **LDAP Admin** (phpLDAPadmin) - Port 8081
+8. **Snapshot Worker** (Python/Docker) - Background scheduled service
+9. **Host Automation** (Python scripts via Windows Task Scheduler)
 
 ## 📊 Comprehensive Feature Matrix
 

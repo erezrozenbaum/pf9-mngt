@@ -147,14 +147,14 @@ GET  /simple-test                # Basic functionality test
 **Port**: 8001  
 **Responsibilities**:
 - Real-time metrics collection and caching
-- Host-based data aggregation
+- Host-based data aggregation via Prometheus node_exporter
 - Auto-setup detection and management
 - UI integration with monitoring dashboard
 
 ```python
 # Monitoring Structure
 monitoring/
-├── main.py              # FastAPI monitoring service (40+ endpoints total)
+├── main.py              # FastAPI monitoring service
 ├── prometheus_client.py # Prometheus integration
 ├── models.py           # Data models for metrics
 ├── requirements.txt    # Dependencies
@@ -164,31 +164,75 @@ monitoring/
     └── metrics_cache.json # Persistent cache storage
 ```
 
-**Hybrid Collection Model**:
+**Hybrid Collection Model** (Host Scripts → Container Service):
 ```
-PF9 Compute Hosts → Host Collector → JSON Cache → Monitoring API → React UI
-     ↓                    ↓             ↓            ↓             ↓
-node_exporter:9388   host_metrics_   Persistent   FastAPI      Monitoring
-(✅ Working)         collector.py     JSON File    Service      Tab
-                     (Scheduled)                   (Port 8001)
-
-libvirt_exporter:9177 → [BLOCKED] → VM Metrics (Requires PF9 Engineering Support)
-(❌ Access Denied)
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Monitoring Architecture                           │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  PF9 Compute Hosts                                                   │
+│    ├─ node_exporter:9388    ✅ Working (CPU, Memory, Disk)         │
+│    └─ libvirt_exporter:9177 ❌ Blocked (VM metrics - requires PF9)  │
+│                     │                                                │
+│                     ▼                                                │
+│  Host Collector (Windows Task Scheduler - Every 30 min)             │
+│    └─ host_metrics_collector.py                                     │
+│         ├─ Scrapes node_exporter   ✅                               │
+│         ├─ Attempts libvirt_exporter ❌                             │
+│         └─ Writes to metrics_cache.json ✅                          │
+│                     │                                                │
+│                     ▼                                                │
+│  Persistent Cache                                                    │
+│    └─ /tmp/metrics_cache.json                                       │
+│         ├─ Survives container restarts ✅                           │
+│         └─ Shared with monitoring container ✅                      │
+│                     │                                                │
+│                     ▼                                                │
+│  Monitoring API (Docker Container - Port 8001)                      │
+│    └─ monitoring/main.py (FastAPI)                                  │
+│         ├─ Loads cache file ✅                                      │
+│         ├─ Serves metrics via REST API ✅                           │
+│         └─ Auto-setup detection ✅                                  │
+│                     │                                                │
+│                     ▼                                                │
+│  React UI - Monitoring Tab                                          │
+│    └─ Real-time dashboard with auto-refresh ✅                      │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-**Data Flow Architecture**:
-1. **Host Collection**: [host_metrics_collector.py](../host_metrics_collector.py) runs via Windows Task Scheduler every 30 minutes
-2. **Cache Storage**: Metrics stored in persistent JSON cache file (`/tmp/metrics_cache.json`)
-3. **API Service**: FastAPI monitoring service serves cached data with auto-setup detection
-4. **UI Integration**: React monitoring tab with auto-refresh and real-time updates
+**Current Status**:
+- ✅ **Host-Level Metrics**: CPU, memory, storage from node_exporter working perfectly
+- ❌ **VM-Level Metrics**: Individual VM tracking blocked - libvirt_exporter cannot connect to libvirtd
+- ✅ **Cache Persistence**: Metrics survive container restarts
+- ✅ **Automated Collection**: Windows Task Scheduler running every 30 minutes
+- ✅ **UI Integration**: Monitoring tab displaying host metrics with auto-refresh
+
+**Known Limitation - VM Metrics**:
+```python
+# From host_metrics_collector.py
+async def collect_vm_metrics(self, session, host):
+    """Collect VM metrics from libvirt exporter on a single host"""
+    try:
+        async with session.get(f"http://{host}:9177/metrics", timeout=10) as response:
+            # Currently returns connection error:
+            # libvirt_up=0 (cannot connect to libvirtd daemon)
+```
+
+**Issue**: Libvirt exporter requires access to libvirtd Unix socket (`/var/run/libvirt/libvirt-sock`)  
+**Cause**: Permission/configuration issue on PF9 compute nodes  
+**Impact**: Cannot track per-VM CPU, memory, disk usage  
+**Workaround**: Host-level aggregated metrics still provide operational value  
+**Status**: Awaiting Platform9 engineering support to configure libvirtd access  
+**Tracking**: See comments in [host_metrics_collector.py](../host_metrics_collector.py)
 
 **Monitoring Endpoints**:
 - `GET /` - Service status and version
 - `GET /health` - Health check endpoint  
 - `GET /auto-setup` - Auto-setup detection and instructions
-- `GET /metrics/vms` - VM metrics (currently limited due to libvirt access)
-- `GET /metrics/hosts` - Host resource metrics ✅
-- `GET /metrics/summary` - Overall infrastructure summary
+- `GET /metrics/vms` - VM metrics (limited - returns empty until libvirt access resolved)
+- `GET /metrics/hosts` - Host resource metrics ✅ **Working**
+- `GET /metrics/summary` - Overall infrastructure summary from cache
 - `GET /alerts` - System alerts and notifications
 
 ### Database Service

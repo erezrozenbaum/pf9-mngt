@@ -750,6 +750,75 @@ The React-based UI provides:
 - **Sorting and pagination** for large datasets
 - **CSV export functionality** for all data types
 - **Detailed view panels** for selected items
+- **Admin Panel** for system administration (accessible only to Admin/Superadmin users)
+
+### Admin Panel (System Administration)
+
+The Admin Panel provides comprehensive system administration capabilities accessible via the Admin icon in the main navigation. Only users with Admin or Superadmin roles can access this panel.
+
+#### Admin Panel Tabs
+
+##### 1. LDAP Users Tab
+Manage local LDAP user accounts for accessing the management system:
+- **View all LDAP users** with usernames, email addresses, and current roles
+- **Create new users** with role assignment (Superadmin only)
+- **Edit user roles** - Reassign roles (admin, operator, viewer) to users
+- **Delete users** - Remove user accounts from the system (Superadmin only)
+- **User status tracking** - See which users are active or inactive
+
+**Current Users**: The system includes 7 LDAP users (admin, erez, itay, ili, yaronso, itayh, yaronm) with role distributions:
+- Superadmin: 5 users
+- Admin: 0 users  
+- Operator: 1 user
+- Viewer: 1 user
+
+##### 2. Roles Tab
+View the system's role hierarchy and user distribution:
+- **Superadmin**: Full system access including user management (5 users)
+- **Admin**: Administrative access for resource operations (0 users)
+- **Operator**: Operational access with limited write permissions (1 user)
+- **Viewer**: Read-only access to all resources (1 user)
+
+Shows real-time user count for each role automatically updated from LDAP authentication data.
+
+##### 3. Permissions Tab
+View the Permission Matrix showing resource-level access control:
+- **Resource list**: servers, volumes, snapshots, networks, subnets, ports, floatingips, domains, projects, flavors, images, hypervisors, users, monitoring, history, audit
+- **Actions**: read, write, admin (actions vary by resource)
+- **Role permissions**: Visual matrix showing which roles have access to each resource action
+- **Read-only display**: Current implementation shows permissions for reference
+
+**Permission Matrix Features**:
+- Only displays actual permissions from the database (no empty combinations)
+- High-contrast checkboxes visible in dark mode
+- Organized by resource name and action type
+- Clear role headers showing permission assignments
+
+**Resource Permissions Examples**:
+- `servers/read`: viewer, operator, admin, superadmin ✓
+- `servers/admin`: admin, superadmin ✓
+- `users/admin`: superadmin only ✓
+- `volumes/read`: viewer, operator, admin, superadmin ✓
+
+##### 4. System Audit Tab
+Monitor authentication events and system access:
+- **Login events** - Track successful logins with user, timestamp, and IP address
+- **Failed login attempts** - Security monitoring for unauthorized access attempts
+- **User management events** - Track user creation, deletion, and role changes
+- **Filter options** - Filter by username, action, date range
+- **90-day retention** - Audit logs maintained for compliance purposes
+
+**Audit Events Tracked**:
+- login / failed_login
+- user_created / user_deleted
+- role_changed
+- logout
+
+### Admin Panel Authentication
+- **Access Control**: Admin panel is only visible to users with Admin or Superadmin roles
+- **LDAP-based**: All users authenticate against the OpenLDAP server
+- **Session management**: JWT tokens valid for 480 minutes (8 hours)
+- **Audit logging**: All admin operations logged to auth_audit_log
 
 ### UI Configuration
 
