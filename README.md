@@ -148,6 +148,9 @@ cp .env.template .env
 # One-command complete setup
 .\startup.ps1
 
+# Deployment automation (validation + health checks)
+.\deployment.ps1
+
 # Access services:
 # - UI: http://localhost:5173
 # - API: http://localhost:8000

@@ -51,6 +51,9 @@ EOF
 # 3. Start all services
 docker-compose up -d
 
+# Windows automated deployment (includes validation + health checks)
+# .\deployment.ps1
+
 # 4. Wait for services to be ready
 docker-compose ps
 
@@ -454,6 +457,15 @@ POSTGRES_INITDB_ARGS="-c max_connections=200 -c shared_buffers=256MB"
 # Logging Level
 LOG_LEVEL=INFO
 # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# Structured Logging (JSON) for file output
+JSON_LOGS=true
+# true=JSON format, false=colored console
+
+# Log File Location (inside containers)
+LOG_FILE=/app/logs/pf9_api.log
+# Logs are written to ./logs on the host via Docker volume
+# Monitoring logs: /app/logs/pf9_monitoring.log
 ```
 
 ### Environment File Security
@@ -680,12 +692,20 @@ curl http://localhost:8000/servers \
 curl http://localhost:8000/sync \
   -H "Authorization: Bearer <jwt-token>"
 
-# 4. Browser Testing
+# 4. Test API Metrics & Logs (Admin/Superadmin)
+curl http://localhost:8000/api/metrics \
+  -H "Authorization: Bearer <jwt-token>"
+
+curl "http://localhost:8000/api/logs?limit=50&log_file=all" \
+  -H "Authorization: Bearer <jwt-token>"
+
+# 5. Browser Testing
 # Navigate to http://localhost:5173
 # - Login with LDAP user
 # - Verify dashboard loads
 # - Check infrastructure tables populate
 # - Verify monitoring metrics appear
+# - Verify API Metrics and System Logs tabs (admin only)
 ```
 
 ### Performance Testing

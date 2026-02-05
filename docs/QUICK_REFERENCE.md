@@ -47,7 +47,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **RBAC**: `api_metrics:read`, `system_logs:read` (Admin/Superadmin)
 
 #### Enterprise Features
-- **Single-Command Deployment**: Complete automation via `startup.ps1`
+- **Single-Command Deployment**: Complete automation via `startup.ps1` or `deployment.ps1`
 - **Hybrid Architecture**: Scripts work standalone or with full web services
 - **RVTools Compatibility**: Excel/CSV exports with delta tracking and customer data masking
 - **Modern React UI**: TypeScript-based with Vite build system and theme support
@@ -648,6 +648,7 @@ docker-compose up -d
 - [`db/init.sql`](../db/init.sql) - Database schema
 - [`p9_common.py`](../p9_common.py) - Platform9 connection settings
 - [`startup.ps1`](../startup.ps1) - Complete automation and service management
+- [`deployment.ps1`](../deployment.ps1) - Deployment automation with validation and health checks
 - [`host_metrics_collector.py`](../host_metrics_collector.py) - Real-time metrics collection
 - [`cleanup_snapshots.py`](../cleanup_snapshots.py) - Database cleanup utilities
 
