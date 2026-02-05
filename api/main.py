@@ -736,11 +736,11 @@ def get_api_metrics_authenticated(request: Request):
         if not token:
             raise HTTPException(status_code=401, detail="Not authenticated")
 
-        payload = verify_token(token)
-        if not payload:
+        token_data = verify_token(token)
+        if not token_data:
             raise HTTPException(status_code=401, detail="Invalid token")
 
-        username = payload.get("sub")
+        username = token_data.username
 
         if not has_permission(username, "api_metrics", "read"):
             raise HTTPException(status_code=403, detail="Insufficient permissions to view API metrics")
@@ -783,11 +783,11 @@ def get_system_logs(
         if not token:
             raise HTTPException(status_code=401, detail="Not authenticated")
 
-        payload = verify_token(token)
-        if not payload:
+        token_data = verify_token(token)
+        if not token_data:
             raise HTTPException(status_code=401, detail="Invalid token")
 
-        username = payload.get("sub")
+        username = token_data.username
 
         if not has_permission(username, "system_logs", "read"):
             raise HTTPException(status_code=403, detail="Only admins can view system logs")

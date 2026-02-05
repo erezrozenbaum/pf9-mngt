@@ -38,6 +38,7 @@ interface Metrics {
 }
 
 export const APIMetricsTab: React.FC = () => {
+  const API_BASE = 'http://localhost:8000';
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,8 +47,8 @@ export const APIMetricsTab: React.FC = () => {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const response = await fetch('http://localhost:8000/api/metrics', {
+        const token = localStorage.getItem('auth_token');
+        const response = await fetch(`${API_BASE}/api/metrics`, {
           headers: {
             'Authorization': `Bearer ${token}`,
           },
