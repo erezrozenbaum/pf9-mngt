@@ -151,7 +151,7 @@ Write-Host "5. Verifying services..." -ForegroundColor Yellow
 $services = @(
     @{Name="Database"; Url="http://localhost:5432"; Container="pf9_db"},
     @{Name="API"; Url="http://localhost:8000/health"; Container="pf9_api"},
-    @{Name="UI"; Url="http://localhost:3000"; Container="pf9_ui"},
+    @{Name="UI"; Url="http://localhost:5173"; Container="pf9_ui"},
     @{Name="Monitoring"; Url="http://localhost:8001/health"; Container="pf9_monitoring"}
 )
 
