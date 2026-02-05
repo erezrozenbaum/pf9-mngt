@@ -810,16 +810,7 @@ def main():
                 
                 # Get project-scoped session for service user
                 print(f"    Getting project-scoped session for service user...")
-                from p9_common import get_session
-                project_session = get_session(
-                    username=SERVICE_USER_EMAIL,
-                    password=get_service_user_password(),
-                    keystone_url=CFG["KEYSTONE_URL"],
-                    user_domain=CFG["USER_DOMAIN"],
-                    project_domain=CFG["PROJECT_DOMAIN"],
-                    project_id=vol_project_id,
-                    verify_tls=CFG["VERIFY_TLS"]
-                )
+                project_session = get_project_scoped_session(vol_project_id)
                 print(f"    ✓ Using service user session for project {project_name}")
             except Exception as e:
                 print(f"    ⚠ Could not use service user for project {project_name}: {e}")

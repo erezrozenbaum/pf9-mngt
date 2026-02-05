@@ -151,7 +151,7 @@ def create_user_in_domain(
     keystone_url: str,
     email: str,
     password: str,
-    domain_id: str
+    domain_id: str = "default"
 ) -> Optional[Dict[str, Any]]:
     """Create a new user in a specific domain."""
     url = f"{keystone_url.rstrip('/')}/users"
@@ -228,13 +228,13 @@ def ensure_service_user(
     session: requests.Session,
     keystone_url: str,
     project_id: str,
-    domain_id: str = DEFAULT_DOMAIN
+    domain_id: str = "default"
 ) -> Optional[Dict[str, Any]]:
     """
     Ensure snapshot service user exists in the given project.
     
     Steps:
-    1. Check if user exists in domain
+    1. Check if user exists in default domain
     2. If not, create it with auto-generated password
     3. Assign 'service' role to the project
     4. Return user info
@@ -242,7 +242,7 @@ def ensure_service_user(
     
     print(f"[SNAPSHOT-USER] Ensuring service user exists for project {project_id}...")
     
-    # Check if user exists
+    # Check if user exists in default domain (domain_id="default")
     existing_user = user_exists_in_domain(session, keystone_url, SERVICE_USER_EMAIL, domain_id)
     
     if existing_user:
