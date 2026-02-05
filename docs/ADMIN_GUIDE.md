@@ -2,7 +2,13 @@
 
 ## Recent Major Enhancements (February 2026)
 
-### Enterprise Authentication & Authorization (NEW)
+### Production-Ready Features (NEW ✨)
+- **Startup Config Validation**: Comprehensive environment variable validation on API startup with color-coded results
+- **API Performance Metrics**: Real-time performance monitoring with `/metrics` endpoint (p50/p95/p99 latencies, request tracking)
+- **Structured Logging**: JSON and colored console logging with context (user, endpoint, duration, IP address)
+- **Auto Metrics Collection**: Dual-redundancy collection (background process + scheduled task) with automatic startup
+
+### Enterprise Authentication & Authorization
 - **LDAP Integration**: Production OpenLDAP authentication (dc=ccc,dc=co,dc=il)
 - **Role-Based Access Control**: 4-tier permission system (Viewer, Operator, Admin, Superadmin)
 - **JWT Token Management**: Secure 480-minute sessions with Bearer authentication
@@ -71,19 +77,23 @@
 1. [System Overview](#system-overview)
 2. [Architecture & Components](#architecture--components)
 3. [Authentication & Authorization](#authentication--authorization)
-4. [Core Components Deep Dive](#core-components-deep-dive)
-5. [Installation & Deployment](#installation--deployment)
-6. [Security Considerations](#security-considerations)
-7. [Configuration Management](#configuration-management)
-8. [Database Management](#database-management)
-9. [API Operations](#api-operations)
-10. [Data Collection Scripts](#data-collection-scripts)
-11. [Snapshot Automation](#snapshot-automation)
-12. [Compliance Reporting](#compliance-reporting)
-13. [UI Management](#ui-management)
-14. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
-15. [Maintenance & Updates](#maintenance--updates)
-16. [Performance Optimization](#performance-optimization)
+4. [Real-Time Monitoring System](#real-time-monitoring-system)
+5. [Production Features](#production-features)
+   - [Startup Configuration Validation](#1-startup-configuration-validation-)
+   - [API Performance Metrics](#2-api-performance-metrics-)
+   - [Structured Logging](#3-structured-logging-centralized-logging-foundation-)
+   - [Automated Metrics Collection](#4-automated-metrics-collection-)
+6. [Core Components Deep Dive](#core-components-deep-dive)
+7. [Installation & Deployment](#installation--deployment)
+8. [Security Considerations](#security-considerations)
+9. [Database Management](#database-management)
+10. [API Operations](#api-operations)
+11. [UI Management](#ui-management)
+12. [Data Collection & Reporting](#data-collection--reporting)
+13. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
+14. [Maintenance & Updates](#maintenance--updates)
+15. [Code Quality Issues](#code-quality-issues)
+16. [Recommended Improvements](#recommended-improvements)
 
 ---
 
@@ -562,6 +572,268 @@ python snapshots/p9_snapshot_compliance_report.py  # Compliance reporting
 - ✅ Automatic .env file loading
 - ❌ No database storage (optional)
 - ❌ No web UI access
+
+---
+
+## Production Features
+
+### 1. Startup Configuration Validation ✅
+
+**Implementation**: [api/config_validator.py](../api/config_validator.py)
+
+Comprehensive environment variable validation that runs **before** the FastAPI application starts, ensuring all required configuration is present and valid.
+
+**Features**:
+- ✅ Validates 12+ required environment variables (DB, LDAP, JWT, PF9 credentials)
+- ✅ Checks port number ranges (1-65535)
+- ✅ Validates URL formats (http/https)
+- ✅ Enforces JWT secret minimum length (32 characters)
+- ✅ Validates token expiration range (1 minute to 1 week)
+- ✅ Color-coded validation results (green ✓ / red ✗)
+- ✅ **Exits with error** if validation fails (prevents startup with bad config)
+
+**Validated Configuration**:
+```python
+# Required Variables
+PF9_DB_HOST, PF9_DB_PORT, PF9_DB_NAME
+PF9_DB_USER, PF9_DB_PASSWORD
+PF9_AUTH_URL, PF9_USERNAME, PF9_PASSWORD
+LDAP_SERVER, LDAP_PORT, LDAP_BASE_DN
+JWT_SECRET_KEY
+
+# Optional (with defaults)
+PF9_USER_DOMAIN (Default)
+PF9_PROJECT_NAME (service)
+JWT_ALGORITHM (HS256)
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES (480)
+```
+
+**Startup Output Example**:
+```
+======= Configuration Validation Results =======
+✓ PF9_DB_HOST: postgres
+✓ PF9_DB_PORT: 5432 (valid port)
+✓ PF9_AUTH_URL: https://pf9.example.com (valid URL)
+✓ JWT_SECRET_KEY: ******** (32+ chars)
+⚠ Using default for PF9_USER_DOMAIN=Default
+✅ Configuration validation PASSED
+```
+
+**Error Handling**:
+If validation fails, the API container exits with code 1 and displays detailed errors:
+```
+✗ Missing required env var: PF9_DB_PASSWORD
+✗ Invalid port: PF9_DB_PORT=99999 (must be 1-65535)
+✗ Invalid URL format: PF9_AUTH_URL=invalid-url
+❌ Configuration validation FAILED
+Exiting...
+```
+
+---
+
+### 2. API Performance Metrics ✅
+
+**Implementation**: [api/performance_metrics.py](../api/performance_metrics.py)
+
+Real-time performance monitoring with FastAPI middleware that tracks every API request and provides detailed metrics via a public endpoint.
+
+**Features**:
+- ✅ In-memory metrics storage (configurable, default 1000 requests)
+- ✅ Per-endpoint request counting and timing
+- ✅ Status code distribution tracking
+- ✅ Slow request detection (>1 second threshold)
+- ✅ Error request tracking (4xx, 5xx)
+- ✅ Latency percentiles (avg, min, max, p50, p95, p99)
+- ✅ Requests per second calculation
+- ✅ Uptime tracking
+- ✅ **No authentication required** on `/metrics` endpoint
+
+**Metrics Endpoint**: `GET http://localhost:8000/metrics`
+
+**Response Structure**:
+```json
+{
+  "uptime_seconds": 3600.45,
+  "total_requests": 1523,
+  "requests_per_second": 0.42,
+  "status_codes": {
+    "200": 1450,
+    "401": 12,
+    "404": 5,
+    "500": 2
+  },
+  "top_endpoints": [
+    {
+      "endpoint": "/servers",
+      "count": 450,
+      "avg_duration": 0.125,
+      "min_duration": 0.045,
+      "max_duration": 0.850,
+      "p50": 0.110,
+      "p95": 0.320,
+      "p99": 0.650
+    }
+  ],
+  "slow_endpoints": [
+    {
+      "endpoint": "/volumes/history",
+      "avg_duration": 1.245,
+      "count": 15
+    }
+  ],
+  "recent_slow_requests": [
+    {
+      "endpoint": "/snapshots",
+      "duration": 2.341,
+      "timestamp": "2026-02-05T10:23:45.123Z",
+      "status_code": 200
+    }
+  ],
+  "recent_errors": [
+    {
+      "endpoint": "/auth/login",
+      "status_code": 401,
+      "timestamp": "2026-02-05T10:20:12.456Z",
+      "duration": 0.089
+    }
+  ]
+}
+```
+
+**Response Headers**:
+All API responses include:
+```
+X-Process-Time: 0.123  # Request duration in seconds
+```
+
+**Integration**:
+```python
+# api/main.py
+from api.performance_metrics import PerformanceMetrics, PerformanceMiddleware
+
+performance_metrics = PerformanceMetrics()
+app.add_middleware(PerformanceMiddleware, metrics=performance_metrics)
+
+@app.get("/metrics")
+async def get_metrics():
+    return performance_metrics.get_stats()
+```
+
+**Use Cases**:
+- Monitor API response times in production
+- Identify slow endpoints needing optimization
+- Track error rates and patterns
+- Capacity planning (requests/second trends)
+- SLA compliance monitoring
+
+---
+
+### 3. Structured Logging (Centralized Logging Foundation) ✅
+
+**Implementation**: [api/structured_logging.py](../api/structured_logging.py)
+
+Production-grade logging with JSON formatting for log aggregation tools (ELK, Loki, Datadog) and colored console output for development.
+
+**Features**:
+- ✅ **Dual formatters**: JSON (production) + Colored Console (development)
+- ✅ **Context-rich logs**: user, endpoint, status_code, duration_ms, ip_address
+- ✅ **Exception tracking**: Full stack traces with structured data
+- ✅ **Configurable output**: Console, file, or both
+- ✅ **Log levels**: DEBUG, INFO, WARNING, ERROR, CRITICAL
+- ✅ **Noise reduction**: Quiets uvicorn and asyncio loggers
+- ✅ **Compatible with**: ELK Stack, Grafana Loki, Splunk, Datadog
+
+**Configuration** (Environment Variables):
+```bash
+LOG_LEVEL=INFO              # DEBUG, INFO, WARNING, ERROR, CRITICAL
+JSON_LOGS=true              # true=JSON, false=colored console
+LOG_FILE=/var/log/pf9.log  # Optional file output
+```
+
+**JSON Log Format** (Production):
+```json
+{
+  "timestamp": "2026-02-05T10:23:45.123Z",
+  "level": "INFO",
+  "logger": "pf9_api",
+  "message": "Request completed",
+  "context": {
+    "user": "admin",
+    "endpoint": "/servers",
+    "method": "GET",
+    "status_code": 200,
+    "duration_ms": 125.4,
+    "ip_address": "172.17.0.1"
+  }
+}
+```
+
+**Colored Console Format** (Development):
+```
+[2026-02-05 10:23:45] INFO pf9_api | Request completed
+  user=admin endpoint=/servers status_code=200 duration_ms=125.4
+```
+
+**Error Logging Example**:
+```json
+{
+  "timestamp": "2026-02-05T10:25:12.456Z",
+  "level": "ERROR",
+  "logger": "pf9_api",
+  "message": "Database connection failed",
+  "exception": "psycopg2.OperationalError: connection refused",
+  "stack_trace": "Traceback (most recent call last)...",
+  "context": {
+    "endpoint": "/volumes",
+    "user": "operator1"
+  }
+}
+```
+
+**Integration**:
+```python
+# api/main.py
+from api.structured_logging import setup_logging
+
+logger = setup_logging(
+    log_level=os.getenv("LOG_LEVEL", "INFO"),
+    json_logs=os.getenv("JSON_LOGS", "false").lower() == "true",
+    log_file=os.getenv("LOG_FILE")
+)
+
+# Usage in code
+logger.info("Server started", extra={"context": {"port": 8000}})
+logger.error("Auth failed", extra={"context": {"user": username, "ip": client_ip}})
+```
+
+**Log Aggregation Ready**:
+- **ELK Stack**: Direct JSON ingestion via Filebeat
+- **Grafana Loki**: LogQL queries on JSON fields
+- **Datadog**: Automatic attribute parsing
+- **Splunk**: JSON sourcetype recognition
+
+**Benefits**:
+- ✅ Searchable structured logs (query by user, endpoint, status)
+- ✅ Metrics from logs (request duration histograms)
+- ✅ Alerting on error patterns
+- ✅ Distributed tracing correlation (add request_id)
+- ✅ Compliance audit trails
+
+---
+
+### 4. Automated Metrics Collection ✅
+
+**Implementation**: [startup.ps1](../startup.ps1) + [host_metrics_collector.py](../host_metrics_collector.py)
+
+Dual-redundancy approach for continuous infrastructure metrics collection with automatic startup and scheduled backup.
+
+See [Real-Time Monitoring System](#real-time-monitoring-system) section for full details.
+
+**Quick Summary**:
+- **Primary**: Background Python process (auto-start on system launch)
+- **Backup**: Windows Task Scheduler (every 30 minutes)
+- **Cache**: `metrics_cache.json` (persistent across restarts)
+- **Status**: ✅ Production-ready with automatic recovery
 
 ---
 
