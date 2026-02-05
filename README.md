@@ -145,11 +145,24 @@ cd pf9-mngt
 cp .env.template .env
 # Edit .env with your Platform9 credentials
 
-# One-command complete setup
-.\startup.ps1
-
-# Deployment automation (validation + health checks)
+# One-command complete deployment (includes Docker install check)
 .\deployment.ps1
+
+# What deployment.ps1 does:
+# ✓ Checks/installs Docker Desktop for Windows
+# ✓ Creates and validates .env configuration
+# ✓ Creates all required directories (logs, secrets, cache)
+# ✓ Installs Python dependencies
+# ✓ Builds and starts all Docker containers
+# ✓ Initializes PostgreSQL database schema
+# ✓ Configures LDAP directory structure
+# ✓ Creates automated scheduled tasks:
+#   - Metrics collection (every 30 minutes)
+#   - RVTools export (daily at 2:00 AM)
+# ✓ Runs comprehensive health checks
+
+# Alternative quick startup (assumes Docker installed)
+.\startup.ps1
 
 # Access services:
 # - UI: http://localhost:5173
