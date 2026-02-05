@@ -4,6 +4,8 @@ import asyncio
 import re
 import logging
 import json
+import time
+import uuid
 from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta
 
@@ -264,6 +266,45 @@ async def rbac_middleware(request: Request, call_next):
         )
 
     return await call_next(request)
+
+
+@app.middleware("http")
+async def access_log_middleware(request: Request, call_next):
+    start_time = time.time()
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+
+    response = await call_next(request)
+
+    duration_ms = round((time.time() - start_time) * 1000, 2)
+    response.headers["X-Request-Id"] = request_id
+
+    user = "anonymous"
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        token_data = verify_token(token)
+        if token_data:
+            user = token_data.username
+
+    context = {
+        "request_id": request_id,
+        "method": request.method,
+        "path": request.url.path,
+        "status_code": response.status_code,
+        "duration_ms": duration_ms,
+        "user": user,
+        "ip_address": request.client.host if request.client else None,
+    }
+
+    if response.status_code >= 500:
+        logger.error("Request failed", extra={"context": context})
+    elif response.status_code >= 400:
+        logger.warning("Request warning", extra={"context": context})
+    else:
+        logger.info("Request completed", extra={"context": context})
+
+    return response
 
 # Import snapshot management routes
 from snapshot_management import setup_snapshot_routes
