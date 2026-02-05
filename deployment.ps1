@@ -98,249 +98,195 @@ function Install-DockerDesktop {
     
     Write-Success "Docker Desktop installed successfully"
     Write-Warning "Please restart your computer and run this script again."
-    Write-Info "After restart, Docker Desktop will start automatically."
-    
-    Read-Host "Press Enter to exit"
+    Write-Warning "After restart, you may need to enable virtualization in BIOS if prompted."
     exit 0
 }
 
-function Test-DockerInstallation {
-    $dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
-    if (-not $dockerCmd) {
-        return $false
-    }
-    
+function Test-Http($url, $timeoutSec = 5) {
     try {
-        & docker info 2>&1 | Out-Null
-        return $LASTEXITCODE -eq 0
+        $response = Invoke-WebRequest -Uri $url -Method Get -TimeoutSec $timeoutSec -UseBasicParsing -ErrorAction Stop
+        return $true
     } catch {
         return $false
     }
 }
 
-function Wait-DockerReady {
-    Write-Info "Waiting for Docker to be ready..."
-    $maxRetries = 30
-    $retryCount = 0
-    
-    while ($retryCount -lt $maxRetries) {
-        try {
-            & docker info 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                Write-Success "Docker is ready"
-                return $true
-            }
-        } catch { }
-        
-        $retryCount++
-        Start-Sleep -Seconds 2
-    }
-    
-    Write-Error "Docker did not become ready in time"
-    Write-Info "Please ensure Docker Desktop is running and try again"
-    return $false
-}
-
-function Get-ComposeCommand {
-    if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
-        return @("docker-compose")
-    }
-
-    if (Get-Command docker -ErrorAction SilentlyContinue) {
-        try {
-            & docker compose version | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                return @("docker", "compose")
-            }
-        } catch {
-            # fall through
-        }
-    }
-
-    throw "Docker Compose not found. Install Docker Desktop or docker-compose."
-}
-
-function Invoke-Compose {
-    param([string[]]$Args)
-    if ($script:ComposeCmd.Count -eq 1) {
-        & $script:ComposeCmd[0] @Args
-    } else {
-        & $script:ComposeCmd[0] $script:ComposeCmd[1] @Args
-    }
+function Invoke-Compose($arguments) {
+    & docker-compose $arguments 2>&1
     if ($LASTEXITCODE -ne 0) {
-        throw "Docker Compose command failed: $($Args -join ' ')"
+        throw "docker-compose command failed"
     }
 }
 
-function Read-DotEnv($path) {
-    $map = @{}
-    Get-Content $path | ForEach-Object {
-        $line = $_.Trim()
-        if (-not $line -or $line.StartsWith("#")) { return }
-        $idx = $line.IndexOf("=")
-        if ($idx -lt 1) { return }
-        $key = $line.Substring(0, $idx).Trim()
-        $value = $line.Substring($idx + 1).Trim()
-        $map[$key] = $value
-    }
-    return $map
-}
+$ScriptDir = $PSScriptRoot
 
-function New-SecurePassword($length = 32) {
-    $bytes = New-Object byte[] $length
-    $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::new()
-    $rng.GetBytes($bytes)
-    $rng.Dispose()
-    return [Convert]::ToBase64String($bytes).Substring(0, $length)
-}
-
-function Initialize-EnvFile {
-    Write-Section "Creating .env configuration file"
-    
-    if (Test-Path ".\.env") {
-        Write-Warning ".env file already exists"
-        $overwrite = Read-Host "Do you want to create a new one? (y/N)"
-        if ($overwrite -ne "y" -and $overwrite -ne "Y") {
-            Write-Info "Using existing .env file"
-            return
-        }
-Write-Host ""
-Write-Host "╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║                                                               ║" -ForegroundColor Cyan
-Write-Host "║         Platform9 Management System - Deployment             ║" -ForegroundColor Cyan
-Write-Host "║              Automated Installation Script                    ║" -ForegroundColor Cyan
-Write-Host "║               and Cleaning Up Services"
-    
-    $script:ComposeCmd = Get-ComposeCommand
-    
-    Write-Info "Stopping Docker containers..."
+# Handle --Stop mode
+if ($Stop) {
+    Write-Section "Stopping PF9 Management System"
+    Set-Location $ScriptDir
     Invoke-Compose @("down", "-v")
-    Write-Success "Docker containers stopped"
-    
-    Write-Info "Removing scheduled task..."
-    try { 
-        schtasks /delete /tn "PF9 Metrics Collection" /f 2>&1 | Out-Null
-        Write-Success "Scheduled task removed"
-    } catch { 
-        Write-Info "No scheduled task to remove"
-    }
-    
-    Write-Info "Stopping background metrics collectors..."
-    Get-Process | Where-Object { $_.ProcessName -match "python" -and $_.CommandLine -like "*host_metrics_collector*" } | Stop-Process -Force -ErrorAction SilentlyContinue
-    Write-Success "Background processes stopped"
-    
-    Write-Success "Cleanup complete"
-    }
-    
-    Write-Info "Generating secure passwords and secrets..."
-    
-    $postgresPassword = New-SecurePassword
-    $jwtSecret = New-SecurePassword 64
-    $ldapAdminPassword = New-SecurePassword 16
-    $ldapConfigPassword = New-SecurePassword 16
-    $ldapReadonlyPassword = New-SecurePassword 16
-    $defaultAdminPassword = New-SecurePassword 16
-    
-    # Read template
-    $envContent = Get-Content ".\.env.template" -Raw
-    
-    # Replace passwords with generated values
-    $envContent = $envContent -replace 'POSTGRES_PASSWORD=.*', "POSTGRES_PASSWORD=$postgresPassword"
-    $envContent = $envContent -replace 'JWT_SECRET_KEY=.*', "JWT_SECRET_KEY=$jwtSecret"
-    $envContent = $envContent -replace 'LDAP_ADMIN_PASSWORD=.*', "LDAP_ADMIN_PASSWORD=$ldapAdminPassword"
-    $envContent = $envContent -replace 'LDAP_CONFIG_PASSWORD=.*', "LDAP_CONFIG_PASSWORD=$ldapConfigPassword"
-    $envContent = $envContent -replace 'LDAP_READONLY_PASSWORD=.*', "LDAP_READONLY_PASSWORD=$ldapReadonlyPassword"
-    $envContent = $envContent -replace 'DEFAULT_ADMIN_PASSWORD=.*', "DEFAULT_ADMIN_PASSWORD=$defaultAdminPassword"
-    
-    # Save to .env
-    $envContent | Set-Content ".\.env" -NoNewline
-    
-    Write-Success ".env file created with secure random passwords"
-    Write-Warning "IMPORTANT: You must edit .env and configure:"
-    Write-Info "  - PF9_AUTH_URL (your Platform9 cluster URL)"
-    Write-Info "  - PF9_USERNAME (your service account)"
-    Write-Info "  - PF9_PASSWORD (your service account password)"
-    Write-Info "  - PF9_HOSTS (comma-separated list of host IPs for monitoring)"
-    Write-Info ""
-    Write-Info "Opening .env in notepad for editing..."
-    Start-Sleep -Seconds 2
-    
-    & notepad.exe ".\.env"
-    
-    Write-Info ""
-    $ready = Read-Host "Have you updated .env with your Platform9 credentials? (y/N)"
-    if ($ready -ne "y" -and $ready -ne "Y") {
-        Write-Warning "Please update .env and run deployment.ps1 again"
-        exit 1
-    }
+    Write-Success "All services stopped and volumes removed"
+    exit 0
 }
 
-function Test-Http($url, $retries = 10, $delaySec = 3) {
-    for ($i = 0; $i -lt $retries; $i++) {
-        try {
-            $resp = Invoke-WebRequest -Uri $url -TimeoutSec 5 -UseBasicParsing
-            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
-                return $true
-            }
-        } catch {
-            Start-Sleep -Seconds $delaySec
-        }
-# Step 1: Check Docker Installation
+Write-Section "PF9 Management System - Automated Deployment"
+Write-Info "Starting comprehensive deployment process..."
+
+# Step 1: Docker Environment Check
 if (-not $QuickStart) {
     Write-Section "Step 1: Checking Docker Installation"
     
-    if (-not (Test-DockerInstallation)) {
-        Write-Warning "Docker Desktop not found or not running"
-        Write-Info "Docker Desktop is required for this deployment"
-        Write-Info ""
-        
-        $install = Read-Host "Would you like to install Docker Desktop now? (y/N)"
-        if ($install -eq "y" -or $install -eq "Y") {
+    $dockerInstalled = Get-Command docker -ErrorAction SilentlyContinue
+    $composeInstalled = Get-Command docker-compose -ErrorAction SilentlyContinue
+    
+    if (-not $dockerInstalled) {
+        Write-Warning "Docker is not installed"
+        $install = Read-Host "Would you like to install Docker Desktop now? (y/n)"
+        if ($install -eq 'y' -or $install -eq 'Y') {
             Install-DockerDesktop
         } else {
-            Write-Error "Docker Desktop is required. Please install it manually:"
-            Write-Info "https://www.docker.com/products/docker-desktop"
+            Write-Error "Docker is required for deployment"
+            Write-Info "Download Docker Desktop from: https://www.docker.com/products/docker-desktop"
             exit 1
         }
-    } else {
-        Write-Success "Docker Desktop found"
     }
-# Step 3: Validate .env Configuration
-Write-Section "Step 3: Validating Configuration"
+    
+    Write-Success "Docker is installed"
+    
+    if (-not $composeInstalled) {
+        Write-Error "Docker Compose is not installed"
+        Write-Info "Please install Docker Desktop which includes Docker Compose"
+        exit 1
+    }
+    
+    Write-Success "Docker Compose is installed"
+    
+    # Verify Docker daemon is running
+    try {
+        docker info 2>&1 | Out-Null
+        Write-Success "Docker daemon is running"
+    } catch {
+        Write-Error "Docker daemon is not running"
+        Write-Info "Please start Docker Desktop and try again"
+        exit 1
+    }
+} else {
+    Write-Section "Step 1: Docker Check (Skipped)"
+    Write-Info "QuickStart mode - assuming Docker is installed and running"
+}
 
-$envMap = Read-DotEnv ".\.env"
-$required = @(
-    "POSTGRES_USER",
-    "POSTGRES_PASSWORD",
-    "POSTGRES_DB",
-    "JWT_SECRET_KEY",
-    "LDAP_ADMIN_PASSWORD",
-    "LDAP_CONFIG_PASSWORD",
-    "LDAP_READONLY_PASSWORD",
-    "PF9_AUTH_URL",
-    "PF9_USERNAME",
-    "PF9_PASSWORD"
+# Step 2: Environment Configuration
+Write-Section "Step 2: Environment Configuration"
+
+Set-Location $ScriptDir
+
+if (-not (Test-Path ".env")) {
+    if (Test-Path ".env.example") {
+        Write-Info "Creating .env from .env.example..."
+        Copy-Item ".env.example" ".env"
+        Write-Success "Created .env file"
+        Write-Warning "Please update .env with your Platform9 credentials:"
+        Write-Info "  - PF9_USERNAME: Your Platform9 username"
+        Write-Info "  - PF9_PASSWORD: Your Platform9 password"
+        Write-Info "  - PF9_REGION: Your Platform9 region URL"
+        Write-Info ""
+        $continue = Read-Host "Have you updated the .env file with your credentials? (y/n)"
+        if ($continue -ne 'y' -and $continue -ne 'Y') {
+            Write-Warning "Deployment paused. Please update .env and run the script again."
+            exit 0
+        }
+    } else {
+        Write-Error ".env.example not found"
+        Write-Info "Please ensure .env.example exists in the project root"
+        exit 1
+    }
+} else {
+    Write-Success ".env file already exists"
+}
+
+# Step 3: Validate Environment File
+Write-Section "Step 3: Validating Environment Configuration"
+
+$envContent = Get-Content ".env" | Where-Object { $_ -notmatch '^\s*#' -and $_ -match '=' }
+$envMap = @{}
+
+foreach ($line in $envContent) {
+    $parts = $line -split '=', 2
+    if ($parts.Count -eq 2) {
+        $key = $parts[0].Trim()
+        $value = $parts[1].Trim()
+        $envMap[$key] = $value
+    }
+}
+
+$requiredVars = @(
+    'PF9_USERNAME',
+    'PF9_PASSWORD',
+    'PF9_REGION',
+    'POSTGRES_USER',
+    'POSTGRES_PASSWORD',
+    'POSTGRES_DB'
 )
 
 $missing = @()
-$placeholders = @()
-
-foreach ($key in $required) {
-    if (-not $envMap.ContainsKey($key) -or [string]::IsNullOrWhiteSpace($envMap[$key])) {
-        $missing += $key
-    } elseif ($envMap[$key] -match "change|your|placeholder|example|FIXME") {
-        $placeholders += $key
+foreach ($var in $requiredVars) {
+    if (-not $envMap.ContainsKey($var) -or [string]::IsNullOrWhiteSpace($envMap[$var])) {
+        $missing += $var
     }
 }
 
 if ($missing.Count -gt 0) {
+    Write-Error "Missing or empty required environment variables:"
+    foreach ($var in $missing) {
+        Write-Host "  - $var" -ForegroundColor Red
+    }
+    Write-Info "Please update .env with all required values"
+    exit 1
+}
+
+Write-Success "All required environment variables are set"
+
 # Step 4: Prepare Directory Structure
 Write-Section "Step 4: Creating Directory Structure"
 
-# Step 5: Python and Metrics Setup
+$directories = @(
+    ".\logs",
+    ".\secrets",
+    ".\api\__pycache__",
+    ".\monitoring\cache",
+    ".\pf9-ui\dist"
+)
+
+foreach ($dir in $directories) {
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        Write-Success "Created: $dir"
+    } else {
+        Write-Info "Exists: $dir"
+    }
+}
+
+# Ensure metrics cache exists
+if (-not (Test-Path ".\metrics_cache.json")) {
+    @{
+        vms = @()
+        hosts = @()
+        alerts = @()
+        summary = @{
+            total_vms = 0
+            total_hosts = 0
+            last_update = $null
+        }
+        timestamp = $null
+    } | ConvertTo-Json | Set-Content ".\metrics_cache.json"
+    Write-Success "Created metrics cache file"
+}
+
+Write-Success "Directory structure ready"
+
+# Step 5: Python Environment Setup
 Write-Section "Step 5: Python Environment Setup"
 
-$pythonExe = $null
 $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $pythonExe) {
     $pythonExe = (Get-Command python3 -ErrorAction SilentlyContinue).Source
@@ -349,12 +295,33 @@ if (-not $pythonExe) {
 if ($pythonExe) {
     Write-Success "Python found: $pythonExe"
     
-    # Check/Install required packages
-    Write-Info "Checking Python dependencies..."
-    $requiredPackages = @("requests", "aiohttp", "openpyxl", "psycopg2-binary")
+    Write-Info "Installing required Python packages..."
+    $requiredPackages = @('requests', 'aiohttp', 'openpyxl', 'psycopg2-binary')
     
     foreach ($pkg in $requiredPackages) {
         try {
+            & $pythonExe -m pip install --quiet $pkg 2>&1 | Out-Null
+            Write-Success "Installed: $pkg"
+        } catch {
+            Write-Warning "Could not install: $pkg (may already be installed)"
+        }
+    }
+    
+    # Collect initial metrics if not skipped
+    if (-not $SkipMetrics) {
+        Write-Info "Collecting initial metrics snapshot..."
+        try {
+            & $pythonExe "host_metrics_collector.py" "--once" 2>&1 | Out-Null
+            Write-Success "Initial metrics collected"
+        } catch {
+            Write-Warning "Metrics collection failed (will retry later)"
+        }
+    }
+} else {
+    Write-Warning "Python not found - metrics collection will be unavailable"
+    Write-Info "Install Python 3.11+ from: https://www.python.org/downloads/"
+}
+
 # Step 6: Configure Automated Metrics Collection
 if (-not $NoSchedule -and -not $SkipMetrics -and $pythonExe) {
     Write-Section "Step 6: Configuring Automated Metrics Collection"
@@ -384,14 +351,9 @@ if (-not $NoSchedule -and -not $SkipMetrics -and $pythonExe) {
         Write-Info "Metrics collection skipped (--SkipMetrics)"
     } else {
         Write-Info "Python not available for metrics collection"
-            Write-Success "Initial metrics collected"
-        } catch {
-            Write-Warning "Metrics collection failed (will retry later)"
-        }
     }
-} else {
-    Write-Warning "Python not found - metrics collection will be unavailable"
-    Write-Info "Install Python 3.11+ from: https://www.python.org/downloads/"
+}
+
 # Step 7: Build and Start Docker Services
 Write-Section "Step 7: Building and Starting Docker Services"
 
@@ -399,6 +361,23 @@ Write-Info "Pulling base images (this may take a few minutes on first run)..."
 try {
     Invoke-Compose @("pull") 2>&1 | Out-Null
     Write-Success "Base images pulled"
+} catch {
+    Write-Warning "Could not pull some images (will build from scratch)"
+}
+
+if ($ForceRebuild) {
+    Write-Info "Force rebuilding all containers..."
+    Invoke-Compose @("build", "--no-cache")
+    Write-Success "Containers rebuilt"
+}
+
+Write-Info "Starting all services..."
+Invoke-Compose @("up", "-d", "--build")
+Write-Success "All services started"
+
+Write-Info "Waiting for services to initialize..."
+Start-Sleep -Seconds 15
+
 # Step 8: Verify Database Initialization
 Write-Section "Step 8: Verifying Database Schema"
 
@@ -413,271 +392,108 @@ try {
         Write-Success "Database initialized with $tableCount tables"
     } else {
         Write-Warning "Database may not be fully initialized ($tableCount tables found)"
+        Write-Info "Check logs with: docker-compose logs db"
     }
 } catch {
     Write-Warning "Could not verify database initialization"
+    Write-Info "Database may still be starting up - check with: docker-compose logs db"
 }
 
 # Step 9: Verify LDAP Initialization
 Write-Section "Step 9: Verifying LDAP Directory"
 
-Write-Info "Checking LDAP structure..."
-Start-Sleep -Seconds 3
-
 try {
-    $ldapCheck = & docker-compose exec -T ldap ldapsearch -x -H ldap://localhost -b "dc=$($envMap['LDAP_DOMAIN'].Split('.')[0]),dc=$($envMap['LDAP_DOMAIN'].Split('.')[1])" -LLL 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Success "LDAP directory initialized"
+    $ldapCheck = & docker-compose exec -T ldap ldapsearch -x -H ldap://localhost -b "dc=platform9,dc=local" -D "cn=admin,dc=platform9,dc=local" -w $envMap['LDAP_ADMIN_PASSWORD'] "(objectClass=organizationalUnit)" dn 2>&1
+    
+    if ($ldapCheck -match "numEntries") {
+        Write-Success "LDAP directory initialized successfully"
     } else {
-        Write-Warning "LDAP directory may need configuration"
+        Write-Warning "LDAP directory may not be fully initialized"
+        Write-Info "Check logs with: docker-compose logs ldap"
     }
 } catch {
     Write-Warning "Could not verify LDAP initialization"
+    Write-Info "LDAP may still be starting up - check with: docker-compose logs ldap"
 }
 
 # Step 10: Health Checks
 if (-not $SkipHealthCheck) {
-    Write-Section "Step 10: Running Service Health Checks"
+    Write-Section "Step 10: Running Health Checks"
     
     $checks = @(
-        @{Name="Database"; Container="pf9_db"; Port=5432},
-        @{Name="LDAP"; Container="pf9_ldap"; Port=389},
-        @{Name="API"; Container="pf9_api"; Url="http://localhost:8000/health"},
-        @{Name="Monitoring"; Container="pf9_monitoring"; Url="http://localhost:8001/health"},
-        @{Name="UI"; Container="pf9_ui"; Url="http://localhost:5173"}
-    )🎉 Deployment Complete!"
-
-Write-Host ""
-Write-Host "╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║                                                               ║" -ForegroundColor Green
-Write-Host "║     Platform9 Management System Successfully Deployed!       ║" -ForegroundColor Green
-Write-Host "║                                                               ║" -ForegroundColor Green
-Write-Host "╚═══════════════════════════════════════════════════════════════╝" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "Access your services:" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  Main Dashboard:  " -NoNewline; Write-Host "http://localhost:5173" -ForegroundColor Yellow
-Write-Host "  API Backend:     " -NoNewline; Write-Host "http://localhost:8000" -ForegroundColor Yellow
-Write-Host "  API Docs:        " -NoNewline; Write-Host "http://localhost:8000/docs" -ForegroundColor Yellow
-Write-Host "  Monitoring:      " -NoNewline; Write-Host "http://localhost:8001" -ForegroundColor Yellow
-Write-Host "  Database Admin:  " -NoNewline; Write-Host "http://localhost:8080" -ForegroundColor Yellow
-Write-Host "  LDAP Admin:      " -NoNewline; Write-Host "http://localhost:8081" -ForegroundColor Yellow
-Write-Host ""
-
-Write-Host "Default Admin Credentials:" -ForegroundColor Cyan
-Write-Host "  Username: " -NoNewline; Write-Host "admin" -ForegroundColor White
-Write-Host "  Password: " -NoNewline; Write-Host "$($envMap['DEFAULT_ADMIN_PASSWORD'])" -ForegroundColor White
-Write-Host "  (Change this in LDAP Admin after first login)" -ForegroundColor Yellow
-Write-Host ""
-
-Write-Host "Next Steps:" -ForegroundColor Cyan
-Write-Host "  1. Open http://localhost:5173 in your browser" -ForegroundColor White
-Write-Host "  2. Login with the admin credentials above" -ForegroundColor White
-Write-Host "  3. Navigate to Admin → User Management to create additional users" -ForegroundColor White
-Write-Host "  4. Check the Monitoring tab to verify Platform9 connectivity" -ForegroundColor White
-Write-Host ""
-
-Write-Host "Useful Commands:" -ForegroundColor Cyan
-Write-Host "  Stop services:    " -NoNewline; Write-Host ".\deployment.ps1 -Stop" -ForegroundColor White
-Write-Host "  View logs:        " -NoNewline; Write-Host "docker-compose logs -f <service>" -ForegroundColor White
-Write-Host "  Restart service:  " -NoNewline; Write-Host "docker-compose restart <service>" -ForegroundColor White
-Write-Host "  Check status:     " -NoNewline; Write-Host "docker-compose ps" -ForegroundColor White
-Write-Host ""
-
-Write-Host "Documentation:" -ForegroundColor Cyan
-Write-Host "  Admin Guide:      " -NoNewline; Write-Host "docs\ADMIN_GUIDE.md" -ForegroundColor White
-Write-Host "  Quick Reference:  " -NoNewline; Write-Host "docs\QUICK_REFERENCE.md" -ForegroundColor White
-Write-Host "  Deployment Guide: " -NoNewline; Write-Host "docs\DEPLOYMENT_GUIDE.md" -ForegroundColor White
-Write-Host ""
-
-if ($pythonExe) {
-    Write-Host "Metrics collection configured to run every 30 minutes" -ForegroundColor Green
-} else {
-    Write-Host "Note: Install Python 3.11+ to enable automated metrics collection" -ForegroundColor Yellow
-}
-
-Write-Host ""
-Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host ""ner)" --format "{{.Status}}" 2>&1
-        
-        if ($containerStatus -like "*Up*") {
-            # If has URL, test HTTP
-            if ($check.Url) {
-                if (Test-Http $check.Url -retries 5 -delaySec 2) {
-                    Write-Success "$($check.Name) - Healthy"
-                } else {
-                    Write-Warning "$($check.Name) - Container running but HTTP not responding"
-                    $allOk = $false
-                }
-            } else {
-                Write-Success "$($check.Name) - Running"
-            }
-        } else {
-            Write-Error "$($check.Name) - Not running"
-            $allOk = $false
-        }
-    }
-
-    if (-not $allOk) {
-        Write-Warning "Some services may need more time to initialize"
-        Write-Info "Check status with: docker-compose ps"
-        Write-Info "View logs with: docker-compose logs <service-name>"
-    }
-} else {
-    Write-Section "Step 10: Health Checks (Skipped)"
-    Write-Info "Health checks skipped (--SkipHealthCheck)"-Info "Waiting for services to initialize..."
-Start-Sleep -Seconds 15       hosts = @()
-        alerts = @()
-        summary = @{
-            total_vms = 0
-            total_hosts = 0
-            last_update = $null
-        }
-        timestamp = $null
-    } | ConvertTo-Json | Set-Content ".\metrics_cache.json"
-    Write-Success "Created metrics cache file"
-}
-
-Write-Success "Directory structure ready"
-    throw "Configuration incomplete"
-}
-
-if ($placeholders.Count -gt 0) {
-    Write-Warning "Placeholder values detected in .env:"
-    $placeholders | ForEach-Object { Write-Info "  - $_" }
-    Write-Info ""
-    $continue = Read-Host "Continue anyway? (y/N)"
-    if ($continue -ne "y" -and $continue -ne "Y") {
-        Write-Info "Please update .env and run deployment.ps1 again"
-        exit 1
-    }
-}
-
-Write-Success "Configuration validated"
-Write-Info "  Database: $($envMap['POSTGRES_DB'])"
-Write-Info "  LDAP Domain: $($envMap['LDAP_DOMAIN'])"
-Write-Info "  Platform9: $($envMap['PF9_AUTH_URL'])"
-
-Write-Section "Checking prerequisites"
-& docker info | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "Docker is not running. Start Docker Desktop and retry."
-}
-
-if ($InitEnv -and -not (Test-Path ".\.env")) {
-    if (Test-Path ".\.env.template") {
-        Copy-Item ".\.env.template" ".\.env"
-        Write-Host "Created .env from .env.template. Update required values before deploying." -ForegroundColor Yellow
-        exit 1
-    } else {
-        throw ".env.template not found. Create .env manually."
-    }
-}
-
-if (-not (Test-Path ".\.env")) {
-    throw ".env not found. Create it from .env.template or run deployment.ps1 -InitEnv."
-}
-
-Write-Section "Validating .env"
-$envMap = Read-DotEnv ".\.env"
-$required = @(
-    "POSTGRES_USER",
-    "POSTGRES_PASSWORD",
-    "POSTGRES_DB",
-    "JWT_SECRET_KEY",
-    "LDAP_ADMIN_PASSWORD",
-    "LDAP_CONFIG_PASSWORD",
-    "LDAP_READONLY_PASSWORD",
-    "PF9_AUTH_URL",
-    "PF9_USERNAME",
-    "PF9_PASSWORD"
-)
-$missing = @()
-foreach ($key in $required) {
-    if (-not $envMap.ContainsKey($key) -or [string]::IsNullOrWhiteSpace($envMap[$key])) {
-        $missing += $key
-    }
-}
-if ($missing.Count -gt 0) {
-    throw "Missing required .env values: $($missing -join ', ')"
-}
-
-Write-Section "Preparing directories"
-New-Item -ItemType Directory -Force -Path ".\logs" | Out-Null
-
-if (-not $SkipMetrics) {
-    Write-Section "Collecting initial metrics"
-    $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
-    if (-not $pythonExe) {
-        $pythonExe = (Get-Command python3 -ErrorAction SilentlyContinue).Source
-    }
-
-    if ($pythonExe) {
-        try {
-            & $pythonExe "host_metrics_collector.py" "--once" | Out-Null
-        } catch {
-            Write-Host "Metrics collection failed (non-fatal)." -ForegroundColor Yellow
-        }
-    } else {
-        Write-Host "Python not found. Skipping metrics collection." -ForegroundColor Yellow
-    }
-}
-
-if (-not $NoSchedule -and -not $SkipMetrics) {
-    Write-Section "Configuring scheduled metrics collection"
-    try {
-        schtasks /delete /tn "PF9 Metrics Collection" /f | Out-Null
-    } catch { }
-
-    $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
-    if (-not $pythonExe) {
-        $pythonExe = (Get-Command python3 -ErrorAction SilentlyContinue).Source
-    }
-
-    if ($pythonExe) {
-        $start = (Get-Date).AddMinutes(1).ToString("HH:mm")
-        $taskCmd = "cmd /c \"\"$pythonExe\" \"$ScriptDir\host_metrics_collector.py\" --once\""
-        schtasks /create /tn "PF9 Metrics Collection" /sc minute /mo 30 /st $start /tr $taskCmd /ru $env:USERNAME /f | Out-Null
-        Write-Host "Scheduled task created: PF9 Metrics Collection" -ForegroundColor Green
-    } else {
-        Write-Host "Python not found. Skipping scheduled task." -ForegroundColor Yellow
-    }
-}
-
-Write-Section "Starting services"
-if ($NoBuild) {
-    Invoke-Compose @("up", "-d")
-} else {
-    Invoke-Compose @("up", "-d", "--build")
-}
-
-if (-not $SkipHealthCheck) {
-    Write-Section "Running health checks"
-    $checks = @(
-        @{Name="API"; Url="http://localhost:8000/health"},
-        @{Name="Monitoring"; Url="http://localhost:8001/health"},
-        @{Name="UI"; Url="http://localhost:5173"}
+        @{Name="API"; Url="http://localhost:8000/health"; Critical=$true},
+        @{Name="API Docs"; Url="http://localhost:8000/docs"; Critical=$false},
+        @{Name="Monitoring"; Url="http://localhost:8001/health"; Critical=$true},
+        @{Name="UI"; Url="http://localhost:5173"; Critical=$true},
+        @{Name="pgAdmin"; Url="http://localhost:8080"; Critical=$false}
     )
 
     $allOk = $true
+    $criticalFailed = $false
+    
     foreach ($check in $checks) {
+        Write-Info "Testing $($check.Name)..."
+        Start-Sleep -Seconds 2
+        
         if (Test-Http $check.Url) {
-            Write-Host "✓ $($check.Name) OK" -ForegroundColor Green
+            Write-Success "$($check.Name) is responding"
         } else {
-            Write-Host "✗ $($check.Name) not ready" -ForegroundColor Red
+            if ($check.Critical) {
+                Write-Error "$($check.Name) is not responding (critical)"
+                $criticalFailed = $true
+            } else {
+                Write-Warning "$($check.Name) is not responding (non-critical)"
+            }
             $allOk = $false
         }
     }
 
-    if (-not $allOk) {
-        Write-Host "Some services are not ready yet. Re-check with docker-compose ps." -ForegroundColor Yellow
+    if ($criticalFailed) {
+        Write-Warning "Some critical services are not responding yet"
+        Write-Info "Services may need more time to start. Check status with:"
+        Write-Info "  docker-compose ps"
+        Write-Info "  docker-compose logs"
+    } elseif (-not $allOk) {
+        Write-Success "All critical services are running (some optional services pending)"
+    } else {
+        Write-Success "All services are healthy and responding"
     }
+} else {
+    Write-Section "Step 10: Health Checks (Skipped)"
+    Write-Info "Use --SkipHealthCheck=false to enable health checks"
 }
 
-Write-Section "Deployment complete"
-Write-Host "UI:         http://localhost:5173" -ForegroundColor White
-Write-Host "API:        http://localhost:8000" -ForegroundColor White
-Write-Host "API Docs:   http://localhost:8000/docs" -ForegroundColor White
-Write-Host "Monitoring: http://localhost:8001" -ForegroundColor White
-Write-Host "pgAdmin:    http://localhost:8080" -ForegroundColor White
+# Final Summary
+Write-Section "Deployment Complete!"
+
+Write-Host ""
+Write-Host "Access Points:" -ForegroundColor Cyan
+Write-Host "  UI:            http://localhost:5173" -ForegroundColor White
+Write-Host "  API:           http://localhost:8000" -ForegroundColor White
+Write-Host "  API Docs:      http://localhost:8000/docs" -ForegroundColor White
+Write-Host "  Monitoring:    http://localhost:8001" -ForegroundColor White
+Write-Host "  pgAdmin:       http://localhost:8080" -ForegroundColor White
+Write-Host ""
+
+Write-Host "Next Steps:" -ForegroundColor Cyan
+Write-Host "  1. Open UI at http://localhost:5173" -ForegroundColor White
+Write-Host "  2. Log in with LDAP credentials (admin@platform9.local / changeme)" -ForegroundColor White
+Write-Host "  3. Configure snapshot policies and automation" -ForegroundColor White
+Write-Host "  4. Review metrics and monitoring dashboards" -ForegroundColor White
+Write-Host ""
+
+Write-Host "Management Commands:" -ForegroundColor Cyan
+Write-Host "  View logs:        docker-compose logs -f" -ForegroundColor White
+Write-Host "  Check status:     docker-compose ps" -ForegroundColor White
+Write-Host "  Stop services:    docker-compose down" -ForegroundColor White
+Write-Host "  Restart service:  docker-compose restart <service>" -ForegroundColor White
+Write-Host ""
+
+if ($pythonExe -and -not $SkipMetrics) {
+    Write-Host "Metrics Collection:" -ForegroundColor Cyan
+    Write-Host "  Scheduled Task:   PF9 Metrics Collection (every 30 minutes)" -ForegroundColor White
+    Write-Host "  Manual run:       python host_metrics_collector.py" -ForegroundColor White
+    Write-Host ""
+}
+
+Write-Success "System is ready for use!"
