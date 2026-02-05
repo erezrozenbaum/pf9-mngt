@@ -348,6 +348,7 @@ docker stats
 - **[ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md)**: Comprehensive administration guide
 - **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)**: Quick commands and examples
 - **[SECURITY_CHECKLIST.md](docs/SECURITY_CHECKLIST.md)**: Security assessment and hardening
+- **[SNAPSHOT_AUTOMATION.md](docs/SNAPSHOT_AUTOMATION.md)**: Complete snapshot automation system guide
 
 ## 🆘 Troubleshooting
 

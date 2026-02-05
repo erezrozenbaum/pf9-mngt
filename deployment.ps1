@@ -492,7 +492,9 @@ Write-Host "Next Steps:" -ForegroundColor Cyan
 Write-Host "  1. Open UI at http://localhost:5173" -ForegroundColor White
 Write-Host "  2. Log in with LDAP credentials (admin@platform9.local / changeme)" -ForegroundColor White
 Write-Host "  3. Configure snapshot policies and automation" -ForegroundColor White
-Write-Host "  4. Review metrics and monitoring dashboards" -ForegroundColor White
+Write-Host "  4. Review compliance reports in Dashboard > Snapshot Compliance tab" -ForegroundColor White
+Write-Host "  5. Monitor system operations in Dashboard > System Logs tab" -ForegroundColor White
+Write-Host "  6. Review security practices in docs/SECURITY_CHECKLIST.md before production" -ForegroundColor White
 Write-Host ""
 
 Write-Host "Management Commands:" -ForegroundColor Cyan
@@ -504,12 +506,14 @@ Write-Host ""
 
 if ($pythonExe -and -not $SkipMetrics) {
     Write-Host "Automated Tasks:" -ForegroundColor Cyan
-    Write-Host "  Metrics Collection:  Every 30 minutes (PF9 Metrics Collection)" -ForegroundColor White
-    Write-Host "  RVTools Export:      Daily at 2:00 AM (PF9 RVTools Export)" -ForegroundColor White
+    Write-Host "  Metrics Collection:    Every 30 minutes (PF9 Metrics Collection)" -ForegroundColor White
+    Write-Host "  RVTools Export:        Daily at 2:00 AM (PF9 RVTools Export)" -ForegroundColor White
+    Write-Host "  Compliance Report:     Daily via snapshot_worker container" -ForegroundColor White
     Write-Host ""
     Write-Host "Manual Execution:" -ForegroundColor Cyan
-    Write-Host "  Metrics:             python host_metrics_collector.py" -ForegroundColor White
-    Write-Host "  RVTools:             python pf9_rvtools.py" -ForegroundColor White
+    Write-Host "  Metrics:               python host_metrics_collector.py" -ForegroundColor White
+    Write-Host "  RVTools:               python pf9_rvtools.py" -ForegroundColor White
+    Write-Host "  Compliance Report:     docker exec pf9_snapshot_worker python snapshots/p9_snapshot_compliance_report.py --sla-days 2" -ForegroundColor White
     Write-Host ""
 }
 
