@@ -51,7 +51,7 @@ EOF
 # 3. Start all services
 docker-compose up -d
 
-# Windows automated deployment (includes validation + health checks)
+# Windows automated deployment (includes validation, admin user/role/permission automation, and health checks)
 # .\deployment.ps1
 
 # 4. Wait for services to be ready
@@ -523,38 +523,16 @@ After `docker-compose up -d` and services are healthy:
 | **pgAdmin** | http://localhost:8080 | $PGADMIN_EMAIL / $PGADMIN_PASSWORD | Database management |
 | **LDAP Admin** | http://localhost:8081 | cn=admin / $LDAP_ADMIN_PASSWORD | LDAP user management |
 
-### Create Initial Users in LDAP
+### Admin User and Superadmin Permissions Are Automated
 
-Use phpLDAPadmin (http://localhost:8081):
+> **Note:** As of February 2026, running `deployment.ps1` will always ensure:
+> - The admin user (from `.env`: `DEFAULT_ADMIN_USER`/`DEFAULT_ADMIN_PASSWORD`) is created in LDAP and in the `user_roles` table as `superadmin`.
+> - The `superadmin` role always has a wildcard permission (`*`) in `role_permissions`.
+> - You do **not** need to manually create the admin user or fix permissions in the database—this is enforced automatically on every deployment.
 
-1. **Login**:
-   - Server: `ldap`
-   - Login DN: `cn=admin,dc=company,dc=local` (or your LDAP_BASE_DN)
-   - Password: Use `$LDAP_ADMIN_PASSWORD` from .env
+If you change the admin username/email in `.env`, simply re-run `deployment.ps1` and the system will update LDAP and database roles/permissions accordingly.
 
-2. **Create User Structure**:
-   ```
-   1. Expand tree: dc=company,dc=local
-   2. Create child entries:
-      - ou=users
-      - ou=groups
-   ```
-
-3. **Add Users**:
-   - Right-click ou=users → Create child entry
-   - Object class: inetOrgPerson
-   - Fill details:
-     - cn: username
-     - sn: lastname
-     - mail: user@company.com
-     - userPassword: (secure password)
-
-4. **Set RBAC Roles** (via API or directly in database):
-   ```bash
-   # Connect to database and set role
-   docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c \
-     "INSERT INTO user_roles (username, role, domain_id) VALUES ('user1', 'admin', 'default');"
-   ```
+You can still use phpLDAPadmin (http://localhost:8081) for advanced LDAP management, but initial admin setup is now fully automated.
 
 ### Verify Connectivity
 

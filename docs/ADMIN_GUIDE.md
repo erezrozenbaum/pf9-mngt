@@ -165,11 +165,20 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 ## Authentication & Authorization
 
 ### LDAP Integration
+
 The system uses OpenLDAP for enterprise user authentication:
 - **LDAP Server**: Port 389
 - **Base DN**: dc=ccc,dc=co,dc=il
 - **User DN**: ou=users,dc=ccc,dc=co,dc=il
 - **Admin Password**: Configured via LDAP_ADMIN_PASSWORD environment variable
+
+> **Note:** As of February 2026, running `deployment.ps1` will always ensure:
+> - The admin user (from `.env`: `DEFAULT_ADMIN_USER`/`DEFAULT_ADMIN_PASSWORD`) is created in LDAP and in the `user_roles` table as `superadmin`.
+> - The `superadmin` role always has a wildcard permission (`*`) in `role_permissions`.
+> - You do **not** need to manually create the admin user or fix permissions in the database—this is enforced automatically on every deployment.
+> - If you change the admin username/email in `.env`, simply re-run `deployment.ps1` and the system will update LDAP and database roles/permissions accordingly.
+
+Manual LDAP or database admin setup is no longer required for initial deployment or admin recovery.
 
 ### Role Hierarchy
 1. **Viewer**: Read-only access to all resources
@@ -184,10 +193,14 @@ The system uses OpenLDAP for enterprise user authentication:
 - **Audit Trail**: All permission denials logged to auth_audit_log
 
 ### User Management Operations
+
 - Create LDAP users via Admin panel or API (superadmin only)
 - Assign roles: viewer, operator, admin, superadmin
 - Track authentication events: login, logout, failed_login
 - Monitor user activity via System Audit tab (90-day retention)
+
+> **Admin/Superadmin Setup Automation:**
+> The admin user and superadmin permissions are always enforced by `deployment.ps1` using `.env` values. Manual admin user/role/permission setup is not required and will be automatically corrected on each deployment.
 
 ## Real-Time Monitoring System
 

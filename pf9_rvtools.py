@@ -231,40 +231,31 @@ def cleanup_old_records(conn):
         total_removed = 0
         for table in tables:
             try:
-                # First, capture records we're about to delete for audit trail
                 resource_type = resource_type_map.get(table, table)
-                
-                # Select records to delete and log them to deletions_history
+                # Determine which columns exist in the table
+                cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = %s", (table,))
+                cols = set(r[0] for r in cur.fetchall())
+                # Use NULL for missing columns
+                name_col = 'name as resource_name' if 'name' in cols else 'NULL as resource_name'
+                project_name_col = 'project_name' if 'project_name' in cols else 'NULL as project_name'
+                domain_name_col = 'domain_name' if 'domain_name' in cols else 'NULL as domain_name'
+                # Build the SELECT statement dynamically
+                select_stmt = f"SELECT %s::text as resource_type, id::text as resource_id, {name_col}, {project_name_col}, {domain_name_col}, last_seen_at as last_seen_before_deletion, 'Automatic cleanup - not seen in recent RVTools scan' as reason, row_to_json({table}.*)::jsonb as raw_json_snapshot FROM {table} WHERE last_seen_at < %s"
                 cur.execute(f"""
                     INSERT INTO deletions_history 
                         (resource_type, resource_id, resource_name, project_name, 
                          domain_name, last_seen_before_deletion, reason, raw_json_snapshot)
-                    SELECT 
-                        %s::text as resource_type,
-                        id::text as resource_id,
-                        name as resource_name,
-                        project_name,
-                        domain_name,
-                        last_seen_at as last_seen_before_deletion,
-                        'Automatic cleanup - not seen in recent RVTools scan' as reason,
-                        row_to_json({table}.*)::jsonb as raw_json_snapshot
-                    FROM {table}
-                    WHERE last_seen_at < %s
+                    {select_stmt}
                 """, (resource_type, cutoff))
                 logged = cur.rowcount
-                
-                # Now delete the stale records
                 cur.execute(f"DELETE FROM {table} WHERE last_seen_at < %s", (cutoff,))
                 removed = cur.rowcount
-                
                 if removed > 0:
                     print(f"[DB] Cleaned {removed} old records from {table} (logged {logged} to deletions_history)")
                     total_removed += removed
-                # Commit after each successful table deletion
                 conn.commit()
             except Exception as e:
                 print(f"[DB] Warning: Could not clean {table}: {e}")
-                # For foreign key issues, roll back this table only and continue
                 conn.rollback()
         
         if total_removed > 0:

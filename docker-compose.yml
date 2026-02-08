@@ -102,7 +102,7 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      - "./metrics_cache.json:/tmp/metrics_cache.json:ro"
+      - "./metrics_cache.json:/tmp/metrics_cache.json"
       - "./logs:/app/logs"
     depends_on:
       - pf9_api
@@ -162,11 +162,13 @@ services:
     environment:
       LDAP_ORGANISATION: "${LDAP_ORGANISATION:-Platform9 Management}"
       LDAP_DOMAIN: "${LDAP_DOMAIN:-pf9mgmt.local}"
-      LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD}"
+      LDAP_ADMIN_PASSWORD: '${LDAP_ADMIN_PASSWORD}'
       LDAP_CONFIG_PASSWORD: "${LDAP_CONFIG_PASSWORD}"
       LDAP_READONLY_USER: "${LDAP_READONLY_USER:-true}"
       LDAP_READONLY_USER_PASSWORD: "${LDAP_READONLY_PASSWORD}"
       LDAP_TLS_VERIFY_CLIENT: "never"
+      LDAP_ADMIN_DN: "cn=admin,dc=ccc,dc=co,dc=il"
+      # LDAP_ADMIN_PASSWORD is already set above
     ports:
       - "${LDAP_PORT:-389}:389"
       - "${LDAP_SSL_PORT:-636}:636"
@@ -175,7 +177,7 @@ services:
       - ldap_config:/etc/ldap/slapd.d
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost", "-b", "${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}", "-s", "base"]
+      test: ["CMD", "sh", "-c", "ldapsearch -x -D \"$LDAP_ADMIN_DN\" -w \"$LDAP_ADMIN_PASSWORD\" -H ldap://localhost -b $LDAP_BASE_DN -s base"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -336,7 +336,7 @@ if (-not $NoSchedule -and -not $SkipMetrics -and $pythonExe) {
 
     Write-Info "Creating metrics collection task (every 30 minutes)..."
     $start = (Get-Date).AddMinutes(1).ToString("HH:mm")
-    $metricsCmd = "cmd /c \"\"$pythonExe\" \"$ScriptDir\host_metrics_collector.py\" --once\""
+    $metricsCmd = "cmd /c `"$pythonExe`" `"$ScriptDir\host_metrics_collector.py`" --once"
     
     try {
         schtasks /create /tn "PF9 Metrics Collection" /sc minute /mo 30 /st $start /tr $metricsCmd /ru $env:USERNAME /f 2>&1 | Out-Null
@@ -347,7 +347,7 @@ if (-not $NoSchedule -and -not $SkipMetrics -and $pythonExe) {
     }
     
     Write-Info "Creating RVTools export task (daily at 2 AM)..."
-    $rvtoolsCmd = "cmd /c \"\"$pythonExe\" \"$ScriptDir\pf9_rvtools.py\"\""
+    $rvtoolsCmd = "cmd /c `"$pythonExe`" `"$ScriptDir\pf9_rvtools.py`""
     
     try {
         schtasks /create /tn "PF9 RVTools Export" /sc daily /st 02:00 /tr $rvtoolsCmd /ru $env:USERNAME /f 2>&1 | Out-Null
@@ -388,19 +388,18 @@ Write-Info "Starting all services..."
 Invoke-Compose @("up", "-d", "--build")
 Write-Success "All services started"
 
+
+# Wait for services to initialize
 Write-Info "Waiting for services to initialize..."
 Start-Sleep -Seconds 15
 
 # Step 8: Verify Database Initialization
 Write-Section "Step 8: Verifying Database Schema"
-
 Write-Info "Checking database tables..."
 Start-Sleep -Seconds 5
-
 try {
     $tableCheck = & docker-compose exec -T db psql -U $envMap['POSTGRES_USER'] -d $envMap['POSTGRES_DB'] -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>&1
     $tableCount = [int]($tableCheck -replace '\s','')
-    
     if ($tableCount -gt 20) {
         Write-Success "Database initialized with $tableCount tables"
     } else {
@@ -411,6 +410,23 @@ try {
     Write-Warning "Could not verify database initialization"
     Write-Info "Database may still be starting up - check with: docker-compose logs db"
 }
+
+# Step 8b: Ensure admin user and superadmin permissions
+Write-Section "Step 8b: Ensuring Admin User and Superadmin Permissions"
+$defaultAdminUser = $envMap['DEFAULT_ADMIN_USER']
+$defaultAdminPassword = $envMap['DEFAULT_ADMIN_PASSWORD']
+if (-not $defaultAdminUser) { $defaultAdminUser = "admin" }
+if (-not $defaultAdminPassword) { $defaultAdminPassword = "admin" }
+
+Write-Info "Ensuring admin user '$defaultAdminUser' is present in user_roles as superadmin..."
+$ensureUserRole = "INSERT INTO user_roles (username, role, granted_by, granted_at, is_active) VALUES ('$defaultAdminUser', 'superadmin', 'system', now(), true) ON CONFLICT (username) DO UPDATE SET role='superadmin', granted_by='system', granted_at=now(), is_active=true;"
+docker exec -i pf9_db psql -U $envMap['POSTGRES_USER'] -d $envMap['POSTGRES_DB'] -c "$ensureUserRole" | Out-Null
+Write-Success "Admin user ensured in user_roles."
+
+Write-Info "Ensuring wildcard permission for superadmin in role_permissions..."
+$ensureSuperadminPerm = "INSERT INTO role_permissions (role, resource, action) VALUES ('superadmin', '*', 'admin') ON CONFLICT DO NOTHING;"
+docker exec -i pf9_db psql -U $envMap['POSTGRES_USER'] -d $envMap['POSTGRES_DB'] -c "$ensureSuperadminPerm" | Out-Null
+Write-Success "Wildcard permission for superadmin ensured."
 
 # Step 9: Verify LDAP Initialization
 Write-Section "Step 9: Verifying LDAP Directory"
