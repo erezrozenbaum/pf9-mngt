@@ -1,3 +1,26 @@
+-- =====================================================================
+-- VIEW: v_most_changed_resources (for compliance/audit UI)
+-- =====================================================================
+-- This view summarizes the most recently changed resources (servers, volumes, snapshots, deletions).
+CREATE OR REPLACE VIEW v_most_changed_resources AS
+SELECT
+    resource_type,
+    resource_id,
+    resource_name,
+    project_id,
+    project_name,
+    domain_id,
+    domain_name,
+    status,
+    created_at,
+    modified_at,
+    deleted_at,
+    change_type,
+    recorded_at,
+    COUNT(*) OVER (PARTITION BY resource_type, resource_id) AS change_count,
+    recorded_at AS last_change
+FROM v_recent_changes
+ORDER BY recorded_at DESC;
 -- Basic tenants/projects/domains
 CREATE TABLE IF NOT EXISTS domains (
     id          TEXT PRIMARY KEY,
@@ -953,4 +976,98 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('superadmin', 'snapshot_runs', 'admin'),
 ('superadmin', 'snapshot_records', 'admin'),
 ('superadmin', 'dashboard', 'admin'),
+
 ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- =====================================================================
+-- VIEW: v_recent_changes (for audit/compliance UI)
+-- =====================================================================
+CREATE OR REPLACE VIEW v_recent_changes AS
+SELECT
+    'server' AS resource_type,
+    s.id AS resource_id,
+    s.name AS resource_name,
+    s.project_id,
+    p.name AS project_name,
+    d.id AS domain_id,
+    d.name AS domain_name,
+    s.status,
+    s.created_at,
+    s.last_seen_at AS modified_at,
+    NULL::TIMESTAMPTZ AS deleted_at,
+    'active' AS change_type
+FROM servers s
+LEFT JOIN projects p ON s.project_id = p.id
+LEFT JOIN domains d ON p.domain_id = d.id
+UNION ALL
+SELECT
+    'volume',
+    v.id,
+    v.name,
+    v.project_id,
+    p.name,
+    d.id,
+    d.name,
+    v.status,
+    v.created_at,
+    v.last_seen_at,
+    NULL,
+    'active'
+FROM volumes v
+LEFT JOIN projects p ON v.project_id = p.id
+LEFT JOIN domains d ON p.domain_id = d.id
+UNION ALL
+SELECT
+    'snapshot',
+    s.id,
+    s.name,
+    s.project_id,
+    p.name,
+    d.id,
+    d.name,
+    s.status,
+    s.created_at,
+    s.last_seen_at,
+    NULL,
+    'active'
+FROM snapshots s
+LEFT JOIN projects p ON s.project_id = p.id
+LEFT JOIN domains d ON p.domain_id = d.id
+UNION ALL
+SELECT
+    dh.resource_type,
+    dh.resource_id,
+    dh.resource_name,
+    NULL AS project_id,
+    dh.project_name,
+    NULL AS domain_id,
+    dh.domain_name,
+    NULL AS status,
+    NULL AS created_at,
+    NULL AS modified_at,
+    dh.deleted_at,
+    'deleted'
+FROM deletions_history dh;
+
+-- =====================================================================
+-- VIEW: v_comprehensive_changes (for history/audit endpoints)
+-- =====================================================================
+CREATE OR REPLACE VIEW v_comprehensive_changes AS
+SELECT 'server' AS resource_type, h.server_id AS resource_id, s.name AS resource_name, h.change_hash, h.recorded_at, p.name AS project_name, d.name AS domain_name, NULL::TIMESTAMPTZ AS actual_time, 'Server state/history change' AS change_description
+FROM servers_history h
+LEFT JOIN servers s ON h.server_id = s.id
+LEFT JOIN projects p ON s.project_id = p.id
+LEFT JOIN domains d ON p.domain_id = d.id
+UNION ALL
+SELECT 'volume', h.volume_id, v.name, h.change_hash, h.recorded_at, p.name, d.name, NULL, 'Volume state/history change'
+FROM volumes_history h
+LEFT JOIN volumes v ON h.volume_id = v.id
+LEFT JOIN projects p ON v.project_id = p.id
+LEFT JOIN domains d ON p.domain_id = d.id
+UNION ALL
+SELECT 'snapshot', h.snapshot_id, s.name, h.change_hash, h.recorded_at, s.project_name, s.domain_name, NULL, 'Snapshot state/history change'
+FROM snapshots_history h
+LEFT JOIN snapshots s ON h.snapshot_id = s.id
+UNION ALL
+SELECT 'deletion', dh.resource_id, dh.resource_name, 'deleted-' || dh.resource_id AS change_hash, dh.deleted_at AS recorded_at, dh.project_name, dh.domain_name, dh.deleted_at AS actual_time, 'Resource deleted'
+FROM deletions_history dh;
