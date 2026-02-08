@@ -518,6 +518,9 @@ def main():
             n_assignments  = write_role_assignments(conn, role_assignments, run_id=run_id)
             n_groups       = write_groups(conn, groups, run_id=run_id)
             
+            # Commit after user management to prevent transaction abort from affecting subsequent operations
+            conn.commit()
+            
             n_flavors      = upsert_flavors(conn, flavors, run_id=run_id)
             n_images       = upsert_images(conn, images, run_id=run_id)
             n_hv           = upsert_hypervisors(conn, hypervisors, run_id=run_id)

@@ -573,7 +573,9 @@ docker-compose exec ldap ldapwhoami -x -D "cn=admin,dc=company,dc=local" -w ${LD
 
 # 4. Test UI (in browser)
 # Navigate to http://localhost:5173
-# You should see the Platform9 dashboard (will prompt for login)
+# You should see the Landing Dashboard (default view, v1.1 feature)
+# Shows real-time health metrics, compliance status, and 14 analytics cards
+# Will prompt for login with LDAP credentials
 
 # 5. Test Platform9 Connection
 docker-compose logs pf9_api | grep -i "platform9\|openstack\|auth"

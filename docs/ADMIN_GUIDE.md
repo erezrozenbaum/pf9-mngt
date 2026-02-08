@@ -2,7 +2,42 @@
 
 ## Recent Major Enhancements (February 2026)
 
-### Production-Ready Features (NEW ✨)
+### Landing Dashboard (v1.1 - NEW ✨✨✨)
+- **14 Real-Time Analytics Endpoints**: Comprehensive operational intelligence dashboard
+  - **Health Summary**: System-wide metrics (VMs, volumes, networks, alerts, CPU/memory utilization)
+  - **Snapshot SLA Compliance**: Tenant-level snapshot policy compliance tracking with violation details
+  - **Host Utilization**: Top N hosts by CPU/memory with critical threshold alerts (>85%)
+  - **Recent Activity**: 24-hour activity timeline (VM creation, deletions, user logins)
+  - **Coverage Risks**: Unprotected volume analysis with risk scoring and GB-at-risk calculations
+  - **Capacity Pressure**: Storage/compute quota warnings (>75% storage, >80% compute)
+  - **VM Hotspots**: Top resource consumers sorted by CPU, memory, or disk usage
+  - **Tenant Risk Scores**: Multi-factor risk assessment (compliance, utilization, drift)
+  - **Compliance Drift**: 7-day policy compliance trending with deterioration alerts
+  - **Capacity Trends**: 7-day growth forecasting with projected exhaustion dates
+  - **Trendlines**: 30-day infrastructure growth patterns (VMs, volumes, snapshots)
+  - **Change Compliance**: Post-change snapshot verification within configurable windows
+  - **Tenant Risk Heatmap**: Multi-dimensional risk matrix with interactive filtering
+  - **Tenant Summary**: Quick tenant overview with VM/volume/network/user counts
+- **17+ React Dashboard Components**: Advanced analytics cards with auto-refresh (30s intervals)
+- **Dark/Light Mode Support**: Full theme compatibility with glassmorphic card design
+- **Responsive Design**: Mobile-first layout with adaptive breakpoints (1440px, 1024px, 640px)
+- **Auto-Refresh**: Real-time updates every 30 seconds with manual refresh capability
+- **RBAC Integration**: Dashboard access requires "dashboard:read" permission
+
+### Database Integration & Bug Fixes (v1.1)
+- **db_writer.py Module**: Complete database integration layer (690+ lines)
+  - 20+ upsert functions for all resource types (domains, projects, servers, volumes, networks, etc.)
+  - Foreign key validation preventing constraint violations
+  - SHA256-based change detection for history tracking
+  - Savepoint-based transaction recovery for partial failure isolation
+- **Fixed API Server Crash**: Corrected IndentationError in snapshot_management.py (lines 27-38)
+- **Fixed Foreign Key Violations**: Enhanced validation logic for users, networks, ports, routers, floating_IPs
+- **Fixed Integer Field Handling**: safe_int() helper to convert empty strings to NULL
+- **Enhanced Snapshots History**: Added project_name, tenant_name, domain_name, domain_id columns
+- **Transaction Isolation**: Intermediate commits prevent cascading failures in user management
+- **Production Validation**: Successfully processes 107 users, 123 role assignments with zero violations
+
+### Production-Ready Features
 - **Startup Config Validation**: Comprehensive environment variable validation on API startup with color-coded results
 - **API Performance Metrics**: Public `/metrics` + authenticated `/api/metrics` for UI (p50/p95/p99 latencies, request tracking)
 - **Structured Logging**: JSON + colored console logs, plus authenticated `/api/logs` endpoint for UI

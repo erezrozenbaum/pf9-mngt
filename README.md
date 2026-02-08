@@ -102,11 +102,24 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Comprehensive Reporting**: Detailed compliance reports with tenant/domain aggregation
 
 ### Modern Web Management Interface
-- **React 19.2+ Dashboard**: 16 comprehensive management tabs (Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, History, Audit, Monitoring, Admin)
+- **React 19.2+ Dashboard**: 17+ comprehensive management tabs including new **Landing Dashboard** with real-time operational intelligence
+- **Landing Dashboard Features** (All Users):
+  - **Health Summary Card**: System-wide metrics (VMs, volumes, networks, resource utilization)
+  - **Snapshot SLA Compliance**: Tenant-level compliance tracking with warning/critical alerting
+  - **Top Host Utilization**: Real-time CPU/memory usage across compute nodes
+  - **Recent Activity Widget**: Last 24 hours of infrastructure changes
+  - **Coverage Risk Analysis**: Volumes without snapshot protection
+  - **Capacity Pressure Indicators**: Storage and compute capacity warnings
+  - **VM Hotspots**: Top resource consumers (CPU/memory/storage)
+  - **Tenant Risk Scores**: Multi-factor risk assessments per tenant
+  - **Compliance Drift Tracking**: Policy adherence trending
+  - **Capacity Trends**: 7-day resource utilization forecasting
+  - **Trendlines**: Infrastructure growth patterns and velocity metrics
+- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring
 - **Admin Observability Tabs**: API Metrics + System Logs (Admin/Superadmin only)
-- **Role-Based UI**: Admin-only tabs visible only to admin/superadmin roles
-- **Secure Login**: LDAP authentication with JWT token management
-- **Real-Time Data**: Auto-refresh capabilities with efficient pagination across all endpoints
+- **Role-Based UI**: Dashboard and admin tabs with permission-based visibility
+- **Secure Login**: LDAP authentication with JWT token management and session tracking
+- **Real-Time Data**: Auto-refresh every 30 seconds on dashboard, efficient pagination across all endpoints
 - **Advanced Filtering**: Multi-field filtering, sorting, and search across all 19+ resource types
 - **Administrative Operations**: Create/delete flavors and networks, user management, role assignments (admin+ only)
 - **Historical Analysis**: Resource timeline tracking, change velocity metrics, compliance dashboards
@@ -687,5 +700,24 @@ If you find this project useful, please consider:
 ---
 
 **Project Status**: Active Development  
-**Last Updated**: February 4, 2026  
-**Version**: 1.0
+**Last Updated**: February 8, 2026  
+**Version**: 1.1
+
+## 🎯 Recent Updates (February 2026)
+
+### Landing Dashboard Implementation (v1.1)
+- ✅ 14 New Dashboard REST Endpoints with comprehensive operational intelligence
+- ✅ Real-time health summary with system-wide metrics
+- ✅ Snapshot SLA compliance monitoring with tenant-level tracking
+- ✅ Host utilization tracking with critical threshold alerting
+- ✅ Recent changes timeline (24-hour activity feed)
+- ✅ Coverage risk analysis for unprotected volumes
+- ✅ Capacity pressure indicators and forecasting
+- ✅ VM hotspots identification across CPU/memory/storage
+- ✅ Tenant risk scoring with multi-factor analysis
+- ✅ Compliance drift tracking and trending
+- ✅ Trendlines for infrastructure growth patterns
+- ✅ Auto-refresh every 30 seconds on dashboard
+- ✅ Database schema enhancements for user management and history tracking
+- ✅ Complete db_writer.py module for RVTools database integration
+- ✅ Foreign key validation and transaction management improvements

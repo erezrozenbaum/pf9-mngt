@@ -183,6 +183,15 @@
   color: white;
 }
 
+.status-pending {
+  background: #e8eaf6 !important;
+}
+
+.status-pending .status-badge {
+  background: #5c6bc0;
+  color: white;
+}
+
 .status-skipped {
   background: #e2e3e5 !important;
 }

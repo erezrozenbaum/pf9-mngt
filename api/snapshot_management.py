@@ -4,7 +4,7 @@ Handles snapshot policy sets, assignments, exclusions, runs, and records
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field, validator
 from fastapi import HTTPException, status, Depends
 import psycopg2
@@ -24,7 +24,6 @@ class SnapshotPolicySetCreate(BaseModel):
     description: Optional[str] = None
     is_global: bool = False
     tenant_id: Optional[str] = None
-    tenant_name: Optional[str] = None
     policies: List[str] = Field(..., min_items=1)  # ["daily_5", "weekly_4"]
     retention_map: Dict[str, int] = Field(..., min_items=1)  # {"daily_5": 5}
     priority: int = Field(default=0, ge=0, le=1000)
@@ -122,6 +121,110 @@ class SnapshotRecordCreate(BaseModel):
     error_message: Optional[str] = None
     openstack_created_at: Optional[datetime] = None
     raw_snapshot_json: Optional[Dict] = None
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
+def _parse_policy_list(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    normalized = str(value).replace(";", ",")
+    return [p.strip() for p in normalized.split(",") if p.strip()]
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_compliance_from_metadata(
+    cur: RealDictCursor,
+    days: int,
+    tenant_id: Optional[str],
+    project_id: Optional[str],
+    policy_filter: Optional[str],
+) -> List[Dict[str, Any]]:
+    cur.execute(
+        """
+        SELECT volume_id, policy_name, MAX(openstack_created_at) AS last_snapshot_at
+        FROM snapshot_records
+        WHERE action IN ('created', 'create')
+          AND (status IS NULL OR status NOT IN ('failed', 'error'))
+        GROUP BY volume_id, policy_name
+        """
+    )
+    last_snapshots = {
+        (row.get("volume_id"), row.get("policy_name")): row.get("last_snapshot_at")
+        for row in cur.fetchall()
+    }
+
+    cur.execute(
+        """
+        SELECT
+            v.id AS volume_id,
+            v.name AS volume_name,
+            v.project_id,
+            p.name AS project_name,
+            p.id AS tenant_id,
+            p.name AS tenant_name,
+            v.raw_json->'attachments'->0->>'server_id' AS vm_id,
+            (SELECT srv.name FROM servers srv WHERE srv.id = (v.raw_json->'attachments'->0->>'server_id')) AS vm_name,
+            v.raw_json->'metadata' AS metadata
+        FROM volumes v
+        LEFT JOIN projects p ON p.id = v.project_id
+        WHERE v.raw_json->'metadata'->>'auto_snapshot' IN ('true', 'True', '1', 'yes')
+          AND v.raw_json->'metadata'->>'snapshot_policies' IS NOT NULL
+        """
+    )
+    rows = cur.fetchall()
+    now = datetime.now(timezone.utc)
+    compliance_rows: List[Dict[str, Any]] = []
+
+    for row in rows:
+        if tenant_id and row.get("tenant_id") != tenant_id:
+            continue
+        if project_id and row.get("project_id") != project_id:
+            continue
+
+        metadata = row.get("metadata") or {}
+        policies = _parse_policy_list(metadata.get("snapshot_policies"))
+        for policy_name in policies:
+            if policy_filter and policy_name != policy_filter:
+                continue
+
+            retention_days = _safe_int(metadata.get(f"retention_{policy_name}"))
+            last_snapshot_at = last_snapshots.get((row.get("volume_id"), policy_name))
+            compliant = False
+            if last_snapshot_at:
+                compliant = last_snapshot_at >= (now - timedelta(days=days))
+
+            compliance_rows.append({
+                "volume_id": row.get("volume_id"),
+                "volume_name": row.get("volume_name"),
+                "tenant_id": row.get("tenant_id"),
+                "tenant_name": row.get("tenant_name"),
+                "project_id": row.get("project_id"),
+                "project_name": row.get("project_name"),
+                "vm_id": row.get("vm_id"),
+                "vm_name": row.get("vm_name"),
+                "policy_name": policy_name,
+                "retention_days": retention_days,
+                "last_snapshot_at": last_snapshot_at,
+                "compliant": compliant,
+            })
+
+    min_time = datetime.min.replace(tzinfo=timezone.utc)
+    compliance_rows.sort(
+        key=lambda r: (r.get("compliant"), r.get("last_snapshot_at") or min_time),
+        reverse=False,
+    )
+    return compliance_rows
 
 
 # ============================================================================
@@ -1146,8 +1249,8 @@ def setup_snapshot_routes(app, get_db_connection):
                     p.tenant_name,
                     p.project_id,
                     p.project_name,
-                    p.vm_id,
-                    p.vm_name,
+                    COALESCE(p.vm_id, v.raw_json->'attachments'->0->>'server_id') AS vm_id,
+                    COALESCE(p.vm_name, (SELECT name FROM servers WHERE id = (v.raw_json->'attachments'->0->>'server_id'))) AS vm_name,
                     p.policy_name,
                     (p.retention_map->>p.policy_name)::int AS retention_days,
                     ls.last_snapshot_at,
@@ -1157,6 +1260,7 @@ def setup_snapshot_routes(app, get_db_connection):
                         THEN true ELSE false
                     END AS compliant
                 FROM policy_assignments p
+                LEFT JOIN volumes v ON v.id = p.volume_id
                 LEFT JOIN last_snaps ls
                   ON ls.volume_id = p.volume_id AND ls.policy_name = p.policy_name
                 WHERE 1=1
@@ -1177,6 +1281,14 @@ def setup_snapshot_routes(app, get_db_connection):
 
             cur.execute(query, params)
             rows = cur.fetchall()
+            if not rows:
+                rows = _build_compliance_from_metadata(
+                    cur,
+                    days,
+                    tenant_id,
+                    project_id,
+                    policy,
+                )
             cur.close()
             conn.close()
 
