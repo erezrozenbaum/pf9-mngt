@@ -99,7 +99,11 @@ const SnapshotMonitor: React.FC = () => {
   };
 
   const getDuration = (run: SnapshotRun) => {
-    if (!run.finished_at) return 'Running...';
+    if (!run.finished_at) {
+      if (run.status?.toLowerCase() === 'pending') return 'Pending...';
+      if (run.status?.toLowerCase() === 'queued') return 'Queued...';
+      return 'Running...';
+    }
     const start = new Date(run.started_at).getTime();
     const end = new Date(run.finished_at).getTime();
     const seconds = Math.floor((end - start) / 1000);
@@ -123,6 +127,9 @@ const SnapshotMonitor: React.FC = () => {
         return 'status-running';
       case 'skipped':
         return 'status-skipped';
+      case 'pending':
+      case 'queued':
+        return 'status-pending';
       default:
         return '';
     }
@@ -165,6 +172,7 @@ const SnapshotMonitor: React.FC = () => {
               <option value="partial">Partial</option>
               <option value="failed">Failed</option>
               <option value="running">Running</option>
+              <option value="pending">Pending</option>
               <option value="skipped">Skipped</option>
             </select>
           </label>

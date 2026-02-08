@@ -17,7 +17,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Activity Monitoring**: User last-seen timestamps, account status, and authentication tracking
 - **Role Inference System**: Intelligent role assignment detection when API access is limited
 
-#### Modern React UI Features (16 Comprehensive Tabs)
+#### Modern React UI Features (17 Comprehensive Tabs)
+- **Dashboard Tab** (NEW ✨): Landing Dashboard with 14 real-time analytics endpoints
+  - Health Summary, Snapshot SLA Compliance, Host Utilization, Recent Activity
+  - Coverage Risks, Capacity Pressure, VM Hotspots, Tenant Risk Scores
+  - Compliance Drift, Capacity Trends, Trendlines, Change Compliance
+  - Tenant Risk Heatmap, Tenant Summary
+  - Auto-refresh every 30 seconds, Dark/Light mode support
 - **Infrastructure Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs
 - **Platform Tabs**: Domains, Projects, Flavors, Images, Hypervisors
 - **Management Tabs**: Users (with role assignments), History (change tracking), Audit (compliance), Monitoring (real-time metrics)

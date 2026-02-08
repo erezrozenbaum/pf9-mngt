@@ -490,10 +490,12 @@ Write-Host ""
 
 Write-Host "Next Steps:" -ForegroundColor Cyan
 Write-Host "  1. Open UI at http://localhost:5173" -ForegroundColor White
+Write-Host "     Default view: Landing Dashboard (🏠) with real-time analytics" -ForegroundColor Gray
 Write-Host "  2. Log in with LDAP credentials (admin@platform9.local / changeme)" -ForegroundColor White
-Write-Host "  3. Configure snapshot policies and automation" -ForegroundColor White
-Write-Host "  4. Review compliance reports in Dashboard > Snapshot Compliance tab" -ForegroundColor White
-Write-Host "  5. Monitor system operations in Dashboard > System Logs tab" -ForegroundColor White
+Write-Host "  3. Review system health on Landing Dashboard (auto-refreshes every 30s)" -ForegroundColor White
+Write-Host "  4. Configure snapshot policies via Snapshots tab" -ForegroundColor White
+Write-Host "     Monitor compliance on Dashboard > Snapshot SLA Compliance card" -ForegroundColor White
+Write-Host "  5. Review system logs in Audit tab for operations monitoring" -ForegroundColor White
 Write-Host "  6. Review security practices in docs/SECURITY_CHECKLIST.md before production" -ForegroundColor White
 Write-Host ""
 

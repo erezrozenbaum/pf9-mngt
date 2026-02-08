@@ -48,6 +48,7 @@ C:/Reports/
 
 # Logs
 *.log
+*.log.err
 logs/
 
 # Database files

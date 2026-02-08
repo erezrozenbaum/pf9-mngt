@@ -83,23 +83,45 @@ src/
 **Technology**: FastAPI + Python 3.11+
 **Port**: 8000
 **Responsibilities**:
-- RESTful API endpoints (40+ routes)
+- RESTful API endpoints (80+ routes across infrastructure and analytics)
 - Database operations and queries
 - Platform9 integration proxy
 - Administrative operations
 - User management and role tracking
 - Historical analysis and audit trails
+- Real-time dashboard analytics with 14 endpoints
 
 ```python
 # API Structure
 api/
-├── main.py              # FastAPI application and routes
+├── main.py              # FastAPI application and routes (66+ infrastructure endpoints)
+├── dashboards.py        # Analytics dashboard routes (14 endpoints)
 ├── pf9_control.py       # Platform9 API integration
 ├── requirements.txt     # Python dependencies
 └── Dockerfile          # Container configuration
 ```
 
-**API Endpoints** (Selected from 40+ total):
+**API Endpoints** (80+ total across two modules):
+
+**Dashboard Analytics Endpoints** (api/dashboards.py - 14 endpoints):
+```python
+GET  /dashboard/health-summary              # System health metrics
+GET  /dashboard/snapshot-sla-compliance      # Tenant compliance tracking
+GET  /dashboard/top-hosts-utilization       # Top resource consumers
+GET  /dashboard/recent-changes              # 24-hour activity timeline
+GET  /dashboard/coverage-risks              # Unprotected volume analysis
+GET  /dashboard/capacity-pressure           # Resource quota warnings
+GET  /dashboard/vm-hotspots                 # Top resource consumers by metric
+GET  /dashboard/tenant-risk-scores          # Multi-factor risk assessment
+GET  /dashboard/compliance-drift            # 7-day policy drift trends
+GET  /dashboard/capacity-trends             # Capacity forecasting
+GET  /dashboard/trendlines                  # 30-day growth patterns
+GET  /dashboard/change-compliance           # Post-change verification
+GET  /dashboard/tenant-risk-heatmap         # Multi-dimensional risk matrix
+GET  /dashboard/tenant-summary              # Quick tenant overview
+```
+
+**Infrastructure Management Endpoints** (api/main.py - 66+ endpoints):
 ```python
 # Core Resource Management (19+ types)
 GET  /domains                    # List domains
@@ -128,7 +150,7 @@ DEL  /admin/flavors/{id}         # Delete flavors
 POST /admin/networks             # Create networks
 DEL  /admin/networks/{id}        # Delete networks
 POST /admin/user-access-log      # Log user access
-
+```
 # Historical & Audit Analysis
 GET  /history/recent-changes     # Recent infrastructure changes
 GET  /history/most-changed       # Most frequently changed resources

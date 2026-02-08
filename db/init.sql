@@ -311,6 +311,10 @@ CREATE TABLE IF NOT EXISTS snapshots_history (
     description  TEXT,
     run_id       BIGINT REFERENCES inventory_runs(id),
     project_id   TEXT,
+    project_name TEXT,
+    tenant_name  TEXT,
+    domain_name  TEXT,
+    domain_id    TEXT,
     volume_id    TEXT,
     size_gb      INTEGER,
     status       TEXT,
@@ -424,10 +428,10 @@ SELECT
     p.name AS tenant_name,
     d.id AS domain_id,
     d.name AS domain_name,
-    v.raw_json->>'server_id' AS server_id,
-    v.raw_json->>'server_name' AS server_name,
-    v.raw_json->>'device' AS device,
-    v.raw_json->>'attach_host' AS attach_host
+    v.raw_json->'attachments'->0->>'server_id' AS server_id,
+    (SELECT srv.name FROM servers srv WHERE srv.id = (v.raw_json->'attachments'->0->>'server_id')) AS server_name,
+    v.raw_json->'attachments'->0->>'device' AS device,
+    v.raw_json->'attachments'->0->>'host_name' AS attach_host
 FROM volumes v
 LEFT JOIN projects p ON p.id = v.project_id
 LEFT JOIN domains d ON d.id = p.domain_id;
@@ -878,6 +882,7 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('viewer', 'snapshot_exclusions', 'read'),
 ('viewer', 'snapshot_runs', 'read'),
 ('viewer', 'snapshot_records', 'read'),
+('viewer', 'dashboard', 'read'),
 
 -- Operator permissions (read + limited write operations)
 ('operator', 'servers', 'read'),
@@ -898,6 +903,7 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('operator', 'snapshot_exclusions', 'write'),
 ('operator', 'snapshot_runs', 'read'),
 ('operator', 'snapshot_records', 'read'),
+('operator', 'dashboard', 'read'),
 
 -- Admin permissions (full access except user management)
 ('admin', 'servers', 'admin'),
@@ -921,6 +927,7 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('admin', 'snapshot_exclusions', 'admin'),
 ('admin', 'snapshot_runs', 'admin'),
 ('admin', 'snapshot_records', 'admin'),
+('admin', 'dashboard', 'admin'),
 
 -- Super Admin permissions (everything including user management)
 ('superadmin', 'servers', 'admin'),
@@ -944,5 +951,6 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('superadmin', 'snapshot_assignments', 'admin'),
 ('superadmin', 'snapshot_exclusions', 'admin'),
 ('superadmin', 'snapshot_runs', 'admin'),
-('superadmin', 'snapshot_records', 'admin')
+('superadmin', 'snapshot_records', 'admin'),
+('superadmin', 'dashboard', 'admin'),
 ON CONFLICT (role, resource, action) DO NOTHING;

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import "./App.css";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { LandingDashboard } from "./components/LandingDashboard";
 import UserManagement from "./components/UserManagement";
 import SnapshotPolicyManager from "./components/SnapshotPolicyManager";
 import SnapshotAuditTrail from "./components/SnapshotAuditTrail";
@@ -375,7 +376,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance";
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -389,6 +390,16 @@ async function fetchJson<T>(url: string): Promise<T> {
   }
 
   const res = await fetch(url, { headers });
+  
+  // If we get a 401 and we have a token (meaning it's invalid), clear it
+  // but don't reload - let the component handle showing the login screen
+  if (res.status === 401 && token) {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_user');
+    localStorage.removeItem('token_expires_at');
+    // Don't reload - just throw error and let the component handle it
+  }
+  
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`HTTP ${res.status}: ${txt || res.statusText}`);
@@ -796,7 +807,7 @@ const App: React.FC = () => {
   const [vmSearch, setVmSearch] = useState<string>("");
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<ActiveTab>("servers");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
 
   // Paging + sorting
   const [serverPage, setServerPage] = useState(1);
@@ -2124,6 +2135,30 @@ const App: React.FC = () => {
       ? projectPageSize
       : 50;
 
+  const tableTabs = new Set([
+    "servers",
+    "snapshots",
+    "networks",
+    "subnets",
+    "volumes",
+    "flavors",
+    "images",
+    "hypervisors",
+    "users",
+    "ports",
+    "floatingips",
+    "projects",
+  ]);
+
+  const isTableTab = tableTabs.has(activeTab);
+  const hideDetailsPanel = [
+    "snapshot-policies",
+    "snapshot-audit",
+    "snapshot_monitor",
+    "snapshot_compliance",
+    "monitoring",
+  ].includes(activeTab);
+
   // -----------------------------------------------------------------------
   // Render
   // -----------------------------------------------------------------------
@@ -2170,6 +2205,14 @@ const App: React.FC = () => {
               </div>
             )}
             <div className="pf9-tabs">
+          <button
+            className={
+              activeTab === "dashboard" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+            }
+            onClick={() => setActiveTab("dashboard")}
+          >
+            🏠 Dashboard
+          </button>
           <button
             className={
               activeTab === "servers" ? "pf9-tab pf9-tab-active" : "pf9-tab"
@@ -2364,10 +2407,10 @@ const App: React.FC = () => {
         </header>
 
       <section className="pf9-subtitle">
-        {activeTab === "servers"
+        {activeTab === "dashboard"
+          ? "Infrastructure health summary · compliance tracking · recent activity"
+          : activeTab === "servers"
           ? "VM inventory · filters · details · CSV export"
-          : activeTab === "snapshots"
-          ? "Volume snapshots · filters · details · CSV export"
           : activeTab === "networks"
           ? "Neutron networks · filters · details · CSV export"
           : activeTab === "subnets"
@@ -2403,7 +2446,12 @@ const App: React.FC = () => {
             : "Compliance reporting · audit logs · change analysis"}
       </section>
 
-      {activeTab !== "api_metrics" && activeTab !== "system_logs" && (
+      {/* Landing Dashboard - Special handling, no filters/pagination */}
+      {activeTab === "dashboard" && (
+        <LandingDashboard />
+      )}
+
+      {activeTab !== "api_metrics" && activeTab !== "system_logs" && activeTab !== "dashboard" && (
       <section className="pf9-filters">
         <div className="pf9-filter-row">
           <label>
@@ -2469,154 +2517,156 @@ const App: React.FC = () => {
 
       <section className="pf9-main">
         <div className="pf9-table-panel">
-          <div className="pf9-table-header">
-            <span>
-              Page {activePage} of {activeTotalPages} • {activeTotal} total
-            </span>
-            <span className="pf9-pagination">
-              <button
-                onClick={() => {
-                  if (activeTab === "servers")
-                    setServerPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "snapshots")
-                    setSnapPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "networks")
-                    setNetworkPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "subnets")
-                    setSubnetPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "volumes")
-                    setVolumePage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "flavors")
-                    setFlavorPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "images")
-                    setImagePage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "hypervisors")
-                    setHypervisorPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "users")
-                    setUserPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "ports")
-                    setPortPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "floatingips")
-                    setFloatingIPPage((p) => Math.max(1, p - 1));
-                  else if (activeTab === "projects")
-                    setProjectPage((p) => Math.max(1, p - 1));
-                }}
-                disabled={activePage <= 1}
-              >
-                Prev
-              </button>
-              <button
-                onClick={() => {
-                  if (activeTab === "servers")
-                    setServerPage((p) =>
-                      Math.min(totalPagesServers, p + 1)
-                    );
-                  else if (activeTab === "snapshots")
-                    setSnapPage((p) =>
-                      Math.min(totalPagesSnapshots, p + 1)
-                    );
-                  else if (activeTab === "networks")
-                    setNetworkPage((p) =>
-                      Math.min(totalPagesNetworks, p + 1)
-                    );
-                  else if (activeTab === "subnets")
-                    setSubnetPage((p) =>
-                      Math.min(totalPagesSubnets, p + 1)
-                    );
-                  else if (activeTab === "volumes")
-                    setVolumePage((p) =>
-                      Math.min(totalPagesVolumes, p + 1)
-                    );
-                  else if (activeTab === "flavors")
-                    setFlavorPage((p) =>
-                      Math.min(Math.ceil(flavorsTotal / flavorPageSize), p + 1)
-                    );
-                  else if (activeTab === "images")
-                    setImagePage((p) =>
-                      Math.min(Math.ceil(imagesTotal / imagePageSize), p + 1)
-                    );
-                  else if (activeTab === "hypervisors")
-                    setHypervisorPage((p) =>
-                      Math.min(Math.ceil(hypervisorsTotal / hypervisorPageSize), p + 1)
-                    );
-                  else if (activeTab === "ports")
-                    setPortPage((p) =>
-                      Math.min(Math.ceil(portsTotal / portPageSize), p + 1)
-                    );
-                  else if (activeTab === "floatingips")
-                    setFloatingIPPage((p) =>
-                      Math.min(Math.ceil(floatingIPsTotal / floatingIPPageSize), p + 1)
-                    );
-                  else if (activeTab === "projects")
-                    setProjectPage((p) =>
-                      Math.min(Math.ceil(projectsTotal / projectPageSize), p + 1)
-                    );
-                  else if (activeTab === "users")
-                    setUserPage((p) =>
-                      Math.min(Math.ceil(usersTotal / userPageSize), p + 1)
-                    );
-                }}
-                disabled={activePage >= activeTotalPages}
-              >
-                Next
-              </button>
+          {isTableTab && (
+            <>
+              <div className="pf9-table-header">
+                <span>
+                  Page {activePage} of {activeTotalPages} • {activeTotal} total
+                </span>
+                <span className="pf9-pagination">
+                  <button
+                    onClick={() => {
+                      if (activeTab === "servers")
+                        setServerPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "snapshots")
+                        setSnapPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "networks")
+                        setNetworkPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "subnets")
+                        setSubnetPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "volumes")
+                        setVolumePage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "flavors")
+                        setFlavorPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "images")
+                        setImagePage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "hypervisors")
+                        setHypervisorPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "users")
+                        setUserPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "ports")
+                        setPortPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "floatingips")
+                        setFloatingIPPage((p) => Math.max(1, p - 1));
+                      else if (activeTab === "projects")
+                        setProjectPage((p) => Math.max(1, p - 1));
+                    }}
+                    disabled={activePage <= 1}
+                  >
+                    Prev
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (activeTab === "servers")
+                        setServerPage((p) =>
+                          Math.min(totalPagesServers, p + 1)
+                        );
+                      else if (activeTab === "snapshots")
+                        setSnapPage((p) =>
+                          Math.min(totalPagesSnapshots, p + 1)
+                        );
+                      else if (activeTab === "networks")
+                        setNetworkPage((p) =>
+                          Math.min(totalPagesNetworks, p + 1)
+                        );
+                      else if (activeTab === "subnets")
+                        setSubnetPage((p) =>
+                          Math.min(totalPagesSubnets, p + 1)
+                        );
+                      else if (activeTab === "volumes")
+                        setVolumePage((p) =>
+                          Math.min(totalPagesVolumes, p + 1)
+                        );
+                      else if (activeTab === "flavors")
+                        setFlavorPage((p) =>
+                          Math.min(Math.ceil(flavorsTotal / flavorPageSize), p + 1)
+                        );
+                      else if (activeTab === "images")
+                        setImagePage((p) =>
+                          Math.min(Math.ceil(imagesTotal / imagePageSize), p + 1)
+                        );
+                      else if (activeTab === "hypervisors")
+                        setHypervisorPage((p) =>
+                          Math.min(Math.ceil(hypervisorsTotal / hypervisorPageSize), p + 1)
+                        );
+                      else if (activeTab === "ports")
+                        setPortPage((p) =>
+                          Math.min(Math.ceil(portsTotal / portPageSize), p + 1)
+                        );
+                      else if (activeTab === "floatingips")
+                        setFloatingIPPage((p) =>
+                          Math.min(Math.ceil(floatingIPsTotal / floatingIPPageSize), p + 1)
+                        );
+                      else if (activeTab === "projects")
+                        setProjectPage((p) =>
+                          Math.min(Math.ceil(projectsTotal / projectPageSize), p + 1)
+                        );
+                      else if (activeTab === "users")
+                        setUserPage((p) =>
+                          Math.min(Math.ceil(usersTotal / userPageSize), p + 1)
+                        );
+                    }}
+                    disabled={activePage >= activeTotalPages}
+                  >
+                    Next
+                  </button>
 
-              <label>
-                Page size
-                <select
-                  value={activePageSize}
-                  onChange={(e) => {
-                    const v = Number(e.target.value) || 50;
-                    if (activeTab === "servers") {
-                      setServerPageSize(v);
-                      setServerPage(1);
-                    } else if (activeTab === "snapshots") {
-                      setSnapPageSize(v);
-                      setSnapPage(1);
-                    } else if (activeTab === "networks") {
-                      setNetworkPageSize(v);
-                      setNetworkPage(1);
-                    } else if (activeTab === "subnets") {
-                      setSubnetPageSize(v);
-                      setSubnetPage(1);
-                    } else if (activeTab === "volumes") {
-                      setVolumePageSize(v);
-                      setVolumePage(1);
-                    } else if (activeTab === "flavors") {
-                      setFlavorPageSize(v);
-                      setFlavorPage(1);
-                    } else if (activeTab === "images") {
-                      setImagePageSize(v);
-                      setImagePage(1);
-                    } else if (activeTab === "hypervisors") {
-                      setHypervisorPageSize(v);
-                      setHypervisorPage(1);
-                    } else if (activeTab === "ports") {
-                      setPortPageSize(v);
-                      setPortPage(1);
-                    } else if (activeTab === "floatingips") {
-                      setFloatingIPPageSize(v);
-                      setFloatingIPPage(1);
-                    } else if (activeTab === "projects") {
-                      setProjectPageSize(v);
-                      setProjectPage(1);
-                    } else if (activeTab === "users") {
-                      setUserPageSize(v);
-                      setUserPage(1);
-                    }
-                  }}
-                >
-                  <option value={10}>10</option>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
-              </label>
-            </span>
-          </div>
+                  <label>
+                    Page size
+                    <select
+                      value={activePageSize}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || 50;
+                        if (activeTab === "servers") {
+                          setServerPageSize(v);
+                          setServerPage(1);
+                        } else if (activeTab === "snapshots") {
+                          setSnapPageSize(v);
+                          setSnapPage(1);
+                        } else if (activeTab === "networks") {
+                          setNetworkPageSize(v);
+                          setNetworkPage(1);
+                        } else if (activeTab === "subnets") {
+                          setSubnetPageSize(v);
+                          setSubnetPage(1);
+                        } else if (activeTab === "volumes") {
+                          setVolumePageSize(v);
+                          setVolumePage(1);
+                        } else if (activeTab === "flavors") {
+                          setFlavorPageSize(v);
+                          setFlavorPage(1);
+                        } else if (activeTab === "images") {
+                          setImagePageSize(v);
+                          setImagePage(1);
+                        } else if (activeTab === "hypervisors") {
+                          setHypervisorPageSize(v);
+                          setHypervisorPage(1);
+                        } else if (activeTab === "ports") {
+                          setPortPageSize(v);
+                          setPortPage(1);
+                        } else if (activeTab === "floatingips") {
+                          setFloatingIPPageSize(v);
+                          setFloatingIPPage(1);
+                        } else if (activeTab === "projects") {
+                          setProjectPageSize(v);
+                          setProjectPage(1);
+                        } else if (activeTab === "users") {
+                          setUserPageSize(v);
+                          setUserPage(1);
+                        }
+                      }}
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                  </label>
+                </span>
+              </div>
 
-          {/* Sort controls per tab */}
-          <div className="pf9-sort-row">
+              {/* Sort controls per tab */}
+              <div className="pf9-sort-row">
             {activeTab === "servers" && (
               <>
                 <label>
@@ -2840,6 +2890,8 @@ const App: React.FC = () => {
               </>
             )}
           </div>
+            </>
+          )}
 
           {/* Tables */}
           {activeTab === "servers" && (
@@ -4062,6 +4114,16 @@ const App: React.FC = () => {
             <SnapshotComplianceReport />
           )}
 
+          {/* Snapshot Policy Management Section */}
+          {activeTab === "snapshot-policies" && (
+            <SnapshotPolicyManager />
+          )}
+
+          {/* Snapshot Audit Trail Section */}
+          {activeTab === "snapshot-audit" && (
+            <SnapshotAuditTrail />
+          )}
+
           {/* Monitoring Section */}
           {activeTab === "monitoring" && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -4370,6 +4432,7 @@ const App: React.FC = () => {
         </div>
 
         {/* Details panel */}
+        {!hideDetailsPanel && (
         <div className="pf9-details-panel">
           {activeTab === "servers" && selectedServer && (
             <div>
@@ -4693,14 +4756,6 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {activeTab === "snapshot-policies" && (
-            <SnapshotPolicyManager />
-          )}
-
-          {activeTab === "snapshot-audit" && (
-            <SnapshotAuditTrail />
-          )}
-
           {/* Empty states for details */}
           {!selectedServer &&
             activeTab === "servers" &&
@@ -4725,6 +4780,7 @@ const App: React.FC = () => {
               </div>
             )}
         </div>
+        )}
       </section>
     </div>
     </ThemeProvider>

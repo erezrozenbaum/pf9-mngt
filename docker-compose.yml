@@ -55,7 +55,7 @@ services:
       LDAP_GROUP_DN: ${LDAP_GROUP_DN:-ou=groups,dc=pf9mgmt,dc=local}
 
       # === JWT Configuration ===
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-pf9-management-jwt-secret-key-2026}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-30}
@@ -71,6 +71,8 @@ services:
       - "8000:8000"
     volumes:
       - app_logs:/app/logs
+      - ./monitoring/cache:/app/monitoring/cache:ro
+      - ./metrics_cache.json:/app/metrics_cache.json:ro
     depends_on:
       - db
       - ldap

@@ -38,6 +38,9 @@ from config_validator import ConfigValidator
 from performance_metrics import PerformanceMetrics, PerformanceMiddleware
 from structured_logging import setup_logging
 
+# Dashboard endpoints
+from dashboards import router as dashboard_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -176,23 +179,27 @@ def db_conn():
 
 app = FastAPI(title=APP_NAME)
 
+# Include routers
+app.include_router(dashboard_router)
+
 # Rate limiting setup
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Performance monitoring middleware (add first to track all requests)
+# Performance monitoring middleware
 app.add_middleware(PerformanceMiddleware, metrics=performance_metrics)
 
-# Security middleware
+# Security middleware (TrustedHost)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "*"])
 
-# Secure CORS policy
+# CORS middleware (added LAST so it executes FIRST in the chain)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # RBAC middleware (enforces read/write permissions by resource)
@@ -214,12 +221,22 @@ async def rbac_middleware(request: Request, call_next):
 
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
-        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+        response = JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
 
     token = auth_header[7:]
     token_data = verify_token(token)
     if not token_data:
-        return JSONResponse(status_code=401, content={"detail": "Invalid token"})
+        response = JSONResponse(status_code=401, content={"detail": "Invalid token"})
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
 
     # Extract segment (first path component) without query parameters
     clean_path = path.split("?")[0]  # Remove query string
@@ -243,6 +260,7 @@ async def rbac_middleware(request: Request, call_next):
         "audit": "audit",
         "monitoring": "monitoring",
         "users": "users",
+        "dashboard": "dashboard",
     }
 
     resource = resource_map.get(segment)
@@ -260,10 +278,15 @@ async def rbac_middleware(request: Request, call_next):
             resource=resource,
             endpoint=path,
         )
-        return JSONResponse(
+        response = JSONResponse(
             status_code=403,
             content={"detail": f"Insufficient permissions for {resource}:{permission}"}
         )
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
 
     return await call_next(request)
 
@@ -1550,9 +1573,9 @@ def snapshots(
         s.name             AS snapshot_name,
         s.status,
         s.size_gb,
-        s.volume_id,
-        vv.server_id       AS vm_id,
-        vv.server_name     AS vm_name,
+                s.volume_id,
+                COALESCE(vv.server_id, v.raw_json->'attachments'->0->>'server_id') AS vm_id,
+                COALESCE(vv.server_name, srv.name) AS vm_name,
         v.name             AS volume_name,
         s.project_id,
         s.project_name,
@@ -1565,6 +1588,7 @@ def snapshots(
       FROM snapshots s
       LEFT JOIN v_volumes_full vv ON vv.id = s.volume_id
       LEFT JOIN volumes  v ON v.id = s.volume_id
+            LEFT JOIN servers  srv ON srv.id = (v.raw_json->'attachments'->0->>'server_id')
       LEFT JOIN projects p ON p.id = s.project_id
       LEFT JOIN domains  d ON d.id = p.domain_id
       {where_sql}
@@ -2801,6 +2825,13 @@ def get_resource_history(
                     ORDER BY recorded_at DESC
                     LIMIT %s
                 """, (resource_id, limit))
+            elif resource_type == "snapshot":
+                cur.execute(f"""
+                    SELECT * FROM {table_name}
+                    WHERE snapshot_id = %s
+                    ORDER BY last_seen_at DESC
+                    LIMIT %s
+                """, (resource_id, limit))
             
             history = cur.fetchall()
             
@@ -2849,6 +2880,17 @@ def get_resource_history(
                         "resource_type": resource_type,
                         "resource_id": row_dict.get('volume_id'),
                         "resource_name": row_dict.get('volume_name') or f"Volume {row_dict.get('volume_id', '')[:8]}",
+                        "recorded_at": row_dict.get('last_seen_at') or row_dict.get('recorded_at'),
+                        "change_hash": row_dict.get('change_hash', ''),
+                        "current_state": row_dict.get('raw_json') or row_dict,
+                        "previous_hash": None,
+                        "change_sequence": len(history) - idx
+                    }
+                elif resource_type == "snapshot":
+                    mapped_row = {
+                        "resource_type": resource_type,
+                        "resource_id": row_dict.get('snapshot_id'),
+                        "resource_name": row_dict.get('name') or f"Snapshot {row_dict.get('snapshot_id', '')[:8]}",
                         "recorded_at": row_dict.get('last_seen_at') or row_dict.get('recorded_at'),
                         "change_hash": row_dict.get('change_hash', ''),
                         "current_state": row_dict.get('raw_json') or row_dict,
