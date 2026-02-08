@@ -24,7 +24,16 @@
 
 ### LDAP Configuration
 
+
 The system uses OpenLDAP for enterprise user authentication:
+
+> **Note:** As of February 2026, running `deployment.ps1` will always ensure:
+> - The admin user (from `.env`: `DEFAULT_ADMIN_USER`/`DEFAULT_ADMIN_PASSWORD`) is created in LDAP and in the `user_roles` table as `superadmin`.
+> - The `superadmin` role always has a wildcard permission (`*`) in `role_permissions`.
+> - You do **not** need to manually create the admin user or fix permissions in the database—this is enforced automatically on every deployment.
+> - If you change the admin username/email in `.env`, simply re-run `deployment.ps1` and the system will update LDAP and database roles/permissions accordingly.
+
+Manual LDAP or database admin setup is no longer required for initial deployment or admin recovery.
 
 ```bash
 # LDAP Server Settings (configured in docker-compose.yml)

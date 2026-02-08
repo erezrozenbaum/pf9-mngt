@@ -1,6 +1,22 @@
+
 dn: dc=ccc,dc=co,dc=il
 objectClass: top
 objectClass: dcObject
 objectClass: organization
 o: Triple C
 dc: ccc
+
+dn: ou=users,dc=ccc,dc=co,dc=il
+objectClass: organizationalUnit
+ou: users
+
+dn: ou=groups,dc=ccc,dc=co,dc=il
+objectClass: organizationalUnit
+ou: groups
+
+dn: cn=admin,dc=ccc,dc=co,dc=il
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+cn: admin
+description: LDAP administrator
+userPassword: r#1kajun

@@ -1,0 +1,13 @@
+dn: ou=users,dc=ccc,dc=co,dc=il
+objectClass: organizationalUnit
+ou: users
+
+dn: cn=admin,ou=users,dc=ccc,dc=co,dc=il
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: admin
+sn: admin
+uid: admin
+mail: admin@example.com
+userPassword: r#1kajun
