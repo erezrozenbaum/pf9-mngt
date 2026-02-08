@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import "./App.css";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -691,14 +692,22 @@ const App: React.FC = () => {
             localStorage.removeItem('auth_user');
             localStorage.removeItem('token_expires_at');
             setLoginError('Your session has expired. Please login again.');
-            return;
-          }
-        }
-        
-        setAuthToken(token);
-        setAuthUser(JSON.parse(user));
-        setTokenExpiresAt(expiresAt);
-        setIsAuthenticated(true);
+                <ThemeProvider>
+                  <ErrorBoundary
+                    FallbackComponent={({ error }) => (
+                      <div style={{ color: 'red', padding: '2rem' }}>
+                        <h2>Something went wrong.</h2>
+                        <pre>{error.message}</pre>
+                      </div>
+                    )}
+                  >
+                    {/* ...existing code... */}
+                    <div className="pf9-main">
+                      {/* ...existing code... */}
+                    </div>
+                  </ErrorBoundary>
+                </ThemeProvider>
+              );
       } catch (e) {
         // Clear invalid data
         localStorage.removeItem('auth_token');
@@ -3554,6 +3563,13 @@ const App: React.FC = () => {
                       </thead>
                       <tbody>
                         {recentChanges.map((change, idx) => {
+                          // Log all change_hash values for debugging
+                          console.log('change_hash value:', change.change_hash);
+                          // Defensive: skip only if change_hash is strictly null or undefined
+                          if (change.change_hash == null) {
+                            console.warn('Skipping change with null/undefined change_hash:', change);
+                            return null;
+                          }
                           // Use API-provided project/domain data directly
                           const projectName = change.project_name || "N/A";
                           const domainName = change.domain_name || "N/A";
@@ -3574,7 +3590,7 @@ const App: React.FC = () => {
                               <td>{domainName}</td>
                               <td className="pf9-cell-subtle">
                                 <div>{change.change_description || 'Infrastructure change'}</div>
-                                <small style={{color: '#666'}}>{change.change_hash.substring(0, 8)}...</small>
+                                <small style={{color: '#666'}}>{typeof change.change_hash === 'string' && change.change_hash ? change.change_hash.substring(0, 8) + "..." : ""}</small>
                               </td>
                               <td>
                                 <button 
@@ -4705,10 +4721,10 @@ const App: React.FC = () => {
                       <strong>Change Sequence:</strong> #{record.change_sequence || idx + 1}
                     </div>
                     <div style={{fontSize: "12px", color: "var(--color-text-secondary)", marginBottom: "8px"}}>
-                      Hash: {record.change_hash?.substring(0, 12)}...
-                      {record.previous_hash && (
+                      Hash: {record.change_hash ? record.change_hash.substring(0, 12) + "..." : ""}
+                      {record.previous_hash ? (
                         <span> (Previous: {record.previous_hash.substring(0, 8)}...)</span>
-                      )}
+                      ) : null}
                     </div>
                     <div style={{fontSize: "12px"}}>
                       <strong>Resource Type:</strong> {record.resource_type}
