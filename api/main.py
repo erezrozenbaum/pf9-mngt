@@ -189,6 +189,17 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Performance monitoring middleware
 app.add_middleware(PerformanceMiddleware, metrics=performance_metrics)
 
+# Cache control middleware (prevents browser caching of API responses)
+@app.middleware("http")
+async def add_cache_control_headers(request: Request, call_next):
+    response = await call_next(request)
+    # Prevent caching for all API endpoints except static files
+    if not request.url.path.startswith("/static"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # Security middleware (TrustedHost)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "*"])
 

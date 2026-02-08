@@ -223,9 +223,11 @@ def cleanup_old_records(conn):
                 if removed > 0:
                     print(f"[DB] Cleaned {removed} old records from {table}")
                     total_removed += removed
+                # Commit after each successful table deletion
+                conn.commit()
             except Exception as e:
                 print(f"[DB] Warning: Could not clean {table}: {e}")
-                # For foreign key issues, roll back and continue
+                # For foreign key issues, roll back this table only and continue
                 conn.rollback()
         
         if total_removed > 0:
