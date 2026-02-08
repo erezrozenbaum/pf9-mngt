@@ -215,13 +215,50 @@ def cleanup_old_records(conn):
         tables = ['snapshots', 'images', 'servers', 'volumes', 'floating_ips', 
                   'ports', 'routers', 'subnets', 'networks']
         
+        # Map table names to their resource types for deletions_history
+        resource_type_map = {
+            'snapshots': 'snapshot',
+            'images': 'image',
+            'servers': 'server',
+            'volumes': 'volume',
+            'floating_ips': 'floating_ip',
+            'ports': 'port',
+            'routers': 'router',
+            'subnets': 'subnet',
+            'networks': 'network'
+        }
+        
         total_removed = 0
         for table in tables:
             try:
+                # First, capture records we're about to delete for audit trail
+                resource_type = resource_type_map.get(table, table)
+                
+                # Select records to delete and log them to deletions_history
+                cur.execute(f"""
+                    INSERT INTO deletions_history 
+                        (resource_type, resource_id, resource_name, project_name, 
+                         domain_name, last_seen_before_deletion, reason, raw_json_snapshot)
+                    SELECT 
+                        %s::text as resource_type,
+                        id::text as resource_id,
+                        name as resource_name,
+                        project_name,
+                        domain_name,
+                        last_seen_at as last_seen_before_deletion,
+                        'Automatic cleanup - not seen in recent RVTools scan' as reason,
+                        row_to_json({table}.*)::jsonb as raw_json_snapshot
+                    FROM {table}
+                    WHERE last_seen_at < %s
+                """, (resource_type, cutoff))
+                logged = cur.rowcount
+                
+                # Now delete the stale records
                 cur.execute(f"DELETE FROM {table} WHERE last_seen_at < %s", (cutoff,))
                 removed = cur.rowcount
+                
                 if removed > 0:
-                    print(f"[DB] Cleaned {removed} old records from {table}")
+                    print(f"[DB] Cleaned {removed} old records from {table} (logged {logged} to deletions_history)")
                     total_removed += removed
                 # Commit after each successful table deletion
                 conn.commit()
@@ -231,7 +268,7 @@ def cleanup_old_records(conn):
                 conn.rollback()
         
         if total_removed > 0:
-            print(f"[DB] Total cleaned: {total_removed} old records")
+            print(f"[DB] Total cleaned: {total_removed} old records (all logged to audit trail)")
         else:
             print("[DB] No old records to clean")
 

@@ -2520,9 +2520,10 @@ def get_recent_changes(
             # Apply time filtering based on hours parameter
             time_filter = ""
             if hours and hours > 0:
-                # Filter by actual change time, not RVtools processing time
+                # Use recorded_at for deletion events so they appear when the delete is detected
                 time_filter = f"""WHERE (
-                    actual_time >= (NOW() - interval '{hours} hours') OR
+                    (change_description = 'Resource deletion detected' AND recorded_at >= (NOW() - interval '{hours} hours')) OR
+                    (change_description <> 'Resource deletion detected' AND actual_time >= (NOW() - interval '{hours} hours')) OR
                     (actual_time IS NULL AND recorded_at >= (NOW() - interval '{hours} hours'))
                 )"""
             
