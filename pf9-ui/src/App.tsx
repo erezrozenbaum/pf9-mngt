@@ -1622,26 +1622,12 @@ const App: React.FC = () => {
         
         let filteredChanges = response.data || [];
         
-        // Apply domain filtering on frontend since it's complex in SQL
+        // Apply domain filtering on frontend using domain_name from change record
+        // This ensures deleted resources are still shown in history
         if (selectedDomain !== "__ALL__") {
           filteredChanges = filteredChanges.filter(change => {
-            if (change.resource_type === "network") {
-              const network = networks.find(n => n.network_id === change.resource_id);
-              return network?.domain_name === selectedDomain;
-            } else if (change.resource_type === "server") {
-              const server = servers.find(s => s.server_id === change.resource_id);
-              return server?.domain_name === selectedDomain;
-            } else if (change.resource_type === "volume") {
-              const volume = volumes.find(v => v.id === change.resource_id);
-              return volume?.domain_name === selectedDomain;
-            } else if (change.resource_type === "project") {
-              const tenant = tenants.find(t => t.tenant_id === change.resource_id);
-              return tenant?.domain_name === selectedDomain;
-            } else if (change.resource_type === "domain") {
-              const domain = domains.find(d => d.domain_id === change.resource_id);
-              return domain?.domain_name === selectedDomain;
-            }
-            return true; // Include other types for now
+            // Use domain_name directly from change record - works for both existing and deleted resources
+            return change.domain_name === selectedDomain;
           });
         }
         
