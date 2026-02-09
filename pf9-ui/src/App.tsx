@@ -692,22 +692,8 @@ const App: React.FC = () => {
             localStorage.removeItem('auth_user');
             localStorage.removeItem('token_expires_at');
             setLoginError('Your session has expired. Please login again.');
-                <ThemeProvider>
-                  <ErrorBoundary
-                    FallbackComponent={({ error }) => (
-                      <div style={{ color: 'red', padding: '2rem' }}>
-                        <h2>Something went wrong.</h2>
-                        <pre>{error.message}</pre>
-                      </div>
-                    )}
-                  >
-                    {/* ...existing code... */}
-                    <div className="pf9-main">
-                      {/* ...existing code... */}
-                    </div>
-                  </ErrorBoundary>
-                </ThemeProvider>
-              );
+          }
+        }
       } catch (e) {
         // Clear invalid data
         localStorage.removeItem('auth_token');
