@@ -1,3 +1,5 @@
+
+
 """
 Dashboard endpoints for operational intelligence.
 
@@ -14,13 +16,32 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import glob
+from auth import require_permission
+
+
 
 logger = logging.getLogger("pf9_dashboards")
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/rvtools-last-run", dependencies=[Depends(require_permission("dashboard", "read"))])
+async def get_rvtools_last_run():
+    """Return the timestamp of the last RVTools Excel import (if available)."""
+    # Look for the latest Excel file in /mnt/reports or a configured path
+    report_dir = os.getenv("RVTOOLS_REPORT_DIR", "/mnt/reports")
+    pattern = os.path.join(report_dir, "pf9_rvtools_*.xlsx")
+    files = glob.glob(pattern)
+    if not files:
+        return {"last_run": None}
+    latest_file = max(files, key=os.path.getmtime)
+    last_run = datetime.fromtimestamp(os.path.getmtime(latest_file), tz=timezone.utc).isoformat()
+    return {"last_run": last_run}
 
 
 def get_db_connection():

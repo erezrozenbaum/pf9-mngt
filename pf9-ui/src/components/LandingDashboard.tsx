@@ -57,6 +57,7 @@ export const LandingDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [lastRVToolsRun, setLastRVToolsRun] = useState<string | null>(null);
 
   const fetchDashboardData = async () => {
     try {
@@ -89,6 +90,7 @@ export const LandingDashboard: React.FC = () => {
         tenantRiskHeatmapRes,
         capacityTrendsRes,
         complianceDriftRes,
+        rvtoolsRes
       ] = await Promise.all([
         fetch(`${API_BASE}/dashboard/health-summary`, { headers }),
         fetch(`${API_BASE}/dashboard/snapshot-sla-compliance`, { headers }),
@@ -105,6 +107,7 @@ export const LandingDashboard: React.FC = () => {
         fetch(`${API_BASE}/dashboard/tenant-risk-heatmap`, { headers }),
         fetch(`${API_BASE}/dashboard/capacity-trends`, { headers }),
         fetch(`${API_BASE}/dashboard/compliance-drift`, { headers }),
+        fetch(`${API_BASE}/dashboard/rvtools-last-run`, { headers }),
       ]);
 
       // If we get a 401, clear the invalid token but don't reload - let the app show login page
@@ -170,6 +173,7 @@ export const LandingDashboard: React.FC = () => {
         tenantRiskHeatmap,
         capacityTrends,
         complianceDrift,
+        rvtoolsLastRun
       ] = await Promise.all([
         healthRes.json(),
         slaRes.json(),
@@ -186,6 +190,7 @@ export const LandingDashboard: React.FC = () => {
         tenantRiskHeatmapRes.json(),
         capacityTrendsRes.json(),
         complianceDriftRes.json(),
+        rvtoolsRes.json(),
       ]);
 
       setData({
@@ -206,6 +211,7 @@ export const LandingDashboard: React.FC = () => {
         complianceDrift,
       });
       setLastRefresh(new Date());
+      setLastRVToolsRun(rvtoolsLastRun?.last_run || null);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Failed to load dashboard data'
@@ -260,6 +266,11 @@ export const LandingDashboard: React.FC = () => {
           {lastRefresh && (
             <span className="last-refresh">
               Last updated: {lastRefresh.toLocaleTimeString()}
+            </span>
+          )}
+          {lastRVToolsRun && (
+            <span className="last-rvtools-run">
+              RVTools last run: {new Date(lastRVToolsRun).toLocaleString()}
             </span>
           )}
         </div>

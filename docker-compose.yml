@@ -73,6 +73,7 @@ services:
       - app_logs:/app/logs
       - ./monitoring/cache:/app/monitoring/cache:ro
       - ./metrics_cache.json:/app/metrics_cache.json:ro
+      - C:\Reports\Platform9:/mnt/reports:ro
     depends_on:
       - db
       - ldap
