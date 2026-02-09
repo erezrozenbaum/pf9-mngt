@@ -1,3 +1,8 @@
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("[WARNING] python-dotenv not installed; .env file will not be loaded automatically.")
 #!/usr/bin/env python3
 """
 p9_auto_snapshots.py
@@ -96,11 +101,14 @@ try:
         ensure_service_user,
         get_service_user_password,
         SERVICE_USER_EMAIL,
+        is_password_expired,
     )
 except ImportError:
     print("[WARNING] snapshot_service_user module not available; service user management disabled")
     ensure_service_user = None
     SERVICE_USER_EMAIL = None
+    get_service_user_password = lambda tenant_id=None: None
+    is_password_expired = lambda password_last_changed=None, max_age_days=90: False
 
 # Database constants
 ENABLE_DB = os.getenv("ENABLE_DB", "true").lower() in ("true", "yes", "1")
@@ -389,7 +397,11 @@ def cleanup_old_snapshots_for_volume(
     vol_id = volume["id"]
 
     try:
-        snaps = cinder_list_snapshots_for_volume(session, admin_project_id, vol_id)
+        # Use admin session for admin project, else use project session for project
+        if getattr(session, "is_admin", False):
+            snaps = cinder_list_snapshots_for_volume(session, admin_project_id, vol_id)
+        else:
+            snaps = cinder_list_snapshots_for_volume(session, volume.get("os-vol-tenant-attr:tenant_id") or volume.get("project_id"), vol_id)
     except Exception as e:
         msg = f"Failed to list snapshots for volume {vol_id}: {type(e).__name__}: {e}"
         print("    WARNING:", msg)
@@ -481,10 +493,19 @@ def process_volume(
 
     # Use the session passed in (which should be project-scoped for service user)
     # The snapshot will be created in the authenticated session's project
+    # Check service user password expiration if available
+    password_last_changed = None
+    if hasattr(volume, "get"):
+        password_last_changed = volume.get("service_user_password_last_changed")
+    if is_password_expired(password_last_changed):
+        msg = f"Service user password expired for volume {vol_id} (project {volume_project_id})"
+        print("      ERROR:", msg)
+        log_error("auto_snapshots/password_expired", msg)
+        return None, volume_project_id, deleted_ids, msg, snap_name
     try:
         snap = cinder_create_snapshot(
-            admin_session,  # Use the project-scoped session (renamed from admin_session in function args)
-            admin_project_id,  # Use the correct project ID (renamed from admin_project_id in function args)
+            admin_session,
+            admin_project_id,
             volume_id=vol_id,
             name=snap_name,
             description=snap_desc,
@@ -497,18 +518,14 @@ def process_volume(
             force=True,
         )
         sid = snap.get("id")
-        
-        # Try multiple fields to find the project ID
         snapshot_created_in_project = (
             snap.get("os-extended-snapshot-attributes:project_id") or
             snap.get("os-vol-tenant-attr:tenant_id") or 
             snap.get("project_id") or 
             snap.get("tenant_id") or
-            volume_project_id  # Fall back to the volume's project ID (should be correct)
+            volume_project_id
         )
-        print(
-            f"      OK, snapshot id={sid} created in project={snapshot_created_in_project}"
-        )
+        print(f"      OK, snapshot id={sid} created in project={snapshot_created_in_project}")
         return sid, snapshot_created_in_project, deleted_ids, None, snap_name
     except Exception as e:
         msg = f"Failed to create snapshot for volume {vol_id}: {type(e).__name__}: {e}"
@@ -584,6 +601,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Automatic volume snapshot tool for Platform9/OpenStack (Cinder)."
     )
+
+    # Ensure service user has admin role in all tenants before snapshot automation
+    try:
+        from p9_common import ensure_admin_role_for_service_user
+        print("[INFO] Ensuring service user admin role in all tenants...")
+        ensure_admin_role_for_service_user()
+    except Exception as e:
+        print(f"[WARNING] Could not ensure admin role for service user: {e}")
     parser.add_argument(
         "--policy",
         default="daily_5",

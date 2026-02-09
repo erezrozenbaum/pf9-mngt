@@ -1,3 +1,11 @@
+def cinder_list_snapshots_for_volume(session: requests.Session, project_id: str, volume_id: str):
+    """
+    List all snapshots for a specific volume in a given project.
+    Uses cinder_snapshots_all and filters by volume_id.
+    Ensures all_tenants=1 is only used for admin sessions.
+    """
+    all_snaps = cinder_snapshots_all(session, project_id)
+    return [s for s in all_snaps if s.get("volume_id") == volume_id]
 #!/usr/bin/env python3
 """
 Common helpers for Platform9/OpenStack tools
@@ -109,6 +117,21 @@ def http_json(session: requests.Session, method: str, url: str, **kwargs) -> Dic
         return resp.json()
     except ValueError:
         return {}
+        print(f"[DEBUG] HTTP {method} {url}")
+        print(f"[DEBUG] Headers: {session.headers}")
+        if 'json' in kwargs:
+            print(f"[DEBUG] Payload: {kwargs['json']}")
+        elif 'data' in kwargs:
+            print(f"[DEBUG] Data: {kwargs['data']}")
+        resp = session.request(method, url, timeout=timeout, **kwargs)
+        print(f"[DEBUG] Response status: {resp.status_code}")
+        print(f"[DEBUG] Response body: {resp.text[:1000]}")
+        try:
+            resp.raise_for_status()
+        except Exception as e:
+            print(f"[HTTP] {method} {url} failed: {e}")
+            raise
+        return resp.json()
 
 
 def paginate(
@@ -116,6 +139,7 @@ def paginate(
     url: str,
     key: str,
     extra_params: Optional[Dict[str, Any]] = None,
+    debug_context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generic helper for limit/marker style pagination.
@@ -124,23 +148,27 @@ def paginate(
     out: List[Dict[str, Any]] = []
     marker: Optional[str] = None
     extra_params = dict(extra_params or {})
-
     while True:
         params: Dict[str, Any] = {"limit": CFG["PAGE_LIMIT"], **extra_params}
         if marker:
             params["marker"] = marker
-
-        resp = session.get(url, params=params, timeout=CFG["REQUEST_TIMEOUT"])
-        resp.raise_for_status()
+        try:
+            resp = session.get(url, params=params, timeout=CFG["REQUEST_TIMEOUT"])
+            resp.raise_for_status()
+        except requests.HTTPError as e:
+            print(f"[ERROR] HTTPError during paginate: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"[ERROR] Response status: {e.response.status_code}")
+                print(f"[ERROR] Response body: {e.response.text}")
+            if debug_context:
+                print(f"[ERROR] Debug context: {debug_context}")
+            raise
         data = resp.json() if resp.content else {}
         items = data.get(key, [])
         out.extend(items)
-
         if len(items) < CFG["PAGE_LIMIT"]:
             break
-
         marker = items[-1].get("id")
-
     return out
 
 
@@ -401,7 +429,7 @@ def list_users_all_domains(session: requests.Session):
         domains_response = session.get(domains_url, timeout=CFG["REQUEST_TIMEOUT"])
         
         if domains_response.status_code != 200:
-            log_warn("keystone", f"Could not fetch domains (status {domains_response.status_code}), falling back to current scope")
+            log_error("keystone", f"Could not fetch domains (status {domains_response.status_code}), falling back to current scope")
             current_users = list_users_all(session)
             log_info("keystone", f"Fallback: found {len(current_users)} users in current scope")
             return current_users
@@ -457,10 +485,10 @@ def list_users_all_domains(session: requests.Session):
                     # Other error
                     domain_stats[domain_name] = f"ERROR_{users_response.status_code}"
                     error_domains += 1
-                    log_warn("keystone", f"Domain {domain_name}: HTTP {users_response.status_code}")
+                    log_error("keystone", f"Domain {domain_name}: HTTP {users_response.status_code}")
                     
             except Exception as e:
-                log_warn("keystone", f"Exception querying domain {domain_name}: {str(e)}")
+                log_error("keystone", f"Exception querying domain {domain_name}: {str(e)}")
                 domain_stats[domain_name] = "EXCEPTION"
                 error_domains += 1
         
@@ -490,21 +518,25 @@ def list_users_all_domains(session: requests.Session):
         # Validation: compare with single-scope approach
         try:
             current_scope_users = list_users_all(session)
+            # Try to get the token from session headers if present
+            token = session.headers.get("X-Auth-Token") if hasattr(session, "headers") else None
             if len(final_users) > len(current_scope_users):
-                log_info("keystone", f"SUCCESS: Multi-domain found {len(final_users)} vs single-scope {len(current_scope_users)} users")
+                if token:
+                    session.headers.update({"X-Auth-Token": token})
+                session.is_admin = True
             elif len(final_users) == len(current_scope_users):
-                log_warn("keystone", f"NOTICE: Multi-domain and single-scope both found {len(final_users)} users - may have cloud admin scope")
+                log_error("keystone", f"NOTICE: Multi-domain and single-scope both found {len(final_users)} users - may have cloud admin scope")
             else:
-                log_warn("keystone", f"WARNING: Multi-domain found fewer users ({len(final_users)}) than single-scope ({len(current_scope_users)})")
+                log_error("keystone", f"WARNING: Multi-domain found fewer users ({len(final_users)}) than single-scope ({len(current_scope_users)})")
         except Exception as e:
-            log_warn("keystone", f"Could not compare with single-scope approach: {e}")
+            log_error("keystone", f"Could not compare with single-scope approach: {e}")
         
         return final_users
             
     except Exception as e:
         log_error("keystone", f"Error in list_users_all_domains: {str(e)}")
         # Fall back to regular user listing
-        log_warn("keystone", "Falling back to single-scope user collection")
+        log_error("keystone", "Falling back to single-scope user collection")
         return list_users_all(session)
 
 
@@ -719,7 +751,9 @@ def cinder_volumes_all(session: requests.Session, project_id: str):
     _require_cinder()
     # If endpoint already has /v3/<proj>, just append /volumes/detail
     url = f"{CINDER_ENDPOINT}/volumes/detail"
-    return paginate(session, url, "volumes", extra_params={"all_tenants": "1"})
+    # Only use all_tenants=1 if session is admin (token project == service project)
+    extra_params = {"all_tenants": "1"} if getattr(session, "is_admin", False) else {}
+    return paginate(session, url, "volumes", extra_params=extra_params)
 
 
 def cinder_snapshots_all(session: requests.Session, project_id: str):
@@ -730,41 +764,15 @@ def cinder_snapshots_all(session: requests.Session, project_id: str):
     the token scope. We reconstruct the URL with the provided project_id.
     """
     _require_cinder()
-    
     # Reconstruct the URL with the correct project_id
     if CINDER_ENDPOINT:
         base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
         url = f"{base_url}/{project_id}/snapshots/detail"
     else:
         raise RuntimeError("CINDER_ENDPOINT not initialized")
-    
-    return paginate(session, url, "snapshots", extra_params={"all_tenants": "1"})
-
-
-def cinder_list_snapshots_for_volume(
-    session: requests.Session, project_id: str, volume_id: str
-):
-    """
-    Fetch snapshots for a specific volume (all tenants, detailed).
-    
-    Note: When using project-scoped sessions, project_id should match
-    the token scope. We reconstruct the URL with the provided project_id.
-    """
-    _require_cinder()
-    
-    # Reconstruct the URL with the correct project_id
-    if CINDER_ENDPOINT:
-        base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
-        url = f"{base_url}/{project_id}/snapshots/detail"
-    else:
-        raise RuntimeError("CINDER_ENDPOINT not initialized")
-    
-    return paginate(
-        session,
-        url,
-        "snapshots",
-        extra_params={"all_tenants": "1", "volume_id": volume_id},
-    )
+    # Only use all_tenants=1 if session is admin
+    extra_params = {"all_tenants": "1"} if getattr(session, "is_admin", False) else {}
+    return paginate(session, url, "snapshots", extra_params=extra_params)
 
 
 def cinder_create_snapshot(
@@ -890,3 +898,23 @@ def neutron_list(session: requests.Session, resource: str):
     url = f"{NEUTRON_ENDPOINT}/v2.0/{resource}"
     # Neutron returns e.g. {"networks":[...]} – key is usually plural resource name
     return paginate(session, url, resource)
+
+
+# Integration: automate admin role assignment for service user
+
+def ensure_admin_role_for_service_user():
+    """
+    Ensure snapshot@ccc.co.il has admin role in every tenant/project.
+    Uses Keystone session and credentials from CFG.
+    """
+    try:
+        from snapshots.snapshot_service_user import automate_admin_role_assignment, SERVICE_USER_EMAIL
+    except ImportError:
+        print("[ERROR] snapshot_service_user module not available; cannot automate admin role assignment.")
+        return
+    session, token, body, scope_mode, _ = get_session_best_scope()
+    keystone_url = CFG["KEYSTONE_URL"]
+    if not token or not keystone_url:
+        print("[ERROR] Keystone session or URL not available.")
+        return
+    automate_admin_role_assignment(keystone_url, token, SERVICE_USER_EMAIL)
