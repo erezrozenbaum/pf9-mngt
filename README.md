@@ -50,7 +50,24 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Enhanced functionality**: Snapshot management, volume management, and other tools not available in standard Platform9 UI.
 - **Lower complexity**: Consistent workflows reduce manual steps and errors.
 
-## 📚 Documentation
+## � Screenshots
+
+### Landing Dashboard
+![Landing Dashboard](docs/images/dashboard-overview.png)
+
+### Snapshot Compliance Report
+![Snapshot Compliance Report](docs/images/snapshot-compliance-report.png)
+
+### VM Inventory
+![VM Inventory](docs/images/VMs%20inventory.png)
+
+### History & Monitoring
+![History & Monitoring](docs/images/History%20monitoring.png)
+
+### API Performance
+![API Performance](docs/images/API%20Performance.png)
+
+## �📚 Documentation
 
 - **[LICENSE](LICENSE)** - MIT License
 
