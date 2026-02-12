@@ -1,0 +1,70 @@
+name: Create Release Tag
+
+# Triggers when a PR is merged to master/main
+on:
+  pull_request:
+    types: [closed]
+    branches: [master, main]
+
+jobs:
+  release:
+    # Only run if the PR was actually merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from CHANGELOG.md
+        id: changelog
+        run: |
+          # Parse the latest version from CHANGELOG.md
+          VERSION=$(grep -oP '## \[\K\d+\.\d+\.\d+' CHANGELOG.md | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "No version found in CHANGELOG.md"
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+          # Check if tag already exists
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag $TAG already exists, skipping"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Will create tag: $TAG"
+          fi
+
+          # Extract changelog section for release notes
+          # Get content between this version header and the next version header
+          NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+          # Write multi-line output
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Git Tag
+        if: steps.changelog.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a ${{ steps.changelog.outputs.tag }} -m "Release ${{ steps.changelog.outputs.tag }}"
+          git push origin ${{ steps.changelog.outputs.tag }}
+
+      - name: Create GitHub Release
+        if: steps.changelog.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.changelog.outputs.tag }}
+          name: Release ${{ steps.changelog.outputs.tag }}
+          body: ${{ steps.changelog.outputs.notes }}
+          draft: false
+          prerelease: false
