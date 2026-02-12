@@ -24,6 +24,7 @@ class SnapshotPolicySetCreate(BaseModel):
     description: Optional[str] = None
     is_global: bool = False
     tenant_id: Optional[str] = None
+    tenant_name: Optional[str] = None
     policies: List[str] = Field(..., min_items=1)  # ["daily_5", "weekly_4"]
     retention_map: Dict[str, int] = Field(..., min_items=1)  # {"daily_5": 5}
     priority: int = Field(default=0, ge=0, le=1000)
@@ -143,42 +144,83 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-def _build_compliance_from_metadata(
+def _build_compliance_from_volumes(
     cur: RealDictCursor,
     days: int,
     tenant_id: Optional[str],
     project_id: Optional[str],
     policy_filter: Optional[str],
 ) -> List[Dict[str, Any]]:
+    """
+    Build compliance rows directly from the volumes table metadata.
+    This is the primary compliance data source — volumes with auto_snapshot=true
+    are the authoritative list.  Each volume × policy is a separate row.
+
+    Name resolution:
+      - volume name  → volumes.name
+      - project name → projects.name  (via volumes.project_id)
+      - tenant/domain name → domains.name (via projects.domain_id)
+      - VM name      → servers.name  (via volumes.raw_json→attachments→server_id)
+
+    Retention per policy is read from volume metadata keys like
+    "retention_daily_5", "retention_monthly_1st", etc.
+
+    Last-snapshot timestamps and snapshot counts are derived directly from
+    the snapshots table using OpenStack metadata (created_by, policy) stored
+    in each snapshot's raw_json.  This is more reliable than snapshot_records
+    which may have gaps.
+
+    Manual snapshots (those without created_by=p9_auto_snapshots metadata)
+    are counted separately and are never touched by automation.
+
+    This means policies that have never run (e.g. monthly_1st before the
+    1st of the month) will correctly show 0 snapshots and no last-snapshot
+    timestamp.
+    """
+
+    # ---- per-policy stats: directly from snapshot metadata -----------------
+    # The snapshots table raw_json->'metadata' has 'created_by' and 'policy'
+    # set by p9_auto_snapshots.  This is the authoritative source.
     cur.execute(
         """
-        SELECT volume_id, policy_name, MAX(openstack_created_at) AS last_snapshot_at
-        FROM snapshot_records
-        WHERE action IN ('created', 'create')
-          AND (status IS NULL OR status NOT IN ('failed', 'error'))
-        GROUP BY volume_id, policy_name
+        SELECT s.volume_id,
+               s.raw_json->'metadata'->>'policy' AS policy_name,
+               COUNT(*)        AS snapshot_count,
+               MAX(s.created_at) AS last_snapshot_at
+        FROM snapshots s
+        WHERE s.status IN ('available', 'in-use')
+          AND s.raw_json->'metadata'->>'created_by' = 'p9_auto_snapshots'
+          AND s.raw_json->'metadata'->>'policy' IS NOT NULL
+        GROUP BY s.volume_id, s.raw_json->'metadata'->>'policy'
         """
     )
-    last_snapshots = {
-        (row.get("volume_id"), row.get("policy_name")): row.get("last_snapshot_at")
+    policy_stats = {
+        (row["volume_id"], row["policy_name"]): {
+            "snapshot_count":   row["snapshot_count"],
+            "last_snapshot_at": row["last_snapshot_at"],
+        }
         for row in cur.fetchall()
     }
 
+    # ---- volumes with auto_snapshot metadata, enriched with names ----------
     cur.execute(
         """
         SELECT
-            v.id AS volume_id,
-            v.name AS volume_name,
+            v.id              AS volume_id,
+            v.name            AS volume_name,
             v.project_id,
-            p.name AS project_name,
-            p.id AS tenant_id,
-            p.name AS tenant_name,
+            proj.name         AS project_name,
+            proj.domain_id    AS tenant_id,
+            dom.name          AS tenant_name,
             v.raw_json->'attachments'->0->>'server_id' AS vm_id,
-            (SELECT srv.name FROM servers srv WHERE srv.id = (v.raw_json->'attachments'->0->>'server_id')) AS vm_name,
+            srv.name          AS vm_name,
             v.raw_json->'metadata' AS metadata
         FROM volumes v
-        LEFT JOIN projects p ON p.id = v.project_id
-        WHERE v.raw_json->'metadata'->>'auto_snapshot' IN ('true', 'True', '1', 'yes')
+        LEFT JOIN projects proj ON proj.id = v.project_id
+        LEFT JOIN domains  dom  ON dom.id  = proj.domain_id
+        LEFT JOIN servers  srv  ON srv.id  = v.raw_json->'attachments'->0->>'server_id'
+        WHERE v.raw_json->'metadata'->>'auto_snapshot'
+                  IN ('true', 'True', '1', 'yes')
           AND v.raw_json->'metadata'->>'snapshot_policies' IS NOT NULL
         """
     )
@@ -186,42 +228,75 @@ def _build_compliance_from_metadata(
     now = datetime.now(timezone.utc)
     compliance_rows: List[Dict[str, Any]] = []
 
+    # Determine which policies have EVER produced at least one snapshot.
+    # If a policy has zero snapshots across ALL volumes, it hasn't had its
+    # first scheduled run yet → volumes should show "Pending" not "Missing".
+    policies_that_have_run = set()
+    for (_, pname) in policy_stats:
+        policies_that_have_run.add(pname)
+
     for row in rows:
-        if tenant_id and row.get("tenant_id") != tenant_id:
+        row_project_id = row.get("project_id")
+        row_tenant_id = row.get("tenant_id")
+
+        if tenant_id and row_tenant_id != tenant_id:
             continue
-        if project_id and row.get("project_id") != project_id:
+        if project_id and row_project_id != project_id:
             continue
 
         metadata = row.get("metadata") or {}
         policies = _parse_policy_list(metadata.get("snapshot_policies"))
+        vol_id = row["volume_id"]
+
         for policy_name in policies:
             if policy_filter and policy_name != policy_filter:
                 continue
 
-            retention_days = _safe_int(metadata.get(f"retention_{policy_name}"))
-            last_snapshot_at = last_snapshots.get((row.get("volume_id"), policy_name))
-            compliant = False
-            if last_snapshot_at:
-                compliant = last_snapshot_at >= (now - timedelta(days=days))
+            retention = _safe_int(metadata.get(f"retention_{policy_name}")) or 0
 
+            # Strictly per-policy: from snapshot metadata directly
+            pstat = policy_stats.get((vol_id, policy_name), {})
+            last_snapshot_at = pstat.get("last_snapshot_at")
+            policy_snap_count = pstat.get("snapshot_count", 0)
+
+            # Determine compliance status:
+            #  - "compliant": has a snapshot within the time window
+            #  - "missing":  policy has run before but this volume is overdue
+            #  - "pending":  policy has NEVER run for ANY volume yet
+            if last_snapshot_at and last_snapshot_at >= (now - timedelta(days=days)):
+                comp_status = "compliant"
+                compliant = True
+            elif policy_name not in policies_that_have_run:
+                comp_status = "pending"
+                compliant = False
+            else:
+                comp_status = "missing"
+                compliant = False
+
+            vol_name = row.get("volume_name")
             compliance_rows.append({
-                "volume_id": row.get("volume_id"),
-                "volume_name": row.get("volume_name"),
-                "tenant_id": row.get("tenant_id"),
-                "tenant_name": row.get("tenant_name"),
-                "project_id": row.get("project_id"),
-                "project_name": row.get("project_name"),
-                "vm_id": row.get("vm_id"),
-                "vm_name": row.get("vm_name"),
-                "policy_name": policy_name,
-                "retention_days": retention_days,
+                "volume_id":        vol_id,
+                "volume_name":      vol_name if vol_name else vol_id,
+                "tenant_id":        row_tenant_id or "",
+                "tenant_name":      row.get("tenant_name") or row_tenant_id or "",
+                "project_id":       row_project_id or "",
+                "project_name":     row.get("project_name") or row_project_id or "",
+                "vm_id":            row.get("vm_id") or "",
+                "vm_name":          row.get("vm_name") or row.get("vm_id") or "",
+                "policy_name":      policy_name,
+                "retention_days":   retention,
+                "snapshot_count":   policy_snap_count,
                 "last_snapshot_at": last_snapshot_at,
-                "compliant": compliant,
+                "compliant":        compliant,
+                "status":           comp_status,
             })
 
+    # Sort: pending last, then non-compliant, then compliant
+    status_order = {"missing": 0, "compliant": 1, "pending": 2}
     min_time = datetime.min.replace(tzinfo=timezone.utc)
     compliance_rows.sort(
-        key=lambda r: (r.get("compliant"), r.get("last_snapshot_at") or min_time),
+        key=lambda r: (status_order.get(r.get("status"), 0),
+                       r.get("last_snapshot_at") or min_time),
         reverse=False,
     )
     return compliance_rows
@@ -1225,75 +1300,71 @@ def setup_snapshot_routes(app, get_db_connection):
         current_user: User = Depends(get_current_user),
         _has_permission: bool = Depends(require_permission("snapshot_records", "read"))
     ):
-        """Get snapshot compliance status per volume+policy"""
+        """Get snapshot compliance status per volume+policy.
+
+        Builds compliance rows directly from volumes table metadata,
+        enriched with project/domain/server names via JOINs and
+        snapshot counts/timestamps from snapshot metadata.
+
+        Also returns a separate manual_snapshots list for snapshots
+        not created by automation (no created_by=p9_auto_snapshots
+        metadata).  These are never touched by retention / cleanup.
+        """
         try:
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
 
-            query = """
-                WITH policy_assignments AS (
-                    SELECT a.*, jsonb_array_elements_text(a.policies) AS policy_name
-                    FROM snapshot_assignments a
-                    WHERE a.auto_snapshot = true
-                ), last_snaps AS (
-                    SELECT volume_id, policy_name, MAX(openstack_created_at) AS last_snapshot_at
-                    FROM snapshot_records
-                    WHERE action IN ('created', 'create')
-                      AND (status IS NULL OR status NOT IN ('failed', 'error'))
-                    GROUP BY volume_id, policy_name
-                )
-                SELECT
-                    p.volume_id,
-                    p.volume_name,
-                    p.tenant_id,
-                    p.tenant_name,
-                    p.project_id,
-                    p.project_name,
-                    COALESCE(p.vm_id, v.raw_json->'attachments'->0->>'server_id') AS vm_id,
-                    COALESCE(p.vm_name, (SELECT name FROM servers WHERE id = (v.raw_json->'attachments'->0->>'server_id'))) AS vm_name,
-                    p.policy_name,
-                    (p.retention_map->>p.policy_name)::int AS retention_days,
-                    ls.last_snapshot_at,
-                    CASE
-                        WHEN ls.last_snapshot_at IS NOT NULL
-                         AND ls.last_snapshot_at >= NOW() - (%s || ' days')::interval
-                        THEN true ELSE false
-                    END AS compliant
-                FROM policy_assignments p
-                LEFT JOIN volumes v ON v.id = p.volume_id
-                LEFT JOIN last_snaps ls
-                  ON ls.volume_id = p.volume_id AND ls.policy_name = p.policy_name
-                WHERE 1=1
-            """
-            params = [days]
+            rows = _build_compliance_from_volumes(
+                cur, days, tenant_id, project_id, policy
+            )
 
-            if tenant_id:
-                query += " AND p.tenant_id = %s"
-                params.append(tenant_id)
-            if project_id:
-                query += " AND p.project_id = %s"
-                params.append(project_id)
-            if policy:
-                query += " AND p.policy_name = %s"
-                params.append(policy)
+            # ---- manual snapshots detail -----------------------------------
+            cur.execute(
+                """
+                SELECT s.id            AS snapshot_id,
+                       s.name          AS snapshot_name,
+                       s.volume_id,
+                       v.name          AS volume_name,
+                       s.project_id,
+                       proj.name       AS project_name,
+                       proj.domain_id  AS tenant_id,
+                       dom.name        AS tenant_name,
+                       s.size_gb,
+                       s.status,
+                       s.created_at
+                FROM snapshots s
+                LEFT JOIN volumes  v    ON v.id    = s.volume_id
+                LEFT JOIN projects proj ON proj.id = s.project_id
+                LEFT JOIN domains  dom  ON dom.id  = proj.domain_id
+                WHERE s.status IN ('available', 'in-use')
+                  AND (s.raw_json->'metadata'->>'created_by' IS NULL
+                       OR s.raw_json->'metadata'->>'created_by'
+                              != 'p9_auto_snapshots')
+                ORDER BY s.created_at DESC
+                """
+            )
+            manual_snapshots = []
+            for r in cur.fetchall():
+                manual_snapshots.append({
+                    "snapshot_id":   r["snapshot_id"],
+                    "snapshot_name": r["snapshot_name"] or r["snapshot_id"],
+                    "volume_id":     r["volume_id"] or "",
+                    "volume_name":   r["volume_name"] or r["volume_id"] or "",
+                    "project_id":    r["project_id"] or "",
+                    "project_name":  r["project_name"] or r["project_id"] or "",
+                    "tenant_id":     r["tenant_id"] or "",
+                    "tenant_name":   r["tenant_name"] or r["tenant_id"] or "",
+                    "size_gb":       r["size_gb"],
+                    "status":        r["status"],
+                    "created_at":    r["created_at"],
+                })
 
-            query += " ORDER BY compliant ASC, last_snapshot_at DESC NULLS LAST"
-
-            cur.execute(query, params)
-            rows = cur.fetchall()
-            if not rows:
-                rows = _build_compliance_from_metadata(
-                    cur,
-                    days,
-                    tenant_id,
-                    project_id,
-                    policy,
-                )
             cur.close()
             conn.close()
 
-            compliant_count = sum(1 for r in rows if r.get("compliant"))
-            noncompliant_count = len(rows) - compliant_count
+            compliant_count = sum(1 for r in rows if r.get("status") == "compliant")
+            noncompliant_count = sum(1 for r in rows if r.get("status") == "missing")
+            pending_count = sum(1 for r in rows if r.get("status") == "pending")
 
             return {
                 "rows": rows,
@@ -1301,8 +1372,10 @@ def setup_snapshot_routes(app, get_db_connection):
                 "summary": {
                     "compliant": compliant_count,
                     "noncompliant": noncompliant_count,
+                    "pending": pending_count,
                     "days": days,
                 },
+                "manual_snapshots": manual_snapshots,
             }
 
         except Exception as e:

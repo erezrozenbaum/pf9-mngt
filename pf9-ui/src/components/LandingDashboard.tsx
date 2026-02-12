@@ -57,7 +57,7 @@ export const LandingDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [lastRVToolsRun, setLastRVToolsRun] = useState<string | null>(null);
+  const [lastRVToolsRun, setLastRVToolsRun] = useState<{last_run: string; source?: string; duration_seconds?: number} | null>(null);
 
   const fetchDashboardData = async () => {
     try {
@@ -211,7 +211,7 @@ export const LandingDashboard: React.FC = () => {
         complianceDrift,
       });
       setLastRefresh(new Date());
-      setLastRVToolsRun(rvtoolsLastRun?.last_run || null);
+      setLastRVToolsRun(rvtoolsLastRun?.last_run ? rvtoolsLastRun : null);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Failed to load dashboard data'
@@ -270,10 +270,33 @@ export const LandingDashboard: React.FC = () => {
           )}
           {lastRVToolsRun && (
             <span className="last-rvtools-run">
-              RVTools last run: {new Date(lastRVToolsRun).toLocaleString()}
+              Data from: {new Date(lastRVToolsRun.last_run).toLocaleString()}
             </span>
           )}
         </div>
+      </div>
+
+      {/* Data freshness banner */}
+      <div className="data-freshness-banner">
+        <span className="freshness-icon">📡</span>
+        {lastRVToolsRun ? (
+          <>
+            <span className="freshness-label">Data collected:</span>
+            <span className="freshness-time">{new Date(lastRVToolsRun.last_run).toLocaleString()}</span>
+            {lastRVToolsRun.duration_seconds != null && (
+              <span className="freshness-detail">({lastRVToolsRun.duration_seconds}s run)</span>
+            )}
+            {(() => {
+              const ageMs = Date.now() - new Date(lastRVToolsRun.last_run).getTime();
+              const ageMins = Math.round(ageMs / 60000);
+              const cls = ageMins > 120 ? 'freshness-age stale' : ageMins > 60 ? 'freshness-age warning' : 'freshness-age fresh';
+              const label = ageMins < 1 ? 'just now' : ageMins < 60 ? `${ageMins}m ago` : `${Math.round(ageMins / 60)}h ago`;
+              return <span className={cls}>{label}</span>;
+            })()}
+          </>
+        ) : (
+          <span className="freshness-label" style={{color: '#f5d1b9'}}>No inventory data collected yet</span>
+        )}
       </div>
 
       {error && (

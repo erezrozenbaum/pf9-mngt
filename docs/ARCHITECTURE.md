@@ -155,7 +155,9 @@ POST /admin/user-access-log      # Log user access
 GET  /history/recent-changes     # Recent infrastructure changes
 GET  /history/most-changed       # Most frequently changed resources
 GET  /history/by-timeframe       # Changes by time period
-GET  /history/resource/{type}/{id} # Resource-specific history
+GET  /history/resource/{type}/{id} # Resource-specific history (incl. deletion)
+GET  /history/compare/{type}/{id}  # Compare two history snapshots
+GET  /history/details/{type}/{id}  # Detailed change info with sequencing
 GET  /audit/compliance-report    # Compliance analysis
 GET  /audit/change-patterns      # Change pattern analysis
 

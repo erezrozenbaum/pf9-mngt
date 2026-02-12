@@ -149,73 +149,184 @@ def get_db_connection():
 
 
 def write_compliance_to_db(vol_comp: pd.DataFrame, input_file: str, output_file: str, sla_days: int):
-    """Write compliance report data to database tables."""
+    """Write compliance report data to database tables.
+
+    Creates one row per volume × policy (splitting the comma-separated
+    policy string from the DataFrame).  Resolves tenant/domain and VM
+    names from the DB so that compliance_details is fully populated.
+    """
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
+
         # Count compliant vs non-compliant
         compliant_count = int(vol_comp["is_compliant"].sum()) if not vol_comp.empty else 0
         total_volumes = len(vol_comp)
         noncompliant_count = total_volumes - compliant_count
-        
+
         # Insert compliance report summary
         cur.execute("""
-            INSERT INTO compliance_reports 
+            INSERT INTO compliance_reports
             (report_date, input_file, output_file, sla_days, total_volumes, compliant_count, noncompliant_count)
             VALUES (NOW(), %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (input_file, output_file, sla_days, total_volumes, compliant_count, noncompliant_count))
-        
+
         report_id = cur.fetchone()[0]
-        
-        # Prepare compliance details data
+
+        # ---- Build lookup maps from DB for enrichment ----------------------
+        # project_id → (project_name, domain_id, domain_name)
+        project_map = {}
+        try:
+            cur.execute("""
+                SELECT p.id, p.name AS project_name,
+                       p.domain_id, d.name AS domain_name
+                FROM projects p
+                LEFT JOIN domains d ON d.id = p.domain_id
+            """)
+            for prow in cur.fetchall():
+                project_map[prow[0]] = {
+                    "project_name": prow[1],
+                    "domain_id": prow[2],
+                    "domain_name": prow[3],
+                }
+        except Exception:
+            pass
+
+        # volume_id → (volume_name, vm_id, vm_name) from volumes + servers
+        volume_enrichment = {}
+        try:
+            cur.execute("""
+                SELECT v.id,
+                       v.name AS volume_name,
+                       v.raw_json->'attachments'->0->>'server_id' AS vm_id,
+                       srv.name AS vm_name,
+                       v.raw_json->'metadata' AS metadata
+                FROM volumes v
+                LEFT JOIN servers srv
+                    ON srv.id = v.raw_json->'attachments'->0->>'server_id'
+            """)
+            for vrow in cur.fetchall():
+                volume_enrichment[vrow[0]] = {
+                    "volume_name": vrow[1] if vrow[1] else None,
+                    "vm_id": vrow[2],
+                    "vm_name": vrow[3],
+                    "metadata": vrow[4] if vrow[4] else {},
+                }
+        except Exception:
+            pass
+
+        # ---- Prepare compliance detail rows --------------------------------
         if not vol_comp.empty:
             details = []
             for _, row in vol_comp.iterrows():
-                # Convert pandas NaT to None
+                volume_id = row.get("volume_id")
+                project_id = row.get("project_id")
+
+                # Resolve names from DB lookups
+                vol_info = volume_enrichment.get(volume_id, {})
+                proj_info = project_map.get(project_id, {})
+
+                # Volume name: prefer DB name, fall back to DataFrame, skip NaN
+                raw_vol_name = row.get("volume_name")
+                if pd.isna(raw_vol_name) or str(raw_vol_name).strip().lower() in ("nan", ""):
+                    raw_vol_name = None
+                vol_name = vol_info.get("volume_name") or raw_vol_name
+
+                # Tenant = domain (project→domain)
+                tenant_id = proj_info.get("domain_id") or row.get("domain_id")
+                tenant_name = proj_info.get("domain_name") or row.get("domain_name")
+                if pd.isna(tenant_name):
+                    tenant_name = None
+
+                # Project name
+                project_name = proj_info.get("project_name") or row.get("project_name")
+                if pd.isna(project_name):
+                    project_name = None
+
+                # Domain
+                domain_id = proj_info.get("domain_id") or row.get("domain_id")
+                if pd.isna(domain_id):
+                    domain_id = None
+                domain_name = proj_info.get("domain_name") or row.get("domain_name")
+                if pd.isna(domain_name):
+                    domain_name = None
+
+                # VM info
+                vm_id = vol_info.get("vm_id") or (row.get("vm_id") if pd.notna(row.get("vm_id")) else None)
+                vm_name = vol_info.get("vm_name") or (row.get("vm_name") if pd.notna(row.get("vm_name")) else None)
+
+                # Last snapshot
                 last_snapshot_at = None
                 if pd.notna(row.get("last_snapshot_at")):
                     last_snapshot_at = row["last_snapshot_at"]
-                
+
                 days_since = None
                 if pd.notna(row.get("days_since_last_snapshot")):
                     days_since = float(row["days_since_last_snapshot"])
-                
-                details.append((
-                    report_id,
-                    row.get("volume_id"),
-                    row.get("volume_name"),
-                    row.get("tenant_id"),
-                    row.get("tenant_name"),
-                    row.get("project_id"),
-                    row.get("project_name"),
-                    row.get("domain_id"),
-                    row.get("domain_name"),
-                    row.get("vm_id"),
-                    row.get("vm_name"),
-                    row.get("policy"),
-                    int(row.get("retention_days", 0)) if pd.notna(row.get("retention_days")) else None,
-                    last_snapshot_at,
-                    days_since,
-                    bool(row.get("is_compliant", False)),
-                    row.get("status", "Unknown")
-                ))
-            
+                elif pd.notna(row.get("last_snapshot_age_days")):
+                    days_since = float(row["last_snapshot_age_days"])
+
+                is_compliant = bool(row.get("is_compliant", False))
+                compliance_status = row.get("status", "Unknown")
+                if pd.isna(compliance_status):
+                    compliance_status = "Compliant" if is_compliant else "Missing"
+
+                # Split comma-separated policies into individual rows
+                policies_str = str(row.get("policy", "")) if pd.notna(row.get("policy")) else ""
+                policies = [p.strip() for p in policies_str.split(",") if p.strip()]
+                if not policies:
+                    policies = ["unknown"]
+
+                # Get per-policy retention from volume metadata
+                vol_metadata = vol_info.get("metadata", {})
+                if isinstance(vol_metadata, str):
+                    try:
+                        vol_metadata = json.loads(vol_metadata)
+                    except Exception:
+                        vol_metadata = {}
+
+                for policy_name in policies:
+                    ret_key = f"retention_{policy_name}"
+                    try:
+                        retention = int(vol_metadata.get(ret_key, 0))
+                    except (TypeError, ValueError):
+                        retention = 0
+
+                    details.append((
+                        report_id,
+                        volume_id,
+                        vol_name,
+                        tenant_id,
+                        tenant_name,
+                        project_id,
+                        project_name,
+                        domain_id,
+                        domain_name,
+                        vm_id,
+                        vm_name,
+                        policy_name,
+                        retention,
+                        last_snapshot_at,
+                        days_since,
+                        is_compliant,
+                        compliance_status,
+                    ))
+
             # Bulk insert compliance details
             execute_values(cur, """
-                INSERT INTO compliance_details 
+                INSERT INTO compliance_details
                 (report_id, volume_id, volume_name, tenant_id, tenant_name, project_id, project_name,
                  domain_id, domain_name, vm_id, vm_name, policy_name, retention_days, last_snapshot_at,
                  days_since_snapshot, is_compliant, compliance_status)
                 VALUES %s
             """, details)
-        
+
         conn.commit()
         cur.close()
         conn.close()
-        
-        print(f"✅ Compliance data written to database (report ID: {report_id})")
+
+        print(f"✅ Compliance data written to database (report ID: {report_id}, {len(details) if not vol_comp.empty else 0} detail rows)")
         return report_id
         
     except Exception as e:

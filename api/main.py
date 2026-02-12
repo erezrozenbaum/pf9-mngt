@@ -1704,93 +1704,6 @@ def snapshot_runs(
     }
 
 
-@app.get("/snapshot/compliance")
-def snapshot_compliance(
-    days: int = Query(default=7, ge=1, le=365),
-    tenant_id: Optional[str] = None,
-    project_id: Optional[str] = None,
-    policy: Optional[str] = None,
-):
-    """Get snapshot compliance report from the latest compliance report run."""
-    # Get the latest compliance report
-    latest_report_sql = """
-    SELECT id, report_date, sla_days, total_volumes, compliant_count, noncompliant_count
-    FROM compliance_reports
-    ORDER BY report_date DESC
-    LIMIT 1
-    """
-    
-    latest_report = run_query(latest_report_sql)
-    if not latest_report:
-        return {
-            "rows": [],
-            "count": 0,
-            "summary": {
-                "compliant": 0,
-                "noncompliant": 0,
-                "days": days,
-                "last_report_date": None
-            }
-        }
-    
-    report = latest_report[0]
-    report_id = report['id']
-    
-    # Build query for compliance details
-    where_conditions = ["cd.report_id = %s"]
-    params = [report_id]
-    
-    if tenant_id:
-        where_conditions.append("cd.tenant_id = %s")
-        params.append(tenant_id)
-    if project_id:
-        where_conditions.append("cd.project_id = %s")
-        params.append(project_id)
-    if policy:
-        where_conditions.append("cd.policy_name LIKE %s")
-        params.append(f"%{policy}%")
-    
-    where_sql = " AND ".join(where_conditions)
-    
-    sql = f"""
-    SELECT 
-        cd.volume_id,
-        cd.volume_name,
-        cd.tenant_id,
-        cd.tenant_name,
-        cd.project_id,
-        cd.project_name,
-        cd.vm_id,
-        cd.vm_name,
-        cd.policy_name,
-        cd.retention_days,
-        cd.last_snapshot_at,
-        cd.days_since_snapshot,
-        cd.is_compliant as compliant,
-        cd.compliance_status
-    FROM compliance_details cd
-    WHERE {where_sql}
-    ORDER BY cd.is_compliant ASC, cd.tenant_name, cd.volume_name
-    """
-    
-    rows = run_query(sql, tuple(params))
-    
-    # Calculate summary from filtered results
-    compliant_count = sum(1 for r in rows if r.get('compliant'))
-    noncompliant_count = len(rows) - compliant_count
-    
-    return {
-        "rows": rows,
-        "count": len(rows),
-        "summary": {
-            "compliant": compliant_count,
-            "noncompliant": noncompliant_count,
-            "days": report['sla_days'],
-            "last_report_date": report['report_date'].isoformat() if report.get('report_date') else None
-        }
-    }
-
-
 # ---------------------------------------------------------------------------
 #  Networks (read-only for UI, plus admin POST/DELETE below)
 # ---------------------------------------------------------------------------
@@ -2733,6 +2646,48 @@ def get_resource_history(
                 "role": "roles_history"
             }
             
+            # Handle deletion records specially - they come from deletions_history
+            if resource_type == "deletion":
+                cur.execute("""
+                    SELECT id, resource_type AS original_resource_type, resource_id, resource_name,
+                           deleted_at, project_name, domain_name, reason,
+                           last_seen_before_deletion, raw_json_snapshot,
+                           'deleted-' || resource_id AS change_hash
+                    FROM deletions_history
+                    WHERE resource_id = %s
+                    ORDER BY deleted_at DESC
+                    LIMIT %s
+                """, (resource_id, limit))
+                
+                history = cur.fetchall()
+                standardized_history = []
+                for idx, row in enumerate(history):
+                    row_dict = dict(row)
+                    mapped_row = {
+                        "resource_type": "deletion",
+                        "resource_id": row_dict.get('resource_id'),
+                        "resource_name": row_dict.get('resource_name') or f"Deleted {row_dict.get('original_resource_type', 'resource')}",
+                        "recorded_at": row_dict.get('deleted_at'),
+                        "change_hash": row_dict.get('change_hash', ''),
+                        "current_state": row_dict.get('raw_json_snapshot') or {
+                            "original_type": row_dict.get('original_resource_type'),
+                            "reason": row_dict.get('reason'),
+                            "last_seen_before_deletion": str(row_dict.get('last_seen_before_deletion') or ''),
+                            "project_name": row_dict.get('project_name'),
+                            "domain_name": row_dict.get('domain_name'),
+                        },
+                        "previous_hash": None,
+                        "change_sequence": len(history) - idx
+                    }
+                    standardized_history.append(mapped_row)
+                
+                return {
+                    "status": "success",
+                    "data": standardized_history,
+                    "count": len(standardized_history),
+                    "resource": {"type": "deletion", "id": resource_id}
+                }
+            
             if resource_type not in table_mapping:
                 raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
             
@@ -2965,6 +2920,13 @@ def compare_history_entries(
                 "role": "roles_history"
             }
             
+            if resource_type == "deletion":
+                return {
+                    "status": "info",
+                    "message": "Comparison is not available for deletion records. Deletion events are one-time occurrences.",
+                    "changes": {}
+                }
+            
             if resource_type not in table_mapping:
                 raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
             
@@ -3077,6 +3039,52 @@ def get_change_details(resource_type: str, resource_id: str):
                 "user": "users_history",
                 "role": "roles_history"
             }
+            
+            if resource_type == "deletion":
+                cur.execute("""
+                    SELECT id, resource_type AS original_resource_type, resource_id, resource_name,
+                           deleted_at, project_name, domain_name, reason,
+                           last_seen_before_deletion, raw_json_snapshot
+                    FROM deletions_history
+                    WHERE resource_id = %s
+                    ORDER BY deleted_at DESC
+                    LIMIT 10
+                """, (resource_id,))
+                history = cur.fetchall()
+                if not history:
+                    raise HTTPException(status_code=404, detail="Deletion record not found")
+                
+                latest = dict(history[0])
+                return {
+                    "status": "success",
+                    "resource": {
+                        "type": "deletion",
+                        "id": resource_id,
+                        "name": latest.get('resource_name', 'Unknown'),
+                        "original_type": latest.get('original_resource_type'),
+                    },
+                    "total_changes": len(history),
+                    "latest": {
+                        "deleted_at": latest.get('deleted_at'),
+                        "reason": latest.get('reason'),
+                        "project_name": latest.get('project_name'),
+                        "domain_name": latest.get('domain_name'),
+                        "last_seen_before_deletion": latest.get('last_seen_before_deletion'),
+                        "raw_json_snapshot": latest.get('raw_json_snapshot'),
+                    },
+                    "changes": [{
+                        "change_type": "deleted",
+                        "change_summary": f"Resource deletion detected - {dict(row).get('reason', 'no longer found in inventory')}",
+                        "recorded_at": dict(row).get('deleted_at'),
+                        "key_info": {
+                            "original_type": dict(row).get('original_resource_type'),
+                            "name": dict(row).get('resource_name'),
+                            "project": dict(row).get('project_name'),
+                            "domain": dict(row).get('domain_name'),
+                            "reason": dict(row).get('reason'),
+                        }
+                    } for row in history]
+                }
             
             if resource_type not in table_mapping:
                 raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
