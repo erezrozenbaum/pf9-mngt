@@ -32,8 +32,33 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 @router.get("/rvtools-last-run", dependencies=[Depends(require_permission("dashboard", "read"))])
 async def get_rvtools_last_run():
-    """Return the timestamp of the last RVTools Excel import (if available)."""
-    # Look for the latest Excel file in /mnt/reports or a configured path
+    """Return the timestamp and details of the last inventory / RVTools data collection."""
+    try:
+        conn = get_db_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, started_at, finished_at, status, source, duration_seconds
+                FROM inventory_runs
+                WHERE status = 'success'
+                ORDER BY finished_at DESC
+                LIMIT 1
+            """)
+            row = cur.fetchone()
+        conn.close()
+
+        if row:
+            return {
+                "last_run": row["finished_at"].isoformat() if row["finished_at"] else row["started_at"].isoformat(),
+                "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+                "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+                "source": row["source"],
+                "duration_seconds": row["duration_seconds"],
+                "run_id": row["id"],
+            }
+    except Exception as e:
+        logger.warning(f"Could not query inventory_runs: {e}")
+
+    # Fallback: check for Excel files on disk
     report_dir = os.getenv("RVTOOLS_REPORT_DIR", "/mnt/reports")
     pattern = os.path.join(report_dir, "pf9_rvtools_*.xlsx")
     files = glob.glob(pattern)

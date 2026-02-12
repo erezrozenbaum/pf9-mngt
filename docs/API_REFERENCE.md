@@ -487,15 +487,48 @@ Logs user access events for monitoring.
 
 ### Recent Changes
 **GET** `/history/recent-changes`  
-Returns recent resource changes.
+Returns recent resource changes from the `v_comprehensive_changes` view (includes all resource types and deletions).
+
+Query Parameters:
+- `hours` (optional, default: 24, max: 168) - Lookback period
+- `limit` (optional, default: 100, max: 1000) - Maximum results
+
+### Most Changed Resources
+**GET** `/history/most-changed`  
+Returns resources with the highest number of recorded changes.
 
 Query Parameters:
 - `hours` (optional, default: 24) - Lookback period
-- `resource_type` (optional) - Filter by type
+- `limit` (optional, default: 20) - Maximum results
+
+### Changes by Timeframe
+**GET** `/history/by-timeframe`  
+Returns changes grouped by time period for trend analysis.
 
 ### Resource History
 **GET** `/history/resource/{resource_type}/{resource_id}`  
 Returns complete change history for a specific resource.
+
+Valid `resource_type` values: `server`, `domain`, `project`, `flavor`, `image`, `hypervisor`, `network`, `volume`, `floating_ip`, `snapshot`, `port`, `subnet`, `router`, `user`, `role`, **`deletion`**
+
+Query Parameters:
+- `limit` (optional, default: 100, max: 1000) - Maximum history entries
+
+> **Note**: `deletion` queries the `deletions_history` table directly and returns the deletion event with original resource type, reason, last-seen timestamp, and raw JSON state snapshot.
+
+### Compare History Entries
+**GET** `/history/compare/{resource_type}/{resource_id}`  
+Compares two history entries to show field-level differences.
+
+Query Parameters:
+- `current_hash` (required) - Current change hash
+- `previous_hash` (required) - Previous change hash
+
+> **Note**: Not available for `deletion` resource type (returns info message).
+
+### Change Details
+**GET** `/history/details/{resource_type}/{resource_id}`  
+Returns detailed change information including change sequence numbering and key field extraction.
 
 ### Resource Timeline
 **GET** `/audit/resource-timeline/{resource_type}`  
