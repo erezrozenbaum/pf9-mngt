@@ -198,7 +198,7 @@ def _build_compliance_from_metadata(
             if policy_filter and policy_name != policy_filter:
                 continue
 
-            retention_days = _safe_int(metadata.get(f"retention_{policy_name}"))
+            retention_days = _safe_int(metadata.get(f"retention_{policy_name}")) or 0
             last_snapshot_at = last_snapshots.get((row.get("volume_id"), policy_name))
             compliant = False
             if last_snapshot_at:
@@ -206,13 +206,13 @@ def _build_compliance_from_metadata(
 
             compliance_rows.append({
                 "volume_id": row.get("volume_id"),
-                "volume_name": row.get("volume_name"),
+                "volume_name": row.get("volume_name") or row.get("volume_id"),
                 "tenant_id": row.get("tenant_id"),
-                "tenant_name": row.get("tenant_name"),
+                "tenant_name": row.get("tenant_name") or row.get("tenant_id"),
                 "project_id": row.get("project_id"),
-                "project_name": row.get("project_name"),
+                "project_name": row.get("project_name") or row.get("project_id"),
                 "vm_id": row.get("vm_id"),
-                "vm_name": row.get("vm_name"),
+                "vm_name": row.get("vm_name") or row.get("vm_id") or "",
                 "policy_name": policy_name,
                 "retention_days": retention_days,
                 "last_snapshot_at": last_snapshot_at,
@@ -1244,15 +1244,22 @@ def setup_snapshot_routes(app, get_db_connection):
                 )
                 SELECT
                     p.volume_id,
-                    p.volume_name,
+                    COALESCE(p.volume_name, v.name, p.volume_id) AS volume_name,
                     p.tenant_id,
-                    p.tenant_name,
+                    COALESCE(p.tenant_name, proj.name, p.tenant_id) AS tenant_name,
                     p.project_id,
-                    p.project_name,
+                    COALESCE(p.project_name, proj.name, p.project_id) AS project_name,
                     COALESCE(p.vm_id, v.raw_json->'attachments'->0->>'server_id') AS vm_id,
-                    COALESCE(p.vm_name, (SELECT name FROM servers WHERE id = (v.raw_json->'attachments'->0->>'server_id'))) AS vm_name,
+                    COALESCE(
+                        p.vm_name,
+                        (SELECT srv.name FROM servers srv WHERE srv.id = COALESCE(p.vm_id, v.raw_json->'attachments'->0->>'server_id')),
+                        COALESCE(p.vm_id, v.raw_json->'attachments'->0->>'server_id')
+                    ) AS vm_name,
                     p.policy_name,
-                    (p.retention_map->>p.policy_name)::int AS retention_days,
+                    COALESCE(
+                        (p.retention_map->>p.policy_name)::int,
+                        0
+                    ) AS retention_days,
                     ls.last_snapshot_at,
                     CASE
                         WHEN ls.last_snapshot_at IS NOT NULL
@@ -1261,6 +1268,7 @@ def setup_snapshot_routes(app, get_db_connection):
                     END AS compliant
                 FROM policy_assignments p
                 LEFT JOIN volumes v ON v.id = p.volume_id
+                LEFT JOIN projects proj ON proj.id = p.project_id
                 LEFT JOIN last_snaps ls
                   ON ls.volume_id = p.volume_id AND ls.policy_name = p.policy_name
                 WHERE 1=1

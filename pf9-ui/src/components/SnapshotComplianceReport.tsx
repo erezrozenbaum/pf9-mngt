@@ -1,5 +1,6 @@
 /**
  * Snapshot Compliance Report Component
+ * Groups volumes by policy with per-policy compliance summaries
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -7,15 +8,15 @@ import '../styles/SnapshotComplianceReport.css';
 
 interface ComplianceRow {
   volume_id: string;
-  volume_name?: string;
+  volume_name: string;
   tenant_id: string;
-  tenant_name?: string;
+  tenant_name: string;
   project_id: string;
-  project_name?: string;
+  project_name: string;
   vm_id?: string;
   vm_name?: string;
   policy_name: string;
-  retention_days?: number;
+  retention_days: number;
   last_snapshot_at?: string;
   compliant: boolean;
 }
@@ -39,21 +40,43 @@ const SnapshotComplianceReport: React.FC = () => {
   const [project, setProject] = useState('');
   const [policy, setPolicy] = useState('');
   const [summary, setSummary] = useState<ComplianceResponse['summary'] | null>(null);
+  const [collapsedPolicies, setCollapsedPolicies] = useState<Set<string>>(new Set());
 
   const token = localStorage.getItem('auth_token');
 
   const tenants = useMemo(
-    () => Array.from(new Set(rows.map(r => r.tenant_name || r.tenant_id).filter(Boolean))),
+    () => Array.from(new Set(rows.map(r => r.tenant_name).filter(Boolean))).sort(),
     [rows]
   );
   const projects = useMemo(
-    () => Array.from(new Set(rows.map(r => r.project_name || r.project_id).filter(Boolean))),
+    () => Array.from(new Set(rows.map(r => r.project_name).filter(Boolean))).sort(),
     [rows]
   );
   const policies = useMemo(
-    () => Array.from(new Set(rows.map(r => r.policy_name).filter(Boolean))),
+    () => Array.from(new Set(rows.map(r => r.policy_name).filter(Boolean))).sort(),
     [rows]
   );
+
+  // Group rows by policy_name
+  const groupedByPolicy = useMemo(() => {
+    const groups: Record<string, ComplianceRow[]> = {};
+    for (const row of rows) {
+      const key = row.policy_name || 'Unknown Policy';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(row);
+    }
+    // Sort policies alphabetically
+    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+  }, [rows]);
+
+  const togglePolicy = (policyName: string) => {
+    setCollapsedPolicies(prev => {
+      const next = new Set(prev);
+      if (next.has(policyName)) next.delete(policyName);
+      else next.add(policyName);
+      return next;
+    });
+  };
 
   const loadCompliance = async () => {
     setLoading(true);
@@ -84,10 +107,38 @@ const SnapshotComplianceReport: React.FC = () => {
     loadCompliance();
   }, [days, tenant, project, policy]);
 
+  const exportCSV = () => {
+    if (rows.length === 0) return;
+    const headers = ['Status', 'Volume', 'VM', 'Tenant', 'Project', 'Policy', 'Retention (days)', 'Last Snapshot'];
+    const csvRows = rows.map(r => [
+      r.compliant ? 'Compliant' : 'Missing',
+      r.volume_name,
+      r.vm_name || '',
+      r.tenant_name,
+      r.project_name,
+      r.policy_name,
+      String(r.retention_days ?? ''),
+      r.last_snapshot_at ? new Date(r.last_snapshot_at).toLocaleString() : '',
+    ].map(v => `"${(v || '').replace(/"/g, '""')}"`).join(','));
+    const csv = [headers.join(','), ...csvRows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `snapshot_compliance_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="snapshot-compliance">
       <div className="compliance-header">
-        <h2>Snapshot Compliance</h2>
+        <div className="compliance-title-row">
+          <h2>Snapshot Compliance</h2>
+          <button className="btn-export" onClick={exportCSV} disabled={rows.length === 0}>
+            Export CSV ({rows.length})
+          </button>
+        </div>
         <div className="compliance-filters">
           <label>
             Days
@@ -134,6 +185,7 @@ const SnapshotComplianceReport: React.FC = () => {
           <div className="summary-card ok">Compliant: {summary.compliant}</div>
           <div className="summary-card warn">Non‑Compliant: {summary.noncompliant}</div>
           <div className="summary-card">Window: {summary.days} days</div>
+          <div className="summary-card">Policies: {policies.length}</div>
         </div>
       )}
 
@@ -141,45 +193,68 @@ const SnapshotComplianceReport: React.FC = () => {
       {loading ? (
         <div className="loader">Loading...</div>
       ) : (
-        <div className="table-container">
-          <table className="compliance-table">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Volume</th>
-                <th>Policy</th>
-                <th>Last Snapshot</th>
-                <th>Tenant</th>
-                <th>Project</th>
-                <th>VM</th>
-                <th>Retention (days)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="empty-cell">No compliance data</td>
-                </tr>
-              ) : (
-                rows.map((r, idx) => (
-                  <tr key={`${r.volume_id}-${r.policy_name}-${idx}`}>
-                    <td>
-                      <span className={`badge ${r.compliant ? 'enabled' : 'inactive'}`}>
-                        {r.compliant ? 'Compliant' : 'Missing'}
+        <div className="policy-groups">
+          {groupedByPolicy.length === 0 ? (
+            <div className="empty-state">No compliance data available</div>
+          ) : (
+            groupedByPolicy.map(([policyName, policyRows]) => {
+              const compliant = policyRows.filter(r => r.compliant).length;
+              const total = policyRows.length;
+              const isCollapsed = collapsedPolicies.has(policyName);
+              const pct = total > 0 ? Math.round((compliant / total) * 100) : 0;
+
+              return (
+                <div key={policyName} className="policy-group">
+                  <div className="policy-group-header" onClick={() => togglePolicy(policyName)}>
+                    <span className="policy-toggle">{isCollapsed ? '▶' : '▼'}</span>
+                    <span className="policy-group-name">{policyName}</span>
+                    <span className="policy-group-stats">
+                      <span className={`policy-pct ${pct === 100 ? 'pct-ok' : pct >= 50 ? 'pct-warn' : 'pct-bad'}`}>
+                        {pct}%
                       </span>
-                    </td>
-                    <td>{r.volume_name || r.volume_id}</td>
-                    <td>{r.policy_name}</td>
-                    <td>{r.last_snapshot_at ? new Date(r.last_snapshot_at).toLocaleString() : '—'}</td>
-                    <td>{r.tenant_name || r.tenant_id}</td>
-                    <td>{r.project_name || r.project_id}</td>
-                    <td>{r.vm_name || r.vm_id || '—'}</td>
-                    <td>{r.retention_days ?? '—'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                      <span className="policy-counts">
+                        {compliant}/{total} compliant
+                      </span>
+                    </span>
+                  </div>
+                  {!isCollapsed && (
+                    <div className="table-container">
+                      <table className="compliance-table">
+                        <thead>
+                          <tr>
+                            <th>Status</th>
+                            <th>Volume</th>
+                            <th>VM</th>
+                            <th>Tenant</th>
+                            <th>Project</th>
+                            <th>Retention (days)</th>
+                            <th>Last Snapshot</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {policyRows.map((r, idx) => (
+                            <tr key={`${r.volume_id}-${idx}`} className={r.compliant ? '' : 'row-missing'}>
+                              <td>
+                                <span className={`badge ${r.compliant ? 'enabled' : 'inactive'}`}>
+                                  {r.compliant ? 'Compliant' : 'Missing'}
+                                </span>
+                              </td>
+                              <td title={r.volume_id}>{r.volume_name}</td>
+                              <td title={r.vm_id || ''}>{r.vm_name || '—'}</td>
+                              <td title={r.tenant_id}>{r.tenant_name}</td>
+                              <td title={r.project_id}>{r.project_name}</td>
+                              <td>{r.retention_days}</td>
+                              <td>{r.last_snapshot_at ? new Date(r.last_snapshot_at).toLocaleString() : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       )}
     </div>

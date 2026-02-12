@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Enhanced
+- **Snapshot Compliance Report** — major UI and API improvements
+  - Volumes grouped by policy with collapsible sections and per-policy compliance percentage
+  - API resolves human-readable names via COALESCE + LEFT JOIN (volume, tenant, project, VM)
+  - Retention days now always populated (defaults to 0 instead of null)
+  - Non-compliant rows highlighted with subtle red background
+  - Added CSV export button with all compliance data
+  - Added UUID tooltips on hover for Volume, VM, Tenant, Project cells
+  - Summary bar shows policy count alongside compliant/non-compliant totals
+
 ## [1.0.0] - 2026-02-12
 
 ### Added
