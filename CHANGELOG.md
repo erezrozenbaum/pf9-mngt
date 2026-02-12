@@ -10,12 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Enhanced
 - **Snapshot Compliance Report** — major UI and API improvements
   - Volumes grouped by policy with collapsible sections and per-policy compliance percentage
-  - API resolves human-readable names via COALESCE + LEFT JOIN (volume, tenant, project, VM)
-  - Retention days now always populated (defaults to 0 instead of null)
+  - API queries volumes table directly (source of truth) instead of stale compliance_details
+  - Removed duplicate `/snapshot/compliance` endpoint from main.py that served stale data
+  - Full name resolution: volume → `volumes.name`, project → `projects.name`, tenant → `domains.name`, VM → `servers.name`
+  - Each volume × policy is a separate row (e.g. 11 volumes × 3 policies = 33 rows)
+  - Retention days per policy from volume metadata (`retention_daily_5`, `retention_monthly_1st`, etc.)
   - Non-compliant rows highlighted with subtle red background
   - Added CSV export button with all compliance data
-  - Added UUID tooltips on hover for Volume, VM, Tenant, Project cells
-  - Summary bar shows policy count alongside compliant/non-compliant totals
+  - Tenant/Project filter dropdowns send IDs (not names) for proper server-side filtering
+  - Compliance report generator (`p9_snapshot_compliance_report.py`) now writes per-policy rows with resolved names
+
+### Fixed
+- **Snapshot Compliance showed NaN, missing names, and no per-policy breakdown**
+  - Root cause: duplicate endpoint in `main.py` read from stale `compliance_details` table
+  - Compliance_details had concatenated policy names, literal "NaN" for unnamed volumes, no tenant/VM data
+  - Fixed by removing duplicate and querying volumes table with JOINs to projects, domains, servers
 
 ## [1.0.0] - 2026-02-12
 
