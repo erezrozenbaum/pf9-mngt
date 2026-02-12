@@ -468,6 +468,38 @@ LOG_FILE=/app/logs/pf9_api.log
 # Monitoring logs: /app/logs/pf9_monitoring.log
 ```
 
+#### Snapshot Service User (Cross-Tenant Snapshots)
+
+The snapshot service user enables creating snapshots in the correct tenant project (instead of the service domain). The user must **pre-exist in Platform9** — the system only manages role assignments.
+
+```bash
+# Service user identity
+SNAPSHOT_SERVICE_USER_EMAIL=<your-snapshot-user@your-domain.com>
+# The email address of the service user in Platform9 Keystone
+# This user must already exist — the system does NOT create it
+
+# Password Option A: Plaintext (simpler)
+SNAPSHOT_SERVICE_USER_PASSWORD=<service-user-password>
+
+# Password Option B: Fernet Encrypted (more secure)
+SNAPSHOT_PASSWORD_KEY=<Fernet-encryption-key>
+# Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+SNAPSHOT_USER_PASSWORD_ENCRYPTED=<encrypted-password>
+# Generate: python -c "from cryptography.fernet import Fernet; f=Fernet(b'<key>'); print(f.encrypt(b'<password>').decode())"
+
+# Optional: Disable service user (snapshots fall back to service domain)
+SNAPSHOT_SERVICE_USER_DISABLED=false
+```
+
+**How It Works:**
+1. Admin session lists volumes across all tenants (`all_tenants=1`)
+2. For each tenant project with volumes, `ensure_service_user()` assigns admin role to the service user
+3. System authenticates as service user scoped to that project
+4. Snapshot is created in the correct tenant project
+
+See [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md) for full setup details.
+
 ### Environment File Security
 
 **⚠️ CRITICAL SECURITY NOTICE**:

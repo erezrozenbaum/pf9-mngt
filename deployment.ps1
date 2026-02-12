@@ -185,23 +185,166 @@ if (-not (Test-Path ".env")) {
         Write-Info "Creating .env from .env.example..."
         Copy-Item ".env.example" ".env"
         Write-Success "Created .env file"
-        Write-Warning "Please update .env with your Platform9 credentials:"
-        Write-Info "  - PF9_USERNAME: Your Platform9 username"
-        Write-Info "  - PF9_PASSWORD: Your Platform9 password"
-        Write-Info "  - PF9_REGION: Your Platform9 region URL"
-        Write-Info ""
-        $continue = Read-Host "Have you updated the .env file with your credentials? (y/n)"
-        if ($continue -ne 'y' -and $continue -ne 'Y') {
-            Write-Warning "Deployment paused. Please update .env and run the script again."
-            exit 0
-        }
     } else {
         Write-Error ".env.example not found"
         Write-Info "Please ensure .env.example exists in the project root"
         exit 1
     }
+    
+    # --- Interactive Configuration Wizard ---
+    Write-Section "Environment Configuration Wizard"
+    Write-Info "We'll now configure your deployment. Press Enter to accept defaults shown in [brackets]."
+    Write-Host ""
+
+    function Prompt-Value($prompt, $default, $secret = $false) {
+        $displayDefault = if ($default -and -not $secret) { " [$default]" } else { "" }
+        if ($secret) {
+            $input = Read-Host "$prompt$displayDefault (input hidden)" -AsSecureString
+            $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($input)
+            $plaintext = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+            if ([string]::IsNullOrWhiteSpace($plaintext) -and $default) { return $default }
+            return $plaintext
+        } else {
+            $input = Read-Host "$prompt$displayDefault"
+            if ([string]::IsNullOrWhiteSpace($input) -and $default) { return $default }
+            return $input
+        }
+    }
+
+    function Set-EnvValue($key, $value) {
+        $envPath = ".env"
+        $content = Get-Content $envPath -Raw
+        $escaped = [regex]::Escape($key)
+        if ($content -match "(?m)^$escaped=.*$") {
+            $content = $content -replace "(?m)^$escaped=.*$", "$key=$value"
+        } else {
+            $content += "`n$key=$value"
+        }
+        Set-Content $envPath -Value $content -NoNewline
+    }
+
+    # --- Platform9 Credentials ---
+    Write-Host "── Platform9 API Credentials ──" -ForegroundColor Yellow
+    $pf9AuthUrl = Prompt-Value "Platform9 Keystone URL (e.g. https://your-cluster.platform9.com/keystone/v3)" ""
+    $pf9Username = Prompt-Value "Platform9 Username (email)" ""
+    $pf9Password = Prompt-Value "Platform9 Password" "" $true
+    $pf9UserDomain = Prompt-Value "Platform9 User Domain" "Default"
+    $pf9ProjectName = Prompt-Value "Platform9 Project Name" "service"
+    $pf9RegionName = Prompt-Value "Platform9 Region Name" "region-one"
+    $pf9RegionUrl = Prompt-Value "Platform9 Region URL (e.g. https://your-cluster.platform9.com)" ""
+
+    Set-EnvValue "PF9_AUTH_URL" $pf9AuthUrl
+    Set-EnvValue "PF9_USERNAME" $pf9Username
+    Set-EnvValue "PF9_PASSWORD" $pf9Password
+    Set-EnvValue "PF9_USER_DOMAIN" $pf9UserDomain
+    Set-EnvValue "PF9_PROJECT_NAME" $pf9ProjectName
+    Set-EnvValue "PF9_REGION_NAME" $pf9RegionName
+    Set-EnvValue "PF9_REGION_URL" $pf9RegionUrl
+
+    Write-Host ""
+    # --- Database ---
+    Write-Host "── Database Configuration ──" -ForegroundColor Yellow
+    $pgUser = Prompt-Value "PostgreSQL Username" "pf9"
+    $pgPassword = Prompt-Value "PostgreSQL Password (min 16 chars)" "" $true
+    $pgDb = Prompt-Value "PostgreSQL Database Name" "pf9_mgmt"
+
+    Set-EnvValue "POSTGRES_USER" $pgUser
+    Set-EnvValue "POSTGRES_PASSWORD" $pgPassword
+    Set-EnvValue "POSTGRES_DB" $pgDb
+    Set-EnvValue "PF9_DB_USER" $pgUser
+    Set-EnvValue "PF9_DB_PASSWORD" $pgPassword
+    Set-EnvValue "PF9_DB_NAME" $pgDb
+
+    Write-Host ""
+    # --- LDAP ---
+    Write-Host "── LDAP Directory Configuration ──" -ForegroundColor Yellow
+    $ldapOrg = Prompt-Value "LDAP Organization Name" "Platform9 Management"
+    $ldapDomain = Prompt-Value "LDAP Domain (e.g. company.com)" "pf9mgmt.local"
+    $ldapAdminPw = Prompt-Value "LDAP Admin Password" "" $true
+    $ldapConfigPw = Prompt-Value "LDAP Config Password" "" $true
+
+    Set-EnvValue "LDAP_ORGANISATION" $ldapOrg
+    Set-EnvValue "LDAP_DOMAIN" $ldapDomain
+    Set-EnvValue "LDAP_ADMIN_PASSWORD" $ldapAdminPw
+    Set-EnvValue "LDAP_CONFIG_PASSWORD" $ldapConfigPw
+
+    # Derive LDAP base DN from domain (e.g. company.com -> dc=company,dc=com)
+    $ldapBaseDn = ($ldapDomain -split '\.' | ForEach-Object { "dc=$_" }) -join ','
+    Set-EnvValue "LDAP_BASE_DN" $ldapBaseDn
+    Set-EnvValue "LDAP_USER_DN" "ou=users,$ldapBaseDn"
+    Set-EnvValue "LDAP_GROUP_DN" "ou=groups,$ldapBaseDn"
+
+    Write-Host ""
+    # --- Admin User ---
+    Write-Host "── Web Portal Admin ──" -ForegroundColor Yellow
+    $adminUser = Prompt-Value "Admin Username (email)" "admin"
+    $adminPassword = Prompt-Value "Admin Password" "" $true
+
+    Set-EnvValue "DEFAULT_ADMIN_USER" $adminUser
+    Set-EnvValue "DEFAULT_ADMIN_PASSWORD" $adminPassword
+
+    Write-Host ""
+    # --- Monitoring ---
+    Write-Host "── Monitoring Configuration ──" -ForegroundColor Yellow
+    $pf9Hosts = Prompt-Value "PF9 Host IPs for metrics (comma-separated, or blank to skip)" ""
+    if ($pf9Hosts) {
+        Set-EnvValue "PF9_HOSTS" $pf9Hosts
+    }
+
+    Write-Host ""
+    # --- Snapshot Service User ---
+    Write-Host "── Snapshot Service User (Cross-Tenant Snapshots) ──" -ForegroundColor Yellow
+    Write-Info "A dedicated service user enables creating snapshots in each tenant's project."
+    Write-Info "This user must already exist in your Platform9 Identity."
+    $snapshotUserEmail = Prompt-Value "Snapshot Service User Email (or blank to skip)" ""
+    if ($snapshotUserEmail) {
+        Set-EnvValue "SNAPSHOT_SERVICE_USER_EMAIL" $snapshotUserEmail
+        
+        $encChoice = Prompt-Value "Password storage: [1] Plaintext  [2] Fernet Encrypted" "1"
+        if ($encChoice -eq "2") {
+            Write-Info "Generating Fernet encryption key..."
+            $pythonExeCheck = (Get-Command python -ErrorAction SilentlyContinue).Source
+            if ($pythonExeCheck) {
+                $fernetKey = & $pythonExeCheck -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())" 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "Generated Fernet key"
+                    Set-EnvValue "SNAPSHOT_PASSWORD_KEY" $fernetKey
+                    $svcPassword = Prompt-Value "Service User Password" "" $true
+                    $encryptedPw = & $pythonExeCheck -c "from cryptography.fernet import Fernet; f=Fernet(b'$fernetKey'); print(f.encrypt(b'$svcPassword').decode())" 2>&1
+                    Set-EnvValue "SNAPSHOT_USER_PASSWORD_ENCRYPTED" $encryptedPw
+                    Write-Success "Password encrypted and saved"
+                } else {
+                    Write-Warning "cryptography package not available. Falling back to plaintext."
+                    $svcPassword = Prompt-Value "Service User Password" "" $true
+                    Set-EnvValue "SNAPSHOT_SERVICE_USER_PASSWORD" $svcPassword
+                }
+            } else {
+                Write-Warning "Python not found. Falling back to plaintext."
+                $svcPassword = Prompt-Value "Service User Password" "" $true
+                Set-EnvValue "SNAPSHOT_SERVICE_USER_PASSWORD" $svcPassword
+            }
+        } else {
+            $svcPassword = Prompt-Value "Service User Password" "" $true
+            Set-EnvValue "SNAPSHOT_SERVICE_USER_PASSWORD" $svcPassword
+        }
+    } else {
+        Write-Info "Skipping snapshot service user (snapshots will stay in service domain)"
+    }
+
+    # --- JWT Secret ---
+    Write-Host ""
+    Write-Host "── Security ──" -ForegroundColor Yellow
+    $jwtSecret = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 64 | ForEach-Object { [char]$_ })
+    Set-EnvValue "JWT_SECRET_KEY" $jwtSecret
+    Write-Success "Generated JWT secret key"
+
+    Write-Host ""
+    Write-Success "Environment configuration complete!"
+    Write-Info "Settings saved to .env"
+    Write-Host ""
 } else {
     Write-Success ".env file already exists"
+    Write-Info "To reconfigure, delete .env and run deployment again"
 }
 
 # Step 3: Validate Environment File
@@ -222,10 +365,11 @@ foreach ($line in $envContent) {
 $requiredVars = @(
     'PF9_USERNAME',
     'PF9_PASSWORD',
-    'PF9_REGION',
+    'PF9_AUTH_URL',
     'POSTGRES_USER',
     'POSTGRES_PASSWORD',
-    'POSTGRES_DB'
+    'POSTGRES_DB',
+    'LDAP_ADMIN_PASSWORD'
 )
 
 $missing = @()
@@ -245,6 +389,58 @@ if ($missing.Count -gt 0) {
 }
 
 Write-Success "All required environment variables are set"
+
+# Validate snapshot service user configuration
+Write-Info "Checking snapshot service user configuration..."
+
+$snapshotEmail = $envMap['SNAPSHOT_SERVICE_USER_EMAIL']
+$snapshotPassPlain = $envMap['SNAPSHOT_SERVICE_USER_PASSWORD']
+$snapshotPassKey = $envMap['SNAPSHOT_PASSWORD_KEY']
+$snapshotPassEnc = $envMap['SNAPSHOT_USER_PASSWORD_ENCRYPTED']
+
+$hasPlainPassword = (-not [string]::IsNullOrWhiteSpace($snapshotPassPlain))
+$hasEncryptedPassword = ((-not [string]::IsNullOrWhiteSpace($snapshotPassKey)) -and (-not [string]::IsNullOrWhiteSpace($snapshotPassEnc)))
+
+if (-not [string]::IsNullOrWhiteSpace($snapshotEmail)) {
+    Write-Success "Snapshot service user email: $snapshotEmail"
+} else {
+    Write-Warning "SNAPSHOT_SERVICE_USER_EMAIL not set — cross-tenant snapshots disabled"
+}
+
+if ($hasPlainPassword) {
+    Write-Success "Snapshot service user password configured (plaintext)"
+} elseif ($hasEncryptedPassword) {
+    Write-Success "Snapshot service user password configured (encrypted)"
+    # Verify password can be decrypted
+    if ($pythonExe) {
+        try {
+            $decryptTest = & $pythonExe -c "
+from cryptography.fernet import Fernet
+import os, sys
+try:
+    f = Fernet('$snapshotPassKey'.encode())
+    pw = f.decrypt('$snapshotPassEnc'.encode()).decode()
+    print(f'OK:{len(pw)}')
+except Exception as e:
+    print(f'FAIL:{e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1
+            if ($decryptTest -match "^OK:(\d+)$") {
+                Write-Success "Encrypted password verified (length: $($Matches[1]))"
+            } else {
+                Write-Warning "Could not verify encrypted password: $decryptTest"
+            }
+        } catch {
+            Write-Warning "Could not verify encrypted password (cryptography package may not be installed)"
+        }
+    }
+} else {
+    Write-Warning "No snapshot service user password configured"
+    Write-Warning "Cross-tenant snapshots will fall back to admin session (service domain)"
+    Write-Info "  Set SNAPSHOT_SERVICE_USER_PASSWORD or both"
+    Write-Info "  SNAPSHOT_PASSWORD_KEY and SNAPSHOT_USER_PASSWORD_ENCRYPTED in .env"
+    Write-Info "  See docs/SNAPSHOT_SERVICE_USER.md for details"
+}
 
 # Step 4: Prepare Directory Structure
 Write-Section "Step 4: Creating Directory Structure"
@@ -296,7 +492,7 @@ if ($pythonExe) {
     Write-Success "Python found: $pythonExe"
     
     Write-Info "Installing required Python packages..."
-    $requiredPackages = @('requests', 'aiohttp', 'openpyxl', 'psycopg2-binary')
+    $requiredPackages = @('requests', 'aiohttp', 'openpyxl', 'psycopg2-binary', 'cryptography')
     
     foreach ($pkg in $requiredPackages) {
         try {
@@ -507,7 +703,7 @@ Write-Host ""
 Write-Host "Next Steps:" -ForegroundColor Cyan
 Write-Host "  1. Open UI at http://localhost:5173" -ForegroundColor White
 Write-Host "     Default view: Landing Dashboard (🏠) with real-time analytics" -ForegroundColor Gray
-Write-Host "  2. Log in with LDAP credentials (admin@platform9.local / changeme)" -ForegroundColor White
+Write-Host "  2. Log in with your LDAP admin credentials (configured during setup)" -ForegroundColor White
 Write-Host "  3. Review system health on Landing Dashboard (auto-refreshes every 30s)" -ForegroundColor White
 Write-Host "  4. Configure snapshot policies via Snapshots tab" -ForegroundColor White
 Write-Host "     Monitor compliance on Dashboard > Snapshot SLA Compliance card" -ForegroundColor White
@@ -534,5 +730,20 @@ if ($pythonExe -and -not $SkipMetrics) {
     Write-Host "  Compliance Report:     docker exec pf9_snapshot_worker python snapshots/p9_snapshot_compliance_report.py --sla-days 2" -ForegroundColor White
     Write-Host ""
 }
+
+Write-Host "Snapshot Service User:" -ForegroundColor Cyan
+if ($hasPlainPassword -or $hasEncryptedPassword) {
+    $displayEmail = if ($snapshotEmail) { $snapshotEmail } else { "NOT SET" }
+    $passType = if ($hasPlainPassword) { "plaintext" } else { "encrypted" }
+    Write-Host "  Service User:          $displayEmail" -ForegroundColor White
+    Write-Host "  Password:              Configured ($passType)" -ForegroundColor White
+    Write-Host "  Cross-Tenant Mode:     ENABLED (snapshots in correct tenant projects)" -ForegroundColor Green
+} else {
+    Write-Host "  Service User:          NOT CONFIGURED" -ForegroundColor Yellow
+    Write-Host "  Cross-Tenant Mode:     DISABLED (snapshots in service domain)" -ForegroundColor Yellow
+    Write-Host "  To enable:             Set SNAPSHOT_SERVICE_USER_PASSWORD in .env" -ForegroundColor Yellow
+    Write-Host "                         See docs/SNAPSHOT_SERVICE_USER.md" -ForegroundColor Yellow
+}
+Write-Host ""
 
 Write-Success "System is ready for use!"

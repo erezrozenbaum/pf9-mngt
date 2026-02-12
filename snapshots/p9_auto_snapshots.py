@@ -442,18 +442,28 @@ def process_volume(
     dry_run: bool,
     primary_server_name: str | None = None,
     tenant_name: str | None = None,
+    create_session=None,
+    create_project_id: str | None = None,
 ):
     """
     Create one snapshot for this volume and clean old ones.
     Returns (created_snapshot_id or None, created_snapshot_project_id,
-             deleted_ids, error_message_or_None).
+             deleted_ids, error_message_or_None, snap_name).
 
     We:
-      - List & delete snapshots via admin_session (all_tenants=1).
-      - Try to create snapshot in the **volume's tenant project** using a
-        per-project session. If that fails (Keystone forbids project scoping),
-        we fall back to creating it in the admin project.
+      - List & delete snapshots via admin_session + admin_project_id
+        (these must match — token scope == URL project_id).
+      - Create snapshot via create_session + create_project_id so the
+        snapshot lands in the volume's tenant.  When no service-user
+        session is available the caller falls back to admin_session +
+        admin_project_id (snapshots will land in the service domain).
     """
+    # Default create_session / create_project_id to admin if not supplied
+    if create_session is None:
+        create_session = admin_session
+    if create_project_id is None:
+        create_project_id = admin_project_id
+
     vol_id = volume["id"]
     vol_name = volume.get("name") or vol_id
     volume_project_id = (
@@ -464,9 +474,10 @@ def process_volume(
 
     print(f"  Volume {vol_id} ({vol_name}), project={volume_project_id}")
 
+    # --- cleanup old snapshots (admin session, all_tenants=1) ---
     deleted_ids = cleanup_old_snapshots_for_volume(
         admin_session,
-        admin_project_id,  # Use admin session project ID for list/delete operations
+        admin_project_id,   # MUST match admin token scope
         volume,
         policy_name,
         dry_run=dry_run,
@@ -477,14 +488,13 @@ def process_volume(
 
     print(f"    Create snapshot: {snap_name}")
     if dry_run:
-        return None, None, deleted_ids, None
+        return None, None, deleted_ids, None, snap_name
 
-    # Use the session passed in (which should be project-scoped for service user)
-    # The snapshot will be created in the authenticated session's project
+    # --- create snapshot (service-user session → correct tenant) ---
     try:
         snap = cinder_create_snapshot(
-            admin_session,  # Use the project-scoped session (renamed from admin_session in function args)
-            admin_project_id,  # Use the correct project ID (renamed from admin_project_id in function args)
+            create_session,
+            create_project_id,   # MUST match create_session token scope
             volume_id=vol_id,
             name=snap_name,
             description=snap_desc,
@@ -497,14 +507,14 @@ def process_volume(
             force=True,
         )
         sid = snap.get("id")
-        
+
         # Try multiple fields to find the project ID
         snapshot_created_in_project = (
             snap.get("os-extended-snapshot-attributes:project_id") or
-            snap.get("os-vol-tenant-attr:tenant_id") or 
-            snap.get("project_id") or 
+            snap.get("os-vol-tenant-attr:tenant_id") or
+            snap.get("project_id") or
             snap.get("tenant_id") or
-            volume_project_id  # Fall back to the volume's project ID (should be correct)
+            create_project_id
         )
         print(
             f"      OK, snapshot id={sid} created in project={snapshot_created_in_project}"
@@ -818,37 +828,52 @@ def main():
         print(f"\n=== Project {project_idx}/{len(volumes_by_project)}: {project_name} ({vol_project_id}) ===")
         print(f"    Volumes in this project: {len(project_volumes)}")
         
-        # Ensure service user exists for this project (unless UNKNOWN or service domain)
-        project_session = session  # Default to admin session
+        # -----------------------------------------------------------------
+        # Determine which session to use for CREATING snapshots
+        #   create_session + create_project_id  →  snapshot lands here
+        # Admin session is always used for listing / cleanup (all_tenants)
+        # -----------------------------------------------------------------
+        create_session = None
+        create_project_id = None
+
         if vol_project_id != "UNKNOWN" and vol_project_id != admin_project_id and ensure_service_user:
             try:
-                print(f"    Ensuring service user exists in project...")
+                print(f"    Ensuring service user has admin role on project...")
                 ensure_service_user(session, CFG["KEYSTONE_URL"], vol_project_id)
                 
                 # Get project-scoped session for service user
                 print(f"    Authenticating as service user for this project...")
                 service_password = get_service_user_password()
-                project_session, token = get_service_user_session(
+                svc_sess, svc_tok = get_service_user_session(
                     vol_project_id, 
                     SERVICE_USER_EMAIL, 
                     service_password,
                     user_domain="default"
                 )
                 
-                if project_session:
+                if svc_sess:
+                    create_session = svc_sess
+                    create_project_id = vol_project_id
                     print(f"    ✓ Using service user session for project {project_name}")
                 else:
                     print(f"    ⚠ Service user authentication failed")
                     print(f"    Falling back to admin session (snapshots will be in service domain)")
-                    project_session = session
             except Exception as e:
                 print(f"    ⚠ Could not use service user for project {project_name}: {e}")
                 print(f"    Falling back to admin session (snapshots will be in service domain)")
-                project_session = session
+
         elif vol_project_id == admin_project_id:
+            # Volume is already in the admin/service project – use admin session directly
+            create_session = session
+            create_project_id = admin_project_id
             print(f"    Using admin session (service domain project)")
-        else:
-            print(f"    Using admin session (UNKNOWN project)")
+
+        # Final fallback: admin session + admin_project_id
+        if create_session is None:
+            create_session = session
+            create_project_id = admin_project_id
+            if vol_project_id != admin_project_id:
+                print(f"    ⚠ Falling back to admin session – snapshots will land in service domain")
     
         # Process volumes in this project
         for vol_idx, v in enumerate(project_volumes, start=1):
@@ -930,13 +955,15 @@ def main():
             primary_server_name = attached_server_names_list[0] if attached_server_names_list else None
 
             sid, sid_project, deleted_ids, err_msg, snap_name = process_volume(
-                project_session,  # Use project-scoped session instead of admin session
-                vol_project_id,   # Use the volume's project ID, not admin project ID
-                v,
-                policy_name,
+                admin_session=session,                # Admin for listing / cleanup
+                admin_project_id=admin_project_id,    # MUST match admin token scope
+                volume=v,
+                policy_name=policy_name,
                 dry_run=dry_run,
                 primary_server_name=primary_server_name,
                 tenant_name=tenant_name,
+                create_session=create_session,         # Service-user (or admin fallback)
+                create_project_id=create_project_id,   # Matches create_session scope
             )
             if sid:
                 created_count += 1

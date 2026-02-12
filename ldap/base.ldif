@@ -1,22 +1,22 @@
 
-dn: dc=ccc,dc=co,dc=il
+dn: dc=pf9mgmt,dc=local
 objectClass: top
 objectClass: dcObject
 objectClass: organization
-o: Triple C
-dc: ccc
+o: Platform9 Management
+dc: pf9mgmt
 
-dn: ou=users,dc=ccc,dc=co,dc=il
+dn: ou=users,dc=pf9mgmt,dc=local
 objectClass: organizationalUnit
 ou: users
 
-dn: ou=groups,dc=ccc,dc=co,dc=il
+dn: ou=groups,dc=pf9mgmt,dc=local
 objectClass: organizationalUnit
 ou: groups
 
-dn: cn=admin,dc=ccc,dc=co,dc=il
+dn: cn=admin,dc=pf9mgmt,dc=local
 objectClass: simpleSecurityObject
 objectClass: organizationalRole
 cn: admin
 description: LDAP administrator
-userPassword: r#1kajun
+userPassword: <SET_VIA_LDAP_ADMIN_PASSWORD>

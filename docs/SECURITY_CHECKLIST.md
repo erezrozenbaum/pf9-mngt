@@ -58,8 +58,17 @@
   - Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 
 - [ ] **Service user password encrypted**
-  - Auto-generated on first run
   - Stored in `.env` as `SNAPSHOT_USER_PASSWORD_ENCRYPTED`
+  - Or plaintext in `SNAPSHOT_SERVICE_USER_PASSWORD`
+
+- [ ] **Snapshot service user configured**
+  - `SNAPSHOT_SERVICE_USER_EMAIL` set in `.env` (your snapshot service user email)
+  - User pre-created in Platform9 (Identity → Users)
+  - Password provided via plaintext or Fernet encryption
+  - Verify: `docker logs pf9_snapshot_worker 2>&1 | grep SERVICE_USER`
+
+- [ ] **Service user password can be decrypted**
+  - Test: `python -c "from snapshots.snapshot_service_user import get_service_user_password; print('OK', len(get_service_user_password()))"`
 
 ## Container Security
 

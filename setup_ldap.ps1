@@ -85,19 +85,9 @@ objectClass: inetOrgPerson
 cn: $DEFAULT_ADMIN_USER
 sn: Administrator
 uid: $DEFAULT_ADMIN_USER
-mail: $DEFAULT_ADMIN_USER@mgmt.local
+mail: $DEFAULT_ADMIN_USER
 userPassword: {SSHA}$(docker exec pf9_ldap slappasswd -s "$DEFAULT_ADMIN_PASSWORD")
 description: Management System Administrator
-
-dn: cn=erez,$LDAP_USER_DN
-objectClass: person
-objectClass: inetOrgPerson
-cn: erez
-sn: Manager
-uid: erez
-mail: erez@mgmt.local
-userPassword: {SSHA}$(docker exec pf9_ldap slappasswd -s "erez123")
-description: Management System Manager
 
 dn: cn=viewer,$LDAP_USER_DN
 objectClass: person
@@ -105,7 +95,7 @@ objectClass: inetOrgPerson
 cn: viewer
 sn: Viewer
 uid: viewer
-mail: viewer@mgmt.local
+mail: viewer
 userPassword: {SSHA}$(docker exec pf9_ldap slappasswd -s "viewer123")
 description: Read-only viewer user
 
@@ -115,7 +105,7 @@ objectClass: inetOrgPerson
 cn: operator
 sn: Operator
 uid: operator
-mail: operator@mgmt.local
+mail: operator
 userPassword: {SSHA}$(docker exec pf9_ldap slappasswd -s "operator123")
 description: Operations user
 "@ | Out-File -FilePath "$ldifDir\03_create_users.ldif" -Encoding UTF8
@@ -137,7 +127,7 @@ delete: member
 member: cn=placeholder,$LDAP_USER_DN
 -
 add: member
-member: cn=erez,$LDAP_USER_DN
+member: cn=`$DEFAULT_ADMIN_USER,`$LDAP_USER_DN
 
 dn: cn=pf9_operators,$LDAP_GROUP_DN
 changetype: modify
@@ -184,7 +174,6 @@ Write-Host "=== LDAP Directory Setup Complete ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "Management System Users Created:" -ForegroundColor Cyan
 Write-Host "  • $DEFAULT_ADMIN_USER/$DEFAULT_ADMIN_PASSWORD - System Administrator" -ForegroundColor White
-Write-Host "  • erez/erez123         - Manager" -ForegroundColor White
 Write-Host "  • operator/operator123 - Operator" -ForegroundColor White
 Write-Host "  • viewer/viewer123     - Viewer" -ForegroundColor White
 Write-Host ""

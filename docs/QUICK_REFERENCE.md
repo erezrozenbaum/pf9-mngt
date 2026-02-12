@@ -31,11 +31,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
 
 #### Advanced Snapshot Management
+- **Cross-Tenant Snapshots**: Snapshots created in correct tenant projects via dedicated service user
 - **Automated Snapshot Creation**: Policy-driven with daily/monthly schedules
 - **Metadata-Driven Policies**: Volume-level configuration via OpenStack metadata
 - **Multi-Policy Support**: Volumes support multiple concurrent policies (daily_5, monthly_1st, monthly_15th)
 - **Compliance Monitoring**: SLA tracking and policy adherence reporting with tenant/domain aggregation
 - **Policy Assignment Rules**: JSON-driven automatic assignment based on volume properties
+- **Service User**: Configurable via `SNAPSHOT_SERVICE_USER_EMAIL` with per-project admin role assignment
 
 #### Real-Time Infrastructure Monitoring
 - **Host Metrics**: CPU, Memory, Storage from PF9 compute nodes via node_exporter (port 9388) ✅
@@ -133,6 +135,7 @@ PF9_ENABLE_DB=1 python pf9_rvtools.py
 python snapshots/p9_snapshot_policy_assign.py
 
 # Run automated snapshots (respects metadata policies)
+# Uses service user for cross-tenant snapshot creation
 python snapshots/p9_auto_snapshots.py
 
 # Dry-run mode (safe testing)
@@ -143,6 +146,18 @@ python snapshots/p9_snapshot_compliance_report.py
 
 # Input: Platform9_RVTools_*.xlsx
 # Output: Platform9_Snapshot_Compliance_Report_*.xlsx
+```
+
+### Snapshot Service User
+```bash
+# Verify service user password configuration
+python -c "from snapshots.snapshot_service_user import get_service_user_password, SERVICE_USER_EMAIL; pw=get_service_user_password(); print(f'{SERVICE_USER_EMAIL}: OK (len={len(pw)})')"
+
+# Check service user activity in snapshot worker logs
+docker logs pf9_snapshot_worker 2>&1 | grep "SERVICE_USER"
+
+# Disable cross-tenant mode (fall back to admin session)
+# Set in .env: SNAPSHOT_SERVICE_USER_DISABLED=true
 ```
 
 ### Real-Time Monitoring
