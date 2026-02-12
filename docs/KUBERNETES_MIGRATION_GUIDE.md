@@ -375,7 +375,7 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 # - ConfigMap for PF9 host list
 
 # Example refactor needed in host_metrics_collector.py:
-# Instead of: hosts = ["172.17.95.2", "172.17.95.3", ...]
+# Instead of: hosts = ["<HOST_IP_1>", "<HOST_IP_2>", ...]
 # Use: from kubernetes import config, client
 #      hosts = get_pf9_hosts_from_configmap()
 ```
@@ -1614,7 +1614,7 @@ spec:
 ```python
 # CURRENT (Windows-specific):
 import os
-hosts = ["172.17.95.2", "172.17.95.3", "172.17.95.4", "172.17.95.5"]
+hosts = ["<HOST_IP_1>", "<HOST_IP_2>", "<HOST_IP_3>", "<HOST_IP_4>"]
 cache_file = "metrics_cache.json"
 
 def run():

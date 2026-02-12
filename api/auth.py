@@ -171,7 +171,7 @@ class LDAPAuthenticator:
             
             # Bind as admin first
             admin_dn = f"cn=admin,{self.base_dn}"
-            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', 'r#1kajun')
+            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', '')
             conn.simple_bind_s(admin_dn, admin_password)
             
             # Search for all users
@@ -207,7 +207,7 @@ class LDAPAuthenticator:
             
             # Bind as admin
             admin_dn = f"cn=admin,{self.base_dn}"
-            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', 'r#1kajun')
+            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', '')
             conn.simple_bind_s(admin_dn, admin_password)
             
             # Prepare user entry
@@ -251,7 +251,7 @@ class LDAPAuthenticator:
             
             # Bind as admin
             admin_dn = f"cn=admin,{self.base_dn}"
-            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', 'r#1kajun')
+            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', '')
             conn.simple_bind_s(admin_dn, admin_password)
             
             # Delete user

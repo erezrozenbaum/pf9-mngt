@@ -260,14 +260,21 @@ Comprehensive OpenStack inventory with RVTools-compatible exports:
 - User descriptions and metadata
 
 ### 3. Snapshot Management
-**⚠️ PARTIAL FUNCTIONALITY** — Full cross-tenant support coming in ~1 month
+✅ **FULLY FUNCTIONAL** — Cross-tenant snapshots enabled via service user
 
 **Automated Creation** (`snapshots/p9_auto_snapshots.py`):
 - Policy-driven volume snapshots with retention management
 - Multi-policy support per volume (daily, weekly, monthly patterns)
+- **Cross-tenant snapshot creation** via dedicated service user (configurable via `SNAPSHOT_SERVICE_USER_EMAIL`)
+- Dual-session architecture: admin for listing, service user for creating in correct tenant
 - SLA compliance enforcement with automatic cleanup
 - Audit trail for all snapshot operations
-- **Status**: ✅ Fully functional; snapshots currently in service domain pending tenant access
+
+**Service User Management** (`snapshots/snapshot_service_user.py`):
+- Automatic admin role assignment per tenant project
+- Fernet-encrypted or plaintext password support
+- Graceful fallback to admin session if service user unavailable
+- Per-run caching of role checks for performance
 
 **Policy Assignment** (`snapshots/p9_snapshot_policy_assign.py`):
 - Opt-out rule engine (all volumes tagged unless excluded)
@@ -280,12 +287,6 @@ Comprehensive OpenStack inventory with RVTools-compatible exports:
 - Tenant/Domain aggregation views
 - Policy adherence tracking with detailed records
 - **Status**: ✅ Fully functional; accessible via UI and REST API
-
-**Snapshot Storage Location** ⚠️
-- **Current**: Snapshots created in service domain (security boundary limitation)
-- **Planned**: Snapshots in original tenant projects (when admin cross-tenant access available)
-- **Timeline**: Expected within ~1 month when platform admin roles assigned to each tenant
-- **See**: [Snapshot Automation Guide](docs/SNAPSHOT_AUTOMATION.md) for details and timeline
 
 ### 3. Real-Time Monitoring
 **Host Metrics** (`host_metrics_collector.py`):
@@ -362,6 +363,7 @@ docker stats
 - **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)**: Quick commands and examples
 - **[SECURITY_CHECKLIST.md](docs/SECURITY_CHECKLIST.md)**: Security assessment and hardening
 - **[SNAPSHOT_AUTOMATION.md](docs/SNAPSHOT_AUTOMATION.md)**: Complete snapshot automation system guide
+- **[SNAPSHOT_SERVICE_USER.md](docs/SNAPSHOT_SERVICE_USER.md)**: Cross-tenant snapshot service user setup
 
 ## 🆘 Troubleshooting
 
@@ -497,7 +499,7 @@ POSTGRES_PASSWORD=change-this-secure-password
 POSTGRES_DB=pf9_mgmt
 
 # Monitoring Configuration (NEW)
-PF9_HOSTS=172.17.95.2,172.17.95.3,172.17.95.4,172.17.95.5
+PF9_HOSTS=<HOST_IP_1>,<HOST_IP_2>,<HOST_IP_3>,<HOST_IP_4>
 METRICS_CACHE_TTL=60
 ```
 
@@ -592,7 +594,8 @@ pf9-mngt/
 ├── metrics_cache.json     # Persistent metrics storage (NEW)
 ├── pf9_rvtools.py          # Main inventory collection script
 ├── snapshots/              # Snapshot tooling
-│   ├── p9_auto_snapshots.py            # Snapshot automation
+│   ├── p9_auto_snapshots.py            # Snapshot automation (cross-tenant)
+│   ├── snapshot_service_user.py         # Service user management
 │   ├── p9_snapshot_compliance_report.py # Compliance reporting
 │   ├── p9_snapshot_policy_assign.py     # Policy management
 │   └── snapshot_policy_rules.json       # Policy assignment rules
@@ -649,7 +652,7 @@ PF9_USERNAME="user@company.com"
 
 **Monitoring service not working**:
 - Check if monitoring service is running: `docker ps | grep pf9_monitoring`
-- Verify PF9 hosts are accessible: `curl http://172.17.95.2:9388/metrics`
+- Verify PF9 hosts are accessible: `curl http://<PF9_HOST_IP>:9388/metrics`
 - Check scheduled task: `schtasks /query /tn "PF9 Metrics Collection"`
 - Manual metrics collection: `python host_metrics_collector.py --once`
 
@@ -704,6 +707,15 @@ If you find this project useful, please consider:
 **Version**: 1.1
 
 ## 🎯 Recent Updates (February 2026)
+
+### Cross-Tenant Snapshot Service User (v1.2)
+- ✅ **Cross-tenant snapshot creation** — snapshots now land in the correct tenant project
+- ✅ Dedicated service user with automatic per-project admin role assignment (configurable via `SNAPSHOT_SERVICE_USER_EMAIL`)
+- ✅ Dual-session architecture: admin session for listing, service user session for creating
+- ✅ Fernet-encrypted password support for secure credential storage
+- ✅ Graceful fallback to admin session if service user is unavailable
+- ✅ `deployment.ps1` validates snapshot service user configuration
+- ✅ Comprehensive documentation updates across all guides
 
 ### Landing Dashboard Implementation (v1.1)
 - ✅ 14 New Dashboard REST Endpoints with comprehensive operational intelligence

@@ -1,8 +1,3 @@
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    print("[WARNING] python-dotenv not installed; .env file will not be loaded automatically.")
 #!/usr/bin/env python3
 """
 p9_auto_snapshots.py
@@ -101,14 +96,11 @@ try:
         ensure_service_user,
         get_service_user_password,
         SERVICE_USER_EMAIL,
-        is_password_expired,
     )
 except ImportError:
     print("[WARNING] snapshot_service_user module not available; service user management disabled")
     ensure_service_user = None
     SERVICE_USER_EMAIL = None
-    get_service_user_password = lambda tenant_id=None: None
-    is_password_expired = lambda password_last_changed=None, max_age_days=90: False
 
 # Database constants
 ENABLE_DB = os.getenv("ENABLE_DB", "true").lower() in ("true", "yes", "1")
@@ -397,11 +389,7 @@ def cleanup_old_snapshots_for_volume(
     vol_id = volume["id"]
 
     try:
-        # Use admin session for admin project, else use project session for project
-        if getattr(session, "is_admin", False):
-            snaps = cinder_list_snapshots_for_volume(session, admin_project_id, vol_id)
-        else:
-            snaps = cinder_list_snapshots_for_volume(session, volume.get("os-vol-tenant-attr:tenant_id") or volume.get("project_id"), vol_id)
+        snaps = cinder_list_snapshots_for_volume(session, admin_project_id, vol_id)
     except Exception as e:
         msg = f"Failed to list snapshots for volume {vol_id}: {type(e).__name__}: {e}"
         print("    WARNING:", msg)
@@ -454,18 +442,28 @@ def process_volume(
     dry_run: bool,
     primary_server_name: str | None = None,
     tenant_name: str | None = None,
+    create_session=None,
+    create_project_id: str | None = None,
 ):
     """
     Create one snapshot for this volume and clean old ones.
     Returns (created_snapshot_id or None, created_snapshot_project_id,
-             deleted_ids, error_message_or_None).
+             deleted_ids, error_message_or_None, snap_name).
 
     We:
-      - List & delete snapshots via admin_session (all_tenants=1).
-      - Try to create snapshot in the **volume's tenant project** using a
-        per-project session. If that fails (Keystone forbids project scoping),
-        we fall back to creating it in the admin project.
+      - List & delete snapshots via admin_session + admin_project_id
+        (these must match — token scope == URL project_id).
+      - Create snapshot via create_session + create_project_id so the
+        snapshot lands in the volume's tenant.  When no service-user
+        session is available the caller falls back to admin_session +
+        admin_project_id (snapshots will land in the service domain).
     """
+    # Default create_session / create_project_id to admin if not supplied
+    if create_session is None:
+        create_session = admin_session
+    if create_project_id is None:
+        create_project_id = admin_project_id
+
     vol_id = volume["id"]
     vol_name = volume.get("name") or vol_id
     volume_project_id = (
@@ -476,9 +474,10 @@ def process_volume(
 
     print(f"  Volume {vol_id} ({vol_name}), project={volume_project_id}")
 
+    # --- cleanup old snapshots (admin session, all_tenants=1) ---
     deleted_ids = cleanup_old_snapshots_for_volume(
         admin_session,
-        admin_project_id,  # Use admin session project ID for list/delete operations
+        admin_project_id,   # MUST match admin token scope
         volume,
         policy_name,
         dry_run=dry_run,
@@ -489,23 +488,13 @@ def process_volume(
 
     print(f"    Create snapshot: {snap_name}")
     if dry_run:
-        return None, None, deleted_ids, None
+        return None, None, deleted_ids, None, snap_name
 
-    # Use the session passed in (which should be project-scoped for service user)
-    # The snapshot will be created in the authenticated session's project
-    # Check service user password expiration if available
-    password_last_changed = None
-    if hasattr(volume, "get"):
-        password_last_changed = volume.get("service_user_password_last_changed")
-    if is_password_expired(password_last_changed):
-        msg = f"Service user password expired for volume {vol_id} (project {volume_project_id})"
-        print("      ERROR:", msg)
-        log_error("auto_snapshots/password_expired", msg)
-        return None, volume_project_id, deleted_ids, msg, snap_name
+    # --- create snapshot (service-user session → correct tenant) ---
     try:
         snap = cinder_create_snapshot(
-            admin_session,
-            admin_project_id,
+            create_session,
+            create_project_id,   # MUST match create_session token scope
             volume_id=vol_id,
             name=snap_name,
             description=snap_desc,
@@ -518,14 +507,18 @@ def process_volume(
             force=True,
         )
         sid = snap.get("id")
+
+        # Try multiple fields to find the project ID
         snapshot_created_in_project = (
             snap.get("os-extended-snapshot-attributes:project_id") or
-            snap.get("os-vol-tenant-attr:tenant_id") or 
-            snap.get("project_id") or 
+            snap.get("os-vol-tenant-attr:tenant_id") or
+            snap.get("project_id") or
             snap.get("tenant_id") or
-            volume_project_id
+            create_project_id
         )
-        print(f"      OK, snapshot id={sid} created in project={snapshot_created_in_project}")
+        print(
+            f"      OK, snapshot id={sid} created in project={snapshot_created_in_project}"
+        )
         return sid, snapshot_created_in_project, deleted_ids, None, snap_name
     except Exception as e:
         msg = f"Failed to create snapshot for volume {vol_id}: {type(e).__name__}: {e}"
@@ -601,14 +594,6 @@ def main():
     parser = argparse.ArgumentParser(
         description="Automatic volume snapshot tool for Platform9/OpenStack (Cinder)."
     )
-
-    # Ensure service user has admin role in all tenants before snapshot automation
-    try:
-        from p9_common import ensure_admin_role_for_service_user
-        print("[INFO] Ensuring service user admin role in all tenants...")
-        ensure_admin_role_for_service_user()
-    except Exception as e:
-        print(f"[WARNING] Could not ensure admin role for service user: {e}")
     parser.add_argument(
         "--policy",
         default="daily_5",
@@ -843,37 +828,52 @@ def main():
         print(f"\n=== Project {project_idx}/{len(volumes_by_project)}: {project_name} ({vol_project_id}) ===")
         print(f"    Volumes in this project: {len(project_volumes)}")
         
-        # Ensure service user exists for this project (unless UNKNOWN or service domain)
-        project_session = session  # Default to admin session
+        # -----------------------------------------------------------------
+        # Determine which session to use for CREATING snapshots
+        #   create_session + create_project_id  →  snapshot lands here
+        # Admin session is always used for listing / cleanup (all_tenants)
+        # -----------------------------------------------------------------
+        create_session = None
+        create_project_id = None
+
         if vol_project_id != "UNKNOWN" and vol_project_id != admin_project_id and ensure_service_user:
             try:
-                print(f"    Ensuring service user exists in project...")
+                print(f"    Ensuring service user has admin role on project...")
                 ensure_service_user(session, CFG["KEYSTONE_URL"], vol_project_id)
                 
                 # Get project-scoped session for service user
                 print(f"    Authenticating as service user for this project...")
                 service_password = get_service_user_password()
-                project_session, token = get_service_user_session(
+                svc_sess, svc_tok = get_service_user_session(
                     vol_project_id, 
                     SERVICE_USER_EMAIL, 
                     service_password,
                     user_domain="default"
                 )
                 
-                if project_session:
+                if svc_sess:
+                    create_session = svc_sess
+                    create_project_id = vol_project_id
                     print(f"    ✓ Using service user session for project {project_name}")
                 else:
                     print(f"    ⚠ Service user authentication failed")
                     print(f"    Falling back to admin session (snapshots will be in service domain)")
-                    project_session = session
             except Exception as e:
                 print(f"    ⚠ Could not use service user for project {project_name}: {e}")
                 print(f"    Falling back to admin session (snapshots will be in service domain)")
-                project_session = session
+
         elif vol_project_id == admin_project_id:
+            # Volume is already in the admin/service project – use admin session directly
+            create_session = session
+            create_project_id = admin_project_id
             print(f"    Using admin session (service domain project)")
-        else:
-            print(f"    Using admin session (UNKNOWN project)")
+
+        # Final fallback: admin session + admin_project_id
+        if create_session is None:
+            create_session = session
+            create_project_id = admin_project_id
+            if vol_project_id != admin_project_id:
+                print(f"    ⚠ Falling back to admin session – snapshots will land in service domain")
     
         # Process volumes in this project
         for vol_idx, v in enumerate(project_volumes, start=1):
@@ -955,13 +955,15 @@ def main():
             primary_server_name = attached_server_names_list[0] if attached_server_names_list else None
 
             sid, sid_project, deleted_ids, err_msg, snap_name = process_volume(
-                project_session,  # Use project-scoped session instead of admin session
-                vol_project_id,   # Use the volume's project ID, not admin project ID
-                v,
-                policy_name,
+                admin_session=session,                # Admin for listing / cleanup
+                admin_project_id=admin_project_id,    # MUST match admin token scope
+                volume=v,
+                policy_name=policy_name,
                 dry_run=dry_run,
                 primary_server_name=primary_server_name,
                 tenant_name=tenant_name,
+                create_session=create_session,         # Service-user (or admin fallback)
+                create_project_id=create_project_id,   # Matches create_session scope
             )
             if sid:
                 created_count += 1

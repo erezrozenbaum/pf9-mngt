@@ -2,9 +2,10 @@
 
 ## Overview
 
-The Platform9 Management system includes an automated snapshot management solution that enables:
+The Platform9 Management system includes a fully automated snapshot management solution that enables:
 
 - **Policy-based snapshot creation** across Cinder volumes
+- **Cross-tenant snapshot creation** using a dedicated service user
 - **Retention management** with automatic cleanup of old snapshots
 - **Cross-tenant snapshot policies** with exclusion rules
 - **Compliance reporting** on snapshot adherence
@@ -27,18 +28,47 @@ The Platform9 Management system includes an automated snapshot management soluti
 3. **Auto Snapshots** (`snapshots/p9_auto_snapshots.py`)
    - Processes volumes marked for auto-snapshotting
    - Creates snapshots with formatted names: `auto-{tenant}-{policy}-{server}-{volume}-{timestamp}`
+   - Uses **dual-session architecture**: admin session for listing, service user session for creating
    - Deletes old snapshots based on retention policies
    - Generates audit records for all actions
 
-4. **Snapshot Management API** (`api/snapshot_management.py`)
+4. **Snapshot Service User** (`snapshots/snapshot_service_user.py`)
+   - Manages the snapshot service user account for cross-tenant operations
+   - Ensures admin role assignment on each tenant project
+   - Handles password retrieval (plaintext or Fernet-encrypted)
+   - Per-run caching of role checks and user lookups
+
+5. **Snapshot Management API** (`api/snapshot_management.py`)
    - REST endpoints for policy management
    - Compliance reporting endpoint
    - Audit trail queries
 
-5. **Compliance UI** (`pf9-ui/src/components/SnapshotComplianceReport.tsx`)
+6. **Compliance UI** (`pf9-ui/src/components/SnapshotComplianceReport.tsx`)
    - Dashboard for compliance visualization
    - Filters by tenant, project, policy, and date range
    - Summary metrics and detailed records
+
+### Dual-Session Architecture
+
+The snapshot system uses two separate sessions to correctly scope snapshot operations:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Admin Session (service project scope)                    │
+│  • List all volumes (all_tenants=1)                     │
+│  • List snapshots for cleanup                           │
+│  • Delete expired snapshots                             │
+└─────────────────────────────────────────────────────────┘
+              │
+              ▼  For each tenant project:
+┌─────────────────────────────────────────────────────────┐
+│ Service User Session (tenant project scope)              │
+│  • ensure_service_user() → admin role on project        │
+│  • Authenticate as snapshot service user                │
+│  • Create snapshot in correct tenant project            │
+│  • Fallback: admin session (snapshot in service domain) │
+└─────────────────────────────────────────────────────────┘
+```
 
 ### Database
 
@@ -100,30 +130,19 @@ retention_monthly_15th: "1"
 
 ## Current Status
 
-⚠️ **PARTIAL FUNCTIONALITY** — Awaiting cross-tenant access
+✅ **FULLY FUNCTIONAL** — Cross-tenant snapshots enabled via service user
 
-### Working Features
-✅ Policy-based volume tagging
-✅ Snapshot creation with tenant-aware naming
-✅ Retention and cleanup
-✅ Audit trail and database logging
-✅ Compliance API and UI
-✅ Policy set synchronization from rules
-
-### Pending Features (Expected: ~1 month)
-⏳ **Snapshots in correct tenant projects**
-
-Currently, snapshots are created in the **service/admin domain** because the service admin user (`erez@ccc.co.il`) lacks roles in tenant projects. This is a multi-tenant security boundary issue:
-
-- **Problem**: Keystone project-scoped tokens require the user to have a role in that project
-- **Current State**: Service admin can list all volumes but can only create snapshots in own project
-- **Solution**: Once the platform admin gains cross-tenant access (tenant admin role assignment in progress), snapshots will be created in the **original tenant project** where the volume resides
-
-### Timeline
-
-1. **Now**: System is fully functional for metadata tagging and audit tracking
-2. **In ~1 month**: Tenant access configured → snapshots move to correct projects
-3. **Activation**: Change `docker-compose.yml` `restart: "no"` back to `restart: unless-stopped` and restart services
+### All Features Working
+✅ Policy-based volume tagging  
+✅ **Cross-tenant snapshot creation** (snapshots in correct tenant projects)  
+✅ Snapshot creation with tenant-aware naming  
+✅ Retention and cleanup  
+✅ Audit trail and database logging  
+✅ Compliance API and UI  
+✅ Policy set synchronization from rules  
+✅ Service user role management per-project  
+✅ Fernet-encrypted password support  
+✅ Graceful fallback to admin session  
 
 ## Deployment
 
@@ -134,39 +153,53 @@ snapshot_worker:
   build:
     context: .
     dockerfile: snapshots/Dockerfile
+  container_name: pf9_snapshot_worker
   environment:
-    # Keystone
-    PF9_AUTH_URL: http://keystone:5000/v3
-    PF9_USERNAME: erez@ccc.co.il
-    PF9_PASSWORD: <password>
-    PF9_USER_DOMAIN: ccc.co.il
-    PF9_PROJECT_NAME: service
-    PF9_PROJECT_DOMAIN: Default
+    # Keystone Authentication
+    PF9_AUTH_URL: ${PF9_AUTH_URL}
+    PF9_USERNAME: ${PF9_USERNAME}
+    PF9_PASSWORD: ${PF9_PASSWORD}
+    PF9_USER_DOMAIN: ${PF9_USER_DOMAIN:-Default}
+    PF9_PROJECT_NAME: ${PF9_PROJECT_NAME:-service}
+    PF9_PROJECT_DOMAIN: ${PF9_PROJECT_DOMAIN:-Default}
+    
+    # Snapshot Service User (cross-tenant)
+    SNAPSHOT_SERVICE_USER_EMAIL: ${SNAPSHOT_SERVICE_USER_EMAIL}
+    SNAPSHOT_SERVICE_USER_PASSWORD: ${SNAPSHOT_SERVICE_USER_PASSWORD:-}
+    SNAPSHOT_PASSWORD_KEY: ${SNAPSHOT_PASSWORD_KEY}
+    SNAPSHOT_USER_PASSWORD_ENCRYPTED: ${SNAPSHOT_USER_PASSWORD_ENCRYPTED}
     
     # Database
     PF9_DB_HOST: db
-    PF9_DB_NAME: pf9_mgmt
-    PF9_DB_USER: pf9
-    PF9_DB_PASSWORD: <password>
+    PF9_DB_NAME: ${PF9_DB_NAME:-pf9_mgmt}
+    PF9_DB_USER: ${PF9_DB_USER:-pf9}
+    PF9_DB_PASSWORD: ${PF9_DB_PASSWORD}
     
     # Scheduler
-    SNAPSHOT_SCHEDULER_ENABLED: true
-    POLICY_ASSIGN_INTERVAL_MINUTES: 60
-    AUTO_SNAPSHOT_INTERVAL_MINUTES: 60
-    
-    # Config
-    POLICY_ASSIGN_CONFIG: /app/snapshots/snapshot_policy_rules.json
-    POLICY_ASSIGN_DRY_RUN: false
-    AUTO_SNAPSHOT_DRY_RUN: false
-  restart: "no"  # Paused until cross-tenant access available
+    SNAPSHOT_SCHEDULER_ENABLED: ${SNAPSHOT_SCHEDULER_ENABLED:-true}
+    POLICY_ASSIGN_INTERVAL_MINUTES: ${POLICY_ASSIGN_INTERVAL_MINUTES:-1440}
+    AUTO_SNAPSHOT_INTERVAL_MINUTES: ${AUTO_SNAPSHOT_INTERVAL_MINUTES:-1440}
+    AUTO_SNAPSHOT_DRY_RUN: ${AUTO_SNAPSHOT_DRY_RUN:-false}
+  restart: always
 ```
 
-### Enable When Ready
+### Environment Variables
+
+Add to `.env`:
 
 ```bash
-# Update docker-compose.yml: change restart: "no" to restart: unless-stopped
-docker-compose up -d snapshot_worker
+# Required: Service user credentials (choose one option)
+SNAPSHOT_SERVICE_USER_EMAIL=<your-snapshot-user@your-domain.com>
+
+# Option A: Plaintext password
+SNAPSHOT_SERVICE_USER_PASSWORD=<service_user_password>
+
+# Option B: Encrypted password
+SNAPSHOT_PASSWORD_KEY=<Fernet encryption key>
+SNAPSHOT_USER_PASSWORD_ENCRYPTED=<Fernet encrypted password>
 ```
+
+See [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md) for detailed setup instructions.
 
 ## Usage
 
@@ -220,11 +253,19 @@ cinder metadata-list
 
 ### Snapshots in Wrong Project
 
-**Current Limitation**: Service admin lacks cross-tenant roles.
+**Symptom**: Snapshots created in service domain instead of volume's tenant
 
-**Workaround**: Snapshots are still created; they're just in the service domain. All metadata tracks the original volume and tenant for recovery purposes.
+**Check**:
+```bash
+docker logs pf9_snapshot_worker 2>&1 | grep -E "SERVICE_USER|service user|Falling back"
+```
 
-**Fix**: Wait for tenant admin role assignment (in progress).
+**Causes**:
+- Service user password not configured in `.env`
+- Service user (configured via `SNAPSHOT_SERVICE_USER_EMAIL`) not created in Platform9
+- Admin session lacks permission to assign roles
+
+**Fix**: See [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md) for setup instructions
 
 ### Database Connection Issues
 
@@ -238,17 +279,35 @@ Check PostgreSQL:
 psql -h localhost -U pf9 -d pf9_mgmt -c "SELECT COUNT(*) FROM snapshot_records;"
 ```
 
-## Next Steps
+## Operations
 
-1. **Confirm tenant admin roles assigned** to `erez@ccc.co.il` in each tenant project
-2. **Enable snapshot worker**: Update `docker-compose.yml` and restart
-3. **Verify snapshots in tenant projects**: Check Horizon or CLI
-4. **Monitor compliance**: Use UI dashboard to track snapshot coverage
+### Verify Cross-Tenant Snapshots
+
+```bash
+# Check snapshot worker logs for service user activity
+docker logs pf9_snapshot_worker 2>&1 | grep -E "SERVICE_USER|service user session"
+
+# Expected: lines showing admin role grants and service user authentication per project
+```
+
+### Disable Cross-Tenant Mode
+
+To fall back to admin-only mode (snapshots in service domain):
+
+```bash
+# Option 1: Disable service user via env var
+SNAPSHOT_SERVICE_USER_DISABLED=true
+
+# Option 2: Remove service user password from .env
+# (system will gracefully fall back to admin session)
+```
 
 ## References
 
+- [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md)
 - [Policy Rules Format](../snapshots/snapshot_policy_rules.json)
 - [Snapshot Scheduler](../snapshots/snapshot_scheduler.py)
 - [Policy Assignment](../snapshots/p9_snapshot_policy_assign.py)
 - [Auto Snapshots](../snapshots/p9_auto_snapshots.py)
+- [Service User Module](../snapshots/snapshot_service_user.py)
 - [API Endpoints](../api/snapshot_management.py)

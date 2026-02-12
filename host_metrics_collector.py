@@ -11,9 +11,17 @@ from datetime import datetime, timedelta
 import os
 import sys
 
+# Load .env file when running on the host (outside Docker)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed; rely on system environment
+
 class HostMetricsCollector:
     def __init__(self):
-        self.hosts = ["172.17.95.2", "172.17.95.3", "172.17.95.4", "172.17.95.5"]
+        hosts_env = os.getenv("PF9_HOSTS", "")
+        self.hosts = [h.strip() for h in hosts_env.split(",") if h.strip()] if hosts_env else []
         self.cache_file = "metrics_cache.json"
         
     async def collect_host_metrics(self, session, host):

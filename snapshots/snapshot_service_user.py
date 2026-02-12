@@ -1,253 +1,265 @@
-import requests
-
-# List all users in a tenant/project using Keystone API
-def list_users_in_project(keystone_url: str, token: str, project_id: str) -> list:
-    """
-    Fetch all users for a given project from Keystone, including hidden/service users.
-    Returns a list of user dicts.
-    """
-    url = f"{keystone_url.rstrip('/')}/projects/{project_id}/users"
-    headers = {"X-Auth-Token": token}
-    try:
-        resp = requests.get(url, headers=headers, timeout=30)
-        resp.raise_for_status()
-        return resp.json().get("users", [])
-    except Exception as e:
-        print(f"[ERROR] Failed to list users in project {project_id}: {e}")
-        return []
+#!/usr/bin/env python3
 """
 snapshot_service_user.py
-Service user credential management for Platform9 snapshot automation.
+
+Manages the dedicated snapshot service user for cross-tenant snapshot operations.
+
+The service user (configured via SNAPSHOT_SERVICE_USER_EMAIL) is used to create snapshots in
+each tenant's project scope, rather than in the service domain.
+
+Flow:
+  1. Admin session checks if the service user exists in Keystone
+  2. For each target project, ensures the user has admin role
+  3. Authenticates as the service user scoped to the target project
+  4. Uses that project-scoped session for snapshot create/list/delete
+
+Environment variables:
+  SNAPSHOT_SERVICE_USER_EMAIL    - Service user email (required, no default)
+  SNAPSHOT_SERVICE_USER_PASSWORD - Plaintext password (preferred for simplicity)
+  SNAPSHOT_PASSWORD_KEY          - Fernet key for encrypted password
+  SNAPSHOT_USER_PASSWORD_ENCRYPTED - Encrypted password
+  SNAPSHOT_SERVICE_USER_DOMAIN   - User domain ID (default: "default")
+  SNAPSHOT_SERVICE_USER_DISABLED - Set to "true" to disable (default: false)
 """
 
+from __future__ import annotations
+
 import os
-from typing import Dict, Optional
+import secrets
+import string
+from typing import Optional, Tuple
 
-import json
-import os
-from typing import Dict, Optional
-from datetime import datetime, timedelta
+import requests
 
-# Service user email (should match Keystone user)
-SERVICE_USER_EMAIL = os.getenv("SERVICE_USER_EMAIL", "snapshot@ccc.co.il")
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
-# Default service user password
-SERVICE_USER_PASSWORD = os.getenv("SERVICE_USER_PASSWORD", "changeme")
+SERVICE_USER_EMAIL = os.getenv("SNAPSHOT_SERVICE_USER_EMAIL", "")
+SERVICE_USER_DOMAIN = os.getenv("SNAPSHOT_SERVICE_USER_DOMAIN", "default")
+SERVICE_USER_DISABLED = os.getenv("SNAPSHOT_SERVICE_USER_DISABLED", "false").lower() in ("true", "1", "yes")
 
-# Per-tenant service user passwords (from env or file)
-SERVICE_USER_PASSWORDS: Dict[str, str] = {}
+# Cache: project_id -> True (role already verified this run)
+_role_cache: dict[str, bool] = {}
+
+# Cache: user_id once found
+_cached_user_id: Optional[str] = None
 
 
-# Optional: Load per-tenant passwords from a JSON file
-SERVICE_USER_PASSWORDS_FILE = os.getenv("SERVICE_USER_PASSWORDS_FILE", "service_user_passwords.json")
-if os.path.exists(SERVICE_USER_PASSWORDS_FILE):
-    try:
-        with open(SERVICE_USER_PASSWORDS_FILE, "r") as f:
-            SERVICE_USER_PASSWORDS = json.load(f)
-    except Exception as e:
-        print(f"[WARNING] Failed to load per-tenant service user passwords: {e}")
+# ---------------------------------------------------------------------------
+# Password management
+# ---------------------------------------------------------------------------
 
-def assign_admin_role_to_service_user(keystone_url: str, token: str, project_id: str, user_id: str, admin_role_id: str) -> bool:
+def get_service_user_password() -> str:
     """
-    Assign the admin role to the service user in the specified project using Keystone API.
-    Returns True if assignment succeeded or already present, False otherwise.
+    Retrieve the service user password from environment.
+
+    Tries in order:
+      1. SNAPSHOT_SERVICE_USER_PASSWORD (plaintext)
+      2. SNAPSHOT_USER_PASSWORD_ENCRYPTED + SNAPSHOT_PASSWORD_KEY (Fernet)
+
+    Raises RuntimeError if no password is available.
     """
-    url = f"{keystone_url.rstrip('/')}/projects/{project_id}/users/{user_id}/roles/{admin_role_id}"
-    headers = {"X-Auth-Token": token}
-    try:
-        resp = requests.put(url, headers=headers, timeout=30)
-        if resp.status_code in (200, 204):
-            print(f"[INFO] Admin role assigned to user {user_id} in project {project_id}")
-            return True
-        elif resp.status_code == 409:
-            print(f"[INFO] Admin role already assigned to user {user_id} in project {project_id}")
-            return True
-        else:
-            print(f"[ERROR] Failed to assign admin role: {resp.status_code} {resp.text}")
-            return False
-    except Exception as e:
-        print(f"[ERROR] Exception assigning admin role: {e}")
-        return False
+    # 1. Plain password
+    plain = os.getenv("SNAPSHOT_SERVICE_USER_PASSWORD")
+    if plain:
+        return plain
 
-def automate_admin_role_assignment(keystone_url: str, token: str, service_user_email: str):
-    """
-    For each project, ensure the service user has the admin role. Assign if missing.
-    """
-    # List all projects
-    projects_url = f"{keystone_url.rstrip('/')}/projects"
-    projects_resp = requests.get(projects_url, headers={"X-Auth-Token": token}, timeout=30)
-    projects_resp.raise_for_status()
-    projects = projects_resp.json().get("projects", [])
+    # 2. Encrypted password
+    encrypted = os.getenv("SNAPSHOT_USER_PASSWORD_ENCRYPTED")
+    key = os.getenv("SNAPSHOT_PASSWORD_KEY")
 
-    # List all roles
-    roles_url = f"{keystone_url.rstrip('/')}/roles"
-    roles_resp = requests.get(roles_url, headers={"X-Auth-Token": token}, timeout=30)
-    roles_resp.raise_for_status()
-    roles = roles_resp.json().get("roles", [])
-    admin_role = next((r for r in roles if r["name"].lower() == "admin"), None)
-    if not admin_role:
-        print("[ERROR] Admin role not found in Keystone roles.")
-        return
-    admin_role_id = admin_role["id"]
-
-    # List all users
-    users_url = f"{keystone_url.rstrip('/')}/users"
-    users_resp = requests.get(users_url, headers={"X-Auth-Token": token}, timeout=30)
-    users_resp.raise_for_status()
-    users = users_resp.json().get("users", [])
-    service_user = next((u for u in users if u.get("email", "") == service_user_email or u.get("name", "") == service_user_email), None)
-    if not service_user:
-        print(f"[ERROR] Service user {service_user_email} not found.")
-        return
-    service_user_id = service_user["id"]
-
-    for project in projects:
-        project_id = project["id"]
-        # Check if admin role is already assigned
-        role_assign_url = f"{keystone_url.rstrip('/')}/role_assignments?user.id={service_user_id}&project.id={project_id}&role.id={admin_role_id}"
-        role_assign_resp = requests.get(role_assign_url, headers={"X-Auth-Token": token}, timeout=30)
-        role_assign_resp.raise_for_status()
-        assignments = role_assign_resp.json().get("role_assignments", [])
-        if assignments:
-            print(f"[INFO] Service user already has admin role in project {project_id}")
-            continue
-        # Assign admin role
-        assign_admin_role_to_service_user(keystone_url, token, project_id, service_user_id, admin_role_id)
-
-def get_service_user_password(tenant_id: Optional[str] = None) -> str:
-    """
-    Return the service user password for a given tenant.
-    If tenant_id is not specified or not found, return the default password.
-    """
-    if tenant_id and tenant_id in SERVICE_USER_PASSWORDS:
-        return SERVICE_USER_PASSWORDS[tenant_id]
-    return SERVICE_USER_PASSWORD
-
-def ensure_service_user(tenant_id: Optional[str] = None) -> bool:
-    """
-    Ensure service user exists for the tenant (project_id).
-    If not, create it and assign admin role. Returns True if user exists/created and has admin role.
-    """
-    import requests
-    from p9_common import CFG
-    keystone_url = CFG["KEYSTONE_URL"]
-    admin_username = CFG["USERNAME"]
-    admin_password = CFG["PASSWORD"]
-    user_domain = CFG["USER_DOMAIN"]
-    # Get admin token
-    session = requests.Session()
-    auth_url = keystone_url.rstrip("/") + "/auth/tokens"
-    payload = {
-        "auth": {
-            "identity": {
-                "methods": ["password"],
-                "password": {
-                    "user": {
-                        "name": admin_username,
-                        "domain": {"name": user_domain},
-                        "password": admin_password,
-                    }
-                },
-            },
-            "scope": {"project": {"id": tenant_id}}
-        }
-    }
-    try:
-        resp = session.post(auth_url, json=payload, timeout=30)
-        resp.raise_for_status()
-        admin_token = resp.headers["X-Subject-Token"]
-    except Exception as e:
-        print(f"[ERROR] Could not get admin token for tenant {tenant_id}: {e}")
-        return False
-
-    # Check if user exists in this tenant
-    users_url = keystone_url.rstrip("/") + "/users"
-    try:
-        users_resp = session.get(users_url, headers={"X-Auth-Token": admin_token}, timeout=30)
-        users_resp.raise_for_status()
-        users = users_resp.json().get("users", [])
-        service_user = next((u for u in users if u.get("email", "") == SERVICE_USER_EMAIL or u.get("name", "") == SERVICE_USER_EMAIL), None)
-    except Exception as e:
-        print(f"[ERROR] Could not list users in tenant {tenant_id}: {e}")
-        return False
-
-    if not service_user:
-        # Create the user
-        create_url = keystone_url.rstrip("/") + "/users"
-        user_data = {
-            "user": {
-                "name": SERVICE_USER_EMAIL,
-                "email": SERVICE_USER_EMAIL,
-                "password": get_service_user_password(tenant_id),
-                "domain_id": "default",
-                "default_project_id": tenant_id,
-                "enabled": True
-            }
-        }
+    if encrypted and key:
         try:
-            create_resp = session.post(create_url, headers={"X-Auth-Token": admin_token}, json=user_data, timeout=30)
-            create_resp.raise_for_status()
-            service_user = create_resp.json().get("user")
-            print(f"[INFO] Created service user {SERVICE_USER_EMAIL} in tenant {tenant_id}")
+            from cryptography.fernet import Fernet
+            f = Fernet(key.encode() if isinstance(key, str) else key)
+            return f.decrypt(encrypted.encode() if isinstance(encrypted, str) else encrypted).decode()
+        except ImportError:
+            # cryptography not installed, try base64 decode as fallback
+            print("[SERVICE_USER] cryptography package not installed; cannot decrypt password")
         except Exception as e:
-            print(f"[ERROR] Could not create service user in tenant {tenant_id}: {e}")
-            return False
-    else:
-        print(f"[INFO] Service user {SERVICE_USER_EMAIL} already exists in tenant {tenant_id}")
+            print(f"[SERVICE_USER] Failed to decrypt password: {e}")
 
-    # Ensure admin role
-    # Get admin role id
-    roles_url = keystone_url.rstrip("/") + "/roles"
+    raise RuntimeError(
+        "No snapshot service user password found. "
+        "Set SNAPSHOT_SERVICE_USER_PASSWORD or both "
+        "SNAPSHOT_PASSWORD_KEY and SNAPSHOT_USER_PASSWORD_ENCRYPTED in .env"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Keystone helpers
+# ---------------------------------------------------------------------------
+
+def _keystone_get(session: requests.Session, url: str, timeout: int = 60):
+    """GET from Keystone, return JSON dict."""
+    resp = session.get(url, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json() if resp.content else {}
+
+
+def _find_user_id(session: requests.Session, keystone_url: str, email: str) -> Optional[str]:
+    """Find the Keystone user ID for the given email/name."""
+    global _cached_user_id
+    if _cached_user_id:
+        return _cached_user_id
+
+    url = f"{keystone_url}/users?name={email}"
     try:
-        roles_resp = session.get(roles_url, headers={"X-Auth-Token": admin_token}, timeout=30)
-        roles_resp.raise_for_status()
-        roles = roles_resp.json().get("roles", [])
-        admin_role = next((r for r in roles if r["name"].lower() == "admin"), None)
-        if not admin_role:
-            print(f"[ERROR] Admin role not found in Keystone roles.")
-            return False
-        admin_role_id = admin_role["id"]
+        data = _keystone_get(session, url)
+        users = data.get("users", [])
+        if users:
+            _cached_user_id = users[0]["id"]
+            return _cached_user_id
     except Exception as e:
-        print(f"[ERROR] Could not get roles for tenant {tenant_id}: {e}")
-        return False
+        print(f"[SERVICE_USER] Failed to search for user {email}: {e}")
 
-    # Check if admin role is already assigned
-    role_assign_url = keystone_url.rstrip("/") + f"/role_assignments?user.id={service_user['id']}&project.id={tenant_id}&role.id={admin_role_id}"
+    # Also try searching by domain_id
     try:
-        role_assign_resp = session.get(role_assign_url, headers={"X-Auth-Token": admin_token}, timeout=30)
-        role_assign_resp.raise_for_status()
-        assignments = role_assign_resp.json().get("role_assignments", [])
-        if assignments:
-            print(f"[INFO] Service user already has admin role in tenant {tenant_id}")
-            return True
+        url = f"{keystone_url}/users?domain_id={SERVICE_USER_DOMAIN}&name={email}"
+        data = _keystone_get(session, url)
+        users = data.get("users", [])
+        if users:
+            _cached_user_id = users[0]["id"]
+            return _cached_user_id
+    except Exception:
+        pass
+
+    return None
+
+
+def _find_role_id(session: requests.Session, keystone_url: str, role_name: str) -> Optional[str]:
+    """Find a Keystone role ID by name."""
+    url = f"{keystone_url}/roles?name={role_name}"
+    try:
+        data = _keystone_get(session, url)
+        roles = data.get("roles", [])
+        if roles:
+            return roles[0]["id"]
     except Exception as e:
-        print(f"[ERROR] Could not check admin role assignment in tenant {tenant_id}: {e}")
-        return False
+        print(f"[SERVICE_USER] Failed to find role '{role_name}': {e}")
+    return None
 
-    # Assign admin role
-    assign_url = keystone_url.rstrip("/") + f"/projects/{tenant_id}/users/{service_user['id']}/roles/{admin_role_id}"
-    try:
-        assign_resp = session.put(assign_url, headers={"X-Auth-Token": admin_token}, timeout=30)
-        if assign_resp.status_code in (200, 204):
-            print(f"[INFO] Assigned admin role to service user in tenant {tenant_id}")
-            return True
-        else:
-            print(f"[ERROR] Failed to assign admin role: {assign_resp.status_code} {assign_resp.text}")
-            return False
-    except Exception as e:
-        print(f"[ERROR] Could not assign admin role in tenant {tenant_id}: {e}")
-        return False
 
-def is_password_expired(password_last_changed: Optional[str], max_age_days: int = 90) -> bool:
-    """
-    Check if the password is expired based on last changed date.
-    password_last_changed: ISO date string
-    max_age_days: maximum allowed age in days
-    """
-    if not password_last_changed:
-        return False
+def _has_role_on_project(
+    session: requests.Session,
+    keystone_url: str,
+    user_id: str,
+    project_id: str,
+    role_id: str,
+) -> bool:
+    """Check if a user already has a specific role on a project."""
+    url = f"{keystone_url}/projects/{project_id}/users/{user_id}/roles/{role_id}"
     try:
-        last_changed = datetime.fromisoformat(password_last_changed)
-        return datetime.utcnow() - last_changed > timedelta(days=max_age_days)
+        resp = session.head(url, timeout=30)
+        # 204 = role exists, 404 = not assigned
+        return resp.status_code == 204
     except Exception:
         return False
+
+
+def _assign_role_to_project(
+    session: requests.Session,
+    keystone_url: str,
+    user_id: str,
+    project_id: str,
+    role_id: str,
+) -> bool:
+    """Assign a role to a user on a project. Returns True on success."""
+    url = f"{keystone_url}/projects/{project_id}/users/{user_id}/roles/{role_id}"
+    try:
+        resp = session.put(url, timeout=30)
+        if resp.status_code in (200, 201, 204):
+            return True
+        else:
+            print(f"[SERVICE_USER] Role assignment returned {resp.status_code}: {resp.text}")
+            return False
+    except Exception as e:
+        print(f"[SERVICE_USER] Failed to assign role: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def ensure_service_user(
+    admin_session: requests.Session,
+    keystone_url: str,
+    project_id: str,
+) -> None:
+    """
+    Ensure the snapshot service user exists and has admin role on the
+    given project.
+
+    Args:
+        admin_session: An authenticated admin session (service-scoped)
+        keystone_url:  Keystone v3 URL (e.g. https://.../keystone/v3)
+        project_id:    The target project to grant access to
+
+    Raises:
+        RuntimeError if the user cannot be found or the role cannot be assigned.
+    """
+    if SERVICE_USER_DISABLED:
+        print(f"    [SERVICE_USER] Disabled via SNAPSHOT_SERVICE_USER_DISABLED")
+        return
+
+    keystone_url = keystone_url.rstrip("/")
+
+    # Skip if we already verified this project in this process run
+    if project_id in _role_cache:
+        return
+
+    # 1. Find the service user
+    user_id = _find_user_id(admin_session, keystone_url, SERVICE_USER_EMAIL)
+    if not user_id:
+        raise RuntimeError(
+            f"Service user '{SERVICE_USER_EMAIL}' not found in Keystone. "
+            f"Please create the user in Platform9 first, then set its password "
+            f"in SNAPSHOT_SERVICE_USER_PASSWORD or encrypt it with "
+            f"SNAPSHOT_PASSWORD_KEY / SNAPSHOT_USER_PASSWORD_ENCRYPTED."
+        )
+
+    # 2. Find the admin role
+    admin_role_id = _find_role_id(admin_session, keystone_url, "admin")
+    if not admin_role_id:
+        raise RuntimeError("'admin' role not found in Keystone")
+
+    # 3. Check / assign role
+    if _has_role_on_project(admin_session, keystone_url, user_id, project_id, admin_role_id):
+        print(f"    [SERVICE_USER] {SERVICE_USER_EMAIL} already has admin role on project {project_id}")
+    else:
+        print(f"    [SERVICE_USER] Granting admin role to {SERVICE_USER_EMAIL} on project {project_id}")
+        ok = _assign_role_to_project(admin_session, keystone_url, user_id, project_id, admin_role_id)
+        if not ok:
+            raise RuntimeError(
+                f"Failed to assign admin role to {SERVICE_USER_EMAIL} on project {project_id}"
+            )
+        print(f"    [SERVICE_USER] ✓ Admin role granted")
+
+    _role_cache[project_id] = True
+
+
+def reset_cache() -> None:
+    """Clear the per-run role verification cache."""
+    global _cached_user_id
+    _role_cache.clear()
+    _cached_user_id = None
+
+
+# ---------------------------------------------------------------------------
+# Self-test
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    print(f"[TEST] Service user email: {SERVICE_USER_EMAIL}")
+    print(f"[TEST] Service user domain: {SERVICE_USER_DOMAIN}")
+    print(f"[TEST] Disabled: {SERVICE_USER_DISABLED}")
+
+    try:
+        pw = get_service_user_password()
+        print(f"[TEST] Password retrieved (length: {len(pw)})")
+    except RuntimeError as e:
+        print(f"[TEST] Password not available: {e}")
+
+    print("[TEST] Module ready for use")

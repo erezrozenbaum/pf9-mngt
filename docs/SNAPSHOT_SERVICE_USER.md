@@ -2,228 +2,241 @@
 
 ## Overview
 
-This document describes the **Snapshot Service User** feature—a workaround that enables snapshots to be created in the correct tenant instead of the service domain.
+This document describes the **Snapshot Service User** feature that enables snapshots to be created in the correct tenant project instead of the service domain.
 
 ## Problem Statement
 
 When using the admin session to create snapshots, Platform9's OpenStack API always creates resources in the authenticated session's project scope, which is the **service domain**. The `all_tenants=1` parameter only allows **listing** resources across tenants; it doesn't change where resources are created.
 
-To create snapshots in the correct tenant project, we need a user account with privileges in that specific tenant.
+To create snapshots in the correct tenant project, we need a user account with admin privileges in that specific tenant.
 
 ## Solution Architecture
 
-### Automatic Service User Creation
+### Pre-Existing Service User
 
-A dedicated service account (`snapshotsrv@ccc.co.il`) is automatically created in each tenant with the following properties:
+A dedicated service account must be **pre-created in Platform9** before deployment. The system does **not** auto-create this user — it only manages role assignments and authentication.
 
-- **Email**: snapshotsrv@ccc.co.il
-- **Role**: service (Platform9 service role with snapshot permissions)
-- **Scope**: One user per tenant (Default domain)
-- **Lifecycle**: Temporary until Platform9 enables cross-tenant admin access
+- **Email**: Configured via `SNAPSHOT_SERVICE_USER_EMAIL` environment variable
+- **Role**: `admin` (assigned per-project automatically by the system)
+- **Scope**: One user, granted admin on each tenant project as needed
+- **Domain**: Default domain (configurable via `SNAPSHOT_SERVICE_USER_DOMAIN`)
 
-### Auto-Generated & Encrypted Password
+### Dual-Session Architecture
 
-The service user password is:
+The snapshot system uses two separate sessions:
 
-1. **Auto-generated** on first run using `secrets` module (32 random characters)
-2. **Encrypted** using Fernet symmetric encryption
-3. **Stored encrypted** in `.env` as `SNAPSHOT_USER_PASSWORD_ENCRYPTED`
-4. **Never in plaintext** on disk or in memory (except during authentication)
-5. **Unknown to administrators** (security by design)
+1. **Admin Session** — Scoped to the service project
+   - Used for listing volumes (`all_tenants=1`), listing snapshots, and cleanup
+   - Token scope: service project (e.g., `service` in `Default` domain)
 
-### Encryption Key Management
+2. **Service User Session** — Scoped to each volume's tenant project
+   - Used for creating snapshots in the correct tenant
+   - Authenticated as the snapshot service user with project-scoped token
+   - Falls back to admin session if service user is unavailable
 
-- **Key generation**: Fernet key generated on first run
-- **Key storage**: Stored in `.env` as `SNAPSHOT_PASSWORD_KEY`
-- **Key access**: Only the running process with access to `.env` can decrypt
-- **Rotation**: Can be rotated by updating both key and password
+### Password Management
+
+The service user password can be provided in two ways:
+
+1. **Plaintext** (simpler): Set `SNAPSHOT_SERVICE_USER_PASSWORD` in `.env`
+2. **Fernet Encrypted** (more secure): Set both `SNAPSHOT_PASSWORD_KEY` and `SNAPSHOT_USER_PASSWORD_ENCRYPTED`
+
+The system tries plaintext first, then falls back to Fernet decryption.
 
 ## Implementation Details
 
-### Modules
+### Module: `snapshots/snapshot_service_user.py`
 
-**`snapshot_service_user.py`** - Service user management utilities
+**Exports:**
+- `SERVICE_USER_EMAIL` — The configured service user email address
+- `ensure_service_user(admin_session, keystone_url, project_id)` — Ensures admin role on project
+- `get_service_user_password()` — Retrieves password (plaintext or decrypted)
+- `reset_cache()` — Clears per-run role and user ID caches
 
-Functions:
-- `generate_secure_password()` - Generate cryptographically secure password
-- `get_or_create_encryption_key()` - Manage encryption key lifecycle
-- `encrypt_password()` / `decrypt_password()` - Fernet encryption/decryption
-- `get_service_user_password()` - Get/generate service user password
-- `ensure_service_user()` - Check/create user in tenant and assign role
-- `get_service_user_session()` - Authenticate as service user
+**Internal Functions:**
+- `_find_user_id(session, keystone_url, email)` — Looks up user by email in Keystone
+- `_find_role_id(session, keystone_url, role_name)` — Finds role ID by name
+- `_has_role_on_project(session, keystone_url, user_id, project_id, role_id)` — Checks existing role assignment (HEAD request, 204=exists)
+- `_assign_role_to_project(session, keystone_url, user_id, project_id, role_id)` — Assigns role via PUT
 
-### Integration Points
+**Caching:**
+- `_cached_user_id` — User ID cached after first lookup (avoids repeated Keystone queries)
+- `_role_cache` — Dict of `project_id → True` for projects already verified this run
 
-**`snapshots/p9_auto_snapshots.py`** - Calls `ensure_service_user()` before creating snapshots
+### Integration: `snapshots/p9_auto_snapshots.py`
+
+The main auto-snapshot loop groups volumes by project, then for each project:
 
 ```python
-# Before each snapshot run, ensure service user exists in the project
-ensure_service_user(session, keystone_url, project_id)
+# 1. Ensure service user has admin role on the project
+ensure_service_user(admin_session, keystone_url, vol_project_id)
 
-# Use service user session for snapshot operations
-service_session = get_service_user_session(keystone_url)
-cinder_create_snapshot(service_session, volume_id, ...)
+# 2. Authenticate as service user scoped to the project
+svc_sess, svc_tok = get_service_user_session(
+    vol_project_id, SERVICE_USER_EMAIL, service_password, user_domain="default"
+)
+
+# 3. Use service user session for snapshot creation
+process_volume(
+    admin_session=session,            # For listing / cleanup
+    admin_project_id=admin_project_id,
+    create_session=svc_sess,          # For creating snapshots
+    create_project_id=vol_project_id, # Matches service user token scope
+    ...
+)
 ```
+
+**Fallback Chain:**
+1. Service user session scoped to volume's project (correct tenant)
+2. Admin session scoped to admin project (snapshots land in service domain)
 
 ### Environment Variables
 
-Added to `.env` and `.env.template`:
-
 ```bash
-# Auto-generated on first run
-SNAPSHOT_PASSWORD_KEY=<Fernet encryption key>
-SNAPSHOT_USER_PASSWORD_ENCRYPTED=<Encrypted password>
+# Service user identity
+SNAPSHOT_SERVICE_USER_EMAIL=<your-snapshot-user@your-domain.com>    # User email (must exist in Platform9)
+SNAPSHOT_SERVICE_USER_DOMAIN=default                   # User domain ID
+
+# Password (Option A: plaintext)
+SNAPSHOT_SERVICE_USER_PASSWORD=<password>
+
+# Password (Option B: Fernet encrypted)
+SNAPSHOT_PASSWORD_KEY=<Fernet key>                     # Generated with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+SNAPSHOT_USER_PASSWORD_ENCRYPTED=<encrypted password>  # Generated with: python -c "from cryptography.fernet import Fernet; f=Fernet(b'<key>'); print(f.encrypt(b'<password>').decode())"
+
+# Disable service user (use admin session only)
+SNAPSHOT_SERVICE_USER_DISABLED=false                   # Set to "true" to disable
 ```
 
-## Usage
+## Setup Guide
 
-### Automatic (During Snapshot Runs)
+### Prerequisites
 
-The service user is automatically created and used:
+1. **Create the service user** in Platform9 UI or CLI:
+   - Navigate to Identity → Users → Create User
+   - Email: Your chosen service user email
+   - Domain: Default
+   - Set a strong password (32+ characters recommended)
+
+2. The system will **automatically** assign admin role to this user on each tenant project as snapshots are processed.
+
+### Configure Password (Option A: Plaintext)
 
 ```bash
-python snapshots/p9_auto_snapshots.py --policy daily_5
+# Add to .env
+SNAPSHOT_SERVICE_USER_EMAIL=<your-snapshot-user@your-domain.com>
+SNAPSHOT_SERVICE_USER_PASSWORD=<your-service-user-password>
 ```
 
-The script will:
-1. Check if `snapshotsrv@ccc.co.il` exists in each tenant
-2. If not, create it with auto-generated password
-3. Assign `service` role to the tenant project
-4. Use this user for all snapshot operations
-5. Return snapshots created in the correct tenant
-
-### Manual Testing
+### Configure Password (Option B: Fernet Encrypted)
 
 ```bash
-# Test the module
-python snapshot_service_user.py
+# Generate encryption key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Output: <your-generated-fernet-key>
 
-# Output:
-# [TEST] Service user email: snapshotsrv@ccc.co.il
-# [TEST] Password generated (length: 32)
-# [TEST] Encryption key ready
-# [TEST] Module ready for use
+# Encrypt the password (replace <YOUR_KEY> with the key from above)
+python -c "from cryptography.fernet import Fernet; f=Fernet(b'<YOUR_KEY>'); print(f.encrypt(b'<YOUR_PASSWORD>').decode())"
+
+# Add to .env
+SNAPSHOT_SERVICE_USER_EMAIL=<your-snapshot-user@your-domain.com>
+SNAPSHOT_PASSWORD_KEY=<your-generated-fernet-key>
+SNAPSHOT_USER_PASSWORD_ENCRYPTED=<your-encrypted-password>
+```
+
+### Verify Configuration
+
+```bash
+# Test password retrieval
+python -c "
+from snapshots.snapshot_service_user import get_service_user_password, SERVICE_USER_EMAIL
+pw = get_service_user_password()
+print(f'User: {SERVICE_USER_EMAIL}')
+print(f'Password length: {len(pw)}')
+print('OK')
+"
 ```
 
 ## Security Considerations
 
 ### Strengths
 
-✅ **No plaintext passwords** on disk  
-✅ **Unknown to administrators** (auto-generated)  
-✅ **Limited scope** (per-tenant service user, not global admin)  
-✅ **Service role** (narrower permissions than admin)  
-✅ **Encrypted storage** using industry-standard Fernet  
-✅ **Audit trail** (can log user creation events to database)  
-
-### Limitations
-
-⚠️ **One password per tenant** (can't easily rotate individual passwords)  
-⚠️ **Encryption key in .env** (protect .env file with appropriate permissions)  
-⚠️ **Service account accessible** (anyone with .env can decrypt)  
-⚠️ **Temporary solution** (depends on Platform9 limitation)  
+- **Minimal privilege**: Admin role assigned only to projects that need snapshots
+- **Per-run caching**: Role checks cached within a run to avoid repeated Keystone API calls
+- **Encrypted password option**: Fernet symmetric encryption for `.env` storage
+- **Graceful fallback**: System continues with admin session if service user fails
+- **Disable switch**: Set `SNAPSHOT_SERVICE_USER_DISABLED=true` to disable entirely
 
 ### Recommendations
 
-1. **Protect .env file**
+1. **Protect `.env` file**:
+   ```powershell
+   # Windows
+   icacls .env /inheritance:r /grant:r "%USERNAME%:F"
+   ```
    ```bash
-   chmod 600 .env  # Linux/macOS
-   icacls .env /inheritance:r /grant:r "%USERNAME%:F"  # Windows
+   # Linux/macOS
+   chmod 600 .env
    ```
 
-2. **Audit user creation**
-   - Log all `snapshotsrv@ccc.co.il` creation events to database
-   - Monitor for unexpected role assignments
+2. **Use encrypted password** in production (Option B above)
 
-3. **Document password removal**
-   - Document how to delete these users when Platform9 enables cross-tenant admin
-   - Create automation for bulk deletion
+3. **Audit role assignments**: Monitor `[SERVICE_USER]` log entries for unexpected role grants
 
-4. **Separate authentication**
-   - Consider using a separate encryption key file (not in .env)
-   - Example: `/etc/pf9-mgmt/snapshot_key.txt` with restricted permissions
-
-## Cleanup & Deprecation
-
-When Platform9 enables cross-tenant admin access:
-
-1. **Stop creating service users**
-   - Set environment variable: `SNAPSHOT_SERVICE_USER_DISABLED=true`
-   - Comment out `ensure_service_user()` calls
-
-2. **Delete existing service users**
-   ```bash
-   python snapshots/cleanup_service_users.py --all
-   # Deletes snapshotsrv@ccc.co.il from all tenants
-   ```
-
-3. **Remove credentials**
-   - Remove `SNAPSHOT_PASSWORD_KEY` and `SNAPSHOT_USER_PASSWORD_ENCRYPTED` from .env
-   - Remove `snapshot_service_user.py`
-
-4. **Revert to admin session**
-   - Use original admin session for all snapshot operations
-   - Snapshots will be created in the correct tenant automatically
+4. **Rotate password periodically**: Update in both Platform9 and `.env`
 
 ## Troubleshooting
 
-### Service user not created
+### Service user not found
 
-**Issue**: `[ERROR] Failed to create service user`
+**Error**: `Service user '<email>' not found in Keystone`
 
-**Causes**:
-- Admin user doesn't have permission to create users in tenant
-- Keystone API is unavailable
-- User already exists with different configuration
+**Cause**: User does not exist in Platform9
 
-**Solution**:
-```bash
-# Check if user exists
-python -c "from snapshot_service_user import user_exists_in_domain; ..."
-# Manually create user via Platform9 UI
-# Re-run snapshot script to detect existing user
-```
+**Fix**: Create the user in Platform9 UI (Identity → Users → Create User)
 
 ### Password decryption fails
 
-**Issue**: `[WARNING] Failed to decrypt password`
+**Error**: `Failed to decrypt password`
 
 **Causes**:
-- Encryption key changed or corrupted
-- Password was manually modified in .env
+- Encryption key (`SNAPSHOT_PASSWORD_KEY`) changed or corrupted
+- Encrypted password (`SNAPSHOT_USER_PASSWORD_ENCRYPTED`) manually modified
+- `cryptography` package not installed
 
-**Solution**:
-1. Backup current .env
-2. Remove corrupted lines:
-   ```bash
-   SNAPSHOT_PASSWORD_KEY=...
-   SNAPSHOT_USER_PASSWORD_ENCRYPTED=...
-   ```
-3. Re-run script to generate new password and key
+**Fix**:
+1. Install cryptography: `pip install cryptography`
+2. Re-generate key and encrypted password (see Setup Guide above)
+3. Update `.env` with new values
 
-### Authentication fails
+### Role assignment fails
 
-**Issue**: Service user created but authentication fails
+**Error**: `Failed to assign admin role to <email> on project <id>`
 
-**Causes**:
-- Role assignment failed (insufficient permissions)
-- User not yet synced across OpenStack services
-- Password contains special characters causing issues
+**Cause**: Admin session lacks permission to manage roles in the target project
 
-**Solution**:
+**Fix**: Ensure the admin user (`PF9_USERNAME`) has domain-level admin privileges
+
+### Snapshots still in service domain
+
+**Symptom**: Snapshots created but in wrong project
+
+**Check**:
 ```bash
-# Check role assignment
-openstack role assignment list --user snapshotsrv@ccc.co.il
-
-# Verify user exists
-openstack user list --domain Default
-
-# Retry authentication after 30 seconds
-sleep 30 && python snapshots/p9_auto_snapshots.py --policy daily_5
+docker logs pf9_snapshot_worker 2>&1 | grep SERVICE_USER
 ```
+
+**Expected output** (working):
+```
+[SERVICE_USER] <your-snapshot-user@your-domain.com> already has admin role on project <id>
+Using service user session for project <name>
+```
+
+**If you see fallback messages**: Check password configuration and Keystone connectivity
 
 ## References
 
-- Platform9 documentation on user management
-- OpenStack Keystone API reference
-- Fernet encryption: https://cryptography.io/en/latest/fernet/
+- [Snapshot Automation Guide](SNAPSHOT_AUTOMATION.md) — Full snapshot system documentation
+- [Security Checklist](SECURITY_CHECKLIST.md) — Security hardening recommendations
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) — Deployment configuration
+- [Fernet Encryption](https://cryptography.io/en/latest/fernet/) — Cryptography library docs

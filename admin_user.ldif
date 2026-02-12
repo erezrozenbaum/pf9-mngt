@@ -1,8 +1,8 @@
-dn: ou=users,dc=ccc,dc=co,dc=il
+dn: ou=users,dc=pf9mgmt,dc=local
 objectClass: organizationalUnit
 ou: users
 
-dn: cn=admin,ou=users,dc=ccc,dc=co,dc=il
+dn: cn=admin,ou=users,dc=pf9mgmt,dc=local
 objectClass: person
 objectClass: organizationalPerson
 objectClass: inetOrgPerson
@@ -10,4 +10,4 @@ cn: admin
 sn: admin
 uid: admin
 mail: admin@example.com
-userPassword: r#1kajun
+userPassword: <SET_VIA_DEPLOYMENT_SCRIPT>
