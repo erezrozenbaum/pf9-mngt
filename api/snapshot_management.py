@@ -143,16 +143,35 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-def _build_compliance_from_metadata(
+def _build_compliance_from_volumes(
     cur: RealDictCursor,
     days: int,
     tenant_id: Optional[str],
     project_id: Optional[str],
     policy_filter: Optional[str],
 ) -> List[Dict[str, Any]]:
+    """
+    Build compliance rows directly from the volumes table metadata.
+    This is the primary compliance data source — volumes with auto_snapshot=true
+    are the authoritative list.  Each volume × policy is a separate row.
+
+    Name resolution:
+      - volume name  → volumes.name
+      - project name → projects.name  (via volumes.project_id)
+      - tenant/domain name → domains.name (via projects.domain_id)
+      - VM name      → servers.name  (via volumes.raw_json→attachments→server_id)
+
+    Retention per policy is read from volume metadata keys like
+    "retention_daily_5", "retention_monthly_1st", etc.
+
+    Last-snapshot timestamp comes from snapshot_records.
+    """
+
+    # ---- last snapshot per volume+policy -----------------------------------
     cur.execute(
         """
-        SELECT volume_id, policy_name, MAX(openstack_created_at) AS last_snapshot_at
+        SELECT volume_id, policy_name,
+               MAX(openstack_created_at) AS last_snapshot_at
         FROM snapshot_records
         WHERE action IN ('created', 'create')
           AND (status IS NULL OR status NOT IN ('failed', 'error'))
@@ -160,25 +179,29 @@ def _build_compliance_from_metadata(
         """
     )
     last_snapshots = {
-        (row.get("volume_id"), row.get("policy_name")): row.get("last_snapshot_at")
+        (row["volume_id"], row["policy_name"]): row["last_snapshot_at"]
         for row in cur.fetchall()
     }
 
+    # ---- volumes with auto_snapshot metadata, enriched with names ----------
     cur.execute(
         """
         SELECT
-            v.id AS volume_id,
-            v.name AS volume_name,
+            v.id              AS volume_id,
+            v.name            AS volume_name,
             v.project_id,
-            p.name AS project_name,
-            p.id AS tenant_id,
-            p.name AS tenant_name,
+            proj.name         AS project_name,
+            proj.domain_id    AS tenant_id,
+            dom.name          AS tenant_name,
             v.raw_json->'attachments'->0->>'server_id' AS vm_id,
-            (SELECT srv.name FROM servers srv WHERE srv.id = (v.raw_json->'attachments'->0->>'server_id')) AS vm_name,
+            srv.name          AS vm_name,
             v.raw_json->'metadata' AS metadata
         FROM volumes v
-        LEFT JOIN projects p ON p.id = v.project_id
-        WHERE v.raw_json->'metadata'->>'auto_snapshot' IN ('true', 'True', '1', 'yes')
+        LEFT JOIN projects proj ON proj.id = v.project_id
+        LEFT JOIN domains  dom  ON dom.id  = proj.domain_id
+        LEFT JOIN servers  srv  ON srv.id  = v.raw_json->'attachments'->0->>'server_id'
+        WHERE v.raw_json->'metadata'->>'auto_snapshot'
+                  IN ('true', 'True', '1', 'yes')
           AND v.raw_json->'metadata'->>'snapshot_policies' IS NOT NULL
         """
     )
@@ -187,41 +210,48 @@ def _build_compliance_from_metadata(
     compliance_rows: List[Dict[str, Any]] = []
 
     for row in rows:
-        if tenant_id and row.get("tenant_id") != tenant_id:
+        row_project_id = row.get("project_id")
+        row_tenant_id = row.get("tenant_id")
+
+        if tenant_id and row_tenant_id != tenant_id:
             continue
-        if project_id and row.get("project_id") != project_id:
+        if project_id and row_project_id != project_id:
             continue
 
         metadata = row.get("metadata") or {}
         policies = _parse_policy_list(metadata.get("snapshot_policies"))
+
         for policy_name in policies:
             if policy_filter and policy_name != policy_filter:
                 continue
 
-            retention_days = _safe_int(metadata.get(f"retention_{policy_name}")) or 0
-            last_snapshot_at = last_snapshots.get((row.get("volume_id"), policy_name))
+            retention = _safe_int(metadata.get(f"retention_{policy_name}")) or 0
+            last_snapshot_at = last_snapshots.get(
+                (row["volume_id"], policy_name)
+            )
             compliant = False
             if last_snapshot_at:
                 compliant = last_snapshot_at >= (now - timedelta(days=days))
 
+            vol_name = row.get("volume_name")
             compliance_rows.append({
-                "volume_id": row.get("volume_id"),
-                "volume_name": row.get("volume_name") or row.get("volume_id"),
-                "tenant_id": row.get("tenant_id"),
-                "tenant_name": row.get("tenant_name") or row.get("tenant_id"),
-                "project_id": row.get("project_id"),
-                "project_name": row.get("project_name") or row.get("project_id"),
-                "vm_id": row.get("vm_id"),
-                "vm_name": row.get("vm_name") or row.get("vm_id") or "",
-                "policy_name": policy_name,
-                "retention_days": retention_days,
+                "volume_id":      row["volume_id"],
+                "volume_name":    vol_name if vol_name else row["volume_id"],
+                "tenant_id":      row_tenant_id or "",
+                "tenant_name":    row.get("tenant_name") or row_tenant_id or "",
+                "project_id":     row_project_id or "",
+                "project_name":   row.get("project_name") or row_project_id or "",
+                "vm_id":          row.get("vm_id") or "",
+                "vm_name":        row.get("vm_name") or row.get("vm_id") or "",
+                "policy_name":    policy_name,
+                "retention_days": retention,
                 "last_snapshot_at": last_snapshot_at,
-                "compliant": compliant,
+                "compliant":      compliant,
             })
 
     min_time = datetime.min.replace(tzinfo=timezone.utc)
     compliance_rows.sort(
-        key=lambda r: (r.get("compliant"), r.get("last_snapshot_at") or min_time),
+        key=lambda r: (r["compliant"], r.get("last_snapshot_at") or min_time),
         reverse=False,
     )
     return compliance_rows
@@ -1225,78 +1255,20 @@ def setup_snapshot_routes(app, get_db_connection):
         current_user: User = Depends(get_current_user),
         _has_permission: bool = Depends(require_permission("snapshot_records", "read"))
     ):
-        """Get snapshot compliance status per volume+policy"""
+        """Get snapshot compliance status per volume+policy.
+
+        Builds compliance rows directly from volumes table metadata,
+        enriched with project/domain/server names via JOINs and
+        last-snapshot timestamps from snapshot_records.
+        """
         try:
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
 
-            query = """
-                WITH policy_assignments AS (
-                    SELECT a.*, jsonb_array_elements_text(a.policies) AS policy_name
-                    FROM snapshot_assignments a
-                    WHERE a.auto_snapshot = true
-                ), last_snaps AS (
-                    SELECT volume_id, policy_name, MAX(openstack_created_at) AS last_snapshot_at
-                    FROM snapshot_records
-                    WHERE action IN ('created', 'create')
-                      AND (status IS NULL OR status NOT IN ('failed', 'error'))
-                    GROUP BY volume_id, policy_name
-                )
-                SELECT
-                    p.volume_id,
-                    COALESCE(p.volume_name, v.name, p.volume_id) AS volume_name,
-                    p.tenant_id,
-                    COALESCE(p.tenant_name, proj.name, p.tenant_id) AS tenant_name,
-                    p.project_id,
-                    COALESCE(p.project_name, proj.name, p.project_id) AS project_name,
-                    COALESCE(p.vm_id, v.raw_json->'attachments'->0->>'server_id') AS vm_id,
-                    COALESCE(
-                        p.vm_name,
-                        (SELECT srv.name FROM servers srv WHERE srv.id = COALESCE(p.vm_id, v.raw_json->'attachments'->0->>'server_id')),
-                        COALESCE(p.vm_id, v.raw_json->'attachments'->0->>'server_id')
-                    ) AS vm_name,
-                    p.policy_name,
-                    COALESCE(
-                        (p.retention_map->>p.policy_name)::int,
-                        0
-                    ) AS retention_days,
-                    ls.last_snapshot_at,
-                    CASE
-                        WHEN ls.last_snapshot_at IS NOT NULL
-                         AND ls.last_snapshot_at >= NOW() - (%s || ' days')::interval
-                        THEN true ELSE false
-                    END AS compliant
-                FROM policy_assignments p
-                LEFT JOIN volumes v ON v.id = p.volume_id
-                LEFT JOIN projects proj ON proj.id = p.project_id
-                LEFT JOIN last_snaps ls
-                  ON ls.volume_id = p.volume_id AND ls.policy_name = p.policy_name
-                WHERE 1=1
-            """
-            params = [days]
+            rows = _build_compliance_from_volumes(
+                cur, days, tenant_id, project_id, policy
+            )
 
-            if tenant_id:
-                query += " AND p.tenant_id = %s"
-                params.append(tenant_id)
-            if project_id:
-                query += " AND p.project_id = %s"
-                params.append(project_id)
-            if policy:
-                query += " AND p.policy_name = %s"
-                params.append(policy)
-
-            query += " ORDER BY compliant ASC, last_snapshot_at DESC NULLS LAST"
-
-            cur.execute(query, params)
-            rows = cur.fetchall()
-            if not rows:
-                rows = _build_compliance_from_metadata(
-                    cur,
-                    days,
-                    tenant_id,
-                    project_id,
-                    policy,
-                )
             cur.close()
             conn.close()
 
