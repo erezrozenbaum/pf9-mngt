@@ -6,9 +6,39 @@
 
 .compliance-header {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compliance-title-row {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.compliance-title-row h2 {
+  margin: 0;
+}
+
+.btn-export {
+  background: #1a2332;
+  border: 1px solid #2a3444;
+  border-radius: 6px;
+  padding: 6px 14px;
+  color: #cfd6e6;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-export:hover:not(:disabled) {
+  background: #253040;
+}
+
+.btn-export:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .compliance-filters {
@@ -36,7 +66,7 @@
 
 .compliance-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
 }
 
@@ -47,6 +77,7 @@
   padding: 10px 12px;
   color: #e8edf7;
   font-weight: 600;
+  text-align: center;
 }
 
 .summary-card.ok {
@@ -59,7 +90,189 @@
   color: #f5d1b9;
 }
 
-.compliance-table th,
-.compliance-table td {
+/* Policy group sections */
+.policy-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.policy-group {
+  border: 1px solid #2a3444;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.policy-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #131a24;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.policy-group-header:hover {
+  background: #1a2332;
+}
+
+.policy-toggle {
+  font-size: 11px;
+  color: #8899aa;
+  width: 14px;
+}
+
+.policy-group-name {
+  font-weight: 700;
+  font-size: 15px;
+  color: #e8edf7;
+  flex: 1;
+}
+
+.policy-group-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.policy-pct {
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.policy-pct.pct-ok {
+  background: rgba(31, 122, 58, 0.25);
+  color: #b9f5c8;
+}
+
+.policy-pct.pct-warn {
+  background: rgba(168, 132, 30, 0.25);
+  color: #f5e6b9;
+}
+
+.policy-pct.pct-bad {
+  background: rgba(122, 58, 31, 0.25);
+  color: #f5b9b9;
+}
+
+.policy-counts {
+  color: #8899aa;
+}
+
+.compliance-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.compliance-table th {
+  background: #0d1117;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 12px;
+  color: #8899aa;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid #2a3444;
   white-space: nowrap;
+}
+
+.compliance-table td {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #cfd6e6;
+  border-bottom: 1px solid #1a2332;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compliance-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.compliance-table tbody tr.row-missing {
+  background: rgba(122, 58, 31, 0.06);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: #667788;
+  font-size: 14px;
+}
+
+/* Light theme overrides */
+:root[data-theme='light'] .compliance-filters label {
+  color: #4a5568;
+}
+
+:root[data-theme='light'] .compliance-filters input,
+:root[data-theme='light'] .compliance-filters select {
+  background: #fff;
+  border-color: #d1d5db;
+  color: #1a202c;
+}
+
+:root[data-theme='light'] .summary-card {
+  background: #f7fafc;
+  border-color: #e2e8f0;
+  color: #2d3748;
+}
+
+:root[data-theme='light'] .summary-card.ok {
+  border-color: #48bb78;
+  color: #22543d;
+}
+
+:root[data-theme='light'] .summary-card.warn {
+  border-color: #ed8936;
+  color: #7b341e;
+}
+
+:root[data-theme='light'] .policy-group {
+  border-color: #e2e8f0;
+}
+
+:root[data-theme='light'] .policy-group-header {
+  background: #f7fafc;
+}
+
+:root[data-theme='light'] .policy-group-header:hover {
+  background: #edf2f7;
+}
+
+:root[data-theme='light'] .policy-group-name {
+  color: #1a202c;
+}
+
+:root[data-theme='light'] .compliance-table th {
+  background: #f7fafc;
+  color: #718096;
+  border-bottom-color: #e2e8f0;
+}
+
+:root[data-theme='light'] .compliance-table td {
+  color: #2d3748;
+  border-bottom-color: #edf2f7;
+}
+
+:root[data-theme='light'] .compliance-table tbody tr.row-missing {
+  background: rgba(245, 101, 101, 0.06);
+}
+
+:root[data-theme='light'] .btn-export {
+  background: #edf2f7;
+  border-color: #e2e8f0;
+  color: #4a5568;
+}
+
+:root[data-theme='light'] .btn-export:hover:not(:disabled) {
+  background: #e2e8f0;
 }
