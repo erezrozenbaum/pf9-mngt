@@ -369,6 +369,38 @@ def _retention_for_volume_and_policy(
     return _parse_int(raw, default)
 
 
+def _has_snapshot_today(
+    session,
+    admin_project_id: str,
+    volume,
+    policy_name: str,
+) -> bool:
+    """
+    Return True if this volume already has an automated snapshot for today
+    (UTC date) under the given policy.  This prevents duplicate snapshots
+    when the script is run multiple times in the same day.
+    """
+    vol_id = volume["id"]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    try:
+        snaps = cinder_list_snapshots_for_volume(session, admin_project_id, vol_id)
+    except Exception:
+        # If listing fails, err on the side of creating (don't skip).
+        return False
+
+    for s in snaps:
+        smeta = s.get("metadata") or {}
+        if smeta.get("created_by") != "p9_auto_snapshots":
+            continue
+        if smeta.get("policy") != policy_name:
+            continue
+        created = s.get("created_at") or ""
+        if created.startswith(today):
+            return True
+    return False
+
+
 def cleanup_old_snapshots_for_volume(
     session,
     admin_project_id: str,
@@ -474,20 +506,26 @@ def process_volume(
 
     print(f"  Volume {vol_id} ({vol_name}), project={volume_project_id}")
 
-    # --- cleanup old snapshots (admin session, all_tenants=1) ---
-    deleted_ids = cleanup_old_snapshots_for_volume(
-        admin_session,
-        admin_project_id,   # MUST match admin token scope
-        volume,
-        policy_name,
-        dry_run=dry_run,
-    )
+    # --- dedup: skip if a snapshot already exists today for this policy ---
+    if not dry_run and _has_snapshot_today(
+        admin_session, admin_project_id, volume, policy_name
+    ):
+        print(f"    SKIP: snapshot already exists today for policy {policy_name}")
+        return None, volume_project_id, [], None, None
 
     snap_name = build_snapshot_name(volume, policy_name, primary_server_name, tenant_name)
     snap_desc = f"Auto snapshot ({policy_name}) created by p9_auto_snapshots"
 
     print(f"    Create snapshot: {snap_name}")
     if dry_run:
+        # In dry-run, still preview the cleanup
+        deleted_ids = cleanup_old_snapshots_for_volume(
+            admin_session,
+            admin_project_id,
+            volume,
+            policy_name,
+            dry_run=True,
+        )
         return None, None, deleted_ids, None, snap_name
 
     # --- create snapshot (service-user session → correct tenant) ---
@@ -519,12 +557,22 @@ def process_volume(
         print(
             f"      OK, snapshot id={sid} created in project={snapshot_created_in_project}"
         )
+
+        # --- cleanup AFTER create so the new snapshot is counted ---
+        deleted_ids = cleanup_old_snapshots_for_volume(
+            admin_session,
+            admin_project_id,
+            volume,
+            policy_name,
+            dry_run=False,
+        )
+
         return sid, snapshot_created_in_project, deleted_ids, None, snap_name
     except Exception as e:
         msg = f"Failed to create snapshot for volume {vol_id}: {type(e).__name__}: {e}"
         print("      ERROR:", msg)
         log_error("auto_snapshots/create", msg)
-        return None, volume_project_id, deleted_ids, msg, snap_name
+        return None, volume_project_id, [], msg, snap_name
 
 
 def _build_metadata_maps(session):
@@ -975,9 +1023,15 @@ def main():
             elif err_msg:
                 status = "ERROR"
                 note = err_msg
+            elif sid:
+                status = "OK"
+                note = "Snapshot created"
+            elif snap_name is None:
+                status = "SKIPPED"
+                note = "Already has a snapshot today for this policy"
             else:
                 status = "OK"
-                note = "Snapshot created" if sid else "No snapshot created"
+                note = "No snapshot created"
 
             # Log to database if enabled
             if db_conn and run_id:

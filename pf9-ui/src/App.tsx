@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import "./App.css";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
@@ -927,6 +927,14 @@ const App: React.FC = () => {
   const [dailySummary, setDailySummary] = useState<DailyChangeSummary[]>([]);
   const [velocityStats, setVelocityStats] = useState<VelocityStats[]>([]);
   const [mostChangedResources, setMostChangedResources] = useState<MostChangedResource[]>([]);
+
+  // History tab filters & sort
+  const [historyFilterType, setHistoryFilterType] = useState<string>("all");
+  const [historyFilterProject, setHistoryFilterProject] = useState<string>("all");
+  const [historyFilterDomain, setHistoryFilterDomain] = useState<string>("all");
+  const [historyFilterSearch, setHistoryFilterSearch] = useState<string>("");
+  const [historySortField, setHistorySortField] = useState<string>("time");
+  const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
   const [complianceReport, setComplianceReport] = useState<ComplianceReport | null>(null);
   const [selectedResourceHistory, setSelectedResourceHistory] = useState<ResourceHistory[]>([]);
   const [historyResourceType, setHistoryResourceType] = useState<string>("");
@@ -1732,6 +1740,103 @@ const App: React.FC = () => {
   }, [activeTab]);
 
   // Load resource history (when user selects a specific resource)
+  // Derive unique values for History filter dropdowns + filtered/sorted list
+  const historyResourceTypes = useMemo(() => {
+    const types = new Set<string>();
+    (recentChanges || []).forEach(c => { if (c.resource_type) types.add(c.resource_type); });
+    return Array.from(types).sort();
+  }, [recentChanges]);
+
+  const historyProjects = useMemo(() => {
+    const projs = new Set<string>();
+    (recentChanges || []).forEach(c => { if (c.project_name) projs.add(c.project_name); });
+    return Array.from(projs).sort();
+  }, [recentChanges]);
+
+  const historyDomains = useMemo(() => {
+    const doms = new Set<string>();
+    (recentChanges || []).forEach(c => { if (c.domain_name) doms.add(c.domain_name); });
+    return Array.from(doms).sort();
+  }, [recentChanges]);
+
+  const filteredSortedChanges = useMemo(() => {
+    let list = recentChanges || [];
+    // Filter by resource type
+    if (historyFilterType !== "all") {
+      list = list.filter(c => c.resource_type === historyFilterType);
+    }
+    // Filter by project
+    if (historyFilterProject !== "all") {
+      list = list.filter(c => (c.project_name || "N/A") === historyFilterProject);
+    }
+    // Filter by domain
+    if (historyFilterDomain !== "all") {
+      list = list.filter(c => (c.domain_name || "N/A") === historyFilterDomain);
+    }
+    // Filter by search text (name, id, description)
+    if (historyFilterSearch.trim()) {
+      const q = historyFilterSearch.trim().toLowerCase();
+      list = list.filter(c =>
+        (c.resource_name || "").toLowerCase().includes(q) ||
+        (c.resource_id || "").toLowerCase().includes(q) ||
+        (c.change_description || "").toLowerCase().includes(q)
+      );
+    }
+    // Sort
+    const sorted = [...list];
+    sorted.sort((a, b) => {
+      let va: string | number = "";
+      let vb: string | number = "";
+      switch (historySortField) {
+        case "time":
+          va = a.actual_time || a.recorded_at || "";
+          vb = b.actual_time || b.recorded_at || "";
+          break;
+        case "type":
+          va = a.resource_type || "";
+          vb = b.resource_type || "";
+          break;
+        case "resource":
+          va = (a.resource_name || "").toLowerCase();
+          vb = (b.resource_name || "").toLowerCase();
+          break;
+        case "project":
+          va = (a.project_name || "").toLowerCase();
+          vb = (b.project_name || "").toLowerCase();
+          break;
+        case "domain":
+          va = (a.domain_name || "").toLowerCase();
+          vb = (b.domain_name || "").toLowerCase();
+          break;
+        case "description":
+          va = (a.change_description || "").toLowerCase();
+          vb = (b.change_description || "").toLowerCase();
+          break;
+        default:
+          va = a.actual_time || a.recorded_at || "";
+          vb = b.actual_time || b.recorded_at || "";
+      }
+      if (va < vb) return historySortDir === "asc" ? -1 : 1;
+      if (va > vb) return historySortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [recentChanges, historyFilterType, historyFilterProject, historyFilterDomain, historyFilterSearch, historySortField, historySortDir]);
+
+  function toggleHistorySort(field: string) {
+    if (historySortField === field) {
+      setHistorySortDir(prev => prev === "asc" ? "desc" : "asc");
+    } else {
+      setHistorySortField(field);
+      setHistorySortDir(field === "time" ? "desc" : "asc");
+    }
+  }
+
+  function histSortIndicator(field: string) {
+    if (historySortField !== field) return "";
+    return historySortDir === "asc" ? " ▲" : " ▼";
+  }
+
   async function loadResourceHistory(resourceType: string, resourceId: string) {
     try {
       setLoading(true);
@@ -3512,9 +3617,9 @@ const App: React.FC = () => {
           {/* History Tab Content */}
           {activeTab === "history" && (
             <div className="pf9-history-container">
-              <div className="pf9-history-controls">
+              <div className="pf9-history-controls" style={{display:'flex', flexWrap:'wrap', gap:'12px', alignItems:'center', marginBottom:'12px'}}>
                 <label>
-                  Timeframe (hours):
+                  Timeframe:
                   <select
                     value={changeTimeframe}
                     onChange={(e) => setChangeTimeframe(parseInt(e.target.value))}
@@ -3525,49 +3630,86 @@ const App: React.FC = () => {
                     <option value={168}>Last week</option>
                   </select>
                 </label>
+                <label>
+                  Type:
+                  <select value={historyFilterType} onChange={e => setHistoryFilterType(e.target.value)}>
+                    <option value="all">All types</option>
+                    {historyResourceTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Project:
+                  <select value={historyFilterProject} onChange={e => setHistoryFilterProject(e.target.value)}>
+                    <option value="all">All projects</option>
+                    {historyProjects.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Domain:
+                  <select value={historyFilterDomain} onChange={e => setHistoryFilterDomain(e.target.value)}>
+                    <option value="all">All domains</option>
+                    {historyDomains.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Search:
+                  <input
+                    type="text"
+                    placeholder="Name, ID, or description…"
+                    value={historyFilterSearch}
+                    onChange={e => setHistoryFilterSearch(e.target.value)}
+                    style={{width:'200px',padding:'4px 8px',borderRadius:'4px',border:'1px solid #555',background:'var(--bg-secondary, #1e1e2e)',color:'inherit'}}
+                  />
+                </label>
+                {(historyFilterType !== "all" || historyFilterProject !== "all" || historyFilterDomain !== "all" || historyFilterSearch) && (
+                  <button
+                    className="pf9-button-small"
+                    style={{marginLeft:'4px'}}
+                    onClick={() => { setHistoryFilterType("all"); setHistoryFilterProject("all"); setHistoryFilterDomain("all"); setHistoryFilterSearch(""); }}
+                  >
+                    Clear Filters
+                  </button>
+                )}
               </div>
               
               <div className="pf9-history-sections">
                 {/* Recent Changes Section */}
                 <div className="pf9-history-section">
-                  <h3>Recent Changes ({recentChanges?.length || 0})</h3>
-                  {!recentChanges || recentChanges.length === 0 ? (
-                    <p>No changes in the selected timeframe.</p>
+                  <h3>Recent Changes ({filteredSortedChanges.length}{filteredSortedChanges.length !== (recentChanges?.length || 0) ? ` of ${recentChanges?.length || 0}` : ''})</h3>
+                  {filteredSortedChanges.length === 0 ? (
+                    <p>{(recentChanges?.length || 0) > 0 ? 'No changes match the current filters.' : 'No changes in the selected timeframe.'}</p>
                   ) : (
                     <table className="pf9-table">
                       <thead>
                         <tr>
-                          <th>Time</th>
-                          <th>Type</th>
-                          <th>Resource</th>
+                          <th style={{cursor:'pointer',userSelect:'none'}} onClick={() => toggleHistorySort('time')}>Time{histSortIndicator('time')}</th>
+                          <th style={{cursor:'pointer',userSelect:'none'}} onClick={() => toggleHistorySort('type')}>Type{histSortIndicator('type')}</th>
+                          <th style={{cursor:'pointer',userSelect:'none'}} onClick={() => toggleHistorySort('resource')}>Resource{histSortIndicator('resource')}</th>
                           <th>ID</th>
-                          <th>Project</th>
-                          <th>Domain</th>
-                          <th>Change Description</th>
+                          <th style={{cursor:'pointer',userSelect:'none'}} onClick={() => toggleHistorySort('project')}>Project{histSortIndicator('project')}</th>
+                          <th style={{cursor:'pointer',userSelect:'none'}} onClick={() => toggleHistorySort('domain')}>Domain{histSortIndicator('domain')}</th>
+                          <th style={{cursor:'pointer',userSelect:'none'}} onClick={() => toggleHistorySort('description')}>Change Description{histSortIndicator('description')}</th>
                           <th>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {recentChanges.map((change, idx) => {
-                          // Log all change_hash values for debugging
-                          console.log('change_hash value:', change.change_hash);
+                        {filteredSortedChanges.map((change, idx) => {
                           // Defensive: skip only if change_hash is strictly null or undefined
-                          if (change.change_hash == null) {
-                            console.warn('Skipping change with null/undefined change_hash:', change);
-                            return null;
-                          }
-                          // Use API-provided project/domain data directly
+                          if (change.change_hash == null) return null;
                           const projectName = change.project_name || "N/A";
                           const domainName = change.domain_name || "N/A";
-                          const changeTypeClass = change.change_description?.includes('deletion') ? 
+                          const changeTypeClass = change.resource_type === 'deletion' ?
+                            'pf9-badge pf9-badge-warning' : 
+                            change.change_description?.includes('deletion') ? 
                             'pf9-badge pf9-badge-warning' : 'pf9-badge pf9-badge-info';
+                          const isDeletion = change.resource_type === 'deletion';
                           
                           return (
                             <tr key={idx}>
                               <td>{formatDate(change.actual_time || change.recorded_at)}</td>
                               <td>
                                 <span className={changeTypeClass}>
-                                  {change.resource_type}
+                                  {isDeletion ? '🗑 deletion' : change.resource_type}
                                 </span>
                               </td>
                               <td>{change.resource_name || "N/A"}</td>
@@ -3583,7 +3725,7 @@ const App: React.FC = () => {
                                   className="pf9-button-small"
                                   onClick={() => loadResourceHistory(change.resource_type, change.resource_id)}
                                 >
-                                  View History
+                                  {isDeletion ? 'View Details' : 'View History'}
                                 </button>
                               </td>
                             </tr>

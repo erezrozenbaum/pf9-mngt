@@ -84,6 +84,87 @@
   color: #d1d5db;
 }
 
+/* Data Freshness Banner */
+.data-freshness-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  border-radius: 8px;
+  background: #f0f4ff;
+  border: 1px solid #c7d2fe;
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.landing-dashboard.dark .data-freshness-banner {
+  background: rgba(30, 58, 95, 0.4);
+  border-color: rgba(59, 130, 246, 0.25);
+  color: #d1d5db;
+}
+
+.freshness-icon {
+  font-size: 1.1rem;
+}
+
+.freshness-label {
+  font-weight: 600;
+}
+
+.freshness-time {
+  font-weight: 500;
+}
+
+.freshness-detail {
+  color: #9ca3af;
+  font-size: 0.8rem;
+}
+
+.freshness-age {
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  margin-left: 4px;
+}
+
+.freshness-age.fresh {
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+}
+
+.landing-dashboard.dark .freshness-age.fresh {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+
+.freshness-age.warning {
+  background: rgba(234, 179, 8, 0.15);
+  color: #b45309;
+}
+
+.landing-dashboard.dark .freshness-age.warning {
+  background: rgba(234, 179, 8, 0.2);
+  color: #fde68a;
+}
+
+.freshness-age.stale {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+.landing-dashboard.dark .freshness-age.stale {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.last-rvtools-run {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
 /* Error Banner */
 .error-banner {
   display: flex;
