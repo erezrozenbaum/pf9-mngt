@@ -233,7 +233,7 @@ ENABLE_AUTHENTICATION=true
 
 # LDAP Configuration
 LDAP_ORGANISATION=Your Organization Name
-LDAP_DOMAIN=ccc.co.il
+LDAP_DOMAIN=your-domain.com
 LDAP_ADMIN_PASSWORD=<secure-ldap-password>
 LDAP_CONFIG_PASSWORD=<secure-config-password>
 
@@ -493,7 +493,61 @@ docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "
 
 ---
 
-## 🔒 Data Protection
+## � Snapshot Service User Security
+
+### Overview
+
+A dedicated service user (configured via `SNAPSHOT_SERVICE_USER_EMAIL`) is used for cross-tenant snapshot operations. This user is granted admin role on each tenant project to create snapshots in the correct project scope.
+
+### Security Model
+
+| Aspect | Detail |
+|--------|--------|
+| **User** | Configured via `SNAPSHOT_SERVICE_USER_EMAIL` (pre-created in Platform9) |
+| **Role** | `admin` per-project (minimum required for snapshot creation) |
+| **Scope** | Project-scoped tokens (not domain-scoped) |
+| **Password** | Stored encrypted (Fernet) or plaintext in `.env` |
+| **Role Assignment** | Automatic via Keystone API, cached per-run |
+| **Disable Switch** | `SNAPSHOT_SERVICE_USER_DISABLED=true` |
+
+### Password Storage
+
+Two options for storing the service user password:
+
+1. **Plaintext** (`SNAPSHOT_SERVICE_USER_PASSWORD`) — Simpler, acceptable if `.env` is properly protected
+2. **Fernet Encrypted** (`SNAPSHOT_PASSWORD_KEY` + `SNAPSHOT_USER_PASSWORD_ENCRYPTED`) — Industry-standard symmetric encryption
+
+**Recommendations**:
+- Use Fernet encryption in production environments
+- Protect `.env` with restricted file permissions (`chmod 600` / `icacls`)
+- Rotate password periodically and update both Platform9 and `.env`
+
+### Audit & Monitoring
+
+Monitor for snapshot service user activity:
+
+```bash
+# Check service user role assignments
+docker logs pf9_snapshot_worker 2>&1 | grep "SERVICE_USER"
+
+# Review role grants in Keystone
+openstack role assignment list --user $SNAPSHOT_SERVICE_USER_EMAIL
+```
+
+### Risk Mitigation
+
+| Risk | Mitigation |
+|------|------------|
+| Password exposure | Fernet encryption + `.env` file permissions |
+| Excessive privileges | Admin role assigned per-project only (not domain-wide) |
+| Stale role assignments | Role cache cleared on each snapshot scheduler run |
+| Service disruption | Graceful fallback to admin session if service user fails |
+
+See [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md) for full details.
+
+---
+
+## �🔒 Data Protection
 
 ### Sensitive Information Handling
 
@@ -532,6 +586,8 @@ Masks:
 ### Before Production Deployment
 
 - [ ] Update all default passwords (LDAP, PostgreSQL, JWT secret)
+- [ ] Configure snapshot service user password (encrypted recommended)
+- [ ] Verify snapshot service user exists in Platform9 (email from `SNAPSHOT_SERVICE_USER_EMAIL`)
 - [ ] Restrict CORS to production domain only
 - [ ] Configure HTTPS with valid SSL/TLS certificates
 - [ ] Implement rate limiting on API endpoints

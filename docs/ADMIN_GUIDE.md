@@ -45,7 +45,7 @@
 - **Auto Metrics Collection**: Dual-redundancy collection (background process + scheduled task) with automatic startup
 
 ### Enterprise Authentication & Authorization
-- **LDAP Integration**: Production OpenLDAP authentication (dc=ccc,dc=co,dc=il)
+- **LDAP Integration**: Production OpenLDAP authentication (configured via `LDAP_DOMAIN` env var)
 - **Role-Based Access Control**: 4-tier permission system (Viewer, Operator, Admin, Superadmin)
 - **JWT Token Management**: Secure 480-minute sessions with Bearer authentication
 - **RBAC Middleware**: Automatic permission enforcement on all resource endpoints
@@ -142,7 +142,7 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 - **Role-Based Access Control**: 4-tier permission system with automatic enforcement
 - **Audit & Compliance**: 90-day authentication event tracking and permission logging
 - **Comprehensive Inventory Management**: Real-time tracking of VMs, volumes, snapshots, networks, subnets, ports, floating IPs, hypervisors, flavors, and images
-- **Automated Snapshot Management**: Policy-driven snapshot creation with configurable retention periods
+- **Automated Snapshot Management**: Policy-driven snapshot creation with cross-tenant support via dedicated service user and configurable retention periods
 - **Compliance Reporting**: Detailed compliance reports with policy adherence tracking
 - **Multi-Tenant Resource Administration**: Domain and project-level filtering with role-based permissions
 - **Complete RVTools Parity**: Full infrastructure visibility including ports and floating IP tracking
@@ -168,8 +168,8 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 
 The system uses OpenLDAP for enterprise user authentication:
 - **LDAP Server**: Port 389
-- **Base DN**: dc=ccc,dc=co,dc=il
-- **User DN**: ou=users,dc=ccc,dc=co,dc=il
+- **Base DN**: Derived from `LDAP_DOMAIN` (e.g., `dc=company,dc=com`)
+- **User DN**: `ou=users,<LDAP_BASE_DN>`
 - **Admin Password**: Configured via LDAP_ADMIN_PASSWORD environment variable
 
 > **Note:** As of February 2026, running `deployment.ps1` will always ensure:
@@ -349,10 +349,10 @@ Get-Content metrics_cache.json | ConvertFrom-Json
 2. **Host connection timeouts**:
    ```powershell
    # Test node_exporter accessibility
-   curl http://172.17.95.2:9388/metrics
+   curl http://<PF9_HOST_IP>:9388/metrics
    
    # Check network connectivity
-   Test-NetConnection 172.17.95.2 -Port 9388
+   Test-NetConnection <PF9_HOST_IP> -Port 9388
    ```
 
 3. **Monitoring service errors**:
@@ -479,15 +479,16 @@ inventory_runs  -- Audit trail for data collection
 **Specialized Data Endpoints**:
 - `GET /tenants/summary` - Tenant resource summaries
 
-### Python Scripts (8 Core Scripts)
+### Python Scripts (9 Core Scripts)
 1. **pf9_rvtools.py** - Main inventory collection (542 lines)
-2. **snapshots/p9_auto_snapshots.py** - Automated snapshot management (754 lines)
-3. **snapshots/p9_snapshot_compliance_report.py** - Compliance reporting (749 lines)
-4. **snapshots/p9_snapshot_policy_assign.py** - Policy management (454 lines)
-5. **p9_common.py** - Shared utilities and API clients (376 lines)
-6. **db_writer.py** - Database operations (1113 lines)
-7. **test_db_write.py** - Database testing utilities
-8. **api/pf9_control.py** - Platform9 API client
+2. **snapshots/p9_auto_snapshots.py** - Automated snapshot management with cross-tenant support (1068 lines)
+3. **snapshots/snapshot_service_user.py** - Service user management for cross-tenant snapshots (266 lines)
+4. **snapshots/p9_snapshot_compliance_report.py** - Compliance reporting (749 lines)
+5. **snapshots/p9_snapshot_policy_assign.py** - Policy management (454 lines)
+6. **p9_common.py** - Shared utilities and API clients (893 lines)
+7. **db_writer.py** - Database operations (1113 lines)
+8. **test_db_write.py** - Database testing utilities
+9. **api/pf9_control.py** - Platform9 API client
 
 ---
 
@@ -611,7 +612,7 @@ Python scripts can run independently without Docker services:
 # Scripts automatically load .env file and continue without database
 cd C:\pf9-mngt
 python pf9_rvtools.py                    # Inventory collection
-python snapshots/p9_auto_snapshots.py     # Snapshot automation
+python snapshots/p9_auto_snapshots.py     # Snapshot automation (uses service user for cross-tenant)
 python snapshots/p9_snapshot_compliance_report.py  # Compliance reporting
 ```
 
@@ -619,6 +620,7 @@ python snapshots/p9_snapshot_compliance_report.py  # Compliance reporting
 - ✅ Platform9 API access and data collection
 - ✅ Excel/CSV report generation
 - ✅ Automatic .env file loading
+- ✅ Cross-tenant snapshots via service user (configured via `SNAPSHOT_SERVICE_USER_EMAIL`)
 - ❌ No database storage (optional)
 - ❌ No web UI access
 

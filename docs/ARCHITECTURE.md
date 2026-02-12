@@ -348,22 +348,36 @@ class HostMetricsCollector:
         self.save_to_cache(host_metrics, vm_metrics)
 ```
 
-**3. Snapshot Management** ([p9_auto_snapshots_no_email.py](../p9_auto_snapshots_no_email.py))
+**3. Snapshot Management** ([p9_auto_snapshots.py](../snapshots/p9_auto_snapshots.py))
 ```python
-# Policy-driven snapshot workflow
+# Policy-driven snapshot workflow with cross-tenant service user
 def main():
-    # 1. Load volume metadata and policies
+    # 1. Admin session: list all volumes (all_tenants=1)
     volumes = get_volumes_with_policies()
     
-    # 2. Apply policy rules
-    for volume in volumes:
-        policies = parse_snapshot_policies(volume.metadata)
-        for policy in policies:
-            if should_create_snapshot(volume, policy):
-                create_snapshot(volume, policy)
+    # 2. Group volumes by tenant project
+    for project_id, project_volumes in group_by_project(volumes):
+        # 3. Ensure service user has admin role
+        ensure_service_user(admin_session, keystone_url, project_id)
+        
+        # 4. Authenticate as service user scoped to tenant project
+        service_session = get_service_user_session(project_id, ...)
+        
+        # 5. Create snapshots in correct tenant (using service user session)
+        for volume in project_volumes:
+            process_volume(admin_session, service_session, volume, policy)
                 
-    # 3. Cleanup old snapshots per retention
+    # 6. Cleanup old snapshots per retention
     cleanup_expired_snapshots()
+```
+
+**4. Snapshot Service User** ([snapshot_service_user.py](../snapshots/snapshot_service_user.py))
+```python
+# Cross-tenant role management and authentication
+# - Finds service user in Keystone by email
+# - Assigns admin role on each tenant project (cached per-run)
+# - Password: plaintext or Fernet-encrypted from .env
+# - Graceful fallback to admin session if unavailable
 ```
 
 ## 🔄 Data Flow Architecture
@@ -473,17 +487,24 @@ graph TD
 ## 🔒 Security Architecture
 
 ### Authentication & Authorization
-**Current State**: ⚠️ **Development mode - requires hardening**
-- No authentication on administrative endpoints
-- Wide-open CORS policy allowing any origin
-- Default database credentials
+
+**LDAP + JWT Authentication**:
+- LDAP directory service for user management (OpenLDAP)
+- JWT-based authentication with configurable token expiry
+- Role-based access control (RBAC) with superadmin, admin, viewer roles
+- `user_roles` and `role_permissions` database tables for authorization
+
+**Snapshot Service User**:
+- Dedicated service account (configured via `SNAPSHOT_SERVICE_USER_EMAIL`) for cross-tenant operations
+- Admin role automatically assigned per-project via Keystone API
+- Password stored encrypted (Fernet) or as plaintext in `.env`
+- See [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md)
 
 **Production Requirements**:
-- JWT-based authentication for admin operations
-- Role-based access control (RBAC)
-- Restricted CORS policy
-- HTTPS/TLS encryption
-- Secure credential management
+- Restricted CORS policy (configure `CORS_ORIGINS` in `.env`)
+- HTTPS/TLS encryption via reverse proxy
+- Secure `.env` file permissions
+- Regular credential rotation
 
 ### Network Security
 **Current Topology**:
@@ -529,6 +550,13 @@ POSTGRES_DB=pf9_mgmt
 PF9_DB_HOST=db
 PF9_ENABLE_DB=1
 PF9_OUTPUT_DIR=/reports
+
+# Snapshot Service User (Cross-Tenant Snapshots)
+SNAPSHOT_SERVICE_USER_EMAIL=<your-snapshot-user@your-domain.com>
+SNAPSHOT_SERVICE_USER_PASSWORD=<password>          # Option A: plaintext
+# OR
+SNAPSHOT_PASSWORD_KEY=<Fernet-key>                 # Option B: encrypted
+SNAPSHOT_USER_PASSWORD_ENCRYPTED=<encrypted-pwd>
 ```
 
 ### Service Configuration Files
