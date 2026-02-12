@@ -45,11 +45,19 @@ const SnapshotComplianceReport: React.FC = () => {
   const token = localStorage.getItem('auth_token');
 
   const tenants = useMemo(
-    () => Array.from(new Set(rows.map(r => r.tenant_name).filter(Boolean))).sort(),
+    () => {
+      const map = new Map<string, string>();
+      rows.forEach(r => { if (r.tenant_id && r.tenant_name) map.set(r.tenant_id, r.tenant_name); });
+      return Array.from(map.entries()).sort(([, a], [, b]) => a.localeCompare(b));
+    },
     [rows]
   );
   const projects = useMemo(
-    () => Array.from(new Set(rows.map(r => r.project_name).filter(Boolean))).sort(),
+    () => {
+      const map = new Map<string, string>();
+      rows.forEach(r => { if (r.project_id && r.project_name) map.set(r.project_id, r.project_name); });
+      return Array.from(map.entries()).sort(([, a], [, b]) => a.localeCompare(b));
+    },
     [rows]
   );
   const policies = useMemo(
@@ -154,8 +162,8 @@ const SnapshotComplianceReport: React.FC = () => {
             Tenant
             <select value={tenant} onChange={e => setTenant(e.target.value)}>
               <option value="">All Tenants</option>
-              {tenants.map(t => (
-                <option key={t} value={t}>{t}</option>
+              {tenants.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
               ))}
             </select>
           </label>
@@ -163,8 +171,8 @@ const SnapshotComplianceReport: React.FC = () => {
             Project
             <select value={project} onChange={e => setProject(e.target.value)}>
               <option value="">All Projects</option>
-              {projects.map(p => (
-                <option key={p} value={p}>{p}</option>
+              {projects.map(([id, name]) => (
+                <option key={id} value={id}>{name}</option>
               ))}
             </select>
           </label>
