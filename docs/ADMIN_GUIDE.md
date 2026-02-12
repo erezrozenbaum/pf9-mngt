@@ -451,13 +451,22 @@ inventory_runs  -- Audit trail for data collection
 - `GET /user-activity-summary` - User activity analytics
 
 **Historical Analysis & Audit Endpoints**:
-- `GET /history/recent-changes` - Recent infrastructure changes
+- `GET /history/recent-changes` - Recent infrastructure changes (filterable by hours, limit)
 - `GET /history/most-changed` - Most frequently changed resources
 - `GET /history/by-timeframe` - Changes by time period
-- `GET /history/resource/{type}/{id}` - Resource-specific history timeline
+- `GET /history/resource/{type}/{id}` - Resource-specific history timeline (supports `deletion` type — queries `deletions_history` with original resource type, reason, and raw state)
+- `GET /history/compare/{type}/{id}` - Compare two history snapshots (requires `current_hash` and `previous_hash` query params)
+- `GET /history/details/{type}/{id}` - Detailed change information with change sequencing
 - `GET /audit/compliance-report` - Comprehensive compliance analysis
 - `GET /audit/change-patterns` - Change pattern and velocity analysis
 - `GET /audit/resource-timeline/{type}` - Resource type timeline analysis
+
+**History Tab UI Features**:
+- Filter recent changes by resource type, project, domain, and free-text search (name/ID/description)
+- Sortable column headers: Time, Type, Resource, Project, Domain, Change Description (ascending/descending)
+- Deletion records surfaced with 🗑 badge; "View Details" shows deletion timeline from `deletions_history`
+- "Most Frequently Changed Resources" section with direct history navigation
+- Configurable timeframe: 1 hour, 24 hours, 3 days, 1 week
 
 **Administrative Endpoints**:
 - `POST /admin/flavors` - Create compute flavors

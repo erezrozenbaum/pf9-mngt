@@ -2646,6 +2646,48 @@ def get_resource_history(
                 "role": "roles_history"
             }
             
+            # Handle deletion records specially - they come from deletions_history
+            if resource_type == "deletion":
+                cur.execute("""
+                    SELECT id, resource_type AS original_resource_type, resource_id, resource_name,
+                           deleted_at, project_name, domain_name, reason,
+                           last_seen_before_deletion, raw_json_snapshot,
+                           'deleted-' || resource_id AS change_hash
+                    FROM deletions_history
+                    WHERE resource_id = %s
+                    ORDER BY deleted_at DESC
+                    LIMIT %s
+                """, (resource_id, limit))
+                
+                history = cur.fetchall()
+                standardized_history = []
+                for idx, row in enumerate(history):
+                    row_dict = dict(row)
+                    mapped_row = {
+                        "resource_type": "deletion",
+                        "resource_id": row_dict.get('resource_id'),
+                        "resource_name": row_dict.get('resource_name') or f"Deleted {row_dict.get('original_resource_type', 'resource')}",
+                        "recorded_at": row_dict.get('deleted_at'),
+                        "change_hash": row_dict.get('change_hash', ''),
+                        "current_state": row_dict.get('raw_json_snapshot') or {
+                            "original_type": row_dict.get('original_resource_type'),
+                            "reason": row_dict.get('reason'),
+                            "last_seen_before_deletion": str(row_dict.get('last_seen_before_deletion') or ''),
+                            "project_name": row_dict.get('project_name'),
+                            "domain_name": row_dict.get('domain_name'),
+                        },
+                        "previous_hash": None,
+                        "change_sequence": len(history) - idx
+                    }
+                    standardized_history.append(mapped_row)
+                
+                return {
+                    "status": "success",
+                    "data": standardized_history,
+                    "count": len(standardized_history),
+                    "resource": {"type": "deletion", "id": resource_id}
+                }
+            
             if resource_type not in table_mapping:
                 raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
             
@@ -2878,6 +2920,13 @@ def compare_history_entries(
                 "role": "roles_history"
             }
             
+            if resource_type == "deletion":
+                return {
+                    "status": "info",
+                    "message": "Comparison is not available for deletion records. Deletion events are one-time occurrences.",
+                    "changes": {}
+                }
+            
             if resource_type not in table_mapping:
                 raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
             
@@ -2990,6 +3039,52 @@ def get_change_details(resource_type: str, resource_id: str):
                 "user": "users_history",
                 "role": "roles_history"
             }
+            
+            if resource_type == "deletion":
+                cur.execute("""
+                    SELECT id, resource_type AS original_resource_type, resource_id, resource_name,
+                           deleted_at, project_name, domain_name, reason,
+                           last_seen_before_deletion, raw_json_snapshot
+                    FROM deletions_history
+                    WHERE resource_id = %s
+                    ORDER BY deleted_at DESC
+                    LIMIT 10
+                """, (resource_id,))
+                history = cur.fetchall()
+                if not history:
+                    raise HTTPException(status_code=404, detail="Deletion record not found")
+                
+                latest = dict(history[0])
+                return {
+                    "status": "success",
+                    "resource": {
+                        "type": "deletion",
+                        "id": resource_id,
+                        "name": latest.get('resource_name', 'Unknown'),
+                        "original_type": latest.get('original_resource_type'),
+                    },
+                    "total_changes": len(history),
+                    "latest": {
+                        "deleted_at": latest.get('deleted_at'),
+                        "reason": latest.get('reason'),
+                        "project_name": latest.get('project_name'),
+                        "domain_name": latest.get('domain_name'),
+                        "last_seen_before_deletion": latest.get('last_seen_before_deletion'),
+                        "raw_json_snapshot": latest.get('raw_json_snapshot'),
+                    },
+                    "changes": [{
+                        "change_type": "deleted",
+                        "change_summary": f"Resource deletion detected - {dict(row).get('reason', 'no longer found in inventory')}",
+                        "recorded_at": dict(row).get('deleted_at'),
+                        "key_info": {
+                            "original_type": dict(row).get('original_resource_type'),
+                            "name": dict(row).get('resource_name'),
+                            "project": dict(row).get('project_name'),
+                            "domain": dict(row).get('domain_name'),
+                            "reason": dict(row).get('reason'),
+                        }
+                    } for row in history]
+                }
             
             if resource_type not in table_mapping:
                 raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")

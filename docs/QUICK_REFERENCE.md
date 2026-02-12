@@ -27,6 +27,12 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Infrastructure Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs
 - **Platform Tabs**: Domains, Projects, Flavors, Images, Hypervisors
 - **Management Tabs**: Users (with role assignments), History (change tracking), Audit (compliance), Monitoring (real-time metrics)
+- **History Tab Features**:
+  - Filter by resource type, project, domain, and free-text search (name/ID/description)
+  - Sortable columns: Time, Type, Resource, Project, Domain, Description (▲/▼)
+  - Deletion record viewing with original resource type, reason, and raw state snapshot
+  - Most frequently changed resources with direct history navigation
+  - Configurable timeframe: 1 hour, 24 hours, 3 days, 1 week
 - **Admin Tabs**: API Metrics, System Logs (Admin/Superadmin only)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
 

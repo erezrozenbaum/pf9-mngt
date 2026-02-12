@@ -116,6 +116,12 @@ The enhanced inventory and monitoring experience is built on a few principles:
   - **Capacity Trends**: 7-day resource utilization forecasting
   - **Trendlines**: Infrastructure growth patterns and velocity metrics
 - **Management Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring
+- **History Tab Features**:
+  - Filter by resource type (server, volume, snapshot, deletion, etc.), project, domain, and free-text search
+  - Sortable column headers (Time, Type, Resource, Project, Domain, Description) with ascending/descending indicators
+  - Deletion record viewing — shows deletion timeline, original resource type, reason, and last-known state
+  - Most frequently changed resources section with direct history navigation
+  - Configurable timeframe (1 hour to 1 week)
 - **Admin Observability Tabs**: API Metrics + System Logs (Admin/Superadmin only)
 - **Role-Based UI**: Dashboard and admin tabs with permission-based visibility
 - **Secure Login**: LDAP authentication with JWT token management and session tracking
