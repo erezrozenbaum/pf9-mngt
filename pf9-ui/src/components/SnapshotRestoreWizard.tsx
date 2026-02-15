@@ -983,6 +983,14 @@ const SnapshotRestoreWizard: React.FC = () => {
                   <div><strong>Flavor:</strong> {plan.vm.flavor_name} — {plan.vm.flavor_vcpus} vCPU / {plan.vm.flavor_ram_mb}MB RAM / {plan.vm.flavor_disk_gb}GB disk</div>
                   <div><strong>New Name:</strong> {plan.new_vm_name}</div>
                   <div><strong>Snapshot:</strong> {plan.restore_point.name || plan.restore_point.id.slice(0, 8)} ({formatDateShort(plan.restore_point.created_at)})</div>
+                  <div>
+                    <strong>Cloud-Init:</strong>{" "}
+                    {(plan.vm as any).user_data ? (
+                      <span style={{ color: "#2e7d32" }}>✅ Will be preserved (original user_data re-applied)</span>
+                    ) : (
+                      <span style={{ color: "#e65100" }}>⚠️ No user_data found — cloud-init may reset credentials on first boot</span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Network Plan */}
@@ -1247,6 +1255,13 @@ const SnapshotRestoreWizard: React.FC = () => {
                           {ip.network}: {ip.ip}
                         </span>
                       ))}
+                    </div>
+                  )}
+                  {step.details_json && step.status === "SUCCEEDED" && step.step_name === "CREATE_SERVER" && (
+                    <div style={{ marginTop: 4, fontSize: "0.82rem", color: (step.details_json as any).user_data_preserved ? "#2e7d32" : "#e65100" }}>
+                      {(step.details_json as any).user_data_preserved
+                        ? "✅ Cloud-init user_data preserved"
+                        : "⚠️ No cloud-init user_data — credentials may need manual reset"}
                     </div>
                   )}
                 </div>

@@ -333,6 +333,7 @@ class RestoreOpenStackClient:
         self, session: http_requests.Session, name: str,
         flavor_id: str, port_ids: list, block_device_mapping: list = None,
         image_id: str = None, availability_zone: str = None,
+        user_data: str = None,
     ) -> dict:
         if not self.nova_endpoint:
             raise RuntimeError("Nova endpoint not discovered")
@@ -348,6 +349,8 @@ class RestoreOpenStackClient:
             server_body["imageRef"] = image_id
         if availability_zone:
             server_body["availability_zone"] = availability_zone
+        if user_data:
+            server_body["user_data"] = user_data
         r = session.post(url, json={"server": server_body}, timeout=120)
         r.raise_for_status()
         return r.json().get("server", {})
@@ -359,6 +362,30 @@ class RestoreOpenStackClient:
         r = session.get(url, timeout=60)
         r.raise_for_status()
         return r.json().get("server", {})
+
+    def get_server_user_data(self, session: http_requests.Session, server_id: str) -> Optional[str]:
+        """
+        Fetch the base64-encoded user_data (cloud-init) associated with a VM.
+        Uses Nova microversion 2.3+ which exposes OS-EXT-SRV-ATTR:user_data.
+        Returns the base64 string or None if unavailable.
+        """
+        if not self.nova_endpoint:
+            return None
+        url = f"{self.nova_endpoint}/servers/{server_id}"
+        try:
+            r = session.get(
+                url, timeout=60,
+                headers={"X-OpenStack-Nova-API-Version": "2.3"},
+            )
+            r.raise_for_status()
+            server = r.json().get("server", {})
+            user_data = server.get("OS-EXT-SRV-ATTR:user_data")
+            if user_data:
+                logger.info(f"Retrieved user_data for server {server_id} ({len(user_data)} chars)")
+            return user_data
+        except Exception as e:
+            logger.warning(f"Could not retrieve user_data for {server_id}: {e}")
+            return None
 
     def wait_server_active(
         self, session: http_requests.Session, server_id: str,
@@ -500,6 +527,7 @@ class RestorePlanner:
 
             # 11. Try to fetch quota from OpenStack (best effort)
             quota_check = {"can_create_new_vm": True, "reasons": []}
+            admin_session = None
             try:
                 admin_session = self.os_client.authenticate_admin()
                 nova_quota = self.os_client.get_project_quota(admin_session, req.project_id)
@@ -510,6 +538,15 @@ class RestorePlanner:
             except Exception as e:
                 logger.warning(f"Could not fetch quota: {e}")
                 quota_check["reasons"].append(f"Could not verify quota: {str(e)}")
+
+            # 12. Fetch original VM's user_data (cloud-init) so it can be re-applied
+            original_user_data = None
+            try:
+                if not admin_session:
+                    admin_session = self.os_client.authenticate_admin()
+                original_user_data = self.os_client.get_server_user_data(admin_session, req.vm_id)
+            except Exception as e:
+                logger.warning(f"Could not fetch user_data for VM {req.vm_id}: {e}")
 
             # Build the plan
             plan = {
@@ -527,6 +564,7 @@ class RestorePlanner:
                     "flavor_vcpus": flavor_data.get("vcpus") if flavor_data else None,
                     "flavor_ram_mb": flavor_data.get("ram_mb") if flavor_data else None,
                     "flavor_disk_gb": flavor_data.get("disk_gb") if flavor_data else None,
+                    "user_data": original_user_data,  # base64-encoded cloud-init, if any
                 },
                 "restore_point": {
                     "id": req.restore_point_id,
@@ -1173,9 +1211,10 @@ class RestoreExecutor:
         vm_name = plan["new_vm_name"]
         port_ids = resources.get("port_ids", [])
         volume_id = resources.get("volume_id")
+        user_data = plan.get("vm", {}).get("user_data")  # base64-encoded cloud-init
 
         if RESTORE_DRY_RUN:
-            return {"server_id": "dry-run-server-id", "dry_run": True}
+            return {"server_id": "dry-run-server-id", "dry_run": True, "user_data_preserved": bool(user_data)}
 
         # Boot from volume: block device mapping
         bdm = [{
@@ -1192,8 +1231,13 @@ class RestoreExecutor:
             flavor_id=flavor_id,
             port_ids=port_ids,
             block_device_mapping=bdm,
+            user_data=user_data,
         )
-        return {"server_id": server.get("id"), "server_name": vm_name}
+        return {
+            "server_id": server.get("id"),
+            "server_name": vm_name,
+            "user_data_preserved": bool(user_data),
+        }
 
     def _step_wait_server(self, session, server_id) -> dict:
         if RESTORE_DRY_RUN:
