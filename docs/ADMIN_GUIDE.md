@@ -162,7 +162,8 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 - **Role-Based Access Control**: 4-tier permission system with automatic enforcement
 - **Audit & Compliance**: 90-day authentication event tracking and permission logging
 - **Comprehensive Inventory Management**: Real-time tracking of VMs, volumes, snapshots, networks, subnets, ports, floating IPs, hypervisors, flavors, and images
-- **Automated Snapshot Management**: Policy-driven snapshot creation with cross-tenant support via dedicated service user and configurable retention periods
+- **Automated Snapshot Management**: Policy-driven snapshot creation with cross-tenant support via dedicated service user, configurable retention periods, and hourly scheduling (default 60 min)
+- **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" UI button and `POST /snapshot/run-now` API for immediate policy assignment and snapshot creation
 - **Compliance Reporting**: Detailed compliance reports with policy adherence tracking
 - **Multi-Tenant Resource Administration**: Domain and project-level filtering with role-based permissions
 - **Complete RVTools Parity**: Full infrastructure visibility including ports and floating IP tracking

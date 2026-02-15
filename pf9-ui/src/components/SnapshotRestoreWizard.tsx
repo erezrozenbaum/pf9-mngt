@@ -281,6 +281,12 @@ const SnapshotRestoreWizard: React.FC = () => {
   const [jobHistory, setJobHistory] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
+  // On-demand snapshot pipeline ("Sync & Snapshot Now")
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [syncSteps, setSyncSteps] = useState<any[]>([]);
+  const syncPollingRef = useRef<number | null>(null);
+
   // General
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -302,8 +308,50 @@ const SnapshotRestoreWizard: React.FC = () => {
     })();
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
+      if (syncPollingRef.current) clearInterval(syncPollingRef.current);
     };
   }, []);
+
+  // -----------------------------------------------------------------------
+  // On-Demand Snapshot Pipeline — trigger + poll
+  // -----------------------------------------------------------------------
+  const triggerSyncAndSnapshot = useCallback(async () => {
+    if (syncRunning) return;
+    setSyncRunning(true);
+    setSyncStatus("running");
+    setSyncSteps([]);
+    try {
+      await apiFetch<any>("/snapshot/run-now", { method: "POST" });
+    } catch (e: any) {
+      setSyncStatus("failed");
+      setSyncRunning(false);
+      return;
+    }
+    // start polling
+    syncPollingRef.current = window.setInterval(async () => {
+      try {
+        const st = await apiFetch<any>("/snapshot/run-now/status");
+        setSyncSteps(st.steps || []);
+        setSyncStatus(st.status);
+        if (st.status !== "running") {
+          if (syncPollingRef.current) clearInterval(syncPollingRef.current);
+          syncPollingRef.current = null;
+          setSyncRunning(false);
+          // refresh VMs after pipeline completes
+          if (selectedTenantId) {
+            try {
+              const vmRes = await apiFetch<{ items: VM[] }>(`/tenants/${selectedTenantId}/vms`);
+              setVms(vmRes.items || []);
+            } catch { /* ignore */ }
+          }
+        }
+      } catch {
+        if (syncPollingRef.current) clearInterval(syncPollingRef.current);
+        syncPollingRef.current = null;
+        setSyncRunning(false);
+      }
+    }, 3000);
+  }, [syncRunning, selectedTenantId]);
 
   // -----------------------------------------------------------------------
   // Load tenants on mount
@@ -568,7 +616,85 @@ const SnapshotRestoreWizard: React.FC = () => {
               ))}
             </select>
           </div>
+
+          {/* Sync & Snapshot Now Button */}
+          <button
+            onClick={triggerSyncAndSnapshot}
+            disabled={syncRunning}
+            title="Run the full snapshot pipeline now: policy assignment, inventory sync, and auto snapshots"
+            style={{
+              padding: "8px 16px",
+              borderRadius: 6,
+              border: "1px solid #1976d2",
+              background: syncRunning ? "#e3f2fd" : "#1976d2",
+              color: syncRunning ? "#1976d2" : "#fff",
+              fontWeight: 600,
+              fontSize: "0.85rem",
+              cursor: syncRunning ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {syncRunning ? "⏳" : "🔄"} Sync & Snapshot Now
+          </button>
         </div>
+
+        {/* On-Demand Pipeline Progress */}
+        {syncStatus && syncStatus !== "idle" && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: 14,
+              background: syncStatus === "completed" ? "#e8f5e9" : syncStatus === "failed" ? "#fbe9e7" : "#e3f2fd",
+              borderRadius: 8,
+              border: `1px solid ${syncStatus === "completed" ? "#a5d6a7" : syncStatus === "failed" ? "#ef9a9a" : "#90caf9"}`,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: syncSteps.length ? 10 : 0 }}>
+              <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>
+                {syncStatus === "running" ? "⏳ Snapshot pipeline running..." :
+                 syncStatus === "completed" ? "✅ Snapshot pipeline completed" :
+                 "❌ Snapshot pipeline failed"}
+              </span>
+              {syncStatus !== "running" && (
+                <button
+                  onClick={() => { setSyncStatus(null); setSyncSteps([]); }}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.8rem", color: "#666" }}
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+            {syncSteps.length > 0 && (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {syncSteps.map((step: any) => (
+                  <span
+                    key={step.key}
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 12,
+                      fontSize: "0.78rem",
+                      fontWeight: 500,
+                      background: step.status === "completed" ? "#c8e6c9" :
+                                  step.status === "running" ? "#bbdefb" :
+                                  step.status === "failed" ? "#ffcdd2" : "#f5f5f5",
+                      color: step.status === "completed" ? "#2e7d32" :
+                             step.status === "running" ? "#1565c0" :
+                             step.status === "failed" ? "#c62828" : "#757575",
+                    }}
+                  >
+                    {step.status === "completed" ? "✓" :
+                     step.status === "running" ? "▶" :
+                     step.status === "failed" ? "✗" : "○"}{" "}
+                    {step.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Quota Summary */}
         {quota && (
