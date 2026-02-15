@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.3] - 2026-02-15
+
+### Fixed
+- **250GB volumes now snapshot correctly** — `AUTO_SNAPSHOT_MAX_SIZE_GB` docker-compose default was still 200GB even after code change; updated default to 260GB in both `docker-compose.yml` and `snapshot_scheduler.py`
+- **Fixed `ActiveTab` TypeScript type** — added missing `"snapshot-policies"` and `"snapshot-audit"` to the `ActiveTab` union type in `App.tsx`
+
 ## [1.6.2] - 2026-02-15
 
 ### Changed
