@@ -256,17 +256,29 @@ if (-not (Test-Path ".env")) {
     Set-EnvValue "PF9_DB_NAME" $pgDb
 
     Write-Host ""
+    # --- pgAdmin ---
+    Write-Host "── pgAdmin (Database Web UI) ──" -ForegroundColor Yellow
+    $pgAdminEmail = Prompt-Value "pgAdmin login email" "admin@pf9-mgmt.local"
+    $pgAdminPassword = Prompt-Value "pgAdmin login password (min 8 chars)" "" $true
+
+    Set-EnvValue "PGADMIN_EMAIL" $pgAdminEmail
+    Set-EnvValue "PGADMIN_PASSWORD" $pgAdminPassword
+
+    Write-Host ""
     # --- LDAP ---
     Write-Host "── LDAP Directory Configuration ──" -ForegroundColor Yellow
     $ldapOrg = Prompt-Value "LDAP Organization Name" "Platform9 Management"
     $ldapDomain = Prompt-Value "LDAP Domain (e.g. company.com)" "pf9mgmt.local"
     $ldapAdminPw = Prompt-Value "LDAP Admin Password" "" $true
     $ldapConfigPw = Prompt-Value "LDAP Config Password" "" $true
+    $ldapReadonlyPw = Prompt-Value "LDAP Readonly User Password" "" $true
 
     Set-EnvValue "LDAP_ORGANISATION" $ldapOrg
     Set-EnvValue "LDAP_DOMAIN" $ldapDomain
     Set-EnvValue "LDAP_ADMIN_PASSWORD" $ldapAdminPw
     Set-EnvValue "LDAP_CONFIG_PASSWORD" $ldapConfigPw
+    Set-EnvValue "LDAP_READONLY_USER" "true"
+    Set-EnvValue "LDAP_READONLY_PASSWORD" $ldapReadonlyPw
 
     # Derive LDAP base DN from domain (e.g. company.com -> dc=company,dc=com)
     $ldapBaseDn = ($ldapDomain -split '\.' | ForEach-Object { "dc=$_" }) -join ','
@@ -331,12 +343,40 @@ if (-not (Test-Path ".env")) {
         Write-Info "Skipping snapshot service user (snapshots will stay in service domain)"
     }
 
+    Write-Host ""
+    # --- Snapshot Restore ---
+    Write-Host "── Snapshot Restore Configuration ──" -ForegroundColor Yellow
+    Write-Info "The restore feature allows operators to restore VMs from Cinder snapshots."
+    Write-Info "It is disabled by default and can be enabled later by editing .env."
+    $restoreEnabled = Prompt-Value "Enable Snapshot Restore feature? (true/false)" "false"
+    Set-EnvValue "RESTORE_ENABLED" $restoreEnabled
+
+    if ($restoreEnabled -eq "true") {
+        $restoreDryRun = Prompt-Value "Enable Dry-Run mode? (plans only, no execution) (true/false)" "false"
+        Set-EnvValue "RESTORE_DRY_RUN" $restoreDryRun
+
+        $restoreCleanup = Prompt-Value "Enable Volume Cleanup on failed restores? (true/false)" "false"
+        Set-EnvValue "RESTORE_CLEANUP_VOLUMES" $restoreCleanup
+    } else {
+        Set-EnvValue "RESTORE_DRY_RUN" "false"
+        Set-EnvValue "RESTORE_CLEANUP_VOLUMES" "false"
+    }
+
     # --- JWT Secret ---
     Write-Host ""
     Write-Host "── Security ──" -ForegroundColor Yellow
     $jwtSecret = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 64 | ForEach-Object { [char]$_ })
     Set-EnvValue "JWT_SECRET_KEY" $jwtSecret
     Write-Success "Generated JWT secret key"
+
+    Write-Host ""
+    # --- LDAP Demo Users ---
+    Write-Host "── LDAP Demo User Passwords (viewer/operator) ──" -ForegroundColor Yellow
+    Write-Info "These users are created by setup_ldap.ps1. Leave blank to auto-generate."
+    $viewerPw = Prompt-Value "Viewer user password (blank = auto-generate)" ""
+    $operatorPw = Prompt-Value "Operator user password (blank = auto-generate)" ""
+    if ($viewerPw) { Set-EnvValue "VIEWER_PASSWORD" $viewerPw }
+    if ($operatorPw) { Set-EnvValue "OPERATOR_PASSWORD" $operatorPw }
 
     Write-Host ""
     Write-Success "Environment configuration complete!"
@@ -369,12 +409,16 @@ $requiredVars = @(
     'POSTGRES_USER',
     'POSTGRES_PASSWORD',
     'POSTGRES_DB',
-    'LDAP_ADMIN_PASSWORD'
+    'LDAP_ADMIN_PASSWORD',
+    'DEFAULT_ADMIN_PASSWORD',
+    'PGADMIN_PASSWORD',
+    'JWT_SECRET_KEY'
 )
 
 $missing = @()
 foreach ($var in $requiredVars) {
-    if (-not $envMap.ContainsKey($var) -or [string]::IsNullOrWhiteSpace($envMap[$var])) {
+    $val = $envMap[$var]
+    if (-not $envMap.ContainsKey($var) -or [string]::IsNullOrWhiteSpace($val) -or $val -match '^<.*>$') {
         $missing += $var
     }
 }
@@ -448,6 +492,7 @@ Write-Section "Step 4: Creating Directory Structure"
 $directories = @(
     ".\logs",
     ".\secrets",
+    ".\reports",
     ".\api\__pycache__",
     ".\monitoring\cache",
     ".\pf9-ui\dist"
@@ -612,7 +657,11 @@ Write-Section "Step 8b: Ensuring Admin User and Superadmin Permissions"
 $defaultAdminUser = $envMap['DEFAULT_ADMIN_USER']
 $defaultAdminPassword = $envMap['DEFAULT_ADMIN_PASSWORD']
 if (-not $defaultAdminUser) { $defaultAdminUser = "admin" }
-if (-not $defaultAdminPassword) { $defaultAdminPassword = "admin" }
+if (-not $defaultAdminPassword) {
+    Write-Error "ERROR: DEFAULT_ADMIN_PASSWORD is not set in .env — refusing to use a default password."
+    Write-Error "Please set DEFAULT_ADMIN_PASSWORD in your .env file and re-run deployment."
+    exit 1
+}
 
 Write-Info "Ensuring admin user '$defaultAdminUser' is present in user_roles as superadmin..."
 $ensureUserRole = "INSERT INTO user_roles (username, role, granted_by, granted_at, is_active) VALUES ('$defaultAdminUser', 'superadmin', 'system', now(), true) ON CONFLICT (username) DO UPDATE SET role='superadmin', granted_by='system', granted_at=now(), is_active=true;"
@@ -628,7 +677,9 @@ Write-Success "Wildcard permission for superadmin ensured."
 Write-Section "Step 9: Verifying LDAP Directory"
 
 try {
-    $ldapCheck = & docker-compose exec -T ldap ldapsearch -x -H ldap://localhost -b "dc=platform9,dc=local" -D "cn=admin,dc=platform9,dc=local" -w $envMap['LDAP_ADMIN_PASSWORD'] "(objectClass=organizationalUnit)" dn 2>&1
+    $ldapBaseDN = $envMap['LDAP_BASE_DN']
+    if (-not $ldapBaseDN) { $ldapBaseDN = "dc=pf9mgmt,dc=local" }
+    $ldapCheck = & docker-compose exec -T ldap ldapsearch -x -H ldap://localhost -b "$ldapBaseDN" -D "cn=admin,$ldapBaseDN" -w $envMap['LDAP_ADMIN_PASSWORD'] "(objectClass=organizationalUnit)" dn 2>&1
     
     if ($ldapCheck -match "numEntries") {
         Write-Success "LDAP directory initialized successfully"
@@ -743,6 +794,30 @@ if ($hasPlainPassword -or $hasEncryptedPassword) {
     Write-Host "  Cross-Tenant Mode:     DISABLED (snapshots in service domain)" -ForegroundColor Yellow
     Write-Host "  To enable:             Set SNAPSHOT_SERVICE_USER_PASSWORD in .env" -ForegroundColor Yellow
     Write-Host "                         See docs/SNAPSHOT_SERVICE_USER.md" -ForegroundColor Yellow
+}
+Write-Host ""
+
+Write-Host "Snapshot Restore:" -ForegroundColor Cyan
+$restoreEnabledVal = $envMap['RESTORE_ENABLED']
+$restoreDryRunVal = $envMap['RESTORE_DRY_RUN']
+$restoreCleanupVal = $envMap['RESTORE_CLEANUP_VOLUMES']
+if ($restoreEnabledVal -eq "true") {
+    Write-Host "  Feature:               ENABLED" -ForegroundColor Green
+    if ($restoreDryRunVal -eq "true") {
+        Write-Host "  Dry-Run Mode:          ON (plans only, no execution)" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Dry-Run Mode:          OFF (full execution)" -ForegroundColor White
+    }
+    if ($restoreCleanupVal -eq "true") {
+        Write-Host "  Volume Cleanup:        ON (cleanup on failure)" -ForegroundColor White
+    } else {
+        Write-Host "  Volume Cleanup:        OFF (orphaned volumes kept)" -ForegroundColor White
+    }
+    Write-Host "  Documentation:         docs/RESTORE_GUIDE.md" -ForegroundColor White
+} else {
+    Write-Host "  Feature:               DISABLED (default)" -ForegroundColor Yellow
+    Write-Host "  To enable:             Set RESTORE_ENABLED=true in .env" -ForegroundColor Yellow
+    Write-Host "                         See docs/RESTORE_GUIDE.md" -ForegroundColor Yellow
 }
 Write-Host ""
 

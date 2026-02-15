@@ -367,11 +367,37 @@ Query Parameters:
 
 ### Servers (VMs)
 **GET** `/servers`  
-Returns all virtual machines with detailed status.
+Returns all virtual machines with detailed status, resource allocation, and host utilization.
 
 Query Parameters:
-- `project_id` (optional) - Filter by project
+- `domain_name` (optional) - Filter by domain
+- `tenant_id` (optional) - Filter by project/tenant
 - `status` (optional) - Filter by status (ACTIVE, SHUTOFF, etc.)
+- `page` / `page_size` - Pagination (default 1 / 50)
+- `sort_by` / `sort_dir` - Sort column and direction
+
+Response fields per server:
+| Field | Type | Description |
+|-------|------|-------------|
+| `vm_id` | string | Server UUID |
+| `vm_name` | string | Server display name |
+| `domain_name` | string | Parent domain |
+| `tenant_name` | string | Parent project/tenant |
+| `status` | string | VM status (ACTIVE, SHUTOFF, etc.) |
+| `flavor_name` | string | Flavor template name |
+| `vcpus` | int | Allocated vCPUs (from flavor) |
+| `ram_mb` | int | Allocated RAM in MB (from flavor) |
+| `disk_gb` | int | **Actual disk size** — uses flavor disk, or sum of attached volume sizes for boot-from-volume VMs |
+| `ips` | string | Comma-separated fixed and floating IPs |
+| `image_name` | string | Boot image name |
+| `hypervisor_hostname` | string | Physical host running VM |
+| `host_vcpus_total` | int | Total vCPUs on the host |
+| `host_vcpus_used` | int | vCPUs allocated across all VMs on the host |
+| `host_ram_total_mb` | int | Total RAM (MB) on the host |
+| `host_ram_used_mb` | int | RAM allocated across all VMs on the host |
+| `host_disk_total_gb` | int | Total local disk (GB) on the host |
+| `host_disk_used_gb` | int | Local disk used on the host |
+| `host_running_vms` | int | Number of VMs running on the host |
 
 ### Volumes
 **GET** `/volumes`  
@@ -629,6 +655,113 @@ Query Parameters:
 
 ---
 
+## Snapshot Restore Endpoints
+
+> **Feature Toggle**: These endpoints require `RESTORE_ENABLED=true`. When disabled, all restore endpoints return 404.  
+> **RBAC**: All endpoints require authentication. See permission requirements per endpoint below.  
+> **Full Guide**: See [RESTORE_GUIDE.md](RESTORE_GUIDE.md) for detailed feature documentation.
+
+### Get Restore Configuration
+**GET** `/restore/config` (Authenticated, `restore:read`)  
+Returns current restore feature configuration.
+
+Response:
+```json
+{
+  "enabled": true,
+  "dry_run": false,
+  "cleanup_volumes": false
+}
+```
+
+### List Available Snapshots
+**GET** `/restore/snapshots` (Authenticated, `restore:read`)  
+Returns Cinder snapshots available for restore.
+
+Query Parameters:
+- `tenant_name` (required) - Tenant name to fetch snapshots for
+
+### Get VM Restore Points
+**GET** `/restore/vm/{vm_id}/restore-points` (Authenticated, `restore:read`)  
+Returns snapshots of a specific VM's boot volume, sorted newest first.
+
+Query Parameters:
+- `project_id` (required) - Project ID the VM belongs to
+
+### Create Restore Plan
+**POST** `/restore/plan` (Authenticated, `restore:write`)  
+Validates resources and creates a restore plan without executing it.
+
+Request Body:
+```json
+{
+  "project_id": "tenant-project-uuid",
+  "vm_id": "vm-uuid",
+  "restore_point_id": "snapshot-uuid",
+  "mode": "NEW",
+  "new_vm_name": "my-restored-vm",
+  "ip_strategy": "TRY_SAME_IPS"
+}
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `project_id` | Yes | — | Target project UUID |
+| `vm_id` | Yes | — | Original VM UUID |
+| `restore_point_id` | Yes | — | Cinder snapshot UUID |
+| `mode` | No | `NEW` | `NEW` (side-by-side) or `REPLACE` (destructive) |
+| `new_vm_name` | No | auto-generated | Name for the restored VM (NEW mode only) |
+| `ip_strategy` | No | `NEW_IPS` | `NEW_IPS`, `TRY_SAME_IPS`, or `SAME_IPS_OR_FAIL` |
+
+Response: Restore job object with status `PLANNED` and full `plan_json`.
+
+### Execute Restore Plan
+**POST** `/restore/execute` (Authenticated, `restore:write`)  
+Starts execution of a previously-created restore plan.
+
+Request Body:
+```json
+{
+  "plan_id": "restore-job-uuid",
+  "confirm_destructive": null
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `plan_id` | Yes | UUID of a restore job in PLANNED status |
+| `confirm_destructive` | REPLACE only | Must be exactly `DELETE AND RESTORE <vm_name>` |
+
+Response: Restore job object with status `PENDING` (execution starts asynchronously).
+
+### List Restore Jobs
+**GET** `/restore/jobs` (Authenticated, `restore:read`)  
+Returns all restore jobs, sorted by creation time (newest first).
+
+Query Parameters:
+- `status` (optional) - Filter by job status
+- `vm_id` (optional) - Filter by original VM ID
+
+### Get Restore Job Details
+**GET** `/restore/jobs/{job_id}` (Authenticated, `restore:read`)  
+Returns detailed job information including all step statuses.
+
+Path Parameters:
+- `job_id` (required) - UUID of the restore job
+
+### Cancel Restore Job
+**POST** `/restore/cancel/{job_id}` (Authenticated, `restore:write`)  
+Requests cancellation of a running or pending restore job.
+
+Request Body:
+```json
+{
+  "reason": "Optional cancellation reason"
+}
+```
+
+---
+
 ## Error Responses
 
 All endpoints return standard error responses:
@@ -703,7 +836,7 @@ Response includes:
 
 ---
 
-**API Version**: 1.1  
-**Last Updated**: February 8, 2026  
+**API Version**: 1.2  
+**Last Updated**: February 2026  
 **Base URL**: http://localhost:8000  
 **Documentation**: http://localhost:8000/docs

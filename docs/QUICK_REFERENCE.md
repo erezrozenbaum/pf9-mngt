@@ -17,7 +17,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Activity Monitoring**: User last-seen timestamps, account status, and authentication tracking
 - **Role Inference System**: Intelligent role assignment detection when API access is limited
 
-#### Modern React UI Features (17 Comprehensive Tabs)
+#### Modern React UI Features (18+ Comprehensive Tabs)
 - **Dashboard Tab** (NEW ✨): Landing Dashboard with 14 real-time analytics endpoints
   - Health Summary, Snapshot SLA Compliance, Host Utilization, Recent Activity
   - Coverage Risks, Capacity Pressure, VM Hotspots, Tenant Risk Scores
@@ -26,7 +26,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Auto-refresh every 30 seconds, Dark/Light mode support
 - **Infrastructure Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs
 - **Platform Tabs**: Domains, Projects, Flavors, Images, Hypervisors
-- **Management Tabs**: Users (with role assignments), History (change tracking), Audit (compliance), Monitoring (real-time metrics)
+- **Management Tabs**: Users (with role assignments), History (change tracking), Audit (compliance), Monitoring (real-time metrics), Restore Audit (restore job history)
 - **History Tab Features**:
   - Filter by resource type, project, domain, and free-text search (name/ID/description)
   - Sortable columns: Time, Type, Resource, Project, Domain, Description (▲/▼)
@@ -45,11 +45,22 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Policy Assignment Rules**: JSON-driven automatic assignment based on volume properties
 - **Service User**: Configurable via `SNAPSHOT_SERVICE_USER_EMAIL` with per-project admin role assignment
 
+#### Snapshot Restore (v1.2 - NEW)
+- **VM Restore from Snapshot**: Restore boot-from-volume VMs from Cinder volume snapshots
+- **NEW Mode**: Side-by-side restore (keeps original VM)
+- **REPLACE Mode**: Destructive restore (superadmin only, deletes original VM)
+- **IP Strategies**: NEW_IPS, TRY_SAME_IPS, SAME_IPS_OR_FAIL
+- **UI Wizard**: 3-screen guided restore (Select VM → Configure → Execute/Progress)
+- **Safety**: Dry-run mode, destructive confirmation, stale job recovery, volume cleanup
+- **Feature Toggle**: Disabled by default (`RESTORE_ENABLED=true` to activate)
+- **RBAC**: Admin for NEW mode, Superadmin for REPLACE mode
+
 #### Real-Time Infrastructure Monitoring
 - **Host Metrics**: CPU, Memory, Storage from PF9 compute nodes via node_exporter (port 9388) ✅
 - **VM Metrics**: Individual VM resource tracking via libvirt_exporter (port 9177) ❌ *[Requires PF9 Engineering]*
+- **Hostname Resolution**: Friendly host names via `PF9_HOST_MAP` env var (API/DNS fallback)
 - **Automated Collection**: Windows Task Scheduler every 30 minutes
-- **Cache-Based Storage**: Persistent metrics with container restart survival
+- **Cache-Based Storage**: Persistent directory-mounted cache (`monitoring/cache/`) with container restart survival
 - **Integrated Dashboard**: Real-time monitoring tab with auto-refresh in React UI
 
 #### API Observability Endpoints
@@ -90,7 +101,7 @@ PF9_REGION_NAME=region-one
 
 # Database credentials (for Docker services)
 POSTGRES_USER=pf9
-POSTGRES_PASSWORD=change-this-secure-password
+POSTGRES_PASSWORD=<GENERATE: openssl rand -base64 32>
 POSTGRES_DB=pf9_mgmt
 ```
 
@@ -164,6 +175,47 @@ docker logs pf9_snapshot_worker 2>&1 | grep "SERVICE_USER"
 
 # Disable cross-tenant mode (fall back to admin session)
 # Set in .env: SNAPSHOT_SERVICE_USER_DISABLED=true
+```
+
+### Snapshot Restore (v1.2)
+```bash
+# Enable restore feature (add to .env)
+RESTORE_ENABLED=true
+RESTORE_DRY_RUN=false           # Set true to test without executing
+RESTORE_CLEANUP_VOLUMES=false   # Set true to auto-delete failed restore volumes
+
+# Restart API to pick up changes
+docker-compose restart pf9_api
+
+# Check restore config
+curl -H "Authorization: Bearer <token>" http://localhost:8000/restore/config
+
+# List available snapshots for a tenant
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/restore/snapshots?tenant_name=production"
+
+# Get restore points for a specific VM
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/restore/vm/<vm_id>/restore-points?project_id=<project_id>"
+
+# Create a restore plan (NEW mode)
+curl -X POST http://localhost:8000/restore/plan \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"<proj_id>","vm_id":"<vm_id>","restore_point_id":"<snap_id>","mode":"NEW"}'
+
+# Execute the plan
+curl -X POST http://localhost:8000/restore/execute \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"plan_id":"<job_uuid>"}'
+
+# Check job status
+curl -H "Authorization: Bearer <token>" http://localhost:8000/restore/jobs/<job_id>
+
+# Cancel a running restore
+curl -X POST http://localhost:8000/restore/cancel/<job_id> \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Testing"}'
 ```
 
 ### Real-Time Monitoring

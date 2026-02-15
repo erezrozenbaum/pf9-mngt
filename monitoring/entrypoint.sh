@@ -4,9 +4,10 @@
 echo "Starting PF9 Monitoring Service..."
 
 # Check if cache file exists, create empty one if not
-if [ ! -f "/tmp/metrics_cache.json" ]; then
+mkdir -p /tmp/cache
+if [ ! -f "/tmp/cache/metrics_cache.json" ]; then
     echo "Creating empty metrics cache file..."
-    cat > /tmp/metrics_cache.json << EOF
+    cat > /tmp/cache/metrics_cache.json << EOF
 {
   "vms": [],
   "hosts": [],

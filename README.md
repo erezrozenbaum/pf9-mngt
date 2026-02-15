@@ -67,15 +67,27 @@ The enhanced inventory and monitoring experience is built on a few principles:
 ### API Performance
 ![API Performance](docs/images/API%20Performance.png)
 
-## �📚 Documentation
+## 📚 Documentation
 
-- **[LICENSE](LICENSE)** - MIT License
+- **[Deployment Guide](docs/DEPLOYMENT_GUIDE.md)** — Step-by-step deployment instructions
+- **[Admin Guide](docs/ADMIN_GUIDE.md)** — Day-to-day administration reference
+- **[Architecture](docs/ARCHITECTURE.md)** — System design and component interaction
+- **[API Reference](docs/API_REFERENCE.md)** — Complete API endpoint documentation
+- **[Security Guide](docs/SECURITY.md)** — Security model, authentication, encryption
+- **[Security Checklist](docs/SECURITY_CHECKLIST.md)** — Pre-production security audit checklist
+- **[Restore Guide](docs/RESTORE_GUIDE.md)** — Snapshot restore feature documentation
+- **[Snapshot Automation](docs/SNAPSHOT_AUTOMATION.md)** — Snapshot system design and configuration
+- **[Snapshot Service User](docs/SNAPSHOT_SERVICE_USER.md)** — Service user setup and troubleshooting
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** — Common commands and URLs cheat sheet
+- **[Kubernetes Migration](docs/KUBERNETES_MIGRATION_GUIDE.md)** — Future K8s migration planning
+- **[Contributing](CONTRIBUTING.md)** — Contribution guidelines
+- **[LICENSE](LICENSE)** — MIT License
 
 ## 🚀 System Architecture
 
 **Enterprise microservices-based platform** with 8 containerized services plus host-based automation:
-- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 16 management tabs + admin panel
-- **Backend API** (FastAPI/Python) - Port 8000 - 40+ REST endpoints with RBAC middleware
+- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 18 management tabs + admin panel
+- **Backend API** (FastAPI/Python) - Port 8000 - 88+ REST endpoints with RBAC middleware
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
 - **LDAP Admin** (phpLDAPadmin) - Port 8081 - Web-based LDAP management
 - **Monitoring Service** (FastAPI/Python) - Port 8001 - Real-time metrics collection via Prometheus
@@ -118,8 +130,17 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Policy Assignment Rules**: JSON-driven automatic policy assignment based on volume properties
 - **Comprehensive Reporting**: Detailed compliance reports with tenant/domain aggregation
 
+### Snapshot Restore (NEW - v1.2)
+- **VM Restore from Snapshot**: Restore boot-from-volume VMs from Cinder volume snapshots
+- **Two Restore Modes**: NEW (side-by-side, non-destructive) and REPLACE (destructive, superadmin-only)
+- **IP Strategies**: NEW_IPS (DHCP), TRY_SAME_IPS (best-effort), SAME_IPS_OR_FAIL (strict)
+- **3-Screen UI Wizard**: Guided restore flow with real-time progress tracking
+- **Cross-Tenant Support**: Uses same service user mechanism as snapshot system
+- **Safety First**: Disabled by default, dry-run mode, destructive confirmation, volume cleanup option
+- **Full RBAC**: Viewer/Operator=read, Admin=write (NEW mode), Superadmin=admin (REPLACE mode)
+
 ### Modern Web Management Interface
-- **React 19.2+ Dashboard**: 17+ comprehensive management tabs including new **Landing Dashboard** with real-time operational intelligence
+- **React 19.2+ Dashboard**: 18+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
 - **Landing Dashboard Features** (All Users):
   - **Health Summary Card**: System-wide metrics (VMs, volumes, networks, resource utilization)
   - **Snapshot SLA Compliance**: Tenant-level compliance tracking with warning/critical alerting
@@ -132,7 +153,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
   - **Compliance Drift Tracking**: Policy adherence trending
   - **Capacity Trends**: 7-day resource utilization forecasting
   - **Trendlines**: Infrastructure growth patterns and velocity metrics
-- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring
+- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit
 - **History Tab Features**:
   - Filter by resource type (server, volume, snapshot, deletion, etc.), project, domain, and free-text search
   - Sortable column headers (Time, Type, Resource, Project, Domain, Description) with ascending/descending indicators
@@ -410,7 +431,7 @@ docker stats
 - **Logs**: `docker-compose logs <service-name>`
 - **Health checks**: `curl http://localhost:8000/health`
 - **API documentation**: `http://localhost:8000/docs`
-- **Database admin**: `http://localhost:8080` (admin@pf9-mgmt.com / admin123)
+- **Database admin**: `http://localhost:8080` (credentials configured via `PGADMIN_EMAIL` / `PGADMIN_PASSWORD` in `.env`)
 # Run inventory collection (standalone)
 python pf9_rvtools.py
 
@@ -726,10 +747,17 @@ If you find this project useful, please consider:
 ---
 
 **Project Status**: Active Development  
-**Last Updated**: February 8, 2026  
-**Version**: 1.1
+**Last Updated**: March 2026  
+**Version**: 1.4.0
 
-## 🎯 Recent Updates (February 2026)
+## 🎯 Recent Updates
+
+### Monitoring & Restore Audit (v1.4)
+- ✅ **Restore Audit Tab** — full audit trail with search, filters, pagination, step-level drill-down, and CSV export
+- ✅ **Monitoring hostname resolution** — hosts displayed by name instead of IP via `PF9_HOST_MAP` env var
+- ✅ **Monitoring data fixes** — VM IPs, storage metrics, and network rx/tx bytes now display correctly
+- ✅ **Docker cache mount fix** — monitoring cache uses directory mount for reliable Windows/Docker sync
+- ✅ **MONITORING_BASE config** — UI supports `VITE_MONITORING_BASE` for monitoring service URL override
 
 ### Cross-Tenant Snapshot Service User (v1.2)
 - ✅ **Cross-tenant snapshot creation** — snapshots now land in the correct tenant project
@@ -756,3 +784,96 @@ If you find this project useful, please consider:
 - ✅ Database schema enhancements for user management and history tracking
 - ✅ Complete db_writer.py module for RVTools database integration
 - ✅ Foreign key validation and transaction management improvements
+
+---
+
+## ❓ FAQ
+
+### General
+
+**Q: What is PF9 Management?**
+A: PF9 Management is a self-hosted operations dashboard for Private Cloud Directors powered by Platform9. It provides a unified UI and API layer for VM management, automated snapshots, compliance reporting, restore orchestration, monitoring, and RBAC — all running as Docker containers alongside your existing Platform9 deployment.
+
+**Q: Does this replace the Platform9 UI?**
+A: No. PF9 Management is a complementary tool that adds operational capabilities not present in the native Platform9 console — automated snapshot scheduling, SLA compliance tracking, restore workflows, LDAP-backed RBAC, and an operational landing dashboard. You continue using the Platform9 UI for day-to-day cloud management.
+
+**Q: Is this an official Platform9 product?**
+A: No. This is an independent project built to work with Platform9 OpenStack APIs. It is not endorsed by or affiliated with Platform9 Systems, Inc.
+
+### Deployment & Setup
+
+**Q: What are the minimum requirements to run PF9 Management?**
+A: A Docker host (Linux or Windows with Docker Desktop) with at least 4 GB RAM, 2 CPU cores, and network access to your Platform9 region's Keystone and Nova/Cinder/Neutron/Glance endpoints. You need a Platform9 admin account to configure the environment variables.
+
+**Q: How do I deploy for the first time?**
+A: Run `deployment.ps1` (Windows) which validates your `.env`, builds all containers, runs database migrations, and starts the stack via `docker-compose up -d`. See [docs/DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) for full instructions.
+
+**Q: How do I upgrade to a new version?**
+A: Pull the latest code, then run `deployment.ps1` again. It will rebuild changed containers and apply any new database migrations. Your data is preserved in the PostgreSQL volume.
+
+**Q: Can I run this in Kubernetes instead of Docker Compose?**
+A: A Kubernetes migration guide is available at [docs/KUBERNETES_MIGRATION_GUIDE.md](docs/KUBERNETES_MIGRATION_GUIDE.md). The application is designed with container-first architecture and can be adapted to Helm charts or raw manifests.
+
+### Authentication & RBAC
+
+**Q: How does authentication work?**
+A: PF9 Management authenticates users against an LDAP directory (bundled OpenLDAP or your corporate LDAP/AD). Users are assigned one of four roles: `viewer`, `operator`, `admin`, or `superadmin`. JWT tokens are issued on login and validated on every API call.
+
+**Q: What can each role do?**
+A: `viewer` — read-only access to all tabs. `operator` — viewer permissions plus snapshot trigger and policy assignment. `admin` — operator permissions plus user management, restore, and system configuration. `superadmin` — full access including RBAC rule management and dangerous operations like restore-execute.
+
+**Q: How do I create the first admin user?**
+A: The deployment script seeds a default admin via `admin_user.ldif`. After first login, use the Users tab to promote additional LDAP users to `admin` or `superadmin`. See [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md).
+
+**Q: Can I use Active Directory instead of OpenLDAP?**
+A: Yes. Set the `LDAP_URL`, `LDAP_BASE_DN`, `LDAP_BIND_DN`, and `LDAP_BIND_PASSWORD` environment variables to point at your AD server. The LDAP integration uses standard `ldap3` bind operations compatible with AD.
+
+### Snapshots
+
+**Q: How does automated snapshot scheduling work?**
+A: The snapshot scheduler container runs on a configurable cron interval (default every 4 hours). It evaluates policy rules from `snapshot_policy_rules.json`, matches volumes by tenant/naming pattern/metadata, and creates snapshots via the Cinder API using the snapshot service user.
+
+**Q: What is the Snapshot Service User?**
+A: A dedicated Platform9 user (configured via `SNAPSHOT_SERVICE_USER_EMAIL`) that is automatically granted admin roles in each tenant project. This allows cross-tenant snapshot creation without using your personal admin credentials. See [docs/SNAPSHOT_SERVICE_USER.md](docs/SNAPSHOT_SERVICE_USER.md).
+
+**Q: How do I protect a volume that isn't currently getting snapshots?**
+A: Assign a snapshot policy to the volume via the Snapshot Policies tab or the `POST /api/snapshots/policy/assign` endpoint. The coverage risk card on the Dashboard highlights unprotected volumes.
+
+### Restore
+
+**Q: What does the Restore feature support?**
+A: Restore supports boot-from-volume VMs. Given a snapshot, it creates a new volume from the snapshot, then boots a new VM attached to that volume with the original flavor, network, and security group configuration. Boot-from-image VMs are on the roadmap but not yet supported.
+
+**Q: Is restore destructive? Will it overwrite my existing VM?**
+A: No. Restore always creates a **new** VM and a **new** volume. The original VM and snapshot are untouched. The restored VM name is suffixed with `-restored-<timestamp>` to avoid confusion.
+
+**Q: What is dry-run mode?**
+A: When `RESTORE_DRY_RUN=true` (the default), the restore planner generates and validates the full restoration plan but does not execute it against OpenStack. This lets you review what would happen before committing. Set `RESTORE_DRY_RUN=false` to enable actual execution.
+
+**Q: Can I cancel a restore in progress?**
+A: Yes. Use the Cancel button in the Snapshot Restore wizard or call `POST /api/restore/{job_id}/cancel`. The executor will stop at the next step boundary and attempt to clean up any partially created resources.
+
+### Monitoring & Troubleshooting
+
+**Q: What does the Monitoring tab show?**
+A: Real-time host-level metrics (CPU, memory, disk, network) collected from Platform9 hypervisors. Metrics are cached in Redis and displayed with configurable refresh intervals.
+
+**Q: Where are the logs?**
+A: Application logs are written to `logs/` and also available via the System Logs tab (admin-only). Each container also logs to stdout, viewable with `docker logs <container>`. Structured JSON logging is enabled by default for the API container.
+
+**Q: The dashboard shows stale data — how do I force a refresh?**
+A: The dashboard auto-refreshes every 30 seconds. You can force a refresh by switching away from the Dashboard tab and back. If data is persistently stale, check that the monitoring and API containers are healthy with `docker ps` and inspect their logs.
+
+**Q: How do I apply database migrations without losing data?**
+A: Use the idempotent migration scripts in `db/`. For example: `docker cp db/migrate_restore_tables.sql pf9-db:/tmp/ && docker exec pf9-db psql -U pf9admin -d pf9db -f /tmp/migrate_restore_tables.sql`. These scripts use `IF NOT EXISTS` guards so they are safe to run multiple times.
+
+### UI
+
+**Q: What do the 🔧 tabs mean?**
+A: Tabs with the 🔧 icon and amber/orange accent are **write-capable** — they can create, modify, or delete resources. Read-only tabs (VMs, Snapshots, Volumes, etc.) use the default blue styling. This visual distinction helps operators quickly identify which tabs perform mutations.
+
+**Q: Does the UI support dark mode?**
+A: Yes. Click the theme toggle button (top-right moon/sun icon) to switch between light and dark themes. Your preference is saved in local storage.
+
+**Q: How do I access the API documentation?**
+A: The FastAPI backend exposes interactive Swagger docs at `http://<host>:8000/docs` and ReDoc at `http://<host>:8000/redoc`. All endpoints are grouped by feature tag.

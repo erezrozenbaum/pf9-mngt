@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/APIMetricsTab.css';
+import { API_BASE } from '../config';
 
 interface Endpoint {
   endpoint: string;
@@ -48,7 +49,6 @@ interface Metrics {
 }
 
 export const APIMetricsTab: React.FC = () => {
-  const API_BASE = 'http://localhost:8000';
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
