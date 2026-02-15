@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-02-15
+
+### Fixed
+- **Manual snapshots not showing in restore wizard** — the restore-points endpoint only queried the local DB `snapshots` table (populated by scheduled sync), so manually created snapshots in Platform9/OpenStack were invisible until the next sync. Now also queries Cinder API directly, merges and deduplicates results, so all snapshots appear immediately
+
 ## [1.6.0] - 2026-02-15
 
 ### Added
