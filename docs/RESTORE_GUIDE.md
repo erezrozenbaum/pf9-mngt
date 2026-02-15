@@ -44,6 +44,7 @@ The restore is fully asynchronous — the API returns immediately after starting
 ### Supported
 - **Boot-from-volume VMs** — VMs whose root disk is a Cinder volume (the standard for Platform9 environments)
 - **Cross-tenant restore** — Restore VMs in any tenant project using the service user mechanism
+- **Cloud-init user_data preservation** — The original VM's `user_data` (cloud-init script) is automatically fetched during planning and re-applied to the restored VM, preventing credential or configuration resets on first boot
 
 ### Not Yet Supported
 - **Boot-from-image VMs** — VMs that boot directly from a Glance image (no Cinder volume). This is planned for a future release.
