@@ -50,7 +50,7 @@ LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD}  # Set in .env file
 
 ```bash
 # JWT Settings (add to .env)
-JWT_SECRET_KEY=your-secret-key-change-this  # ⚠️ Use openssl rand -base64 64
+JWT_SECRET_KEY=<GENERATE: openssl rand -base64 64>  # ⚠️ REQUIRED — do not use a placeholder
 JWT_ALGORITHM=HS256
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES=480  # 8 hours
 ENABLE_AUTHENTICATION=true
@@ -89,6 +89,7 @@ ENABLE_AUTHENTICATION=true
 | Users | - | - | - | admin |
 | Domains | read | read | read | admin |
 | Projects | read | read | read | admin |
+| Restore | read | read | write | admin |
 
 ### RBAC Middleware Operation
 
@@ -100,6 +101,19 @@ The system automatically enforces permissions on all API endpoints:
 4. **Resource Mapping**: Maps URL path to permission resource (e.g., `/servers` → `servers`)
 5. **Permission Check**: Queries `role_permissions` table for required action (read/write/admin)
 6. **Enforcement**: Returns 403 Forbidden if permission denied, logs event to `auth_audit_log`
+
+### Restore-Specific Security Controls
+
+The snapshot restore feature includes additional security safeguards:
+
+- **Feature Toggle**: Restore is disabled by default (`RESTORE_ENABLED=false`). All endpoints return 404 when disabled.
+- **REPLACE Mode Restriction**: Destructive restore (deleting the original VM) requires **superadmin** role (`restore:admin`).
+- **Destructive Confirmation**: REPLACE mode requires the caller to send `confirm_destructive: "DELETE AND RESTORE <vm_name>"` — an exact string match prevents accidental destructive operations.
+- **Concurrency Guard**: A unique partial index prevents two simultaneous restores of the same VM.
+- **Dry-Run Mode**: Operators can validate restore plans without executing them (`RESTORE_DRY_RUN=true`).
+- **Cross-Tenant Access**: Uses the same service user scoping as snapshot creation — the service user must have admin role on the target project.
+
+See [RESTORE_GUIDE.md](RESTORE_GUIDE.md) for full restore documentation.
 
 ---
 

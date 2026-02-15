@@ -14,8 +14,7 @@ import { TrendlinesCard } from './TrendlinesCard';
 import { TenantRiskHeatmapCard } from './TenantRiskHeatmapCard';
 import { CapacityTrendsCard } from './CapacityTrendsCard';
 import { ComplianceDriftCard } from './ComplianceDriftCard';
-
-const API_BASE = 'http://localhost:8000';
+import { API_BASE } from '../config';
 
 interface DashboardData {
   health: any;

@@ -23,7 +23,7 @@ class PF9LogCollector:
         self.ssh_key_path = os.getenv('PF9_SSH_KEY_PATH')
         
         # ONLY use SSH_PF9_HOSTS for logs - both display and SSH connections
-        ssh_hosts_str = os.getenv('SSH_PF9_HOSTS', '172.17.18.5,172.17.18.15,172.17.18.16,172.17.18.18')
+        ssh_hosts_str = os.getenv('SSH_PF9_HOSTS', '')
         self.hosts = [host.strip() for host in ssh_hosts_str.split(',')]
         
         print(f"Log collector initialized with SSH hosts: {self.hosts}")  # Debug
@@ -43,7 +43,19 @@ class PF9LogCollector:
         
         try:
             client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # Load system known hosts; reject unknown hosts to prevent MITM attacks
+            known_hosts_path = os.getenv('SSH_KNOWN_HOSTS', os.path.expanduser('~/.ssh/known_hosts'))
+            if os.path.isfile(known_hosts_path):
+                client.load_host_keys(known_hosts_path)
+                client.set_missing_host_key_policy(paramiko.WarningPolicy())
+            else:
+                import warnings
+                warnings.warn(
+                    f"SSH known_hosts file not found at {known_hosts_path}. "
+                    "Using WarningPolicy — set SSH_KNOWN_HOSTS env var for production.",
+                    stacklevel=2,
+                )
+                client.set_missing_host_key_policy(paramiko.WarningPolicy())
             
             # Connect directly to SSH host (no mapping needed)
             if self.ssh_password:

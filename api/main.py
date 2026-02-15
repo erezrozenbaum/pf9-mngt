@@ -173,7 +173,7 @@ def db_conn():
         port=int(os.getenv("PF9_DB_PORT", "5432")),
         dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
         user=os.getenv("PF9_DB_USER", "pf9"),
-        password=os.getenv("PF9_DB_PASSWORD", "pf9_password_change_me"),
+        password=os.getenv("PF9_DB_PASSWORD", ""),
     )
 
 
@@ -272,6 +272,7 @@ async def rbac_middleware(request: Request, call_next):
         "monitoring": "monitoring",
         "users": "users",
         "dashboard": "dashboard",
+        "restore": "restore",
     }
 
     resource = resource_map.get(segment)
@@ -347,6 +348,7 @@ async def access_log_middleware(request: Request, call_next):
 
 # Import snapshot management routes
 from snapshot_management import setup_snapshot_routes
+from restore_management import setup_restore_routes
 
 # Startup event
 @app.on_event("startup")
@@ -355,6 +357,8 @@ async def startup_event():
     initialize_default_admin()
     # Setup snapshot management routes
     setup_snapshot_routes(app, db_conn)
+    # Setup restore management routes
+    setup_restore_routes(app, db_conn)
     print(f"PF9 Management API started - Authentication: {'Enabled' if ENABLE_AUTHENTICATION else 'Disabled'}")
 
 # =====================================================================
@@ -561,7 +565,7 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
         'servers', 'volumes', 'snapshots', 'networks', 'subnets', 'ports',
         'floatingips', 'domains', 'projects', 'flavors', 'images',
         'hypervisors', 'users', 'monitoring', 'history', 'audit',
-        'api_metrics', 'system_logs'
+        'api_metrics', 'system_logs', 'restore'
     ]
     
     try:
@@ -633,7 +637,10 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
             {"id": 23, "resource": "monitoring", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
             {"id": 24, "resource": "monitoring", "action": "write", "roles": ["admin", "superadmin"]},
             {"id": 25, "resource": "history", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
-            {"id": 26, "resource": "audit", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]}
+            {"id": 26, "resource": "audit", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 27, "resource": "restore", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
+            {"id": 28, "resource": "restore", "action": "write", "roles": ["admin", "superadmin"]},
+            {"id": 29, "resource": "restore", "action": "admin", "roles": ["superadmin"]}
         ]
 
 @app.post("/auth/users")
@@ -1094,6 +1101,8 @@ VALID_SERVER_SORT_COLUMNS = {
     "image_name": "image_name",
     "vcpus": "s.vcpus",
     "ram_mb": "s.ram_mb",
+    "disk_gb": "s.disk_gb",
+    "hypervisor_hostname": "s.hypervisor_hostname",
 }
 
 
@@ -1186,7 +1195,16 @@ def servers(
         -- Add vCPU and RAM from flavor
         fl.vcpus                             AS vcpus,
         fl.ram_mb                            AS ram_mb,
-        fl.disk_gb                           AS disk_gb,
+        fl.disk_gb                           AS flavor_disk_gb,
+        -- Use flavor disk unless 0 (boot-from-volume), then sum attached volume sizes
+        COALESCE(NULLIF(fl.disk_gb, 0),
+          (SELECT COALESCE(SUM(vol2.size_gb), 0)
+           FROM volumes vol2
+           WHERE vol2.id IN (
+             SELECT (jsonb_array_elements_text(s.raw_json->'os-extended-volumes:volumes_attached')::jsonb)->>'id'
+           )
+          )
+        )                                    AS disk_gb,
         -- Extract attached volumes
         (SELECT STRING_AGG(vol_info.volume_id || ':' || COALESCE(vol.name, 'Unknown') || ':' || COALESCE(vol.size_gb::text, '0'), '|')
          FROM (
@@ -1199,6 +1217,15 @@ def servers(
         ) AS attached_volumes,
         s.created_at,
         s.last_seen_at,
+        -- Host utilization from hypervisor
+        s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname' AS hypervisor_hostname,
+        h.vcpus                              AS host_vcpus_total,
+        COALESCE((h.raw_json->>'vcpus_used')::integer, 0)   AS host_vcpus_used,
+        h.memory_mb                          AS host_ram_total_mb,
+        COALESCE((h.raw_json->>'memory_mb_used')::bigint, 0) AS host_ram_used_mb,
+        h.local_gb                           AS host_disk_total_gb,
+        COALESCE((h.raw_json->>'local_gb_used')::integer, 0) AS host_disk_used_gb,
+        COALESCE((h.raw_json->>'running_vms')::integer, 0)  AS host_running_vms,
         s.raw_json
       FROM servers s
       LEFT JOIN projects p
@@ -1207,6 +1234,8 @@ def servers(
         ON d.id = p.domain_id
       LEFT JOIN flavors fl
         ON fl.id = s.flavor_id
+      LEFT JOIN hypervisors h
+        ON h.hostname = s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname'
     ),
     fixed_ips AS (
       SELECT
@@ -2405,6 +2434,155 @@ def list_hypervisors(
 @app.get("/test-simple")
 def test_simple():
     return {"message": "simple test works"}
+
+
+# -----------------------------------------------------------------------
+# DB-backed monitoring fallback (when monitoring service has no live data)
+# -----------------------------------------------------------------------
+
+@app.get("/monitoring/host-metrics")
+def monitoring_host_metrics():
+    """Return host resource utilization from hypervisors table (DB fallback for monitoring)."""
+    sql = """
+    SELECT 
+        COALESCE(raw_json->>'hypervisor_hostname', hostname) AS hostname,
+        NOW()::text AS timestamp,
+        COALESCE(vcpus, 0) AS cpu_total,
+        CASE WHEN vcpus > 0 
+            THEN ROUND(COALESCE((raw_json->>'vcpus_used')::numeric, 0) / vcpus * 100, 1) 
+            ELSE 0 
+        END AS cpu_usage_percent,
+        COALESCE(memory_mb, 0) AS memory_total_mb,
+        COALESCE((raw_json->>'memory_mb_used')::bigint, 0) AS memory_used_mb,
+        CASE WHEN memory_mb > 0 
+            THEN ROUND(COALESCE((raw_json->>'memory_mb_used')::numeric, 0) / memory_mb * 100, 1) 
+            ELSE 0 
+        END AS memory_usage_percent,
+        COALESCE(local_gb, 0) AS storage_total_gb,
+        COALESCE((raw_json->>'local_gb_used')::integer, 0) AS storage_used_gb,
+        CASE WHEN local_gb > 0 
+            THEN ROUND(COALESCE((raw_json->>'local_gb_used')::numeric, 0) / local_gb * 100, 1) 
+            ELSE 0 
+        END AS storage_usage_percent,
+        COALESCE((raw_json->>'running_vms')::integer, 0) AS running_vms
+    FROM hypervisors
+    WHERE state = 'up' OR state IS NULL
+    ORDER BY hostname;
+    """
+    rows = run_query(sql)
+    return {"data": rows, "timestamp": str(datetime.now()), "source": "database"}
+
+
+@app.get("/monitoring/vm-metrics")
+def monitoring_vm_metrics():
+    """Return per-VM resource allocation from servers + flavors + hypervisors (DB fallback)."""
+    sql = """
+    SELECT 
+        s.id AS vm_id,
+        COALESCE(s.name, s.id) AS vm_name,
+        s.raw_json->'addresses' AS _addresses_json,
+        COALESCE(s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname', '') AS host,
+        d.name AS domain,
+        p.name AS project_name,
+        fl.name AS flavor,
+        NOW()::text AS timestamp,
+        COALESCE(fl.vcpus, 0) AS cpu_total,
+        COALESCE(fl.ram_mb, 0) AS memory_total_mb,
+        COALESCE(fl.ram_mb, 0) AS memory_allocated_mb,
+        COALESCE(NULLIF(fl.disk_gb, 0),
+            (SELECT COALESCE(SUM(vol.size_gb), 0) FROM volumes vol 
+             WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(vol.raw_json->'attachments') att 
+                           WHERE att->>'server_id' = s.id))
+        ) AS storage_allocated_gb,
+        -- Per-VM CPU/RAM usage cannot be determined from DB alone;
+        -- show proportional share of host usage as estimate
+        CASE WHEN h.vcpus > 0 AND fl.vcpus > 0
+            THEN ROUND(COALESCE((h.raw_json->>'vcpus_used')::numeric, 0) / h.vcpus * 100 
+                        * fl.vcpus::numeric / NULLIF(COALESCE((h.raw_json->>'vcpus_used')::integer, 1), 0), 1)
+            ELSE 0
+        END AS cpu_usage_percent,
+        CASE WHEN h.memory_mb > 0 AND fl.ram_mb > 0
+            THEN ROUND(fl.ram_mb::numeric / h.memory_mb * 
+                        COALESCE((h.raw_json->>'memory_mb_used')::numeric, 0) / 
+                        NULLIF(COALESCE((h.raw_json->>'memory_mb_used')::numeric, 1), 0) * 100, 1)
+            ELSE 0
+        END AS memory_usage_percent
+    FROM servers s
+    LEFT JOIN projects p ON p.id = s.project_id
+    LEFT JOIN domains d ON d.id = p.domain_id
+    LEFT JOIN flavors fl ON fl.id = s.flavor_id
+    LEFT JOIN hypervisors h ON h.hostname = s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname'
+    WHERE s.status = 'ACTIVE'
+    ORDER BY s.name;
+    """
+    rows = run_query(sql)
+
+    # Post-process: extract VM IP from OpenStack addresses JSON and map storage fields
+    for row in rows:
+        # Extract first IP from addresses structure: {"net": [{"addr": "x.x.x.x", ...}]}
+        vm_ip = "Unknown"
+        addresses = row.pop("_addresses_json", None)
+        if addresses:
+            if isinstance(addresses, str):
+                try:
+                    addresses = json.loads(addresses)
+                except Exception:
+                    addresses = None
+            if isinstance(addresses, dict):
+                for net_name, addrs in addresses.items():
+                    if isinstance(addrs, list):
+                        for entry in addrs:
+                            if isinstance(entry, dict) and "addr" in entry:
+                                vm_ip = entry["addr"]
+                                break
+                    if vm_ip != "Unknown":
+                        break
+        row["vm_ip"] = vm_ip
+
+        # Map storage_allocated_gb → storage_total_gb for UI compatibility
+        alloc = row.get("storage_allocated_gb", 0) or 0
+        row["storage_total_gb"] = alloc
+        row["storage_used_gb"] = 0  # Not knowable from DB, but prevents N/A
+        row["storage_usage_percent"] = 0
+
+    return {"data": rows, "timestamp": str(datetime.now()), "source": "database"}
+
+
+@app.get("/monitoring/summary")
+def monitoring_summary():
+    """Return monitoring summary from DB (fallback when monitoring service has no data)."""
+    hosts_sql = """
+    SELECT 
+        COUNT(*) AS total_hosts,
+        ROUND(AVG(CASE WHEN vcpus > 0 THEN COALESCE((raw_json->>'vcpus_used')::numeric, 0) / vcpus * 100 END), 1) AS avg_cpu_usage,
+        ROUND(MAX(CASE WHEN vcpus > 0 THEN COALESCE((raw_json->>'vcpus_used')::numeric, 0) / vcpus * 100 END), 1) AS max_cpu_usage,
+        ROUND(AVG(CASE WHEN memory_mb > 0 THEN COALESCE((raw_json->>'memory_mb_used')::numeric, 0) / memory_mb * 100 END), 1) AS avg_memory_usage,
+        ROUND(MAX(CASE WHEN memory_mb > 0 THEN COALESCE((raw_json->>'memory_mb_used')::numeric, 0) / memory_mb * 100 END), 1) AS max_memory_usage,
+        COALESCE(SUM((raw_json->>'running_vms')::integer), 0) AS total_vms
+    FROM hypervisors
+    WHERE state = 'up' OR state IS NULL;
+    """
+    host_row = run_query(hosts_sql)
+    h = host_row[0] if host_row else {}
+    
+    return {
+        "total_vms": int(h.get("total_vms", 0)),
+        "total_hosts": int(h.get("total_hosts", 0)),
+        "last_update": str(datetime.now()),
+        "source": "database",
+        "vm_stats": {
+            "avg_cpu_usage": float(h.get("avg_cpu_usage", 0) or 0),
+            "max_cpu_usage": float(h.get("max_cpu_usage", 0) or 0),
+            "avg_memory_usage": float(h.get("avg_memory_usage", 0) or 0),
+            "max_memory_usage": float(h.get("max_memory_usage", 0) or 0),
+        },
+        "host_stats": {
+            "avg_cpu_usage": float(h.get("avg_cpu_usage", 0) or 0),
+            "max_cpu_usage": float(h.get("max_cpu_usage", 0) or 0),
+            "avg_memory_usage": float(h.get("avg_memory_usage", 0) or 0),
+            "max_memory_usage": float(h.get("max_memory_usage", 0) or 0),
+        }
+    }
 
 
 @app.get("/test-history")

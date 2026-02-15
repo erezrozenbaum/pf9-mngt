@@ -8,9 +8,9 @@ set -e
 # Configuration from environment variables
 LDAP_DOMAIN=${LDAP_DOMAIN:-"pf9mgmt.local"}
 LDAP_BASE_DN=${LDAP_BASE_DN:-"dc=pf9mgmt,dc=local"}
-LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD:-"admin"}
+LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD:?"ERROR: LDAP_ADMIN_PASSWORD must be set"}
 DEFAULT_ADMIN_USER=${DEFAULT_ADMIN_USER:-"admin"}
-DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-"admin"}
+DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:?"ERROR: DEFAULT_ADMIN_PASSWORD must be set"}
 
 echo "Setting up LDAP directory structure for domain: $LDAP_DOMAIN"
 

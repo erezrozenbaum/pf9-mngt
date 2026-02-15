@@ -906,6 +906,9 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('viewer', 'snapshot_runs', 'read'),
 ('viewer', 'snapshot_records', 'read'),
 ('viewer', 'dashboard', 'read'),
+('viewer', 'monitoring', 'read'),
+('viewer', 'history', 'read'),
+('viewer', 'audit', 'read'),
 
 -- Operator permissions (read + limited write operations)
 ('operator', 'servers', 'read'),
@@ -927,6 +930,8 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('operator', 'snapshot_runs', 'read'),
 ('operator', 'snapshot_records', 'read'),
 ('operator', 'dashboard', 'read'),
+('operator', 'monitoring', 'read'),
+('operator', 'audit', 'read'),
 
 -- Admin permissions (full access except user management)
 ('admin', 'servers', 'admin'),
@@ -951,6 +956,7 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('admin', 'snapshot_runs', 'admin'),
 ('admin', 'snapshot_records', 'admin'),
 ('admin', 'dashboard', 'admin'),
+('admin', 'monitoring', 'write'),
 
 -- Super Admin permissions (everything including user management)
 ('superadmin', 'servers', 'admin'),
@@ -976,8 +982,69 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('superadmin', 'snapshot_runs', 'admin'),
 ('superadmin', 'snapshot_records', 'admin'),
 ('superadmin', 'dashboard', 'admin'),
+('superadmin', 'monitoring', 'admin'),
+
+-- Restore permissions
+('viewer', 'restore', 'read'),
+('operator', 'restore', 'read'),
+('admin', 'restore', 'write'),
+('superadmin', 'restore', 'admin'),
 
 ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- =====================================================================
+-- SNAPSHOT RESTORE TABLES
+-- =====================================================================
+
+-- Restore jobs (each restore operation is a tracked job)
+CREATE TABLE IF NOT EXISTS restore_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_by VARCHAR(255) NOT NULL,
+    executed_by VARCHAR(255),
+    project_id TEXT NOT NULL,
+    project_name TEXT,
+    vm_id TEXT NOT NULL,
+    vm_name TEXT,
+    restore_point_id TEXT NOT NULL,        -- Cinder snapshot ID used as restore point
+    restore_point_name TEXT,
+    mode VARCHAR(20) NOT NULL DEFAULT 'NEW',  -- 'NEW' (side-by-side) or 'REPLACE'
+    ip_strategy VARCHAR(30) NOT NULL DEFAULT 'NEW_IPS',  -- 'NEW_IPS', 'TRY_SAME_IPS', 'SAME_IPS_OR_FAIL'
+    requested_name TEXT,                    -- Name for the new VM
+    boot_mode VARCHAR(30) NOT NULL DEFAULT 'BOOT_FROM_VOLUME',  -- 'BOOT_FROM_VOLUME' or 'BOOT_FROM_IMAGE'
+    status VARCHAR(30) NOT NULL DEFAULT 'PLANNED',  -- PLANNED, PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED, INTERRUPTED
+    plan_json JSONB NOT NULL,               -- Full plan as generated and approved
+    result_json JSONB,                      -- new_server_id, new_volume_id, new_port_ids, new_ips, etc.
+    failure_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    last_heartbeat TIMESTAMPTZ,             -- Updated per step for staleness detection
+    canceled_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_project ON restore_jobs(project_id);
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_vm ON restore_jobs(vm_id);
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_status ON restore_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_created_at ON restore_jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_created_by ON restore_jobs(created_by);
+-- Prevent concurrent restores for the same VM
+CREATE UNIQUE INDEX IF NOT EXISTS idx_restore_jobs_vm_running
+    ON restore_jobs(vm_id) WHERE status IN ('PENDING', 'RUNNING');
+
+-- Restore job steps (each step in the state machine)
+CREATE TABLE IF NOT EXISTS restore_job_steps (
+    id BIGSERIAL PRIMARY KEY,
+    job_id UUID NOT NULL REFERENCES restore_jobs(id) ON DELETE CASCADE,
+    step_order INTEGER NOT NULL,
+    step_name VARCHAR(60) NOT NULL,         -- VALIDATE_LIVE_STATE, CREATE_VOLUME_FROM_SNAPSHOT, etc.
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING',  -- PENDING, RUNNING, SUCCEEDED, FAILED, SKIPPED
+    started_at TIMESTAMPTZ,
+    finished_at TIMESTAMPTZ,
+    details_json JSONB,                     -- Step-specific input/output data
+    error_text TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_restore_job_steps_job ON restore_job_steps(job_id);
+CREATE INDEX IF NOT EXISTS idx_restore_job_steps_status ON restore_job_steps(status);
 
 -- =====================================================================
 -- VIEW: v_recent_changes (for audit/compliance UI)

@@ -4,7 +4,9 @@
 param(
     [string]$LdapContainer = "pf9_ldap",
     [string]$AdminPassword = $env:LDAP_ADMIN_PASSWORD,
-    [string]$BaseDN = $env:LDAP_BASE_DN
+    [string]$BaseDN = $env:LDAP_BASE_DN,
+    [string]$DefaultAdminUser = $(if ($env:DEFAULT_ADMIN_USER) { $env:DEFAULT_ADMIN_USER } else { "admin" }),
+    [string]$DefaultAdminPassword = $env:DEFAULT_ADMIN_PASSWORD
 )
 
 Write-Host "PF9 Management System - LDAP Setup" -ForegroundColor Green
@@ -16,6 +18,11 @@ if (-not $AdminPassword) {
 
 if (-not $BaseDN) {
     $BaseDN = "dc=pf9mgmt,dc=local"
+}
+
+if (-not $DefaultAdminPassword) {
+    $DefaultAdminPassword = Read-Host "Enter Default Admin Password" -AsSecureString
+    $DefaultAdminPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($DefaultAdminPassword))
 }
 
 Write-Host "Setting up LDAP directory structure..." -ForegroundColor Yellow
@@ -34,8 +41,8 @@ Write-Host "Executing LDAP setup script in container..." -ForegroundColor Yellow
 docker exec $LdapContainer bash -c "
 export LDAP_BASE_DN='$BaseDN'
 export LDAP_ADMIN_PASSWORD='$AdminPassword'
-export DEFAULT_ADMIN_USER='admin'
-export DEFAULT_ADMIN_PASSWORD='admin'
+export DEFAULT_ADMIN_USER='$DefaultAdminUser'
+export DEFAULT_ADMIN_PASSWORD='$DefaultAdminPassword'
 bash /container/service/setup.sh
 "
 

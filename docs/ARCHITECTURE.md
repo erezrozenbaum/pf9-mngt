@@ -65,6 +65,7 @@ The Platform9 Management System is a **microservices-based enterprise platform**
 // Component Structure
 src/
 ├── App.tsx              # Main application component
+├── config.ts            # Centralised API_BASE + MONITORING_BASE config
 ├── components/
 │   └── ThemeToggle.tsx  # Theme switching component
 ├── hooks/
@@ -83,7 +84,7 @@ src/
 **Technology**: FastAPI + Python 3.11+
 **Port**: 8000
 **Responsibilities**:
-- RESTful API endpoints (80+ routes across infrastructure and analytics)
+- RESTful API endpoints (88+ routes across infrastructure, analytics, and restore)
 - Database operations and queries
 - Platform9 integration proxy
 - Administrative operations
@@ -96,6 +97,7 @@ src/
 api/
 ├── main.py              # FastAPI application and routes (66+ infrastructure endpoints)
 ├── dashboards.py        # Analytics dashboard routes (14 endpoints)
+├── restore_management.py # Snapshot restore planner + executor (8 endpoints)
 ├── pf9_control.py       # Platform9 API integration
 ├── requirements.txt     # Python dependencies
 └── Dockerfile          # Container configuration
@@ -126,7 +128,7 @@ GET  /dashboard/tenant-summary              # Quick tenant overview
 # Core Resource Management (19+ types)
 GET  /domains                    # List domains
 GET  /tenants                    # List projects/tenants  
-GET  /servers                    # List VMs with filtering
+GET  /servers                    # List VMs with disk size, host utilization
 GET  /volumes                    # List volumes with metadata
 GET  /snapshots                  # List snapshots
 GET  /networks                   # List networks
@@ -160,6 +162,16 @@ GET  /history/compare/{type}/{id}  # Compare two history snapshots
 GET  /history/details/{type}/{id}  # Detailed change info with sequencing
 GET  /audit/compliance-report    # Compliance analysis
 GET  /audit/change-patterns      # Change pattern analysis
+
+# Snapshot Restore (api/restore_management.py - 8 endpoints, feature-flagged)
+GET  /restore/config                   # Feature configuration status
+GET  /restore/snapshots                # Available snapshots for restore
+GET  /restore/vm/{vm_id}/restore-points # VM-specific restore points
+POST /restore/plan                     # Create restore plan
+POST /restore/execute                  # Execute restore plan
+GET  /restore/jobs                     # List restore jobs
+GET  /restore/jobs/{job_id}            # Job details + step progress
+POST /restore/cancel/{job_id}          # Cancel running restore
 
 # System Health & Testing
 GET  /health                     # Service health check
@@ -203,11 +215,12 @@ monitoring/
 │    └─ host_metrics_collector.py                                     │
 │         ├─ Scrapes node_exporter   ✅                               │
 │         ├─ Attempts libvirt_exporter ❌                             │
-│         └─ Writes to metrics_cache.json ✅                          │
+│         ├─ Resolves hostnames via PF9_HOST_MAP ✅                   │
+│         └─ Writes to monitoring/cache/metrics_cache.json ✅          │
 │                     │                                                │
 │                     ▼                                                │
-│  Persistent Cache                                                    │
-│    └─ /tmp/metrics_cache.json                                       │
+│  Persistent Cache (Directory Mount: ./monitoring/cache:/tmp/cache)   │
+│    └─ /tmp/cache/metrics_cache.json                                 │
 │         ├─ Survives container restarts ✅                           │
 │         └─ Shared with monitoring container ✅                      │
 │                     │                                                │
@@ -421,6 +434,25 @@ graph TD
     G --> A
 ```
 
+### 4. Snapshot Restore Flow
+```mermaid
+graph TD
+    A[UI Restore Wizard] --> B[POST /restore/plan]
+    B --> C[RestorePlanner]
+    C --> D[Validate VM + Snapshot]
+    D --> E[Check Quotas]
+    E --> F[Build Step List]
+    F --> G[Save PLANNED Job]
+    G --> H[POST /restore/execute]
+    H --> I[RestoreExecutor]
+    I --> J[Create Volume from Snapshot]
+    J --> K[Create Network Ports]
+    K --> L[Create Server]
+    L --> M[Wait for ACTIVE]
+    M --> N[Mark COMPLETED]
+    I -->|Failure| O[Rollback + Mark FAILED]
+```
+
 ## 🚀 Deployment Architecture
 
 ### Docker Compose Stack
@@ -552,6 +584,9 @@ POSTGRES_DB=pf9_mgmt
 PF9_DB_HOST=db
 PF9_ENABLE_DB=1
 PF9_OUTPUT_DIR=/reports
+
+# Monitoring Configuration
+# PF9_HOST_MAP=10.0.1.10:host-01,10.0.1.11:host-02
 
 # Snapshot Service User (Cross-Tenant Snapshots)
 SNAPSHOT_SERVICE_USER_EMAIL=<your-snapshot-user@your-domain.com>
