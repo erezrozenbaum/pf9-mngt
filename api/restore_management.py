@@ -52,8 +52,34 @@ PF9_PROJECT_DOMAIN = os.getenv("PF9_PROJECT_DOMAIN", "Default")
 
 # Service user for cross-tenant operations
 SNAPSHOT_SERVICE_USER_EMAIL = os.getenv("SNAPSHOT_SERVICE_USER_EMAIL", "")
-SNAPSHOT_SERVICE_USER_PASSWORD = os.getenv("SNAPSHOT_SERVICE_USER_PASSWORD", "")
 SNAPSHOT_SERVICE_USER_DOMAIN = os.getenv("SNAPSHOT_SERVICE_USER_DOMAIN", "default")
+
+
+def _resolve_service_user_password() -> str:
+    """
+    Resolve the snapshot service user password.
+    Tries in order:
+      1. SNAPSHOT_SERVICE_USER_PASSWORD (plaintext)
+      2. SNAPSHOT_USER_PASSWORD_ENCRYPTED + SNAPSHOT_PASSWORD_KEY (Fernet)
+    Returns empty string if no password is available.
+    """
+    plain = os.getenv("SNAPSHOT_SERVICE_USER_PASSWORD", "")
+    if plain:
+        return plain
+
+    encrypted = os.getenv("SNAPSHOT_USER_PASSWORD_ENCRYPTED", "")
+    key = os.getenv("SNAPSHOT_PASSWORD_KEY", "")
+    if encrypted and key:
+        try:
+            from cryptography.fernet import Fernet
+            f = Fernet(key.encode() if isinstance(key, str) else key)
+            return f.decrypt(encrypted.encode() if isinstance(encrypted, str) else encrypted).decode()
+        except Exception as e:
+            logger.error(f"Failed to decrypt service user password: {e}")
+    return ""
+
+
+SNAPSHOT_SERVICE_USER_PASSWORD = _resolve_service_user_password()
 
 
 # ============================================================================
