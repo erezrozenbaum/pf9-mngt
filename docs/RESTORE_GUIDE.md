@@ -53,6 +53,7 @@ The restore is fully asynchronous — the API returns immediately after starting
 
 ### Prerequisites
 - At least one Cinder volume snapshot exists for the target VM's boot volume
+  > **Tip**: If the VM was just created and the hourly scheduler hasn't run yet, use the **🔄 Sync & Snapshot Now** button on the Restore wizard (Screen 1) to trigger an immediate snapshot pipeline.
 - The Platform9 service user must have admin role on the target project (same as snapshot service user)
 - Sufficient quota in the target project for: 1 volume, 1 server, N ports (matching original)
 - `RESTORE_ENABLED=true` in the environment

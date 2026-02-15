@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-02-15
+
+### Changed
+- **Snapshot scheduler default interval changed from daily to hourly** — `POLICY_ASSIGN_INTERVAL_MINUTES` and `AUTO_SNAPSHOT_INTERVAL_MINUTES` now default to `60` (was `1440`). Existing `_has_snapshot_today()` deduplication prevents duplicate snapshots; newly created VMs are now picked up within one hour instead of waiting up to 24 hours.
+
+### Added
+- **On-demand snapshot pipeline ("Sync & Snapshot Now")** — admins can trigger the full snapshot pipeline (policy assignment → inventory sync → auto snapshots → inventory sync) on demand without waiting for the next scheduled run
+  - **API**: `POST /snapshot/run-now` (requires `snapshots:admin`) returns job ID; poll `GET /snapshot/run-now/status` for step-by-step progress
+  - **UI**: "🔄 Sync & Snapshot Now" button on Delete & Restore → Screen 1, next to tenant selector; shows real-time step progress with color-coded status pills
+  - Built-in concurrency guard — only one on-demand run at a time (409 Conflict if already running)
+  - Auto-refreshes VM list after pipeline completes
+
 ## [1.4.1] - 2026-02-15
 
 ### Fixed
