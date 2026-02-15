@@ -10,8 +10,21 @@ from fastapi import HTTPException, status, Depends
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
+import subprocess
+import threading
+import logging
+import os
+import time
 
 from auth import require_permission, get_current_user, User
+
+logger = logging.getLogger("snapshot_management")
+
+# ---------------------------------------------------------------------------
+# On-Demand Snapshot Pipeline State
+# ---------------------------------------------------------------------------
+_on_demand_lock = threading.Lock()
+_on_demand_job: Optional[Dict[str, Any]] = None
 
 
 # ============================================================================
@@ -1383,3 +1396,157 @@ def setup_snapshot_routes(app, get_db_connection):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to retrieve compliance report: {str(e)}"
             )
+
+    # ========================================================================
+    # On-Demand Snapshot Pipeline  ("Sync & Snapshot Now")
+    # ========================================================================
+
+    def _run_on_demand_pipeline():
+        """Run the full snapshot pipeline in a background thread."""
+        global _on_demand_job
+        steps = [
+            {"key": "policy_assign", "label": "Policy Assignment",
+             "cmd": ["python", "snapshots/p9_snapshot_policy_assign.py",
+                     "--config", os.getenv("POLICY_ASSIGN_CONFIG",
+                                           "/app/snapshots/snapshot_policy_rules.json"),
+                     "--merge-existing"]},
+            {"key": "rvtools_pre", "label": "Inventory Sync (pre-snapshot)",
+             "cmd": ["python", "pf9_rvtools.py"]},
+            {"key": "auto_snapshots", "label": "Auto Snapshots",
+             "cmd": None},  # handled specially — iterates policies
+            {"key": "rvtools_post", "label": "Inventory Sync (post-snapshot)",
+             "cmd": ["python", "pf9_rvtools.py"]},
+        ]
+
+        with _on_demand_lock:
+            _on_demand_job["steps"] = [
+                {"key": s["key"], "label": s["label"], "status": "pending"}
+                for s in steps
+            ]
+
+        for step_def in steps:
+            key = step_def["key"]
+
+            # mark running
+            with _on_demand_lock:
+                for s in _on_demand_job["steps"]:
+                    if s["key"] == key:
+                        s["status"] = "running"
+                        s["started_at"] = datetime.now(timezone.utc).isoformat()
+
+            try:
+                if key == "auto_snapshots":
+                    _run_auto_snapshot_step()
+                else:
+                    result = subprocess.run(step_def["cmd"], text=True, timeout=1800)
+                    if result.returncode != 0:
+                        raise RuntimeError(f"exit code {result.returncode}")
+
+                with _on_demand_lock:
+                    for s in _on_demand_job["steps"]:
+                        if s["key"] == key:
+                            s["status"] = "completed"
+                            s["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+            except Exception as exc:
+                logger.error(f"On-demand step '{key}' failed: {exc}")
+                with _on_demand_lock:
+                    for s in _on_demand_job["steps"]:
+                        if s["key"] == key:
+                            s["status"] = "failed"
+                            s["error"] = str(exc)
+                            s["finished_at"] = datetime.now(timezone.utc).isoformat()
+                    _on_demand_job["status"] = "failed"
+                    _on_demand_job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                return
+
+        with _on_demand_lock:
+            _on_demand_job["status"] = "completed"
+            _on_demand_job["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+    def _run_auto_snapshot_step():
+        """Run auto snapshots for every active policy (mirrors scheduler logic)."""
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT DISTINCT jsonb_array_elements_text(policies) AS policy
+                FROM snapshot_policy_sets WHERE is_active = true
+            """)
+            policies = sorted(set(r[0] for r in cur.fetchall()))
+            cur.close()
+            conn.close()
+        except Exception:
+            policies = []
+
+        if not policies:
+            logger.info("On-demand: no active policies found; skipping auto snapshots")
+            return
+
+        max_new = os.getenv("AUTO_SNAPSHOT_MAX_NEW", "200")
+        max_size = os.getenv("AUTO_SNAPSHOT_MAX_SIZE_GB", "200")
+
+        for policy in policies:
+            args = [
+                "python", "snapshots/p9_auto_snapshots.py",
+                "--policy", policy,
+                "--max-new", max_new,
+                "--max-size-gb", max_size,
+            ]
+            result = subprocess.run(args, text=True, timeout=1800)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"auto snapshot for policy '{policy}' exited {result.returncode}"
+                )
+
+    @app.post("/snapshot/run-now", status_code=status.HTTP_202_ACCEPTED)
+    async def run_snapshot_now(
+        current_user: User = Depends(get_current_user),
+        _has_permission: bool = Depends(require_permission("snapshots", "admin"))
+    ):
+        """
+        Trigger the full snapshot pipeline on demand:
+        policy assignment → inventory sync → auto snapshots → inventory sync.
+        Requires admin or superadmin role.
+        Returns immediately with a job ID; poll GET /snapshot/run-now/status.
+        """
+        global _on_demand_job
+
+        with _on_demand_lock:
+            if _on_demand_job and _on_demand_job.get("status") == "running":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An on-demand snapshot pipeline is already running."
+                )
+
+            import uuid
+            job_id = str(uuid.uuid4())
+            _on_demand_job = {
+                "job_id": job_id,
+                "status": "running",
+                "triggered_by": current_user.username,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": None,
+                "steps": [],
+            }
+
+        thread = threading.Thread(target=_run_on_demand_pipeline, daemon=True)
+        thread.start()
+
+        return {
+            "job_id": job_id,
+            "status": "running",
+            "message": "Snapshot pipeline started. Poll /snapshot/run-now/status for progress.",
+        }
+
+    @app.get("/snapshot/run-now/status")
+    async def get_run_now_status(
+        current_user: User = Depends(get_current_user),
+        _has_permission: bool = Depends(require_permission("snapshots", "read"))
+    ):
+        """Get the status of the most recent on-demand snapshot pipeline run."""
+        global _on_demand_job
+        with _on_demand_lock:
+            if _on_demand_job is None:
+                return {"status": "idle", "message": "No on-demand run has been triggered yet."}
+            return dict(_on_demand_job)

@@ -8,8 +8,8 @@ Runs:
 
 Environment:
   SNAPSHOT_SCHEDULER_ENABLED=true|false
-  POLICY_ASSIGN_INTERVAL_MINUTES=1440 (default: once per day)
-  AUTO_SNAPSHOT_INTERVAL_MINUTES=1440 (default: once per day)
+  POLICY_ASSIGN_INTERVAL_MINUTES=60 (default: once per hour)
+  AUTO_SNAPSHOT_INTERVAL_MINUTES=60 (default: once per hour)
   POLICY_ASSIGN_CONFIG=/app/snapshots/snapshot_policy_rules.json
   POLICY_ASSIGN_MERGE_EXISTING=true|false
   POLICY_ASSIGN_DRY_RUN=true|false
@@ -71,8 +71,8 @@ DB_USER = os.getenv("PF9_DB_USER", os.getenv("POSTGRES_USER", "pf9"))
 DB_PASSWORD = os.getenv("PF9_DB_PASSWORD", os.getenv("POSTGRES_PASSWORD", ""))
 
 SCHEDULER_ENABLED = os.getenv("SNAPSHOT_SCHEDULER_ENABLED", "true").lower() in ("true", "1", "yes")
-POLICY_ASSIGN_INTERVAL_MINUTES = int(os.getenv("POLICY_ASSIGN_INTERVAL_MINUTES", "1440"))
-AUTO_SNAPSHOT_INTERVAL_MINUTES = int(os.getenv("AUTO_SNAPSHOT_INTERVAL_MINUTES", "1440"))
+POLICY_ASSIGN_INTERVAL_MINUTES = int(os.getenv("POLICY_ASSIGN_INTERVAL_MINUTES", "60"))
+AUTO_SNAPSHOT_INTERVAL_MINUTES = int(os.getenv("AUTO_SNAPSHOT_INTERVAL_MINUTES", "60"))
 POLICY_ASSIGN_CONFIG = os.getenv("POLICY_ASSIGN_CONFIG", "/app/snapshots/snapshot_policy_rules.json")
 POLICY_ASSIGN_MERGE = os.getenv("POLICY_ASSIGN_MERGE_EXISTING", "true").lower() in ("true", "1", "yes")
 POLICY_ASSIGN_DRY_RUN = os.getenv("POLICY_ASSIGN_DRY_RUN", "false").lower() in ("true", "1", "yes")

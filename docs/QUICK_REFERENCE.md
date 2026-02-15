@@ -38,7 +38,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 
 #### Advanced Snapshot Management
 - **Cross-Tenant Snapshots**: Snapshots created in correct tenant projects via dedicated service user
-- **Automated Snapshot Creation**: Policy-driven with daily/monthly schedules
+- **Automated Snapshot Creation**: Policy-driven with hourly scheduling (default 60 min, configurable)
+- **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" button on Restore tab + `POST /snapshot/run-now` API
 - **Metadata-Driven Policies**: Volume-level configuration via OpenStack metadata
 - **Multi-Policy Support**: Volumes support multiple concurrent policies (daily_5, monthly_1st, monthly_15th)
 - **Compliance Monitoring**: SLA tracking and policy adherence reporting with tenant/domain aggregation
