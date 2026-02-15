@@ -759,9 +759,31 @@ Request Body:
 | `restore_point_id` | Yes | — | Cinder snapshot UUID |
 | `mode` | No | `NEW` | `NEW` (side-by-side) or `REPLACE` (destructive) |
 | `new_vm_name` | No | auto-generated | Name for the restored VM (NEW mode only) |
-| `ip_strategy` | No | `NEW_IPS` | `NEW_IPS`, `TRY_SAME_IPS`, or `SAME_IPS_OR_FAIL` |
+| `ip_strategy` | No | `NEW_IPS` | `NEW_IPS`, `TRY_SAME_IPS`, `SAME_IPS_OR_FAIL`, or `MANUAL_IP` |
+| `manual_ips` | No | — | Dict mapping network IDs to desired IPs (only used with `MANUAL_IP` strategy) |
 
 Response: Restore job object with status `PLANNED` and full `plan_json`.
+
+### List Available IPs on a Network
+**GET** `/restore/networks/{network_id}/available-ips` (Authenticated, `restore:read`)  
+Lists available (unused) IPs on each subnet of the given network. Queries Neutron for subnet CIDRs and existing ports, then computes free IPs (up to 200 per subnet).
+
+Response:
+```json
+{
+  "network_id": "network-uuid",
+  "subnets": [
+    {
+      "subnet_id": "subnet-uuid",
+      "subnet_name": "my-subnet",
+      "cidr": "10.0.0.0/24",
+      "gateway_ip": "10.0.0.1",
+      "available_ips": ["10.0.0.50", "10.0.0.51", "..."],
+      "available_count": 200
+    }
+  ]
+}
+```
 
 ### Execute Restore Plan
 **POST** `/restore/execute` (Authenticated, `restore:write`)  
