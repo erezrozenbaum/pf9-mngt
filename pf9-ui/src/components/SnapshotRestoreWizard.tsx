@@ -333,7 +333,7 @@ const SnapshotRestoreWizard: React.FC = () => {
         const st = await apiFetch<any>("/snapshot/run-now/status");
         setSyncSteps(st.steps || []);
         setSyncStatus(st.status);
-        if (st.status !== "running") {
+        if (st.status !== "running" && st.status !== "pending") {
           if (syncPollingRef.current) clearInterval(syncPollingRef.current);
           syncPollingRef.current = null;
           setSyncRunning(false);
@@ -654,11 +654,12 @@ const SnapshotRestoreWizard: React.FC = () => {
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: syncSteps.length ? 10 : 0 }}>
               <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>
-                {syncStatus === "running" ? "⏳ Snapshot pipeline running..." :
+                {syncStatus === "pending" ? "⏳ Waiting for worker to pick up..." :
+                 syncStatus === "running" ? "⏳ Snapshot pipeline running..." :
                  syncStatus === "completed" ? "✅ Snapshot pipeline completed" :
                  "❌ Snapshot pipeline failed"}
               </span>
-              {syncStatus !== "running" && (
+              {syncStatus !== "running" && syncStatus !== "pending" && (
                 <button
                   onClick={() => { setSyncStatus(null); setSyncSteps([]); }}
                   style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.8rem", color: "#666" }}

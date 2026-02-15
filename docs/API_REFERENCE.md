@@ -665,14 +665,14 @@ Triggers the full snapshot pipeline on demand: policy assignment → inventory s
 ```json
 {
   "job_id": "abc-123",
-  "status": "running",
-  "message": "Snapshot pipeline started. Poll /snapshot/run-now/status for progress."
+  "status": "pending",
+  "message": "Snapshot pipeline queued. The worker will pick it up within 10 seconds. Poll /snapshot/run-now/status for progress."
 }
 ```
 
-**Error** (409 Conflict — pipeline already running):
+**Error** (409 Conflict — pipeline already pending or running):
 ```json
-{ "detail": "An on-demand snapshot pipeline is already running." }
+{ "detail": "An on-demand snapshot pipeline is already pending or running." }
 ```
 
 ### Get Pipeline Status
@@ -697,7 +697,9 @@ Returns the status of the most recent on-demand snapshot pipeline run.
 ```
 
 Step statuses: `pending`, `running`, `completed`, `failed`  
-Job statuses: `idle`, `running`, `completed`, `failed`
+Job statuses: `idle`, `pending`, `running`, `completed`, `failed`  
+
+> **Architecture note**: The API queues the pipeline by writing a `pending` row to the `snapshot_on_demand_runs` database table. The `snapshot_worker` container picks it up within 10 seconds and executes the full pipeline, updating step progress in real time.
 
 ---
 
