@@ -68,6 +68,7 @@ import socket
 from datetime import datetime, timezone
 from collections import defaultdict
 
+import requests
 import pandas as pd
 import psycopg2
 from psycopg2.extras import Json
@@ -568,6 +569,20 @@ def process_volume(
         )
 
         return sid, snapshot_created_in_project, deleted_ids, None, snap_name
+    except requests.exceptions.HTTPError as e:
+        status_code = getattr(e.response, 'status_code', None)
+        if status_code == 413:
+            vol_size_gb = volume.get("size", 0)
+            msg = (f"413_SKIPPED: Volume {vol_id} ({vol_size_gb}GB) rejected by "
+                   f"Platform9 API (413 Request Entity Too Large)")
+            print(f"      [SKIP] {msg}")
+            # NOT calling log_error — 413 is a known Platform9 limitation, not a real error
+            return None, volume_project_id, [], msg, snap_name
+        # Non-413 HTTP errors are real failures
+        msg = f"Failed to create snapshot for volume {vol_id}: {type(e).__name__}: {e}"
+        print("      ERROR:", msg)
+        log_error("auto_snapshots/create", msg)
+        return None, volume_project_id, [], msg, snap_name
     except Exception as e:
         msg = f"Failed to create snapshot for volume {vol_id}: {type(e).__name__}: {e}"
         print("      ERROR:", msg)
@@ -1017,9 +1032,16 @@ def main():
                 created_count += 1
             deleted_total += len(deleted_ids)
 
+            # Detect 413 skipped volumes (Platform9 API size limitation)
+            is_413_skipped = err_msg and err_msg.startswith("413_SKIPPED:")
+
             if dry_run:
                 status = "DRY_RUN"
                 note = "Dry run; no changes applied"
+            elif is_413_skipped:
+                status = "SKIPPED"
+                note = err_msg
+                skipped_count += 1
             elif err_msg:
                 status = "ERROR"
                 note = err_msg
@@ -1035,7 +1057,7 @@ def main():
 
             # Log to database if enabled
             if db_conn and run_id:
-                action = "created" if sid else ("skipped" if not err_msg else "failed")
+                action = "created" if sid else ("skipped" if (not err_msg or is_413_skipped) else "failed")
                 create_snapshot_record(
                     db_conn, run_id, action, sid, snap_name or "", vol_id, vol_name,
                     volume_project_id, tenant_name, volume_project_id, tenant_name,
