@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-02-15
+
+### Changed
+- **Manual IP selection now auto-loads available IPs** — when "Select IPs manually" is chosen, available IPs are fetched automatically from Neutron (no more "Load IPs" button click required)
+- Removed misleading warning "restore will FAIL if any chosen IP is already in use" since the UI now only presents available (unused) IPs in the dropdown
+- Manual IP selector shows a loading indicator while fetching and a clear message if no IPs are available on a network
+
 ## [1.6.1] - 2026-02-15
 
 ### Fixed
