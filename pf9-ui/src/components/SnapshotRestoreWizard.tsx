@@ -83,6 +83,20 @@ interface NetworkPlanEntry {
   note: string;
 }
 
+interface AvailableSubnet {
+  subnet_id: string;
+  subnet_name: string;
+  cidr: string;
+  gateway_ip: string | null;
+  available_ips: string[];
+  available_count: number;
+}
+
+interface AvailableIpsResponse {
+  network_id: string;
+  subnets: AvailableSubnet[];
+}
+
 interface PlanAction {
   step: string;
   details: Record<string, any>;
@@ -265,7 +279,10 @@ const SnapshotRestoreWizard: React.FC = () => {
   const [restorePoints, setRestorePoints] = useState<RestorePointsResponse | null>(null);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string>("");
   const [mode, setMode] = useState<"NEW" | "REPLACE">("NEW");
-  const [ipStrategy, setIpStrategy] = useState<"NEW_IPS" | "TRY_SAME_IPS" | "SAME_IPS_OR_FAIL">("NEW_IPS");
+  const [ipStrategy, setIpStrategy] = useState<"NEW_IPS" | "TRY_SAME_IPS" | "SAME_IPS_OR_FAIL" | "MANUAL_IP">("NEW_IPS");
+  const [manualIps, setManualIps] = useState<Record<string, string>>({});
+  const [availableIps, setAvailableIps] = useState<Record<string, AvailableIpsResponse>>({});
+  const [loadingAvailIps, setLoadingAvailIps] = useState(false);
   const [newVmName, setNewVmName] = useState("");
   const [plan, setPlan] = useState<RestorePlan | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
@@ -451,7 +468,7 @@ const SnapshotRestoreWizard: React.FC = () => {
     setPlan(null);
 
     try {
-      const body = {
+      const body: any = {
         project_id: selectedTenantId,
         vm_id: selectedVmId,
         restore_point_id: selectedSnapshotId,
@@ -459,6 +476,9 @@ const SnapshotRestoreWizard: React.FC = () => {
         new_vm_name: newVmName || null,
         ip_strategy: ipStrategy,
       };
+      if (ipStrategy === "MANUAL_IP" && Object.keys(manualIps).length > 0) {
+        body.manual_ips = manualIps;
+      }
       const p = await apiFetch<RestorePlan>("/restore/plan", {
         method: "POST",
         body: JSON.stringify(body),
@@ -469,7 +489,7 @@ const SnapshotRestoreWizard: React.FC = () => {
     } finally {
       setPlanLoading(false);
     }
-  }, [selectedVmId, selectedSnapshotId, selectedTenantId, mode, newVmName, ipStrategy]);
+  }, [selectedVmId, selectedSnapshotId, selectedTenantId, mode, newVmName, ipStrategy, manualIps]);
 
   // Auto-build plan when selections change
   useEffect(() => {
@@ -1044,14 +1064,116 @@ const SnapshotRestoreWizard: React.FC = () => {
               <label style={{ fontWeight: 600, display: "block", marginBottom: 8 }}>IP Strategy</label>
               <select
                 value={ipStrategy}
-                onChange={(e) => setIpStrategy(e.target.value as any)}
+                onChange={(e) => {
+                  const val = e.target.value as any;
+                  setIpStrategy(val);
+                  if (val !== "MANUAL_IP") {
+                    setManualIps({});
+                    setAvailableIps({});
+                  }
+                }}
                 style={{ width: "100%", padding: "8px 12px", borderRadius: 6, border: "1px solid #ccc" }}
               >
                 <option value="NEW_IPS">Allocate new IPs (safest)</option>
                 <option value="TRY_SAME_IPS">Try to keep same IPs (best effort)</option>
                 <option value="SAME_IPS_OR_FAIL">Must keep same IPs (fail if unavailable)</option>
+                <option value="MANUAL_IP">Select IPs manually</option>
               </select>
             </div>
+
+            {/* Manual IP Selector (shown when MANUAL_IP strategy is selected and plan has network_plan) */}
+            {ipStrategy === "MANUAL_IP" && plan && plan.network_plan.length > 0 && (
+              <div style={{ marginBottom: 18, padding: 12, background: "#e3f2fd", borderRadius: 6 }}>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 8 }}>
+                  Select IP for each network
+                </div>
+                {plan.network_plan.map((net, i) => {
+                  const netId = net.network_id || "";
+                  const netAvail = availableIps[netId];
+                  const allIps = netAvail?.subnets?.flatMap((s) => s.available_ips) || [];
+
+                  return (
+                    <div key={i} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: "0.82rem", fontWeight: 500, marginBottom: 4 }}>
+                        {net.network_name || netId || "Unknown Network"}
+                        {net.original_fixed_ip && (
+                          <span style={{ color: "#888", fontWeight: 400, marginLeft: 8 }}>
+                            (was: {net.original_fixed_ip})
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        {allIps.length > 0 ? (
+                          <select
+                            value={manualIps[netId] || ""}
+                            onChange={(e) => {
+                              setManualIps((prev) => ({
+                                ...prev,
+                                [netId]: e.target.value,
+                              }));
+                            }}
+                            style={{ flex: 1, padding: "6px 10px", borderRadius: 4, border: "1px solid #ccc", fontSize: "0.82rem" }}
+                          >
+                            <option value="">— Select an IP —</option>
+                            {allIps.map((ip) => (
+                              <option key={ip} value={ip}>{ip}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder="Enter IP address (e.g. 10.0.0.50)"
+                            value={manualIps[netId] || ""}
+                            onChange={(e) => {
+                              setManualIps((prev) => ({
+                                ...prev,
+                                [netId]: e.target.value,
+                              }));
+                            }}
+                            style={{ flex: 1, padding: "6px 10px", borderRadius: 4, border: "1px solid #ccc", fontSize: "0.82rem" }}
+                          />
+                        )}
+                        {!netAvail && netId && (
+                          <button
+                            onClick={async () => {
+                              setLoadingAvailIps(true);
+                              try {
+                                const res = await apiFetch<AvailableIpsResponse>(
+                                  `/restore/networks/${netId}/available-ips`
+                                );
+                                setAvailableIps((prev) => ({ ...prev, [netId]: res }));
+                              } catch {
+                                // Fallback to manual text input
+                              } finally {
+                                setLoadingAvailIps(false);
+                              }
+                            }}
+                            disabled={loadingAvailIps}
+                            style={{
+                              padding: "6px 12px",
+                              borderRadius: 4,
+                              border: "1px solid #1976d2",
+                              background: "#1976d2",
+                              color: "#fff",
+                              fontSize: "0.78rem",
+                              cursor: loadingAvailIps ? "wait" : "pointer",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {loadingAvailIps ? "Loading…" : "Load IPs"}
+                          </button>
+                        )}
+                        {netAvail && (
+                          <span style={{ fontSize: "0.75rem", color: "#888" }}>
+                            {allIps.length} available
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* New VM Name */}
             <div style={{ marginBottom: 18 }}>

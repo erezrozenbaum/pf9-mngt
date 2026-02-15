@@ -584,6 +584,42 @@ const SnapshotRestoreAudit: React.FC = () => {
                                     </dl>
                                   </div>
 
+                                  {/* Original VM Configuration */}
+                                  {jobDetail.plan_json?.vm && (
+                                    <div className="restore-audit-detail-section">
+                                      <h4>Original VM Configuration</h4>
+                                      <dl>
+                                        <dt>Name</dt>
+                                        <dd>{jobDetail.plan_json.vm.name || "—"}</dd>
+                                        <dt>Flavor</dt>
+                                        <dd>{jobDetail.plan_json.vm.flavor_name || "—"}</dd>
+                                        <dt>vCPUs</dt>
+                                        <dd>{jobDetail.plan_json.vm.flavor_vcpus ?? "—"}</dd>
+                                        <dt>RAM</dt>
+                                        <dd>{jobDetail.plan_json.vm.flavor_ram_mb ? `${jobDetail.plan_json.vm.flavor_ram_mb} MB` : "—"}</dd>
+                                        <dt>Disk</dt>
+                                        <dd>{jobDetail.plan_json.vm.flavor_disk_gb ? `${jobDetail.plan_json.vm.flavor_disk_gb} GB` : "—"}</dd>
+                                        <dt>Status</dt>
+                                        <dd>{jobDetail.plan_json.vm.status || "—"}</dd>
+                                        {jobDetail.plan_json.network_plan && jobDetail.plan_json.network_plan.length > 0 && (
+                                          <>
+                                            <dt>Networks / IPs</dt>
+                                            <dd>
+                                              {jobDetail.plan_json.network_plan.map((n: any, idx: number) => (
+                                                <div key={idx} style={{ marginBottom: idx < jobDetail.plan_json.network_plan.length - 1 ? 2 : 0 }}>
+                                                  <span style={{ fontWeight: 500 }}>{n.network_name || n.network_id || "Unknown"}</span>
+                                                  {n.original_fixed_ip && (
+                                                    <span style={{ marginLeft: 6 }}>{n.original_fixed_ip}</span>
+                                                  )}
+                                                </div>
+                                              ))}
+                                            </dd>
+                                          </>
+                                        )}
+                                      </dl>
+                                    </div>
+                                  )}
+
                                   {/* Result or Failure */}
                                   {jobDetail.status === "SUCCEEDED" && jobDetail.result_json && (
                                     <div className="restore-audit-detail-section restore-audit-result-success">

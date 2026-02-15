@@ -748,9 +748,14 @@ If you find this project useful, please consider:
 
 **Project Status**: Active Development  
 **Last Updated**: February 2026  
-**Version**: 1.5.1
+**Version**: 1.6.0
 
 ## 🎯 Recent Updates
+
+### Manual IP Selection & Restore Audit Enhancements (v1.6)
+- ✅ **Manual IP selection during restore** — new "Select IPs manually" IP strategy lets users pick from available IPs on each network or enter a specific IP
+- ✅ **Available IPs API** — `GET /restore/networks/{network_id}/available-ips` lists free IPs per subnet from Neutron
+- ✅ **Original VM config in audit trail** — restore audit detail now shows the deleted VM's flavor, vCPUs, RAM, disk, status, and original IPs
 
 ### Bugfixes (v1.5.1)
 - ✅ **On-demand pipeline fix** — rearchitected from subprocess to DB-based signaling; API queues jobs, snapshot worker executes them
