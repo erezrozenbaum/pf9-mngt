@@ -747,10 +747,14 @@ If you find this project useful, please consider:
 ---
 
 **Project Status**: Active Development  
-**Last Updated**: March 2026  
-**Version**: 1.5.0
+**Last Updated**: February 2026  
+**Version**: 1.5.1
 
 ## 🎯 Recent Updates
+
+### Bugfixes (v1.5.1)
+- ✅ **On-demand pipeline fix** — rearchitected from subprocess to DB-based signaling; API queues jobs, snapshot worker executes them
+- ✅ **Restore auth fix** — service user password now decrypted from Fernet-encrypted env vars, fixing 401 errors on cross-tenant restore
 
 ### Hourly Scheduler & On-Demand Snapshots (v1.5)
 - ✅ **Snapshot scheduler now runs hourly** — default interval changed from 1440 min (daily) to 60 min (hourly); newly created VMs are protected within one hour
