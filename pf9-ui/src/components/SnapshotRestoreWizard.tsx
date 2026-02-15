@@ -499,6 +499,40 @@ const SnapshotRestoreWizard: React.FC = () => {
     }
   }, [screen, selectedSnapshotId, mode, ipStrategy, newVmName, buildPlan]);
 
+  // Auto-fetch available IPs when MANUAL_IP is selected and plan is ready
+  useEffect(() => {
+    if (ipStrategy !== "MANUAL_IP" || !plan || plan.network_plan.length === 0) return;
+
+    const networkIds = plan.network_plan
+      .map((n) => n.network_id)
+      .filter((id): id is string => !!id && !availableIps[id]);
+
+    if (networkIds.length === 0) return;
+
+    let cancelled = false;
+    setLoadingAvailIps(true);
+
+    Promise.all(
+      networkIds.map((netId) =>
+        apiFetch<AvailableIpsResponse>(`/restore/networks/${netId}/available-ips`)
+          .then((res) => ({ netId, res }))
+          .catch(() => null)
+      )
+    ).then((results) => {
+      if (cancelled) return;
+      setAvailableIps((prev) => {
+        const next = { ...prev };
+        for (const r of results) {
+          if (r) next[r.netId] = r.res;
+        }
+        return next;
+      });
+      setLoadingAvailIps(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [ipStrategy, plan]);
+
   // -----------------------------------------------------------------------
   // Execute restore
   // -----------------------------------------------------------------------
@@ -1103,7 +1137,11 @@ const SnapshotRestoreWizard: React.FC = () => {
                         )}
                       </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        {allIps.length > 0 ? (
+                        {!netAvail && loadingAvailIps ? (
+                          <div style={{ flex: 1, padding: "6px 10px", fontSize: "0.82rem", color: "#888" }}>
+                            Loading available IPs…
+                          </div>
+                        ) : allIps.length > 0 ? (
                           <select
                             value={manualIps[netId] || ""}
                             onChange={(e) => {
@@ -1114,57 +1152,22 @@ const SnapshotRestoreWizard: React.FC = () => {
                             }}
                             style={{ flex: 1, padding: "6px 10px", borderRadius: 4, border: "1px solid #ccc", fontSize: "0.82rem" }}
                           >
-                            <option value="">— Select an IP —</option>
+                            <option value="">— Select an available IP —</option>
                             {allIps.map((ip) => (
                               <option key={ip} value={ip}>{ip}</option>
                             ))}
                           </select>
+                        ) : netAvail ? (
+                          <div style={{ flex: 1, padding: "6px 10px", fontSize: "0.82rem", color: "#c62828" }}>
+                            No available IPs found on this network
+                          </div>
                         ) : (
-                          <input
-                            type="text"
-                            placeholder="Enter IP address (e.g. 10.0.0.50)"
-                            value={manualIps[netId] || ""}
-                            onChange={(e) => {
-                              setManualIps((prev) => ({
-                                ...prev,
-                                [netId]: e.target.value,
-                              }));
-                            }}
-                            style={{ flex: 1, padding: "6px 10px", borderRadius: 4, border: "1px solid #ccc", fontSize: "0.82rem" }}
-                          />
+                          <div style={{ flex: 1, padding: "6px 10px", fontSize: "0.82rem", color: "#888" }}>
+                            Loading available IPs…
+                          </div>
                         )}
-                        {!netAvail && netId && (
-                          <button
-                            onClick={async () => {
-                              setLoadingAvailIps(true);
-                              try {
-                                const res = await apiFetch<AvailableIpsResponse>(
-                                  `/restore/networks/${netId}/available-ips`
-                                );
-                                setAvailableIps((prev) => ({ ...prev, [netId]: res }));
-                              } catch {
-                                // Fallback to manual text input
-                              } finally {
-                                setLoadingAvailIps(false);
-                              }
-                            }}
-                            disabled={loadingAvailIps}
-                            style={{
-                              padding: "6px 12px",
-                              borderRadius: 4,
-                              border: "1px solid #1976d2",
-                              background: "#1976d2",
-                              color: "#fff",
-                              fontSize: "0.78rem",
-                              cursor: loadingAvailIps ? "wait" : "pointer",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {loadingAvailIps ? "Loading…" : "Load IPs"}
-                          </button>
-                        )}
-                        {netAvail && (
-                          <span style={{ fontSize: "0.75rem", color: "#888" }}>
+                        {netAvail && allIps.length > 0 && (
+                          <span style={{ fontSize: "0.75rem", color: "#2e7d32" }}>
                             {allIps.length} available
                           </span>
                         )}
