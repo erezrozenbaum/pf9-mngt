@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-02-15
+
+### Fixed
+- **Snapshot Restore — cloud-init user_data preservation** — restored VMs now receive the original VM's cloud-init `user_data` (base64-encoded), preventing cloud-init from resetting credentials or configuration on first boot
+  - During plan building, the original VM's `user_data` is fetched via Nova API (microversion 2.3+, `OS-EXT-SRV-ATTR:user_data`)
+  - Stored in the plan's VM section and passed to `create_server` on restore execution
+  - UI plan preview shows whether cloud-init data will be preserved (green ✅) or is missing (amber ⚠️)
+  - Progress tracker shows preservation status after the CREATE_SERVER step completes
+
 ## [1.4.0] - 2026-03-01
 
 ### Added
@@ -227,7 +236,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Snapshot service user password supports Fernet encryption at rest
 - JWT secret auto-generated during deployment
 
-[unreleased]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.4.0...HEAD
+[unreleased]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.1.0...v1.2.0
