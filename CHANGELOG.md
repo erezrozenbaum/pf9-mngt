@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.4] - 2026-02-15
+
+### Fixed
+- **413 "Request Entity Too Large" volumes now skipped instead of failed** — when Platform9 Cinder API rejects a snapshot with HTTP 413, the volume is recorded as `skipped` (not `failed`) and does not add to the ERRORS list, so snapshot runs show `completed` status instead of `partial` in the Snapshot Run Monitor
+- Catches `requests.exceptions.HTTPError` with status 413 specifically in `process_volume()`, logs as `413_SKIPPED` with a clear message, and increments `skipped_count` instead of `failed_count`
+
 ## [1.6.3] - 2026-02-15
 
 ### Fixed
