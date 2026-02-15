@@ -18,7 +18,7 @@ services:
     container_name: pf9_pgadmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@pf9-mgmt.local}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-change_this_admin_password}
+      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:?ERROR: PGADMIN_PASSWORD must be set in .env}"
     ports:
       - "8080:80"
     volumes:
@@ -56,7 +56,7 @@ services:
       LDAP_GROUP_DN: ${LDAP_GROUP_DN:-ou=groups,dc=pf9mgmt,dc=local}
 
       # === JWT Configuration ===
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-pf9-management-jwt-secret-key-2026}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-30}
@@ -68,13 +68,28 @@ services:
       ENABLE_AUTHENTICATION: ${ENABLE_AUTHENTICATION:-true}
       DEFAULT_ADMIN_USER: ${DEFAULT_ADMIN_USER:-admin}
       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD}
+
+      # === Restore Feature ===
+      RESTORE_ENABLED: ${RESTORE_ENABLED:-false}
+      RESTORE_DRY_RUN: ${RESTORE_DRY_RUN:-false}
+      RESTORE_CLEANUP_VOLUMES: ${RESTORE_CLEANUP_VOLUMES:-false}
+
+      # === Service User (shared with snapshot worker) ===
+      SNAPSHOT_SERVICE_USER_EMAIL: ${SNAPSHOT_SERVICE_USER_EMAIL:-}
+      SNAPSHOT_SERVICE_USER_PASSWORD: ${SNAPSHOT_SERVICE_USER_PASSWORD:-}
+      SNAPSHOT_SERVICE_USER_DOMAIN: ${SNAPSHOT_SERVICE_USER_DOMAIN:-default}
+
+      # === SSH Log Collection ===
+      SSH_PF9_HOSTS: ${SSH_PF9_HOSTS:-}
+      PF9_SSH_USER: ${PF9_SSH_USER:-pf9}
+      PF9_SSH_PASSWORD: ${PF9_SSH_PASSWORD:-}
+      PF9_SSH_KEY_PATH: ${PF9_SSH_KEY_PATH:-}
     ports:
       - "8000:8000"
     volumes:
       - app_logs:/app/logs
       - ./monitoring/cache:/app/monitoring/cache:ro
-      - ./metrics_cache.json:/app/metrics_cache.json:ro
-      - C:\Reports\Platform9:/mnt/reports:ro
+      - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports:ro
     depends_on:
       - db
       - ldap
@@ -104,13 +119,13 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      - "./metrics_cache.json:/tmp/metrics_cache.json"
+      - "./monitoring/cache:/tmp/cache"
       - "./logs:/app/logs"
     depends_on:
       - pf9_api
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -154,7 +169,7 @@ services:
       AUTO_SNAPSHOT_DRY_RUN: ${AUTO_SNAPSHOT_DRY_RUN:-false}
     volumes:
       - app_logs:/app/logs
-      - C:\Reports\Platform9:/mnt/reports
+      - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports
     depends_on:
       - db
     restart: always
@@ -172,7 +187,7 @@ services:
       LDAP_READONLY_USER_PASSWORD: "${LDAP_READONLY_PASSWORD}"
       LDAP_TLS_VERIFY_CLIENT: "never"
       LDAP_ADMIN_DN: "cn=admin,${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}"
-      # LDAP_ADMIN_PASSWORD is already set above
+      LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}"
     ports:
       - "${LDAP_PORT:-389}:389"
       - "${LDAP_SSL_PORT:-636}:636"
@@ -181,7 +196,7 @@ services:
       - ldap_config:/etc/ldap/slapd.d
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "ldapsearch -x -D \"$LDAP_ADMIN_DN\" -w \"$LDAP_ADMIN_PASSWORD\" -H ldap://localhost -b $LDAP_BASE_DN -s base"]
+      test: ["CMD", "sh", "-c", "ldapsearch -x -D \"$$LDAP_ADMIN_DN\" -w \"$$LDAP_ADMIN_PASSWORD\" -H ldap://localhost -b $$LDAP_BASE_DN -s base"]
       interval: 30s
       timeout: 10s
       retries: 3

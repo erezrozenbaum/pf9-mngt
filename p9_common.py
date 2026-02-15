@@ -32,7 +32,7 @@ CFG = {
     "VERIFY_TLS": os.getenv("PF9_VERIFY_TLS", "true").lower()
     in ("1", "true", "yes"),
 
-    "OUTPUT_DIR": os.getenv("PF9_OUTPUT_DIR", r"C:\Reports\Platform9"),
+    "OUTPUT_DIR": os.getenv("PF9_OUTPUT_DIR", os.path.join(os.path.expanduser("~"), "Reports", "Platform9")),
 
     "REQUEST_TIMEOUT": int(os.getenv("PF9_REQUEST_TIMEOUT", "60")),
     "PAGE_LIMIT": int(os.getenv("PF9_PAGE_LIMIT", "500")),

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/SystemLogsTab.css';
+import { API_BASE } from '../config';
 
 interface LogEntry {
   timestamp?: string;
@@ -23,7 +24,6 @@ interface LogsResponse {
 }
 
 export const SystemLogsTab: React.FC = () => {
-  const API_BASE = 'http://localhost:8000';
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

@@ -1,6 +1,26 @@
 # Platform9 Management System - Administrator Guide
 
-## Recent Major Enhancements (February 2026)
+## Recent Major Enhancements
+
+### Monitoring & Restore Audit (v1.4 - NEW ✨)
+- **Restore Audit Tab**: Full audit trail for restore operations with search, filters, pagination, step-level drill-down, CSV export
+- **Monitoring hostname resolution**: Hosts displayed by friendly name via `PF9_HOST_MAP` env var (API/DNS fallback)
+- **Monitoring data fixes**: VM IPs, storage metrics, network rx/tx bytes now display correctly
+- **Docker cache directory mount**: Replaced single-file bind mount with `./monitoring/cache:/tmp/cache` for reliable Windows sync
+- **MONITORING_BASE config**: UI supports `VITE_MONITORING_BASE` for monitoring service URL override
+
+### Snapshot Restore (v1.2 - NEW ✨✨✨)
+- **Full VM Restore from Snapshot**: Restore boot-from-volume VMs from Cinder snapshots
+  - **NEW mode**: Create restored VM alongside existing (side-by-side, non-destructive)
+  - **REPLACE mode**: Delete existing VM and recreate from snapshot (superadmin-only, destructive)
+  - **IP strategies**: NEW_IPS (DHCP), TRY_SAME_IPS (best-effort), SAME_IPS_OR_FAIL (strict)
+  - **3-Screen UI Wizard**: Select VM → Configure Restore → Execute/Progress with real-time updates
+  - **8 API Endpoints**: Plan, execute, cancel, list jobs, get config, browse snapshots
+  - **RBAC**: Viewer/Operator=read, Admin=write (NEW mode), Superadmin=admin (REPLACE mode)
+  - **Cross-Tenant**: Uses same service user mechanism as snapshot system
+  - **Safety Features**: Dry-run mode, destructive confirmation string, stale job recovery, volume cleanup option
+  - **Feature Toggle**: Disabled by default — set `RESTORE_ENABLED=true` to activate
+- See [RESTORE_GUIDE.md](RESTORE_GUIDE.md) for full documentation
 
 ### Landing Dashboard (v1.1 - NEW ✨✨✨)
 - **14 Real-Time Analytics Endpoints**: Comprehensive operational intelligence dashboard
@@ -75,7 +95,7 @@
 
 #### Compute Infrastructure (4 tables)
 - **hypervisors**: Physical compute nodes with resource utilization and status tracking
-- **servers**: Virtual machines with complete lifecycle, flavor associations, and project relationships
+- **servers**: Virtual machines with complete lifecycle, flavor associations, project relationships, actual disk size (from attached volumes for boot-from-volume VMs), and per-host CPU/RAM/disk utilization from hypervisors
 - **flavors**: VM templates with detailed resource specifications and public/private visibility
 - **images**: OS and application images with format details and visibility controls
 
@@ -168,9 +188,13 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 
 The system uses OpenLDAP for enterprise user authentication:
 - **LDAP Server**: Port 389
-- **Base DN**: Derived from `LDAP_DOMAIN` (e.g., `dc=company,dc=com`)
-- **User DN**: `ou=users,<LDAP_BASE_DN>`
-- **Admin Password**: Configured via LDAP_ADMIN_PASSWORD environment variable
+- **Base DN**: Set explicitly via `LDAP_BASE_DN` env var, or derived from `LDAP_DOMAIN` by `deployment.ps1` (e.g., `dc=company,dc=com`)
+- **User DN**: `ou=users,<LDAP_BASE_DN>` (set via `LDAP_USER_DN`)
+- **Group DN**: `ou=groups,<LDAP_BASE_DN>` (set via `LDAP_GROUP_DN`)
+- **Admin DN**: `cn=admin,<LDAP_BASE_DN>` (auto-composed in docker-compose.yml)
+- **Admin Password**: Configured via `LDAP_ADMIN_PASSWORD` environment variable
+
+> **Important:** `LDAP_BASE_DN` must be set in `.env` for the LDAP container healthcheck to work. The `deployment.ps1` wizard auto-generates this from `LDAP_DOMAIN`.
 
 > **Note:** As of February 2026, running `deployment.ps1` will always ensure:
 > - The admin user (from `.env`: `DEFAULT_ADMIN_USER`/`DEFAULT_ADMIN_PASSWORD`) is created in LDAP and in the `user_roles` table as `superadmin`.
@@ -241,8 +265,8 @@ async def collect_host_metrics(self, session, host):
    - **Remove**: Run `.\startup.ps1 -StopOnly` to clean up
 
 **Storage & Persistence**:
-- **Cache**: Persistent storage in `metrics_cache.json` (workspace root)
-- **Docker Mount**: Cache file accessible to monitoring container
+- **Cache**: Persistent storage in `monitoring/cache/metrics_cache.json`
+- **Docker Mount**: Directory mount `./monitoring/cache:/tmp/cache` syncs cache to monitoring container
 - **Survives**: Container restarts, system reboots (with scheduled task)
 - **Status**: ✅ **Working reliably with dual collection**
 
@@ -328,7 +352,7 @@ schtasks /create /tn "PF9 Metrics Collection" /tr "python C:\pf9-mngt\host_metri
 python host_metrics_collector.py
 
 # Check cache output
-Get-Content metrics_cache.json | ConvertFrom-Json
+Get-Content monitoring\cache\metrics_cache.json | ConvertFrom-Json
 ```
 
 ### Troubleshooting Monitoring
@@ -343,7 +367,7 @@ Get-Content metrics_cache.json | ConvertFrom-Json
    python host_metrics_collector.py
    
    # Verify cache file creation
-   ls metrics_cache.json
+   ls monitoring\cache\metrics_cache.json
    ```
 
 2. **Host connection timeouts**:
@@ -361,7 +385,7 @@ Get-Content metrics_cache.json | ConvertFrom-Json
    docker-compose logs pf9_monitoring
    
    # Verify cache file is mounted
-   docker-compose exec pf9_monitoring ls -la /tmp/metrics_cache.json
+   docker-compose exec pf9_monitoring ls -la /tmp/cache/metrics_cache.json
    ```
 
 **Performance Optimization**:
@@ -574,6 +598,7 @@ POSTGRES_DB=pf9_mgmt
 
 # Monitoring Configuration (NEW)
 PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
+# PF9_HOST_MAP=203.0.113.10:host-01,203.0.113.11:host-02
 METRICS_CACHE_TTL=60
 EOF
 chmod 600 .env
@@ -908,7 +933,7 @@ See [Real-Time Monitoring System](#real-time-monitoring-system) section for full
 **Quick Summary**:
 - **Primary**: Background Python process (auto-start on system launch)
 - **Backup**: Windows Task Scheduler (every 30 minutes)
-- **Cache**: `metrics_cache.json` (persistent across restarts)
+- **Cache**: `monitoring/cache/metrics_cache.json` (persistent across restarts)
 - **Status**: ✅ Production-ready with automatic recovery
 
 ---
@@ -1329,6 +1354,8 @@ The Platform9 Management System now includes a comprehensive real-time monitorin
 ```bash
 # Monitoring Configuration
 PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
+# Map host IPs to friendly hostnames for monitoring display
+# PF9_HOST_MAP=203.0.113.10:host-01,203.0.113.11:host-02
 METRICS_CACHE_TTL=60
 ```
 
@@ -1375,8 +1402,8 @@ curl http://203.0.113.10:9388/metrics | head -20
 docker logs pf9_monitoring
 
 # Verify cache file is updating
-ls -la metrics_cache.json
-cat metrics_cache.json | head -50
+ls -la monitoring/cache/metrics_cache.json
+cat monitoring/cache/metrics_cache.json | head -50
 
 # Check Windows scheduled task status
 schtasks /query /tn "PF9 Metrics Collection" /v

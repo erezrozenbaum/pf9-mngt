@@ -689,7 +689,7 @@ def main():
     max_new = args.max_new
     max_size_gb = args.max_size_gb
     report_xlsx = args.report_xlsx
-    report_dir = args.report_dir or CFG.get("OUTPUT_DIR", r"C:\\Reports\\Platform9")
+    report_dir = args.report_dir or CFG.get("OUTPUT_DIR", os.path.join(os.path.expanduser("~"), "Reports", "Platform9"))
 
     ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
     report_path = os.path.join(

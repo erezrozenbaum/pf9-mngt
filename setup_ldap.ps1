@@ -23,6 +23,16 @@ if (-not $LDAP_BASE_DN) {
     exit 1
 }
 
+# Default passwords for demo users — override via VIEWER_PASSWORD / OPERATOR_PASSWORD in .env
+if (-not $VIEWER_PASSWORD) {
+    Write-Host "WARNING: VIEWER_PASSWORD not set in .env — generating a random password" -ForegroundColor Yellow
+    $VIEWER_PASSWORD = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
+}
+if (-not $OPERATOR_PASSWORD) {
+    Write-Host "WARNING: OPERATOR_PASSWORD not set in .env — generating a random password" -ForegroundColor Yellow
+    $OPERATOR_PASSWORD = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
+}
+
 # Wait for LDAP service to be ready
 Write-Host "Waiting for LDAP service to be ready..." -ForegroundColor Yellow
 do {
@@ -96,7 +106,7 @@ cn: viewer
 sn: Viewer
 uid: viewer
 mail: viewer
-userPassword: {SSHA}$(docker exec pf9_ldap slappasswd -s "viewer123")
+userPassword: {SSHA}$(docker exec pf9_ldap slappasswd -s "$VIEWER_PASSWORD")
 description: Read-only viewer user
 
 dn: cn=operator,$LDAP_USER_DN
@@ -106,7 +116,7 @@ cn: operator
 sn: Operator
 uid: operator
 mail: operator
-userPassword: {SSHA}$(docker exec pf9_ldap slappasswd -s "operator123")
+userPassword: {SSHA}$(docker exec pf9_ldap slappasswd -s "$OPERATOR_PASSWORD")
 description: Operations user
 "@ | Out-File -FilePath "$ldifDir\03_create_users.ldif" -Encoding UTF8
 
@@ -173,14 +183,14 @@ Write-Host ""
 Write-Host "=== LDAP Directory Setup Complete ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "Management System Users Created:" -ForegroundColor Cyan
-Write-Host "  • $DEFAULT_ADMIN_USER/$DEFAULT_ADMIN_PASSWORD - System Administrator" -ForegroundColor White
-Write-Host "  • operator/operator123 - Operator" -ForegroundColor White
-Write-Host "  • viewer/viewer123     - Viewer" -ForegroundColor White
+Write-Host "  • $DEFAULT_ADMIN_USER/(configured via DEFAULT_ADMIN_PASSWORD) - System Administrator" -ForegroundColor White
+Write-Host "  • operator/(configured via OPERATOR_PASSWORD) - Operator" -ForegroundColor White
+Write-Host "  • viewer/(configured via VIEWER_PASSWORD)     - Viewer" -ForegroundColor White
 Write-Host ""
 Write-Host "LDAP Management:" -ForegroundColor Cyan
 Write-Host "  • Web Admin: http://localhost:$LDAP_ADMIN_PORT" -ForegroundColor White
 Write-Host "  • Admin DN: cn=admin,$LDAP_BASE_DN" -ForegroundColor White
-Write-Host "  • Password: $LDAP_ADMIN_PASSWORD" -ForegroundColor White
+Write-Host "  • Password: ********** (set via LDAP_ADMIN_PASSWORD in .env)" -ForegroundColor White
 
 # Test authentication
 Write-Host ""

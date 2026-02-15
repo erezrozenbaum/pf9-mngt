@@ -106,11 +106,12 @@ prometheus_client = PrometheusClient(
 @app.on_event("startup")
 async def startup_event():
     """Initialize the application"""
-    logger.info("PF9 Monitoring Service started", extra={"context": {"cache": "/tmp/metrics_cache.json"}})
+    logger.info("PF9 Monitoring Service started", extra={"context": {"cache": "/tmp/cache/metrics_cache.json"}})
     
     # Ensure we have a cache file with some default data if none exists
     import os
-    if not os.path.exists("/tmp/metrics_cache.json"):
+    os.makedirs("/tmp/cache", exist_ok=True)
+    if not os.path.exists("/tmp/cache/metrics_cache.json"):
         default_cache = {
             "vms": [],
             "hosts": [],
@@ -119,9 +120,9 @@ async def startup_event():
             "timestamp": None
         }
         try:
-            with open("/tmp/metrics_cache.json", "w") as f:
+            with open("/tmp/cache/metrics_cache.json", "w") as f:
                 json.dump(default_cache, f)
-            logger.info("Created default cache file", extra={"context": {"path": "/tmp/metrics_cache.json"}})
+            logger.info("Created default cache file", extra={"context": {"path": "/tmp/cache/metrics_cache.json"}})
         except Exception as e:
             logger.error("Could not create cache file", extra={"context": {"error": str(e)}})
 
@@ -129,7 +130,7 @@ async def startup_event():
 def load_cache_data() -> Dict[str, Any]:
     """Load metrics from cache file"""
     try:
-        with open("/tmp/metrics_cache.json", "r") as f:
+        with open("/tmp/cache/metrics_cache.json", "r") as f:
             return json.load(f)
     except FileNotFoundError:
         return {

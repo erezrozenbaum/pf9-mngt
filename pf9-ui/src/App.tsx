@@ -9,10 +9,12 @@ import SnapshotPolicyManager from "./components/SnapshotPolicyManager";
 import SnapshotAuditTrail from "./components/SnapshotAuditTrail";
 import SnapshotMonitor from "./components/SnapshotMonitor";
 import SnapshotComplianceReport from "./components/SnapshotComplianceReport";
+import SnapshotRestoreWizard from "./components/SnapshotRestoreWizard";
+import SnapshotRestoreAudit from "./components/SnapshotRestoreAudit";
+import "./styles/SnapshotRestoreAudit.css";
 import { APIMetricsTab } from "./components/APIMetricsTab";
 import { SystemLogsTab } from "./components/SystemLogsTab";
-
-const API_BASE = "http://localhost:8000";
+import { API_BASE, MONITORING_BASE } from "./config";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -55,8 +57,21 @@ type Server = {
   project_name: string | null;
   status: string;
   flavor_name: string | null;
+  vcpus: number | null;
+  ram_mb: number | null;
+  disk_gb: number | null;
   ips: string | null;
+  image_name: string | null;
   created_at: string | null;
+  // Host utilization
+  hypervisor_hostname: string | null;
+  host_vcpus_total: number | null;
+  host_vcpus_used: number | null;
+  host_ram_total_mb: number | null;
+  host_ram_used_mb: number | null;
+  host_disk_total_gb: number | null;
+  host_disk_used_gb: number | null;
+  host_running_vms: number | null;
 };
 
 type Snapshot = {
@@ -377,7 +392,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "restore" | "restore_audit";
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -968,27 +983,52 @@ const App: React.FC = () => {
   async function loadVMMetrics() {
     try {
       setMonitoringLoading(true);
-      const res = await fetchJson<{ data: VMMetrics[]; timestamp: string }>('http://localhost:8001/metrics/vms');
-      setVmMetrics(res.data || []);
-      setLastMetricsUpdate(res.timestamp);
+      const res = await fetchJson<{ data: VMMetrics[]; timestamp: string }>(`${MONITORING_BASE}/metrics/vms`);
+      if (res.data && res.data.length > 0) {
+        setVmMetrics(res.data);
+        setLastMetricsUpdate(res.timestamp);
+      } else {
+        // Fallback to DB-backed metrics from main API
+        const dbRes = await fetchJson<{ data: VMMetrics[]; timestamp: string }>(`${API_BASE}/monitoring/vm-metrics`);
+        setVmMetrics(dbRes.data || []);
+        setLastMetricsUpdate(dbRes.timestamp);
+      }
     } catch (e: any) {
-      console.error("Failed to load VM metrics:", e);
-      setError(e.message || "Failed to load VM metrics");
+      console.error("Failed to load VM metrics from monitoring service, trying DB fallback:", e);
+      try {
+        const dbRes = await fetchJson<{ data: VMMetrics[]; timestamp: string }>(`${API_BASE}/monitoring/vm-metrics`);
+        setVmMetrics(dbRes.data || []);
+        setLastMetricsUpdate(dbRes.timestamp);
+      } catch (dbErr: any) {
+        console.error("DB fallback also failed:", dbErr);
+        setError(dbErr.message || "Failed to load VM metrics");
+      }
     }
   }
 
   async function loadHostMetrics() {
     try {
-      const res = await fetchJson<{ data: HostMetrics[]; timestamp: string }>('http://localhost:8001/metrics/hosts');
-      setHostMetrics(res.data || []);
+      const res = await fetchJson<{ data: HostMetrics[]; timestamp: string }>(`${MONITORING_BASE}/metrics/hosts`);
+      if (res.data && res.data.length > 0) {
+        setHostMetrics(res.data);
+      } else {
+        const dbRes = await fetchJson<{ data: HostMetrics[]; timestamp: string }>(`${API_BASE}/monitoring/host-metrics`);
+        setHostMetrics(dbRes.data || []);
+      }
     } catch (e: any) {
-      console.error("Failed to load host metrics:", e);
+      console.error("Failed to load host metrics, trying DB fallback:", e);
+      try {
+        const dbRes = await fetchJson<{ data: HostMetrics[]; timestamp: string }>(`${API_BASE}/monitoring/host-metrics`);
+        setHostMetrics(dbRes.data || []);
+      } catch (dbErr: any) {
+        console.error("DB fallback also failed:", dbErr);
+      }
     }
   }
 
   async function loadMonitoringAlerts() {
     try {
-      const res = await fetchJson<{ alerts: MonitoringAlert[] }>('http://localhost:8001/metrics/alerts');
+      const res = await fetchJson<{ alerts: MonitoringAlert[] }>(`${MONITORING_BASE}/metrics/alerts`);
       setMonitoringAlerts(res.alerts || []);
     } catch (e: any) {
       console.error("Failed to load monitoring alerts:", e);
@@ -997,22 +1037,22 @@ const App: React.FC = () => {
 
   async function loadMetricsSummary() {
     try {
-      const res = await fetchJson<MetricsSummary>('http://localhost:8001/metrics/summary');
-      setMetricsSummary(res);
-      
-      // Check if monitoring setup is needed
-      if (res.total_hosts === 0) {
-        try {
-          const setupCheck = await fetchJson<any>('http://localhost:8001/auto-setup');
-          if (setupCheck.status === 'setup_needed') {
-            console.warn("Monitoring setup needed:", setupCheck.message);
-          }
-        } catch (setupError) {
-          console.error("Could not check setup status:", setupError);
-        }
+      const res = await fetchJson<MetricsSummary>(`${MONITORING_BASE}/metrics/summary`);
+      if (res.total_hosts > 0 || res.total_vms > 0) {
+        setMetricsSummary(res);
+      } else {
+        // Monitoring service has no data, try DB fallback
+        const dbRes = await fetchJson<MetricsSummary>(`${API_BASE}/monitoring/summary`);
+        setMetricsSummary(dbRes);
       }
     } catch (e: any) {
-      console.error("Failed to load metrics summary:", e);
+      console.error("Failed to load metrics summary, trying DB fallback:", e);
+      try {
+        const dbRes = await fetchJson<MetricsSummary>(`${API_BASE}/monitoring/summary`);
+        setMetricsSummary(dbRes);
+      } catch (dbErr: any) {
+        console.error("DB fallback also failed:", dbErr);
+      }
     } finally {
       setMonitoringLoading(false);
     }
@@ -1034,7 +1074,7 @@ const App: React.FC = () => {
     setIsRefreshingMetrics(true);
     try {
       // Trigger refresh on the backend
-      await fetch('http://localhost:8001/metrics/refresh', { method: 'POST' });
+      await fetch(`${MONITORING_BASE}/metrics/refresh`, { method: 'POST' });
       // Wait a bit for the refresh to complete
       await new Promise(resolve => setTimeout(resolve, 2000));
       // Reload all monitoring data
@@ -1302,24 +1342,7 @@ const App: React.FC = () => {
         const url = `${API_BASE}/volumes?${params.toString()}`;
         const data = await fetchJson<PagedResponse<Volume>>(url);
         
-        // Enhance volumes with metadata for snapshot policy management
-        const volumesWithMetadata = data.items.map(volume => {
-          // Add metadata fields with sample data to demonstrate functionality
-          const hasMetadata = volume.volume_name?.includes("CentOS") || volume.volume_name?.includes("yossi") || volume.volume_name?.includes("200BR");
-          
-          return {
-            ...volume,
-            auto_snapshot: hasMetadata ? "true" : "false",
-            snapshot_policy: hasMetadata ? "daily_5,monthly_15th" : null,
-            metadata: hasMetadata ? {
-              auto_snapshot: "true",
-              snapshot_policies: "daily_5,monthly_15th",
-              retention_daily_5: "5"
-            } : null
-          };
-        });
-        
-        setVolumes(volumesWithMetadata);
+        setVolumes(data.items);
         setVolumesTotal(data.total);
         if (
           selectedVolume &&
@@ -2243,6 +2266,8 @@ const App: React.FC = () => {
     "snapshot_monitor",
     "snapshot_compliance",
     "monitoring",
+    "restore",
+    "restore_audit",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------
@@ -2317,11 +2342,11 @@ const App: React.FC = () => {
           </button>
           <button
             className={
-              activeTab === "networks" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+              activeTab === "networks" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
             }
             onClick={() => setActiveTab("networks")}
           >
-            Networks
+            🔧 Networks
           </button>
           <button
             className={
@@ -2357,11 +2382,11 @@ const App: React.FC = () => {
           </button>
           <button
             className={
-              activeTab === "flavors" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+              activeTab === "flavors" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
             }
             onClick={() => setActiveTab("flavors")}
           >
-            Flavors
+            🔧 Flavors
           </button>
           <button
             className={
@@ -2381,21 +2406,21 @@ const App: React.FC = () => {
           </button>
           <button
             className={
-              activeTab === "users" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+              activeTab === "users" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
             }
             onClick={() => setActiveTab("users")}
           >
-            Users
+            🔧 Users
           </button>
           {authUser && (authUser.role === 'admin' || authUser.role === 'superadmin') && (
             <>
               <button
                 className={
-                  activeTab === "admin" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+                  activeTab === "admin" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
                 }
                 onClick={() => setActiveTab("admin")}
               >
-                Admin
+                🔧 Admin
               </button>
               <button
                 className={
@@ -2415,19 +2440,35 @@ const App: React.FC = () => {
               </button>
               <button
                 className={
-                  activeTab === "snapshot_monitor" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+                  activeTab === "snapshot_monitor" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
                 }
                 onClick={() => setActiveTab("snapshot_monitor")}
               >
-                Snapshot Monitor
+                🔧 Snapshot Monitor
               </button>
               <button
                 className={
-                  activeTab === "snapshot_compliance" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+                  activeTab === "snapshot_compliance" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
                 }
                 onClick={() => setActiveTab("snapshot_compliance")}
               >
-                Snapshot Compliance
+                🔧 Snapshot Compliance
+              </button>
+              <button
+                className={
+                  activeTab === "restore" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
+                }
+                onClick={() => setActiveTab("restore")}
+              >
+                🔧 Snapshot Restore
+              </button>
+              <button
+                className={
+                  activeTab === "restore_audit" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
+                }
+                onClick={() => setActiveTab("restore_audit")}
+              >
+                🔧 Restore Audit
               </button>
             </>
           )}
@@ -2473,11 +2514,11 @@ const App: React.FC = () => {
           </button>
           <button
             className={
-              activeTab === "snapshot-policies" ? "pf9-tab pf9-tab-active" : "pf9-tab"
+              activeTab === "snapshot-policies" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
             }
             onClick={() => setActiveTab("snapshot-policies")}
           >
-            📸 Snapshot Policies
+            📸🔧 Snapshot Policies
           </button>
           <button
             className={
@@ -2529,6 +2570,8 @@ const App: React.FC = () => {
             ? "API performance metrics · latency · error rates"
             : activeTab === "system_logs"
             ? "Centralized system logs · filtering · diagnostics"
+            : activeTab === "restore"
+            ? "Snapshot restore wizard · plan · execute · monitor progress"
             : "Compliance reporting · audit logs · change analysis"}
       </section>
 
@@ -2988,10 +3031,14 @@ const App: React.FC = () => {
                   <th>Domain</th>
                   <th>Tenant</th>
                   <th>Status</th>
+                  <th>Host</th>
                   <th>Flavor</th>
                   <th>vCPUs</th>
                   <th>RAM (MB)</th>
                   <th>Disk (GB)</th>
+                  <th>Host CPU</th>
+                  <th>Host RAM</th>
+                  <th>Host Disk</th>
                   <th>IPs</th>
                   <th>Image</th>
                 </tr>
@@ -2999,12 +3046,17 @@ const App: React.FC = () => {
               <tbody>
                 {servers.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="pf9-empty">
+                    <td colSpan={14} className="pf9-empty">
                       No results.
                     </td>
                   </tr>
                 ) : (
-                  servers.map((s) => (
+                  servers.map((s) => {
+                    const cpuPct = s.host_vcpus_total ? Math.round((s.host_vcpus_used || 0) / s.host_vcpus_total * 100) : null;
+                    const ramPct = s.host_ram_total_mb ? Math.round((s.host_ram_used_mb || 0) / s.host_ram_total_mb * 100) : null;
+                    const diskPct = s.host_disk_total_gb ? Math.round((s.host_disk_used_gb || 0) / s.host_disk_total_gb * 100) : null;
+                    const pctColor = (pct: number | null) => !pct ? '#888' : pct > 85 ? '#ef4444' : pct > 65 ? '#f59e0b' : '#22c55e';
+                    return (
                     <tr
                       key={s.vm_id}
                       className={
@@ -3023,14 +3075,46 @@ const App: React.FC = () => {
                       <td>{s.domain_name}</td>
                       <td>{s.tenant_name}</td>
                       <td>{s.status}</td>
+                      <td><span className="pf9-cell-subtle">{s.hypervisor_hostname || '—'}</span></td>
                       <td>{s.flavor_name}</td>
                       <td className="pf9-cell-number">{s.vcpus || 0}</td>
                       <td className="pf9-cell-number">{s.ram_mb || 0}</td>
                       <td className="pf9-cell-number">{s.disk_gb || 0}</td>
+                      <td className="pf9-cell-number" title={s.host_vcpus_total ? `${s.host_vcpus_used}/${s.host_vcpus_total} vCPUs allocated on ${s.hypervisor_hostname}` : ''}>
+                        {cpuPct !== null ? (
+                          <div style={{display:'flex',alignItems:'center',gap:4}}>
+                            <div style={{width:36,height:6,background:'#333',borderRadius:3,overflow:'hidden'}}>
+                              <div style={{width:`${cpuPct}%`,height:'100%',background:pctColor(cpuPct),borderRadius:3}}/>
+                            </div>
+                            <span style={{fontSize:'0.8em',color:pctColor(cpuPct)}}>{cpuPct}%</span>
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td className="pf9-cell-number" title={s.host_ram_total_mb ? `${((s.host_ram_used_mb||0)/1024).toFixed(0)}/${(s.host_ram_total_mb/1024).toFixed(0)} GB used on ${s.hypervisor_hostname}` : ''}>
+                        {ramPct !== null ? (
+                          <div style={{display:'flex',alignItems:'center',gap:4}}>
+                            <div style={{width:36,height:6,background:'#333',borderRadius:3,overflow:'hidden'}}>
+                              <div style={{width:`${ramPct}%`,height:'100%',background:pctColor(ramPct),borderRadius:3}}/>
+                            </div>
+                            <span style={{fontSize:'0.8em',color:pctColor(ramPct)}}>{ramPct}%</span>
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td className="pf9-cell-number" title={s.host_disk_total_gb ? `${s.host_disk_used_gb}/${s.host_disk_total_gb} GB used on ${s.hypervisor_hostname}` : ''}>
+                        {diskPct !== null ? (
+                          <div style={{display:'flex',alignItems:'center',gap:4}}>
+                            <div style={{width:36,height:6,background:'#333',borderRadius:3,overflow:'hidden'}}>
+                              <div style={{width:`${diskPct}%`,height:'100%',background:pctColor(diskPct),borderRadius:3}}/>
+                            </div>
+                            <span style={{fontSize:'0.8em',color:pctColor(diskPct)}}>{diskPct}%</span>
+                          </div>
+                        ) : '—'}
+                      </td>
                       <td>{s.ips}</td>
                       <td>{s.image_name || "N/A"}</td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -4244,6 +4328,16 @@ const App: React.FC = () => {
             <SnapshotComplianceReport />
           )}
 
+          {/* Snapshot Restore Section */}
+          {activeTab === "restore" && (
+            <SnapshotRestoreWizard />
+          )}
+
+          {/* Snapshot Restore Audit Section */}
+          {activeTab === "restore_audit" && (
+            <SnapshotRestoreAudit />
+          )}
+
           {/* Snapshot Policy Management Section */}
           {activeTab === "snapshot-policies" && (
             <SnapshotPolicyManager />
@@ -4408,27 +4502,27 @@ const App: React.FC = () => {
                               )}
                             </td>
                             <td>
-                              {vm.storage_total_gb && vm.storage_total_gb > 0 ? (
+                              {(vm.storage_total_gb ?? vm.storage_allocated_gb ?? 0) > 0 ? (
                                 <>
                                   <span style={{ 
                                     color: (vm.storage_usage_percent || 0) > 90 ? '#e74c3c' : 
                                            (vm.storage_usage_percent || 0) > 75 ? '#f39c12' : '#27ae60'
                                   }}>
-                                    {vm.storage_usage_percent?.toFixed(1) || 0}%
+                                    {vm.storage_usage_percent != null ? `${vm.storage_usage_percent.toFixed(1)}%` : '—'}
                                   </span>
                                   <div className="pf9-cell-subtle">
-                                    {vm.storage_used_gb?.toFixed(1) || 0}GB / {vm.storage_total_gb.toFixed(1)}GB
+                                    {(vm.storage_used_gb ?? 0).toFixed(1)}GB / {(vm.storage_total_gb ?? vm.storage_allocated_gb ?? 0).toFixed(1)}GB
                                   </div>
                                 </>
                               ) : 'N/A'}
                             </td>
                             <td>
-                              {vm.network_rx_bytes && vm.network_tx_bytes ? (
+                              {vm.network_rx_bytes != null && vm.network_tx_bytes != null && (vm.network_rx_bytes > 0 || vm.network_tx_bytes > 0) ? (
                                 <div>
                                   <div>↓ {(vm.network_rx_bytes / 1024 / 1024).toFixed(1)}MB</div>
                                   <div>↑ {(vm.network_tx_bytes / 1024 / 1024).toFixed(1)}MB</div>
                                 </div>
-                              ) : 'N/A'}
+                              ) : <span className="pf9-cell-subtle">N/A</span>}
                             </td>
                             <td>{formatDate(vm.timestamp)}</td>
                           </tr>
@@ -4504,12 +4598,12 @@ const App: React.FC = () => {
                               ) : 'N/A'}
                             </td>
                             <td>
-                              {host.network_rx_mb && host.network_tx_mb ? (
+                              {host.network_rx_mb != null && host.network_tx_mb != null && (host.network_rx_mb > 0 || host.network_tx_mb > 0) ? (
                                 <div>
                                   <div>↓ {host.network_rx_mb.toFixed(0)}MB</div>
                                   <div>↑ {host.network_tx_mb.toFixed(0)}MB</div>
                                 </div>
-                              ) : 'N/A'}
+                              ) : <span className="pf9-cell-subtle">N/A</span>}
                             </td>
                             <td>{formatDate(host.timestamp)}</td>
                           </tr>

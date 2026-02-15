@@ -64,6 +64,29 @@
   transform: translateY(-1px);
 }
 
+/* Action / write-capable tab accent */
+.pf9-tab-action {
+  border-left: 3px solid var(--color-action-accent);
+  background: var(--color-action-accent-bg);
+  border-top-color: var(--color-action-accent-border);
+  border-right-color: var(--color-action-accent-border);
+  border-bottom-color: var(--color-action-accent-border);
+}
+
+.pf9-tab-action:hover {
+  background: var(--color-action-accent);
+  color: white;
+  border-color: var(--color-action-accent);
+  border-left: 3px solid var(--color-action-accent-dark);
+}
+
+.pf9-tab-action.pf9-tab-active {
+  background: linear-gradient(135deg, var(--color-action-accent), var(--color-action-accent-dark));
+  color: white;
+  border-color: var(--color-action-accent);
+  border-left: 3px solid var(--color-action-accent-dark);
+}
+
 /* Enhanced Theme Toggle Styles */
 .theme-toggle {
   background: var(--color-surface);
