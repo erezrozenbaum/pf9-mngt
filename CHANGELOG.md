@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-02-15
+
+### Added
+- **Manual IP selection during restore** — new "Select IPs manually" option in IP Strategy dropdown; users can pick from available IPs per network or type a specific IP address
+- **`GET /restore/networks/{network_id}/available-ips` API endpoint** — lists available (unused) IPs on a network's subnets by querying Neutron for subnet CIDRs and existing ports, returns up to 200 available IPs per subnet
+- **`MANUAL_IP` ip_strategy** — `RestorePlanRequest` now accepts `MANUAL_IP` strategy with optional `manual_ips` dict mapping network IDs to desired IPs
+- **Original VM configuration in Restore Audit Trail** — audit detail view now shows a dedicated "Original VM Configuration" section with flavor name, vCPUs, RAM, disk, status, and original IPs per network (from stored `plan_json`)
+
+### Changed
+- Restore wizard UI: IP Strategy dropdown now includes "Select IPs manually" option with a per-network IP selector
+- Restore wizard: when MANUAL_IP is selected and a plan exists, users can click "Load IPs" to fetch available IPs from Neutron, or manually enter an IP address
+- Restore audit: expanded detail grid with new "Original VM Configuration" section between Source and Result sections
+
 ## [1.5.1] - 2026-02-15
 
 ### Fixed

@@ -93,7 +93,8 @@ class RestorePlanRequest(BaseModel):
     restore_point_id: str  # Cinder snapshot ID
     mode: str = Field(default="NEW", pattern="^(NEW|REPLACE)$")
     new_vm_name: Optional[str] = None
-    ip_strategy: str = Field(default="NEW_IPS", pattern="^(NEW_IPS|TRY_SAME_IPS|SAME_IPS_OR_FAIL)$")
+    ip_strategy: str = Field(default="NEW_IPS", pattern="^(NEW_IPS|TRY_SAME_IPS|SAME_IPS_OR_FAIL|MANUAL_IP)$")
+    manual_ips: Optional[Dict[str, str]] = None  # {network_id: "desired_ip"} for MANUAL_IP strategy
 
 
 class RestoreExecuteRequest(BaseModel):
@@ -539,7 +540,7 @@ class RestorePlanner:
                     new_vm_name = f"{original_name}-restored-{timestamp}"
 
             # 8. Build network plan
-            network_plan = self._build_network_plan(network_config, req.ip_strategy)
+            network_plan = self._build_network_plan(network_config, req.ip_strategy, req.manual_ips)
 
             # 9. Build action steps
             actions = self._build_actions(
@@ -733,7 +734,7 @@ class RestorePlanner:
 
         return "BOOT_FROM_IMAGE"
 
-    def _build_network_plan(self, network_config: list, ip_strategy: str) -> list:
+    def _build_network_plan(self, network_config: list, ip_strategy: str, manual_ips: Optional[Dict[str, str]] = None) -> list:
         plan = []
         for port_info in network_config:
             # Parse existing IPs
@@ -765,6 +766,15 @@ class RestorePlanner:
 
                 if ip_strategy == "NEW_IPS":
                     entry["note"] = "Allocating new IP (auto-assign)"
+                elif ip_strategy == "MANUAL_IP":
+                    net_id = port_info["network_id"]
+                    manual_ip = (manual_ips or {}).get(net_id)
+                    if manual_ip:
+                        entry["will_request_fixed_ip"] = True
+                        entry["requested_ip"] = manual_ip
+                        entry["note"] = f"Manual IP: {manual_ip}"
+                    else:
+                        entry["note"] = "No manual IP specified; allocating new IP (auto-assign)"
                 elif ip_strategy in ("TRY_SAME_IPS", "SAME_IPS_OR_FAIL"):
                     if ip_addr:
                         entry["will_request_fixed_ip"] = True
@@ -863,6 +873,10 @@ class RestorePlanner:
         elif ip_strategy == "SAME_IPS_OR_FAIL":
             warnings.append(
                 "IP preservation is strict. The restore will FAIL if any original IP is unavailable."
+            )
+        elif ip_strategy == "MANUAL_IP":
+            warnings.append(
+                "Manual IPs specified. The restore will FAIL if any chosen IP is already in use."
             )
 
         no_net = [n for n in network_plan if not n.get("network_id")]
@@ -1477,6 +1491,101 @@ def setup_restore_routes(app, db_conn_fn):
         except Exception as e:
             logger.error(f"Failed to fetch quota for {project_id}: {e}")
             raise HTTPException(500, f"Failed to fetch quota: {str(e)}")
+
+    # ------------------------------------------------------------------
+    # GET /restore/networks/{network_id}/available-ips  — list free IPs
+    # ------------------------------------------------------------------
+    @app.get("/restore/networks/{network_id}/available-ips", tags=["Snapshot Restore"])
+    async def get_available_ips(
+        network_id: str,
+        current_user: User = Depends(get_current_user),
+        _perm: bool = Depends(require_permission("restore", "read")),
+    ):
+        """
+        List available (unused) IPs on a network's subnets.
+        Queries Neutron for subnet CIDR and existing ports, then computes free IPs.
+        Returns up to 200 available IPs per subnet.
+        """
+        if not RESTORE_ENABLED:
+            raise HTTPException(503, "Restore feature is not enabled")
+
+        try:
+            import ipaddress
+            admin_session = os_client.authenticate_admin()
+
+            # 1. Get subnets for this network
+            url = f"{os_client.neutron_endpoint}/v2.0/subnets?network_id={network_id}"
+            r = admin_session.get(url, timeout=60)
+            r.raise_for_status()
+            subnets = r.json().get("subnets", [])
+
+            # 2. Get all ports on this network to find used IPs
+            url = f"{os_client.neutron_endpoint}/v2.0/ports?network_id={network_id}&limit=1000"
+            r = admin_session.get(url, timeout=60)
+            r.raise_for_status()
+            ports = r.json().get("ports", [])
+
+            used_ips = set()
+            for port in ports:
+                for fip in port.get("fixed_ips", []):
+                    used_ips.add(fip.get("ip_address"))
+
+            result = []
+            for subnet in subnets:
+                cidr = subnet.get("cidr")
+                subnet_id = subnet.get("id")
+                subnet_name = subnet.get("name", "")
+                gateway_ip = subnet.get("gateway_ip")
+                allocation_pools = subnet.get("allocation_pools", [])
+
+                available = []
+                if allocation_pools:
+                    # Use allocation pools to enumerate available IPs
+                    for pool in allocation_pools:
+                        start = ipaddress.ip_address(pool["start"])
+                        end = ipaddress.ip_address(pool["end"])
+                        current = start
+                        while current <= end and len(available) < 200:
+                            ip_str = str(current)
+                            if ip_str not in used_ips and ip_str != gateway_ip:
+                                available.append(ip_str)
+                            current += 1
+                else:
+                    # Fallback: enumerate from CIDR, skip network/broadcast/gateway
+                    try:
+                        network = ipaddress.ip_network(cidr, strict=False)
+                        for addr in network.hosts():
+                            if len(available) >= 200:
+                                break
+                            ip_str = str(addr)
+                            if ip_str not in used_ips and ip_str != gateway_ip:
+                                available.append(ip_str)
+                    except Exception:
+                        pass
+
+                result.append({
+                    "subnet_id": subnet_id,
+                    "subnet_name": subnet_name,
+                    "cidr": cidr,
+                    "gateway_ip": gateway_ip,
+                    "total_used": len([ip for ip in used_ips if any(
+                        ipaddress.ip_address(ip) in ipaddress.ip_network(cidr, strict=False)
+                        for _ in [None]
+                    )]) if cidr else 0,
+                    "available_ips": available,
+                    "available_count": len(available),
+                })
+
+            return {
+                "network_id": network_id,
+                "subnets": result,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to list available IPs for network {network_id}: {e}")
+            raise HTTPException(500, f"Failed to list available IPs: {str(e)}")
 
     # ------------------------------------------------------------------
     # GET /restore/vms/{vm_id}/restore-points  — snapshots for a VM
