@@ -748,9 +748,17 @@ If you find this project useful, please consider:
 
 **Project Status**: Active Development  
 **Last Updated**: March 2026  
-**Version**: 1.4.0
+**Version**: 1.5.0
 
 ## 🎯 Recent Updates
+
+### Hourly Scheduler & On-Demand Snapshots (v1.5)
+- ✅ **Snapshot scheduler now runs hourly** — default interval changed from 1440 min (daily) to 60 min (hourly); newly created VMs are protected within one hour
+- ✅ **"Sync & Snapshot Now" button** — on-demand full pipeline trigger from Delete & Restore UI with real-time step progress
+- ✅ **On-demand API** — `POST /snapshot/run-now` with job status polling, concurrency guard, admin-only RBAC
+
+### Cloud-Init Preservation (v1.4.1)
+- ✅ **user_data preserved on restore** — restored VMs receive original cloud-init data, preventing credential resets
 
 ### Monitoring & Restore Audit (v1.4)
 - ✅ **Restore Audit Tab** — full audit trail with search, filters, pagination, step-level drill-down, and CSV export

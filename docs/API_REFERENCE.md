@@ -655,6 +655,52 @@ Query Parameters:
 
 ---
 
+## On-Demand Snapshot Pipeline
+
+### Trigger Pipeline
+**POST** `/snapshot/run-now` (Admin only, `snapshots:admin`)  
+Triggers the full snapshot pipeline on demand: policy assignment → inventory sync → auto snapshots → inventory sync. Returns immediately with a job ID.
+
+**Response** (202 Accepted):
+```json
+{
+  "job_id": "abc-123",
+  "status": "running",
+  "message": "Snapshot pipeline started. Poll /snapshot/run-now/status for progress."
+}
+```
+
+**Error** (409 Conflict — pipeline already running):
+```json
+{ "detail": "An on-demand snapshot pipeline is already running." }
+```
+
+### Get Pipeline Status
+**GET** `/snapshot/run-now/status` (Authenticated, `snapshots:read`)  
+Returns the status of the most recent on-demand snapshot pipeline run.
+
+**Response**:
+```json
+{
+  "job_id": "abc-123",
+  "status": "completed",
+  "triggered_by": "admin@example.com",
+  "started_at": "2026-02-15T10:00:00+00:00",
+  "finished_at": "2026-02-15T10:05:32+00:00",
+  "steps": [
+    { "key": "policy_assign", "label": "Policy Assignment", "status": "completed" },
+    { "key": "rvtools_pre", "label": "Inventory Sync (pre-snapshot)", "status": "completed" },
+    { "key": "auto_snapshots", "label": "Auto Snapshots", "status": "completed" },
+    { "key": "rvtools_post", "label": "Inventory Sync (post-snapshot)", "status": "completed" }
+  ]
+}
+```
+
+Step statuses: `pending`, `running`, `completed`, `failed`  
+Job statuses: `idle`, `running`, `completed`, `failed`
+
+---
+
 ## Snapshot Restore Endpoints
 
 > **Feature Toggle**: These endpoints require `RESTORE_ENABLED=true`. When disabled, all restore endpoints return 404.  

@@ -177,8 +177,8 @@ snapshot_worker:
     
     # Scheduler
     SNAPSHOT_SCHEDULER_ENABLED: ${SNAPSHOT_SCHEDULER_ENABLED:-true}
-    POLICY_ASSIGN_INTERVAL_MINUTES: ${POLICY_ASSIGN_INTERVAL_MINUTES:-1440}
-    AUTO_SNAPSHOT_INTERVAL_MINUTES: ${AUTO_SNAPSHOT_INTERVAL_MINUTES:-1440}
+    POLICY_ASSIGN_INTERVAL_MINUTES: ${POLICY_ASSIGN_INTERVAL_MINUTES:-60}
+    AUTO_SNAPSHOT_INTERVAL_MINUTES: ${AUTO_SNAPSHOT_INTERVAL_MINUTES:-60}
     AUTO_SNAPSHOT_DRY_RUN: ${AUTO_SNAPSHOT_DRY_RUN:-false}
   restart: always
 ```
@@ -206,6 +206,48 @@ See [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md) for detailed setup i
 ### Modify Policies
 
 Edit `snapshots/snapshot_policy_rules.json` and the scheduler will sync automatically on next run.
+
+### On-Demand Snapshot Pipeline ("Sync & Snapshot Now")
+
+In addition to the hourly scheduler, admins can trigger the full snapshot pipeline on demand via the UI or API:
+
+**UI**: On the **Delete & Restore** tab → Screen 1, click the **🔄 Sync & Snapshot Now** button. A real-time progress bar shows each step (policy assignment → inventory sync → auto snapshots → inventory sync).
+
+**API**: `POST /snapshot/run-now` (requires `snapshots:admin` — admin or superadmin role)
+
+```bash
+curl -X POST http://localhost:8000/snapshot/run-now \
+  -H "Authorization: Bearer <token>"
+```
+
+Response (202 Accepted):
+```json
+{
+  "job_id": "abc-123",
+  "status": "running",
+  "message": "Snapshot pipeline started. Poll /snapshot/run-now/status for progress."
+}
+```
+
+**Poll status**: `GET /snapshot/run-now/status` (requires `snapshots:read`)
+
+```json
+{
+  "job_id": "abc-123",
+  "status": "completed",
+  "triggered_by": "admin@example.com",
+  "started_at": "2026-02-15T10:00:00+00:00",
+  "finished_at": "2026-02-15T10:05:32+00:00",
+  "steps": [
+    { "key": "policy_assign", "label": "Policy Assignment", "status": "completed" },
+    { "key": "rvtools_pre", "label": "Inventory Sync (pre-snapshot)", "status": "completed" },
+    { "key": "auto_snapshots", "label": "Auto Snapshots", "status": "completed" },
+    { "key": "rvtools_post", "label": "Inventory Sync (post-snapshot)", "status": "completed" }
+  ]
+}
+```
+
+> **Note**: Only one on-demand run can execute at a time. A second request while one is running returns 409 Conflict.
 
 ### Query Compliance
 
