@@ -1651,7 +1651,7 @@ def setup_restore_routes(app, db_conn_fn):
                 # Also find from ports → device_id mapping in volume attachments
                 volume_ids = [v["volume_id"] for v in volumes]
 
-                # Get snapshots for these volumes
+                # Get snapshots for these volumes from local DB
                 snapshots = []
                 if volume_ids:
                     cur.execute(
@@ -1665,11 +1665,34 @@ def setup_restore_routes(app, db_conn_fn):
                     )
                     snapshots = cur.fetchall()
 
-                # Convert to serializable format
+                # Also query Cinder API directly to catch manual/recent snapshots
+                # not yet synced to the local DB
+                live_snapshots = []
+                try:
+                    admin_session = os_client.authenticate_admin()
+                    project_id = vm.get("project_id") or ""
+                    for vol_id in volume_ids:
+                        url = os_client._cinder_url(
+                            project_id,
+                            f"/snapshots/detail?volume_id={vol_id}&status=available"
+                        )
+                        r = admin_session.get(url, timeout=60)
+                        if r.status_code == 200:
+                            for snap in r.json().get("snapshots", []):
+                                live_snapshots.append(snap)
+                except Exception as ex:
+                    logger.warning(f"Failed to query Cinder for live snapshots: {ex}")
+
+                # Merge: local DB snapshots + live Cinder snapshots (deduplicated)
+                seen_ids = set()
                 restore_points = []
+
+                # Add local DB snapshots first
                 for snap in snapshots:
+                    sid = snap["id"]
+                    seen_ids.add(sid)
                     restore_points.append({
-                        "id": snap["id"],
+                        "id": sid,
                         "name": snap["name"],
                         "volume_id": snap["volume_id"],
                         "size_gb": snap["size_gb"],
@@ -1677,6 +1700,28 @@ def setup_restore_routes(app, db_conn_fn):
                         "created_at": snap["created_at"].isoformat() if snap["created_at"] else None,
                         "description": snap.get("description"),
                     })
+
+                # Add live Cinder snapshots that aren't already in local DB
+                for snap in live_snapshots:
+                    sid = snap.get("id")
+                    if sid in seen_ids:
+                        continue
+                    seen_ids.add(sid)
+                    restore_points.append({
+                        "id": sid,
+                        "name": snap.get("name"),
+                        "volume_id": snap.get("volume_id"),
+                        "size_gb": snap.get("size"),
+                        "status": snap.get("status"),
+                        "created_at": snap.get("created_at"),
+                        "description": snap.get("description"),
+                    })
+
+                # Sort all by created_at descending
+                restore_points.sort(
+                    key=lambda x: x.get("created_at") or "",
+                    reverse=True,
+                )
 
                 return {
                     "vm_id": vm_id,
