@@ -76,7 +76,7 @@ def get_db_connection():
         port=int(os.getenv("PF9_DB_PORT", "5432")),
         dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
         user=os.getenv("PF9_DB_USER", "pf9"),
-        password=os.getenv("PF9_DB_PASSWORD", "pf9_password_change_me"),
+        password=os.getenv("PF9_DB_PASSWORD", ""),
     )
 
 

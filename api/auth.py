@@ -31,12 +31,17 @@ LDAP_PORT = int(os.getenv("LDAP_PORT", "389"))
 LDAP_BASE_DN = os.getenv("LDAP_BASE_DN", "dc=pf9mgmt,dc=local")
 LDAP_USER_DN = os.getenv("LDAP_USER_DN", "ou=users,dc=pf9mgmt,dc=local")
 
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-this")
+_jwt_env = os.getenv("JWT_SECRET_KEY", "")
+if not _jwt_env:
+    _jwt_env = secrets.token_urlsafe(48)
+    print("[SECURITY WARNING] JWT_SECRET_KEY not set — generated a random ephemeral key. "
+          "Sessions will be invalidated on every restart. Set JWT_SECRET_KEY in .env.")
+JWT_SECRET_KEY = _jwt_env
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
 
 DEFAULT_ADMIN_USER = os.getenv("DEFAULT_ADMIN_USER", "admin")
-DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin")
+DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD", "")
 
 # Security
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -75,7 +80,7 @@ def get_auth_db_conn():
         port=int(os.getenv("PF9_DB_PORT", "5432")),
         dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
         user=os.getenv("PF9_DB_USER", "pf9"),
-        password=os.getenv("PF9_DB_PASSWORD", "pf9_password_change_me"),
+        password=os.getenv("PF9_DB_PASSWORD", ""),
     )
 
 # LDAP Authentication
@@ -88,8 +93,8 @@ class LDAPAuthenticator:
     def authenticate(self, username: str, password: str) -> bool:
         """Authenticate user against LDAP"""
         try:
-            # Special case for default admin during setup
-            if username == DEFAULT_ADMIN_USER and password == DEFAULT_ADMIN_PASSWORD:
+            # Special case for default admin during setup (only if password is configured)
+            if DEFAULT_ADMIN_PASSWORD and username == DEFAULT_ADMIN_USER and password == DEFAULT_ADMIN_PASSWORD:
                 return True
                 
             # Connect to LDAP server

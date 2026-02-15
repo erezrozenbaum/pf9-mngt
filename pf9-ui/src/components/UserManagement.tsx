@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE } from '../config';
 
 type AuthUser = {
   username: string;
@@ -30,8 +31,6 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     startDate: '',
     endDate: ''
   });
-
-  const API_BASE = 'http://localhost:8000';
 
   useEffect(() => {
     loadData();
@@ -113,7 +112,10 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 9, resource: 'users', action: 'admin', roles: ['superadmin'] },
           { id: 10, resource: 'monitoring', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
           { id: 11, resource: 'hypervisors', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
-          { id: 12, resource: 'flavors', action: 'write', roles: ['operator', 'admin', 'superadmin'] }
+          { id: 12, resource: 'flavors', action: 'write', roles: ['operator', 'admin', 'superadmin'] },
+          { id: 13, resource: 'restore', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 14, resource: 'restore', action: 'write', roles: ['admin', 'superadmin'] },
+          { id: 15, resource: 'restore', action: 'admin', roles: ['superadmin'] }
         ]);
       }
     } catch (error) {

@@ -51,6 +51,11 @@
   - Stored in `.env` as `LDAP_CONFIG_PASSWORD`
   - Different from admin password
 
+- [ ] **LDAP Base DN set**
+  - Stored in `.env` as `LDAP_BASE_DN`
+  - Must match domain (e.g., `dc=company,dc=com` for `company.com`)
+  - Required for container healthcheck to function
+
 ### Snapshot Encryption
 
 - [ ] **Encryption key generated**
@@ -69,6 +74,24 @@
 
 - [ ] **Service user password can be decrypted**
   - Test: `python -c "from snapshots.snapshot_service_user import get_service_user_password; print('OK', len(get_service_user_password()))"`
+
+### Snapshot Restore Security
+
+- [ ] **Restore feature disabled by default**
+  - `RESTORE_ENABLED` is `false` unless explicitly needed
+  - Only enable in environments where VM restore is an approved workflow
+
+- [ ] **REPLACE mode restricted to superadmin**
+  - Verify in `role_permissions`: only superadmin has `restore:admin`
+  - REPLACE mode requires superadmin role AND destructive confirmation string
+
+- [ ] **Dry-run mode tested first**
+  - Set `RESTORE_DRY_RUN=true` and run a test restore before enabling real execution
+  - Validates planning logic without modifying infrastructure
+
+- [ ] **Volume cleanup policy decided**
+  - `RESTORE_CLEANUP_VOLUMES=false` (default) keeps orphaned volumes for inspection
+  - Set to `true` only if you prefer automatic cleanup of failed restore volumes
 
 ## Container Security
 

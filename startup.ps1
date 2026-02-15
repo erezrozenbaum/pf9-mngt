@@ -103,6 +103,45 @@ function Setup-MetricsCollection {
     }
 }
 
+# Step 0: Validate environment file
+Write-Host "0. Validating .env file..." -ForegroundColor Yellow
+if (-not (Test-Path ".env")) {
+    Write-Host "✗ .env file not found. Run deployment.ps1 first or copy .env.example to .env" -ForegroundColor Red
+    exit 1
+}
+
+$envContent = Get-Content ".env" | Where-Object { $_ -notmatch '^\s*#' -and $_ -match '=' }
+$envCheckMap = @{}
+foreach ($line in $envContent) {
+    $parts = $line -split '=', 2
+    if ($parts.Count -eq 2) {
+        $envCheckMap[$parts[0].Trim()] = $parts[1].Trim()
+    }
+}
+
+$criticalVars = @('POSTGRES_PASSWORD', 'LDAP_ADMIN_PASSWORD', 'PGADMIN_PASSWORD', 'DEFAULT_ADMIN_PASSWORD')
+$missingVars = @()
+foreach ($v in $criticalVars) {
+    $val = $envCheckMap[$v]
+    if (-not $val -or $val -match '^<.*>$') {
+        $missingVars += $v
+    }
+}
+if ($missingVars.Count -gt 0) {
+    Write-Host "✗ The following required variables are missing or still have placeholder values in .env:" -ForegroundColor Red
+    foreach ($v in $missingVars) { Write-Host "    - $v" -ForegroundColor Red }
+    Write-Host "  Please run deployment.ps1 or edit .env before starting." -ForegroundColor Yellow
+    exit 1
+}
+
+# Ensure reports directory exists for volume mount
+if (-not (Test-Path ".\reports")) {
+    New-Item -ItemType Directory -Force -Path ".\reports" | Out-Null
+    Write-Host "✓ Created reports directory" -ForegroundColor Green
+}
+
+Write-Host "✓ Environment validated" -ForegroundColor Green
+
 # Step 1: Stop any running services
 Write-Host "1. Stopping existing services..." -ForegroundColor Yellow
 docker-compose down 2>$null | Out-Null
