@@ -285,6 +285,164 @@ def run_compliance_report():
         log("Compliance report generation completed.")
 
 
+# =========================================================================
+# On-Demand Pipeline  (triggered by the API via snapshot_on_demand_runs)
+# =========================================================================
+
+def _update_on_demand_step(conn, run_id, step_key, step_status, error=None):
+    """Update a single step inside the steps JSONB column."""
+    finished = datetime.now(timezone.utc).isoformat() if step_status in ("completed", "failed") else None
+    started = datetime.now(timezone.utc).isoformat() if step_status == "running" else None
+
+    # Build a JSONB update: find the matching step by key and patch it
+    if step_status == "running":
+        sql = """
+            UPDATE snapshot_on_demand_runs
+            SET steps = (
+                SELECT jsonb_agg(
+                    CASE WHEN elem->>'key' = %s
+                         THEN elem || jsonb_build_object('status', %s, 'started_at', %s)
+                         ELSE elem
+                    END
+                ) FROM jsonb_array_elements(steps) AS elem
+            )
+            WHERE id = %s
+        """
+        params = (step_key, step_status, started, run_id)
+    elif step_status == "completed":
+        sql = """
+            UPDATE snapshot_on_demand_runs
+            SET steps = (
+                SELECT jsonb_agg(
+                    CASE WHEN elem->>'key' = %s
+                         THEN elem || jsonb_build_object('status', %s, 'finished_at', %s)
+                         ELSE elem
+                    END
+                ) FROM jsonb_array_elements(steps) AS elem
+            )
+            WHERE id = %s
+        """
+        params = (step_key, step_status, finished, run_id)
+    else:  # failed
+        sql = """
+            UPDATE snapshot_on_demand_runs
+            SET steps = (
+                SELECT jsonb_agg(
+                    CASE WHEN elem->>'key' = %s
+                         THEN elem || jsonb_build_object('status', %s, 'finished_at', %s, 'error', %s)
+                         ELSE elem
+                    END
+                ) FROM jsonb_array_elements(steps) AS elem
+            )
+            WHERE id = %s
+        """
+        params = (step_key, step_status, finished, error or "", run_id)
+
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+    conn.commit()
+
+
+def check_on_demand_trigger():
+    """Check the DB for a pending on-demand run and execute it if found."""
+    try:
+        conn = get_db_connection()
+    except Exception as e:
+        log(f"On-demand check: DB connection failed: {e}")
+        return
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, job_id FROM snapshot_on_demand_runs
+                WHERE status = 'pending'
+                ORDER BY created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            """)
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return
+
+            run_id, job_id = row[0], row[1]
+
+            # Mark as running
+            cur.execute("""
+                UPDATE snapshot_on_demand_runs
+                SET status = 'running', started_at = now()
+                WHERE id = %s
+            """, (run_id,))
+            conn.commit()
+
+        log(f"On-demand pipeline started (job_id={job_id})")
+
+        pipeline_steps = [
+            ("policy_assign", "Policy Assignment"),
+            ("rvtools_pre", "Inventory Sync (pre-snapshot)"),
+            ("auto_snapshots", "Auto Snapshots"),
+            ("rvtools_post", "Inventory Sync (post-snapshot)"),
+        ]
+
+        for step_key, step_label in pipeline_steps:
+            _update_on_demand_step(conn, run_id, step_key, "running")
+            log(f"On-demand step '{step_label}' running...")
+
+            try:
+                if step_key == "policy_assign":
+                    run_policy_assign()
+                elif step_key in ("rvtools_pre", "rvtools_post"):
+                    run_rvtools()
+                elif step_key == "auto_snapshots":
+                    run_auto_snapshots()
+
+                _update_on_demand_step(conn, run_id, step_key, "completed")
+                log(f"On-demand step '{step_label}' completed.")
+
+            except Exception as exc:
+                err_msg = str(exc)
+                log(f"On-demand step '{step_label}' failed: {err_msg}")
+                _update_on_demand_step(conn, run_id, step_key, "failed", err_msg)
+
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE snapshot_on_demand_runs
+                        SET status = 'failed', finished_at = now(), error = %s
+                        WHERE id = %s
+                    """, (err_msg, run_id))
+                    conn.commit()
+                conn.close()
+                return
+
+        # All steps completed
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE snapshot_on_demand_runs
+                SET status = 'completed', finished_at = now()
+                WHERE id = %s
+            """, (run_id,))
+            conn.commit()
+        conn.close()
+        log(f"On-demand pipeline completed (job_id={job_id})")
+
+    except Exception as e:
+        log(f"On-demand pipeline error: {e}")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE snapshot_on_demand_runs
+                    SET status = 'failed', finished_at = now(), error = %s
+                    WHERE id = %s AND status = 'running'
+                """, (str(e), run_id))
+                conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def main():
     if not SCHEDULER_ENABLED:
         log("Snapshot scheduler disabled. Exiting.")
@@ -318,6 +476,9 @@ def main():
             # Run compliance report generation (uses latest RVTools data)
             run_compliance_report()
             next_compliance_report = now + COMPLIANCE_REPORT_INTERVAL_MINUTES * 60
+
+        # Check for on-demand triggers from the API
+        check_on_demand_trigger()
 
         time.sleep(10)
 

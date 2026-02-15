@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-02-15
+
+### Fixed
+- **On-demand snapshot pipeline was failing** — the API container tried to execute snapshot scripts via `subprocess`, but those scripts only exist in the `snapshot_worker` container. Rearchitected to use database-based signaling: the API writes a `pending` row to the new `snapshot_on_demand_runs` table, and the snapshot worker picks it up on its next 10-second polling cycle
+- **Snapshot restore 401 UNAUTHORIZED on cross-tenant operations** — the service user password is stored Fernet-encrypted (`SNAPSHOT_PASSWORD_KEY` + `SNAPSHOT_USER_PASSWORD_ENCRYPTED`), but the API container only checked the plaintext `SNAPSHOT_SERVICE_USER_PASSWORD` env var (which was empty). Added `_resolve_service_user_password()` to decrypt the password using the same Fernet logic the snapshot worker uses
+- **docker-compose.yml** — added `SNAPSHOT_PASSWORD_KEY` and `SNAPSHOT_USER_PASSWORD_ENCRYPTED` env vars to the `pf9_api` container so the restore engine can decrypt the service user credentials
+
+### Added
+- **`snapshot_on_demand_runs` database table** — stores on-demand pipeline jobs with step-level JSONB progress, enabling cross-container communication between the API and snapshot worker
+- **`check_on_demand_trigger()`** in `snapshot_scheduler.py` — checks for pending on-demand runs every 10 seconds in the main scheduler loop and executes the full pipeline with per-step progress updates
+
+### Changed
+- On-demand pipeline status now includes `pending` state (waiting for worker pickup) in addition to `running`, `completed`, and `failed`
+- UI handles `pending` status with "Waiting for worker to pick up..." message and keeps polling until the worker starts execution
+
 ## [1.5.0] - 2026-02-15
 
 ### Changed
