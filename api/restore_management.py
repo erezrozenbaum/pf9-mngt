@@ -875,9 +875,7 @@ class RestorePlanner:
                 "IP preservation is strict. The restore will FAIL if any original IP is unavailable."
             )
         elif ip_strategy == "MANUAL_IP":
-            warnings.append(
-                "Manual IPs specified. The restore will FAIL if any chosen IP is already in use."
-            )
+            pass  # No warning needed — UI presents only available IPs from Neutron
 
         no_net = [n for n in network_plan if not n.get("network_id")]
         if no_net:
