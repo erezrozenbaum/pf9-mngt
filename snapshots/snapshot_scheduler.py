@@ -14,7 +14,7 @@ Environment:
   POLICY_ASSIGN_MERGE_EXISTING=true|false
   POLICY_ASSIGN_DRY_RUN=true|false
   AUTO_SNAPSHOT_MAX_NEW=200
-  AUTO_SNAPSHOT_MAX_SIZE_GB=200 (volumes larger than this are skipped)
+  AUTO_SNAPSHOT_MAX_SIZE_GB=260 (volumes larger than this are skipped)
   AUTO_SNAPSHOT_DRY_RUN=true|false
   RVTOOLS_INTEGRATION_ENABLED=true|false (default: true)
   COMPLIANCE_REPORT_ENABLED=true|false (default: true)
@@ -78,7 +78,7 @@ POLICY_ASSIGN_MERGE = os.getenv("POLICY_ASSIGN_MERGE_EXISTING", "true").lower() 
 POLICY_ASSIGN_DRY_RUN = os.getenv("POLICY_ASSIGN_DRY_RUN", "false").lower() in ("true", "1", "yes")
 POLICY_ASSIGN_SYNC_POLICY_SETS = os.getenv("POLICY_ASSIGN_SYNC_POLICY_SETS", "true").lower() in ("true", "1", "yes")
 AUTO_SNAPSHOT_MAX_NEW = os.getenv("AUTO_SNAPSHOT_MAX_NEW")
-AUTO_SNAPSHOT_MAX_SIZE_GB = os.getenv("AUTO_SNAPSHOT_MAX_SIZE_GB", "200")
+AUTO_SNAPSHOT_MAX_SIZE_GB = os.getenv("AUTO_SNAPSHOT_MAX_SIZE_GB", "260")
 AUTO_SNAPSHOT_DRY_RUN = os.getenv("AUTO_SNAPSHOT_DRY_RUN", "false").lower() in ("true", "1", "yes")
 RVTOOLS_INTEGRATION_ENABLED = os.getenv("RVTOOLS_INTEGRATION_ENABLED", "true").lower() in ("true", "1", "yes")
 COMPLIANCE_REPORT_ENABLED = os.getenv("COMPLIANCE_REPORT_ENABLED", "true").lower() in ("true", "1", "yes")
