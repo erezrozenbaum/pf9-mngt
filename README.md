@@ -93,7 +93,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
 
 **Enterprise microservices-based platform** with 9 containerized services plus host-based automation:
 - **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 20 management tabs + admin panel
-- **Backend API** (FastAPI/Python) - Port 8000 - 100+ REST endpoints with RBAC middleware
+- **Backend API** (FastAPI/Gunicorn/Python) - Port 8000 - 100+ REST endpoints with RBAC middleware, 4 worker processes, connection pooling
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
 - **LDAP Admin** (phpLDAPadmin) - Port 8081 - Web-based LDAP management
 - **Monitoring Service** (FastAPI/Python) - Port 8001 - Real-time metrics collection via Prometheus

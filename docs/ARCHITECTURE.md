@@ -87,11 +87,12 @@ src/
 - **Administrative operation forms**
 
 ### Backend API Service
-**Technology**: FastAPI + Python 3.11+
+**Technology**: FastAPI + Gunicorn + Python 3.11+
 **Port**: 8000
+**Workers**: 4 uvicorn workers via Gunicorn (configurable)
 **Responsibilities**:
 - RESTful API endpoints (98+ routes across infrastructure, analytics, tenant health, notifications, and restore)
-- Database operations and queries
+- Database operations via connection pool (psycopg2 ThreadedConnectionPool)
 - Platform9 integration proxy
 - Administrative operations
 - User management and role tracking
@@ -102,12 +103,14 @@ src/
 # API Structure
 api/
 ├── main.py              # FastAPI application and routes (66+ infrastructure endpoints)
+├── db_pool.py           # Centralized ThreadedConnectionPool (shared across all modules)
 ├── dashboards.py        # Analytics dashboard routes (14 endpoints)
 ├── notification_routes.py # Email notification management (7 endpoints)
 ├── restore_management.py # Snapshot restore planner + executor (8 endpoints)
+├── performance_metrics.py # Thread-safe request tracking with locking
 ├── pf9_control.py       # Platform9 API integration
-├── requirements.txt     # Python dependencies
-└── Dockerfile          # Container configuration
+├── requirements.txt     # Python dependencies (incl. gunicorn)
+└── Dockerfile          # Container configuration (gunicorn CMD)
 ```
 
 **API Endpoints** (83+ total across two modules):
@@ -574,10 +577,15 @@ graph TD
 ## 📊 Performance Architecture
 
 ### Caching Strategy
-**1. Database Query Optimization**:
+**1. Database Connection Pooling**:
+- `ThreadedConnectionPool` (psycopg2) with min=2, max=10 connections per worker
+- Context manager pattern (`with get_connection() as conn:`) for auto-commit/rollback/return
+- 4 Gunicorn workers × 10 max connections = 40 max DB connections (within PostgreSQL default of 100)
+- Configurable via `DB_POOL_MIN_CONN` and `DB_POOL_MAX_CONN` environment variables
+
+**2. Database Query Optimization**:
 - Composite indexes on frequently filtered columns
 - JSONB GIN indexes for metadata queries
-- Connection pooling for concurrent requests
 
 **2. Monitoring Cache**:
 - File-based JSON cache for metrics data
@@ -591,13 +599,14 @@ graph TD
 
 ### Scalability Considerations
 **Horizontal Scaling**:
-- API service: Multiple container instances behind load balancer
+- API service: 4 Gunicorn workers per container, multiple containers behind load balancer
 - Database: Read replicas for query scaling
 - Monitoring: Distributed collection with aggregation
 
 **Resource Optimization**:
 - Container resource limits and requests
-- Database connection pooling
+- Database connection pooling (ThreadedConnectionPool, 10 connections/worker)
+- Thread-safe performance metrics with lock-protected snapshots
 - Efficient query patterns with proper indexing
 
 ## 🔒 Security Architecture

@@ -520,6 +520,11 @@ HEALTH_ALERT_THRESHOLD=50                 # Tenant health score below this trigg
 # CORS Origins (restrict cross-origin requests)
 CORS_ORIGINS=http://localhost:5173,https://pf9-mgmt.company.com
 
+# Database Connection Pool (per worker process)
+DB_POOL_MIN_CONN=2            # Minimum connections per worker (default: 2)
+DB_POOL_MAX_CONN=10           # Maximum connections per worker (default: 10)
+# With 4 Gunicorn workers: max 40 total connections (PostgreSQL default max: 100)
+
 # Database Connection Tuning
 POSTGRES_INITDB_ARGS="-c max_connections=200 -c shared_buffers=256MB"
 

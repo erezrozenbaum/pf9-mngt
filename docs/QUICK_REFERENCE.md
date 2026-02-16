@@ -405,6 +405,13 @@ python host_metrics_collector.py --once
 ### Docker Environment Variables
 **Docker Compose automatically loads `.env` file** - no additional steps needed.
 
+**Connection Pool Tuning** (optional):
+```bash
+DB_POOL_MIN_CONN=2    # Min connections per worker (default: 2)
+DB_POOL_MAX_CONN=10   # Max connections per worker (default: 10)
+# Total max = 4 workers × 10 = 40 connections (PostgreSQL default max: 100)
+```
+
 **To restart and pick up new environment variables**:
 ```bash
 # Stop services
@@ -419,7 +426,7 @@ docker exec pf9_api printenv | grep PF9_
 
 ## Service URLs
 - **Management UI**: http://localhost:5173 (Primary interface)
-- **API Backend**: http://localhost:8000  
+- **API Backend**: http://localhost:8000 (4 Gunicorn workers, connection pooling)
 - **API Documentation**: http://localhost:8000/docs (OpenStack API gateway)
 - **Monitoring API**: http://localhost:8001 (Real-time metrics service)
 - **pgAdmin**: http://localhost:8080

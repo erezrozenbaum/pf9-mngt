@@ -96,6 +96,10 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-pf9-mgmt@example.com}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Platform9 Management}
+
+      # === Connection Pool Tuning ===
+      DB_POOL_MIN_CONN: ${DB_POOL_MIN_CONN:-2}
+      DB_POOL_MAX_CONN: ${DB_POOL_MAX_CONN:-10}
     ports:
       - "8000:8000"
     volumes:

@@ -22,6 +22,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, get_current_user
+from db_pool import get_connection
 
 logger = logging.getLogger("pf9_notifications_api")
 
@@ -49,7 +50,9 @@ VALID_SEVERITIES = ["info", "warning", "critical"]
 VALID_DELIVERY_MODES = ["immediate", "digest"]
 
 
+# DEPRECATED: use db_pool.get_connection() instead
 def get_db_connection():
+    """Deprecated — kept only for backward compatibility. Use get_connection() from db_pool."""
     return psycopg2.connect(
         host=os.getenv("PF9_DB_HOST", "db"),
         port=int(os.getenv("PF9_DB_PORT", "5432")),
@@ -62,24 +65,22 @@ def get_db_connection():
 def ensure_tables():
     """Ensure notification tables exist."""
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables
-                    WHERE table_name = 'notification_preferences'
-                )
-            """)
-            if not cur.fetchone()[0]:
-                migration_path = os.path.join(
-                    os.path.dirname(os.path.dirname(__file__)),
-                    "db", "migrate_notifications.sql"
-                )
-                if os.path.exists(migration_path):
-                    with open(migration_path) as f:
-                        cur.execute(f.read())
-                    conn.commit()
-        conn.close()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'notification_preferences'
+                    )
+                """)
+                if not cur.fetchone()[0]:
+                    migration_path = os.path.join(
+                        os.path.dirname(os.path.dirname(__file__)),
+                        "db", "migrate_notifications.sql"
+                    )
+                    if os.path.exists(migration_path):
+                        with open(migration_path) as f:
+                            cur.execute(f.read())
     except Exception as e:
         logger.warning(f"Could not ensure notification tables: {e}")
 
@@ -153,18 +154,17 @@ async def get_preferences(current_user=Depends(get_current_user)):
     """Get notification preferences for the current user."""
     username = current_user.username
     try:
-        conn = get_db_connection()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT id, username, email, event_type, severity_min,
-                       delivery_mode, enabled, created_at, updated_at
-                FROM notification_preferences
-                WHERE username = %s
-                ORDER BY event_type
-            """, (username,))
-            prefs = cur.fetchall()
-        conn.close()
-        return {"preferences": prefs, "available_event_types": VALID_EVENT_TYPES}
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, username, email, event_type, severity_min,
+                           delivery_mode, enabled, created_at, updated_at
+                    FROM notification_preferences
+                    WHERE username = %s
+                    ORDER BY event_type
+                """, (username,))
+                prefs = cur.fetchall()
+            return {"preferences": prefs, "available_event_types": VALID_EVENT_TYPES}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -177,27 +177,25 @@ async def update_preferences(
     """Create or update notification preferences for the current user (bulk upsert)."""
     username = current_user.username
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            for pref in body.preferences:
-                cur.execute("""
-                    INSERT INTO notification_preferences
-                        (username, email, event_type, severity_min, delivery_mode, enabled, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, now())
-                    ON CONFLICT (username, event_type)
-                    DO UPDATE SET
-                        email = EXCLUDED.email,
-                        severity_min = EXCLUDED.severity_min,
-                        delivery_mode = EXCLUDED.delivery_mode,
-                        enabled = EXCLUDED.enabled,
-                        updated_at = now()
-                """, (
-                    username, pref.email, pref.event_type,
-                    pref.severity_min, pref.delivery_mode, pref.enabled,
-                ))
-        conn.commit()
-        conn.close()
-        return {"status": "ok", "updated": len(body.preferences)}
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                for pref in body.preferences:
+                    cur.execute("""
+                        INSERT INTO notification_preferences
+                            (username, email, event_type, severity_min, delivery_mode, enabled, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, now())
+                        ON CONFLICT (username, event_type)
+                        DO UPDATE SET
+                            email = EXCLUDED.email,
+                            severity_min = EXCLUDED.severity_min,
+                            delivery_mode = EXCLUDED.delivery_mode,
+                            enabled = EXCLUDED.enabled,
+                            updated_at = now()
+                    """, (
+                        username, pref.email, pref.event_type,
+                        pref.severity_min, pref.delivery_mode, pref.enabled,
+                    ))
+            return {"status": "ok", "updated": len(body.preferences)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -207,18 +205,16 @@ async def delete_preference(event_type: str, current_user=Depends(get_current_us
     """Delete a notification preference for the current user."""
     username = current_user.username
     try:
-        conn = get_db_connection()
-        with conn.cursor() as cur:
-            cur.execute("""
-                DELETE FROM notification_preferences
-                WHERE username = %s AND event_type = %s
-            """, (username, event_type))
-            deleted = cur.rowcount
-        conn.commit()
-        conn.close()
-        if deleted == 0:
-            raise HTTPException(status_code=404, detail="Preference not found")
-        return {"status": "ok", "deleted": event_type}
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DELETE FROM notification_preferences
+                    WHERE username = %s AND event_type = %s
+                """, (username, event_type))
+                deleted = cur.rowcount
+            if deleted == 0:
+                raise HTTPException(status_code=404, detail="Preference not found")
+            return {"status": "ok", "deleted": event_type}
     except HTTPException:
         raise
     except Exception as e:
@@ -240,43 +236,42 @@ async def get_notification_history(
     """Get notification history for the current user."""
     username = current_user.username
     try:
-        conn = get_db_connection()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            query = """
-                SELECT id, username, email, event_type, event_id, subject,
-                       body_preview, delivery_status, error_message, sent_at, created_at
-                FROM notification_log
-                WHERE username = %s
-            """
-            params = [username]
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                query = """
+                    SELECT id, username, email, event_type, event_id, subject,
+                           body_preview, delivery_status, error_message, sent_at, created_at
+                    FROM notification_log
+                    WHERE username = %s
+                """
+                params = [username]
 
-            if event_type:
-                query += " AND event_type = %s"
-                params.append(event_type)
-            if status:
-                query += " AND delivery_status = %s"
-                params.append(status)
+                if event_type:
+                    query += " AND event_type = %s"
+                    params.append(event_type)
+                if status:
+                    query += " AND delivery_status = %s"
+                    params.append(status)
 
-            query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
-            params.extend([limit, offset])
+                query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
 
-            cur.execute(query, params)
-            logs = cur.fetchall()
+                cur.execute(query, params)
+                logs = cur.fetchall()
 
-            # Get total count
-            count_query = "SELECT COUNT(*) FROM notification_log WHERE username = %s"
-            count_params = [username]
-            if event_type:
-                count_query += " AND event_type = %s"
-                count_params.append(event_type)
-            if status:
-                count_query += " AND delivery_status = %s"
-                count_params.append(status)
-            cur.execute(count_query, count_params)
-            total = cur.fetchone()["count"]
+                # Get total count
+                count_query = "SELECT COUNT(*) FROM notification_log WHERE username = %s"
+                count_params = [username]
+                if event_type:
+                    count_query += " AND event_type = %s"
+                    count_params.append(event_type)
+                if status:
+                    count_query += " AND delivery_status = %s"
+                    count_params.append(status)
+                cur.execute(count_query, count_params)
+                total = cur.fetchone()["count"]
 
-        conn.close()
-        return {"history": logs, "total": total, "limit": limit, "offset": offset}
+            return {"history": logs, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -289,43 +284,42 @@ async def get_notification_history(
 async def get_notification_stats():
     """Admin: summary stats for all notification activity."""
     try:
-        conn = get_db_connection()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT
-                    COUNT(*)                                                           AS total_sent,
-                    COUNT(*) FILTER (WHERE delivery_status = 'sent')                   AS delivered,
-                    COUNT(*) FILTER (WHERE delivery_status = 'failed')                 AS failed,
-                    COUNT(*) FILTER (WHERE delivery_status = 'digest_queued')           AS digest_queued,
-                    COUNT(DISTINCT username)                                            AS unique_users,
-                    COUNT(*) FILTER (WHERE created_at >= now() - interval '24 hours')  AS last_24h,
-                    COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')    AS last_7d
-                FROM notification_log
-            """)
-            stats = cur.fetchone()
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT
+                        COUNT(*)                                                           AS total_sent,
+                        COUNT(*) FILTER (WHERE delivery_status = 'sent')                   AS delivered,
+                        COUNT(*) FILTER (WHERE delivery_status = 'failed')                 AS failed,
+                        COUNT(*) FILTER (WHERE delivery_status = 'digest_queued')           AS digest_queued,
+                        COUNT(DISTINCT username)                                            AS unique_users,
+                        COUNT(*) FILTER (WHERE created_at >= now() - interval '24 hours')  AS last_24h,
+                        COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')    AS last_7d
+                    FROM notification_log
+                """)
+                stats = cur.fetchone()
 
-            cur.execute("""
-                SELECT event_type, COUNT(*) AS count
-                FROM notification_log
-                WHERE created_at >= now() - interval '7 days'
-                GROUP BY event_type
-                ORDER BY count DESC
-            """)
-            by_type = cur.fetchall()
+                cur.execute("""
+                    SELECT event_type, COUNT(*) AS count
+                    FROM notification_log
+                    WHERE created_at >= now() - interval '7 days'
+                    GROUP BY event_type
+                    ORDER BY count DESC
+                """)
+                by_type = cur.fetchall()
 
-            cur.execute("""
-                SELECT COUNT(*) AS total_subscribers,
-                       COUNT(*) FILTER (WHERE enabled = true) AS active_subscribers
-                FROM notification_preferences
-            """)
-            sub_stats = cur.fetchone()
+                cur.execute("""
+                    SELECT COUNT(*) AS total_subscribers,
+                           COUNT(*) FILTER (WHERE enabled = true) AS active_subscribers
+                    FROM notification_preferences
+                """)
+                sub_stats = cur.fetchone()
 
-        conn.close()
-        return {
-            "stats": stats,
-            "by_event_type_7d": by_type,
-            "subscribers": sub_stats,
-        }
+            return {
+                "stats": stats,
+                "by_event_type_7d": by_type,
+                "subscribers": sub_stats,
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

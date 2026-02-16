@@ -23,6 +23,9 @@ from slowapi.errors import RateLimitExceeded
 
 from pf9_control import get_client
 
+# Database connection pool
+from db_pool import get_connection, close_pool
+
 # Authentication imports
 from auth import (
     ldap_auth, create_access_token, get_current_user, require_authentication, 
@@ -228,18 +231,22 @@ def verify_admin_credentials(credentials: HTTPBasicCredentials = Depends(securit
 
 # ---------------------------------------------------------------------------
 # DB connection helper (inside Docker: host defaults to "db")
+# Uses connection pool for concurrency safety.
 # ---------------------------------------------------------------------------
 def db_conn():
-    return psycopg2.connect(
-        host=os.getenv("PF9_DB_HOST", "db"),
-        port=int(os.getenv("PF9_DB_PORT", "5432")),
-        dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
-        user=os.getenv("PF9_DB_USER", "pf9"),
-        password=os.getenv("PF9_DB_PASSWORD", ""),
-    )
+    """Return a connection from the pool.
+    Prefer `with get_connection() as conn:` for automatic cleanup.
+    If you use db_conn() directly, you MUST close in a finally block.
+    """
+    from db_pool import get_pool
+    return get_pool().getconn()
 
 
 app = FastAPI(title=APP_NAME)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    close_pool()
 
 # Include routers
 app.include_router(dashboard_router)
@@ -638,43 +645,41 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
     ]
     
     try:
-        conn = db_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Get permissions only for main UI resources
-        cur.execute("""
-            SELECT resource, action, array_agg(role ORDER BY 
-                CASE role 
-                    WHEN 'superadmin' THEN 1 
-                    WHEN 'admin' THEN 2 
-                    WHEN 'operator' THEN 3 
-                    WHEN 'viewer' THEN 4 
-                END
-            ) as roles
-            FROM role_permissions
-            WHERE resource = ANY(%s)
-            GROUP BY resource, action
-            ORDER BY resource, action
-        """, (MAIN_UI_RESOURCES,))
-        permissions = cur.fetchall()
-        cur.close()
-        conn.close()
-        
-        # If we got data from database, use it
-        if permissions and len(permissions) > 0:
-            return [
-                {
-                    "id": idx + 1,
-                    "resource": perm['resource'],
-                    "action": perm['action'],
-                    "roles": perm['roles']
-                }
-                for idx, perm in enumerate(permissions)
-            ]
-        else:
-            # Database is empty, return nothing so UI uses its fallback
-            raise Exception("No permissions in database")
-            
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+
+            # Get permissions only for main UI resources
+            cur.execute("""
+                SELECT resource, action, array_agg(role ORDER BY 
+                    CASE role 
+                        WHEN 'superadmin' THEN 1 
+                        WHEN 'admin' THEN 2 
+                        WHEN 'operator' THEN 3 
+                        WHEN 'viewer' THEN 4 
+                    END
+                ) as roles
+                FROM role_permissions
+                WHERE resource = ANY(%s)
+                GROUP BY resource, action
+                ORDER BY resource, action
+            """, (MAIN_UI_RESOURCES,))
+            permissions = cur.fetchall()
+
+            # If we got data from database, use it
+            if permissions and len(permissions) > 0:
+                return [
+                    {
+                        "id": idx + 1,
+                        "resource": perm['resource'],
+                        "action": perm['action'],
+                        "roles": perm['roles']
+                    }
+                    for idx, perm in enumerate(permissions)
+                ]
+            else:
+                # Database is empty, return nothing so UI uses its fallback
+                raise Exception("No permissions in database")
+
     except Exception as e:
         logger.error(f"Error getting permissions: {e}")
         import traceback
@@ -819,45 +824,45 @@ async def get_audit_logs(
         )
     
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Build query with filters
-            query = """
-                SELECT id, username, action, resource, endpoint, ip_address, 
-                       user_agent, timestamp, success, details
-                FROM auth_audit_log
-                WHERE timestamp > NOW() - INTERVAL '90 days'
-            """
-            params = []
-            
-            if username:
-                query += " AND username = %s"
-                params.append(username)
-            
-            if action:
-                query += " AND action = %s"
-                params.append(action)
-            
-            if start_date:
-                query += " AND timestamp >= %s"
-                params.append(start_date)
-            
-            if end_date:
-                query += " AND timestamp <= %s"
-                params.append(end_date)
-            
-            query += " ORDER BY timestamp DESC LIMIT %s"
-            params.append(limit)
-            
-            cur.execute(query, params)
-            logs = [dict(row) for row in cur.fetchall()]
-            
-            # Convert timestamp to ISO format for JSON serialization
-            for log in logs:
-                if log.get('timestamp'):
-                    log['timestamp'] = log['timestamp'].isoformat()
-            
-            return logs
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Build query with filters
+                query = """
+                    SELECT id, username, action, resource, endpoint, ip_address, 
+                           user_agent, timestamp, success, details
+                    FROM auth_audit_log
+                    WHERE timestamp > NOW() - INTERVAL '90 days'
+                """
+                params = []
+                
+                if username:
+                    query += " AND username = %s"
+                    params.append(username)
+                
+                if action:
+                    query += " AND action = %s"
+                    params.append(action)
+                
+                if start_date:
+                    query += " AND timestamp >= %s"
+                    params.append(start_date)
+                
+                if end_date:
+                    query += " AND timestamp <= %s"
+                    params.append(end_date)
+                
+                query += " ORDER BY timestamp DESC LIMIT %s"
+                params.append(limit)
+                
+                cur.execute(query, params)
+                logs = [dict(row) for row in cur.fetchall()]
+                
+                # Convert timestamp to ISO format for JSON serialization
+                for log in logs:
+                    if log.get('timestamp'):
+                        log['timestamp'] = log['timestamp'].isoformat()
+                
+                return logs
     except Exception as e:
         logger.error(f"Error fetching audit logs: {e}")
         raise HTTPException(
@@ -1055,19 +1060,19 @@ def simple_test(request: Request):
 def test_users_db(request: Request):
     """Test users database connectivity"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT COUNT(*) as count FROM users")
-            count = cur.fetchone()['count']
-            
-            cur.execute("SELECT name, email, domain_id FROM users LIMIT 3")
-            sample = [dict(row) for row in cur.fetchall()]
-            
-        return {
-            "status": "success",
-            "total_users": count,
-            "sample_users": sample
-        }
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT COUNT(*) as count FROM users")
+                count = cur.fetchone()['count']
+                
+                cur.execute("SELECT name, email, domain_id FROM users LIMIT 3")
+                sample = [dict(row) for row in cur.fetchall()]
+                
+            return {
+                "status": "success",
+                "total_users": count,
+                "sample_users": sample
+            }
     except Exception as e:
         return {"status": "error", "message": str(e), "type": type(e).__name__}
 
@@ -1094,7 +1099,7 @@ def volumes_with_metadata():
 
 def run_query_raw(sql: str, params: Any = ()) -> List[Dict[str, Any]]:
     """Execute SQL and return rows. Raises DB exceptions as-is (for fallbacks)."""
-    with db_conn() as conn:
+    with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql, params)
             return cur.fetchall()
@@ -3097,40 +3102,40 @@ def get_recent_changes(
     domain_name: Optional[str] = Query(default=None)
 ):
     """Get recent infrastructure changes across all resource types with optional domain filtering"""
-    try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # For now, ignore domain filtering in the SQL query due to complexity
-            # We'll filter it in the frontend since it has the data
+    with get_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # For now, ignore domain filtering in the SQL query due to complexity
+                # We'll filter it in the frontend since it has the data
             
-            # Apply time filtering based on hours parameter
-            time_filter = ""
-            if hours and hours > 0:
-                # Use recorded_at for deletion events so they appear when the delete is detected
-                time_filter = f"""WHERE (
-                    (change_description = 'Resource deletion detected' AND recorded_at >= (NOW() - interval '{hours} hours')) OR
-                    (change_description <> 'Resource deletion detected' AND actual_time >= (NOW() - interval '{hours} hours')) OR
-                    (actual_time IS NULL AND recorded_at >= (NOW() - interval '{hours} hours'))
-                )"""
+                # Apply time filtering based on hours parameter
+                time_filter = ""
+                if hours and hours > 0:
+                    # Use recorded_at for deletion events so they appear when the delete is detected
+                    time_filter = f"""WHERE (
+                        (change_description = 'Resource deletion detected' AND recorded_at >= (NOW() - interval '{hours} hours')) OR
+                        (change_description <> 'Resource deletion detected' AND actual_time >= (NOW() - interval '{hours} hours')) OR
+                        (actual_time IS NULL AND recorded_at >= (NOW() - interval '{hours} hours'))
+                    )"""
             
-            cur.execute(f"""
-                SELECT resource_type, resource_id, resource_name, 
-                       change_hash, recorded_at, project_name, domain_name, actual_time,
-                       change_description
-                FROM v_comprehensive_changes
-                {time_filter}
-                ORDER BY COALESCE(actual_time, recorded_at) DESC
-                LIMIT %s
-            """, (limit,))
-            changes = cur.fetchall()
+                cur.execute(f"""
+                    SELECT resource_type, resource_id, resource_name, 
+                           change_hash, recorded_at, project_name, domain_name, actual_time,
+                           change_description
+                    FROM v_comprehensive_changes
+                    {time_filter}
+                    ORDER BY COALESCE(actual_time, recorded_at) DESC
+                    LIMIT %s
+                """, (limit,))
+                changes = cur.fetchall()
             
-            return {
-                "status": "success", 
-                "data": [dict(row) for row in changes],
-                "count": len(changes)
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving recent changes: {str(e)}")
+                return {
+                    "status": "success", 
+                    "data": [dict(row) for row in changes],
+                    "count": len(changes)
+                }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving recent changes: {str(e)}")
 
 
 @app.get("/history/most-changed")
@@ -3139,62 +3144,62 @@ def get_most_changed_resources(
     domain_name: Optional[str] = Query(default=None)
 ):
     """Get resources with the most changes, with optional domain filtering"""
-    try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            base_sql = """
-                SELECT resource_type, resource_name, change_count, last_change
-                FROM v_most_changed_resources
-            """
-            params = []
-            
-            # Add domain filtering if specified - simplified to avoid table join errors
-            if domain_name:
-                base_sql += """
-                WHERE (
-                    (resource_type = 'network' AND resource_id IN (
-                        SELECT n.id FROM networks n 
-                        LEFT JOIN projects p ON p.id = n.project_id 
-                        LEFT JOIN domains d ON d.id = p.domain_id 
-                        WHERE d.name = %s
-                    )) OR
-                    (resource_type = 'server' AND resource_id IN (
-                        SELECT s.id FROM servers s 
-                        LEFT JOIN projects p ON p.id = s.project_id 
-                        LEFT JOIN domains d ON d.id = p.domain_id 
-                        WHERE d.name = %s  
-                    )) OR
-                    (resource_type = 'volume' AND resource_id IN (
-                        SELECT v.id FROM volumes v 
-                        LEFT JOIN projects p ON p.id = v.project_id 
-                        LEFT JOIN domains d ON d.id = p.domain_id 
-                        WHERE d.name = %s
-                    )) OR
-                    (resource_type = 'project' AND resource_id IN (
-                        SELECT p.id FROM projects p 
-                        LEFT JOIN domains d ON d.id = p.domain_id 
-                        WHERE d.name = %s
-                    )) OR
-                    (resource_type = 'domain' AND resource_id IN (
-                        SELECT id FROM domains WHERE name = %s
-                    ))
-                )
+    with get_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                base_sql = """
+                    SELECT resource_type, resource_name, change_count, last_change
+                    FROM v_most_changed_resources
                 """
-                params.extend([domain_name] * 5)
+                params = []
             
-            base_sql += " ORDER BY change_count DESC, last_change DESC LIMIT %s"
-            params.append(limit)
+                # Add domain filtering if specified - simplified to avoid table join errors
+                if domain_name:
+                    base_sql += """
+                    WHERE (
+                        (resource_type = 'network' AND resource_id IN (
+                            SELECT n.id FROM networks n 
+                            LEFT JOIN projects p ON p.id = n.project_id 
+                            LEFT JOIN domains d ON d.id = p.domain_id 
+                            WHERE d.name = %s
+                        )) OR
+                        (resource_type = 'server' AND resource_id IN (
+                            SELECT s.id FROM servers s 
+                            LEFT JOIN projects p ON p.id = s.project_id 
+                            LEFT JOIN domains d ON d.id = p.domain_id 
+                            WHERE d.name = %s  
+                        )) OR
+                        (resource_type = 'volume' AND resource_id IN (
+                            SELECT v.id FROM volumes v 
+                            LEFT JOIN projects p ON p.id = v.project_id 
+                            LEFT JOIN domains d ON d.id = p.domain_id 
+                            WHERE d.name = %s
+                        )) OR
+                        (resource_type = 'project' AND resource_id IN (
+                            SELECT p.id FROM projects p 
+                            LEFT JOIN domains d ON d.id = p.domain_id 
+                            WHERE d.name = %s
+                        )) OR
+                        (resource_type = 'domain' AND resource_id IN (
+                            SELECT id FROM domains WHERE name = %s
+                        ))
+                    )
+                    """
+                    params.extend([domain_name] * 5)
             
-            cur.execute(base_sql, params)
-            resources = cur.fetchall()
+                base_sql += " ORDER BY change_count DESC, last_change DESC LIMIT %s"
+                params.append(limit)
             
-            return {
-                "status": "success", 
-                "data": [dict(row) for row in resources],
-                "count": len(resources)
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving most changed resources: {str(e)}")
+                cur.execute(base_sql, params)
+                resources = cur.fetchall()
+            
+                return {
+                    "status": "success", 
+                    "data": [dict(row) for row in resources],
+                    "count": len(resources)
+                }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving most changed resources: {str(e)}")
 
 
 @app.get("/history/by-timeframe")
@@ -3204,90 +3209,90 @@ def get_changes_by_timeframe(
     resource_type: Optional[str] = Query(default=None, description="Filter by resource type")
 ):
     """Get changes within a specific timeframe"""
-    try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            base_query = """
-                SELECT resource_type, resource_id, resource_name, 
-                       change_hash, recorded_at
-                FROM v_recent_changes
-                WHERE DATE(recorded_at) >= %s AND DATE(recorded_at) <= %s
-            """
-            params = [start_date, end_date]
+    with get_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                base_query = """
+                    SELECT resource_type, resource_id, resource_name, 
+                           change_hash, recorded_at
+                    FROM v_recent_changes
+                    WHERE DATE(recorded_at) >= %s AND DATE(recorded_at) <= %s
+                """
+                params = [start_date, end_date]
             
-            if resource_type:
-                base_query += " AND resource_type = %s"
-                params.append(resource_type)
+                if resource_type:
+                    base_query += " AND resource_type = %s"
+                    params.append(resource_type)
                 
-            base_query += " ORDER BY recorded_at DESC"
+                base_query += " ORDER BY recorded_at DESC"
             
-            cur.execute(base_query, params)
-            changes = cur.fetchall()
+                cur.execute(base_query, params)
+                changes = cur.fetchall()
             
-            return {
-                "status": "success",
-                "data": [dict(row) for row in changes],
-                "count": len(changes),
-                "timeframe": {"start": start_date, "end": end_date}
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving timeframe changes: {str(e)}")
+                return {
+                    "status": "success",
+                    "data": [dict(row) for row in changes],
+                    "count": len(changes),
+                    "timeframe": {"start": start_date, "end": end_date}
+                }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving timeframe changes: {str(e)}")
 
 
 @app.get("/history/daily-summary")
 def get_daily_summary(days: int = Query(default=30, ge=1, le=365)):
     """Get daily change summary for the specified number of days"""
-    try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT 
-                    DATE(recorded_at) as date,
-                    COUNT(*) as total_changes,
-                    COUNT(DISTINCT resource_type) as resource_types,
-                    COUNT(DISTINCT resource_id) as unique_resources
-                FROM v_recent_changes
-                WHERE recorded_at >= NOW() - INTERVAL '%s days'
-                GROUP BY DATE(recorded_at)
-                ORDER BY date DESC
-                LIMIT %s
-            """, (days, days))
+    with get_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        DATE(recorded_at) as date,
+                        COUNT(*) as total_changes,
+                        COUNT(DISTINCT resource_type) as resource_types,
+                        COUNT(DISTINCT resource_id) as unique_resources
+                    FROM v_recent_changes
+                    WHERE recorded_at >= NOW() - INTERVAL '%s days'
+                    GROUP BY DATE(recorded_at)
+                    ORDER BY date DESC
+                    LIMIT %s
+                """, (days, days))
             
-            results = [dict(row) for row in cur.fetchall()]
-            return {"status": "success", "data": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get daily summary: {str(e)}")
+                results = [dict(row) for row in cur.fetchall()]
+                return {"status": "success", "data": results}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get daily summary: {str(e)}")
 
 @app.get("/history/change-velocity")
 def get_change_velocity():
     """Get change velocity statistics by resource type"""
-    try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT 
-                    resource_type,
-                    COUNT(*) as total_changes,
-                    COUNT(*) / 30.0 as avg_daily_changes,
-                    MAX(daily_count) as max_daily_changes,
-                    MIN(daily_count) as min_daily_changes,
-                    COUNT(DISTINCT date_part('day', recorded_at)) as days_tracked
-                FROM (
+    with get_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
                     SELECT 
-                        resource_type, 
-                        recorded_at,
-                        COUNT(*) OVER (PARTITION BY resource_type, DATE(recorded_at)) as daily_count
-                    FROM v_recent_changes
-                    WHERE recorded_at >= NOW() - INTERVAL '30 days'
-                ) daily_stats
-                GROUP BY resource_type
-                ORDER BY total_changes DESC
-            """)
+                        resource_type,
+                        COUNT(*) as total_changes,
+                        COUNT(*) / 30.0 as avg_daily_changes,
+                        MAX(daily_count) as max_daily_changes,
+                        MIN(daily_count) as min_daily_changes,
+                        COUNT(DISTINCT date_part('day', recorded_at)) as days_tracked
+                    FROM (
+                        SELECT 
+                            resource_type, 
+                            recorded_at,
+                            COUNT(*) OVER (PARTITION BY resource_type, DATE(recorded_at)) as daily_count
+                        FROM v_recent_changes
+                        WHERE recorded_at >= NOW() - INTERVAL '30 days'
+                    ) daily_stats
+                    GROUP BY resource_type
+                    ORDER BY total_changes DESC
+                """)
             
-            results = [dict(row) for row in cur.fetchall()]
-            return {"velocity_stats": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get velocity stats: {str(e)}")
+                results = [dict(row) for row in cur.fetchall()]
+                return {"velocity_stats": results}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get velocity stats: {str(e)}")
 
 
 @app.get("/history/resource/{resource_type}/{resource_id}")
@@ -3297,308 +3302,308 @@ def get_resource_history(
     limit: int = Query(default=100, ge=1, le=1000)
 ):
     """Get complete history for a specific resource"""
-    try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Map resource type to actual history table
-            table_mapping = {
-                "server": "servers_history",
-                "domain": "domains_history",
-                "project": "projects_history", 
-                "flavor": "flavors_history",
-                "image": "images_history",
-                "hypervisor": "hypervisors_history",
-                "network": "networks_history",
-                "volume": "volumes_history",
-                "floating_ip": "floating_ips_history",
-                "snapshot": "snapshots_history",
-                "port": "ports_history",
-                "subnet": "subnets_history",
-                "router": "routers_history",
-                "user": "users_history",
-                "role": "roles_history",
-                "security_group": "security_groups_history",
-                "security_group_rule": "security_group_rules_history"
-            }
+    with get_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Map resource type to actual history table
+                table_mapping = {
+                    "server": "servers_history",
+                    "domain": "domains_history",
+                    "project": "projects_history", 
+                    "flavor": "flavors_history",
+                    "image": "images_history",
+                    "hypervisor": "hypervisors_history",
+                    "network": "networks_history",
+                    "volume": "volumes_history",
+                    "floating_ip": "floating_ips_history",
+                    "snapshot": "snapshots_history",
+                    "port": "ports_history",
+                    "subnet": "subnets_history",
+                    "router": "routers_history",
+                    "user": "users_history",
+                    "role": "roles_history",
+                    "security_group": "security_groups_history",
+                    "security_group_rule": "security_group_rules_history"
+                }
             
-            # Handle deletion records specially - they come from deletions_history
-            if resource_type == "deletion":
-                cur.execute("""
-                    SELECT id, resource_type AS original_resource_type, resource_id, resource_name,
-                           deleted_at, project_name, domain_name, reason,
-                           last_seen_before_deletion, raw_json_snapshot,
-                           'deleted-' || resource_id AS change_hash
-                    FROM deletions_history
-                    WHERE resource_id = %s
-                    ORDER BY deleted_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
+                # Handle deletion records specially - they come from deletions_history
+                if resource_type == "deletion":
+                    cur.execute("""
+                        SELECT id, resource_type AS original_resource_type, resource_id, resource_name,
+                               deleted_at, project_name, domain_name, reason,
+                               last_seen_before_deletion, raw_json_snapshot,
+                               'deleted-' || resource_id AS change_hash
+                        FROM deletions_history
+                        WHERE resource_id = %s
+                        ORDER BY deleted_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
                 
+                    history = cur.fetchall()
+                    standardized_history = []
+                    for idx, row in enumerate(history):
+                        row_dict = dict(row)
+                        mapped_row = {
+                            "resource_type": "deletion",
+                            "resource_id": row_dict.get('resource_id'),
+                            "resource_name": row_dict.get('resource_name') or f"Deleted {row_dict.get('original_resource_type', 'resource')}",
+                            "recorded_at": row_dict.get('deleted_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json_snapshot') or {
+                                "original_type": row_dict.get('original_resource_type'),
+                                "reason": row_dict.get('reason'),
+                                "last_seen_before_deletion": str(row_dict.get('last_seen_before_deletion') or ''),
+                                "project_name": row_dict.get('project_name'),
+                                "domain_name": row_dict.get('domain_name'),
+                            },
+                            "previous_hash": None,
+                            "change_sequence": len(history) - idx
+                        }
+                        standardized_history.append(mapped_row)
+                
+                    return {
+                        "status": "success",
+                        "data": standardized_history,
+                        "count": len(standardized_history),
+                        "resource": {"type": "deletion", "id": resource_id}
+                    }
+            
+                if resource_type not in table_mapping:
+                    raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
+            
+                table_name = table_mapping[resource_type]
+            
+                # Use a simpler query structure based on what we know exists
+                if resource_type == "server":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE server_id = %s
+                        ORDER BY last_seen_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "volume":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE volume_id = %s
+                        ORDER BY last_seen_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "network":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE network_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "port":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE port_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "subnet":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE subnet_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "router":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE router_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "floating_ip":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE floating_ip_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "hypervisor":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE hypervisor_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "image":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE image_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "flavor":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE flavor_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "domain":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE domain_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "project":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE project_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "user":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE user_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "role":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE role_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "snapshot":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE snapshot_id = %s
+                        ORDER BY last_seen_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "security_group":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE security_group_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+                elif resource_type == "security_group_rule":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE security_group_rule_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT %s
+                    """, (resource_id, limit))
+            
                 history = cur.fetchall()
+            
+                # Map database columns to standardized ResourceHistory format
                 standardized_history = []
                 for idx, row in enumerate(history):
                     row_dict = dict(row)
-                    mapped_row = {
-                        "resource_type": "deletion",
-                        "resource_id": row_dict.get('resource_id'),
-                        "resource_name": row_dict.get('resource_name') or f"Deleted {row_dict.get('original_resource_type', 'resource')}",
-                        "recorded_at": row_dict.get('deleted_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json_snapshot') or {
-                            "original_type": row_dict.get('original_resource_type'),
-                            "reason": row_dict.get('reason'),
-                            "last_seen_before_deletion": str(row_dict.get('last_seen_before_deletion') or ''),
-                            "project_name": row_dict.get('project_name'),
-                            "domain_name": row_dict.get('domain_name'),
-                        },
-                        "previous_hash": None,
-                        "change_sequence": len(history) - idx
-                    }
-                    standardized_history.append(mapped_row)
                 
+                    # Map fields based on resource type
+                    if resource_type == "server":
+                        resource_name = row_dict.get('name') or row_dict.get('vm_name')
+                        mapped_row = {
+                            "resource_type": resource_type,
+                            "resource_id": row_dict.get('server_id'),
+                            "resource_name": resource_name,
+                            "recorded_at": row_dict.get('last_seen_at') or row_dict.get('recorded_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json') or row_dict,
+                            "previous_hash": None,  # Not stored in current schema
+                            "change_sequence": len(history) - idx  # Reverse order for sequence
+                        }
+                    elif resource_type == "port":
+                        mapped_row = {
+                            "resource_type": resource_type,
+                            "resource_id": row_dict.get('port_id'),
+                            "resource_name": row_dict.get('name') or f"Port {row_dict.get('port_id', '')[:8]}",
+                            "recorded_at": row_dict.get('recorded_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json') or row_dict,
+                            "previous_hash": None,
+                            "change_sequence": len(history) - idx
+                        }
+                    elif resource_type == "floating_ip":
+                        mapped_row = {
+                            "resource_type": resource_type,
+                            "resource_id": row_dict.get('floating_ip_id'),
+                            "resource_name": row_dict.get('floating_ip') or f"FloatingIP {row_dict.get('floating_ip_id', '')[:8]}",
+                            "recorded_at": row_dict.get('recorded_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json') or row_dict,
+                            "previous_hash": None,
+                            "change_sequence": len(history) - idx
+                        }
+                    elif resource_type == "volume":
+                        mapped_row = {
+                            "resource_type": resource_type,
+                            "resource_id": row_dict.get('volume_id'),
+                            "resource_name": row_dict.get('volume_name') or f"Volume {row_dict.get('volume_id', '')[:8]}",
+                            "recorded_at": row_dict.get('last_seen_at') or row_dict.get('recorded_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json') or row_dict,
+                            "previous_hash": None,
+                            "change_sequence": len(history) - idx
+                        }
+                    elif resource_type == "snapshot":
+                        mapped_row = {
+                            "resource_type": resource_type,
+                            "resource_id": row_dict.get('snapshot_id'),
+                            "resource_name": row_dict.get('name') or f"Snapshot {row_dict.get('snapshot_id', '')[:8]}",
+                            "recorded_at": row_dict.get('last_seen_at') or row_dict.get('recorded_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json') or row_dict,
+                            "previous_hash": None,
+                            "change_sequence": len(history) - idx
+                        }
+                    elif resource_type == "security_group":
+                        mapped_row = {
+                            "resource_type": resource_type,
+                            "resource_id": row_dict.get('security_group_id'),
+                            "resource_name": row_dict.get('name') or f"SG {row_dict.get('security_group_id', '')[:8]}",
+                            "recorded_at": row_dict.get('recorded_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json') or row_dict,
+                            "previous_hash": None,
+                            "change_sequence": len(history) - idx
+                        }
+                    elif resource_type == "security_group_rule":
+                        mapped_row = {
+                            "resource_type": resource_type,
+                            "resource_id": row_dict.get('security_group_rule_id'),
+                            "resource_name": f"{row_dict.get('direction', '')} {row_dict.get('protocol', 'any')} {row_dict.get('security_group_id', '')[:8]}",
+                            "recorded_at": row_dict.get('recorded_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json') or row_dict,
+                            "previous_hash": None,
+                            "change_sequence": len(history) - idx
+                        }
+                    else:
+                        # Generic mapping for other resource types
+                        id_field = f"{resource_type}_id"
+                        mapped_row = {
+                            "resource_type": resource_type,
+                            "resource_id": row_dict.get(id_field),
+                            "resource_name": row_dict.get('name') or f"{resource_type.title()} {row_dict.get(id_field, '')[:8]}",
+                            "recorded_at": row_dict.get('recorded_at') or row_dict.get('last_seen_at'),
+                            "change_hash": row_dict.get('change_hash', ''),
+                            "current_state": row_dict.get('raw_json') or row_dict,
+                            "previous_hash": None,
+                            "change_sequence": len(history) - idx
+                        }
+                
+                    standardized_history.append(mapped_row)
+            
                 return {
                     "status": "success",
                     "data": standardized_history,
                     "count": len(standardized_history),
-                    "resource": {"type": "deletion", "id": resource_id}
+                    "resource": {"type": resource_type, "id": resource_id}
                 }
-            
-            if resource_type not in table_mapping:
-                raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
-            
-            table_name = table_mapping[resource_type]
-            
-            # Use a simpler query structure based on what we know exists
-            if resource_type == "server":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE server_id = %s
-                    ORDER BY last_seen_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "volume":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE volume_id = %s
-                    ORDER BY last_seen_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "network":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE network_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "port":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE port_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "subnet":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE subnet_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "router":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE router_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "floating_ip":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE floating_ip_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "hypervisor":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE hypervisor_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "image":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE image_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "flavor":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE flavor_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "domain":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE domain_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "project":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE project_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "user":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE user_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "role":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE role_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "snapshot":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE snapshot_id = %s
-                    ORDER BY last_seen_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "security_group":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE security_group_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            elif resource_type == "security_group_rule":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE security_group_rule_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT %s
-                """, (resource_id, limit))
-            
-            history = cur.fetchall()
-            
-            # Map database columns to standardized ResourceHistory format
-            standardized_history = []
-            for idx, row in enumerate(history):
-                row_dict = dict(row)
-                
-                # Map fields based on resource type
-                if resource_type == "server":
-                    resource_name = row_dict.get('name') or row_dict.get('vm_name')
-                    mapped_row = {
-                        "resource_type": resource_type,
-                        "resource_id": row_dict.get('server_id'),
-                        "resource_name": resource_name,
-                        "recorded_at": row_dict.get('last_seen_at') or row_dict.get('recorded_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json') or row_dict,
-                        "previous_hash": None,  # Not stored in current schema
-                        "change_sequence": len(history) - idx  # Reverse order for sequence
-                    }
-                elif resource_type == "port":
-                    mapped_row = {
-                        "resource_type": resource_type,
-                        "resource_id": row_dict.get('port_id'),
-                        "resource_name": row_dict.get('name') or f"Port {row_dict.get('port_id', '')[:8]}",
-                        "recorded_at": row_dict.get('recorded_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json') or row_dict,
-                        "previous_hash": None,
-                        "change_sequence": len(history) - idx
-                    }
-                elif resource_type == "floating_ip":
-                    mapped_row = {
-                        "resource_type": resource_type,
-                        "resource_id": row_dict.get('floating_ip_id'),
-                        "resource_name": row_dict.get('floating_ip') or f"FloatingIP {row_dict.get('floating_ip_id', '')[:8]}",
-                        "recorded_at": row_dict.get('recorded_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json') or row_dict,
-                        "previous_hash": None,
-                        "change_sequence": len(history) - idx
-                    }
-                elif resource_type == "volume":
-                    mapped_row = {
-                        "resource_type": resource_type,
-                        "resource_id": row_dict.get('volume_id'),
-                        "resource_name": row_dict.get('volume_name') or f"Volume {row_dict.get('volume_id', '')[:8]}",
-                        "recorded_at": row_dict.get('last_seen_at') or row_dict.get('recorded_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json') or row_dict,
-                        "previous_hash": None,
-                        "change_sequence": len(history) - idx
-                    }
-                elif resource_type == "snapshot":
-                    mapped_row = {
-                        "resource_type": resource_type,
-                        "resource_id": row_dict.get('snapshot_id'),
-                        "resource_name": row_dict.get('name') or f"Snapshot {row_dict.get('snapshot_id', '')[:8]}",
-                        "recorded_at": row_dict.get('last_seen_at') or row_dict.get('recorded_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json') or row_dict,
-                        "previous_hash": None,
-                        "change_sequence": len(history) - idx
-                    }
-                elif resource_type == "security_group":
-                    mapped_row = {
-                        "resource_type": resource_type,
-                        "resource_id": row_dict.get('security_group_id'),
-                        "resource_name": row_dict.get('name') or f"SG {row_dict.get('security_group_id', '')[:8]}",
-                        "recorded_at": row_dict.get('recorded_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json') or row_dict,
-                        "previous_hash": None,
-                        "change_sequence": len(history) - idx
-                    }
-                elif resource_type == "security_group_rule":
-                    mapped_row = {
-                        "resource_type": resource_type,
-                        "resource_id": row_dict.get('security_group_rule_id'),
-                        "resource_name": f"{row_dict.get('direction', '')} {row_dict.get('protocol', 'any')} {row_dict.get('security_group_id', '')[:8]}",
-                        "recorded_at": row_dict.get('recorded_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json') or row_dict,
-                        "previous_hash": None,
-                        "change_sequence": len(history) - idx
-                    }
-                else:
-                    # Generic mapping for other resource types
-                    id_field = f"{resource_type}_id"
-                    mapped_row = {
-                        "resource_type": resource_type,
-                        "resource_id": row_dict.get(id_field),
-                        "resource_name": row_dict.get('name') or f"{resource_type.title()} {row_dict.get(id_field, '')[:8]}",
-                        "recorded_at": row_dict.get('recorded_at') or row_dict.get('last_seen_at'),
-                        "change_hash": row_dict.get('change_hash', ''),
-                        "current_state": row_dict.get('raw_json') or row_dict,
-                        "previous_hash": None,
-                        "change_sequence": len(history) - idx
-                    }
-                
-                standardized_history.append(mapped_row)
-            
-            return {
-                "status": "success",
-                "data": standardized_history,
-                "count": len(standardized_history),
-                "resource": {"type": resource_type, "id": resource_id}
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving resource history: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving resource history: {str(e)}")
 
 
 @app.get("/history/compare/{resource_type}/{resource_id}")
@@ -3609,358 +3614,358 @@ def compare_history_entries(
     previous_hash: str = Query(description="Previous change hash")
 ):
     """Compare two history entries to show what changed"""
-    try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Map resource type to table
-            table_mapping = {
-                "server": "servers_history",
-                "domain": "domains_history",
-                "project": "projects_history", 
-                "flavor": "flavors_history",
-                "image": "images_history",
-                "hypervisor": "hypervisors_history",
-                "network": "networks_history",
-                "volume": "volumes_history",
-                "floating_ip": "floating_ips_history",
-                "snapshot": "snapshots_history",
-                "port": "ports_history",
-                "subnet": "subnets_history",
-                "router": "routers_history",
-                "user": "users_history",
-                "role": "roles_history",
-                "security_group": "security_groups_history",
-                "security_group_rule": "security_group_rules_history"
-            }
-            
-            if resource_type == "deletion":
-                return {
-                    "status": "info",
-                    "message": "Comparison is not available for deletion records. Deletion events are one-time occurrences.",
-                    "changes": {}
+    with get_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Map resource type to table
+                table_mapping = {
+                    "server": "servers_history",
+                    "domain": "domains_history",
+                    "project": "projects_history", 
+                    "flavor": "flavors_history",
+                    "image": "images_history",
+                    "hypervisor": "hypervisors_history",
+                    "network": "networks_history",
+                    "volume": "volumes_history",
+                    "floating_ip": "floating_ips_history",
+                    "snapshot": "snapshots_history",
+                    "port": "ports_history",
+                    "subnet": "subnets_history",
+                    "router": "routers_history",
+                    "user": "users_history",
+                    "role": "roles_history",
+                    "security_group": "security_groups_history",
+                    "security_group_rule": "security_group_rules_history"
                 }
             
-            if resource_type not in table_mapping:
-                raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
+                if resource_type == "deletion":
+                    return {
+                        "status": "info",
+                        "message": "Comparison is not available for deletion records. Deletion events are one-time occurrences.",
+                        "changes": {}
+                    }
             
-            table_name = table_mapping[resource_type]
-            id_field = f"{resource_type}_id" if resource_type != "floating_ip" else "floating_ip_id"
+                if resource_type not in table_mapping:
+                    raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
             
-            # Get both history entries
-            if resource_type == "user":
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE user_id = %s AND change_hash IN (%s, %s)
-                    ORDER BY recorded_at DESC
-                """, (resource_id, current_hash, previous_hash))
-            else:
-                cur.execute(f"""
-                    SELECT * FROM {table_name}
-                    WHERE {id_field} = %s AND change_hash IN (%s, %s)
-                    ORDER BY recorded_at DESC
-                """, (resource_id, current_hash, previous_hash))
+                table_name = table_mapping[resource_type]
+                id_field = f"{resource_type}_id" if resource_type != "floating_ip" else "floating_ip_id"
             
-            entries = cur.fetchall()
+                # Get both history entries
+                if resource_type == "user":
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE user_id = %s AND change_hash IN (%s, %s)
+                        ORDER BY recorded_at DESC
+                    """, (resource_id, current_hash, previous_hash))
+                else:
+                    cur.execute(f"""
+                        SELECT * FROM {table_name}
+                        WHERE {id_field} = %s AND change_hash IN (%s, %s)
+                        ORDER BY recorded_at DESC
+                    """, (resource_id, current_hash, previous_hash))
             
-            if len(entries) < 2:
-                return {
-                    "status": "error",
-                    "message": "Could not find both history entries for comparison",
-                    "found_entries": len(entries)
-                }
+                entries = cur.fetchall()
             
-            current_entry = next((e for e in entries if e['change_hash'] == current_hash), entries[0])
-            previous_entry = next((e for e in entries if e['change_hash'] == previous_hash), entries[1])
+                if len(entries) < 2:
+                    return {
+                        "status": "error",
+                        "message": "Could not find both history entries for comparison",
+                        "found_entries": len(entries)
+                    }
             
-            # Compare the entries
-            changes = {}
-            excluded_fields = {'id', 'recorded_at', 'change_hash', 'raw_json', 'run_id'}
+                current_entry = next((e for e in entries if e['change_hash'] == current_hash), entries[0])
+                previous_entry = next((e for e in entries if e['change_hash'] == previous_hash), entries[1])
             
-            for field in current_entry.keys():
-                if field not in excluded_fields:
-                    current_val = current_entry[field]
-                    previous_val = previous_entry[field]
-                    if current_val != previous_val:
-                        changes[field] = {
-                            "from": previous_val,
-                            "to": current_val,
-                            "changed": True
-                        }
-                    else:
-                        changes[field] = {
-                            "value": current_val,
-                            "changed": False
-                        }
+                # Compare the entries
+                changes = {}
+                excluded_fields = {'id', 'recorded_at', 'change_hash', 'raw_json', 'run_id'}
             
-            # Also compare raw_json if available
-            raw_json_changes = {}
-            if current_entry.get('raw_json') and previous_entry.get('raw_json'):
-                current_raw = dict(current_entry['raw_json'])
-                previous_raw = dict(previous_entry['raw_json'])
+                for field in current_entry.keys():
+                    if field not in excluded_fields:
+                        current_val = current_entry[field]
+                        previous_val = previous_entry[field]
+                        if current_val != previous_val:
+                            changes[field] = {
+                                "from": previous_val,
+                                "to": current_val,
+                                "changed": True
+                            }
+                        else:
+                            changes[field] = {
+                                "value": current_val,
+                                "changed": False
+                            }
+            
+                # Also compare raw_json if available
+                raw_json_changes = {}
+                if current_entry.get('raw_json') and previous_entry.get('raw_json'):
+                    current_raw = dict(current_entry['raw_json'])
+                    previous_raw = dict(previous_entry['raw_json'])
                 
-                # Find changed fields in raw JSON
-                all_keys = set(current_raw.keys()) | set(previous_raw.keys())
-                for key in all_keys:
-                    if key in ['links']:  # Skip metadata fields
-                        continue
-                    current_val = current_raw.get(key)
-                    previous_val = previous_raw.get(key)
-                    if current_val != previous_val:
-                        raw_json_changes[key] = {
-                            "from": previous_val,
-                            "to": current_val
-                        }
+                    # Find changed fields in raw JSON
+                    all_keys = set(current_raw.keys()) | set(previous_raw.keys())
+                    for key in all_keys:
+                        if key in ['links']:  # Skip metadata fields
+                            continue
+                        current_val = current_raw.get(key)
+                        previous_val = previous_raw.get(key)
+                        if current_val != previous_val:
+                            raw_json_changes[key] = {
+                                "from": previous_val,
+                                "to": current_val
+                            }
             
-            return {
-                "status": "success",
-                "resource_type": resource_type,
-                "resource_id": resource_id,
-                "comparison": {
-                    "current_recorded_at": current_entry['recorded_at'],
-                    "previous_recorded_at": previous_entry['recorded_at'],
-                    "field_changes": changes,
-                    "raw_json_changes": raw_json_changes,
-                    "total_changed_fields": len([k for k, v in changes.items() if v.get('changed', False)]),
-                    "has_significant_changes": len(raw_json_changes) > 0 or any(v.get('changed', False) for v in changes.values())
+                return {
+                    "status": "success",
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "comparison": {
+                        "current_recorded_at": current_entry['recorded_at'],
+                        "previous_recorded_at": previous_entry['recorded_at'],
+                        "field_changes": changes,
+                        "raw_json_changes": raw_json_changes,
+                        "total_changed_fields": len([k for k, v in changes.items() if v.get('changed', False)]),
+                        "has_significant_changes": len(raw_json_changes) > 0 or any(v.get('changed', False) for v in changes.values())
+                    }
                 }
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error comparing history entries: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error comparing history entries: {str(e)}")
 
 
 @app.get("/history/details/{resource_type}/{resource_id}")
 def get_change_details(resource_type: str, resource_id: str):
     """Get detailed change information for a specific resource"""
-    try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Map resource type to table
-            table_mapping = {
-                "server": "servers_history",
-                "domain": "domains_history", 
-                "project": "projects_history",
-                "flavor": "flavors_history",
-                "image": "images_history",
-                "hypervisor": "hypervisors_history",
-                "network": "networks_history",
-                "volume": "volumes_history",
-                "floating_ip": "floating_ips_history",
-                "snapshot": "snapshots_history",
-                "port": "ports_history",
-                "subnet": "subnets_history",
-                "router": "routers_history",
-                "user": "users_history",
-                "role": "roles_history",
-                "security_group": "security_groups_history",
-                "security_group_rule": "security_group_rules_history"
-            }
-            
-            if resource_type == "deletion":
-                cur.execute("""
-                    SELECT id, resource_type AS original_resource_type, resource_id, resource_name,
-                           deleted_at, project_name, domain_name, reason,
-                           last_seen_before_deletion, raw_json_snapshot
-                    FROM deletions_history
-                    WHERE resource_id = %s
-                    ORDER BY deleted_at DESC
-                    LIMIT 10
-                """, (resource_id,))
-                history = cur.fetchall()
-                if not history:
-                    raise HTTPException(status_code=404, detail="Deletion record not found")
-                
-                latest = dict(history[0])
-                return {
-                    "status": "success",
-                    "resource": {
-                        "type": "deletion",
-                        "id": resource_id,
-                        "name": latest.get('resource_name', 'Unknown'),
-                        "original_type": latest.get('original_resource_type'),
-                    },
-                    "total_changes": len(history),
-                    "latest": {
-                        "deleted_at": latest.get('deleted_at'),
-                        "reason": latest.get('reason'),
-                        "project_name": latest.get('project_name'),
-                        "domain_name": latest.get('domain_name'),
-                        "last_seen_before_deletion": latest.get('last_seen_before_deletion'),
-                        "raw_json_snapshot": latest.get('raw_json_snapshot'),
-                    },
-                    "changes": [{
-                        "change_type": "deleted",
-                        "change_summary": f"Resource deletion detected - {dict(row).get('reason', 'no longer found in inventory')}",
-                        "recorded_at": dict(row).get('deleted_at'),
-                        "key_info": {
-                            "original_type": dict(row).get('original_resource_type'),
-                            "name": dict(row).get('resource_name'),
-                            "project": dict(row).get('project_name'),
-                            "domain": dict(row).get('domain_name'),
-                            "reason": dict(row).get('reason'),
-                        }
-                    } for row in history]
+    with get_connection() as conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Map resource type to table
+                table_mapping = {
+                    "server": "servers_history",
+                    "domain": "domains_history", 
+                    "project": "projects_history",
+                    "flavor": "flavors_history",
+                    "image": "images_history",
+                    "hypervisor": "hypervisors_history",
+                    "network": "networks_history",
+                    "volume": "volumes_history",
+                    "floating_ip": "floating_ips_history",
+                    "snapshot": "snapshots_history",
+                    "port": "ports_history",
+                    "subnet": "subnets_history",
+                    "router": "routers_history",
+                    "user": "users_history",
+                    "role": "roles_history",
+                    "security_group": "security_groups_history",
+                    "security_group_rule": "security_group_rules_history"
                 }
             
-            if resource_type not in table_mapping:
-                raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
-            
-            table_name = table_mapping[resource_type]
-            id_field = f"{resource_type}_id" if resource_type != "floating_ip" else "floating_ip_id"
-            
-            # Get history entries for this resource
-            if resource_type == "user":
-                cur.execute(f"""
-                    SELECT uh.*, d.name as domain_name, 
-                           (SELECT COUNT(*) FROM users_history uh2 WHERE uh2.user_id = uh.user_id AND uh2.recorded_at < uh.recorded_at) as change_sequence
-                    FROM {table_name} uh
-                    LEFT JOIN domains d ON uh.domain_id = d.id
-                    WHERE user_id = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT 10
-                """, (resource_id,))
-            else:
-                cur.execute(f"""
-                    SELECT *,
-                           (SELECT COUNT(*) FROM {table_name} t2 WHERE t2.{id_field} = t1.{id_field} AND t2.recorded_at < t1.recorded_at) as change_sequence
-                    FROM {table_name} t1
-                    WHERE {id_field} = %s
-                    ORDER BY recorded_at DESC
-                    LIMIT 10
-                """, (resource_id,))
-            
-            history = cur.fetchall()
-            
-            if not history:
-                raise HTTPException(status_code=404, detail="Resource not found in history")
-            
-            # Prepare detailed information
-            latest = history[0]
-            changes_over_time = []
-            
-            for i, entry in enumerate(history):
-                entry_dict = dict(entry)
+                if resource_type == "deletion":
+                    cur.execute("""
+                        SELECT id, resource_type AS original_resource_type, resource_id, resource_name,
+                               deleted_at, project_name, domain_name, reason,
+                               last_seen_before_deletion, raw_json_snapshot
+                        FROM deletions_history
+                        WHERE resource_id = %s
+                        ORDER BY deleted_at DESC
+                        LIMIT 10
+                    """, (resource_id,))
+                    history = cur.fetchall()
+                    if not history:
+                        raise HTTPException(status_code=404, detail="Deletion record not found")
                 
-                # Determine change type
-                if entry_dict.get('change_sequence', 0) == 0:
-                    change_type = "discovered"
-                    change_summary = f"First discovered in inventory"
-                else:
-                    change_type = "modified" 
-                    change_summary = f"Configuration or state change #{entry_dict.get('change_sequence', 0) + 1}"
-                
-                # Extract key information based on resource type
-                if resource_type == "user":
-                    key_info = {
-                        "name": entry_dict.get('name'),
-                        "email": entry_dict.get('email'),
-                        "enabled": entry_dict.get('enabled'),
-                        "domain": entry_dict.get('domain_name'),
-                        "created_at": entry_dict.get('created_at')
+                    latest = dict(history[0])
+                    return {
+                        "status": "success",
+                        "resource": {
+                            "type": "deletion",
+                            "id": resource_id,
+                            "name": latest.get('resource_name', 'Unknown'),
+                            "original_type": latest.get('original_resource_type'),
+                        },
+                        "total_changes": len(history),
+                        "latest": {
+                            "deleted_at": latest.get('deleted_at'),
+                            "reason": latest.get('reason'),
+                            "project_name": latest.get('project_name'),
+                            "domain_name": latest.get('domain_name'),
+                            "last_seen_before_deletion": latest.get('last_seen_before_deletion'),
+                            "raw_json_snapshot": latest.get('raw_json_snapshot'),
+                        },
+                        "changes": [{
+                            "change_type": "deleted",
+                            "change_summary": f"Resource deletion detected - {dict(row).get('reason', 'no longer found in inventory')}",
+                            "recorded_at": dict(row).get('deleted_at'),
+                            "key_info": {
+                                "original_type": dict(row).get('original_resource_type'),
+                                "name": dict(row).get('resource_name'),
+                                "project": dict(row).get('project_name'),
+                                "domain": dict(row).get('domain_name'),
+                                "reason": dict(row).get('reason'),
+                            }
+                        } for row in history]
                     }
-                    if entry_dict.get('last_login'):
-                        key_info["last_login"] = entry_dict.get('last_login')
+            
+                if resource_type not in table_mapping:
+                    raise HTTPException(status_code=400, detail=f"Invalid resource type: {resource_type}")
+            
+                table_name = table_mapping[resource_type]
+                id_field = f"{resource_type}_id" if resource_type != "floating_ip" else "floating_ip_id"
+            
+                # Get history entries for this resource
+                if resource_type == "user":
+                    cur.execute(f"""
+                        SELECT uh.*, d.name as domain_name, 
+                               (SELECT COUNT(*) FROM users_history uh2 WHERE uh2.user_id = uh.user_id AND uh2.recorded_at < uh.recorded_at) as change_sequence
+                        FROM {table_name} uh
+                        LEFT JOIN domains d ON uh.domain_id = d.id
+                        WHERE user_id = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT 10
+                    """, (resource_id,))
                 else:
-                    # Generic key info extraction
-                    raw_json = entry_dict.get('raw_json', {})
-                    if isinstance(raw_json, dict):
-                        key_info = {
-                            "name": entry_dict.get('name') or raw_json.get('name'),
-                            "status": raw_json.get('status'),
-                            "created_at": raw_json.get('created_at')
-                        }
-                    else:
-                        key_info = {"name": entry_dict.get('name', 'Unknown')}
+                    cur.execute(f"""
+                        SELECT *,
+                               (SELECT COUNT(*) FROM {table_name} t2 WHERE t2.{id_field} = t1.{id_field} AND t2.recorded_at < t1.recorded_at) as change_sequence
+                        FROM {table_name} t1
+                        WHERE {id_field} = %s
+                        ORDER BY recorded_at DESC
+                        LIMIT 10
+                    """, (resource_id,))
+            
+                history = cur.fetchall()
+            
+                if not history:
+                    raise HTTPException(status_code=404, detail="Resource not found in history")
+            
+                # Prepare detailed information
+                latest = history[0]
+                changes_over_time = []
+            
+                for i, entry in enumerate(history):
+                    entry_dict = dict(entry)
                 
-                changes_over_time.append({
-                    "recorded_at": entry_dict.get('recorded_at'),
-                    "change_hash": entry_dict.get('change_hash'),
-                    "change_type": change_type,
-                    "change_summary": change_summary,
-                    "key_information": key_info,
-                    "sequence_number": len(history) - i
-                })
+                    # Determine change type
+                    if entry_dict.get('change_sequence', 0) == 0:
+                        change_type = "discovered"
+                        change_summary = f"First discovered in inventory"
+                    else:
+                        change_type = "modified" 
+                        change_summary = f"Configuration or state change #{entry_dict.get('change_sequence', 0) + 1}"
+                
+                    # Extract key information based on resource type
+                    if resource_type == "user":
+                        key_info = {
+                            "name": entry_dict.get('name'),
+                            "email": entry_dict.get('email'),
+                            "enabled": entry_dict.get('enabled'),
+                            "domain": entry_dict.get('domain_name'),
+                            "created_at": entry_dict.get('created_at')
+                        }
+                        if entry_dict.get('last_login'):
+                            key_info["last_login"] = entry_dict.get('last_login')
+                    else:
+                        # Generic key info extraction
+                        raw_json = entry_dict.get('raw_json', {})
+                        if isinstance(raw_json, dict):
+                            key_info = {
+                                "name": entry_dict.get('name') or raw_json.get('name'),
+                                "status": raw_json.get('status'),
+                                "created_at": raw_json.get('created_at')
+                            }
+                        else:
+                            key_info = {"name": entry_dict.get('name', 'Unknown')}
+                
+                    changes_over_time.append({
+                        "recorded_at": entry_dict.get('recorded_at'),
+                        "change_hash": entry_dict.get('change_hash'),
+                        "change_type": change_type,
+                        "change_summary": change_summary,
+                        "key_information": key_info,
+                        "sequence_number": len(history) - i
+                    })
             
-            # Summary information
-            summary = {
-                "resource_type": resource_type,
-                "resource_id": resource_id,
-                "resource_name": latest.get('name') or latest.get(f'{resource_type}_name'),
-                "total_changes": len(history),
-                "first_discovered": history[-1].get('recorded_at') if history else None,
-                "last_changed": history[0].get('recorded_at') if history else None,
-                "current_status": "active" if latest else "unknown"
-            }
+                # Summary information
+                summary = {
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "resource_name": latest.get('name') or latest.get(f'{resource_type}_name'),
+                    "total_changes": len(history),
+                    "first_discovered": history[-1].get('recorded_at') if history else None,
+                    "last_changed": history[0].get('recorded_at') if history else None,
+                    "current_status": "active" if latest else "unknown"
+                }
             
-            if resource_type == "user":
-                summary.update({
-                    "domain": latest.get('domain_name'),
-                    "enabled": latest.get('enabled'),
-                    "email": latest.get('email')
-                })
+                if resource_type == "user":
+                    summary.update({
+                        "domain": latest.get('domain_name'),
+                        "enabled": latest.get('enabled'),
+                        "email": latest.get('email')
+                    })
             
-            return {
-                "status": "success",
-                "summary": summary,
-                "changes_timeline": changes_over_time,
-                "has_multiple_changes": len(history) > 1
-            }
+                return {
+                    "status": "success",
+                    "summary": summary,
+                    "changes_timeline": changes_over_time,
+                    "has_multiple_changes": len(history) > 1
+                }
             
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving change details: {str(e)}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving change details: {str(e)}")
 
 
 @app.get("/audit/compliance-report")
 def get_compliance_report():
     """Generate compliance audit report showing recent changes and patterns"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get recent changes summary by resource type
-            cur.execute("""
-                SELECT resource_type, 
-                       COUNT(*) as total_changes,
-                       MAX(recorded_at) as last_change
-                FROM v_recent_changes
-                WHERE recorded_at >= NOW() - INTERVAL '7 days'
-                GROUP BY resource_type
-                ORDER BY total_changes DESC
-            """)
-            resource_summary = cur.fetchall()
-            
-            # Get high-activity resources (potential compliance risks)
-            cur.execute("""
-                SELECT resource_type, resource_name, change_count
-                FROM v_most_changed_resources
-                WHERE change_count > 10
-                ORDER BY change_count DESC
-                LIMIT 20
-            """)
-            high_activity = cur.fetchall()
-            
-            # Get recent changes (last 30 days)
-            cur.execute("""
-                SELECT resource_type, resource_name, recorded_at
-                FROM v_recent_changes
-                WHERE recorded_at >= NOW() - INTERVAL '30 days'
-                ORDER BY recorded_at DESC
-                LIMIT 50
-            """)
-            recent_changes = cur.fetchall()
-            
-            return {
-                "status": "success",
-                "report_date": "2026-01-26",
-                "summary": {
-                    "resource_activity": [dict(row) for row in resource_summary],
-                    "high_activity_resources": [dict(row) for row in high_activity],
-                    "recent_changes": [dict(row) for row in recent_changes]
-                },
-                "compliance_notes": {
-                    "total_resource_types": len(resource_summary),
-                    "high_risk_resources": len(high_activity),
-                    "recent_changes_count": len(recent_changes)
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Get recent changes summary by resource type
+                cur.execute("""
+                    SELECT resource_type, 
+                           COUNT(*) as total_changes,
+                           MAX(recorded_at) as last_change
+                    FROM v_recent_changes
+                    WHERE recorded_at >= NOW() - INTERVAL '7 days'
+                    GROUP BY resource_type
+                    ORDER BY total_changes DESC
+                """)
+                resource_summary = cur.fetchall()
+                
+                # Get high-activity resources (potential compliance risks)
+                cur.execute("""
+                    SELECT resource_type, resource_name, change_count
+                    FROM v_most_changed_resources
+                    WHERE change_count > 10
+                    ORDER BY change_count DESC
+                    LIMIT 20
+                """)
+                high_activity = cur.fetchall()
+                
+                # Get recent changes (last 30 days)
+                cur.execute("""
+                    SELECT resource_type, resource_name, recorded_at
+                    FROM v_recent_changes
+                    WHERE recorded_at >= NOW() - INTERVAL '30 days'
+                    ORDER BY recorded_at DESC
+                    LIMIT 50
+                """)
+                recent_changes = cur.fetchall()
+                
+                return {
+                    "status": "success",
+                    "report_date": "2026-01-26",
+                    "summary": {
+                        "resource_activity": [dict(row) for row in resource_summary],
+                        "high_activity_resources": [dict(row) for row in high_activity],
+                        "recent_changes": [dict(row) for row in recent_changes]
+                    },
+                    "compliance_notes": {
+                        "total_resource_types": len(resource_summary),
+                        "high_risk_resources": len(high_activity),
+                        "recent_changes_count": len(recent_changes)
+                    }
                 }
-            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating compliance report: {str(e)}")
 
@@ -3969,26 +3974,26 @@ def get_compliance_report():
 def get_change_patterns(days: int = Query(default=30, ge=1, le=365)):
     """Analyze change patterns over specified time period"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT 
-                    DATE(recorded_at) as change_date,
-                    resource_type,
-                    COUNT(*) as change_count
-                FROM v_recent_changes
-                WHERE recorded_at >= NOW() - INTERVAL %s
-                GROUP BY DATE(recorded_at), resource_type
-                ORDER BY change_date DESC, change_count DESC
-            """, (f"{days} days",))
-            patterns = cur.fetchall()
-            
-            return {
-                "status": "success",
-                "analysis_period": f"{days} days",
-                "data": [dict(row) for row in patterns],
-                "count": len(patterns)
-            }
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT 
+                        DATE(recorded_at) as change_date,
+                        resource_type,
+                        COUNT(*) as change_count
+                    FROM v_recent_changes
+                    WHERE recorded_at >= NOW() - INTERVAL %s
+                    GROUP BY DATE(recorded_at), resource_type
+                    ORDER BY change_date DESC, change_count DESC
+                """, (f"{days} days",))
+                patterns = cur.fetchall()
+                
+                return {
+                    "status": "success",
+                    "analysis_period": f"{days} days",
+                    "data": [dict(row) for row in patterns],
+                    "count": len(patterns)
+                }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error analyzing change patterns: {str(e)}")
 
@@ -4000,24 +4005,24 @@ def get_resource_type_timeline(
 ):
     """Get timeline of changes for a specific resource type"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT resource_id, resource_name, change_hash, recorded_at
-                FROM v_recent_changes
-                WHERE resource_type = %s 
-                  AND recorded_at >= NOW() - INTERVAL %s
-                ORDER BY recorded_at DESC
-            """, (resource_type, f"{days} days"))
-            timeline = cur.fetchall()
-            
-            return {
-                "status": "success",
-                "resource_type": resource_type,
-                "period": f"{days} days",
-                "data": [dict(row) for row in timeline],
-                "count": len(timeline)
-            }
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT resource_id, resource_name, change_hash, recorded_at
+                    FROM v_recent_changes
+                    WHERE resource_type = %s 
+                      AND recorded_at >= NOW() - INTERVAL %s
+                    ORDER BY recorded_at DESC
+                """, (resource_type, f"{days} days"))
+                timeline = cur.fetchall()
+                
+                return {
+                    "status": "success",
+                    "resource_type": resource_type,
+                    "period": f"{days} days",
+                    "data": [dict(row) for row in timeline],
+                    "count": len(timeline)
+                }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving resource timeline: {str(e)}")
 
@@ -4056,66 +4061,66 @@ async def get_users(
         }
         sort_column = sort_columns[sort_by]
         
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Main query
-            query = """
-                SELECT 
-                    u.id, u.name, u.email, u.enabled, u.domain_id, 
-                    u.description, u.default_project_id, u.created_at, 
-                    u.last_login, u.last_seen_at,
-                    d.name as domain_name,
-                    p.name as default_project_name,
-                    COUNT(DISTINCT ra.role_id) as role_count,
-                    STRING_AGG(DISTINCT r.name, ', ') as roles
-                FROM users u
-                LEFT JOIN domains d ON d.id = u.domain_id
-                LEFT JOIN projects p ON p.id = u.default_project_id
-                LEFT JOIN role_assignments ra ON ra.user_id = u.id
-                LEFT JOIN roles r ON r.id = ra.role_id
-                WHERE 1=1
-            """
-            params = []
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Main query
+                query = """
+                    SELECT 
+                        u.id, u.name, u.email, u.enabled, u.domain_id, 
+                        u.description, u.default_project_id, u.created_at, 
+                        u.last_login, u.last_seen_at,
+                        d.name as domain_name,
+                        p.name as default_project_name,
+                        COUNT(DISTINCT ra.role_id) as role_count,
+                        STRING_AGG(DISTINCT r.name, ', ') as roles
+                    FROM users u
+                    LEFT JOIN domains d ON d.id = u.domain_id
+                    LEFT JOIN projects p ON p.id = u.default_project_id
+                    LEFT JOIN role_assignments ra ON ra.user_id = u.id
+                    LEFT JOIN roles r ON r.id = ra.role_id
+                    WHERE 1=1
+                """
+                params = []
             
-            if enabled is not None:
-                query += " AND u.enabled = %s"
-                params.append(enabled)
+                if enabled is not None:
+                    query += " AND u.enabled = %s"
+                    params.append(enabled)
                 
-            if domain_id:
-                query += " AND u.domain_id = %s" 
-                params.append(domain_id)
+                if domain_id:
+                    query += " AND u.domain_id = %s" 
+                    params.append(domain_id)
                 
-            query += f" GROUP BY u.id, u.name, u.email, u.enabled, u.domain_id, u.description, u.default_project_id, u.created_at, u.last_login, u.last_seen_at, d.name, p.name ORDER BY {sort_column} {sort_dir.upper()} LIMIT %s OFFSET %s"
-            params.extend([page_size, offset])
+                query += f" GROUP BY u.id, u.name, u.email, u.enabled, u.domain_id, u.description, u.default_project_id, u.created_at, u.last_login, u.last_seen_at, d.name, p.name ORDER BY {sort_column} {sort_dir.upper()} LIMIT %s OFFSET %s"
+                params.extend([page_size, offset])
             
-            cur.execute(query, params)
-            users = [dict(row) for row in cur.fetchall()]
+                cur.execute(query, params)
+                users = [dict(row) for row in cur.fetchall()]
             
-            # Count query
-            count_query = "SELECT COUNT(*) as count FROM users WHERE 1=1"
-            count_params = []
+                # Count query
+                count_query = "SELECT COUNT(*) as count FROM users WHERE 1=1"
+                count_params = []
             
-            if enabled is not None:
-                count_query += " AND enabled = %s"
-                count_params.append(enabled)
+                if enabled is not None:
+                    count_query += " AND enabled = %s"
+                    count_params.append(enabled)
                 
-            if domain_id:
-                count_query += " AND domain_id = %s"
-                count_params.append(domain_id)
+                if domain_id:
+                    count_query += " AND domain_id = %s"
+                    count_params.append(domain_id)
                 
-            cur.execute(count_query, count_params)
-            result = cur.fetchone()
-            total = result['count'] if result else 0
+                cur.execute(count_query, count_params)
+                result = cur.fetchone()
+                total = result['count'] if result else 0
             
-        pages = max(1, (total + page_size - 1) // page_size) if total > 0 and page_size > 0 else 1
+            pages = max(1, (total + page_size - 1) // page_size) if total > 0 and page_size > 0 else 1
         
-        return {
-            "data": users,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "pages": pages
-        }
+            return {
+                "data": users,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "pages": pages
+            }
     except Exception as e:
         import traceback
         traceback.print_exc()  # This will show in docker logs
@@ -4127,53 +4132,53 @@ async def get_users(
 async def get_user_details(request: Request, user_id: str):
     """Get detailed information about a specific user"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get user details with enriched data
-            cur.execute("""
-                SELECT 
-                    u.id, u.name, u.email, u.enabled, u.domain_id, 
-                    u.description, u.default_project_id, u.created_at, 
-                    u.last_login, u.last_seen_at, u.raw_json,
-                    d.name as domain_name,
-                    p.name as default_project_name
-                FROM users u
-                LEFT JOIN domains d ON d.id = u.domain_id
-                LEFT JOIN projects p ON p.id = u.default_project_id
-                WHERE u.id = %s
-            """, (user_id,))
-            user = cur.fetchone()
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Get user details with enriched data
+                cur.execute("""
+                    SELECT 
+                        u.id, u.name, u.email, u.enabled, u.domain_id, 
+                        u.description, u.default_project_id, u.created_at, 
+                        u.last_login, u.last_seen_at, u.raw_json,
+                        d.name as domain_name,
+                        p.name as default_project_name
+                    FROM users u
+                    LEFT JOIN domains d ON d.id = u.domain_id
+                    LEFT JOIN projects p ON p.id = u.default_project_id
+                    WHERE u.id = %s
+                """, (user_id,))
+                user = cur.fetchone()
             
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
+                if not user:
+                    raise HTTPException(status_code=404, detail="User not found")
                 
-            user_data = dict(user)
+                user_data = dict(user)
             
-            # Get user's role assignments
-            cur.execute("""
-                SELECT 
-                    ra.role_id, ra.role_name, ra.project_id, ra.project_name,
-                    ra.domain_id, ra.domain_name, ra.inherited
-                FROM role_assignments ra
-                WHERE ra.user_id = %s
-                ORDER BY ra.project_name, ra.role_name
-            """, (user_id,))
-            user_data['role_assignments'] = [dict(row) for row in cur.fetchall()]
+                # Get user's role assignments
+                cur.execute("""
+                    SELECT 
+                        ra.role_id, ra.role_name, ra.project_id, ra.project_name,
+                        ra.domain_id, ra.domain_name, ra.inherited
+                    FROM role_assignments ra
+                    WHERE ra.user_id = %s
+                    ORDER BY ra.project_name, ra.role_name
+                """, (user_id,))
+                user_data['role_assignments'] = [dict(row) for row in cur.fetchall()]
             
-            # Get user's recent activity (last 30 days)
-            cur.execute("""
-                SELECT action, resource_type, resource_id, success, timestamp, details
-                FROM user_access_logs
-                WHERE user_id = %s AND timestamp > now() - INTERVAL '30 days'
-                ORDER BY timestamp DESC
-                LIMIT 50
-            """, (user_id,))
-            user_data['recent_activity'] = [dict(row) for row in cur.fetchall()]
+                # Get user's recent activity (last 30 days)
+                cur.execute("""
+                    SELECT action, resource_type, resource_id, success, timestamp, details
+                    FROM user_access_logs
+                    WHERE user_id = %s AND timestamp > now() - INTERVAL '30 days'
+                    ORDER BY timestamp DESC
+                    LIMIT 50
+                """, (user_id,))
+                user_data['recent_activity'] = [dict(row) for row in cur.fetchall()]
             
-        return {
-            "status": "success",
-            "data": user_data
-        }
+            return {
+                "status": "success",
+                "data": user_data
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -4190,54 +4195,54 @@ async def get_all_roles(
 ):
     """Get roles with optional filtering"""
     try:
-        conn = db_conn()
-        query = """
-            SELECT 
-                r.id, r.name, r.description, r.domain_id, r.last_seen_at,
-                d.name as domain_name,
-                COUNT(DISTINCT ra.user_id) as user_count
-            FROM roles r
-            LEFT JOIN domains d ON d.id = r.domain_id
-            LEFT JOIN role_assignments ra ON ra.role_id = r.id
-            WHERE 1=1
-        """
-        params = []
+        with get_connection() as conn:
+            query = """
+                SELECT 
+                    r.id, r.name, r.description, r.domain_id, r.last_seen_at,
+                    d.name as domain_name,
+                    COUNT(DISTINCT ra.user_id) as user_count
+                FROM roles r
+                LEFT JOIN domains d ON d.id = r.domain_id
+                LEFT JOIN role_assignments ra ON ra.role_id = r.id
+                WHERE 1=1
+            """
+            params = []
         
-        if domain_id:
-            query += " AND r.domain_id = %s"
-            params.append(domain_id)
-            
-        query += """
-            GROUP BY r.id, r.name, r.description, r.domain_id, r.last_seen_at, d.name
-            ORDER BY r.name
-            LIMIT %s OFFSET %s
-        """
-        params.extend([limit, offset])
-        
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, params)
-            roles = [dict(row) for row in cur.fetchall()]
-            
-            # Get total count
-            count_query = "SELECT COUNT(*) FROM roles WHERE 1=1"
-            count_params = []
             if domain_id:
-                count_query += " AND domain_id = %s"
-                count_params.append(domain_id)
-                
-            cur.execute(count_query, count_params)
-            total = cur.fetchone()[0]
+                query += " AND r.domain_id = %s"
+                params.append(domain_id)
             
-        return {
-            "status": "success",
-            "data": roles,
-            "pagination": {
-                "total": total,
-                "limit": limit,
-                "offset": offset,
-                "count": len(roles)
+            query += """
+                GROUP BY r.id, r.name, r.description, r.domain_id, r.last_seen_at, d.name
+                ORDER BY r.name
+                LIMIT %s OFFSET %s
+            """
+            params.extend([limit, offset])
+        
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, params)
+                roles = [dict(row) for row in cur.fetchall()]
+            
+                # Get total count
+                count_query = "SELECT COUNT(*) FROM roles WHERE 1=1"
+                count_params = []
+                if domain_id:
+                    count_query += " AND domain_id = %s"
+                    count_params.append(domain_id)
+                
+                cur.execute(count_query, count_params)
+                total = cur.fetchone()[0]
+            
+            return {
+                "status": "success",
+                "data": roles,
+                "pagination": {
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "count": len(roles)
+                }
             }
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving roles: {str(e)}")
 
@@ -4247,39 +4252,39 @@ async def get_all_roles(
 async def get_role_details(request: Request, role_id: str):
     """Get detailed information about a specific role"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get role details
-            cur.execute("""
-                SELECT 
-                    r.id, r.name, r.description, r.domain_id, r.last_seen_at, r.raw_json,
-                    d.name as domain_name
-                FROM roles r
-                LEFT JOIN domains d ON d.id = r.domain_id
-                WHERE r.id = %s
-            """, (role_id,))
-            role = cur.fetchone()
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Get role details
+                cur.execute("""
+                    SELECT 
+                        r.id, r.name, r.description, r.domain_id, r.last_seen_at, r.raw_json,
+                        d.name as domain_name
+                    FROM roles r
+                    LEFT JOIN domains d ON d.id = r.domain_id
+                    WHERE r.id = %s
+                """, (role_id,))
+                role = cur.fetchone()
             
-            if not role:
-                raise HTTPException(status_code=404, detail="Role not found")
+                if not role:
+                    raise HTTPException(status_code=404, detail="Role not found")
                 
-            role_data = dict(role)
+                role_data = dict(role)
             
-            # Get users with this role
-            cur.execute("""
-                SELECT 
-                    ra.user_id, ra.user_name, ra.project_id, ra.project_name,
-                    ra.domain_id, ra.domain_name, ra.inherited
-                FROM role_assignments ra
-                WHERE ra.role_id = %s
-                ORDER BY ra.user_name, ra.project_name
-            """, (role_id,))
-            role_data['assignments'] = [dict(row) for row in cur.fetchall()]
+                # Get users with this role
+                cur.execute("""
+                    SELECT 
+                        ra.user_id, ra.user_name, ra.project_id, ra.project_name,
+                        ra.domain_id, ra.domain_name, ra.inherited
+                    FROM role_assignments ra
+                    WHERE ra.role_id = %s
+                    ORDER BY ra.user_name, ra.project_name
+                """, (role_id,))
+                role_data['assignments'] = [dict(row) for row in cur.fetchall()]
             
-        return {
-            "status": "success",
-            "data": role_data
-        }
+            return {
+                "status": "success",
+                "data": role_data
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -4291,19 +4296,19 @@ async def get_role_details(request: Request, role_id: str):
 async def get_user_activity_summary(request: Request):
     """Get user activity summary using the database view"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT * FROM v_user_activity_summary
-                ORDER BY activity_last_30d DESC, user_name
-            """)
-            summary = [dict(row) for row in cur.fetchall()]
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM v_user_activity_summary
+                    ORDER BY activity_last_30d DESC, user_name
+                """)
+                summary = [dict(row) for row in cur.fetchall()]
             
-        return {
-            "status": "success",
-            "data": summary,
-            "count": len(summary)
-        }
+            return {
+                "status": "success",
+                "data": summary,
+                "count": len(summary)
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving user activity summary: {str(e)}")
 
@@ -4321,70 +4326,70 @@ async def get_role_assignments(
 ):
     """Get role assignments with optional filtering"""
     try:
-        conn = db_conn()
-        query = """
-            SELECT 
-                ra.id, ra.role_id, ra.user_id, ra.group_id, 
-                ra.project_id, ra.domain_id, ra.inherited,
-                ra.user_name, ra.role_name, ra.project_name, ra.domain_name,
-                ra.last_seen_at
-            FROM role_assignments ra
-            WHERE 1=1
-        """
-        params = []
+        with get_connection() as conn:
+            query = """
+                SELECT 
+                    ra.id, ra.role_id, ra.user_id, ra.group_id, 
+                    ra.project_id, ra.domain_id, ra.inherited,
+                    ra.user_name, ra.role_name, ra.project_name, ra.domain_name,
+                    ra.last_seen_at
+                FROM role_assignments ra
+                WHERE 1=1
+            """
+            params = []
         
-        if user_id:
-            query += " AND ra.user_id = %s"
-            params.append(user_id)
-        if role_id:
-            query += " AND ra.role_id = %s"
-            params.append(role_id)
-        if project_id:
-            query += " AND ra.project_id = %s"
-            params.append(project_id)
-        if domain_id:
-            query += " AND ra.domain_id = %s"
-            params.append(domain_id)
-            
-        query += """
-            ORDER BY ra.user_name, ra.role_name, ra.project_name
-            LIMIT %s OFFSET %s
-        """
-        params.extend([limit, offset])
-        
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, params)
-            assignments = [dict(row) for row in cur.fetchall()]
-            
-            # Get total count with same filters
-            count_query = "SELECT COUNT(*) FROM role_assignments WHERE 1=1"
-            count_params = []
             if user_id:
-                count_query += " AND user_id = %s"
-                count_params.append(user_id)
+                query += " AND ra.user_id = %s"
+                params.append(user_id)
             if role_id:
-                count_query += " AND role_id = %s"
-                count_params.append(role_id)
+                query += " AND ra.role_id = %s"
+                params.append(role_id)
             if project_id:
-                count_query += " AND project_id = %s"
-                count_params.append(project_id)
+                query += " AND ra.project_id = %s"
+                params.append(project_id)
             if domain_id:
-                count_query += " AND domain_id = %s"
-                count_params.append(domain_id)
-                
-            cur.execute(count_query, count_params)
-            total = cur.fetchone()[0]
+                query += " AND ra.domain_id = %s"
+                params.append(domain_id)
             
-        return {
-            "status": "success",
-            "data": assignments,
-            "pagination": {
-                "total": total,
-                "limit": limit,
-                "offset": offset,
-                "count": len(assignments)
+            query += """
+                ORDER BY ra.user_name, ra.role_name, ra.project_name
+                LIMIT %s OFFSET %s
+            """
+            params.extend([limit, offset])
+        
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, params)
+                assignments = [dict(row) for row in cur.fetchall()]
+            
+                # Get total count with same filters
+                count_query = "SELECT COUNT(*) FROM role_assignments WHERE 1=1"
+                count_params = []
+                if user_id:
+                    count_query += " AND user_id = %s"
+                    count_params.append(user_id)
+                if role_id:
+                    count_query += " AND role_id = %s"
+                    count_params.append(role_id)
+                if project_id:
+                    count_query += " AND project_id = %s"
+                    count_params.append(project_id)
+                if domain_id:
+                    count_query += " AND domain_id = %s"
+                    count_params.append(domain_id)
+                
+                cur.execute(count_query, count_params)
+                total = cur.fetchone()[0]
+            
+            return {
+                "status": "success",
+                "data": assignments,
+                "pagination": {
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "count": len(assignments)
+                }
             }
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving role assignments: {str(e)}")
 
@@ -4406,27 +4411,27 @@ async def log_user_access_activity(
             if field not in body:
                 raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
         
-        conn = db_conn()
+        with get_connection() as conn:
         
-        # Import the logging function
-        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from db_writer import log_user_access
+            # Import the logging function
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from db_writer import log_user_access
         
-        log_user_access(
-            conn,
-            user_id=body['user_id'],
-            user_name=body['user_name'], 
-            action=body['action'],
-            resource_type=body.get('resource_type'),
-            resource_id=body.get('resource_id'),
-            project_id=body.get('project_id'),
-            success=body.get('success', True),
-            ip_address=body.get('ip_address'),
-            user_agent=body.get('user_agent'),
-            details=body.get('details')
-        )
+            log_user_access(
+                conn,
+                user_id=body['user_id'],
+                user_name=body['user_name'], 
+                action=body['action'],
+                resource_type=body.get('resource_type'),
+                resource_id=body.get('resource_id'),
+                project_id=body.get('project_id'),
+                success=body.get('success', True),
+                ip_address=body.get('ip_address'),
+                user_agent=body.get('user_agent'),
+                details=body.get('details')
+            )
         
-        return {"status": "success", "message": "User access logged successfully"}
+            return {"status": "success", "message": "User access logged successfully"}
         
     except HTTPException:
         raise
@@ -4458,39 +4463,39 @@ def test_history_endpoints():
 async def get_role_details(request: Request, role_id: str):
     """Get detailed information about a specific role"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get role details
-            cur.execute("""
-                SELECT 
-                    r.id, r.name, r.description, r.domain_id, r.last_seen_at, r.raw_json,
-                    d.name as domain_name
-                FROM roles r
-                LEFT JOIN domains d ON d.id = r.domain_id
-                WHERE r.id = %s
-            """, (role_id,))
-            role = cur.fetchone()
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Get role details
+                cur.execute("""
+                    SELECT 
+                        r.id, r.name, r.description, r.domain_id, r.last_seen_at, r.raw_json,
+                        d.name as domain_name
+                    FROM roles r
+                    LEFT JOIN domains d ON d.id = r.domain_id
+                    WHERE r.id = %s
+                """, (role_id,))
+                role = cur.fetchone()
             
-            if not role:
-                raise HTTPException(status_code=404, detail="Role not found")
+                if not role:
+                    raise HTTPException(status_code=404, detail="Role not found")
                 
-            role_data = dict(role)
+                role_data = dict(role)
             
-            # Get users with this role
-            cur.execute("""
-                SELECT 
-                    ra.user_id, ra.user_name, ra.project_id, ra.project_name,
-                    ra.domain_id, ra.domain_name, ra.inherited
-                FROM role_assignments ra
-                WHERE ra.role_id = %s
-                ORDER BY ra.user_name, ra.project_name
-            """, (role_id,))
-            role_data['assignments'] = [dict(row) for row in cur.fetchall()]
+                # Get users with this role
+                cur.execute("""
+                    SELECT 
+                        ra.user_id, ra.user_name, ra.project_id, ra.project_name,
+                        ra.domain_id, ra.domain_name, ra.inherited
+                    FROM role_assignments ra
+                    WHERE ra.role_id = %s
+                    ORDER BY ra.user_name, ra.project_name
+                """, (role_id,))
+                role_data['assignments'] = [dict(row) for row in cur.fetchall()]
             
-        return {
-            "status": "success",
-            "data": role_data
-        }
+            return {
+                "status": "success",
+                "data": role_data
+            }
     except HTTPException:
         raise
     except Exception as e:
@@ -4502,19 +4507,19 @@ async def get_role_details(request: Request, role_id: str):
 async def get_user_activity_summary(request: Request):
     """Get user activity summary using the database view"""
     try:
-        conn = db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT * FROM v_user_activity_summary
-                ORDER BY activity_last_30d DESC, user_name
-            """)
-            summary = [dict(row) for row in cur.fetchall()]
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM v_user_activity_summary
+                    ORDER BY activity_last_30d DESC, user_name
+                """)
+                summary = [dict(row) for row in cur.fetchall()]
             
-        return {
-            "status": "success",
-            "data": summary,
-            "count": len(summary)
-        }
+            return {
+                "status": "success",
+                "data": summary,
+                "count": len(summary)
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving user activity summary: {str(e)}")
 
@@ -4532,70 +4537,70 @@ async def get_role_assignments(
 ):
     """Get role assignments with optional filtering"""
     try:
-        conn = db_conn()
-        query = """
-            SELECT 
-                ra.id, ra.role_id, ra.user_id, ra.group_id, 
-                ra.project_id, ra.domain_id, ra.inherited,
-                ra.user_name, ra.role_name, ra.project_name, ra.domain_name,
-                ra.last_seen_at
-            FROM role_assignments ra
-            WHERE 1=1
-        """
-        params = []
+        with get_connection() as conn:
+            query = """
+                SELECT 
+                    ra.id, ra.role_id, ra.user_id, ra.group_id, 
+                    ra.project_id, ra.domain_id, ra.inherited,
+                    ra.user_name, ra.role_name, ra.project_name, ra.domain_name,
+                    ra.last_seen_at
+                FROM role_assignments ra
+                WHERE 1=1
+            """
+            params = []
         
-        if user_id:
-            query += " AND ra.user_id = %s"
-            params.append(user_id)
-        if role_id:
-            query += " AND ra.role_id = %s"
-            params.append(role_id)
-        if project_id:
-            query += " AND ra.project_id = %s"
-            params.append(project_id)
-        if domain_id:
-            query += " AND ra.domain_id = %s"
-            params.append(domain_id)
-            
-        query += """
-            ORDER BY ra.user_name, ra.role_name, ra.project_name
-            LIMIT %s OFFSET %s
-        """
-        params.extend([limit, offset])
-        
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, params)
-            assignments = [dict(row) for row in cur.fetchall()]
-            
-            # Get total count with same filters
-            count_query = "SELECT COUNT(*) FROM role_assignments WHERE 1=1"
-            count_params = []
             if user_id:
-                count_query += " AND user_id = %s"
-                count_params.append(user_id)
+                query += " AND ra.user_id = %s"
+                params.append(user_id)
             if role_id:
-                count_query += " AND role_id = %s"
-                count_params.append(role_id)
+                query += " AND ra.role_id = %s"
+                params.append(role_id)
             if project_id:
-                count_query += " AND project_id = %s"
-                count_params.append(project_id)
+                query += " AND ra.project_id = %s"
+                params.append(project_id)
             if domain_id:
-                count_query += " AND domain_id = %s"
-                count_params.append(domain_id)
-                
-            cur.execute(count_query, count_params)
-            total = cur.fetchone()[0]
+                query += " AND ra.domain_id = %s"
+                params.append(domain_id)
             
-        return {
-            "status": "success",
-            "data": assignments,
-            "pagination": {
-                "total": total,
-                "limit": limit,
-                "offset": offset,
-                "count": len(assignments)
+            query += """
+                ORDER BY ra.user_name, ra.role_name, ra.project_name
+                LIMIT %s OFFSET %s
+            """
+            params.extend([limit, offset])
+        
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, params)
+                assignments = [dict(row) for row in cur.fetchall()]
+            
+                # Get total count with same filters
+                count_query = "SELECT COUNT(*) FROM role_assignments WHERE 1=1"
+                count_params = []
+                if user_id:
+                    count_query += " AND user_id = %s"
+                    count_params.append(user_id)
+                if role_id:
+                    count_query += " AND role_id = %s"
+                    count_params.append(role_id)
+                if project_id:
+                    count_query += " AND project_id = %s"
+                    count_params.append(project_id)
+                if domain_id:
+                    count_query += " AND domain_id = %s"
+                    count_params.append(domain_id)
+                
+                cur.execute(count_query, count_params)
+                total = cur.fetchone()[0]
+            
+            return {
+                "status": "success",
+                "data": assignments,
+                "pagination": {
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "count": len(assignments)
+                }
             }
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving role assignments: {str(e)}")
 
@@ -4617,27 +4622,27 @@ async def log_user_access_activity(
             if field not in body:
                 raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
         
-        conn = db_conn()
+        with get_connection() as conn:
         
-        # Import the logging function
-        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from db_writer import log_user_access
+            # Import the logging function
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from db_writer import log_user_access
         
-        log_user_access(
-            conn,
-            user_id=body['user_id'],
-            user_name=body['user_name'], 
-            action=body['action'],
-            resource_type=body.get('resource_type'),
-            resource_id=body.get('resource_id'),
-            project_id=body.get('project_id'),
-            success=body.get('success', True),
-            ip_address=body.get('ip_address'),
-            user_agent=body.get('user_agent'),
-            details=body.get('details')
-        )
+            log_user_access(
+                conn,
+                user_id=body['user_id'],
+                user_name=body['user_name'], 
+                action=body['action'],
+                resource_type=body.get('resource_type'),
+                resource_id=body.get('resource_id'),
+                project_id=body.get('project_id'),
+                success=body.get('success', True),
+                ip_address=body.get('ip_address'),
+                user_agent=body.get('user_agent'),
+                details=body.get('details')
+            )
         
-        return {"status": "success", "message": "User access logged successfully"}
+            return {"status": "success", "message": "User access logged successfully"}
         
     except HTTPException:
         raise
@@ -4677,19 +4682,17 @@ def get_branding():
     Public endpoint - used on the login page before authentication.
     """
     try:
-        conn = db_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT key, value FROM app_settings")
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        settings = {r["key"]: r["value"] for r in rows}
-        if "login_hero_features" in settings:
-            try:
-                settings["login_hero_features"] = json.loads(settings["login_hero_features"])
-            except Exception:
-                settings["login_hero_features"] = []
-        return settings
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT key, value FROM app_settings")
+            rows = cur.fetchall()
+            settings = {r["key"]: r["value"] for r in rows}
+            if "login_hero_features" in settings:
+                try:
+                    settings["login_hero_features"] = json.loads(settings["login_hero_features"])
+                except Exception:
+                    settings["login_hero_features"] = []
+            return settings
     except Exception as e:
         logger.error(f"Failed to fetch branding settings: {e}")
         return {
@@ -4723,21 +4726,18 @@ def update_branding(
     if not updates:
         raise HTTPException(status_code=400, detail="No valid settings keys provided")
     try:
-        conn = db_conn()
-        cur = conn.cursor()
-        for key, value in updates.items():
-            val = json.dumps(value) if isinstance(value, (list, dict)) else str(value)
-            cur.execute(
-                """INSERT INTO app_settings (key, value, updated_at, updated_by)
-                   VALUES (%s, %s, now(), %s)
-                   ON CONFLICT (key) DO UPDATE
-                   SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
-                (key, val, "admin"),
-            )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"status": "success", "updated_keys": list(updates.keys())}
+        with get_connection() as conn:
+            cur = conn.cursor()
+            for key, value in updates.items():
+                val = json.dumps(value) if isinstance(value, (list, dict)) else str(value)
+                cur.execute(
+                    """INSERT INTO app_settings (key, value, updated_at, updated_by)
+                       VALUES (%s, %s, now(), %s)
+                       ON CONFLICT (key) DO UPDATE
+                       SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                    (key, val, "admin"),
+                )
+            return {"status": "success", "updated_keys": list(updates.keys())}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update branding: {e}")
 
@@ -4772,15 +4772,14 @@ async def upload_branding_logo(
         f.write(body)
     logo_url = f"/static/{filename}"
     try:
-        conn = db_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO app_settings (key, value, updated_at, updated_by)
-               VALUES ('company_logo_url', %s, now(), 'admin')
-               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = 'admin'""",
-            (logo_url,),
-        )
-        conn.commit(); cur.close(); conn.close()
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO app_settings (key, value, updated_at, updated_by)
+                   VALUES ('company_logo_url', %s, now(), 'admin')
+                   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = 'admin'""",
+                (logo_url,),
+            )
     except Exception as e:
         logger.error(f"Failed to save logo URL to DB: {e}")
     return {"status": "success", "logo_url": logo_url}
@@ -4801,18 +4800,17 @@ app.mount("/static", _StaticFiles(directory=_static_dir), name="static")
 def get_user_preferences(current_user: User = Depends(require_authentication)):
     """Return all preferences for the authenticated user."""
     try:
-        conn = db_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT pref_key, pref_value FROM user_preferences WHERE username = %s", (current_user.username,))
-        rows = cur.fetchall()
-        cur.close(); conn.close()
-        prefs = {}
-        for r in rows:
-            try:
-                prefs[r["pref_key"]] = json.loads(r["pref_value"])
-            except Exception:
-                prefs[r["pref_key"]] = r["pref_value"]
-        return prefs
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT pref_key, pref_value FROM user_preferences WHERE username = %s", (current_user.username,))
+            rows = cur.fetchall()
+            prefs = {}
+            for r in rows:
+                try:
+                    prefs[r["pref_key"]] = json.loads(r["pref_value"])
+                except Exception:
+                    prefs[r["pref_key"]] = r["pref_value"]
+            return prefs
     except Exception as e:
         logger.error(f"Failed to fetch preferences for {current_user.username}: {e}")
         return {}
@@ -4825,16 +4823,15 @@ def set_user_preference(pref_key: str, payload: dict, current_user: User = Depen
         raise HTTPException(status_code=400, detail="Body must contain 'value'")
     val = json.dumps(payload["value"]) if isinstance(payload["value"], (list, dict)) else str(payload["value"])
     try:
-        conn = db_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO user_preferences (username, pref_key, pref_value, updated_at)
-               VALUES (%s, %s, %s, now())
-               ON CONFLICT (username, pref_key) DO UPDATE SET pref_value = EXCLUDED.pref_value, updated_at = now()""",
-            (current_user.username, pref_key, val),
-        )
-        conn.commit(); cur.close(); conn.close()
-        return {"status": "success", "pref_key": pref_key}
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO user_preferences (username, pref_key, pref_value, updated_at)
+                   VALUES (%s, %s, %s, now())
+                   ON CONFLICT (username, pref_key) DO UPDATE SET pref_value = EXCLUDED.pref_value, updated_at = now()""",
+                (current_user.username, pref_key, val),
+            )
+            return {"status": "success", "pref_key": pref_key}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save preference: {e}")
 
@@ -4861,70 +4858,69 @@ def get_drift_summary(
 ):
     """Return drift overview: totals, by-severity, by-resource-type, 7-day trend."""
     try:
-        conn = db_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Build optional WHERE clause for domain/project filtering
-        where_parts = []
-        where_params: list = []
-        if domain_id:
-            where_parts.append("domain_id = %s")
-            where_params.append(domain_id)
-        if project_id:
-            where_parts.append("project_id = %s")
-            where_params.append(project_id)
-        where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
-        ack_prefix = (" AND " + " AND ".join(where_parts)) if where_parts else ""
+            # Build optional WHERE clause for domain/project filtering
+            where_parts = []
+            where_params: list = []
+            if domain_id:
+                where_parts.append("domain_id = %s")
+                where_params.append(domain_id)
+            if project_id:
+                where_parts.append("project_id = %s")
+                where_params.append(project_id)
+            where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+            ack_prefix = (" AND " + " AND ".join(where_parts)) if where_parts else ""
 
-        # totals
-        cur.execute(f"""
-            SELECT
-                COUNT(*)                                       AS total,
-                COUNT(*) FILTER (WHERE NOT acknowledged)       AS unacknowledged,
-                COUNT(*) FILTER (WHERE acknowledged)           AS acknowledged,
-                COUNT(*) FILTER (WHERE severity = 'critical' AND NOT acknowledged) AS critical_open,
-                COUNT(*) FILTER (WHERE severity = 'warning'  AND NOT acknowledged) AS warning_open,
-                COUNT(*) FILTER (WHERE severity = 'info'     AND NOT acknowledged) AS info_open
-            FROM drift_events
-            {where_clause}
-        """, where_params)
-        totals = cur.fetchone()
+            # totals
+            cur.execute(f"""
+                SELECT
+                    COUNT(*)                                       AS total,
+                    COUNT(*) FILTER (WHERE NOT acknowledged)       AS unacknowledged,
+                    COUNT(*) FILTER (WHERE acknowledged)           AS acknowledged,
+                    COUNT(*) FILTER (WHERE severity = 'critical' AND NOT acknowledged) AS critical_open,
+                    COUNT(*) FILTER (WHERE severity = 'warning'  AND NOT acknowledged) AS warning_open,
+                    COUNT(*) FILTER (WHERE severity = 'info'     AND NOT acknowledged) AS info_open
+                FROM drift_events
+                {where_clause}
+            """, where_params)
+            totals = cur.fetchone()
 
-        # by severity
-        cur.execute(f"""
-            SELECT severity, COUNT(*) AS count
-            FROM drift_events WHERE NOT acknowledged {ack_prefix}
-            GROUP BY severity ORDER BY severity
-        """, where_params)
-        by_severity = cur.fetchall()
+            # by severity
+            cur.execute(f"""
+                SELECT severity, COUNT(*) AS count
+                FROM drift_events WHERE NOT acknowledged {ack_prefix}
+                GROUP BY severity ORDER BY severity
+            """, where_params)
+            by_severity = cur.fetchall()
 
-        # by resource type
-        cur.execute(f"""
-            SELECT resource_type, COUNT(*) AS count
-            FROM drift_events WHERE NOT acknowledged {ack_prefix}
-            GROUP BY resource_type ORDER BY count DESC
-        """, where_params)
-        by_resource = cur.fetchall()
+            # by resource type
+            cur.execute(f"""
+                SELECT resource_type, COUNT(*) AS count
+                FROM drift_events WHERE NOT acknowledged {ack_prefix}
+                GROUP BY resource_type ORDER BY count DESC
+            """, where_params)
+            by_resource = cur.fetchall()
 
-        # 7-day trend
-        trend_where = "WHERE detected_at >= now() - interval '7 days'"
-        if where_parts:
-            trend_where += " AND " + " AND ".join(where_parts)
-        cur.execute(f"""
-            SELECT detected_at::date AS day, COUNT(*) AS count
-            FROM drift_events
-            {trend_where}
-            GROUP BY day ORDER BY day
-        """, where_params)
-        trend = cur.fetchall()
+            # 7-day trend
+            trend_where = "WHERE detected_at >= now() - interval '7 days'"
+            if where_parts:
+                trend_where += " AND " + " AND ".join(where_parts)
+            cur.execute(f"""
+                SELECT detected_at::date AS day, COUNT(*) AS count
+                FROM drift_events
+                {trend_where}
+                GROUP BY day ORDER BY day
+            """, where_params)
+            trend = cur.fetchall()
 
-        cur.close(); conn.close()
-        return {
-            "totals": totals,
-            "by_severity": by_severity,
-            "by_resource_type": by_resource,
-            "trend_7d": [{"day": str(r["day"]), "count": r["count"]} for r in trend],
-        }
+            return {
+                "totals": totals,
+                "by_severity": by_severity,
+                "by_resource_type": by_resource,
+                "trend_7d": [{"day": str(r["day"]), "count": r["count"]} for r in trend],
+            }
     except Exception as e:
         logger.error(f"Drift summary error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -4991,21 +4987,20 @@ def list_drift_events(
             )
             SELECT * FROM cte
         """
-        conn = db_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-        total = rows[0]["_total"] if rows else 0
-        for r in rows:
-            r.pop("_total", None)
-        cur.close(); conn.close()
-        return {
-            "events": rows,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "total_pages": max(1, -(-total // page_size)),
-        }
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+            total = rows[0]["_total"] if rows else 0
+            for r in rows:
+                r.pop("_total", None)
+            return {
+                "events": rows,
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": max(1, -(-total // page_size)),
+            }
     except Exception as e:
         logger.error(f"Drift events list error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -5015,19 +5010,18 @@ def list_drift_events(
 def get_drift_event(event_id: int, current_user: User = Depends(require_authentication)):
     """Return a single drift event with rule info."""
     try:
-        conn = db_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("""
-            SELECT de.*, dr.description AS rule_description, dr.field_name AS rule_field
-            FROM drift_events de
-            LEFT JOIN drift_rules dr ON dr.id = de.rule_id
-            WHERE de.id = %s
-        """, (event_id,))
-        row = cur.fetchone()
-        cur.close(); conn.close()
-        if not row:
-            raise HTTPException(status_code=404, detail="Drift event not found")
-        return row
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                SELECT de.*, dr.description AS rule_description, dr.field_name AS rule_field
+                FROM drift_events de
+                LEFT JOIN drift_rules dr ON dr.id = de.rule_id
+                WHERE de.id = %s
+            """, (event_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Drift event not found")
+            return row
     except HTTPException:
         raise
     except Exception as e:
@@ -5043,21 +5037,20 @@ def acknowledge_drift_event(
     """Acknowledge a single drift event."""
     note = (payload or {}).get("note", "")
     try:
-        conn = db_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE drift_events
-            SET acknowledged = TRUE,
-                acknowledged_by = %s,
-                acknowledged_at = now(),
-                acknowledge_note = %s
-            WHERE id = %s AND NOT acknowledged
-        """, (current_user.username, note, event_id))
-        updated = cur.rowcount
-        conn.commit(); cur.close(); conn.close()
-        if updated == 0:
-            raise HTTPException(status_code=404, detail="Event not found or already acknowledged")
-        return {"status": "success", "acknowledged": event_id}
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE drift_events
+                SET acknowledged = TRUE,
+                    acknowledged_by = %s,
+                    acknowledged_at = now(),
+                    acknowledge_note = %s
+                WHERE id = %s AND NOT acknowledged
+            """, (current_user.username, note, event_id))
+            updated = cur.rowcount
+            if updated == 0:
+                raise HTTPException(status_code=404, detail="Event not found or already acknowledged")
+            return {"status": "success", "acknowledged": event_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -5075,19 +5068,18 @@ def bulk_acknowledge_drift(
         raise HTTPException(status_code=400, detail="Provide a non-empty 'event_ids' list")
     note = payload.get("note", "")
     try:
-        conn = db_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE drift_events
-            SET acknowledged = TRUE,
-                acknowledged_by = %s,
-                acknowledged_at = now(),
-                acknowledge_note = %s
-            WHERE id = ANY(%s) AND NOT acknowledged
-        """, (current_user.username, note, event_ids))
-        updated = cur.rowcount
-        conn.commit(); cur.close(); conn.close()
-        return {"status": "success", "acknowledged_count": updated}
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE drift_events
+                SET acknowledged = TRUE,
+                    acknowledged_by = %s,
+                    acknowledged_at = now(),
+                    acknowledge_note = %s
+                WHERE id = ANY(%s) AND NOT acknowledged
+            """, (current_user.username, note, event_ids))
+            updated = cur.rowcount
+            return {"status": "success", "acknowledged_count": updated}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -5100,22 +5092,21 @@ def bulk_acknowledge_drift(
 def list_drift_rules(current_user: User = Depends(require_authentication)):
     """Return all drift rules with their open-event counts."""
     try:
-        conn = db_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("""
-            SELECT dr.*,
-                   COALESCE(ec.cnt, 0) AS open_events
-            FROM drift_rules dr
-            LEFT JOIN (
-                SELECT rule_id, COUNT(*) AS cnt
-                FROM drift_events WHERE NOT acknowledged
-                GROUP BY rule_id
-            ) ec ON ec.rule_id = dr.id
-            ORDER BY dr.resource_type, dr.field_name
-        """)
-        rows = cur.fetchall()
-        cur.close(); conn.close()
-        return {"rules": rows, "total": len(rows)}
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                SELECT dr.*,
+                       COALESCE(ec.cnt, 0) AS open_events
+                FROM drift_rules dr
+                LEFT JOIN (
+                    SELECT rule_id, COUNT(*) AS cnt
+                    FROM drift_events WHERE NOT acknowledged
+                    GROUP BY rule_id
+                ) ec ON ec.rule_id = dr.id
+                ORDER BY dr.resource_type, dr.field_name
+            """)
+            rows = cur.fetchall()
+            return {"rules": rows, "total": len(rows)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -5141,14 +5132,12 @@ def update_drift_rule(
         raise HTTPException(status_code=400, detail="Nothing to update")
     params.append(rule_id)
     try:
-        conn = db_conn()
-        cur = conn.cursor()
-        cur.execute(f"UPDATE drift_rules SET {', '.join(sets)} WHERE id = %s", params)
-        if cur.rowcount == 0:
-            cur.close(); conn.close()
-            raise HTTPException(status_code=404, detail="Rule not found")
-        conn.commit(); cur.close(); conn.close()
-        return {"status": "success", "rule_id": rule_id}
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(f"UPDATE drift_rules SET {', '.join(sets)} WHERE id = %s", params)
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Rule not found")
+            return {"status": "success", "rule_id": rule_id}
     except HTTPException:
         raise
     except Exception as e:
