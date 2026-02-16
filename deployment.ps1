@@ -749,7 +749,8 @@ if (-not $SkipHealthCheck) {
         @{Name="Monitoring"; Url="http://localhost:8001/health"; Critical=$true},
         @{Name="UI"; Url="http://localhost:5173"; Critical=$true},
         @{Name="pgAdmin"; Url="http://localhost:8080"; Critical=$false},
-        @{Name="Notification Worker"; Url=$null; Critical=$false}
+        @{Name="Notification Worker"; Url=$null; Container="pf9_notification_worker"; Critical=$false},
+        @{Name="Backup Worker"; Url=$null; Container="pf9_backup_worker"; Critical=$false}
     )
 
     $allOk = $true
@@ -762,7 +763,7 @@ if (-not $SkipHealthCheck) {
         if ($null -eq $check.Url) {
             # Container-only check (no HTTP endpoint)
             try {
-                $containerStatus = docker inspect --format '{{.State.Status}}' pf9_notification_worker 2>&1
+                $containerStatus = docker inspect --format '{{.State.Status}}' $check.Container 2>&1
                 if ($containerStatus -eq 'running') {
                     Write-Success "$($check.Name) container is running"
                 } else {

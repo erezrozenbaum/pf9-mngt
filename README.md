@@ -91,7 +91,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
 
 ## 🚀 System Architecture
 
-**Enterprise microservices-based platform** with 9 containerized services plus host-based automation:
+**Enterprise microservices-based platform** with 10 containerized services plus host-based automation:
 - **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 20 management tabs + admin panel
 - **Backend API** (FastAPI/Gunicorn/Python) - Port 8000 - 100+ REST endpoints with RBAC middleware, 4 worker processes, connection pooling
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
@@ -101,6 +101,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Database Admin** (pgAdmin4) - Port 8080 - Web-based PostgreSQL management
 - **Snapshot Worker** (Python) - Background service for automated snapshot management
 - **Notification Worker** (Python) - Background service for email alerts (drift, snapshots, compliance, health)
+- **Backup Worker** (Python/PostgreSQL 16) - Background service for scheduled/manual database backups and restores
 - **Host Scripts** (Python) - Scheduled automation via Windows Task Scheduler
 
 ## 🌟 Key Features
@@ -382,10 +383,15 @@ Comprehensive OpenStack inventory with RVTools-compatible exports:
 # Connect to database
 psql -h localhost -U pf9 -d pf9_mgmt
 
-# Backup database
+# Automated backups: use the 💾 Backup tab in the UI
+# The backup_worker container runs pg_dump on a schedule (daily/weekly)
+# and writes compressed .sql.gz files to the NFS backup volume.
+# Manual trigger: click "Run Backup Now" in 💾 Backup > Status tab.
+
+# Manual backup (without the backup worker)
 docker exec pf9_db pg_dump -U pf9 pf9_mgmt > backup.sql
 
-# Restore database
+# Restore database (manual)
 docker exec -i pf9_db psql -U pf9 pf9_mgmt < backup.sql
 ```
 
