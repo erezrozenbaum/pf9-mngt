@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-02-16
+
+### Added
+- **Database Backup & Restore System**: Full-stack automated database backup management with scheduling, retention enforcement, and one-click restore
+  - **Database**: New `backup_config` table (single-row schedule configuration) and `backup_history` table (job log with status tracking). Migration script `db/migrate_backup.sql`. Status constraint includes `pending`, `running`, `completed`, `failed`, `deleted`. Backup type constraint includes `manual`, `scheduled`, `restore`. RBAC permissions: admin gets read/write, superadmin gets admin
+  - **Backup Worker** (`backup_worker/`): New long-lived container service that polls `backup_config` every 30s, executes `pg_dump` compressed with gzip at scheduled times (daily/weekly) or for manual jobs. Writes to NFS-mounted backup directory. Enforces retention by count and age after each backup. Handles restore jobs via `gunzip | psql`. Graceful shutdown on SIGINT/SIGTERM
+  - **API Endpoints** (`api/backup_routes.py`): 6 new endpoints —
+    - `GET /api/backup/config` — current backup configuration
+    - `PUT /api/backup/config` — update schedule, retention, NFS path
+    - `POST /api/backup/run` — trigger manual backup (prevents duplicates)
+    - `GET /api/backup/history` — paginated backup history with status filter
+    - `GET /api/backup/status` — compact dashboard summary (running state, total count/size, last backup)
+    - `POST /api/backup/restore/{id}` — queue restore from completed backup (superadmin only)
+    - `DELETE /api/backup/{id}` — delete backup record and file (superadmin only)
+  - **UI Tab** (`BackupManagement.tsx`): New "💾 Backup" tab with three sub-views:
+    - **Status**: Dashboard cards (current state, total backups, total size, last backup time), last backup detail card, manual trigger button with duplicate prevention
+    - **History**: Paginated table of all backup/restore jobs with status badges, file name, size, duration, initiated-by, and timestamps. Status filter dropdown. Restore and delete action buttons with confirmation dialogs
+    - **Settings**: Schedule configuration (enable/disable toggle, schedule type selector, UTC time picker, day-of-week for weekly), retention policy (keep count + max days), NFS storage path. Save/reset with feedback messages. Current config info card
+  - **Styling** (`BackupManagement.css`): Full CSS with status bar grid, form fields, toggle switches, table, badges, pagination, confirmation overlay dialog, and dark mode overrides
+  - **Docker**: New `backup_worker` service in `docker-compose.yml` with `postgres:16` base image (includes pg_dump/pg_restore), Python venv, NFS volume mount, configurable poll interval
+  - **Configuration**: New environment variables — `NFS_BACKUP_PATH` (default: `/backups`), `BACKUP_POLL_INTERVAL` (default: `30`), `BACKUP_VOLUME` (default: `./backups`)
+
+### Fixed
+- **Backup DB constraints**: `backup_type` CHECK constraint now includes `'restore'` and `status` CHECK includes `'deleted'` — previously the backup worker would fail when creating restore jobs or marking retention-deleted entries
+
 ## [1.12.0] - 2026-02-16
 
 ### Added
