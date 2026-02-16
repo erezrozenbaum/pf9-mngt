@@ -2,6 +2,25 @@
 
 ## Recent Major Enhancements
 
+### Multi-User Concurrency (v1.12 - NEW ✨)
+- **Gunicorn + 4 Workers**: API now runs 4 parallel uvicorn worker processes via Gunicorn for 10+ concurrent users
+- **Database Connection Pool**: Centralized `ThreadedConnectionPool` (db_pool.py) replaces per-request connections — min 2, max 10 per worker
+- **Thread-Safe Metrics**: `PerformanceMetrics` class now uses `threading.Lock` for safe concurrent access
+- **97 Connection Leaks Fixed**: All endpoint handlers converted to `with get_connection() as conn:` context manager
+- **Configurable Pool**: `DB_POOL_MIN_CONN` / `DB_POOL_MAX_CONN` env vars for tuning
+
+### Email Notifications (v1.11)
+- **🔔 Notifications Tab**: Per-user email notification preferences, delivery history, and admin SMTP settings
+- **Event Types**: Drift alerts, snapshot failures, compliance violations, and tenant health score drops
+- **Notification Worker**: Background container (`pf9_notification_worker`) polls DB every 120s for new events
+- **Daily Digest**: Configurable daily summary email aggregating all events from the past 24 hours
+- **SMTP Support**: Both authenticated and unauthenticated SMTP relay, optional TLS
+- **HTML Templates**: 6 Jinja2 templates (drift, snapshot, compliance, health, digest, generic)
+- **7 API Endpoints**: SMTP status, preferences CRUD, delivery history, test email, admin stats
+- **RBAC**: `notifications:read`/`notifications:write` for all roles, `notifications:admin` for Admin/Superadmin
+- **DB Migration**: `db/migrate_notifications.sql` for existing databases (4 new tables)
+- **UI Features**: 3 sub-tabs (Preferences, History, Settings), test email button, dark mode support
+
 ### Tenant Health View (v1.10 - NEW ✨)
 - **🏥 Tenant Health Tab**: Per-project health scoring with 0–100 health score, summary cards, sortable/searchable tenant table, and click-to-expand detail panels
 - **Database View**: `v_tenant_health` SQL view aggregating per-project health metrics from all resource tables
@@ -178,6 +197,12 @@
 
 #### Tenant Health (1 view)
 - **v_tenant_health** (View): Aggregates per-project health metrics from all resource tables — server/volume/snapshot/network counts, compliance percentage, drift events, and computed health score (0–100)
+
+#### Notifications (4 tables)
+- **notification_channels**: Available notification delivery channels (email, webhook, etc.)
+- **notification_preferences**: Per-user, per-event-type subscription settings with severity filtering and delivery mode
+- **notification_log**: Complete delivery history with status tracking, error messages, and retry counts
+- **notification_digests**: Daily digest tracking to prevent duplicate sends
 
 #### Performance Optimizations & Advanced Features
 - **RBAC Middleware**: HTTP middleware enforces permissions before request processing
@@ -1464,6 +1489,13 @@ Customize the application’s login page and company identity:
 - **Live Preview** — Gradient preview bar shows the current primary→secondary color combination
 - **Persistence** — All settings stored in the `app_settings` database table and take effect immediately for new visitors
 - **RBAC** — Only Admin and Superadmin users can access this tab
+
+### Notifications Tab
+The Notifications tab allows users to manage email alert preferences:
+- **Preferences Sub-Tab** — Toggle notifications for each event type (drift, snapshots, compliance, health), set minimum severity level, choose delivery mode (immediate or digest)
+- **History Sub-Tab** — Paginated log of all sent notifications with status (sent/failed/pending), timestamps, and event details
+- **Settings Sub-Tab** (Admin only) — SMTP connection status, notification delivery statistics, and test email button
+- **RBAC** — All authenticated users can manage their own preferences; admin statistics require Admin/Superadmin role
 
 ### Tab Drag-and-Drop Reordering
 Users can customize the order of navigation tabs:

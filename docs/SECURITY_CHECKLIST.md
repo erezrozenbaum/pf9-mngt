@@ -93,6 +93,24 @@
   - `RESTORE_CLEANUP_VOLUMES=false` (default) keeps orphaned volumes for inspection
   - Set to `true` only if you prefer automatic cleanup of failed restore volumes
 
+## Email Notification Security
+
+- [ ] **SMTP credentials secured**
+  - `SMTP_PASSWORD` stored only in `.env` (never committed to git)
+  - Use application-specific passwords where possible
+
+- [ ] **SMTP TLS configured for external servers**
+  - `SMTP_USE_TLS=true` for internet-facing SMTP servers
+  - Internal relay servers (port 25, no auth) acceptable on trusted networks
+
+- [ ] **From address validated**
+  - `SMTP_FROM_ADDRESS` uses a domain you control
+  - SPF/DKIM records configured if emails leave internal network
+
+- [ ] **Notification RBAC verified**
+  - `notifications:admin` permission restricted to Admin/Superadmin
+  - Test email endpoint requires admin permission
+
 ## Container Security
 
 ### Volume Protection

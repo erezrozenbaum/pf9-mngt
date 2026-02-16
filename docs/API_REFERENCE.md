@@ -1611,3 +1611,145 @@ Response:
   "status": "saved",
   "username": "admin"
 }
+```
+
+---
+
+## Notification Endpoints
+
+### Get SMTP Status
+**GET** `/notifications/smtp-status`  
+*Requires: `notifications:read`*
+
+Response:
+```json
+{
+  "smtp_enabled": true,
+  "smtp_host": "172.16.33.74",
+  "smtp_port": 25,
+  "smtp_use_tls": false,
+  "smtp_has_auth": false,
+  "smtp_from": "pf9-mgmt@pf9mgmt.local"
+}
+```
+
+### Get Notification Preferences
+**GET** `/notifications/preferences`  
+*Requires: `notifications:read`*
+
+Response:
+```json
+[
+  {
+    "id": 1,
+    "username": "admin",
+    "event_type": "drift_critical",
+    "email": "admin@company.com",
+    "enabled": true,
+    "severity_min": "warning",
+    "delivery_mode": "immediate",
+    "created_at": "2026-02-16T10:30:00Z",
+    "updated_at": "2026-02-16T10:30:00Z"
+  }
+]
+```
+
+### Create/Update Notification Preference
+**PUT** `/notifications/preferences`  
+*Requires: `notifications:write`*
+
+Request:
+```json
+{
+  "event_type": "drift_critical",
+  "email": "admin@company.com",
+  "enabled": true,
+  "severity_min": "warning",
+  "delivery_mode": "immediate"
+}
+```
+
+Response:
+```json
+{
+  "status": "saved",
+  "id": 1
+}
+```
+
+### Delete Notification Preference
+**DELETE** `/notifications/preferences/{id}`  
+*Requires: `notifications:write`*
+
+Response:
+```json
+{
+  "status": "deleted"
+}
+```
+
+### Get Notification History
+**GET** `/notifications/history?limit=50&offset=0`  
+*Requires: `notifications:read`*
+
+Response:
+```json
+{
+  "items": [
+    {
+      "id": 42,
+      "username": "admin",
+      "event_type": "drift_critical",
+      "event_id": "123",
+      "subject": "Drift Alert: server power_state changed",
+      "recipient": "admin@company.com",
+      "status": "sent",
+      "sent_at": "2026-02-16T12:00:00Z",
+      "error_message": null
+    }
+  ],
+  "total": 1
+}
+```
+
+### Send Test Email
+**POST** `/notifications/test-email`  
+*Requires: `notifications:admin`*
+
+Request:
+```json
+{
+  "recipient": "admin@company.com"
+}
+```
+
+Response:
+```json
+{
+  "status": "sent",
+  "message": "Test email sent to admin@company.com"
+}
+```
+
+### Get Admin Notification Statistics
+**GET** `/notifications/admin/stats`  
+*Requires: `notifications:admin`*
+
+Response:
+```json
+{
+  "total_sent": 156,
+  "total_failed": 3,
+  "total_pending": 0,
+  "total_preferences": 12,
+  "active_users": 4,
+  "last_sent_at": "2026-02-16T12:00:00Z",
+  "events_by_type": {
+    "drift_critical": 45,
+    "drift_warning": 67,
+    "snapshot_failure": 12,
+    "compliance_violation": 29,
+    "health_score_drop": 3
+  }
+}
+```

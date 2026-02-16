@@ -1025,7 +1025,84 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('superadmin', 'tenant_health', 'read'),
 ('superadmin', 'tenant_health', 'admin'),
 
+-- Notification permissions (all roles can manage their own subscriptions)
+('viewer', 'notifications', 'read'),
+('viewer', 'notifications', 'write'),
+('operator', 'notifications', 'read'),
+('operator', 'notifications', 'write'),
+('admin', 'notifications', 'admin'),
+('superadmin', 'notifications', 'admin'),
+
 ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- =====================================================================
+-- EMAIL NOTIFICATION TABLES
+-- =====================================================================
+
+-- Notification channels (SMTP config; secrets stay in env vars)
+CREATE TABLE IF NOT EXISTS notification_channels (
+    id              SERIAL PRIMARY KEY,
+    channel_type    TEXT NOT NULL DEFAULT 'email',
+    name            TEXT NOT NULL,
+    enabled         BOOLEAN NOT NULL DEFAULT true,
+    config          JSONB NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Seed a default email channel
+INSERT INTO notification_channels (channel_type, name, enabled, config)
+VALUES ('email', 'Default SMTP', true, '{"from_name": "Platform9 Management"}')
+ON CONFLICT DO NOTHING;
+
+-- Per-user notification subscriptions
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    id              SERIAL PRIMARY KEY,
+    username        TEXT NOT NULL,
+    email           TEXT NOT NULL,
+    event_type      TEXT NOT NULL,
+    severity_min    TEXT NOT NULL DEFAULT 'warning',
+    delivery_mode   TEXT NOT NULL DEFAULT 'immediate',
+    enabled         BOOLEAN NOT NULL DEFAULT true,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (username, event_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_prefs_username ON notification_preferences (username);
+CREATE INDEX IF NOT EXISTS idx_notification_prefs_event    ON notification_preferences (event_type);
+
+-- Sent notification log (with deduplication)
+CREATE TABLE IF NOT EXISTS notification_log (
+    id              SERIAL PRIMARY KEY,
+    username        TEXT NOT NULL,
+    email           TEXT NOT NULL,
+    event_type      TEXT NOT NULL,
+    event_id        TEXT,
+    dedup_key       TEXT,
+    subject         TEXT NOT NULL,
+    body_preview    TEXT,
+    delivery_status TEXT NOT NULL DEFAULT 'pending',
+    error_message   TEXT,
+    sent_at         TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_log_username   ON notification_log (username);
+CREATE INDEX IF NOT EXISTS idx_notification_log_event_type ON notification_log (event_type);
+CREATE INDEX IF NOT EXISTS idx_notification_log_dedup_key  ON notification_log (dedup_key);
+CREATE INDEX IF NOT EXISTS idx_notification_log_created_at ON notification_log (created_at DESC);
+
+-- Digest batching state per user
+CREATE TABLE IF NOT EXISTS notification_digests (
+    id              SERIAL PRIMARY KEY,
+    username        TEXT NOT NULL,
+    email           TEXT NOT NULL,
+    events_json     JSONB NOT NULL DEFAULT '[]',
+    last_sent_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (username)
+);
 
 -- =====================================================================
 -- SNAPSHOT RESTORE TABLES

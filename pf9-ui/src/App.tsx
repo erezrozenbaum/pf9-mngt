@@ -18,6 +18,7 @@ import { API_BASE, MONITORING_BASE } from "./config";
 import SecurityGroupsTab from "./components/SecurityGroupsTab";
 import DriftDetection from "./components/DriftDetection";
 import TenantHealthView from "./components/TenantHealthView";
+import NotificationSettings from "./components/NotificationSettings";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -395,7 +396,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -438,6 +439,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "snapshot-audit",       label: "📋 Snapshot Audit" },
   { id: "drift",                label: "🔍 Drift Detection" },
   { id: "tenant_health",        label: "🏥 Tenant Health" },
+  { id: "notifications",        label: "🔔 Notifications" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2645,9 +2647,29 @@ const App: React.FC = () => {
             ? "Centralized system logs · filtering · diagnostics"
             : activeTab === "restore"
             ? "Snapshot restore wizard · plan · execute · monitor progress"
+            : activeTab === "restore_audit"
+            ? "Restore operation history · success tracking · rollback records"
             : activeTab === "security_groups"
             ? "Security groups · firewall rules · VM associations · CRUD management"
-            : "Compliance reporting · audit logs · change analysis"}
+            : activeTab === "snapshots"
+            ? "Volume snapshots · retention · compliance status"
+            : activeTab === "snapshot_monitor"
+            ? "Snapshot job monitoring · progress · run history"
+            : activeTab === "snapshot_compliance"
+            ? "Snapshot compliance reports · policy adherence · gap analysis"
+            : activeTab === "snapshot-policies"
+            ? "Snapshot policy management · scheduling rules · assignments"
+            : activeTab === "snapshot-audit"
+            ? "Snapshot audit trail · change history · accountability"
+            : activeTab === "drift"
+            ? "Configuration drift detection · field changes · remediation"
+            : activeTab === "audit"
+            ? "Compliance reporting · audit logs · change analysis"
+            : activeTab === "tenant_health"
+            ? "Tenant health scores · risk assessment · resource status"
+            : activeTab === "notifications"
+            ? "Email notification preferences · delivery history · SMTP settings"
+            : "Platform9 management"}
       </section>
 
       {/* Landing Dashboard - Special handling, no filters/pagination */}
@@ -2655,7 +2677,7 @@ const App: React.FC = () => {
         <LandingDashboard />
       )}
 
-      {activeTab !== "api_metrics" && activeTab !== "system_logs" && activeTab !== "dashboard" && activeTab !== "security_groups" && (
+      {["servers", "volumes", "networks", "subnets", "domains", "projects", "flavors", "images", "hypervisors", "users", "ports", "floatingips", "snapshots", "drift", "history", "audit"].includes(activeTab) && (
       <section className="pf9-filters">
         <div className="pf9-filter-row">
           <label>
@@ -4749,6 +4771,13 @@ const App: React.FC = () => {
             <TenantHealthView
               selectedDomain={selectedDomain}
               selectedTenant={selectedTenant}
+            />
+          )}
+
+          {/* Notification Settings */}
+          {activeTab === "notifications" && (
+            <NotificationSettings
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
             />
           )}
 
