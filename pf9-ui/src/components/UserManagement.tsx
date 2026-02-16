@@ -42,12 +42,11 @@ const BrandingSettings: React.FC = () => {
 
   useEffect(() => { fetchBranding(); }, [fetchBranding]);
 
-  const adminUser = localStorage.getItem('admin_user') || '';
-  const adminPass = localStorage.getItem('admin_pass') || '';
-  const authHeader = adminUser && adminPass ? `Basic ${btoa(`${adminUser}:${adminPass}`)}` : '';
+  const authToken = localStorage.getItem('auth_token') || '';
+  const authHeader = authToken ? `Bearer ${authToken}` : '';
 
   const handleSave = async () => {
-    if (!authHeader) { setMsg('⚠️ Enter admin credentials in the Admin panel above'); return; }
+    if (!authHeader) { setMsg('⚠️ Please log in first'); return; }
     setSaving(true); setMsg('');
     try {
       const res = await fetch(`${API_BASE}/admin/settings/branding`, {
@@ -68,7 +67,7 @@ const BrandingSettings: React.FC = () => {
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!authHeader) { setMsg('⚠️ Enter admin credentials first'); return; }
+    if (!authHeader) { setMsg('⚠️ Please log in first'); return; }
     if (file.size > 2 * 1024 * 1024) { setMsg('⚠️ Logo must be under 2 MB'); return; }
     setLogoUploading(true); setMsg('');
     try {

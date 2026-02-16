@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-02-16
+
+### Added
+- **Tenant Health View**: Per-tenant health scoring and resource monitoring dashboard
+  - **Database**: New `v_tenant_health` SQL view that aggregates per-project metrics from servers, volumes, networks, subnets, ports, floating IPs, security groups, snapshots, drift events, and compliance data. Enhanced with compute stats: `total_vcpus`, `total_ram_mb`, `total_flavor_disk_gb`, `active_vcpus`, `active_ram_mb`, `hypervisor_count`, `power_on_pct` (joins servers → flavors for real resource allocation). Health score (0–100) computed from error resources, compliance gaps, and drift severity. Migration script `db/migrate_tenant_health.sql`
+  - **API Endpoints**: 5 new endpoints —
+    - `GET /tenant-health/overview` — all tenants with health scores, compute stats, resource counts, and summary aggregates (healthy/warning/critical counts, avg score). Filterable by `domain_id`, sortable by any metric column
+    - `GET /tenant-health/heatmap` — per-tenant utilization heatmap data with weighted utilization scores (60% VM activity + 40% volume usage), filterable by domain
+    - `GET /tenant-health/{project_id}` — full health detail for a single tenant including compute allocation (vCPUs, RAM, disk), resource status breakdown, top volumes by size, and recent drift events (last 30 days)
+    - `GET /tenant-health/trends/{project_id}` — daily drift and snapshot trends for charts (configurable time range up to 365 days)
+    - `GET /tenant-health/quota/{project_id}` — live OpenStack quota fetch (compute: instances, cores, RAM; storage: volumes, gigabytes, snapshots) with graceful fallback when credentials unavailable
+  - **UI Tab** (`TenantHealthView.tsx`): New "🏥 Tenant Health" tab with:
+    - Summary cards showing total tenants, healthy/warning/critical counts, and average health score
+    - **Compute summary row**: Total VMs (with on/off breakdown), Total vCPUs, Total RAM, Power-On Rate
+    - **Table view**: Sortable, searchable tenant table with health score badges, inline power state mini-bars, vCPU/RAM columns, volume and drift stats, compliance percentage
+    - **Heatmap view**: Visual tile-based utilization map where tile size reflects VM count and color reflects utilization score (green = high, red = low). Toggle between Table and Heatmap views
+    - Click-to-open **detail panel** with:
+      - Score hero with health status, power-on rate, and hypervisor count
+      - Resource summary grid: servers, vCPUs, RAM, flavor disk, volumes, networks, floating IPs, ports, security groups, snapshots, compliance
+      - **VM Power State section**: Active/Shutoff/Error/Other cards with stacked percentage bar and legend
+      - **Volume Status section**: In-use/Available/Error status bar
+      - **Quota vs Usage section**: Live quota bars (Instances, vCPUs, RAM, Volumes, Gigabytes, Snapshots) with color-coded usage levels (green < 70%, yellow 70-90%, red > 90%). Graceful "unavailable" message when OpenStack credentials not configured
+      - Top volumes table, drift activity timeline
+    - Domain/tenant filter integration — auto-opens tenant detail when a specific tenant is selected globally
+    - CSV export with all compute stats (vCPUs, RAM, power-on %, etc.)
+    - Full dark mode support for all new sections (compute row, heatmap tiles, power state cards, quota bars)
+  - **Health Score Formula**: Starts at 100, deductions for: error VMs (−10 each, max −20), shutoff VMs (−2 each, max −10), error volumes (−5 each, max −15), error snapshots (−5 each, max −10), low compliance (up to −20), critical drift (−5 each, max −15), warning drift (−2 each, max −10)
+  - **RBAC**: `tenant_health` resource with read access for all roles, admin for admin/superadmin
+
+### Fixed
+- **Branding logo upload**: Fixed "Enter admin credentials first" error when uploading logos. Changed branding PUT/POST endpoints from HTTP Basic Auth to JWT Bearer auth, matching the token the UI already sends
+
 ## [1.9.0] - 2026-02-16
 
 ### Added
