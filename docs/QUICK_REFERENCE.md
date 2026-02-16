@@ -35,6 +35,12 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - 5 API endpoints: overview, heatmap, detail, trends, live quota
   - CSV export, domain/tenant filter integration, full dark mode support
   - RBAC: `tenant_health:read` (all roles), `tenant_health:admin` (Admin/Superadmin)
+- **Notifications Tab** (v1.11 - NEW ✨):
+  - "🔔 Notifications" tab with per-user email notification preferences, delivery history, and admin settings
+  - Event types: drift alerts, snapshot failures, compliance violations, health score drops
+  - 3 sub-tabs: Preferences (toggle event types, severity filtering), History (delivery log), Settings (SMTP status, test email)
+  - Notification worker container polls DB every 120s, sends immediate emails and daily digests
+  - RBAC: `notifications:read`/`notifications:write` (all roles), `notifications:admin` (Admin/Superadmin)
 - **Drift Detection Tab** (v1.9 - NEW ✨):
   - "🔍 Drift Detection" tab with real-time infrastructure drift event monitoring
   - 24 built-in rules across 8 resource types (servers, volumes, networks, subnets, ports, floating IPs, security groups, snapshots)
@@ -418,6 +424,7 @@ docker exec pf9_api printenv | grep PF9_
 - **Monitoring API**: http://localhost:8001 (Real-time metrics service)
 - **pgAdmin**: http://localhost:8080
 - **Database Direct**: localhost:5432
+- **Notification Worker**: (no web UI — check logs: `docker logs pf9_notification_worker`)
 
 ## Essential Commands
 
@@ -701,6 +708,14 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/hea
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/<project_id>"            # Full tenant detail (vCPUs, RAM, power state)
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/trends/<project_id>?days=30"  # Trend data for charts
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/quota/<project_id>"      # Live OpenStack quota vs usage
+
+# Notification endpoints
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/smtp-status"             # SMTP connection status
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/preferences"              # List user notification preferences
+curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"event_type":"drift_critical","email":"user@company.com","enabled":true,"severity_min":"warning","delivery_mode":"immediate"}' "http://localhost:8000/notifications/preferences"  # Create/update preference
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/history?limit=50"         # Delivery history
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"recipient":"admin@company.com"}' "http://localhost:8000/notifications/test-email"  # Send test email (admin only)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/admin/stats"              # Admin delivery statistics
 ```
 
 ### Query Parameters
@@ -809,6 +824,19 @@ PF9_REGION_NAME=region-one
 # Monitoring Configuration (NEW)
 PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
 METRICS_CACHE_TTL=60
+
+# Email Notification Configuration (v1.11)
+SMTP_ENABLED=true
+SMTP_HOST=172.16.33.74
+SMTP_PORT=25
+SMTP_USE_TLS=false
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM_ADDRESS=pf9-mgmt@pf9mgmt.local
+NOTIFICATION_POLL_INTERVAL_SECONDS=120
+NOTIFICATION_DIGEST_ENABLED=true
+NOTIFICATION_DIGEST_HOUR_UTC=8
+HEALTH_ALERT_THRESHOLD=50
 ```
 
 ## Emergency Procedures

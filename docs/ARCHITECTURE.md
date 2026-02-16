@@ -13,7 +13,10 @@ The Platform9 Management System is a **microservices-based enterprise platform**
 │  Frontend UI │  Backend API │  Monitoring  │   Database   │  Host Scripts   │
 │  React/TS    │   FastAPI    │   FastAPI    │ PostgreSQL16 │    Python       │
 │  Port: 5173  │  Port: 8000  │  Port: 8001  │ Port: 5432   │   Scheduled     │
-└──────────────┴──────────────┴──────────────┴──────────────┴─────────────────┘
+├──────────────┴──────────────┴──────────────┴──────────────┴─────────────────┤
+│  Notification Worker │  Snapshot Worker                                     │
+│  (Python/SMTP)       │  (Python)                                            │
+└──────────────────────┴──────────────────────────────────────────────────────┘
                                     │
                        ┌─────────────────────────┐
                        │      Platform9          │
@@ -87,7 +90,7 @@ src/
 **Technology**: FastAPI + Python 3.11+
 **Port**: 8000
 **Responsibilities**:
-- RESTful API endpoints (91+ routes across infrastructure, analytics, tenant health, and restore)
+- RESTful API endpoints (98+ routes across infrastructure, analytics, tenant health, notifications, and restore)
 - Database operations and queries
 - Platform9 integration proxy
 - Administrative operations
@@ -100,6 +103,7 @@ src/
 api/
 ├── main.py              # FastAPI application and routes (66+ infrastructure endpoints)
 ├── dashboards.py        # Analytics dashboard routes (14 endpoints)
+├── notification_routes.py # Email notification management (7 endpoints)
 ├── restore_management.py # Snapshot restore planner + executor (8 endpoints)
 ├── pf9_control.py       # Platform9 API integration
 ├── requirements.txt     # Python dependencies
@@ -198,6 +202,15 @@ GET  /tenant-health/heatmap               # Per-tenant utilization heatmap data
 GET  /tenant-health/{project_id}          # Full detail for one tenant (vCPUs, RAM, power state)
 GET  /tenant-health/trends/{project_id}   # Daily drift/snapshot trend counts
 GET  /tenant-health/quota/{project_id}    # Live OpenStack quota vs usage
+
+# Notifications (api/notification_routes.py - 7 endpoints)
+GET  /notifications/smtp-status            # SMTP connection status
+GET  /notifications/preferences            # User notification preferences
+PUT  /notifications/preferences            # Create/update notification preference
+DELETE /notifications/preferences/{id}     # Delete a notification preference
+GET  /notifications/history                # Notification delivery history
+POST /notifications/test-email             # Send test email
+GET  /notifications/admin/stats            # Admin notification statistics
 
 # System Health & Testing
 GET  /health                     # Service health check
@@ -334,6 +347,10 @@ drift_rules, drift_events
 -- Advanced Views
 v_comprehensive_changes, v_volumes_full, v_security_groups_full,
 v_tenant_health  -- per-project health score aggregation
+
+-- Notifications (4 tables)
+notification_channels, notification_preferences,
+notification_log, notification_digests
 ```
 
 **Enhanced Schema Features**:
@@ -529,6 +546,11 @@ graph TD
         │pf9_monitoring│    │ pf9_pgadmin │
         │  (FastAPI)  │    │ (Database)  │
         └─────────────┘    └─────────────┘
+                 │
+        ┌─────────────────────┐    ┌─────────────────────┐
+        │pf9_notification_    │    │pf9_snapshot_worker  │
+        │worker (Python/SMTP) │    │   (Python)          │
+        └─────────────────────┘    └─────────────────────┘
 ```
 
 ### Host Integration Points

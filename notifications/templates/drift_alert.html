@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f6f9; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #1a73e8, #0d47a1); padding: 24px; border-radius: 8px 8px 0 0; }
+    .header h1 { color: #fff; margin: 0; font-size: 20px; }
+    .header .subtitle { color: rgba(255,255,255,0.8); font-size: 13px; margin-top: 4px; }
+    .body { background: #fff; padding: 24px; border-radius: 0 0 8px 8px; border: 1px solid #e0e0e0; border-top: 0; }
+    .severity-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+    .severity-critical { background: #fde8e8; color: #c0392b; }
+    .severity-warning { background: #fef3cd; color: #856404; }
+    .severity-info { background: #d1ecf1; color: #0c5460; }
+    .detail-table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    .detail-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .detail-table td:first-child { color: #666; font-weight: 500; width: 140px; }
+    .detail-table td:last-child { color: #333; }
+    .footer { text-align: center; padding: 16px; color: #999; font-size: 12px; }
+    .change-arrow { color: #e74c3c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🔍 Drift Detection Alert</h1>
+      <div class="subtitle">Platform9 Management System &middot; {{ timestamp }}</div>
+    </div>
+    <div class="body">
+      <p>
+        <span class="severity-badge severity-{{ event.severity }}">{{ event.severity }}</span>
+      </p>
+      <p style="font-size: 15px; color: #333; line-height: 1.5;">
+        {{ event.summary }}
+      </p>
+
+      <table class="detail-table">
+        <tr><td>Resource Type</td><td>{{ event.resource_type }}</td></tr>
+        <tr><td>Resource Name</td><td>{{ event.resource_name or event.resource_id }}</td></tr>
+        <tr><td>Field Changed</td><td><strong>{{ event.field_name }}</strong></td></tr>
+        <tr>
+          <td>Change</td>
+          <td>
+            <code>{{ event.old_value }}</code>
+            <span class="change-arrow"> → </span>
+            <code>{{ event.new_value }}</code>
+          </td>
+        </tr>
+        {% if event.project_name %}
+        <tr><td>Project</td><td>{{ event.project_name }}</td></tr>
+        {% endif %}
+        <tr><td>Detected At</td><td>{{ event.detected_at }}</td></tr>
+      </table>
+
+      <p style="font-size: 13px; color: #666;">
+        This drift event has not been acknowledged. Log into the PF9 Management dashboard
+        to review and acknowledge it.
+      </p>
+    </div>
+    <div class="footer">
+      PF9 Management System &middot; You received this because you subscribed to {{ event.event_type }} notifications.
+    </div>
+  </div>
+</body>
+</html>

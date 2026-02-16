@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f6f9; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #e74c3c, #c0392b); padding: 24px; border-radius: 8px 8px 0 0; }
+    .header h1 { color: #fff; margin: 0; font-size: 20px; }
+    .header .subtitle { color: rgba(255,255,255,0.8); font-size: 13px; margin-top: 4px; }
+    .body { background: #fff; padding: 24px; border-radius: 0 0 8px 8px; border: 1px solid #e0e0e0; border-top: 0; }
+    .stat-grid { display: flex; gap: 16px; margin: 16px 0; }
+    .stat-box { flex: 1; background: #f8f9fa; border-radius: 8px; padding: 16px; text-align: center; }
+    .stat-box .value { font-size: 28px; font-weight: 700; }
+    .stat-box .label { font-size: 12px; color: #666; margin-top: 4px; }
+    .stat-box.failed .value { color: #e74c3c; }
+    .stat-box.created .value { color: #27ae60; }
+    .detail-table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    .detail-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .detail-table td:first-child { color: #666; font-weight: 500; width: 140px; }
+    .footer { text-align: center; padding: 16px; color: #999; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📸 Snapshot Run Failed</h1>
+      <div class="subtitle">Platform9 Management System &middot; {{ timestamp }}</div>
+    </div>
+    <div class="body">
+      <p style="font-size: 15px; color: #333; line-height: 1.5;">
+        {{ event.summary }}
+      </p>
+
+      <div class="stat-grid">
+        <div class="stat-box failed">
+          <div class="value">{{ event.snapshots_failed }}</div>
+          <div class="label">Failed</div>
+        </div>
+        <div class="stat-box created">
+          <div class="value">{{ event.snapshots_created }}</div>
+          <div class="label">Created</div>
+        </div>
+      </div>
+
+      <table class="detail-table">
+        <tr><td>Run Type</td><td>{{ event.resource_name }}</td></tr>
+        <tr><td>Status</td><td><strong style="color: #e74c3c;">{{ event.status }}</strong></td></tr>
+        <tr><td>Started At</td><td>{{ event.started_at }}</td></tr>
+        {% if event.error_summary %}
+        <tr><td>Error Summary</td><td>{{ event.error_summary }}</td></tr>
+        {% endif %}
+      </table>
+
+      <p style="font-size: 13px; color: #666;">
+        Check the Snapshot Monitor tab in PF9 Management for details and retry options.
+      </p>
+    </div>
+    <div class="footer">
+      PF9 Management System &middot; You received this because you subscribed to snapshot_failure notifications.
+    </div>
+  </div>
+</body>
+</html>

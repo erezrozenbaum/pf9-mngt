@@ -93,6 +93,7 @@ ENABLE_AUTHENTICATION=true
 | Projects | read | read | read | admin |
 | Restore | read | read | write | admin |
 | Settings/Branding | - | - | admin | admin |
+| Notifications | read, write | read, write | admin | admin |
 
 ### Public (Unauthenticated) Endpoints
 

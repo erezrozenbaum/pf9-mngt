@@ -41,6 +41,9 @@ from structured_logging import setup_logging
 # Dashboard endpoints
 from dashboards import router as dashboard_router
 
+# Notification endpoints
+from notification_routes import router as notification_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -240,6 +243,7 @@ app = FastAPI(title=APP_NAME)
 
 # Include routers
 app.include_router(dashboard_router)
+app.include_router(notification_router)
 
 # Rate limiting setup
 app.state.limiter = limiter
