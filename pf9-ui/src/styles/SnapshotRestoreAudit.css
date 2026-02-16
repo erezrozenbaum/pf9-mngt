@@ -484,3 +484,21 @@
 [data-theme="dark"] .restore-audit-step-details pre {
   background: rgba(255, 255, 255, 0.05);
 }
+
+[data-theme="dark"] .restore-audit-btn-secondary {
+  background: var(--color-surface, #1A1D23);
+  color: var(--color-text-primary, #fff);
+  border-color: var(--color-border, #37474F);
+}
+
+[data-theme="dark"] .restore-audit-btn-secondary:hover:not(:disabled) {
+  background: var(--color-surface-elevated, #1F2937);
+}
+
+[data-theme="dark"] .restore-audit-btn-ghost {
+  color: var(--color-primary, #90CAF9);
+}
+
+[data-theme="dark"] .restore-audit-btn-ghost:hover {
+  background: rgba(144, 202, 249, 0.08);
+}

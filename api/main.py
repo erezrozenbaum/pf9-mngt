@@ -282,6 +282,8 @@ async def rbac_middleware(request: Request, call_next):
     path = request.url.path
     if (
         path.startswith("/auth") or
+        path.startswith("/settings/") or
+        path.startswith("/static/") or
         path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/simple-test", "/test-users-db"]
     ):
         return await call_next(request)
@@ -4656,3 +4658,341 @@ def test_history_endpoints():
     }
 
 
+
+
+# ---------------------------------------------------------------------------
+# Branding / App Settings  (public GET, admin PUT)
+# ---------------------------------------------------------------------------
+
+@app.get("/settings/branding")
+def get_branding():
+    """
+    Return app branding settings (company name, logo, colors, hero text).
+    Public endpoint - used on the login page before authentication.
+    """
+    try:
+        conn = db_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT key, value FROM app_settings")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        settings = {r["key"]: r["value"] for r in rows}
+        if "login_hero_features" in settings:
+            try:
+                settings["login_hero_features"] = json.loads(settings["login_hero_features"])
+            except Exception:
+                settings["login_hero_features"] = []
+        return settings
+    except Exception as e:
+        logger.error(f"Failed to fetch branding settings: {e}")
+        return {
+            "company_name": "PF9 Management System",
+            "company_subtitle": "Platform9 Infrastructure Management",
+            "login_hero_title": "Welcome to PF9 Management",
+            "login_hero_description": "Comprehensive Platform9 infrastructure management.",
+            "login_hero_features": [],
+            "company_logo_url": "",
+            "primary_color": "#667eea",
+            "secondary_color": "#764ba2",
+        }
+
+
+@app.put("/admin/settings/branding")
+@limiter.limit("10/minute")
+def update_branding(
+    request: Request,
+    payload: dict,
+    authenticated: bool = Depends(verify_admin_credentials),
+):
+    """Update one or more branding settings. Requires admin credentials."""
+    ALLOWED_KEYS = {
+        "company_name", "company_subtitle",
+        "login_hero_title", "login_hero_description", "login_hero_features",
+        "company_logo_url", "primary_color", "secondary_color",
+    }
+    updates = {k: v for k, v in payload.items() if k in ALLOWED_KEYS}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid settings keys provided")
+    try:
+        conn = db_conn()
+        cur = conn.cursor()
+        for key, value in updates.items():
+            val = json.dumps(value) if isinstance(value, (list, dict)) else str(value)
+            cur.execute(
+                """INSERT INTO app_settings (key, value, updated_at, updated_by)
+                   VALUES (%s, %s, now(), %s)
+                   ON CONFLICT (key) DO UPDATE
+                   SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                (key, val, "admin"),
+            )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "updated_keys": list(updates.keys())}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update branding: {e}")
+
+
+@app.post("/admin/settings/branding/logo")
+@limiter.limit("5/minute")
+async def upload_branding_logo(
+    request: Request,
+    authenticated: bool = Depends(verify_admin_credentials),
+):
+    """Upload a company logo image (PNG/JPEG/GIF/SVG/WebP, max 2MB)."""
+    content_type = request.headers.get("content-type", "")
+    ext_map = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/svg+xml": "svg", "image/webp": "webp"}
+    ext = ext_map.get(content_type.split(";")[0].strip().lower())
+    if not ext:
+        raise HTTPException(status_code=400, detail=f"Unsupported Content-Type: {content_type}")
+    body = await request.body()
+    if len(body) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Logo file must be under 2 MB")
+    if len(body) == 0:
+        raise HTTPException(status_code=400, detail="Empty file body")
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    os.makedirs(static_dir, exist_ok=True)
+    for old in os.listdir(static_dir):
+        if old.startswith("logo."):
+            os.remove(os.path.join(static_dir, old))
+    filename = f"logo.{ext}"
+    filepath = os.path.join(static_dir, filename)
+    with open(filepath, "wb") as f:
+        f.write(body)
+    logo_url = f"/static/{filename}"
+    try:
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO app_settings (key, value, updated_at, updated_by)
+               VALUES ('company_logo_url', %s, now(), 'admin')
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = 'admin'""",
+            (logo_url,),
+        )
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        logger.error(f"Failed to save logo URL to DB: {e}")
+    return {"status": "success", "logo_url": logo_url}
+
+
+# Serve static files (uploaded logos)
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(_static_dir, exist_ok=True)
+app.mount("/static", _StaticFiles(directory=_static_dir), name="static")
+
+
+# ---------------------------------------------------------------------------
+# User Preferences  (tab order, etc.)
+# ---------------------------------------------------------------------------
+
+@app.get("/user/preferences")
+def get_user_preferences(current_user: User = Depends(require_authentication)):
+    """Return all preferences for the authenticated user."""
+    try:
+        conn = db_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT pref_key, pref_value FROM user_preferences WHERE username = %s", (current_user.username,))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        prefs = {}
+        for r in rows:
+            try:
+                prefs[r["pref_key"]] = json.loads(r["pref_value"])
+            except Exception:
+                prefs[r["pref_key"]] = r["pref_value"]
+        return prefs
+    except Exception as e:
+        logger.error(f"Failed to fetch preferences for {current_user.username}: {e}")
+        return {}
+
+
+@app.put("/user/preferences/{pref_key}")
+def set_user_preference(pref_key: str, payload: dict, current_user: User = Depends(require_authentication)):
+    """Set a single preference. Body: { "value": <any JSON-serializable> }"""
+    if "value" not in payload:
+        raise HTTPException(status_code=400, detail="Body must contain 'value'")
+    val = json.dumps(payload["value"]) if isinstance(payload["value"], (list, dict)) else str(payload["value"])
+    try:
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO user_preferences (username, pref_key, pref_value, updated_at)
+               VALUES (%s, %s, %s, now())
+               ON CONFLICT (username, pref_key) DO UPDATE SET pref_value = EXCLUDED.pref_value, updated_at = now()""",
+            (current_user.username, pref_key, val),
+        )
+        conn.commit(); cur.close(); conn.close()
+        return {"status": "success", "pref_key": pref_key}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save preference: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Branding / App Settings  (public GET, admin PUT)
+# ---------------------------------------------------------------------------
+
+@app.get("/settings/branding")
+def get_branding():
+    """
+    Return app branding settings (company name, logo, colors, hero text).
+    Public endpoint - used on the login page before authentication.
+    """
+    try:
+        conn = db_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT key, value FROM app_settings")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        settings = {r["key"]: r["value"] for r in rows}
+        if "login_hero_features" in settings:
+            try:
+                settings["login_hero_features"] = json.loads(settings["login_hero_features"])
+            except Exception:
+                settings["login_hero_features"] = []
+        return settings
+    except Exception as e:
+        logger.error(f"Failed to fetch branding settings: {e}")
+        return {
+            "company_name": "PF9 Management System",
+            "company_subtitle": "Platform9 Infrastructure Management",
+            "login_hero_title": "Welcome to PF9 Management",
+            "login_hero_description": "Comprehensive Platform9 infrastructure management.",
+            "login_hero_features": [],
+            "company_logo_url": "",
+            "primary_color": "#667eea",
+            "secondary_color": "#764ba2",
+        }
+
+
+@app.put("/admin/settings/branding")
+@limiter.limit("10/minute")
+def update_branding(
+    request: Request,
+    payload: dict,
+    authenticated: bool = Depends(verify_admin_credentials),
+):
+    """Update one or more branding settings. Requires admin credentials."""
+    ALLOWED_KEYS = {
+        "company_name", "company_subtitle",
+        "login_hero_title", "login_hero_description", "login_hero_features",
+        "company_logo_url", "primary_color", "secondary_color",
+    }
+    updates = {k: v for k, v in payload.items() if k in ALLOWED_KEYS}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid settings keys provided")
+    try:
+        conn = db_conn()
+        cur = conn.cursor()
+        for key, value in updates.items():
+            val = json.dumps(value) if isinstance(value, (list, dict)) else str(value)
+            cur.execute(
+                """INSERT INTO app_settings (key, value, updated_at, updated_by)
+                   VALUES (%s, %s, now(), %s)
+                   ON CONFLICT (key) DO UPDATE
+                   SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                (key, val, "admin"),
+            )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"status": "success", "updated_keys": list(updates.keys())}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update branding: {e}")
+
+
+@app.post("/admin/settings/branding/logo")
+@limiter.limit("5/minute")
+async def upload_branding_logo(
+    request: Request,
+    authenticated: bool = Depends(verify_admin_credentials),
+):
+    """Upload a company logo image (PNG/JPEG/GIF/SVG/WebP, max 2MB)."""
+    content_type = request.headers.get("content-type", "")
+    ext_map = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/svg+xml": "svg", "image/webp": "webp"}
+    ext = ext_map.get(content_type.split(";")[0].strip().lower())
+    if not ext:
+        raise HTTPException(status_code=400, detail=f"Unsupported Content-Type: {content_type}")
+    body = await request.body()
+    if len(body) > 2 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Logo file must be under 2 MB")
+    if len(body) == 0:
+        raise HTTPException(status_code=400, detail="Empty file body")
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    os.makedirs(static_dir, exist_ok=True)
+    for old in os.listdir(static_dir):
+        if old.startswith("logo."):
+            os.remove(os.path.join(static_dir, old))
+    filename = f"logo.{ext}"
+    filepath = os.path.join(static_dir, filename)
+    with open(filepath, "wb") as f:
+        f.write(body)
+    logo_url = f"/static/{filename}"
+    try:
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO app_settings (key, value, updated_at, updated_by)
+               VALUES ('company_logo_url', %s, now(), 'admin')
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = 'admin'""",
+            (logo_url,),
+        )
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        logger.error(f"Failed to save logo URL to DB: {e}")
+    return {"status": "success", "logo_url": logo_url}
+
+
+# Serve static files (uploaded logos)
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(_static_dir, exist_ok=True)
+app.mount("/static", _StaticFiles(directory=_static_dir), name="static")
+
+
+# ---------------------------------------------------------------------------
+# User Preferences  (tab order, etc.)
+# ---------------------------------------------------------------------------
+
+@app.get("/user/preferences")
+def get_user_preferences(current_user: User = Depends(require_authentication)):
+    """Return all preferences for the authenticated user."""
+    try:
+        conn = db_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT pref_key, pref_value FROM user_preferences WHERE username = %s", (current_user.username,))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        prefs = {}
+        for r in rows:
+            try:
+                prefs[r["pref_key"]] = json.loads(r["pref_value"])
+            except Exception:
+                prefs[r["pref_key"]] = r["pref_value"]
+        return prefs
+    except Exception as e:
+        logger.error(f"Failed to fetch preferences for {current_user.username}: {e}")
+        return {}
+
+
+@app.put("/user/preferences/{pref_key}")
+def set_user_preference(pref_key: str, payload: dict, current_user: User = Depends(require_authentication)):
+    """Set a single preference. Body: { "value": <any JSON-serializable> }"""
+    if "value" not in payload:
+        raise HTTPException(status_code=400, detail="Body must contain 'value'")
+    val = json.dumps(payload["value"]) if isinstance(payload["value"], (list, dict)) else str(payload["value"])
+    try:
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO user_preferences (username, pref_key, pref_value, updated_at)
+               VALUES (%s, %s, %s, now())
+               ON CONFLICT (username, pref_key) DO UPDATE SET pref_value = EXCLUDED.pref_value, updated_at = now()""",
+            (current_user.username, pref_key, val),
+        )
+        conn.commit(); cur.close(); conn.close()
+        return {"status": "success", "pref_key": pref_key}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save preference: {e}")
