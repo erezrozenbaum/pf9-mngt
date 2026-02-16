@@ -413,3 +413,54 @@
     padding: 8px;
   }
 }
+
+/* ---- Dark mode overrides ---- */
+[data-theme="dark"] .tab-btn {
+  color: var(--color-text-secondary, #B0BEC5);
+}
+
+[data-theme="dark"] .tab-btn:hover {
+  color: var(--color-text-primary, #fff);
+}
+
+[data-theme="dark"] .tab-btn.active {
+  color: var(--color-primary, #90CAF9);
+  border-bottom-color: var(--color-primary, #90CAF9);
+}
+
+[data-theme="dark"] .policy-sets-section,
+[data-theme="dark"] .assignments-section,
+[data-theme="dark"] .runs-section {
+  background: var(--color-card, #252A31);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .section-header h2 {
+  color: var(--color-text-primary, #fff);
+}
+
+[data-theme="dark"] .btn-secondary {
+  background-color: var(--color-surface, #1A1D23);
+  color: var(--color-text-primary, #fff);
+  border: 1px solid var(--color-border, #37474F);
+}
+
+[data-theme="dark"] .btn-secondary:hover {
+  background-color: var(--color-surface-elevated, #1F2937);
+}
+
+[data-theme="dark"] .btn-primary {
+  background-color: var(--color-primary, #90CAF9);
+  color: #0F1419;
+}
+
+[data-theme="dark"] .btn-primary:hover {
+  background-color: var(--color-primary-dark, #5C6BC0);
+  color: #fff;
+}
+
+[data-theme="dark"] .alert-error {
+  background-color: rgba(239, 83, 80, 0.1);
+  color: var(--color-error, #EF5350);
+  border-color: rgba(239, 83, 80, 0.3);
+}

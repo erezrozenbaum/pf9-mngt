@@ -92,6 +92,18 @@ ENABLE_AUTHENTICATION=true
 | Domains | read | read | read | admin |
 | Projects | read | read | read | admin |
 | Restore | read | read | write | admin |
+| Settings/Branding | - | - | admin | admin |
+
+### Public (Unauthenticated) Endpoints
+
+The following paths bypass RBAC middleware and do not require a Bearer token:
+
+| Path | Purpose |
+|------|---------|
+| `/auth/login` | User authentication |
+| `/health` | API health check |
+| `/settings/branding` (GET only) | Login page branding data (needed before user logs in) |
+| `/static/*` | Uploaded logos and static assets |
 
 ### RBAC Middleware Operation
 

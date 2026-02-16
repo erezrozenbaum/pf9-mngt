@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import "./App.css";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
@@ -393,7 +393,48 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips";
+
+// ---------------------------------------------------------------------------
+// Tab definitions – single source of truth for all navigation tabs.
+// Order here is the DEFAULT order. Users can reorder via drag-and-drop.
+// ---------------------------------------------------------------------------
+interface TabDef {
+  id: ActiveTab;
+  label: string;
+  adminOnly?: boolean;
+  actionStyle?: boolean;   // true → adds pf9-tab-action class
+}
+
+const DEFAULT_TAB_ORDER: TabDef[] = [
+  { id: "dashboard",            label: "🏠 Dashboard" },
+  { id: "servers",              label: "VMs" },
+  { id: "snapshots",            label: "Snapshots" },
+  { id: "networks",             label: "🔧 Networks",             actionStyle: true },
+  { id: "security_groups",      label: "🔒 Security Groups",      actionStyle: true },
+  { id: "subnets",              label: "Subnets" },
+  { id: "volumes",              label: "Volumes" },
+  { id: "domains",              label: "Domains" },
+  { id: "projects",             label: "Projects" },
+  { id: "flavors",              label: "🔧 Flavors",              actionStyle: true },
+  { id: "images",               label: "Images" },
+  { id: "hypervisors",          label: "Hypervisors" },
+  { id: "users",                label: "🔧 Users",                actionStyle: true },
+  { id: "admin",                label: "🔧 Admin",                adminOnly: true, actionStyle: true },
+  { id: "api_metrics",          label: "API Metrics",             adminOnly: true },
+  { id: "system_logs",          label: "System Logs",             adminOnly: true },
+  { id: "snapshot_monitor",     label: "🔧 Snapshot Monitor",     adminOnly: true, actionStyle: true },
+  { id: "snapshot_compliance",  label: "🔧 Snapshot Compliance",  adminOnly: true, actionStyle: true },
+  { id: "restore",              label: "🔧 Snapshot Restore",     adminOnly: true, actionStyle: true },
+  { id: "restore_audit",        label: "🔧 Restore Audit",        adminOnly: true, actionStyle: true },
+  { id: "ports",                label: "Ports" },
+  { id: "floatingips",          label: "Floating IPs" },
+  { id: "history",              label: "History" },
+  { id: "audit",                label: "Audit" },
+  { id: "monitoring",           label: "Monitoring" },
+  { id: "snapshot-policies",    label: "📸🔧 Snapshot Policies",  actionStyle: true },
+  { id: "snapshot-audit",       label: "📋 Snapshot Audit" },
+];
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -454,8 +495,38 @@ function csvLine(fields: (string | number | null | undefined)[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Login Page Component
+// Login Page Component  (two-column: form | hero with branding)
 // ---------------------------------------------------------------------------
+
+interface BrandingSettings {
+  company_name: string;
+  company_subtitle: string;
+  login_hero_title: string;
+  login_hero_description: string;
+  login_hero_features: string[];
+  company_logo_url: string;
+  primary_color: string;
+  secondary_color: string;
+}
+
+const DEFAULT_BRANDING: BrandingSettings = {
+  company_name: "PF9 Management System",
+  company_subtitle: "Platform9 Infrastructure Management",
+  login_hero_title: "Welcome to PF9 Management",
+  login_hero_description:
+    "Comprehensive Platform9 infrastructure management with real-time monitoring, snapshot automation, security group management, and full restore capabilities.",
+  login_hero_features: [
+    "Real-time VM & infrastructure monitoring",
+    "Automated snapshot policies & compliance",
+    "Security group management with human-readable rules",
+    "One-click snapshot restore with storage cleanup",
+    "RBAC with LDAP authentication",
+    "Full audit trail & history tracking",
+  ],
+  company_logo_url: "",
+  primary_color: "#667eea",
+  secondary_color: "#764ba2",
+};
 
 interface LoginPageProps {
   isLoggingIn: boolean;
@@ -466,209 +537,285 @@ interface LoginPageProps {
 const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLogin }) => {
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
+  const [branding, setBranding] = useState<BrandingSettings>(DEFAULT_BRANDING);
+
+  // Fetch branding on mount (public endpoint, no auth)
+  useEffect(() => {
+    fetch(`${API_BASE}/settings/branding`)
+      .then(r => r.ok ? r.json() : DEFAULT_BRANDING)
+      .then(data => setBranding({ ...DEFAULT_BRANDING, ...data }))
+      .catch(() => {});
+  }, []);
+
+  const logoUrl = branding.company_logo_url
+    ? (branding.company_logo_url.startsWith("http") ? branding.company_logo_url : `${API_BASE}${branding.company_logo_url}`)
+    : "";
 
   return (
-    <div className="pf9-app" style={{
+    <div style={{
+      fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       minHeight: '100vh',
       display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: isDark 
-        ? 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)'
-        : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+      margin: 0,
+      padding: 0,
+      overflow: 'hidden',
     }}>
       {/* Theme Toggle Button */}
       <button
         onClick={toggleTheme}
         style={{
-          position: 'absolute',
+          position: 'fixed',
           top: '20px',
           right: '20px',
-          background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.2)',
+          background: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.08)',
           border: 'none',
           borderRadius: '50%',
-          width: '48px',
-          height: '48px',
+          width: '44px',
+          height: '44px',
           cursor: 'pointer',
-          fontSize: '1.5rem',
+          fontSize: '1.3rem',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           transition: 'all 0.3s',
-          backdropFilter: 'blur(10px)'
+          backdropFilter: 'blur(10px)',
+          zIndex: 10,
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.3)';
+          e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.12)';
           e.currentTarget.style.transform = 'scale(1.1)';
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.2)';
+          e.currentTarget.style.background = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.08)';
           e.currentTarget.style.transform = 'scale(1)';
         }}
       >
         {isDark ? '☀️' : '🌙'}
       </button>
 
+      {/* ---- Left: Login Form ---- */}
       <div style={{
-        background: isDark ? '#1e1e1e' : 'white',
-        padding: '3rem',
-        borderRadius: '12px',
-        boxShadow: isDark 
-          ? '0 20px 60px rgba(0,0,0,0.6)' 
-          : '0 20px 60px rgba(0,0,0,0.3)',
-        width: '100%',
-        maxWidth: '420px',
-        margin: '20px',
-        border: isDark ? '1px solid rgba(255,255,255,0.1)' : 'none'
+        width: '440px',
+        minWidth: '380px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '2.5rem',
+        background: isDark ? '#1a1b2e' : '#ffffff',
+        boxShadow: isDark ? '4px 0 40px rgba(0,0,0,0.6)' : '4px 0 40px rgba(0,0,0,0.1)',
+        zIndex: 2,
+        flexShrink: 0,
       }}>
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <h1 style={{ 
-            fontSize: '2rem', 
-            marginBottom: '0.5rem', 
-            color: isDark ? '#fff' : '#333' 
-          }}>
-            PF9 Management System
-          </h1>
-          <p style={{ 
-            color: isDark ? '#aaa' : '#666', 
-            fontSize: '0.95rem' 
-          }}>
-            Platform9 Infrastructure Management
-          </p>
-        </div>
-
-        <form onSubmit={(e) => {
-          e.preventDefault();
-          const formData = new FormData(e.currentTarget);
-          const username = formData.get('username') as string;
-          const password = formData.get('password') as string;
-          handleLogin(username, password);
-        }}>
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label style={{ 
-              display: 'block', 
-              marginBottom: '0.5rem', 
-              color: isDark ? '#ccc' : '#444', 
-              fontWeight: '500' 
-            }}>
-              Username
-            </label>
-            <input
-              type="text"
-              name="username"
-              required
-              autoFocus
-              placeholder="Enter your username"
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                fontSize: '1rem',
-                border: isDark 
-                  ? '2px solid rgba(255,255,255,0.2)' 
-                  : '2px solid #ddd',
-                borderRadius: '6px',
-                transition: 'border-color 0.2s',
-                boxSizing: 'border-box',
-                background: isDark ? 'rgba(255,255,255,0.05)' : 'white',
-                color: isDark ? '#fff' : '#333'
-              }}
-              onFocus={(e) => e.target.style.borderColor = isDark ? '#667eea' : '#667eea'}
-              onBlur={(e) => e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.2)' : '#ddd'}
-            />
-          </div>
-
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label style={{ 
-              display: 'block', 
-              marginBottom: '0.5rem', 
-              color: isDark ? '#ccc' : '#444', 
-              fontWeight: '500' 
-            }}>
-              Password
-            </label>
-            <input
-              type="password"
-              name="password"
-              required
-              placeholder="Enter your password"
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                fontSize: '1rem',
-                border: isDark 
-                  ? '2px solid rgba(255,255,255,0.2)' 
-                  : '2px solid #ddd',
-                borderRadius: '6px',
-                transition: 'border-color 0.2s',
-                boxSizing: 'border-box',
-                background: isDark ? 'rgba(255,255,255,0.05)' : 'white',
-                color: isDark ? '#fff' : '#333'
-              }}
-              onFocus={(e) => e.target.style.borderColor = isDark ? '#667eea' : '#667eea'}
-              onBlur={(e) => e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.2)' : '#ddd'}
-            />
-          </div>
-
-          {loginError && (
-            <div style={{
-              padding: '0.75rem',
-              marginBottom: '1rem',
-              background: isDark ? 'rgba(255,50,50,0.2)' : '#fee',
-              border: isDark ? '1px solid rgba(255,100,100,0.4)' : '1px solid #fcc',
-              borderRadius: '6px',
-              color: isDark ? '#ff6b6b' : '#c33',
-              fontSize: '0.9rem'
-            }}>
-              ⚠️ {loginError}
+        <div style={{ width: '100%', maxWidth: '340px' }}>
+          {/* Logo */}
+          {logoUrl && (
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+              <img src={logoUrl} alt="Company Logo" style={{ maxHeight: '64px', maxWidth: '200px', objectFit: 'contain' }} />
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={isLoggingIn}
-            style={{
-              width: '100%',
-              padding: '0.875rem',
-              fontSize: '1rem',
-              fontWeight: '600',
-              color: 'white',
-              background: isLoggingIn 
-                ? (isDark ? '#555' : '#999')
-                : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              border: 'none',
-              borderRadius: '6px',
+          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+            <h1 style={{ 
+              fontSize: '1.6rem', 
+              marginBottom: '0.4rem', 
+              color: isDark ? '#fff' : '#1a1a2e',
+              fontWeight: 700,
+            }}>
+              {branding.company_name}
+            </h1>
+            <p style={{ 
+              color: isDark ? 'rgba(255,255,255,0.5)' : '#888', 
+              fontSize: '0.9rem',
+              margin: 0,
+            }}>
+              {branding.company_subtitle}
+            </p>
+          </div>
+
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.currentTarget);
+            handleLogin(formData.get('username') as string, formData.get('password') as string);
+          }}>
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={{ display: 'block', marginBottom: '6px', color: isDark ? 'rgba(255,255,255,0.7)' : '#555', fontWeight: 500, fontSize: '0.9rem' }}>
+                Username
+              </label>
+              <input
+                type="text" name="username" required autoFocus
+                placeholder="user@example.com"
+                style={{
+                  width: '100%', padding: '0.7rem 0.85rem', fontSize: '0.95rem',
+                  border: isDark ? '1.5px solid rgba(255,255,255,0.15)' : '1.5px solid #e0e0e0',
+                  borderRadius: '8px', transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box',
+                  background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa',
+                  color: isDark ? '#fff' : '#333',
+                  outline: 'none',
+                }}
+                onFocus={(e) => { e.target.style.borderColor = branding.primary_color; e.target.style.boxShadow = `0 0 0 3px ${branding.primary_color}22`; }}
+                onBlur={(e) => { e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.15)' : '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={{ display: 'block', marginBottom: '6px', color: isDark ? 'rgba(255,255,255,0.7)' : '#555', fontWeight: 500, fontSize: '0.9rem' }}>
+                Password
+              </label>
+              <input
+                type="password" name="password" required
+                placeholder="••••••"
+                style={{
+                  width: '100%', padding: '0.7rem 0.85rem', fontSize: '0.95rem',
+                  border: isDark ? '1.5px solid rgba(255,255,255,0.15)' : '1.5px solid #e0e0e0',
+                  borderRadius: '8px', transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box',
+                  background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa',
+                  color: isDark ? '#fff' : '#333',
+                  outline: 'none',
+                }}
+                onFocus={(e) => { e.target.style.borderColor = branding.primary_color; e.target.style.boxShadow = `0 0 0 3px ${branding.primary_color}22`; }}
+                onBlur={(e) => { e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.15)' : '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
+              />
+            </div>
+
+            {loginError && (
+              <div style={{
+                padding: '0.7rem', marginBottom: '1rem',
+                background: isDark ? 'rgba(255,50,50,0.15)' : '#fff0f0',
+                border: isDark ? '1px solid rgba(255,100,100,0.3)' : '1px solid #fcc',
+                borderRadius: '8px', color: isDark ? '#ff6b6b' : '#c33', fontSize: '0.85rem'
+              }}>
+                ⚠️ {loginError}
+              </div>
+            )}
+
+            <button type="submit" disabled={isLoggingIn} style={{
+              width: '100%', padding: '0.8rem', fontSize: '1rem', fontWeight: 600, color: 'white',
+              background: isLoggingIn ? (isDark ? '#444' : '#bbb')
+                : `linear-gradient(135deg, ${branding.primary_color} 0%, ${branding.secondary_color} 100%)`,
+              border: 'none', borderRadius: '8px',
               cursor: isLoggingIn ? 'not-allowed' : 'pointer',
               transition: 'transform 0.1s, box-shadow 0.2s',
-              boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)'
+              boxShadow: isLoggingIn ? 'none' : `0 4px 15px ${branding.primary_color}44`,
+              letterSpacing: '0.3px',
             }}
-            onMouseDown={(e) => !isLoggingIn && (e.currentTarget.style.transform = 'scale(0.98)')}
-            onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
-            onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-          >
-            {isLoggingIn ? 'Signing in...' : 'Sign In'}
-          </button>
-        </form>
+              onMouseDown={(e) => !isLoggingIn && (e.currentTarget.style.transform = 'scale(0.98)')}
+              onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            >
+              {isLoggingIn ? 'Signing in...' : 'Sign In'}
+            </button>
+          </form>
 
-        <div style={{ 
-          marginTop: '2rem', 
-          paddingTop: '1.5rem', 
-          borderTop: isDark ? '1px solid rgba(255,255,255,0.1)' : '1px solid #eee', 
-          textAlign: 'center' 
-        }}>
-          <p style={{ 
-            fontSize: '0.85rem', 
-            color: isDark ? '#999' : '#888', 
-            margin: '0 0 0.5rem 0' 
+          <div style={{ 
+            marginTop: '1.5rem', paddingTop: '1.25rem',
+            borderTop: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid #f0f0f0', textAlign: 'center' 
           }}>
-            🔐 LDAP Authentication Enabled
-          </p>
-          <p style={{ 
-            fontSize: '0.75rem', 
-            color: isDark ? '#777' : '#aaa', 
-            margin: 0 
+            <p style={{ fontSize: '0.8rem', color: isDark ? 'rgba(255,255,255,0.4)' : '#999', margin: '0 0 4px 0' }}>
+              🔐 LDAP Authentication Enabled
+            </p>
+            <p style={{ fontSize: '0.7rem', color: isDark ? 'rgba(255,255,255,0.25)' : '#bbb', margin: 0 }}>
+              Authorized users only • PF9 Infrastructure
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ---- Right: Hero / Branding Panel ---- */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '3rem 4rem',
+        position: 'relative',
+        overflow: 'hidden',
+        background: isDark
+          ? '#1a1b2e'
+          : `linear-gradient(135deg, ${branding.primary_color} 0%, ${branding.secondary_color} 100%)`,
+      }}>
+        {/* Decorative background shapes — light mode only */}
+        {!isDark && (
+          <>
+            <div style={{
+              position: 'absolute', top: '-80px', right: '-60px',
+              width: '350px', height: '350px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.08)',
+            }} />
+            <div style={{
+              position: 'absolute', bottom: '-100px', left: '5%',
+              width: '280px', height: '280px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.06)',
+            }} />
+            <div style={{
+              position: 'absolute', top: '30%', right: '15%',
+              width: '150px', height: '150px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.04)',
+            }} />
+          </>
+        )}
+        {/* Dark mode: subtle top-left glow */}
+        {isDark && (
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            background: `radial-gradient(ellipse at 20% 20%, ${branding.primary_color}18 0%, transparent 60%)`,
+            pointerEvents: 'none',
+          }} />
+        )}
+
+        <div style={{ position: 'relative', maxWidth: '520px', color: isDark ? 'rgba(255,255,255,0.92)' : 'white', zIndex: 1, textAlign: 'center' }}>
+          <h2 style={{
+            fontSize: '2.4rem', fontWeight: 700, marginBottom: '1rem',
+            lineHeight: 1.25, letterSpacing: '-0.5px', margin: '0 0 1rem 0',
+            color: isDark ? '#f0f0f0' : 'white',
           }}>
-            Authorized users only • PF9 Infrastructure
+            {branding.login_hero_title}
+          </h2>
+          <p style={{
+            fontSize: '1.05rem', lineHeight: 1.7, marginBottom: '2rem',
+            opacity: isDark ? 0.95 : 0.85, margin: '0 0 2rem 0',
+          }}>
+            {branding.login_hero_description}
           </p>
+
+          {branding.login_hero_features.length > 0 && (
+            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 2rem 0' }}>
+              {branding.login_hero_features.map((f, i) => (
+                <li key={i} style={{
+                  display: 'flex', alignItems: 'center', gap: '12px',
+                  marginBottom: '0.7rem', fontSize: '0.95rem',
+                }}>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: '22px', height: '22px', borderRadius: '50%',
+                    background: isDark ? 'rgba(102,126,234,0.25)' : 'rgba(255,255,255,0.2)',
+                    fontSize: '0.7rem', flexShrink: 0,
+                    fontWeight: 700,
+                    color: isDark ? '#90CAF9' : 'white',
+                  }}>✓</span>
+                  <span style={{ opacity: isDark ? 0.95 : 0.9 }}>{f}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div style={{
+            marginTop: '2.5rem', paddingTop: '1.5rem',
+            borderTop: isDark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(255,255,255,0.15)',
+            display: 'flex', gap: '2rem', flexWrap: 'wrap', justifyContent: 'center',
+          }}>
+            <div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>24/7</div>
+              <div style={{ fontSize: '0.85rem', opacity: 0.7 }}>Monitoring</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>100%</div>
+              <div style={{ fontSize: '0.85rem', opacity: 0.7 }}>Audit Coverage</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>RBAC</div>
+              <div style={{ fontSize: '0.85rem', opacity: 0.7 }}>Access Control</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -819,6 +966,110 @@ const App: React.FC = () => {
 
   // Tabs
   const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
+
+  // ---------- Tab ordering (drag-and-drop) ----------
+  const [tabOrder, setTabOrder] = useState<ActiveTab[]>(() => {
+    try {
+      const saved = localStorage.getItem('pf9_tab_order');
+      if (saved) {
+        const parsed: ActiveTab[] = JSON.parse(saved);
+        // Merge: keep saved order, append any new tabs not yet in the saved list
+        const allIds = DEFAULT_TAB_ORDER.map(t => t.id);
+        const validSaved = parsed.filter(id => allIds.includes(id));
+        const missing = allIds.filter(id => !validSaved.includes(id));
+        return [...validSaved, ...missing];
+      }
+    } catch {}
+    return DEFAULT_TAB_ORDER.map(t => t.id);
+  });
+  const dragTabRef = useRef<ActiveTab | null>(null);
+  const dragOverTabRef = useRef<ActiveTab | null>(null);
+
+  // Build lookup map once
+  const tabDefMap = useMemo(() => {
+    const m = new Map<ActiveTab, TabDef>();
+    DEFAULT_TAB_ORDER.forEach(t => m.set(t.id, t));
+    return m;
+  }, []);
+
+  // Ordered & filtered tabs for rendering
+  const visibleTabs = useMemo(() => {
+    const isAdmin = authUser && (authUser.role === 'admin' || authUser.role === 'superadmin');
+    return tabOrder
+      .map(id => tabDefMap.get(id))
+      .filter((t): t is TabDef => !!t && (!t.adminOnly || !!isAdmin));
+  }, [tabOrder, tabDefMap, authUser]);
+
+  // Persist tab order
+  const persistTabOrder = useCallback((order: ActiveTab[]) => {
+    localStorage.setItem('pf9_tab_order', JSON.stringify(order));
+    // Also save to backend (fire-and-forget)
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      fetch(`${API_BASE}/user/preferences/tab_order`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ value: order }),
+      }).catch(() => {});
+    }
+  }, []);
+
+  // Load tab order from backend on login
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+    fetch(`${API_BASE}/user/preferences`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then((prefs: Record<string, any>) => {
+        if (prefs.tab_order && Array.isArray(prefs.tab_order)) {
+          const allIds = DEFAULT_TAB_ORDER.map(t => t.id);
+          const saved: ActiveTab[] = (prefs.tab_order as ActiveTab[]).filter(id => allIds.includes(id));
+          const missing = allIds.filter(id => !saved.includes(id));
+          const merged = [...saved, ...missing];
+          setTabOrder(merged);
+          localStorage.setItem('pf9_tab_order', JSON.stringify(merged));
+        }
+      })
+      .catch(() => {});
+  }, [isAuthenticated]);
+
+  // Drag handlers
+  const handleTabDragStart = useCallback((tabId: ActiveTab) => {
+    dragTabRef.current = tabId;
+  }, []);
+
+  const handleTabDragOver = useCallback((e: React.DragEvent, tabId: ActiveTab) => {
+    e.preventDefault();
+    dragOverTabRef.current = tabId;
+  }, []);
+
+  const handleTabDrop = useCallback(() => {
+    const from = dragTabRef.current;
+    const to = dragOverTabRef.current;
+    if (!from || !to || from === to) return;
+
+    setTabOrder(prev => {
+      const newOrder = [...prev];
+      const fromIdx = newOrder.indexOf(from);
+      const toIdx = newOrder.indexOf(to);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      newOrder.splice(fromIdx, 1);
+      newOrder.splice(toIdx, 0, from);
+      persistTabOrder(newOrder);
+      return newOrder;
+    });
+    dragTabRef.current = null;
+    dragOverTabRef.current = null;
+  }, [persistTabOrder]);
+
+  const handleResetTabOrder = useCallback(() => {
+    const def = DEFAULT_TAB_ORDER.map(t => t.id);
+    setTabOrder(def);
+    persistTabOrder(def);
+  }, [persistTabOrder]);
 
   // Paging + sorting
   const [serverPage, setServerPage] = useState(1);
@@ -2318,226 +2569,32 @@ const App: React.FC = () => {
               </div>
             )}
             <div className="pf9-tabs">
-          <button
-            className={
-              activeTab === "dashboard" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("dashboard")}
-          >
-            🏠 Dashboard
-          </button>
-          <button
-            className={
-              activeTab === "servers" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("servers")}
-          >
-            VMs
-          </button>
-          <button
-            className={
-              activeTab === "snapshots" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("snapshots")}
-          >
-            Snapshots
-          </button>
-          <button
-            className={
-              activeTab === "networks" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-            }
-            onClick={() => setActiveTab("networks")}
-          >
-            🔧 Networks
-          </button>
-          <button
-            className={
-              activeTab === "security_groups" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-            }
-            onClick={() => setActiveTab("security_groups")}
-          >
-            🔒 Security Groups
-          </button>
-          <button
-            className={
-              activeTab === "subnets" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("subnets")}
-          >
-            Subnets
-          </button>
-          <button
-            className={
-              activeTab === "volumes" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("volumes")}
-          >
-            Volumes
-          </button>
-          <button
-            className={
-              activeTab === "domains" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("domains")}
-          >
-            Domains
-          </button>
-          <button
-            className={
-              activeTab === "projects" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("projects")}
-          >
-            Projects
-          </button>
-          <button
-            className={
-              activeTab === "flavors" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-            }
-            onClick={() => setActiveTab("flavors")}
-          >
-            🔧 Flavors
-          </button>
-          <button
-            className={
-              activeTab === "images" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("images")}
-          >
-            Images
-          </button>
-          <button
-            className={
-              activeTab === "hypervisors" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("hypervisors")}
-          >
-            Hypervisors
-          </button>
-          <button
-            className={
-              activeTab === "users" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-            }
-            onClick={() => setActiveTab("users")}
-          >
-            🔧 Users
-          </button>
-          {authUser && (authUser.role === 'admin' || authUser.role === 'superadmin') && (
-            <>
+              {visibleTabs.map(tab => (
+                <button
+                  key={tab.id}
+                  className={[
+                    'pf9-tab',
+                    tab.actionStyle ? 'pf9-tab-action' : '',
+                    activeTab === tab.id ? 'pf9-tab-active' : '',
+                  ].filter(Boolean).join(' ')}
+                  onClick={() => setActiveTab(tab.id)}
+                  draggable
+                  onDragStart={() => handleTabDragStart(tab.id)}
+                  onDragOver={(e) => handleTabDragOver(e, tab.id)}
+                  onDrop={handleTabDrop}
+                  title="Drag to reorder"
+                >
+                  {tab.label}
+                </button>
+              ))}
               <button
-                className={
-                  activeTab === "admin" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-                }
-                onClick={() => setActiveTab("admin")}
+                className="pf9-tab"
+                onClick={handleResetTabOrder}
+                title="Reset tab order to default"
+                style={{ fontSize: '0.75rem', opacity: 0.6, padding: '4px 8px', minWidth: 'auto' }}
               >
-                🔧 Admin
+                ↩
               </button>
-              <button
-                className={
-                  activeTab === "api_metrics" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-                }
-                onClick={() => setActiveTab("api_metrics")}
-              >
-                API Metrics
-              </button>
-              <button
-                className={
-                  activeTab === "system_logs" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-                }
-                onClick={() => setActiveTab("system_logs")}
-              >
-                System Logs
-              </button>
-              <button
-                className={
-                  activeTab === "snapshot_monitor" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-                }
-                onClick={() => setActiveTab("snapshot_monitor")}
-              >
-                🔧 Snapshot Monitor
-              </button>
-              <button
-                className={
-                  activeTab === "snapshot_compliance" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-                }
-                onClick={() => setActiveTab("snapshot_compliance")}
-              >
-                🔧 Snapshot Compliance
-              </button>
-              <button
-                className={
-                  activeTab === "restore" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-                }
-                onClick={() => setActiveTab("restore")}
-              >
-                🔧 Snapshot Restore
-              </button>
-              <button
-                className={
-                  activeTab === "restore_audit" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-                }
-                onClick={() => setActiveTab("restore_audit")}
-              >
-                🔧 Restore Audit
-              </button>
-            </>
-          )}
-          <button
-            className={
-              activeTab === "ports" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("ports")}
-          >
-            Ports
-          </button>
-          <button
-            className={
-              activeTab === "floatingips" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("floatingips")}
-          >
-            Floating IPs
-          </button>
-          <button
-            className={
-              activeTab === "history" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("history")}
-          >
-            History
-          </button>
-          <button
-            className={
-              activeTab === "audit" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("audit")}
-          >
-            Audit
-          </button>
-          <button
-            className={
-              activeTab === "monitoring" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("monitoring")}
-          >
-            Monitoring
-          </button>
-          <button
-            className={
-              activeTab === "snapshot-policies" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
-            }
-            onClick={() => setActiveTab("snapshot-policies")}
-          >
-            📸🔧 Snapshot Policies
-          </button>
-          <button
-            className={
-              activeTab === "snapshot-audit" ? "pf9-tab pf9-tab-active" : "pf9-tab"
-            }
-            onClick={() => setActiveTab("snapshot-audit")}
-          >
-            📋 Snapshot Audit
-          </button>
             </div>
             <ThemeToggle />
           </div>

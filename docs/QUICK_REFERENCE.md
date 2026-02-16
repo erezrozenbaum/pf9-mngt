@@ -24,6 +24,18 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Compliance Drift, Capacity Trends, Trendlines, Change Compliance
   - Tenant Risk Heatmap, Tenant Summary
   - Auto-refresh every 30 seconds, Dark/Light mode support
+- **Branding & Login Customization** (v1.8 - NEW ✨):
+  - White-label login page with two-column layout (login form + branded hero panel)
+  - Admin Panel “Branding” tab for company name, subtitle, colors, logo, hero content, feature highlights
+  - Logo upload (PNG/JPEG/GIF/SVG/WebP, max 2 MB)
+  - Live gradient preview, immediate effect for new visitors
+- **Tab Drag-and-Drop** (v1.8 - NEW ✨):
+  - Reorder navigation tabs via drag-and-drop with visual drop indicator
+  - Per-user persistence (localStorage + `user_preferences` backend table)
+  - Reset button ("↩") to restore default 27-tab order
+- **Dark Mode Enhancements** (v1.8):
+  - Comprehensive dark mode fixes across login page, branding settings, restore audit, and snapshot policy
+  - CSS variable aliasing system ensuring all component styles resolve correctly in both themes
 - **Infrastructure Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs
 - **Platform Tabs**: Domains, Projects, Flavors, Images, Hypervisors
 - **Management Tabs**: Users (with role assignments), History (change tracking), Audit (compliance), Monitoring (real-time metrics), Restore Audit (restore job history)

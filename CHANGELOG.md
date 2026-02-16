@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-02-16
+
+### Added
+- **Branding & Login Page Customization**: Full white-label branding system for the login page and application identity
+  - **Database**: New `app_settings` table (key/value store for branding config) and `user_preferences` table (per-user settings like tab order), with migration script `db/migrate_branding_tables.sql`
+  - **API Endpoints**: `GET /settings/branding` (public, no auth), `PUT /settings/branding` (admin), `POST /settings/branding/logo` (admin, file upload), `GET /user-preferences` and `PUT /user-preferences` (authenticated)
+  - **Admin Panel — Branding Tab**: New "🎨 Branding & Login Page Settings" tab in Admin Panel with fields for company name, subtitle, primary/secondary colors (with color pickers), logo upload (PNG/JPEG/GIF/SVG/WebP, max 2 MB), hero title, hero description, and feature highlights list (add/remove). Live gradient preview and immediate save
+  - **Login Page Redesign**: Two-column layout — login form on the left, branded hero panel on the right with customizable title, description, feature checkmarks, and stats bar (24/7 Monitoring, 100% Audit Coverage, RBAC). Company logo and name displayed above the login form. Light mode uses gradient from branding colors; dark mode uses solid dark surface with subtle radial glow
+  - **RBAC**: `/settings/` and `/static/` paths bypass authentication middleware so the login page can load branding before the user logs in
+- **Tab Drag-and-Drop Reordering**: Users can drag-and-drop tabs to customize their preferred tab order
+  - **Data-Driven Tabs**: All 27 tabs defined as a `DEFAULT_TAB_ORDER` array with id, label, icon, category, RBAC permission, and feature-toggle metadata
+  - **HTML5 Drag-and-Drop**: Native drag events with visual drop indicator, grab cursor, and smooth transitions
+  - **Persistence**: Tab order saved to `localStorage` and synced to backend via `PUT /user-preferences` (per-user)
+  - **Reset Button**: "↩" button restores default tab order instantly
+
+### Fixed
+- **Dark Mode — Login Page**: Removed decorative circles that appeared as black blobs in dark mode; replaced with subtle radial glow. Hero text centered horizontally. Text opacity increased for better readability in dark mode
+- **Dark Mode — Branding Settings Tab**: Labels and inputs now use `--color-text-primary` CSS variable (was using undefined `--color-text` with dark fallback `#333`). Feature highlight items get explicit text color
+- **Dark Mode — Restore Audit Refresh Button**: Added `[data-theme="dark"]` CSS overrides for `.restore-audit-btn-secondary` — button now has proper dark surface background and white text instead of invisible dark-on-dark
+- **Dark Mode — Snapshot Policy Buttons**: Added dark mode overrides for `.tab-btn`, `.btn-secondary`, `.btn-primary`, section backgrounds, and error alerts in `SnapshotPolicyManager.css`
+- **Dark Mode — CSS Variable Aliasing**: Root cause fix — component CSS files used undefined shorthand variables (`--text-primary`, `--card-bg`, `--border-color`, `--primary-color`, `--secondary-color`, etc.) that didn't match the actual `--color-*` prefixed variables in `index.css`. Added proper alias definitions to both light and dark theme blocks so all component styles resolve correctly in both modes
+- **`ActiveTab` TypeScript type**: Added missing `"ports"` and `"floatingips"` to the union type
+
 ## [1.7.1] - 2026-02-16
 
 ### Added
