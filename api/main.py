@@ -106,6 +106,65 @@ class CreateNetworkRequest(BaseModel):
             raise ValueError('Tenant ID cannot be empty')
         return v.strip()
 
+
+class CreateSecurityGroupRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    project_id: Optional[str] = None
+
+    @validator('name')
+    def validate_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Name cannot be empty')
+        if not re.match(r'^[a-zA-Z0-9._\- ]+$', v):
+            raise ValueError('Name can only contain alphanumeric characters, dots, underscores, hyphens, and spaces')
+        if len(v) > 255:
+            raise ValueError('Name must be 255 characters or less')
+        return v.strip()
+
+
+class CreateSecurityGroupRuleRequest(BaseModel):
+    security_group_id: str
+    direction: str  # 'ingress' or 'egress'
+    protocol: Optional[str] = None  # 'tcp', 'udp', 'icmp', or None (any)
+    port_range_min: Optional[int] = None
+    port_range_max: Optional[int] = None
+    remote_ip_prefix: Optional[str] = None
+    remote_group_id: Optional[str] = None
+    ethertype: Optional[str] = "IPv4"
+    description: Optional[str] = ""
+
+    @validator('direction')
+    def validate_direction(cls, v):
+        if v not in ('ingress', 'egress'):
+            raise ValueError('Direction must be "ingress" or "egress"')
+        return v
+
+    @validator('protocol')
+    def validate_protocol(cls, v):
+        if v is not None and v not in ('tcp', 'udp', 'icmp', 'icmpv6', 'any'):
+            raise ValueError('Protocol must be tcp, udp, icmp, icmpv6, any, or null')
+        return v
+
+    @validator('ethertype')
+    def validate_ethertype(cls, v):
+        if v not in ('IPv4', 'IPv6'):
+            raise ValueError('Ethertype must be "IPv4" or "IPv6"')
+        return v
+
+    @validator('port_range_min')
+    def validate_port_min(cls, v):
+        if v is not None and (v < 1 or v > 65535):
+            raise ValueError('Port must be between 1 and 65535')
+        return v
+
+    @validator('port_range_max')
+    def validate_port_max(cls, v):
+        if v is not None and (v < 1 or v > 65535):
+            raise ValueError('Port must be between 1 and 65535')
+        return v
+
+
 APP_NAME = "pf9-mgmt-api"
 
 # Security configuration
@@ -273,6 +332,8 @@ async def rbac_middleware(request: Request, call_next):
         "users": "users",
         "dashboard": "dashboard",
         "restore": "restore",
+        "security-groups": "security_groups",
+        "security-group-rules": "security_groups",
     }
 
     resource = resource_map.get(segment)
@@ -2334,6 +2395,432 @@ def admin_delete_network(
         )
 
 
+# ---------------------------------------------------------------------------
+#  Security Groups
+# ---------------------------------------------------------------------------
+
+# Well-known port names for human-readable rule descriptions
+_WELL_KNOWN_PORTS = {
+    22: "SSH", 80: "HTTP", 443: "HTTPS", 3389: "RDP", 53: "DNS",
+    25: "SMTP", 110: "POP3", 143: "IMAP", 993: "IMAPS", 995: "POP3S",
+    3306: "MySQL", 5432: "PostgreSQL", 6379: "Redis", 27017: "MongoDB",
+    8080: "HTTP-Alt", 8443: "HTTPS-Alt", 5900: "VNC", 5901: "VNC",
+    2049: "NFS", 445: "SMB", 139: "NetBIOS", 636: "LDAPS", 389: "LDAP",
+    6443: "K8s-API", 8000: "HTTP-Alt", 9090: "Prometheus",
+}
+
+
+def _format_rule_summary(rule: dict) -> str:
+    """
+    Generate a human-readable one-line description of a security group rule.
+    Examples:
+      - "Allow all IPv4 egress"
+      - "Allow TCP/22 (SSH) ingress from 0.0.0.0/0"
+      - "Allow all IPv4 ingress from SG 'default'"
+      - "Allow ICMP ingress from any"
+    """
+    direction = (rule.get("direction") or "").lower()
+    ethertype = rule.get("ethertype") or "IPv4"
+    protocol = rule.get("protocol")
+    port_min = rule.get("port_range_min")
+    port_max = rule.get("port_range_max")
+    remote_ip = rule.get("remote_ip_prefix")
+    remote_group_id = rule.get("remote_group_id")
+    remote_group_name = rule.get("remote_group_name")
+
+    dir_label = "ingress" if direction == "ingress" else "egress"
+
+    # Protocol + port description
+    if not protocol:
+        proto_desc = f"all {ethertype}"
+    elif protocol.lower() == "icmp":
+        proto_desc = "ICMP"
+    else:
+        proto = protocol.upper()
+        if port_min is not None and port_max is not None:
+            if port_min == port_max:
+                port_name = _WELL_KNOWN_PORTS.get(port_min, "")
+                port_label = f"/{port_min}"
+                if port_name:
+                    port_label += f" ({port_name})"
+                proto_desc = f"{proto}{port_label}"
+            else:
+                proto_desc = f"{proto}/{port_min}-{port_max}"
+        elif port_min is not None:
+            port_name = _WELL_KNOWN_PORTS.get(port_min, "")
+            port_label = f"/{port_min}"
+            if port_name:
+                port_label += f" ({port_name})"
+            proto_desc = f"{proto}{port_label}"
+        else:
+            proto_desc = f"{proto} (all ports)"
+
+    # Source / destination
+    if remote_group_name:
+        source_desc = f"SG '{remote_group_name}'"
+    elif remote_group_id:
+        source_desc = f"SG {remote_group_id[:12]}…"
+    elif remote_ip:
+        source_desc = remote_ip
+    else:
+        source_desc = "any"
+
+    if direction == "ingress":
+        return f"Allow {proto_desc} {dir_label} from {source_desc}"
+    else:
+        return f"Allow {proto_desc} {dir_label} to {source_desc}"
+
+VALID_SECURITY_GROUP_SORT_COLUMNS = {
+    "security_group_name": "security_group_name",
+    "domain_name": "domain_name",
+    "project_name": "project_name",
+    "tenant_name": "tenant_name",
+    "attached_vm_count": "attached_vm_count",
+    "ingress_rule_count": "ingress_rule_count",
+    "egress_rule_count": "egress_rule_count",
+    "last_seen_at": "last_seen_at",
+    "created_at": "created_at",
+}
+
+
+@app.get("/security-groups")
+def list_security_groups(
+    domain_name: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    tenant_name: Optional[str] = None,
+    name: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    sort_by: str = Query(default="security_group_name"),
+    sort_dir: str = Query(default="asc"),
+):
+    """
+    List security groups with enriched tenant/domain info,
+    attached VM counts, and rule summaries.
+    """
+    where: List[str] = []
+    params: List[Any] = []
+
+    if domain_name:
+        where.append("sg.domain_name = %s")
+        params.append(domain_name)
+    if tenant_id:
+        where.append("sg.project_id = %s")
+        params.append(tenant_id)
+    if tenant_name:
+        where.append("sg.tenant_name ILIKE %s")
+        params.append(f"%{tenant_name}%")
+    if name:
+        where.append("sg.name ILIKE %s")
+        params.append(f"%{name}%")
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    offset = (page - 1) * page_size
+    sort_col = VALID_SECURITY_GROUP_SORT_COLUMNS.get(sort_by, "security_group_name")
+    sort_direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+
+    sql = f"""
+    WITH filtered AS (
+      SELECT
+        sg.security_group_id,
+        sg.security_group_name,
+        sg.description,
+        sg.project_id,
+        sg.project_name,
+        sg.tenant_name,
+        sg.domain_id,
+        sg.domain_name,
+        sg.created_at,
+        sg.updated_at,
+        sg.last_seen_at,
+        sg.attached_vm_count,
+        sg.attached_network_count,
+        sg.ingress_rule_count,
+        sg.egress_rule_count
+      FROM v_security_groups_full sg
+      {where_sql}
+    )
+    SELECT
+      *,
+      COUNT(*) OVER() AS total_count
+    FROM filtered
+    ORDER BY {sort_col} {sort_direction}, security_group_name ASC
+    LIMIT %s OFFSET %s
+    """
+    params.extend([page_size, offset])
+    rows = run_query(sql, tuple(params))
+    total = 0
+    if rows:
+        total = rows[0].get("total_count", 0) or 0
+        for r in rows:
+            r.pop("total_count", None)
+
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "items": rows,
+    }
+
+
+@app.get("/security-groups/{sg_id}")
+def get_security_group_detail(sg_id: str):
+    """
+    Get a single security group with its rules, attached VMs, and networks.
+    """
+    # Get the security group
+    sg_rows = run_query("""
+        SELECT
+            sg.security_group_id,
+            sg.security_group_name,
+            sg.description,
+            sg.project_id,
+            sg.project_name,
+            sg.tenant_name,
+            sg.domain_id,
+            sg.domain_name,
+            sg.created_at,
+            sg.updated_at,
+            sg.last_seen_at,
+            sg.attached_vm_count,
+            sg.attached_network_count,
+            sg.ingress_rule_count,
+            sg.egress_rule_count
+        FROM v_security_groups_full sg
+        WHERE sg.security_group_id = %s
+    """, (sg_id,))
+
+    if not sg_rows:
+        raise HTTPException(status_code=404, detail=f"Security group {sg_id} not found")
+
+    sg = sg_rows[0]
+
+    # Get the rules for this security group
+    rules = run_query("""
+        SELECT
+            r.id AS rule_id,
+            r.direction,
+            r.ethertype,
+            r.protocol,
+            r.port_range_min,
+            r.port_range_max,
+            r.remote_ip_prefix,
+            r.remote_group_id,
+            rsg.name AS remote_group_name,
+            r.description
+        FROM security_group_rules r
+        LEFT JOIN security_groups rsg ON rsg.id = r.remote_group_id
+        WHERE r.security_group_id = %s
+        ORDER BY r.direction, r.protocol, r.port_range_min
+    """, (sg_id,))
+
+    # Add human-readable rule summary
+    for rule in rules:
+        rule["rule_summary"] = _format_rule_summary(rule)
+
+    # Get attached VMs via ports
+    attached_vms = run_query("""
+        SELECT DISTINCT
+            s.id AS vm_id,
+            s.name AS vm_name,
+            s.status AS vm_status,
+            p2.network_id,
+            n.name AS network_name
+        FROM ports p2
+        JOIN servers s ON s.id = p2.device_id
+        LEFT JOIN networks n ON n.id = p2.network_id
+        WHERE p2.device_owner LIKE 'compute:%%'
+          AND p2.raw_json::jsonb->'security_groups' ? %s
+        ORDER BY s.name
+    """, (sg_id,))
+
+    # Get attached networks
+    attached_networks = run_query("""
+        SELECT DISTINCT
+            n.id AS network_id,
+            n.name AS network_name,
+            n.is_shared,
+            n.is_external
+        FROM ports p2
+        JOIN networks n ON n.id = p2.network_id
+        WHERE p2.raw_json::jsonb->'security_groups' ? %s
+        ORDER BY n.name
+    """, (sg_id,))
+
+    sg["rules"] = rules
+    sg["attached_vms"] = attached_vms
+    sg["attached_networks"] = attached_networks
+
+    return sg
+
+
+@app.get("/security-group-rules")
+def list_security_group_rules(
+    security_group_id: Optional[str] = None,
+    direction: Optional[str] = None,
+    protocol: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=500),
+):
+    """
+    List security group rules, optionally filtered by security group.
+    """
+    where: List[str] = []
+    params: List[Any] = []
+
+    if security_group_id:
+        where.append("r.security_group_id = %s")
+        params.append(security_group_id)
+    if direction:
+        where.append("r.direction = %s")
+        params.append(direction)
+    if protocol:
+        where.append("r.protocol = %s")
+        params.append(protocol)
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    offset = (page - 1) * page_size
+
+    sql = f"""
+    SELECT
+      r.id AS rule_id,
+      r.security_group_id,
+      sg.name AS security_group_name,
+      r.direction,
+      r.ethertype,
+      r.protocol,
+      r.port_range_min,
+      r.port_range_max,
+      r.remote_ip_prefix,
+      r.remote_group_id,
+      rsg.name AS remote_group_name,
+      r.description,
+      r.project_id,
+      COUNT(*) OVER() AS total_count
+    FROM security_group_rules r
+    LEFT JOIN security_groups sg ON sg.id = r.security_group_id
+    LEFT JOIN security_groups rsg ON rsg.id = r.remote_group_id
+    {where_sql}
+    ORDER BY r.security_group_id, r.direction, r.protocol, r.port_range_min
+    LIMIT %s OFFSET %s
+    """
+    params.extend([page_size, offset])
+    rows = run_query(sql, tuple(params))
+    total = 0
+    if rows:
+        total = rows[0].get("total_count", 0) or 0
+        for r in rows:
+            r.pop("total_count", None)
+            r["rule_summary"] = _format_rule_summary(r)
+
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "items": rows,
+    }
+
+
+@app.post("/admin/security-groups", status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+def admin_create_security_group(
+    request: Request,
+    payload: CreateSecurityGroupRequest,
+    authenticated: bool = Depends(verify_admin_credentials),
+):
+    """Create a Neutron security group. Requires admin authentication."""
+    log_admin_operation("CREATE_SECURITY_GROUP", payload.name, request, authenticated)
+
+    client = get_client()
+    try:
+        result = client.create_security_group(
+            name=payload.name,
+            description=payload.description or "",
+            project_id=payload.project_id,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to create security group: {e}",
+        )
+
+
+@app.delete("/admin/security-groups/{sg_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
+def admin_delete_security_group(
+    request: Request,
+    sg_id: str,
+    admin_creds: HTTPBasicCredentials = Depends(security),
+):
+    """Delete a Neutron security group. Requires admin authentication."""
+    verify_admin_credentials(admin_creds)
+    log_admin_operation("DELETE_SECURITY_GROUP", sg_id, request, True)
+
+    client = get_client()
+    try:
+        client.delete_security_group(sg_id)
+        return
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to delete security group {sg_id}: {e}",
+        )
+
+
+@app.post("/admin/security-group-rules", status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
+def admin_create_security_group_rule(
+    request: Request,
+    payload: CreateSecurityGroupRuleRequest,
+    authenticated: bool = Depends(verify_admin_credentials),
+):
+    """Create a Neutron security group rule. Requires admin authentication."""
+    log_admin_operation("CREATE_SECURITY_GROUP_RULE", payload.security_group_id, request, authenticated)
+
+    client = get_client()
+    try:
+        result = client.create_security_group_rule(
+            security_group_id=payload.security_group_id,
+            direction=payload.direction,
+            protocol=payload.protocol,
+            port_range_min=payload.port_range_min,
+            port_range_max=payload.port_range_max,
+            remote_ip_prefix=payload.remote_ip_prefix,
+            remote_group_id=payload.remote_group_id,
+            ethertype=payload.ethertype or "IPv4",
+            description=payload.description or "",
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to create security group rule: {e}",
+        )
+
+
+@app.delete("/admin/security-group-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")
+def admin_delete_security_group_rule(
+    request: Request,
+    rule_id: str,
+    admin_creds: HTTPBasicCredentials = Depends(security),
+):
+    """Delete a Neutron security group rule. Requires admin authentication."""
+    verify_admin_credentials(admin_creds)
+    log_admin_operation("DELETE_SECURITY_GROUP_RULE", rule_id, request, True)
+
+    client = get_client()
+    try:
+        client.delete_security_group_rule(rule_id)
+        return
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to delete security group rule {rule_id}: {e}",
+        )
+
+
 @app.get("/images")
 def list_images(
     page: int = Query(default=1, ge=1),
@@ -2821,7 +3308,9 @@ def get_resource_history(
                 "subnet": "subnets_history",
                 "router": "routers_history",
                 "user": "users_history",
-                "role": "roles_history"
+                "role": "roles_history",
+                "security_group": "security_groups_history",
+                "security_group_rule": "security_group_rules_history"
             }
             
             # Handle deletion records specially - they come from deletions_history
@@ -2977,6 +3466,20 @@ def get_resource_history(
                     ORDER BY last_seen_at DESC
                     LIMIT %s
                 """, (resource_id, limit))
+            elif resource_type == "security_group":
+                cur.execute(f"""
+                    SELECT * FROM {table_name}
+                    WHERE security_group_id = %s
+                    ORDER BY recorded_at DESC
+                    LIMIT %s
+                """, (resource_id, limit))
+            elif resource_type == "security_group_rule":
+                cur.execute(f"""
+                    SELECT * FROM {table_name}
+                    WHERE security_group_rule_id = %s
+                    ORDER BY recorded_at DESC
+                    LIMIT %s
+                """, (resource_id, limit))
             
             history = cur.fetchall()
             
@@ -3042,6 +3545,28 @@ def get_resource_history(
                         "previous_hash": None,
                         "change_sequence": len(history) - idx
                     }
+                elif resource_type == "security_group":
+                    mapped_row = {
+                        "resource_type": resource_type,
+                        "resource_id": row_dict.get('security_group_id'),
+                        "resource_name": row_dict.get('name') or f"SG {row_dict.get('security_group_id', '')[:8]}",
+                        "recorded_at": row_dict.get('recorded_at'),
+                        "change_hash": row_dict.get('change_hash', ''),
+                        "current_state": row_dict.get('raw_json') or row_dict,
+                        "previous_hash": None,
+                        "change_sequence": len(history) - idx
+                    }
+                elif resource_type == "security_group_rule":
+                    mapped_row = {
+                        "resource_type": resource_type,
+                        "resource_id": row_dict.get('security_group_rule_id'),
+                        "resource_name": f"{row_dict.get('direction', '')} {row_dict.get('protocol', 'any')} {row_dict.get('security_group_id', '')[:8]}",
+                        "recorded_at": row_dict.get('recorded_at'),
+                        "change_hash": row_dict.get('change_hash', ''),
+                        "current_state": row_dict.get('raw_json') or row_dict,
+                        "previous_hash": None,
+                        "change_sequence": len(history) - idx
+                    }
                 else:
                     # Generic mapping for other resource types
                     id_field = f"{resource_type}_id"
@@ -3095,7 +3620,9 @@ def compare_history_entries(
                 "subnet": "subnets_history",
                 "router": "routers_history",
                 "user": "users_history",
-                "role": "roles_history"
+                "role": "roles_history",
+                "security_group": "security_groups_history",
+                "security_group_rule": "security_group_rules_history"
             }
             
             if resource_type == "deletion":
@@ -3215,7 +3742,9 @@ def get_change_details(resource_type: str, resource_id: str):
                 "subnet": "subnets_history",
                 "router": "routers_history",
                 "user": "users_history",
-                "role": "roles_history"
+                "role": "roles_history",
+                "security_group": "security_groups_history",
+                "security_group_rule": "security_group_rules_history"
             }
             
             if resource_type == "deletion":

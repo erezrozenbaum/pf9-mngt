@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-02-16
+
+### Added
+- **Security Groups — Human-Readable Rule Descriptions**: API now returns a `rule_summary` field for every security group rule (e.g., "Allow TCP/22 (SSH) ingress from 0.0.0.0/0"). `remote_group_id` UUIDs are resolved to actual security group names via `remote_group_name` field. Both the detail and list rule endpoints use a LEFT JOIN to resolve names. Well-known port mapping covers SSH, HTTP, HTTPS, RDP, DNS, MySQL, PostgreSQL, Redis, and more
+- **Security Groups Tab — Improved Rule Tables**: Ingress/Egress rule tables now show a bold **Rule** column with the human-readable summary and optional description. "Remote" column renamed to Source/Destination and shows `remote_group_name` instead of raw UUIDs
+- **Security Groups CSV Export — Per-Rule Detail Rows**: Export CSV now fetches all rules and produces one row per rule per security group, with columns for Rule Direction, Rule Summary, Protocol, Port Min/Max, Remote IP, Remote SG Name, and Rule Description. SGs with no rules still get one row
+- **Restore — Post-Restore Storage Cleanup**: New `CLEANUP_OLD_STORAGE` step added to restore workflow. When enabled via `cleanup_old_storage` (delete orphaned original volume) and/or `delete_source_snapshot` (remove source snapshot after restore) flags on the plan request, these are automatically cleaned after a successful restore
+- **Restore — Standalone Storage Cleanup Endpoint**: New `POST /restore/jobs/{job_id}/cleanup-storage` endpoint for cleaning up storage leftovers from already-completed REPLACE-mode restores. Supports `delete_old_volume` and `delete_source_snapshot` query parameters with safety checks (won't delete attached volumes)
+- **Restore Wizard — Storage Cleanup UI**: Configure screen now shows "Post-Restore Storage Cleanup" options with checkboxes for old volume and source snapshot deletion. Success panel for REPLACE-mode restores shows three cleanup buttons: "Delete Old Volume", "Delete Source Snapshot", and "Delete Both"
+
+## [1.7.0] - 2026-02-16
+
+### Added
+- **Security Groups — Full Stack Support**: Complete security groups and firewall rules management across every layer
+  - **Database**: `security_groups` and `security_group_rules` tables with full history tracking (`*_history` tables), cascade-delete FK from rules to groups, `v_security_groups_full` aggregate view (attached VM/network counts, ingress/egress rule counts via ports)
+  - **Data Collection** (`pf9_rvtools.py`): Collects `security-groups` and `security-group-rules` from Neutron API; enriches SGs with VM attachment info via ports; exports "SecurityGroups" and "SecurityGroupRules" sheets in Excel/CSV
+  - **API Endpoints** (`api/main.py`): 7 new endpoints — `GET /security-groups` (paginated, filterable by domain/tenant/name), `GET /security-groups/{sg_id}` (detail with rules + attached VMs + networks), `GET /security-group-rules` (paginated), `POST /admin/security-groups`, `DELETE /admin/security-groups/{sg_id}`, `POST /admin/security-group-rules`, `DELETE /admin/security-group-rules/{rule_id}`
+  - **API Client** (`api/pf9_control.py`): 6 new Neutron methods — `list_security_groups`, `get_security_group`, `create_security_group`, `delete_security_group`, `create_security_group_rule`, `delete_security_group_rule`
+  - **UI Tab** (`SecurityGroupsTab.tsx`): New 🔒 Security Groups tab with list/detail layout, filter/sort/pagination, color-coded ingress/egress badges, create SG form (with project picker), delete SG, add rule form (direction/protocol/ports/remote), delete rule, attached VMs and networks in detail panel
+  - **Restore Wizard**: Security group multi-select picker on Configure screen; `security_group_ids` passed through plan → `create_port()` during execution
+  - **RBAC**: `security_groups` and `security_group_rules` mapped in resource permission system
+  - **DB Migration Script** (`db/migrate_security_groups.sql`): Idempotent migration for existing databases — creates all 4 tables, indexes, the `v_security_groups_full` view, and inserts RBAC permissions
+  - **Export CSV**: Export button on Security Groups tab exports current filtered list to CSV
+  - **Rule Template Presets**: One-click quick-add buttons for common firewall rules (SSH, HTTP, HTTPS, RDP, ICMP, DNS) in the detail panel
+  - **Default SG Auto-Selection**: Restore wizard auto-selects the "default" security group when a tenant is chosen, so users don't accidentally launch VMs without basic firewall rules
+
+### Fixed
+- **`neutron_list()` hyphenated resource names** (`p9_common.py`): URL path uses hyphens (`security-groups`) but Neutron JSON response uses underscores (`security_groups`); added `json_key = resource.replace("-", "_")` mapping — backward-compatible since existing resources don't have hyphens
+- **Missing RBAC permissions for `security_groups`**: Added `security_groups` read/admin permissions for all roles (viewer, operator, admin, superadmin) in `init.sql` — without these, the RBAC middleware would return 403 on all security group endpoints
+- **`security_group_rules_history` missing columns**: Added `created_at` and `updated_at` columns — without these, `_upsert_with_history()` failed with `UndefinedColumn` when collecting security group rules
+- **History tab only showed 6 resource types**: Expanded `v_comprehensive_changes` view from 6 types (server, volume, snapshot, security_group, security_group_rule, deletion) to all 17 tracked resource types — added network, subnet, port, floating_ip, domain, project, flavor, image, hypervisor, user, role. All history tables now surface in the History tab with proper JOINs for resource names, project, and domain context
+- **Restore fails at "Create network ports" in REPLACE mode with SAME_IPS_OR_FAIL**: When replacing a VM, old ports were not explicitly cleaned up — the IP addresses remained held by orphan ports after Nova VM deletion (race condition or externally-created ports). Added `CLEANUP_OLD_PORTS` step that explicitly deletes old ports by ID, scans for orphan ports attached to the deleted VM, and cleans orphan ports holding the target IPs. Also added retry logic (5 attempts × 3s) in the `CREATE_PORTS` step for transient IP release delays
+- **Restore leaves orphaned volumes/ports on failure**: Added `/restore/jobs/{job_id}/cleanup` endpoint to clean up orphaned OpenStack resources (ports, optionally volumes) from a failed restore job. Added `/restore/jobs/{job_id}/retry` endpoint to resume a failed job from the failed step, reusing already-created resources (volumes, ports). Both endpoints exposed via recovery action buttons in the Restore Wizard UI
+
 ## [1.6.4] - 2026-02-15
 
 ### Fixed

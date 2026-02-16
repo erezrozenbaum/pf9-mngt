@@ -882,11 +882,15 @@ def neutron_list(session: requests.Session, resource: str):
     Generic Neutron list helper.
 
     Example:
-      neutron_list(session, "networks")    -> GET /v2.0/networks
-      neutron_list(session, "ports")       -> GET /v2.0/ports
-      neutron_list(session, "floatingips") -> GET /v2.0/floatingips
+      neutron_list(session, "networks")         -> GET /v2.0/networks
+      neutron_list(session, "ports")            -> GET /v2.0/ports
+      neutron_list(session, "floatingips")      -> GET /v2.0/floatingips
+      neutron_list(session, "security-groups")  -> GET /v2.0/security-groups
+      neutron_list(session, "security-group-rules") -> GET /v2.0/security-group-rules
     """
     _require_neutron()
     url = f"{NEUTRON_ENDPOINT}/v2.0/{resource}"
-    # Neutron returns e.g. {"networks":[...]} – key is usually plural resource name
-    return paginate(session, url, resource)
+    # Neutron uses hyphens in URLs but underscores in JSON response keys
+    # e.g. "security-groups" -> {"security_groups": [...]}
+    json_key = resource.replace("-", "_")
+    return paginate(session, url, json_key)

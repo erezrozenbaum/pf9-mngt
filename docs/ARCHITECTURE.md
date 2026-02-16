@@ -135,6 +135,9 @@ GET  /networks                   # List networks
 GET  /subnets                    # List subnets
 GET  /ports                      # List ports
 GET  /floatingips                # List floating IPs
+GET  /security-groups            # List security groups (with counts)
+GET  /security-groups/{id}       # Security group detail (rules, VMs, networks)
+GET  /security-group-rules       # List security group rules
 GET  /flavors                    # List compute flavors
 GET  /images                     # List images
 GET  /hypervisors                # List hypervisors
@@ -151,6 +154,10 @@ POST /admin/flavors              # Create compute flavors
 DEL  /admin/flavors/{id}         # Delete flavors
 POST /admin/networks             # Create networks
 DEL  /admin/networks/{id}        # Delete networks
+POST /admin/security-groups      # Create security groups
+DEL  /admin/security-groups/{id} # Delete security groups
+POST /admin/security-group-rules # Create security group rules
+DEL  /admin/security-group-rules/{id}  # Delete rules
 POST /admin/user-access-log      # Log user access
 ```
 # Historical & Audit Analysis
@@ -303,7 +310,7 @@ deletions_history, inventory_runs
 -- Plus individual *_history tables for each resource type
 
 -- Advanced Views
-v_comprehensive_changes, v_volumes_full
+v_comprehensive_changes, v_volumes_full, v_security_groups_full
 ```
 
 **Enhanced Schema Features**:
@@ -446,7 +453,7 @@ graph TD
     G --> H[POST /restore/execute]
     H --> I[RestoreExecutor]
     I --> J[Create Volume from Snapshot]
-    J --> K[Create Network Ports]
+    J --> K[Create Network Ports + Security Groups]
     K --> L[Create Server]
     L --> M[Wait for ACTIVE]
     M --> N[Mark COMPLETED]

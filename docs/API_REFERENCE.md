@@ -451,6 +451,57 @@ Returns all network ports with device attachments.
 **GET** `/floatingips`  
 Returns all floating IP addresses.
 
+### Security Groups
+**GET** `/security-groups`  
+Returns all security groups with attached VM/network counts and rule counts.
+
+Query Parameters:
+- `page` / `page_size` — Pagination (default 1/50)
+- `sort_by` / `sort_dir` — Sort field and direction
+- `domain_name` — Filter by domain
+- `tenant_name` — Filter by tenant
+- `name` — Filter by security group name (partial match)
+
+**GET** `/security-groups/{sg_id}`  
+Returns detailed info for a single security group including:
+- All rules (ingress and egress)
+- Attached VMs (via port security_groups JSONB)
+- Attached networks
+
+**GET** `/security-group-rules`  
+Returns all security group rules with pagination and filtering.
+
+**POST** `/admin/security-groups` (Admin only)  
+Create a new security group.
+```json
+{
+  "name": "web-servers",
+  "description": "Allow HTTP/HTTPS traffic",
+  "project_id": "optional-project-uuid"
+}
+```
+
+**DELETE** `/admin/security-groups/{sg_id}` (Admin only)  
+Delete a security group and all its rules.
+
+**POST** `/admin/security-group-rules` (Admin only)  
+Create a security group rule.
+```json
+{
+  "security_group_id": "sg-uuid",
+  "direction": "ingress",
+  "protocol": "tcp",
+  "port_range_min": 443,
+  "port_range_max": 443,
+  "remote_ip_prefix": "0.0.0.0/0",
+  "ethertype": "IPv4",
+  "description": "Allow HTTPS"
+}
+```
+
+**DELETE** `/admin/security-group-rules/{rule_id}` (Admin only)  
+Delete a security group rule.
+
 ### Flavors
 **GET** `/flavors`  
 Returns all VM flavors (sizes).
@@ -827,6 +878,87 @@ Request Body:
 ```json
 {
   "reason": "Optional cancellation reason"
+}
+```
+
+### Cleanup Failed Restore Job
+**POST** `/restore/jobs/{job_id}/cleanup` (Authenticated, `restore:admin`)  
+Clean up orphaned OpenStack resources (ports, volumes) from a failed/canceled/interrupted restore job.
+
+Request Body:
+```json
+{
+  "delete_volume": false  // true to also delete the orphaned volume
+}
+```
+
+Response:
+```json
+{
+  "job_id": "uuid",
+  "cleaned": {
+    "ports": ["port-id-1"],
+    "volume": "vol-id (preserved — use delete_volume=true to remove)",
+    "server": null,
+    "errors": []
+  },
+  "message": "Cleanup completed"
+}
+```
+
+### Retry Failed Restore Job
+**POST** `/restore/jobs/{job_id}/retry` (Authenticated, `restore:admin`)  
+Retry a failed restore job from the failed step. Reuses already-created resources (volumes, ports). Optionally override IP strategy.
+
+Request Body:
+```json
+{
+  "confirm_destructive": "DELETE AND RESTORE <vm_name>",  // required for REPLACE mode
+  "ip_strategy_override": "TRY_SAME_IPS"  // optional: NEW_IPS, TRY_SAME_IPS, SAME_IPS_OR_FAIL
+}
+```
+
+Response:
+```json
+{
+  "job_id": "new-retry-job-uuid",
+  "original_job_id": "original-failed-job-uuid",
+  "status": "PENDING",
+  "resumed_from_step": "CREATE_PORTS",
+  "reused_resources": {
+    "volume_id": "vol-id"
+  },
+  "ip_strategy": "TRY_SAME_IPS",
+  "message": "Retry execution started. Poll /restore/jobs/{job_id} for progress."
+}
+```
+
+### Cleanup Storage from Completed Restore
+**POST** `/restore/jobs/{job_id}/cleanup-storage` (Authenticated, `restore:admin`)  
+Delete orphaned storage left behind by a completed REPLACE-mode restore.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `delete_old_volume` | bool | `true` | Delete the original VM's orphaned root volume |
+| `delete_source_snapshot` | bool | `false` | Delete the source Cinder snapshot used for the restore |
+
+Safety checks:
+- Only works on COMPLETED jobs
+- Old volume deletion only applies to REPLACE mode
+- Won't delete volumes that are still attached or in-use
+- Won't delete snapshots that aren't in "available" status
+
+```json
+{
+  "job_id": "abc123",
+  "result": {
+    "deleted_volumes": ["vol-uuid"],
+    "deleted_snapshots": [],
+    "errors": [],
+    "skipped": []
+  },
+  "message": "Storage cleanup completed"
 }
 ```
 

@@ -15,6 +15,7 @@ import "./styles/SnapshotRestoreAudit.css";
 import { APIMetricsTab } from "./components/APIMetricsTab";
 import { SystemLogsTab } from "./components/SystemLogsTab";
 import { API_BASE, MONITORING_BASE } from "./config";
+import SecurityGroupsTab from "./components/SecurityGroupsTab";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -392,7 +393,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups";
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -2268,6 +2269,7 @@ const App: React.FC = () => {
     "monitoring",
     "restore",
     "restore_audit",
+    "security_groups",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------
@@ -2347,6 +2349,14 @@ const App: React.FC = () => {
             onClick={() => setActiveTab("networks")}
           >
             🔧 Networks
+          </button>
+          <button
+            className={
+              activeTab === "security_groups" ? "pf9-tab pf9-tab-action pf9-tab-active" : "pf9-tab pf9-tab-action"
+            }
+            onClick={() => setActiveTab("security_groups")}
+          >
+            🔒 Security Groups
           </button>
           <button
             className={
@@ -2572,6 +2582,8 @@ const App: React.FC = () => {
             ? "Centralized system logs · filtering · diagnostics"
             : activeTab === "restore"
             ? "Snapshot restore wizard · plan · execute · monitor progress"
+            : activeTab === "security_groups"
+            ? "Security groups · firewall rules · VM associations · CRUD management"
             : "Compliance reporting · audit logs · change analysis"}
       </section>
 
@@ -2580,7 +2592,7 @@ const App: React.FC = () => {
         <LandingDashboard />
       )}
 
-      {activeTab !== "api_metrics" && activeTab !== "system_logs" && activeTab !== "dashboard" && (
+      {activeTab !== "api_metrics" && activeTab !== "system_logs" && activeTab !== "dashboard" && activeTab !== "security_groups" && (
       <section className="pf9-filters">
         <div className="pf9-filter-row">
           <label>
@@ -4326,6 +4338,15 @@ const App: React.FC = () => {
           {/* Snapshot Compliance Section */}
           {activeTab === "snapshot_compliance" && (
             <SnapshotComplianceReport />
+          )}
+
+          {/* Security Groups Section */}
+          {activeTab === "security_groups" && authToken && (
+            <SecurityGroupsTab
+              token={authToken}
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+              projects={tenants.filter(t => t.tenant_id !== '__ALL__')}
+            />
           )}
 
           {/* Snapshot Restore Section */}

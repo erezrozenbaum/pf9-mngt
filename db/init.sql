@@ -1005,6 +1005,12 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('admin', 'restore', 'write'),
 ('superadmin', 'restore', 'admin'),
 
+-- Security Groups permissions
+('viewer', 'security_groups', 'read'),
+('operator', 'security_groups', 'read'),
+('admin', 'security_groups', 'admin'),
+('superadmin', 'security_groups', 'admin'),
+
 ON CONFLICT (role, resource, action) DO NOTHING;
 
 -- =====================================================================
@@ -1132,24 +1138,223 @@ SELECT
 FROM deletions_history dh;
 
 -- =====================================================================
+-- Security Groups (Neutron)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS security_groups (
+    id            TEXT PRIMARY KEY,
+    name          TEXT,
+    description   TEXT,
+    project_id    TEXT REFERENCES projects(id),
+    project_name  TEXT,
+    tenant_name   TEXT,
+    domain_id     TEXT,
+    domain_name   TEXT,
+    created_at    TIMESTAMPTZ,
+    updated_at    TIMESTAMPTZ,
+    raw_json      JSONB,
+    last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_security_groups_project_id ON security_groups(project_id);
+CREATE INDEX IF NOT EXISTS idx_security_groups_name ON security_groups(name);
+CREATE INDEX IF NOT EXISTS idx_security_groups_domain_name ON security_groups(domain_name);
+
+-- Security Group Rules (Neutron)
+CREATE TABLE IF NOT EXISTS security_group_rules (
+    id                  TEXT PRIMARY KEY,
+    security_group_id   TEXT REFERENCES security_groups(id) ON DELETE CASCADE,
+    direction           TEXT,           -- 'ingress' or 'egress'
+    ethertype           TEXT,           -- 'IPv4' or 'IPv6'
+    protocol            TEXT,           -- 'tcp', 'udp', 'icmp', null (any)
+    port_range_min      INTEGER,
+    port_range_max      INTEGER,
+    remote_ip_prefix    TEXT,
+    remote_group_id     TEXT,
+    description         TEXT,
+    project_id          TEXT,
+    created_at          TIMESTAMPTZ,
+    updated_at          TIMESTAMPTZ,
+    raw_json            JSONB,
+    last_seen_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sg_rules_security_group_id ON security_group_rules(security_group_id);
+CREATE INDEX IF NOT EXISTS idx_sg_rules_direction ON security_group_rules(direction);
+CREATE INDEX IF NOT EXISTS idx_sg_rules_project_id ON security_group_rules(project_id);
+
+-- Security Groups history
+CREATE TABLE IF NOT EXISTS security_groups_history (
+    id                BIGSERIAL PRIMARY KEY,
+    security_group_id TEXT NOT NULL,
+    name              TEXT,
+    description       TEXT,
+    project_id        TEXT,
+    project_name      TEXT,
+    tenant_name       TEXT,
+    domain_id         TEXT,
+    domain_name       TEXT,
+    created_at        TIMESTAMPTZ,
+    updated_at        TIMESTAMPTZ,
+    recorded_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    change_hash       TEXT NOT NULL,
+    raw_json          JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_security_groups_history_sg_id ON security_groups_history(security_group_id);
+CREATE INDEX IF NOT EXISTS idx_security_groups_history_recorded_at ON security_groups_history(recorded_at);
+CREATE INDEX IF NOT EXISTS idx_security_groups_history_change_hash ON security_groups_history(security_group_id, change_hash);
+
+-- Security Group Rules history
+CREATE TABLE IF NOT EXISTS security_group_rules_history (
+    id                    BIGSERIAL PRIMARY KEY,
+    security_group_rule_id TEXT NOT NULL,
+    security_group_id     TEXT,
+    direction             TEXT,
+    ethertype             TEXT,
+    protocol              TEXT,
+    port_range_min        INTEGER,
+    port_range_max        INTEGER,
+    remote_ip_prefix      TEXT,
+    remote_group_id       TEXT,
+    description           TEXT,
+    project_id            TEXT,
+    created_at            TIMESTAMPTZ,
+    updated_at            TIMESTAMPTZ,
+    recorded_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    change_hash           TEXT NOT NULL,
+    raw_json              JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_sg_rules_history_rule_id ON security_group_rules_history(security_group_rule_id);
+CREATE INDEX IF NOT EXISTS idx_sg_rules_history_recorded_at ON security_group_rules_history(recorded_at);
+CREATE INDEX IF NOT EXISTS idx_sg_rules_history_change_hash ON security_group_rules_history(security_group_rule_id, change_hash);
+
+-- View: Security groups with VM and network associations
+CREATE OR REPLACE VIEW v_security_groups_full AS
+SELECT
+    sg.id AS security_group_id,
+    sg.name AS security_group_name,
+    sg.description,
+    sg.project_id,
+    sg.project_name,
+    sg.tenant_name,
+    sg.domain_id,
+    sg.domain_name,
+    sg.created_at,
+    sg.updated_at,
+    sg.last_seen_at,
+    -- Attached VMs (via ports with this security group in raw_json)
+    (SELECT COUNT(DISTINCT p2.device_id)
+     FROM ports p2
+     WHERE p2.device_owner LIKE 'compute:%'
+       AND p2.raw_json::jsonb->'security_groups' ? sg.id
+    ) AS attached_vm_count,
+    -- Attached networks
+    (SELECT COUNT(DISTINCT p2.network_id)
+     FROM ports p2
+     WHERE p2.raw_json::jsonb->'security_groups' ? sg.id
+    ) AS attached_network_count,
+    -- Rule counts
+    (SELECT COUNT(*) FROM security_group_rules r WHERE r.security_group_id = sg.id AND r.direction = 'ingress') AS ingress_rule_count,
+    (SELECT COUNT(*) FROM security_group_rules r WHERE r.security_group_id = sg.id AND r.direction = 'egress') AS egress_rule_count
+FROM security_groups sg;
+
+-- =====================================================================
 -- VIEW: v_comprehensive_changes (for history/audit endpoints)
 -- =====================================================================
 CREATE OR REPLACE VIEW v_comprehensive_changes AS
+-- Servers
 SELECT 'server' AS resource_type, h.server_id AS resource_id, s.name AS resource_name, h.change_hash, h.recorded_at, p.name AS project_name, d.name AS domain_name, NULL::TIMESTAMPTZ AS actual_time, 'Server state/history change' AS change_description
 FROM servers_history h
 LEFT JOIN servers s ON h.server_id = s.id
 LEFT JOIN projects p ON s.project_id = p.id
 LEFT JOIN domains d ON p.domain_id = d.id
 UNION ALL
+-- Volumes
 SELECT 'volume', h.volume_id, v.name, h.change_hash, h.recorded_at, p.name, d.name, NULL, 'Volume state/history change'
 FROM volumes_history h
 LEFT JOIN volumes v ON h.volume_id = v.id
 LEFT JOIN projects p ON v.project_id = p.id
 LEFT JOIN domains d ON p.domain_id = d.id
 UNION ALL
+-- Snapshots
 SELECT 'snapshot', h.snapshot_id, s.name, h.change_hash, h.recorded_at, s.project_name, s.domain_name, NULL, 'Snapshot state/history change'
 FROM snapshots_history h
 LEFT JOIN snapshots s ON h.snapshot_id = s.id
 UNION ALL
+-- Security Groups
+SELECT 'security_group', h.security_group_id, sg.name, h.change_hash, h.recorded_at, sg.project_name, sg.domain_name, NULL, 'Security group state/history change'
+FROM security_groups_history h
+LEFT JOIN security_groups sg ON h.security_group_id = sg.id
+UNION ALL
+-- Security Group Rules
+SELECT 'security_group_rule', h.security_group_rule_id, COALESCE(sg.name, '') || ' / ' || COALESCE(h.direction, '') || ' ' || COALESCE(h.protocol, 'any'), h.change_hash, h.recorded_at, sg.project_name, sg.domain_name, NULL, 'Security group rule state/history change'
+FROM security_group_rules_history h
+LEFT JOIN security_groups sg ON h.security_group_id = sg.id
+UNION ALL
+-- Networks
+SELECT 'network', h.network_id, n.name, h.change_hash, h.recorded_at, p.name, d.name, NULL, 'Network state/history change'
+FROM networks_history h
+LEFT JOIN networks n ON h.network_id = n.id
+LEFT JOIN projects p ON n.project_id = p.id
+LEFT JOIN domains d ON p.domain_id = d.id
+UNION ALL
+-- Subnets
+SELECT 'subnet', h.subnet_id, sn.name, h.change_hash, h.recorded_at, p.name, d.name, NULL, 'Subnet state/history change'
+FROM subnets_history h
+LEFT JOIN subnets sn ON h.subnet_id = sn.id
+LEFT JOIN networks net ON sn.network_id = net.id
+LEFT JOIN projects p ON net.project_id = p.id
+LEFT JOIN domains d ON p.domain_id = d.id
+UNION ALL
+-- Ports
+SELECT 'port', h.port_id, p2.name, h.change_hash, h.recorded_at, pr.name, dm.name, NULL, 'Port state/history change'
+FROM ports_history h
+LEFT JOIN ports p2 ON h.port_id = p2.id
+LEFT JOIN projects pr ON p2.project_id = pr.id
+LEFT JOIN domains dm ON pr.domain_id = dm.id
+UNION ALL
+-- Floating IPs
+SELECT 'floating_ip', h.floating_ip_id, fi.floating_ip, h.change_hash, h.recorded_at, pr.name, dm.name, NULL, 'Floating IP state/history change'
+FROM floating_ips_history h
+LEFT JOIN floating_ips fi ON h.floating_ip_id = fi.id
+LEFT JOIN projects pr ON fi.project_id = pr.id
+LEFT JOIN domains dm ON pr.domain_id = dm.id
+UNION ALL
+-- Domains
+SELECT 'domain', h.domain_id, dom.name, h.change_hash, h.recorded_at, NULL, dom.name, NULL, 'Domain state/history change'
+FROM domains_history h
+LEFT JOIN domains dom ON h.domain_id = dom.id
+UNION ALL
+-- Projects
+SELECT 'project', h.project_id, proj.name, h.change_hash, h.recorded_at, proj.name, d.name, NULL, 'Project state/history change'
+FROM projects_history h
+LEFT JOIN projects proj ON h.project_id = proj.id
+LEFT JOIN domains d ON proj.domain_id = d.id
+UNION ALL
+-- Flavors
+SELECT 'flavor', h.flavor_id, fl.name, h.change_hash, h.recorded_at, NULL, NULL, NULL, 'Flavor state/history change'
+FROM flavors_history h
+LEFT JOIN flavors fl ON h.flavor_id = fl.id
+UNION ALL
+-- Images
+SELECT 'image', h.image_id, img.name, h.change_hash, h.recorded_at, NULL, NULL, NULL, 'Image state/history change'
+FROM images_history h
+LEFT JOIN images img ON h.image_id = img.id
+UNION ALL
+-- Hypervisors
+SELECT 'hypervisor', h.hypervisor_id, hv.hostname, h.change_hash, h.recorded_at, NULL, NULL, NULL, 'Hypervisor state/history change'
+FROM hypervisors_history h
+LEFT JOIN hypervisors hv ON h.hypervisor_id = hv.id
+UNION ALL
+-- Users
+SELECT 'user', h.user_id, u.name, h.change_hash, h.recorded_at, NULL, d.name, NULL, 'User state/history change'
+FROM users_history h
+LEFT JOIN users u ON h.user_id = u.id
+LEFT JOIN domains d ON u.domain_id = d.id
+UNION ALL
+-- Roles
+SELECT 'role', h.role_id, r.name, h.change_hash, h.recorded_at, NULL, d.name, NULL, 'Role state/history change'
+FROM roles_history h
+LEFT JOIN roles r ON h.role_id = r.id
+LEFT JOIN domains d ON r.domain_id = d.id
+UNION ALL
+-- Deletions
 SELECT 'deletion', dh.resource_id, dh.resource_name, 'deleted-' || dh.resource_id AS change_hash, dh.deleted_at AS recorded_at, dh.project_name, dh.domain_name, dh.deleted_at AS actual_time, 'Resource deleted'
 FROM deletions_history dh;
