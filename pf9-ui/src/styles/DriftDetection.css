@@ -1,0 +1,416 @@
+/* =========================================================================
+   Drift Detection – Styles
+   ========================================================================= */
+
+.drift-container {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.drift-container h2 {
+  margin: 0 0 20px;
+  font-size: 1.5rem;
+  color: var(--text-primary, #1a1a2e);
+}
+
+/* ----- Summary Cards Row ------------------------------------------------ */
+.drift-summary-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.drift-summary-card {
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 12px;
+  padding: 18px 20px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  transition: transform .15s, box-shadow .15s;
+}
+.drift-summary-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,.1);
+}
+.drift-summary-card .card-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text-primary, #1a1a2e);
+}
+.drift-summary-card .card-label {
+  font-size: .82rem;
+  color: var(--text-secondary, #64748b);
+  margin-top: 4px;
+}
+.drift-summary-card.critical .card-value { color: #ef4444; }
+.drift-summary-card.warning  .card-value { color: #f59e0b; }
+.drift-summary-card.info     .card-value { color: #3b82f6; }
+
+/* ----- 7-day Trend Mini-Chart ------------------------------------------- */
+.drift-trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 60px;
+  margin-bottom: 24px;
+  padding: 8px 12px;
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 10px;
+}
+.drift-trend-bar {
+  flex: 1;
+  background: var(--primary-gradient, linear-gradient(135deg, #667eea, #764ba2));
+  border-radius: 4px 4px 0 0;
+  min-height: 4px;
+  position: relative;
+  transition: height .3s;
+}
+.drift-trend-bar:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: #fff;
+  font-size: .7rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.drift-trend-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: .7rem;
+  color: var(--text-secondary, #64748b);
+  margin-top: 4px;
+}
+
+/* ----- Toolbar / Filters ------------------------------------------------ */
+.drift-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+.drift-toolbar select,
+.drift-toolbar input[type="text"] {
+  padding: 7px 12px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: 8px;
+  font-size: .85rem;
+  background: var(--input-bg, #fff);
+  color: var(--text-primary, #1a1a2e);
+}
+.drift-toolbar select:focus,
+.drift-toolbar input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102,126,234,.25);
+}
+
+.drift-btn {
+  padding: 7px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.drift-btn:active { transform: scale(.97); }
+.drift-btn.primary {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: #fff;
+}
+.drift-btn.primary:hover { opacity: .9; }
+.drift-btn.secondary {
+  background: var(--card-bg, #f1f5f9);
+  color: var(--text-primary, #334155);
+  border: 1px solid var(--border-color, #d1d5db);
+}
+.drift-btn.secondary:hover { background: var(--hover-bg, #e2e8f0); }
+.drift-btn.danger {
+  background: #ef4444;
+  color: #fff;
+}
+.drift-btn.danger:hover { background: #dc2626; }
+.drift-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ----- Tabs (Events / Rules) ------------------------------------------- */
+.drift-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--border-color, #e2e8f0);
+  margin-bottom: 16px;
+}
+.drift-tab-btn {
+  padding: 10px 24px;
+  background: none;
+  border: none;
+  font-size: .9rem;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+.drift-tab-btn.active {
+  color: #667eea;
+  border-bottom-color: #667eea;
+}
+.drift-tab-btn:hover:not(.active) {
+  color: var(--text-primary, #1a1a2e);
+}
+
+/* ----- Events Table ----------------------------------------------------- */
+.drift-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 12px;
+  background: var(--card-bg, #ffffff);
+}
+.drift-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .85rem;
+}
+.drift-table th {
+  background: var(--table-header-bg, #f8fafc);
+  color: var(--text-secondary, #64748b);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: .75rem;
+  letter-spacing: .03em;
+  padding: 12px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.drift-table th:hover { color: #667eea; }
+.drift-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color, #f1f5f9);
+  color: var(--text-primary, #1a1a2e);
+  vertical-align: middle;
+}
+.drift-table tbody tr:hover {
+  background: var(--hover-bg, #f8fafc);
+}
+.drift-table tbody tr.ack-row {
+  opacity: .55;
+}
+
+/* Severity badges */
+.drift-severity {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: .75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.drift-severity.critical { background: #fef2f2; color: #dc2626; }
+.drift-severity.warning  { background: #fffbeb; color: #d97706; }
+.drift-severity.info     { background: #eff6ff; color: #2563eb; }
+
+/* Value change display */
+.drift-change {
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: .8rem;
+}
+.drift-change .old { color: #ef4444; text-decoration: line-through; }
+.drift-change .arrow { margin: 0 6px; color: var(--text-secondary, #94a3b8); }
+.drift-change .new { color: #22c55e; font-weight: 600; }
+
+/* ----- Pagination ------------------------------------------------------- */
+.drift-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  font-size: .85rem;
+  color: var(--text-secondary, #64748b);
+}
+.drift-pagination button {
+  padding: 6px 14px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: 6px;
+  background: var(--card-bg, #fff);
+  color: var(--text-primary, #334155);
+  cursor: pointer;
+  font-size: .82rem;
+}
+.drift-pagination button:disabled { opacity: .4; cursor: not-allowed; }
+.drift-pagination button:hover:not(:disabled) { background: var(--hover-bg, #e2e8f0); }
+
+/* ----- Rules Table ------------------------------------------------------ */
+.drift-rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .85rem;
+}
+.drift-rules-table th {
+  background: var(--table-header-bg, #f8fafc);
+  color: var(--text-secondary, #64748b);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: .75rem;
+  padding: 12px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+.drift-rules-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color, #f1f5f9);
+  color: var(--text-primary, #1a1a2e);
+}
+.drift-rules-table tbody tr:hover {
+  background: var(--hover-bg, #f8fafc);
+}
+
+/* Toggle switch */
+.drift-toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+}
+.drift-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.drift-toggle .slider {
+  position: absolute;
+  inset: 0;
+  background: #cbd5e1;
+  border-radius: 22px;
+  cursor: pointer;
+  transition: background .2s;
+}
+.drift-toggle .slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform .2s;
+}
+.drift-toggle input:checked + .slider {
+  background: #667eea;
+}
+.drift-toggle input:checked + .slider::before {
+  transform: translateX(18px);
+}
+
+/* Severity select in rules table */
+.drift-sev-select {
+  padding: 4px 8px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: 6px;
+  font-size: .82rem;
+  background: var(--input-bg, #fff);
+  color: var(--text-primary, #1a1a2e);
+}
+
+/* ----- Detail Side-Panel / Modal ---------------------------------------- */
+.drift-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.35);
+  z-index: 999;
+  display: flex;
+  justify-content: flex-end;
+}
+.drift-detail-panel {
+  width: 480px;
+  max-width: 90vw;
+  background: var(--card-bg, #fff);
+  height: 100vh;
+  overflow-y: auto;
+  padding: 28px 24px;
+  box-shadow: -4px 0 24px rgba(0,0,0,.15);
+  animation: slideIn .2s ease;
+}
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.drift-detail-panel h3 {
+  margin: 0 0 18px;
+  font-size: 1.15rem;
+  color: var(--text-primary, #1a1a2e);
+}
+.drift-detail-row {
+  display: flex;
+  margin-bottom: 12px;
+}
+.drift-detail-row .label {
+  width: 130px;
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--text-secondary, #64748b);
+  font-size: .83rem;
+}
+.drift-detail-row .value {
+  color: var(--text-primary, #1a1a2e);
+  font-size: .85rem;
+  word-break: break-all;
+}
+
+/* Acknowledge note input */
+.drift-ack-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color, #d1d5db);
+  border-radius: 8px;
+  margin-top: 16px;
+  margin-bottom: 10px;
+  font-size: .85rem;
+  background: var(--input-bg, #fff);
+  color: var(--text-primary, #1a1a2e);
+}
+
+/* ----- Loading / Error / Empty ------------------------------------------ */
+.drift-loading,
+.drift-error,
+.drift-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-secondary, #64748b);
+  font-size: .9rem;
+}
+.drift-error { color: #ef4444; }
+
+/* ----- Checkbox in table ------------------------------------------------ */
+.drift-table input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #667eea;
+}
+
+/* ----- Responsive ------------------------------------------------------- */
+@media (max-width: 768px) {
+  .drift-summary-row { grid-template-columns: repeat(2, 1fr); }
+  .drift-toolbar { flex-direction: column; gap: 8px; }
+  .drift-detail-panel { width: 100vw; }
+}
+
+/* ----- Dark Mode overrides ---------------------------------------------- */
+[data-theme="dark"] .drift-severity.critical { background: #451a1a; color: #fca5a5; }
+[data-theme="dark"] .drift-severity.warning  { background: #451a00; color: #fcd34d; }
+[data-theme="dark"] .drift-severity.info     { background: #1a2744; color: #93c5fd; }
+[data-theme="dark"] .drift-change .old { color: #fca5a5; }
+[data-theme="dark"] .drift-change .new { color: #86efac; }

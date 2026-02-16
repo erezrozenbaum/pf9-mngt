@@ -964,6 +964,243 @@ Safety checks:
 
 ---
 
+## Drift Detection Endpoints
+
+> **Version**: v1.9.0  
+> **RBAC**: `drift:read` for all authenticated roles; `drift:write` (acknowledge, toggle rules) for Operator and above.  
+> **Domain/Tenant Filtering**: All event endpoints respect the caller's domain and tenant scope.
+
+### Get Drift Summary
+**GET** `/drift/summary` (Authenticated, `drift:read`)  
+Returns an aggregate overview of drift events grouped by severity, resource type, and acknowledgement status.
+
+Query Parameters:
+- `domain_name` (optional) - Filter by domain
+- `tenant_name` (optional) - Filter by tenant
+
+Response:
+```json
+{
+  "total_events": 42,
+  "unacknowledged": 28,
+  "by_severity": {
+    "critical": 5,
+    "warning": 18,
+    "info": 19
+  },
+  "by_resource_type": {
+    "server": 12,
+    "volume": 9,
+    "network": 6,
+    "floating_ip": 5,
+    "port": 4,
+    "subnet": 3,
+    "security_group": 2,
+    "snapshot": 1
+  },
+  "last_detected_at": "2026-02-16T08:30:00Z"
+}
+```
+
+### List Drift Events
+**GET** `/drift/events` (Authenticated, `drift:read`)  
+Returns drift events with filtering, sorting, and pagination.
+
+Query Parameters:
+- `page` / `page_size` (optional, default: 1 / 50) - Pagination
+- `sort_by` / `sort_dir` (optional) - Sort field and direction
+- `resource_type` (optional) - Filter by resource type (server, volume, network, subnet, port, floating_ip, security_group, snapshot)
+- `severity` (optional) - Filter by severity (critical, warning, info)
+- `acknowledged` (optional) - Filter by acknowledgement status (true/false)
+- `domain_name` (optional) - Filter by domain
+- `tenant_name` (optional) - Filter by tenant
+- `search` (optional) - Free-text search across resource name/ID
+
+Response:
+```json
+{
+  "total": 42,
+  "page": 1,
+  "page_size": 50,
+  "events": [
+    {
+      "id": 1,
+      "resource_type": "server",
+      "resource_id": "vm-abc123",
+      "resource_name": "web-server-01",
+      "field_name": "status",
+      "old_value": "ACTIVE",
+      "new_value": "SHUTOFF",
+      "severity": "critical",
+      "rule_name": "Server Status Change",
+      "detected_at": "2026-02-16T08:30:00Z",
+      "acknowledged": false,
+      "acknowledged_by": null,
+      "acknowledged_at": null,
+      "domain_name": "Default",
+      "tenant_name": "Production"
+    }
+  ]
+}
+```
+
+### Get Drift Event Detail
+**GET** `/drift/events/{id}` (Authenticated, `drift:read`)  
+Returns full detail for a single drift event including rule metadata.
+
+Path Parameters:
+- `id` (required) - Drift event ID
+
+Response:
+```json
+{
+  "id": 1,
+  "resource_type": "server",
+  "resource_id": "vm-abc123",
+  "resource_name": "web-server-01",
+  "field_name": "status",
+  "old_value": "ACTIVE",
+  "new_value": "SHUTOFF",
+  "severity": "critical",
+  "rule_id": 3,
+  "rule_name": "Server Status Change",
+  "rule_description": "Detects when a server's power status changes unexpectedly",
+  "detected_at": "2026-02-16T08:30:00Z",
+  "acknowledged": false,
+  "acknowledged_by": null,
+  "acknowledged_at": null,
+  "domain_name": "Default",
+  "tenant_name": "Production"
+}
+```
+
+### Acknowledge Drift Event
+**PUT** `/drift/events/{id}/acknowledge` (Authenticated, `drift:write`)  
+Acknowledges a single drift event. Records the acknowledging user and timestamp.
+
+Path Parameters:
+- `id` (required) - Drift event ID
+
+Response:
+```json
+{
+  "id": 1,
+  "acknowledged": true,
+  "acknowledged_by": "operator@company.com",
+  "acknowledged_at": "2026-02-16T09:00:00Z"
+}
+```
+
+### Bulk Acknowledge Drift Events
+**PUT** `/drift/events/bulk-acknowledge` (Authenticated, `drift:write`)  
+Acknowledges multiple drift events in a single operation.
+
+Request Body:
+```json
+{
+  "event_ids": [1, 2, 5, 12, 15]
+}
+```
+
+Response:
+```json
+{
+  "acknowledged_count": 5,
+  "acknowledged_by": "operator@company.com",
+  "acknowledged_at": "2026-02-16T09:00:00Z"
+}
+```
+
+### List Drift Rules
+**GET** `/drift/rules` (Authenticated, `drift:read`)  
+Returns all 24 built-in drift detection rules with their current enabled/disabled status.
+
+Response:
+```json
+{
+  "rules": [
+    {
+      "id": 1,
+      "resource_type": "server",
+      "field_name": "flavor_id",
+      "rule_name": "Server Flavor Change",
+      "description": "Detects when a server's flavor (size) is changed",
+      "severity": "warning",
+      "enabled": true
+    },
+    {
+      "id": 2,
+      "resource_type": "server",
+      "field_name": "status",
+      "rule_name": "Server Status Change",
+      "description": "Detects when a server's power status changes unexpectedly",
+      "severity": "critical",
+      "enabled": true
+    },
+    {
+      "id": 3,
+      "resource_type": "server",
+      "field_name": "vm_state",
+      "rule_name": "Server VM State Change",
+      "description": "Detects changes to the underlying VM state",
+      "severity": "warning",
+      "enabled": true
+    },
+    {
+      "id": 4,
+      "resource_type": "server",
+      "field_name": "hypervisor_hostname",
+      "rule_name": "Server Migration Detected",
+      "description": "Detects when a server is live-migrated to a different host",
+      "severity": "info",
+      "enabled": true
+    }
+  ],
+  "total": 24
+}
+```
+
+**Built-in Rules by Resource Type**:
+
+| Resource Type | Monitored Fields | Rule Count |
+|---------------|-----------------|------------|
+| server | flavor_id, status, vm_state, hypervisor_hostname | 4 |
+| volume | status, size, volume_type, server_id | 4 |
+| network | admin_state_up, shared | 2 |
+| subnet | gateway_ip, cidr, enable_dhcp | 3 |
+| port | device_id, mac_address, status | 3 |
+| floating_ip | port_id, router_id, status | 3 |
+| security_group | description | 1 |
+| snapshot | status, size | 2 |
+| **Total** | | **24** |
+
+### Update Drift Rule
+**PUT** `/drift/rules/{rule_id}` (Authenticated, `drift:write`)  
+Enables or disables a specific drift detection rule.
+
+Path Parameters:
+- `rule_id` (required) - Rule ID
+
+Request Body:
+```json
+{
+  "enabled": false
+}
+```
+
+Response:
+```json
+{
+  "id": 4,
+  "rule_name": "Server Migration Detected",
+  "enabled": false,
+  "updated_by": "admin@company.com",
+  "updated_at": "2026-02-16T09:05:00Z"
+}
+```
+
+---
+
 ## Error Responses
 
 All endpoints return standard error responses:
@@ -1038,7 +1275,7 @@ Response includes:
 
 ---
 
-**API Version**: 1.3  
+**API Version**: 1.9  
 **Last Updated**: February 2026  
 **Base URL**: http://localhost:8000  
 **Documentation**: http://localhost:8000/docs

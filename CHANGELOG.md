@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-02-16
+
+### Added
+- **Drift Detection Engine**: Automated configuration drift detection that monitors infrastructure changes between inventory syncs
+  - **Database**: New `drift_rules` table (24 built-in rules across servers, volumes, networks, subnets, ports, floating IPs, security groups, and snapshots) and `drift_events` table (stores detected changes with severity, old/new values, timestamps). Migration script `db/migrate_drift_detection.sql`
+  - **Detection Hook** (`db_writer.py`): `_detect_drift()` function integrated into `_upsert_with_history()` — snapshots existing records before upsert and compares field-by-field against enabled drift rules. Automatically generates drift events when monitored fields change
+  - **API Endpoints**: 7 new endpoints —
+    - `GET /drift/summary` — aggregate counts by severity and resource type, filterable by domain/project
+    - `GET /drift/events` — paginated event list with filters (severity, resource_type, status, search, date range, domain)
+    - `GET /drift/events/{id}` — single event detail
+    - `PUT /drift/events/{id}/acknowledge` — acknowledge an event with optional notes
+    - `PUT /drift/events/bulk-acknowledge` — bulk acknowledge multiple events
+    - `GET /drift/rules` — list all drift rules with enable/disable status
+    - `PUT /drift/rules/{rule_id}` — toggle rule enabled/disabled or update severity
+  - **UI Tab** (`DriftDetection.tsx`): New "🔍 Drift Detection" tab with:
+    - Summary dashboard showing total events, critical/warning/info counts, resource type pie chart
+    - Events table with severity badges, sortable columns, pagination, and multi-select checkboxes
+    - Filters: severity, resource type, status, free-text search, date range
+    - Event detail panel with old → new value comparison
+    - Bulk and individual acknowledge actions
+    - Rules management panel to enable/disable rules and adjust severities
+    - CSV export of filtered events
+    - Domain/tenant filter integration with the global filter bar
+  - **RBAC**: `drift` resource mapped in permission middleware; read access for all roles, write (acknowledge/rule toggle) for operator and above
+  - **Styling**: Full `DriftDetection.css` with dark mode support, severity color coding, responsive layout
+
 ## [1.8.0] - 2026-02-16
 
 ### Added
