@@ -1038,7 +1038,97 @@ Response includes:
 
 ---
 
-**API Version**: 1.2  
+**API Version**: 1.3  
 **Last Updated**: February 2026  
 **Base URL**: http://localhost:8000  
 **Documentation**: http://localhost:8000/docs
+
+---
+
+## Branding & Settings Endpoints
+
+### Get Branding
+**GET** `/settings/branding`  
+*Public — no authentication required* (so the login page can load branding)
+
+Returns the current branding configuration.
+
+Response:
+```json
+{
+  "company_name": "CCC",
+  "company_subtitle": "Infrastructure Management",
+  "company_logo_url": "/static/logos/logo.png",
+  "primary_color": "#667eea",
+  "secondary_color": "#764ba2",
+  "login_hero_title": "Welcome to PF9 Management",
+  "login_hero_description": "Enterprise-grade OpenStack infrastructure management.",
+  "login_hero_features": [
+    "Real-time monitoring & alerting",
+    "Automated snapshot management",
+    "Full audit trail & compliance"
+  ]
+}
+```
+
+### Update Branding
+**PUT** `/settings/branding`  
+*Requires: `settings:admin` permission*
+
+Request:
+```json
+{
+  "company_name": "CCC",
+  "company_subtitle": "Infrastructure Management",
+  "primary_color": "#667eea",
+  "secondary_color": "#764ba2",
+  "login_hero_title": "Welcome to PF9 Management",
+  "login_hero_description": "Enterprise-grade OpenStack infrastructure management.",
+  "login_hero_features": ["Feature 1", "Feature 2"]
+}
+```
+
+### Upload Logo
+**POST** `/settings/branding/logo`  
+*Requires: `settings:admin` permission*
+
+Multipart file upload. Accepts PNG, JPEG, GIF, SVG, WebP. Max 2 MB.
+
+Response:
+```json
+{
+  "logo_url": "/static/logos/company_logo_1708099200.png"
+}
+```
+
+### Get User Preferences
+**GET** `/user-preferences`  
+*Requires authentication*
+
+Returns the current user’s preferences.
+
+Response:
+```json
+{
+  "tab_order": ["dashboard", "servers", "volumes", "snapshots", ...],
+  "custom_setting": "value"
+}
+```
+
+### Update User Preferences
+**PUT** `/user-preferences`  
+*Requires authentication*
+
+Request:
+```json
+{
+  "tab_order": ["dashboard", "volumes", "servers", "snapshots", ...]
+}
+```
+
+Response:
+```json
+{
+  "status": "saved",
+  "username": "admin"
+}

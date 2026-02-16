@@ -2,6 +2,16 @@
 
 ## Recent Major Enhancements
 
+### Branding & Login Customization (v1.8 - NEW ✨)
+- **White-Label Login Page**: Two-column layout with branded hero panel (title, description, feature highlights, stats)
+- **Admin Branding Tab**: "🎨 Branding & Login Page Settings" in Admin Panel — company name, subtitle, colors, logo upload, hero content
+- **Color Customization**: Primary and secondary color pickers with live gradient preview
+- **Logo Upload**: Supports PNG, JPEG, GIF, SVG, WebP (max 2 MB) with instant preview and removal
+- **Feature Highlights**: Configurable checklist shown on the login hero panel (add/remove items)
+- **Tab Drag-and-Drop**: Users can reorder tabs via drag-and-drop; order persists per-user (localStorage + backend)
+- **User Preferences API**: Per-user settings (tab order, etc.) stored in `user_preferences` table
+- **Dark Mode Fixes**: Comprehensive dark mode fixes across login page, branding settings, restore audit buttons, and snapshot policy buttons
+
 ### Security Groups Management (v1.7 - NEW ✨)
 - **Full CRUD**: Create, view, and delete security groups and firewall rules from the UI
 - **🔒 Security Groups Tab**: Dedicated tab with list/detail layout, filter/sort/pagination, color-coded ingress/egress rule badges
@@ -98,6 +108,8 @@
 - **role_permissions**: Resource-level permission matrix (role → resource → action)
 - **auth_audit_log**: Authentication event logging (login, logout, permission denied) with 90-day retention
 - **user_sessions**: JWT session tracking with IP address and user agent
+- **app_settings**: Key/value store for application-wide settings (branding colors, company name, hero content)
+- **user_preferences**: Per-user preferences (tab order, UI settings) with JSONB value column
 
 #### Core Identity & Organization (3 tables)
 - **domains**: OpenStack domains with JSONB metadata and foreign key relationships
@@ -1216,6 +1228,24 @@ Monitor authentication events and system access:
 - user_created / user_deleted
 - role_changed
 - logout
+
+##### 5. Branding Tab (NEW ✨)
+Customize the application’s login page and company identity:
+- **Company Name & Subtitle** — Displayed on the login page header
+- **Primary & Secondary Colors** — Color pickers with hex input; used for login page gradient and UI accents
+- **Logo Upload** — Upload a company logo (PNG, JPEG, GIF, SVG, WebP; max 2 MB) with instant preview
+- **Login Hero Title & Description** — Customizable hero panel text on the right side of the login page
+- **Feature Highlights** — Add/remove checklist items displayed with checkmarks on the login hero panel
+- **Live Preview** — Gradient preview bar shows the current primary→secondary color combination
+- **Persistence** — All settings stored in the `app_settings` database table and take effect immediately for new visitors
+- **RBAC** — Only Admin and Superadmin users can access this tab
+
+### Tab Drag-and-Drop Reordering
+Users can customize the order of navigation tabs:
+- **Drag-and-Drop** — Click and drag any tab to reorder; visual drop indicator shows placement
+- **Persistence** — Tab order saved to `localStorage` and synced to backend (`user_preferences` table) per user
+- **Reset** — Click the "↩" button to restore the default 27-tab order
+- **Data-Driven** — All tabs defined in `DEFAULT_TAB_ORDER` array with id, label, icon, category, RBAC permission, and feature-toggle metadata
 
 ### Admin Panel Authentication
 - **Access Control**: Admin panel is only visible to users with Admin or Superadmin roles

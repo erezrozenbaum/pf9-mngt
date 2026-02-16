@@ -78,6 +78,9 @@ src/
 - **Hot module replacement** via Vite
 - **Auto-refresh capabilities** for real-time data
 - **Advanced filtering and pagination**
+- **White-label branding** — Login page customizable via Admin Panel (colors, logo, hero content)
+- **Drag-and-drop tab reordering** — Per-user tab order with localStorage + backend persistence
+- **Comprehensive dark mode** — Full theme support across all components with CSS variable system
 - **Administrative operation forms**
 
 ### Backend API Service

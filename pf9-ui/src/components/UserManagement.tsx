@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE } from '../config';
 
 type AuthUser = {
@@ -10,6 +10,209 @@ type AuthUser = {
 type UserManagementProps = {
   user?: AuthUser | null;
 };
+
+// ---------------------------------------------------------------------------
+// Branding Settings Sub-Component
+// ---------------------------------------------------------------------------
+const BrandingSettings: React.FC = () => {
+  const [brandData, setBrandData] = useState({
+    company_name: '',
+    company_subtitle: '',
+    login_hero_title: '',
+    login_hero_description: '',
+    login_hero_features: [] as string[],
+    company_logo_url: '',
+    primary_color: '#667eea',
+    secondary_color: '#764ba2',
+  });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [newFeature, setNewFeature] = useState('');
+
+  const fetchBranding = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/settings/branding`);
+      if (res.ok) {
+        const data = await res.json();
+        setBrandData(prev => ({ ...prev, ...data }));
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => { fetchBranding(); }, [fetchBranding]);
+
+  const adminUser = localStorage.getItem('admin_user') || '';
+  const adminPass = localStorage.getItem('admin_pass') || '';
+  const authHeader = adminUser && adminPass ? `Basic ${btoa(`${adminUser}:${adminPass}`)}` : '';
+
+  const handleSave = async () => {
+    if (!authHeader) { setMsg('⚠️ Enter admin credentials in the Admin panel above'); return; }
+    setSaving(true); setMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/admin/settings/branding`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        body: JSON.stringify({
+          ...brandData,
+          login_hero_features: brandData.login_hero_features,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      setMsg('✅ Branding saved successfully');
+      setTimeout(() => setMsg(''), 4000);
+    } catch (e: any) { setMsg(`⚠️ ${e.message}`); }
+    finally { setSaving(false); }
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!authHeader) { setMsg('⚠️ Enter admin credentials first'); return; }
+    if (file.size > 2 * 1024 * 1024) { setMsg('⚠️ Logo must be under 2 MB'); return; }
+    setLogoUploading(true); setMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/admin/settings/branding/logo`, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type, Authorization: authHeader },
+        body: file,
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || 'Upload failed'); }
+      const data = await res.json();
+      setBrandData(prev => ({ ...prev, company_logo_url: data.logo_url }));
+      setMsg('✅ Logo uploaded');
+      setTimeout(() => setMsg(''), 4000);
+    } catch (err: any) { setMsg(`⚠️ ${err.message}`); }
+    finally { setLogoUploading(false); }
+  };
+
+  const removeLogo = () => setBrandData(prev => ({ ...prev, company_logo_url: '' }));
+
+  const addFeature = () => {
+    if (newFeature.trim()) {
+      setBrandData(prev => ({ ...prev, login_hero_features: [...prev.login_hero_features, newFeature.trim()] }));
+      setNewFeature('');
+    }
+  };
+  const removeFeature = (idx: number) =>
+    setBrandData(prev => ({ ...prev, login_hero_features: prev.login_hero_features.filter((_, i) => i !== idx) }));
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 12px', borderRadius: '6px',
+    border: '1px solid var(--color-border, #ddd)', boxSizing: 'border-box',
+    background: 'var(--color-surface, #fff)', color: 'var(--color-text-primary, #333)',
+    fontSize: '14px',
+  };
+  const labelStyle: React.CSSProperties = { fontWeight: 600, fontSize: '13px', marginBottom: '4px', display: 'block', color: 'var(--color-text-primary, #333)' };
+  const logoPreviewUrl = brandData.company_logo_url
+    ? (brandData.company_logo_url.startsWith('http') ? brandData.company_logo_url : `${API_BASE}${brandData.company_logo_url}`)
+    : '';
+
+  return (
+    <div style={{ maxWidth: '700px' }}>
+      <h3 style={{ marginTop: 0, marginBottom: '16px' }}>🎨 Branding & Login Page Settings</h3>
+      <p style={{ fontSize: '13px', color: 'var(--color-text-secondary, #888)', marginBottom: '20px' }}>
+        Customize the company name, logo, and hero content shown on the login page.
+        Changes take effect immediately for new visitors.
+      </p>
+
+      {msg && <div style={{ padding: '10px', borderRadius: '6px', marginBottom: '16px', background: msg.startsWith('✅') ? '#dcfce7' : '#fee2e2', color: msg.startsWith('✅') ? '#166534' : '#991b1b' }}>{msg}</div>}
+
+      <div style={{ display: 'grid', gap: '16px', gridTemplateColumns: '1fr 1fr' }}>
+        <div>
+          <label style={labelStyle}>Company Name</label>
+          <input value={brandData.company_name} onChange={e => setBrandData({...brandData, company_name: e.target.value})} style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Subtitle</label>
+          <input value={brandData.company_subtitle} onChange={e => setBrandData({...brandData, company_subtitle: e.target.value})} style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Primary Color</label>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input type="color" value={brandData.primary_color} onChange={e => setBrandData({...brandData, primary_color: e.target.value})} style={{ width: '40px', height: '36px', border: 'none', cursor: 'pointer' }} />
+            <input value={brandData.primary_color} onChange={e => setBrandData({...brandData, primary_color: e.target.value})} style={{...inputStyle, flex: 1}} />
+          </div>
+        </div>
+        <div>
+          <label style={labelStyle}>Secondary Color</label>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input type="color" value={brandData.secondary_color} onChange={e => setBrandData({...brandData, secondary_color: e.target.value})} style={{ width: '40px', height: '36px', border: 'none', cursor: 'pointer' }} />
+            <input value={brandData.secondary_color} onChange={e => setBrandData({...brandData, secondary_color: e.target.value})} style={{...inputStyle, flex: 1}} />
+          </div>
+        </div>
+      </div>
+
+      {/* Logo */}
+      <div style={{ marginTop: '20px' }}>
+        <label style={labelStyle}>Company Logo</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {logoPreviewUrl ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <img src={logoPreviewUrl} alt="Logo preview" style={{ maxHeight: '48px', maxWidth: '160px', objectFit: 'contain', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '4px' }} />
+              <button onClick={removeLogo} style={{ padding: '4px 8px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>Remove</button>
+            </div>
+          ) : (
+            <span style={{ fontSize: '13px', color: '#888' }}>No logo uploaded</span>
+          )}
+          <label style={{ padding: '6px 14px', background: '#2563eb', color: 'white', borderRadius: '4px', cursor: logoUploading ? 'wait' : 'pointer', fontSize: '13px', fontWeight: 600 }}>
+            {logoUploading ? 'Uploading...' : 'Upload Logo'}
+            <input type="file" accept="image/png,image/jpeg,image/gif,image/svg+xml,image/webp" onChange={handleLogoUpload} style={{ display: 'none' }} />
+          </label>
+        </div>
+        <p style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>PNG, JPEG, GIF, SVG, or WebP. Max 2 MB.</p>
+      </div>
+
+      {/* Hero section */}
+      <div style={{ marginTop: '20px' }}>
+        <label style={labelStyle}>Login Hero Title</label>
+        <input value={brandData.login_hero_title} onChange={e => setBrandData({...brandData, login_hero_title: e.target.value})} style={inputStyle} />
+      </div>
+      <div style={{ marginTop: '12px' }}>
+        <label style={labelStyle}>Login Hero Description</label>
+        <textarea value={brandData.login_hero_description} onChange={e => setBrandData({...brandData, login_hero_description: e.target.value})} rows={3} style={{...inputStyle, resize: 'vertical'}} />
+      </div>
+
+      {/* Feature list */}
+      <div style={{ marginTop: '16px' }}>
+        <label style={labelStyle}>Feature Highlights (shown on login page)</label>
+        {brandData.login_hero_features.map((f, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+            <span style={{ flex: 1, fontSize: '13px', padding: '6px 10px', background: 'var(--color-surface, #f9f9f9)', borderRadius: '4px', border: '1px solid var(--color-border, #ddd)', color: 'var(--color-text-primary, #333)' }}>✓ {f}</span>
+            <button onClick={() => removeFeature(i)} style={{ padding: '2px 8px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✕</button>
+          </div>
+        ))}
+        <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+          <input value={newFeature} onChange={e => setNewFeature(e.target.value)} onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addFeature())} placeholder="Add a feature highlight..." style={{...inputStyle, flex: 1}} />
+          <button onClick={addFeature} style={{ padding: '6px 14px', background: '#16a34a', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>Add</button>
+        </div>
+      </div>
+
+      {/* Color preview */}
+      <div style={{ marginTop: '20px', padding: '16px', borderRadius: '8px', background: `linear-gradient(135deg, ${brandData.primary_color} 0%, ${brandData.secondary_color} 100%)`, color: 'white' }}>
+        <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>Preview: Login Page Gradient</div>
+        <div style={{ fontSize: '11px', opacity: 0.8 }}>{brandData.primary_color} → {brandData.secondary_color}</div>
+      </div>
+
+      {/* Save */}
+      <div style={{ marginTop: '20px', display: 'flex', gap: '10px' }}>
+        <button onClick={handleSave} disabled={saving} style={{
+          padding: '10px 24px', background: '#2563eb', color: 'white', border: 'none',
+          borderRadius: '6px', cursor: saving ? 'wait' : 'pointer', fontWeight: 600, fontSize: '14px',
+        }}>
+          {saving ? 'Saving...' : '💾 Save Branding'}
+        </button>
+        <button onClick={fetchBranding} style={{
+          padding: '10px 24px', background: '#6b7280', color: 'white', border: 'none',
+          borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '14px',
+        }}>
+          ↩ Reset
+        </button>
+      </div>
+    </div>
+  );
+};
+
 
 const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [users, setUsers] = useState([]);
@@ -469,7 +672,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 'users', label: 'LDAP Users', icon: '👥', adminOnly: true },
           { id: 'roles', label: 'Roles', icon: '🛡️', adminOnly: true },
           { id: 'permissions', label: 'Permissions', icon: '🔑', adminOnly: true },
-          { id: 'audit', label: 'System Audit', icon: '📋', adminOnly: false }
+          { id: 'audit', label: 'System Audit', icon: '📋', adminOnly: false },
+          { id: 'branding', label: 'Branding', icon: '🎨', adminOnly: true }
         ]
           .filter(tab => !tab.adminOnly || (user && (user.role === 'admin' || user.role === 'superadmin')))
           .map(tab => (
@@ -721,6 +925,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           </div>
         </div>
       )}
+
+      {/* Branding Settings */}
+      {activeTab === 'branding' && <BrandingSettings />}
 
       {/* Modal */}
       {showModal && (
