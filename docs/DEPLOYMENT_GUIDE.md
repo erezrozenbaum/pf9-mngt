@@ -296,6 +296,7 @@ docker-compose ps
 # pf9_pgadmin     Up (healthy)     0.0.0.0:8080->80/tcp
 # phpldapadmin    Up (healthy)     0.0.0.0:8081->80/tcp
 # pf9_notification_worker  Up       (background worker, no port)
+# pf9_backup_worker         Up       (background worker, no port)
 ```
 
 ### Step 6: Verify Database Initialization
@@ -514,6 +515,21 @@ HEALTH_ALERT_THRESHOLD=50                 # Tenant health score below this trigg
 
 > **Note**: The notification worker runs as a separate container (`pf9_notification_worker`). When `SMTP_ENABLED=false`, the worker starts but does not send emails. Users can still configure preferences via the UI.
 
+#### Database Backup Configuration
+
+```bash
+# Mount point inside the backup worker container
+NFS_BACKUP_PATH=/backups
+
+# Host path or Docker volume mapped into the container
+BACKUP_VOLUME=./backups
+
+# How often (seconds) the worker checks for pending jobs or schedule triggers
+BACKUP_POLL_INTERVAL=30
+```
+
+> **Note**: The backup worker runs as a separate container (`pf9_backup_worker`) based on PostgreSQL 16 (includes `pg_dump`/`pg_restore`). Configure schedule, retention, and NFS path via the 💾 Backup tab in the UI.
+
 #### Optional Advanced Configuration
 
 ```bash
@@ -634,6 +650,7 @@ After `docker-compose up -d` and services are healthy:
 | **pgAdmin** | http://localhost:8080 | $PGADMIN_EMAIL / $PGADMIN_PASSWORD | Database management |
 | **LDAP Admin** | http://localhost:8081 | cn=admin / $LDAP_ADMIN_PASSWORD | LDAP user management |
 | **Notification Worker** | (no web UI) | N/A | Check: `docker logs pf9_notification_worker` |
+| **Backup Worker** | (no web UI) | N/A | Check: `docker logs pf9_backup_worker` |
 
 ### Admin User and Superadmin Permissions Are Automated
 
@@ -1125,7 +1142,19 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\d servers
 
 ## Backup & Recovery
 
-### Backup Strategy
+### Automated Backups (Recommended)
+
+As of v1.13, the platform includes a built-in **Backup Worker** container (`pf9_backup_worker`) that automates database backups:
+
+1. **Enable via UI**: Go to the 💾 **Backup** tab → **Settings** → toggle "Automated Backups" on
+2. **Set Schedule**: Choose daily or weekly, pick a UTC time, and optionally a day of week
+3. **Configure Retention**: Set max backup count and max age in days — old backups are auto-pruned
+4. **Manual Trigger**: Click "🚀 Run Backup Now" on the **Status** sub-tab for an immediate backup
+5. **Restore**: On the **History** sub-tab, click ♻️ Restore on any completed backup (superadmin only)
+
+Backups are compressed `pg_dump` outputs (`.sql.gz`) written to the volume mapped at `BACKUP_VOLUME` (default: `./backups`).
+
+### Manual Backup (Legacy / Ad-Hoc)
 
 ```bash
 # Full backup script

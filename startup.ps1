@@ -191,7 +191,8 @@ $services = @(
     @{Name="Database"; Url="http://localhost:5432"; Container="pf9_db"},
     @{Name="API"; Url="http://localhost:8000/health"; Container="pf9_api"},
     @{Name="UI"; Url="http://localhost:5173"; Container="pf9_ui"},
-    @{Name="Monitoring"; Url="http://localhost:8001/health"; Container="pf9_monitoring"}
+    @{Name="Monitoring"; Url="http://localhost:8001/health"; Container="pf9_monitoring"},
+    @{Name="Backup Worker"; Url=$null; Container="pf9_backup_worker"}
 )
 
 $allGood = $true

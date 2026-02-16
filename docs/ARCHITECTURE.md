@@ -554,6 +554,10 @@ graph TD
         │pf9_notification_    │    │pf9_snapshot_worker  │
         │worker (Python/SMTP) │    │   (Python)          │
         └─────────────────────┘    └─────────────────────┘
+                                   ┌─────────────────────┐
+                                   │pf9_backup_worker    │
+                                   │  (Python/pg_dump)   │
+                                   └─────────────────────┘
 ```
 
 ### Host Integration Points
@@ -746,7 +750,7 @@ python host_metrics_collector.py > metrics.log 2>&1
 2. **Security**: Development-mode configuration not production-ready
 3. **Authentication**: No user authentication or authorization
 4. **High Availability**: Single-instance services without failover
-5. **Backup Strategy**: Manual database backup procedures
+5. ~~**Backup Strategy**: Manual database backup procedures~~ → Automated via `backup_worker` container (v1.13)
 
 ### Planned Enhancements
 1. **Security Hardening**: Authentication, HTTPS, secure defaults
