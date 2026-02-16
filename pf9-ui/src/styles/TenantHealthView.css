@@ -709,6 +709,68 @@
 .th-quota-warning  { background: #f59e0b; }
 .th-quota-critical { background: #ef4444; }
 
+/* ── Resource Usage Bars (DB-based fallback) ── */
+.th-usage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 12px 0;
+}
+
+.th-usage-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.th-usage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.th-usage-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.th-usage-values {
+  font-size: 0.78rem;
+  color: var(--color-text-secondary, #64748b);
+}
+
+.th-usage-bar-track {
+  height: 10px;
+  background: var(--color-bg-secondary, #f0f0f0);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.th-usage-bar-fill {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.3s;
+}
+
+.th-usage-bar-fill.healthy  { background: #22c55e; }
+.th-usage-bar-fill.warning  { background: #f59e0b; }
+.th-usage-bar-fill.critical { background: #ef4444; }
+
+.th-usage-pct {
+  font-size: 0.72rem;
+  color: var(--color-text-secondary, #64748b);
+  text-align: right;
+}
+
+.th-usage-note {
+  grid-column: 1 / -1;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary, #64748b);
+  font-style: italic;
+  margin-top: 4px;
+}
+
 /* ── Dark mode ── */
 [data-theme="dark"] .th-summary-card {
   background: var(--color-surface, #1e293b);
@@ -833,5 +895,170 @@
 }
 
 [data-theme="dark"] .th-view-toggle {
+  border-color: var(--color-border, #334155);
+}
+
+/* Dark mode — text visibility fixes */
+[data-theme="dark"] .th-container h2 {
+  color: var(--color-text-primary, #f1f5f9);
+}
+
+[data-theme="dark"] .th-summary-card .th-card-value {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .th-summary-card .th-card-label {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-val-healthy  { color: #4ade80; }
+[data-theme="dark"] .th-val-warning  { color: #fbbf24; }
+[data-theme="dark"] .th-val-critical { color: #f87171; }
+[data-theme="dark"] .th-val-avg      { color: #60a5fa; }
+
+[data-theme="dark"] .th-compute-value {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .th-compute-label {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-compute-sub {
+  color: #94a3b8;
+}
+
+/* Dark mode — table text */
+[data-theme="dark"] .th-table thead th {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-table tbody td {
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .th-table tbody td strong {
+  color: #f1f5f9;
+}
+
+/* Dark mode — buttons */
+[data-theme="dark"] .th-btn.primary {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+[data-theme="dark"] .th-btn.primary:hover {
+  background: #2563eb;
+}
+
+/* Dark mode — heatmap text */
+[data-theme="dark"] .th-heatmap-section h3 {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .th-heatmap-subtitle {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-heatmap-legend-label {
+  color: #94a3b8;
+}
+
+/* Dark mode — detail panel text */
+[data-theme="dark"] .th-detail-header h3 {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .th-detail-close {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-detail-close:hover {
+  background: var(--color-bg-hover, #334155);
+}
+
+[data-theme="dark"] .th-detail-score-info h4 {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .th-detail-score-info p {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-detail-section h4 {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .th-stat-value {
+  color: #f1f5f9;
+}
+
+[data-theme="dark"] .th-stat-label {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-stat-sub {
+  color: #64748b;
+}
+
+/* Dark mode — power grid labels */
+[data-theme="dark"] .th-power-label {
+  color: #94a3b8;
+}
+
+/* Dark mode — quota text */
+[data-theme="dark"] .th-quota-group-title {
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .th-quota-label {
+  color: #94a3b8;
+}
+
+/* Dark mode — status legend and misc */
+[data-theme="dark"] .th-status-legend {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-loading {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-empty {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-drift-mini td {
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .th-drift-mini th {
+  color: #94a3b8;
+}
+
+/* Dark mode — score circles (ensure ring contrast) */
+[data-theme="dark"] .th-score {
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.1);
+}
+
+[data-theme="dark"] .th-detail-score-circle {
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.1);
+}
+
+/* Dark mode — resource usage bars */
+[data-theme="dark"] .th-usage-bar-track {
+  background: #0f172a;
+}
+
+[data-theme="dark"] .th-usage-label {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .th-usage-values {
+  color: #cbd5e1;
+}
+
+[data-theme="dark"] .th-usage-grid {
   border-color: var(--color-border, #334155);
 }
