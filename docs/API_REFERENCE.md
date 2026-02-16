@@ -1201,6 +1201,248 @@ Response:
 
 ---
 
+## Tenant Health Endpoints
+
+> **Version**: v1.10.0
+> **RBAC**: `tenant_health:read` for all authenticated roles; `tenant_health:admin` for Admin and Superadmin.
+> **Database**: Powered by the `v_tenant_health` SQL view which aggregates per-project health metrics from all resource tables.
+
+### Health Score Formula
+Each tenant starts with a score of **100**. Deductions are applied for:
+- **Error VMs/Volumes/Snapshots**: Resources in error state reduce the score
+- **Low Compliance**: Snapshot compliance below threshold
+- **Critical Drift**: Recent critical or warning drift events
+
+### Tenant Health Overview
+**GET** `/tenant-health/overview` (Authenticated, `tenant_health:read`)
+Returns all tenants with health scores and summary statistics.
+
+Query Parameters:
+- `domain_id` (optional) - Filter by domain
+- `sort_by` (optional, default: `health_score`) - Sort field: `health_score`, `project_name`, `domain_name`, `total_servers`, `total_volumes`, `total_networks`, `total_drift_events`, `compliance_pct`
+- `sort_dir` (optional, default: `desc`) - Sort direction: `asc` or `desc`
+- `search` (optional) - Free-text search across tenant/domain name
+
+Response:
+```json
+{
+  "summary": {
+    "total_tenants": 28,
+    "healthy": 20,
+    "warning": 5,
+    "critical": 3,
+    "avg_health_score": 82.4
+  },
+  "tenants": [
+    {
+      "project_id": "abc-123",
+      "project_name": "Production",
+      "domain_id": "default",
+      "domain_name": "Default",
+      "health_score": 95,
+      "health_status": "healthy",
+      "total_servers": 24,
+      "active_servers": 22,
+      "shutoff_servers": 2,
+      "error_servers": 0,
+      "other_servers": 0,
+      "total_vcpus": 96,
+      "total_ram_mb": 196608,
+      "total_flavor_disk_gb": 480,
+      "active_vcpus": 88,
+      "active_ram_mb": 180224,
+      "hypervisor_count": 4,
+      "power_on_pct": 91.67,
+      "total_volumes": 48,
+      "error_volumes": 1,
+      "total_networks": 6,
+      "total_snapshots": 120,
+      "compliance_pct": 96.5,
+      "total_drift_events": 3,
+      "critical_drift_events": 0,
+      "warning_drift_events": 2
+    }
+  ]
+}
+```
+
+**Health Status Thresholds**:
+| Status | Score Range |
+|--------|-------------|
+| `healthy` | 80–100 |
+| `warning` | 50–79 |
+| `critical` | 0–49 |
+
+### Tenant Health Detail
+**GET** `/tenant-health/{project_id}` (Authenticated, `tenant_health:read`)
+Returns full detail for a single tenant including resource status breakdown, top volumes, and recent drift events.
+
+Path Parameters:
+- `project_id` (required) - Project UUID
+
+Response:
+```json
+{
+  "project_id": "abc-123",
+  "project_name": "Production",
+  "domain_name": "Default",
+  "health_score": 95,
+  "health_status": "healthy",
+  "resources": {
+    "servers": {
+      "total": 24,
+      "active": 22,
+      "shutoff": 2,
+      "error": 0
+    },
+    "volumes": {
+      "total": 48,
+      "available": 10,
+      "in_use": 37,
+      "error": 1
+    },
+    "snapshots": {
+      "total": 120,
+      "available": 118,
+      "error": 2
+    },
+    "networks": {
+      "total": 6
+    }
+  },
+  "compliance_pct": 96.5,
+  "top_volumes": [
+    {
+      "volume_id": "vol-001",
+      "volume_name": "db-primary",
+      "size_gb": 500,
+      "status": "in-use",
+      "attached_to": "db-server-01"
+    }
+  ],
+  "recent_drift_events": [
+    {
+      "id": 42,
+      "resource_type": "server",
+      "resource_name": "web-03",
+      "field_name": "status",
+      "old_value": "ACTIVE",
+      "new_value": "SHUTOFF",
+      "severity": "critical",
+      "detected_at": "2026-02-15T14:30:00Z"
+    }
+  ]
+}
+```
+
+### Tenant Health Trends
+**GET** `/tenant-health/trends/{project_id}` (Authenticated, `tenant_health:read`)
+Returns daily drift and snapshot trend counts for chart visualizations.
+
+Path Parameters:
+- `project_id` (required) - Project UUID
+
+Query Parameters:
+- `days` (optional, default: 30) - Number of days of trend data
+
+Response:
+```json
+{
+  "project_id": "abc-123",
+  "project_name": "Production",
+  "period_days": 30,
+  "trends": [
+    {
+      "date": "2026-02-15",
+      "drift_events": 2,
+      "snapshots_created": 5,
+      "compliance_pct": 96.5,
+      "health_score": 95
+    },
+    {
+      "date": "2026-02-14",
+      "drift_events": 0,
+      "snapshots_created": 5,
+      "compliance_pct": 97.0,
+      "health_score": 97
+    }
+  ]
+}
+```
+
+---
+
+**GET** `/tenant-health/heatmap` (Authenticated, `tenant_health:read`)
+Returns per-tenant resource utilization data for heatmap visualization. Each tenant gets a weighted utilization score (60% VM activity + 40% volume usage).
+
+Query Parameters:
+- `domain_id` (optional) - Filter by domain UUID
+
+Response:
+```json
+{
+  "tenants": [
+    {
+      "project_id": "abc-123",
+      "project_name": "Production",
+      "domain_name": "Default",
+      "health_score": 95,
+      "total_servers": 10,
+      "active_servers": 8,
+      "shutoff_servers": 2,
+      "error_servers": 0,
+      "total_vcpus": 40,
+      "active_vcpus": 32,
+      "total_ram_mb": 81920,
+      "active_ram_mb": 65536,
+      "power_on_pct": 80.0,
+      "total_volumes": 15,
+      "total_volume_gb": 500,
+      "total_drift_events": 3,
+      "critical_drift": 1,
+      "compliance_pct": 96.5,
+      "utilization_score": 72.4
+    }
+  ]
+}
+```
+
+---
+
+**GET** `/tenant-health/quota/{project_id}` (Authenticated, `tenant_health:read`)
+Returns live OpenStack quota usage for a project. Fetches compute quotas (instances, cores, RAM) and storage quotas (volumes, gigabytes, snapshots) directly from OpenStack. Returns `available: false` gracefully when credentials are not configured.
+
+Path Parameters:
+- `project_id` (required) - Project UUID
+
+Response (when available):
+```json
+{
+  "available": true,
+  "project_id": "abc-123",
+  "compute": {
+    "instances": { "limit": 50, "in_use": 10, "reserved": 0 },
+    "cores": { "limit": 200, "in_use": 40, "reserved": 0 },
+    "ram_mb": { "limit": 204800, "in_use": 81920, "reserved": 0 }
+  },
+  "storage": {
+    "volumes": { "limit": 100, "in_use": 15, "reserved": 0 },
+    "gigabytes": { "limit": 5000, "in_use": 500, "reserved": 0 },
+    "snapshots": { "limit": 50, "in_use": 8, "reserved": 0 }
+  }
+}
+```
+
+Response (when unavailable):
+```json
+{
+  "available": false,
+  "reason": "OpenStack credentials not configured"
+}
+```
+
+---
+
 ## Error Responses
 
 All endpoints return standard error responses:
@@ -1275,7 +1517,7 @@ Response includes:
 
 ---
 
-**API Version**: 1.9  
+**API Version**: 1.10  
 **Last Updated**: February 2026  
 **Base URL**: http://localhost:8000  
 **Documentation**: http://localhost:8000/docs
