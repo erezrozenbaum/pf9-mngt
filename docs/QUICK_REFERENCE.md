@@ -24,6 +24,17 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Compliance Drift, Capacity Trends, Trendlines, Change Compliance
   - Tenant Risk Heatmap, Tenant Summary
   - Auto-refresh every 30 seconds, Dark/Light mode support
+- **Tenant Health Tab** (v1.10 - NEW ✨):
+  - "🏥 Tenant Health" tab with per-project health scoring, compute stats, and monitoring
+  - Health score 0–100 per tenant with deductions for error resources, low compliance, drift events
+  - Database: `v_tenant_health` SQL view with compute stats (vCPUs, RAM, disk, power-on %, hypervisor count)
+  - Summary cards + compute summary row (Total VMs, vCPUs, RAM, Power-On Rate)
+  - Table view: sortable tenant table with inline power state mini-bars, vCPU/RAM columns
+  - Heatmap view: visual tile-based utilization map (size = VM count, color = utilization score)
+  - Click-to-expand detail panel: compute resources, VM power state breakdown, volume status, quota vs usage bars, top volumes, drift timeline
+  - 5 API endpoints: overview, heatmap, detail, trends, live quota
+  - CSV export, domain/tenant filter integration, full dark mode support
+  - RBAC: `tenant_health:read` (all roles), `tenant_health:admin` (Admin/Superadmin)
 - **Drift Detection Tab** (v1.9 - NEW ✨):
   - "🔍 Drift Detection" tab with real-time infrastructure drift event monitoring
   - 24 built-in rules across 8 resource types (servers, volumes, networks, subnets, ports, floating IPs, security groups, snapshots)
@@ -682,6 +693,14 @@ curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/jso
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/drift/rules"        # List rules
 curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
   -d '{"enabled":false}' "http://localhost:8000/drift/rules/4"                     # Disable a rule
+
+# Tenant Health endpoints (5 endpoints)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/overview"                # All tenants with health scores + compute stats
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/overview?domain_id=default&sort_by=health_score&sort_dir=asc"  # Filtered & sorted
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/heatmap"                 # Utilization heatmap data
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/<project_id>"            # Full tenant detail (vCPUs, RAM, power state)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/trends/<project_id>?days=30"  # Trend data for charts
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/quota/<project_id>"      # Live OpenStack quota vs usage
 ```
 
 ### Query Parameters
