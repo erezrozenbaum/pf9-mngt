@@ -1197,14 +1197,19 @@ If schema changes are needed:
 
 ```bash
 # 1. Review migration files
-ls -la db/migrations/
+ls -la db/migrate_*.sql
 
-# 2. Apply migrations
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrations/0001_add_new_table.sql
+# 2. Apply migrations (example: security groups — v1.7)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_security_groups.sql
 
-# 3. Verify schema
+# 3. Apply restore tables migration (v1.2+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_restore_tables.sql
+
+# 4. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
+
+> **Note**: All migration scripts are idempotent (use `IF NOT EXISTS` / `ON CONFLICT DO NOTHING`). Safe to re-run.
 
 ---
 

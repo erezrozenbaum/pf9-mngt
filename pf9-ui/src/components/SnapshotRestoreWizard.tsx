@@ -217,12 +217,14 @@ function stepLabel(name: string): string {
     QUOTA_CHECK: "Verify quota",
     DELETE_EXISTING_VM: "Delete existing VM",
     WAIT_VM_DELETED: "Wait for VM deletion",
+    CLEANUP_OLD_PORTS: "Release old ports / free IPs",
     CREATE_VOLUME_FROM_SNAPSHOT: "Create volume from snapshot",
     WAIT_VOLUME_AVAILABLE: "Wait for volume",
     CREATE_PORTS: "Create network ports",
     CREATE_SERVER: "Create server",
     WAIT_SERVER_ACTIVE: "Wait for server active",
     FINALIZE: "Finalize",
+    CLEANUP_OLD_STORAGE: "Cleanup old storage",
   };
   return labels[name] || name;
 }
@@ -288,11 +290,24 @@ const SnapshotRestoreWizard: React.FC = () => {
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
 
+  // Security groups for restore
+  const [availableSecurityGroups, setAvailableSecurityGroups] = useState<{id: string; name: string; description: string | null}[]>([]);
+  const [selectedSecurityGroupIds, setSelectedSecurityGroupIds] = useState<string[]>([]);
+
+  // Storage cleanup options
+  const [cleanupOldStorage, setCleanupOldStorage] = useState(false);
+  const [deleteSourceSnapshot, setDeleteSourceSnapshot] = useState(false);
+
   // Screen 3: Execute
   const [job, setJob] = useState<RestoreJob | null>(null);
   const [executing, setExecuting] = useState(false);
   const [executeError, setExecuteError] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState("");
+
+  // Failed job actions
+  const [retrying, setRetrying] = useState(false);
+  const [cleaningUp, setCleaningUp] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   // Job history
   const [jobHistory, setJobHistory] = useState<any[]>([]);
@@ -385,12 +400,14 @@ const SnapshotRestoreWizard: React.FC = () => {
   }, []);
 
   // -----------------------------------------------------------------------
-  // Load VMs + quota when tenant changes
+  // Load VMs + quota + security groups when tenant changes
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (!selectedTenantId) {
       setVms([]);
       setQuota(null);
+      setAvailableSecurityGroups([]);
+      setSelectedSecurityGroupIds([]);
       return;
     }
     setLoading(true);
@@ -414,6 +431,29 @@ const SnapshotRestoreWizard: React.FC = () => {
           setQuota(q);
         } catch {
           setQuota(null);
+        }
+
+        // Load security groups for this tenant
+        try {
+          const sgRes = await apiFetch<{ items: { security_group_id: string; security_group_name: string; description: string | null }[] }>(
+            `/security-groups?tenant_name=${encodeURIComponent(tenantName)}&page_size=500`
+          );
+          const sgs = (sgRes.items || []).map((sg) => ({
+            id: sg.security_group_id,
+            name: sg.security_group_name,
+            description: sg.description,
+          }));
+          setAvailableSecurityGroups(sgs);
+          // Auto-select the "default" security group if present
+          const defaultSg = sgs.find((sg) => sg.name === "default");
+          if (defaultSg) {
+            setSelectedSecurityGroupIds([defaultSg.id]);
+          } else {
+            setSelectedSecurityGroupIds([]);
+          }
+        } catch {
+          setAvailableSecurityGroups([]);
+          setSelectedSecurityGroupIds([]);
         }
       } catch (e: any) {
         setError(e.message);
@@ -479,6 +519,15 @@ const SnapshotRestoreWizard: React.FC = () => {
       if (ipStrategy === "MANUAL_IP" && Object.keys(manualIps).length > 0) {
         body.manual_ips = manualIps;
       }
+      if (selectedSecurityGroupIds.length > 0) {
+        body.security_group_ids = selectedSecurityGroupIds;
+      }
+      if (mode === "REPLACE" && cleanupOldStorage) {
+        body.cleanup_old_storage = true;
+      }
+      if (deleteSourceSnapshot) {
+        body.delete_source_snapshot = true;
+      }
       const p = await apiFetch<RestorePlan>("/restore/plan", {
         method: "POST",
         body: JSON.stringify(body),
@@ -489,7 +538,7 @@ const SnapshotRestoreWizard: React.FC = () => {
     } finally {
       setPlanLoading(false);
     }
-  }, [selectedVmId, selectedSnapshotId, selectedTenantId, mode, newVmName, ipStrategy, manualIps]);
+  }, [selectedVmId, selectedSnapshotId, selectedTenantId, mode, newVmName, ipStrategy, manualIps, selectedSecurityGroupIds]);
 
   // Auto-build plan when selections change
   useEffect(() => {
@@ -497,7 +546,7 @@ const SnapshotRestoreWizard: React.FC = () => {
       const timer = setTimeout(buildPlan, 400);
       return () => clearTimeout(timer);
     }
-  }, [screen, selectedSnapshotId, mode, ipStrategy, newVmName, buildPlan]);
+  }, [screen, selectedSnapshotId, mode, ipStrategy, newVmName, selectedSecurityGroupIds, buildPlan]);
 
   // Auto-fetch available IPs when MANUAL_IP is selected and plan is ready
   useEffect(() => {
@@ -599,6 +648,89 @@ const SnapshotRestoreWizard: React.FC = () => {
   };
 
   // -----------------------------------------------------------------------
+  // Cleanup orphaned resources from a failed job
+  // -----------------------------------------------------------------------
+  const cleanupJob = async (deleteVolume: boolean = false) => {
+    if (!job) return;
+    setCleaningUp(true);
+    setActionMessage(null);
+    try {
+      const res = await apiFetch<{ cleaned: any; message: string }>(
+        `/restore/jobs/${job.id}/cleanup`,
+        {
+          method: "POST",
+          body: JSON.stringify({ delete_volume: deleteVolume }),
+        }
+      );
+      setActionMessage(`✅ ${res.message}. Ports cleaned: ${res.cleaned.ports?.length || 0}. Volume: ${res.cleaned.volume || "none"}`);
+    } catch (e: any) {
+      setActionMessage(`❌ Cleanup failed: ${e.message}`);
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
+  // -----------------------------------------------------------------------
+  // Retry a failed job
+  // -----------------------------------------------------------------------
+  const retryJob = async (ipOverride?: string) => {
+    if (!job) return;
+    setRetrying(true);
+    setActionMessage(null);
+    try {
+      const body: any = {};
+      if (job.mode === "REPLACE") {
+        body.confirm_destructive = `DELETE AND RESTORE ${job.vm_name}`;
+      }
+      if (ipOverride) {
+        body.ip_strategy_override = ipOverride;
+      }
+      const res = await apiFetch<{ job_id: string; resumed_from_step: string; message: string }>(
+        `/restore/jobs/${job.id}/retry`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        }
+      );
+      setActionMessage(`🔄 Retry started (job ${res.job_id.slice(0, 8)}…), resuming from: ${res.resumed_from_step}`);
+      // Start polling the new job
+      startPolling(res.job_id);
+    } catch (e: any) {
+      setActionMessage(`❌ Retry failed: ${e.message}`);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  // -----------------------------------------------------------------------
+  // Cleanup orphaned storage from a completed REPLACE-mode restore
+  // -----------------------------------------------------------------------
+  const [cleaningStorage, setCleaningStorage] = useState(false);
+
+  const cleanupStorage = async (deleteOldVolume: boolean, deleteSnapshot: boolean) => {
+    if (!job) return;
+    setCleaningStorage(true);
+    setActionMessage(null);
+    try {
+      const res = await apiFetch<{ result: any; message: string }>(
+        `/restore/jobs/${job.id}/cleanup-storage?delete_old_volume=${deleteOldVolume}&delete_source_snapshot=${deleteSnapshot}`,
+        { method: "POST" }
+      );
+      const r = res.result;
+      const parts: string[] = [];
+      if (r.deleted_volumes?.length) parts.push(`Volumes deleted: ${r.deleted_volumes.length}`);
+      if (r.deleted_snapshots?.length) parts.push(`Snapshots deleted: ${r.deleted_snapshots.length}`);
+      if (r.skipped?.length) parts.push(`Skipped: ${r.skipped.join("; ")}`);
+      if (r.errors?.length) parts.push(`Errors: ${r.errors.join("; ")}`);
+      setActionMessage(`🗑️ ${res.message}. ${parts.join(". ")}`);
+    } catch (e: any) {
+      setActionMessage(`❌ Storage cleanup failed: ${e.message}`);
+    } finally {
+      setCleaningStorage(false);
+    }
+  };
+
+  // -----------------------------------------------------------------------
   // Reset wizard
   // -----------------------------------------------------------------------
   const resetWizard = () => {
@@ -612,6 +744,10 @@ const SnapshotRestoreWizard: React.FC = () => {
     setMode("NEW");
     setIpStrategy("NEW_IPS");
     setNewVmName("");
+    setSelectedSecurityGroupIds([]);
+    setRetrying(false);
+    setCleaningUp(false);
+    setActionMessage(null);
     if (pollingRef.current) clearInterval(pollingRef.current);
   };
 
@@ -1178,6 +1314,97 @@ const SnapshotRestoreWizard: React.FC = () => {
               </div>
             )}
 
+            {/* Security Groups */}
+            {availableSecurityGroups.length > 0 && (
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ fontWeight: 600, display: "block", marginBottom: 8 }}>
+                  Security Groups <span style={{ fontWeight: 400, color: "#888" }}>(optional — select groups to attach to restored VM)</span>
+                </label>
+                <div style={{
+                  maxHeight: 180,
+                  overflowY: "auto",
+                  border: "1px solid #ccc",
+                  borderRadius: 6,
+                  padding: 8,
+                }}>
+                  {availableSecurityGroups.map((sg) => (
+                    <label
+                      key={sg.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "4px 0",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedSecurityGroupIds.includes(sg.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedSecurityGroupIds((prev) => [...prev, sg.id]);
+                          } else {
+                            setSelectedSecurityGroupIds((prev) => prev.filter((id) => id !== sg.id));
+                          }
+                        }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: "0.9rem" }}>{sg.name}</div>
+                        {sg.description && (
+                          <div style={{ fontSize: "0.78rem", color: "#888" }}>{sg.description}</div>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+                {selectedSecurityGroupIds.length > 0 && (
+                  <div style={{ marginTop: 4, fontSize: "0.8rem", color: "#2e7d32" }}>
+                    {selectedSecurityGroupIds.length} security group{selectedSecurityGroupIds.length !== 1 ? "s" : ""} selected
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Post-Restore Storage Cleanup */}
+            <div style={{ marginBottom: 18, padding: 12, background: "#fff8e1", borderRadius: 6, border: "1px solid #ffe082" }}>
+              <label style={{ fontWeight: 600, display: "block", marginBottom: 8, fontSize: "0.9rem" }}>
+                🗑️ Post-Restore Storage Cleanup <span style={{ fontWeight: 400, color: "#888" }}>(optional)</span>
+              </label>
+              <div style={{ fontSize: "0.82rem", color: "#666", marginBottom: 8 }}>
+                After a successful restore, orphaned storage resources may remain. Select what to clean up automatically.
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={cleanupOldStorage}
+                  onChange={(e) => setCleanupOldStorage(e.target.checked)}
+                  disabled={mode !== "REPLACE"}
+                />
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: "0.85rem" }}>Delete original VM's volume</div>
+                  <div style={{ fontSize: "0.75rem", color: "#888" }}>
+                    {mode === "REPLACE"
+                      ? "The old root volume becomes orphaned after the VM is deleted"
+                      : "Only applicable in REPLACE mode"}
+                  </div>
+                </div>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={deleteSourceSnapshot}
+                  onChange={(e) => setDeleteSourceSnapshot(e.target.checked)}
+                />
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: "0.85rem" }}>Delete source snapshot after restore</div>
+                  <div style={{ fontSize: "0.75rem", color: "#888" }}>
+                    Remove the Cinder snapshot used for this restore once complete
+                  </div>
+                </div>
+              </label>
+            </div>
+
             {/* New VM Name */}
             <div style={{ marginBottom: 18 }}>
               <label style={{ fontWeight: 600, display: "block", marginBottom: 8 }}>
@@ -1529,6 +1756,120 @@ const SnapshotRestoreWizard: React.FC = () => {
           </div>
         )}
 
+        {/* Failed job actions: Retry & Cleanup */}
+        {job.status === "FAILED" && (
+          <div style={{
+            padding: 16,
+            background: "#fff3e0",
+            borderRadius: 8,
+            marginBottom: 16,
+            border: "1px solid #ffe0b2",
+          }}>
+            <div style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: 10, color: "#e65100" }}>
+              Recovery Options
+            </div>
+            <div style={{ fontSize: "0.85rem", color: "#555", marginBottom: 12 }}>
+              The restore failed mid-process. You can retry from the failed step (reusing already-created resources)
+              or clean up orphaned resources (ports, volumes) before starting fresh.
+            </div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              {/* Retry with same settings */}
+              <button
+                onClick={() => retryJob()}
+                disabled={retrying || cleaningUp}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: retrying ? "#bbb" : "#1976d2",
+                  color: "#fff",
+                  cursor: retrying ? "not-allowed" : "pointer",
+                  fontSize: "0.88rem",
+                  fontWeight: 600,
+                }}
+              >
+                {retrying ? "Retrying…" : "🔄 Retry from Failed Step"}
+              </button>
+
+              {/* Retry with NEW_IPS (if current strategy was SAME_IPS_OR_FAIL) */}
+              {job.ip_strategy === "SAME_IPS_OR_FAIL" && (
+                <button
+                  onClick={() => retryJob("TRY_SAME_IPS")}
+                  disabled={retrying || cleaningUp}
+                  style={{
+                    padding: "8px 18px",
+                    borderRadius: 6,
+                    border: "1px solid #1976d2",
+                    background: "transparent",
+                    color: "#1976d2",
+                    cursor: retrying ? "not-allowed" : "pointer",
+                    fontSize: "0.88rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  🔄 Retry (allow new IPs if needed)
+                </button>
+              )}
+
+              <div style={{ borderLeft: "1px solid #ddd", margin: "0 4px" }} />
+
+              {/* Cleanup - preserve volume */}
+              <button
+                onClick={() => cleanupJob(false)}
+                disabled={retrying || cleaningUp}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: 6,
+                  border: "1px solid #e65100",
+                  background: "transparent",
+                  color: "#e65100",
+                  cursor: cleaningUp ? "not-allowed" : "pointer",
+                  fontSize: "0.88rem",
+                  fontWeight: 600,
+                }}
+              >
+                {cleaningUp ? "Cleaning…" : "🧹 Cleanup (keep volume)"}
+              </button>
+
+              {/* Cleanup - delete everything */}
+              <button
+                onClick={() => {
+                  if (window.confirm("This will also delete the orphaned volume. Continue?")) {
+                    cleanupJob(true);
+                  }
+                }}
+                disabled={retrying || cleaningUp}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: 6,
+                  border: "1px solid #c62828",
+                  background: "transparent",
+                  color: "#c62828",
+                  cursor: cleaningUp ? "not-allowed" : "pointer",
+                  fontSize: "0.88rem",
+                  fontWeight: 600,
+                }}
+              >
+                🗑️ Cleanup (delete all)
+              </button>
+            </div>
+
+            {/* Action result message */}
+            {actionMessage && (
+              <div style={{
+                padding: 10,
+                background: actionMessage.startsWith("❌") ? "#fce4ec" : actionMessage.startsWith("✅") ? "#e8f5e9" : "#e3f2fd",
+                borderRadius: 6,
+                fontSize: "0.85rem",
+                fontFamily: "monospace",
+              }}>
+                {actionMessage}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Success summary */}
         {job.status === "SUCCEEDED" && job.result_json && (
           <div style={{ padding: 16, background: "#e8f5e9", borderRadius: 8, marginBottom: 16 }}>
@@ -1542,6 +1883,56 @@ const SnapshotRestoreWizard: React.FC = () => {
                 <div><strong>Ports:</strong> {job.result_json.port_ids.join(", ")}</div>
               )}
             </div>
+
+            {/* Post-restore storage cleanup options */}
+            {job.mode === "REPLACE" && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #a5d6a7" }}>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 6 }}>
+                  🗑️ Storage Leftovers
+                </div>
+                <div style={{ fontSize: "0.8rem", color: "#555", marginBottom: 8 }}>
+                  The original VM's volume and/or the source snapshot may still exist. Clean them up to reclaim storage.
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => cleanupStorage(true, false)}
+                    disabled={cleaningStorage}
+                    style={{
+                      padding: "6px 14px", background: "#ef6c00", color: "white",
+                      border: "none", borderRadius: 4, cursor: cleaningStorage ? "wait" : "pointer",
+                      fontSize: "0.8rem", fontWeight: 600,
+                    }}
+                    title="Delete the original VM's orphaned root volume"
+                  >
+                    {cleaningStorage ? "Cleaning…" : "Delete Old Volume"}
+                  </button>
+                  <button
+                    onClick={() => cleanupStorage(false, true)}
+                    disabled={cleaningStorage}
+                    style={{
+                      padding: "6px 14px", background: "#7b1fa2", color: "white",
+                      border: "none", borderRadius: 4, cursor: cleaningStorage ? "wait" : "pointer",
+                      fontSize: "0.8rem", fontWeight: 600,
+                    }}
+                    title="Delete the source Cinder snapshot used for this restore"
+                  >
+                    {cleaningStorage ? "Cleaning…" : "Delete Source Snapshot"}
+                  </button>
+                  <button
+                    onClick={() => cleanupStorage(true, true)}
+                    disabled={cleaningStorage}
+                    style={{
+                      padding: "6px 14px", background: "#c62828", color: "white",
+                      border: "none", borderRadius: 4, cursor: cleaningStorage ? "wait" : "pointer",
+                      fontSize: "0.8rem", fontWeight: 600,
+                    }}
+                    title="Delete both the old volume and the source snapshot"
+                  >
+                    {cleaningStorage ? "Cleaning…" : "Delete Both"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1586,6 +1977,8 @@ const SnapshotRestoreWizard: React.FC = () => {
           const isPast =
             (s === "select" && (screen === "configure" || screen === "execute")) ||
             (s === "configure" && screen === "execute");
+          // Execute tab turns green when the job has completed successfully
+          const isCompleted = s === "execute" && screen === "execute" && job?.status === "SUCCEEDED";
 
           return (
             <div
@@ -1596,8 +1989,8 @@ const SnapshotRestoreWizard: React.FC = () => {
                 textAlign: "center",
                 fontWeight: isActive ? 700 : 500,
                 fontSize: "0.95rem",
-                color: isActive ? "#1976d2" : isPast ? "#4caf50" : "#999",
-                borderBottom: isActive ? "3px solid #1976d2" : isPast ? "3px solid #4caf50" : "3px solid transparent",
+                color: isCompleted ? "#4caf50" : isActive ? "#1976d2" : isPast ? "#4caf50" : "#999",
+                borderBottom: isCompleted ? "3px solid #4caf50" : isActive ? "3px solid #1976d2" : isPast ? "3px solid #4caf50" : "3px solid transparent",
                 cursor: isPast ? "pointer" : "default",
               }}
               onClick={() => {
@@ -1607,7 +2000,7 @@ const SnapshotRestoreWizard: React.FC = () => {
                 }
               }}
             >
-              {isPast ? "✓ " : ""}
+              {isPast || isCompleted ? "✓ " : ""}
               {labels[i]}
             </div>
           );

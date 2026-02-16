@@ -24,7 +24,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Compliance Drift, Capacity Trends, Trendlines, Change Compliance
   - Tenant Risk Heatmap, Tenant Summary
   - Auto-refresh every 30 seconds, Dark/Light mode support
-- **Infrastructure Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs
+- **Infrastructure Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs
 - **Platform Tabs**: Domains, Projects, Flavors, Images, Hypervisors
 - **Management Tabs**: Users (with role assignments), History (change tracking), Audit (compliance), Monitoring (real-time metrics), Restore Audit (restore job history)
 - **History Tab Features**:

@@ -744,3 +744,105 @@ def write_groups(conn, groups: List[Dict[str, Any]], run_id: Optional[int] = Non
         })
     
     return _upsert_with_history(conn, 'groups', records, 'id', run_id)
+
+
+def upsert_security_groups(conn, security_groups: List[Dict[str, Any]], run_id: Optional[int] = None) -> int:
+    """Upsert security groups into the database"""
+    if not security_groups:
+        return 0
+
+    # Get valid project IDs for foreign key validation
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM projects")
+        valid_project_ids = set(row[0] for row in cur.fetchall())
+
+    records = []
+    for sg in security_groups:
+        created_at = sg.get('created_at')
+        updated_at = sg.get('updated_at')
+
+        if created_at and isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            except Exception:
+                created_at = None
+
+        if updated_at and isinstance(updated_at, str):
+            try:
+                updated_at = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+            except Exception:
+                updated_at = None
+
+        project_id = sg.get('tenant_id') or sg.get('project_id')
+        if not project_id or project_id not in valid_project_ids:
+            project_id = None
+
+        records.append({
+            'id': sg.get('id'),
+            'name': sg.get('name'),
+            'description': sg.get('description'),
+            'project_id': project_id,
+            'project_name': sg.get('project_name'),
+            'tenant_name': sg.get('tenant_name'),
+            'domain_id': sg.get('domain_id'),
+            'domain_name': sg.get('domain_name'),
+            'created_at': created_at,
+            'updated_at': updated_at,
+            'raw_json': json.dumps(sg) if isinstance(sg, dict) else sg,
+        })
+
+    return _upsert_with_history(conn, 'security_groups', records, 'id', run_id)
+
+
+def upsert_security_group_rules(conn, rules: List[Dict[str, Any]], run_id: Optional[int] = None) -> int:
+    """Upsert security group rules into the database"""
+    if not rules:
+        return 0
+
+    # Get valid security group IDs for foreign key validation
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM security_groups")
+        valid_sg_ids = set(row[0] for row in cur.fetchall())
+
+    records = []
+    for r in rules:
+        sg_id = r.get('security_group_id')
+        if not sg_id or sg_id not in valid_sg_ids:
+            continue  # Skip rules for unknown security groups
+
+        created_at = r.get('created_at')
+        updated_at = r.get('updated_at')
+
+        if created_at and isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            except Exception:
+                created_at = None
+
+        if updated_at and isinstance(updated_at, str):
+            try:
+                updated_at = datetime.fromisoformat(updated_at.replace('Z', '+00:00'))
+            except Exception:
+                updated_at = None
+
+        records.append({
+            'id': r.get('id'),
+            'security_group_id': sg_id,
+            'direction': r.get('direction'),
+            'ethertype': r.get('ethertype'),
+            'protocol': r.get('protocol'),
+            'port_range_min': r.get('port_range_min'),
+            'port_range_max': r.get('port_range_max'),
+            'remote_ip_prefix': r.get('remote_ip_prefix'),
+            'remote_group_id': r.get('remote_group_id'),
+            'description': r.get('description'),
+            'project_id': r.get('tenant_id') or r.get('project_id'),
+            'created_at': created_at,
+            'updated_at': updated_at,
+            'raw_json': json.dumps(r) if isinstance(r, dict) else r,
+        })
+
+    if not records:
+        return 0
+
+    return _upsert_with_history(conn, 'security_group_rules', records, 'id', run_id)

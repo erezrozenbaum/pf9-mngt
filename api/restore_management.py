@@ -95,6 +95,9 @@ class RestorePlanRequest(BaseModel):
     new_vm_name: Optional[str] = None
     ip_strategy: str = Field(default="NEW_IPS", pattern="^(NEW_IPS|TRY_SAME_IPS|SAME_IPS_OR_FAIL|MANUAL_IP)$")
     manual_ips: Optional[Dict[str, str]] = None  # {network_id: "desired_ip"} for MANUAL_IP strategy
+    security_group_ids: Optional[list] = None  # List of security group UUIDs to attach to restored VM ports
+    cleanup_old_storage: bool = Field(default=False, description="Delete original VM's orphaned volume after REPLACE restore")
+    delete_source_snapshot: bool = Field(default=False, description="Delete the source snapshot after a successful restore")
 
 
 class RestoreExecuteRequest(BaseModel):
@@ -106,6 +109,17 @@ class RestoreExecuteRequest(BaseModel):
 class RestoreCancelRequest(BaseModel):
     """Request to cancel a running restore job"""
     reason: Optional[str] = None
+
+
+class RestoreCleanupRequest(BaseModel):
+    """Request to clean up orphaned resources from a failed restore job"""
+    delete_volume: bool = Field(default=False, description="Also delete the orphaned volume (default: preserve for manual recovery)")
+
+
+class RestoreRetryRequest(BaseModel):
+    """Request to retry a failed restore job from the failed step"""
+    confirm_destructive: Optional[str] = None  # Required for REPLACE mode
+    ip_strategy_override: Optional[str] = Field(default=None, pattern="^(NEW_IPS|TRY_SAME_IPS|SAME_IPS_OR_FAIL|MANUAL_IP)$")
 
 
 # ============================================================================
@@ -354,6 +368,32 @@ class RestoreOpenStackClient:
         if r.status_code not in (200, 204, 404):
             r.raise_for_status()
 
+    def list_ports_by_device(self, session: http_requests.Session, device_id: str) -> list:
+        """List all ports attached to a specific device (VM)."""
+        if not self.neutron_endpoint:
+            raise RuntimeError("Neutron endpoint not discovered")
+        url = f"{self.neutron_endpoint}/v2.0/ports?device_id={device_id}"
+        r = session.get(url, timeout=60)
+        r.raise_for_status()
+        return r.json().get("ports", [])
+
+    def list_ports_by_network_and_ip(self, session: http_requests.Session, network_id: str, ip_address: str) -> list:
+        """List ports matching a specific network+IP combination."""
+        if not self.neutron_endpoint:
+            raise RuntimeError("Neutron endpoint not discovered")
+        url = (f"{self.neutron_endpoint}/v2.0/ports"
+               f"?network_id={network_id}&fixed_ips=ip_address%3D{ip_address}")
+        r = session.get(url, timeout=60)
+        r.raise_for_status()
+        return r.json().get("ports", [])
+
+    def delete_volume(self, session: http_requests.Session, project_id: str, volume_id: str):
+        """Delete a volume by ID."""
+        url = self._cinder_url(project_id, f"/volumes/{volume_id}")
+        r = session.delete(url, timeout=60)
+        if r.status_code not in (200, 204, 404):
+            r.raise_for_status()
+
     # --- Nova operations ---
 
     def create_server(
@@ -479,6 +519,22 @@ class RestoreOpenStackClient:
         r.raise_for_status()
         return r.json().get("snapshot", {})
 
+    def delete_snapshot(self, session: http_requests.Session, project_id: str, snapshot_id: str):
+        """Delete a Cinder snapshot by ID."""
+        url = self._cinder_url(project_id, f"/snapshots/{snapshot_id}")
+        r = session.delete(url, timeout=60)
+        if r.status_code not in (200, 202, 204, 404):
+            r.raise_for_status()
+
+    def get_volume_detail(self, session: http_requests.Session, project_id: str, volume_id: str) -> dict:
+        """Get volume details including attachment info."""
+        url = self._cinder_url(project_id, f"/volumes/{volume_id}")
+        r = session.get(url, timeout=60)
+        if r.status_code == 404:
+            return {}
+        r.raise_for_status()
+        return r.json().get("volume", {})
+
 
 # ============================================================================
 # Restore Planner — builds the action plan from DB + live state
@@ -544,7 +600,11 @@ class RestorePlanner:
 
             # 9. Build action steps
             actions = self._build_actions(
-                boot_mode, req.mode, network_plan, new_vm_name
+                boot_mode, req.mode, network_plan, new_vm_name,
+                cleanup_old_storage=req.cleanup_old_storage,
+                delete_source_snapshot=req.delete_source_snapshot,
+                source_volume_id=source_volume.get("id") if source_volume else None,
+                snapshot_id=req.restore_point_id,
             )
 
             # 10. Build warnings
@@ -612,6 +672,9 @@ class RestorePlanner:
                     "size_gb": source_volume.get("size_gb") if source_volume else None,
                     "volume_type": source_volume.get("volume_type") if source_volume else None,
                 },
+                "security_group_ids": req.security_group_ids or [],
+                "cleanup_old_storage": req.cleanup_old_storage,
+                "delete_source_snapshot": req.delete_source_snapshot,
             }
 
             # Store the plan as a PLANNED job in DB
@@ -801,7 +864,9 @@ class RestorePlanner:
         return plan
 
     def _build_actions(
-        self, boot_mode: str, mode: str, network_plan: list, new_name: str
+        self, boot_mode: str, mode: str, network_plan: list, new_name: str,
+        cleanup_old_storage: bool = False, delete_source_snapshot: bool = False,
+        source_volume_id: str = None, snapshot_id: str = None,
     ) -> list:
         actions = [
             {"step": "VALIDATE_LIVE_STATE", "details": {"description": "Verify VM and snapshot still exist in OpenStack"}},
@@ -818,6 +883,16 @@ class RestorePlanner:
                 "step": "WAIT_VM_DELETED",
                 "details": {"description": "Wait for existing VM to be fully removed"},
             })
+            # Explicitly clean up old ports to release IPs before creating new ones
+            old_port_ids = [n.get("original_port_id") for n in network_plan if n.get("original_port_id")]
+            if old_port_ids:
+                actions.append({
+                    "step": "CLEANUP_OLD_PORTS",
+                    "details": {
+                        "description": f"Release {len(old_port_ids)} old port(s) to free IP addresses",
+                        "port_ids": old_port_ids,
+                    },
+                })
 
         if boot_mode == "BOOT_FROM_VOLUME":
             actions.append({
@@ -851,6 +926,24 @@ class RestorePlanner:
             "step": "FINALIZE",
             "details": {"description": "Record results and update audit trail"},
         })
+
+        # Optional post-restore storage cleanup
+        storage_items = []
+        if cleanup_old_storage and mode == "REPLACE" and source_volume_id:
+            storage_items.append(f"old volume {source_volume_id[:12]}…")
+        if delete_source_snapshot and snapshot_id:
+            storage_items.append(f"source snapshot {snapshot_id[:12]}…")
+        if storage_items:
+            actions.append({
+                "step": "CLEANUP_OLD_STORAGE",
+                "details": {
+                    "description": f"Delete orphaned storage: {', '.join(storage_items)}",
+                    "delete_old_volume": cleanup_old_storage and mode == "REPLACE",
+                    "old_volume_id": source_volume_id if (cleanup_old_storage and mode == "REPLACE") else None,
+                    "delete_source_snapshot": delete_source_snapshot,
+                    "source_snapshot_id": snapshot_id if delete_source_snapshot else None,
+                },
+            })
 
         return actions
 
@@ -1109,6 +1202,11 @@ class RestoreExecutor:
                 self._step_wait_vm_deleted, session, plan["vm"]["id"]
             )
 
+        elif step_name == "CLEANUP_OLD_PORTS":
+            return await asyncio.to_thread(
+                self._step_cleanup_old_ports, session, plan
+            )
+
         elif step_name == "CREATE_VOLUME_FROM_SNAPSHOT":
             result = await asyncio.to_thread(
                 self._step_create_volume, session, project_id, plan
@@ -1143,6 +1241,11 @@ class RestoreExecutor:
         elif step_name == "FINALIZE":
             return {"message": "Restore completed successfully", "resources": resources}
 
+        elif step_name == "CLEANUP_OLD_STORAGE":
+            return await asyncio.to_thread(
+                self._step_cleanup_old_storage, session, project_id, plan
+            )
+
         else:
             return {"message": f"Unknown step {step_name}, skipped"}
 
@@ -1176,6 +1279,156 @@ class RestoreExecutor:
         self.os_client.wait_server_deleted(session, vm_id)
         return {"vm_deleted": True}
 
+    def _step_cleanup_old_ports(self, session, plan) -> dict:
+        """
+        Explicitly delete old ports from the original VM to free their IP addresses.
+        In REPLACE mode, Nova *should* auto-delete ports when the VM is deleted, but
+        this is not always immediate (race condition) or guaranteed (externally-created ports).
+        This step ensures IPs are released before we try to recreate ports.
+        """
+        network_plan = plan.get("network_plan", [])
+        vm_id = plan.get("vm", {}).get("id", "")
+        cleaned = []
+        skipped = []
+        force_cleaned = []
+
+        # Strategy 1: Delete original ports listed in the network plan
+        for net in network_plan:
+            port_id = net.get("original_port_id")
+            if not port_id:
+                continue
+            try:
+                self.os_client.delete_port(session, port_id)
+                cleaned.append(port_id)
+                logger.info(f"Cleaned up old port {port_id}")
+            except Exception as e:
+                # Port may already be gone (auto-deleted by Nova) — that's fine
+                skipped.append({"port_id": port_id, "reason": str(e)})
+                logger.debug(f"Old port {port_id} already gone or inaccessible: {e}")
+
+        # Strategy 2: Check for any remaining ports attached to the deleted VM
+        if vm_id:
+            try:
+                remaining_ports = self.os_client.list_ports_by_device(session, vm_id)
+                for port in remaining_ports:
+                    pid = port.get("id")
+                    if pid and pid not in cleaned:
+                        try:
+                            self.os_client.delete_port(session, pid)
+                            force_cleaned.append(pid)
+                            logger.info(f"Force-cleaned orphan port {pid} from deleted VM")
+                        except Exception as e:
+                            logger.warning(f"Failed to force-clean port {pid}: {e}")
+            except Exception as e:
+                logger.debug(f"Could not list ports for device {vm_id}: {e}")
+
+        # Strategy 3: For SAME_IPS_OR_FAIL, also check if the specific IPs are held by
+        # orphan ports (ports with no device_id) and clean those too
+        ip_strategy = plan.get("ip_strategy", "")
+        if ip_strategy in ("SAME_IPS_OR_FAIL", "TRY_SAME_IPS"):
+            for net in network_plan:
+                ip_addr = net.get("requested_ip") or net.get("original_fixed_ip")
+                net_id = net.get("network_id")
+                if not ip_addr or not net_id:
+                    continue
+                try:
+                    blocking_ports = self.os_client.list_ports_by_network_and_ip(
+                        session, net_id, ip_addr
+                    )
+                    for port in blocking_ports:
+                        pid = port.get("id")
+                        device = port.get("device_id", "")
+                        # Only delete if port has no active device (orphaned)
+                        if pid and not device and pid not in cleaned and pid not in force_cleaned:
+                            try:
+                                self.os_client.delete_port(session, pid)
+                                force_cleaned.append(pid)
+                                logger.info(f"Cleaned orphan port {pid} holding IP {ip_addr}")
+                            except Exception as e:
+                                logger.warning(f"Failed to clean port {pid} for IP {ip_addr}: {e}")
+                except Exception as e:
+                    logger.debug(f"Could not check ports for IP {ip_addr}: {e}")
+
+        # Brief pause to let Neutron fully release the IPs
+        if cleaned or force_cleaned:
+            time.sleep(3)
+
+        return {
+            "cleaned_ports": cleaned,
+            "force_cleaned_ports": force_cleaned,
+            "already_gone": [s["port_id"] for s in skipped],
+        }
+
+    def _step_cleanup_old_storage(self, session, project_id, plan) -> dict:
+        """
+        Post-restore cleanup of orphaned storage resources:
+        - The original VM's root volume (orphaned after VM deletion in REPLACE mode)
+        - The source Cinder snapshot (optionally, if caller requested)
+        This step runs after FINALIZE so a failure here does NOT fail the restore itself.
+        """
+        result = {"deleted_volumes": [], "deleted_snapshots": [], "errors": [], "skipped": []}
+
+        if RESTORE_DRY_RUN:
+            result["dry_run"] = True
+            return result
+
+        # Find the action details for this step
+        action_details = {}
+        for action in plan.get("actions", []):
+            if action.get("step") == "CLEANUP_OLD_STORAGE":
+                action_details = action.get("details", {})
+                break
+
+        # --- Delete the original VM's orphaned volume ---
+        if action_details.get("delete_old_volume"):
+            old_vol_id = action_details.get("old_volume_id") or plan.get("source_volume", {}).get("id")
+            if old_vol_id:
+                try:
+                    # Verify the volume is not attached to anything before deleting
+                    vol = self.os_client.get_volume_detail(session, project_id, old_vol_id)
+                    if not vol:
+                        result["skipped"].append(f"Volume {old_vol_id} not found (already deleted?)")
+                    elif vol.get("attachments"):
+                        result["skipped"].append(
+                            f"Volume {old_vol_id} still attached — skipping to prevent data loss"
+                        )
+                    elif vol.get("status") in ("in-use",):
+                        result["skipped"].append(
+                            f"Volume {old_vol_id} is in-use — skipping to prevent data loss"
+                        )
+                    else:
+                        self.os_client.delete_volume(session, project_id, old_vol_id)
+                        result["deleted_volumes"].append(old_vol_id)
+                        logger.info(f"Deleted orphaned original volume {old_vol_id}")
+                except Exception as e:
+                    msg = f"Failed to delete old volume {old_vol_id}: {e}"
+                    result["errors"].append(msg)
+                    logger.warning(msg)
+
+        # --- Delete the source snapshot ---
+        if action_details.get("delete_source_snapshot"):
+            snap_id = action_details.get("source_snapshot_id") or plan.get("restore_point", {}).get("id")
+            if snap_id:
+                try:
+                    snap = self.os_client.get_snapshot_detail(session, project_id, snap_id)
+                    snap_status = snap.get("status", "")
+                    if not snap or snap_status == "":
+                        result["skipped"].append(f"Snapshot {snap_id} not found (already deleted?)")
+                    elif snap_status != "available":
+                        result["skipped"].append(
+                            f"Snapshot {snap_id} status is '{snap_status}' — skipping delete"
+                        )
+                    else:
+                        self.os_client.delete_snapshot(session, project_id, snap_id)
+                        result["deleted_snapshots"].append(snap_id)
+                        logger.info(f"Deleted source snapshot {snap_id}")
+                except Exception as e:
+                    msg = f"Failed to delete snapshot {snap_id}: {e}"
+                    result["errors"].append(msg)
+                    logger.warning(msg)
+
+        return result
+
     def _step_create_volume(self, session, project_id, plan) -> dict:
         snapshot_id = plan["restore_point"]["id"]
         size_gb = plan["restore_point"].get("size_gb") or plan.get("source_volume", {}).get("size_gb") or 20
@@ -1200,6 +1453,8 @@ class RestoreExecutor:
         network_plan = plan.get("network_plan", [])
         port_ids = []
         port_details = []
+        max_ip_retries = 5
+        ip_retry_delay = 3  # seconds between retries
 
         for net in network_plan:
             if not net.get("network_id"):
@@ -1207,20 +1462,34 @@ class RestoreExecutor:
 
             fixed_ip = None
             if net.get("will_request_fixed_ip") and net.get("requested_ip"):
-                # Check if IP is available
-                ip_free = self.os_client.check_ip_available(
-                    session, net["network_id"], net["requested_ip"]
-                )
-                if ip_free:
+                # Retry loop: IP may still be releasing from recently-deleted port
+                ip_available = False
+                for attempt in range(1, max_ip_retries + 1):
+                    ip_free = self.os_client.check_ip_available(
+                        session, net["network_id"], net["requested_ip"]
+                    )
+                    if ip_free:
+                        ip_available = True
+                        break
+                    if attempt < max_ip_retries:
+                        logger.info(
+                            f"IP {net['requested_ip']} not yet available on "
+                            f"{net.get('network_name', net['network_id'])} "
+                            f"(attempt {attempt}/{max_ip_retries}), waiting {ip_retry_delay}s..."
+                        )
+                        time.sleep(ip_retry_delay)
+
+                if ip_available:
                     fixed_ip = net["requested_ip"]
                 elif plan.get("ip_strategy") == "SAME_IPS_OR_FAIL":
                     raise RuntimeError(
                         f"IP {net['requested_ip']} is not available on network "
-                        f"{net.get('network_name', net['network_id'])}"
+                        f"{net.get('network_name', net['network_id'])} "
+                        f"(checked {max_ip_retries} times over {max_ip_retries * ip_retry_delay}s)"
                     )
                 else:
                     logger.warning(
-                        f"IP {net['requested_ip']} not available, allocating new IP"
+                        f"IP {net['requested_ip']} not available after retries, allocating new IP"
                     )
 
             if RESTORE_DRY_RUN:
@@ -1228,11 +1497,13 @@ class RestoreExecutor:
                 port_details.append({"dry_run": True, "network_id": net["network_id"]})
                 continue
 
+            security_groups = plan.get("security_group_ids") or None
             port = self.os_client.create_port(
                 session,
                 network_id=net["network_id"],
                 subnet_id=net.get("subnet_id"),
                 fixed_ip=fixed_ip,
+                security_groups=security_groups,
                 project_id=project_id,
             )
             port_ids.append(port["id"])
@@ -1991,6 +2262,430 @@ def setup_restore_routes(app, db_conn_fn):
             return {"job_id": job_id, "status": "CANCELED", "message": "Job cancellation requested"}
         finally:
             conn.close()
+
+    # ------------------------------------------------------------------
+    # POST /restore/jobs/{job_id}/cleanup  — clean up orphaned resources
+    # ------------------------------------------------------------------
+    @app.post("/restore/jobs/{job_id}/cleanup", tags=["Snapshot Restore"])
+    async def cleanup_restore_job(
+        job_id: str,
+        req: RestoreCleanupRequest = None,
+        current_user: User = Depends(get_current_user),
+        _perm: bool = Depends(require_permission("restore", "admin")),
+    ):
+        """
+        Clean up orphaned OpenStack resources from a failed restore job.
+        Deletes ports and optionally volumes that were created before the failure.
+        """
+        if not RESTORE_ENABLED:
+            raise HTTPException(503, "Restore feature is not enabled")
+
+        conn = db_conn_fn()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (job_id,))
+                job = cur.fetchone()
+                if not job:
+                    raise HTTPException(404, f"Restore job {job_id} not found")
+                if job["status"] not in ("FAILED", "CANCELED", "INTERRUPTED"):
+                    raise HTTPException(400, f"Can only cleanup jobs in FAILED/CANCELED/INTERRUPTED status, got '{job['status']}'")
+
+                # Load step results to find created resources
+                cur.execute(
+                    "SELECT * FROM restore_job_steps WHERE job_id = %s ORDER BY step_order",
+                    (job_id,),
+                )
+                steps = cur.fetchall()
+        finally:
+            conn.close()
+
+        plan = job["plan_json"]
+        if isinstance(plan, str):
+            plan = json.loads(plan)
+
+        project_id = job["project_id"]
+        delete_volume = req.delete_volume if req else False
+
+        # Extract resources from step results
+        resources_to_clean = {"volume_id": None, "port_ids": [], "server_id": None}
+        for step in steps:
+            if step["status"] != "SUCCEEDED":
+                continue
+            details = step.get("details_json") or {}
+            if isinstance(details, str):
+                details = json.loads(details)
+            if step["step_name"] == "CREATE_VOLUME_FROM_SNAPSHOT":
+                resources_to_clean["volume_id"] = details.get("volume_id")
+            elif step["step_name"] == "CREATE_PORTS":
+                resources_to_clean["port_ids"] = details.get("port_ids") or []
+            elif step["step_name"] == "CREATE_SERVER":
+                resources_to_clean["server_id"] = details.get("server_id")
+
+        # Authenticate and clean
+        try:
+            session = os_client.authenticate_service_user(project_id)
+        except Exception as e:
+            raise HTTPException(500, f"Failed to authenticate for cleanup: {e}")
+
+        cleaned = {"ports": [], "volume": None, "server": None, "errors": []}
+
+        # Clean server if it was created
+        if resources_to_clean["server_id"]:
+            try:
+                os_client.delete_server(session, resources_to_clean["server_id"])
+                cleaned["server"] = resources_to_clean["server_id"]
+            except Exception as e:
+                cleaned["errors"].append(f"Server {resources_to_clean['server_id']}: {e}")
+
+        # Clean ports
+        for port_id in resources_to_clean["port_ids"]:
+            try:
+                os_client.delete_port(session, port_id)
+                cleaned["ports"].append(port_id)
+            except Exception as e:
+                cleaned["errors"].append(f"Port {port_id}: {e}")
+
+        # Clean volume
+        if resources_to_clean["volume_id"]:
+            if delete_volume:
+                try:
+                    os_client.delete_volume(session, project_id, resources_to_clean["volume_id"])
+                    cleaned["volume"] = resources_to_clean["volume_id"]
+                except Exception as e:
+                    cleaned["errors"].append(f"Volume {resources_to_clean['volume_id']}: {e}")
+            else:
+                cleaned["volume"] = f"{resources_to_clean['volume_id']} (preserved — use delete_volume=true to remove)"
+
+        # Update job status to reflect cleanup
+        conn2 = db_conn_fn()
+        try:
+            with conn2.cursor() as cur:
+                cur.execute(
+                    """UPDATE restore_jobs
+                       SET failure_reason = COALESCE(failure_reason, '') || %s
+                       WHERE id = %s""",
+                    (f"\n[Cleanup by {current_user.username}: {json.dumps(cleaned)}]", job_id),
+                )
+            conn2.commit()
+        finally:
+            conn2.close()
+
+        return {
+            "job_id": job_id,
+            "cleaned": cleaned,
+            "message": "Cleanup completed" if not cleaned["errors"] else "Cleanup completed with some errors",
+        }
+
+    # ------------------------------------------------------------------
+    # POST /restore/jobs/{job_id}/cleanup-storage  — delete old volume / snapshot
+    # ------------------------------------------------------------------
+    @app.post("/restore/jobs/{job_id}/cleanup-storage", tags=["Snapshot Restore"])
+    async def cleanup_restore_storage(
+        job_id: str,
+        delete_old_volume: bool = True,
+        delete_source_snapshot: bool = False,
+        current_user: User = Depends(get_current_user),
+        _perm: bool = Depends(require_permission("restore", "admin")),
+    ):
+        """
+        Delete orphaned storage left behind by a completed REPLACE-mode restore:
+        - The original VM's root volume (orphaned after VM deletion)
+        - The source Cinder snapshot used for the restore (optional)
+        """
+        if not RESTORE_ENABLED:
+            raise HTTPException(503, "Restore feature is not enabled")
+
+        conn = db_conn_fn()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (job_id,))
+                job = cur.fetchone()
+                if not job:
+                    raise HTTPException(404, f"Restore job {job_id} not found")
+                if job["status"] != "COMPLETED":
+                    raise HTTPException(400, f"Storage cleanup is only for COMPLETED jobs, got '{job['status']}'")
+        finally:
+            conn.close()
+
+        plan = job["plan_json"]
+        if isinstance(plan, str):
+            plan = json.loads(plan)
+
+        project_id = job["project_id"]
+        mode = plan.get("mode", "NEW")
+        if mode != "REPLACE" and delete_old_volume:
+            raise HTTPException(400, "Old volume cleanup only applies to REPLACE mode restores")
+
+        result = {"deleted_volumes": [], "deleted_snapshots": [], "errors": [], "skipped": []}
+
+        # Authenticate
+        try:
+            session = os_client.authenticate_service_user(project_id)
+        except Exception as e:
+            raise HTTPException(500, f"Failed to authenticate for storage cleanup: {e}")
+
+        # Delete old volume (the source volume the snapshot was taken from)
+        if delete_old_volume:
+            old_vol_id = plan.get("source_volume", {}).get("id")
+            if old_vol_id:
+                try:
+                    vol = os_client.get_volume_detail(session, project_id, old_vol_id)
+                    if not vol:
+                        result["skipped"].append(f"Volume {old_vol_id} not found (already deleted?)")
+                    elif vol.get("attachments"):
+                        result["skipped"].append(f"Volume {old_vol_id} still attached — skipping")
+                    elif vol.get("status") == "in-use":
+                        result["skipped"].append(f"Volume {old_vol_id} is in-use — skipping")
+                    else:
+                        os_client.delete_volume(session, project_id, old_vol_id)
+                        result["deleted_volumes"].append(old_vol_id)
+                except Exception as e:
+                    result["errors"].append(f"Volume {old_vol_id}: {e}")
+            else:
+                result["skipped"].append("No source volume ID in restore plan")
+
+        # Delete source snapshot
+        if delete_source_snapshot:
+            snap_id = plan.get("restore_point", {}).get("id")
+            if snap_id:
+                try:
+                    snap = os_client.get_snapshot_detail(session, project_id, snap_id)
+                    snap_status = snap.get("status", "")
+                    if not snap or not snap_status:
+                        result["skipped"].append(f"Snapshot {snap_id} not found")
+                    elif snap_status != "available":
+                        result["skipped"].append(f"Snapshot {snap_id} status '{snap_status}' — skipping")
+                    else:
+                        os_client.delete_snapshot(session, project_id, snap_id)
+                        result["deleted_snapshots"].append(snap_id)
+                except Exception as e:
+                    result["errors"].append(f"Snapshot {snap_id}: {e}")
+            else:
+                result["skipped"].append("No snapshot ID in restore plan")
+
+        # Audit log
+        conn2 = db_conn_fn()
+        try:
+            with conn2.cursor() as cur:
+                cur.execute(
+                    """UPDATE restore_jobs
+                       SET failure_reason = COALESCE(failure_reason, '') || %s
+                       WHERE id = %s""",
+                    (f"\n[Storage cleanup by {current_user.username}: {json.dumps(result)}]", job_id),
+                )
+            conn2.commit()
+        finally:
+            conn2.close()
+
+        return {
+            "job_id": job_id,
+            "result": result,
+            "message": "Storage cleanup completed" if not result["errors"] else "Storage cleanup completed with errors",
+        }
+
+    # ------------------------------------------------------------------
+    # POST /restore/jobs/{job_id}/retry  — retry a failed job
+    # ------------------------------------------------------------------
+    @app.post("/restore/jobs/{job_id}/retry", tags=["Snapshot Restore"])
+    async def retry_restore_job(
+        job_id: str,
+        req: RestoreRetryRequest = None,
+        current_user: User = Depends(get_current_user),
+        _perm: bool = Depends(require_permission("restore", "admin")),
+    ):
+        """
+        Retry a failed restore job. Creates a new job that resumes from the
+        failed step, reusing resources (volumes, ports) already created.
+        Optionally override ip_strategy (e.g., switch from SAME_IPS_OR_FAIL to TRY_SAME_IPS).
+        """
+        if not RESTORE_ENABLED:
+            raise HTTPException(503, "Restore feature is not enabled")
+
+        conn = db_conn_fn()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (job_id,))
+                job = cur.fetchone()
+                if not job:
+                    raise HTTPException(404, f"Restore job {job_id} not found")
+                if job["status"] not in ("FAILED",):
+                    raise HTTPException(400, f"Can only retry FAILED jobs, got '{job['status']}'")
+
+                # REPLACE mode requires destructive confirmation
+                if job["mode"] == "REPLACE":
+                    expected = f"DELETE AND RESTORE {job['vm_name']}"
+                    confirm = req.confirm_destructive if req else None
+                    if confirm != expected:
+                        raise HTTPException(
+                            400,
+                            f"Replace mode requires confirmation. "
+                            f"Set confirm_destructive to: '{expected}'"
+                        )
+                    if current_user.role not in ("superadmin",):
+                        raise HTTPException(403, "Only superadmin can retry REPLACE mode restores")
+
+                # Load steps to find the failed step and any existing resources
+                cur.execute(
+                    "SELECT * FROM restore_job_steps WHERE job_id = %s ORDER BY step_order",
+                    (job_id,),
+                )
+                steps = cur.fetchall()
+        finally:
+            conn.close()
+
+        plan = job["plan_json"]
+        if isinstance(plan, str):
+            plan = json.loads(plan)
+
+        # Apply ip_strategy override
+        if req and req.ip_strategy_override:
+            plan["ip_strategy"] = req.ip_strategy_override
+            # Update network plan entries
+            for net in plan.get("network_plan", []):
+                ip = net.get("original_fixed_ip")
+                if req.ip_strategy_override == "NEW_IPS":
+                    net["will_request_fixed_ip"] = False
+                    net["requested_ip"] = None
+                    net["note"] = "Allocating new IP (auto-assign) [retry override]"
+                elif req.ip_strategy_override == "TRY_SAME_IPS" and ip:
+                    net["will_request_fixed_ip"] = True
+                    net["requested_ip"] = ip
+                    net["note"] = f"Will attempt to assign {ip} [retry override, fallback to new IP]"
+
+        # Collect resources already created by successful steps
+        existing_resources = {"volume_id": None, "port_ids": [], "server_id": None}
+        failed_step_order = None
+        for step in steps:
+            details = step.get("details_json") or {}
+            if isinstance(details, str):
+                details = json.loads(details)
+
+            if step["status"] == "SUCCEEDED":
+                if step["step_name"] == "CREATE_VOLUME_FROM_SNAPSHOT":
+                    existing_resources["volume_id"] = details.get("volume_id")
+                elif step["step_name"] == "CREATE_PORTS":
+                    existing_resources["port_ids"] = details.get("port_ids") or []
+                elif step["step_name"] == "CREATE_SERVER":
+                    existing_resources["server_id"] = details.get("server_id")
+            elif step["status"] == "FAILED":
+                failed_step_order = step["step_order"]
+                break
+
+        if failed_step_order is None:
+            raise HTTPException(400, "Could not determine which step failed")
+
+        # Build retry actions: only include steps from the failed one onwards
+        retry_actions = []
+        for step in steps:
+            if step["step_order"] >= failed_step_order:
+                retry_actions.append({
+                    "step": step["step_name"],
+                    "details": step.get("details_json") or {},
+                })
+
+        # Create a new job for the retry
+        new_job_id = str(uuid.uuid4())
+        conn2 = db_conn_fn()
+        try:
+            with conn2.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO restore_jobs
+                       (id, created_by, project_id, project_name, vm_id, vm_name,
+                        restore_point_id, restore_point_name, mode, ip_strategy,
+                        requested_name, boot_mode, status, plan_json, executed_by)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s)""",
+                    (
+                        new_job_id, current_user.username,
+                        job["project_id"], job["project_name"],
+                        job["vm_id"], job["vm_name"],
+                        job["restore_point_id"], job["restore_point_name"],
+                        job["mode"], plan.get("ip_strategy", job["ip_strategy"]),
+                        job["requested_name"], job["boot_mode"],
+                        Json(plan), current_user.username,
+                    ),
+                )
+
+                for idx, action in enumerate(retry_actions):
+                    cur.execute(
+                        """INSERT INTO restore_job_steps
+                           (job_id, step_order, step_name, status, details_json)
+                           VALUES (%s, %s, %s, 'PENDING', %s)""",
+                        (new_job_id, idx + 1, action["step"], Json(action.get("details", {}))),
+                    )
+
+                # Link retry to original job
+                cur.execute(
+                    """UPDATE restore_jobs
+                       SET failure_reason = COALESCE(failure_reason, '') || %s
+                       WHERE id = %s""",
+                    (f"\n[Retried as job {new_job_id} by {current_user.username}]", job_id),
+                )
+            conn2.commit()
+        finally:
+            conn2.close()
+
+        # Launch execution with pre-existing resources
+        async def retry_with_resources():
+            """Custom execution that pre-populates resources from the original job."""
+            conn3 = db_conn_fn()
+            try:
+                executor._update_job_status(conn3, new_job_id, "RUNNING")
+            finally:
+                conn3.close()
+
+            try:
+                session = os_client.authenticate_service_user(job["project_id"])
+            except Exception as e:
+                executor._with_conn(lambda c: executor._fail_job(c, new_job_id, f"Authentication failed: {e}"))
+                return
+
+            # Start with existing resources
+            created_resources = {
+                "volume_id": existing_resources["volume_id"],
+                "port_ids": list(existing_resources["port_ids"]),
+                "server_id": existing_resources["server_id"],
+            }
+
+            retry_steps = executor._with_conn(lambda c: executor._load_steps(c, new_job_id))
+
+            for step in retry_steps:
+                step_name = step["step_name"]
+                step_id = step["id"]
+
+                executor._with_conn(lambda c: executor._update_step_status(c, new_job_id, step_id, "RUNNING"))
+                executor._with_conn(lambda c: executor._heartbeat(c, new_job_id))
+
+                try:
+                    result = await executor._execute_step(
+                        session, job["project_id"], plan, step_name, created_resources, job
+                    )
+                    executor._with_conn(
+                        lambda c: executor._update_step_status(c, new_job_id, step_id, "SUCCEEDED", details=result)
+                    )
+                except Exception as e:
+                    logger.error(f"Retry step {step_name} failed for job {new_job_id}: {e}")
+                    executor._with_conn(
+                        lambda c: executor._update_step_status(c, new_job_id, step_id, "FAILED", error=str(e))
+                    )
+                    await executor._cleanup_resources(session, job["project_id"], created_resources)
+                    executor._with_conn(
+                        lambda c: executor._fail_job(c, new_job_id, f"Step {step_name} failed: {e}")
+                    )
+                    return
+
+            executor._with_conn(lambda c: executor._complete_job(c, new_job_id, created_resources))
+
+        asyncio.create_task(retry_with_resources())
+
+        return {
+            "job_id": new_job_id,
+            "original_job_id": job_id,
+            "status": "PENDING",
+            "resumed_from_step": steps[failed_step_order - 1]["step_name"] if failed_step_order else None,
+            "reused_resources": {k: v for k, v in existing_resources.items() if v},
+            "ip_strategy": plan.get("ip_strategy", job["ip_strategy"]),
+            "message": "Retry execution started. Poll /restore/jobs/{job_id} for progress.",
+        }
 
     # ------------------------------------------------------------------
     # GET /restore/config  — feature flag + configuration status
