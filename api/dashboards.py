@@ -22,6 +22,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import glob
 from auth import require_permission
+from db_pool import get_connection
 
 
 
@@ -34,27 +35,26 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 async def get_rvtools_last_run():
     """Return the timestamp and details of the last inventory / RVTools data collection."""
     try:
-        conn = get_db_connection()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT id, started_at, finished_at, status, source, duration_seconds
-                FROM inventory_runs
-                WHERE status = 'success'
-                ORDER BY finished_at DESC
-                LIMIT 1
-            """)
-            row = cur.fetchone()
-        conn.close()
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, started_at, finished_at, status, source, duration_seconds
+                    FROM inventory_runs
+                    WHERE status = 'success'
+                    ORDER BY finished_at DESC
+                    LIMIT 1
+                """)
+                row = cur.fetchone()
 
-        if row:
-            return {
-                "last_run": row["finished_at"].isoformat() if row["finished_at"] else row["started_at"].isoformat(),
-                "started_at": row["started_at"].isoformat() if row["started_at"] else None,
-                "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
-                "source": row["source"],
-                "duration_seconds": row["duration_seconds"],
-                "run_id": row["id"],
-            }
+            if row:
+                return {
+                    "last_run": row["finished_at"].isoformat() if row["finished_at"] else row["started_at"].isoformat(),
+                    "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+                    "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+                    "source": row["source"],
+                    "duration_seconds": row["duration_seconds"],
+                    "run_id": row["id"],
+                }
     except Exception as e:
         logger.warning(f"Could not query inventory_runs: {e}")
 
@@ -70,7 +70,7 @@ async def get_rvtools_last_run():
 
 
 def get_db_connection():
-    """Get PostgreSQL database connection"""
+    """DEPRECATED: Use db_pool.get_connection() instead."""
     return psycopg2.connect(
         host=os.getenv("PF9_DB_HOST", "db"),
         port=int(os.getenv("PF9_DB_PORT", "5432")),
@@ -161,24 +161,23 @@ def _calculate_metrics_summary(metrics_data: Optional[Dict[str, Any]]) -> Dict[s
 def _get_vm_count_by_host() -> Dict[str, int]:
     """Get VM counts grouped by hypervisor hostname."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
-            """
-            SELECT hypervisor_hostname, COUNT(*) AS vm_count
-            FROM servers
-            WHERE hypervisor_hostname IS NOT NULL
-            GROUP BY hypervisor_hostname
-            """
-        )
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        return {
-            _normalize_host_key(row["hypervisor_hostname"]): int(row["vm_count"])
-            for row in rows
-            if row["hypervisor_hostname"]
-        }
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                """
+                SELECT hypervisor_hostname, COUNT(*) AS vm_count
+                FROM servers
+                WHERE hypervisor_hostname IS NOT NULL
+                GROUP BY hypervisor_hostname
+                """
+            )
+            rows = cursor.fetchall()
+            cursor.close()
+            return {
+                _normalize_host_key(row["hypervisor_hostname"]): int(row["vm_count"])
+                for row in rows
+                if row["hypervisor_hostname"]
+            }
     except Exception:
         return {}
 
@@ -273,172 +272,169 @@ def _aggregate_vm_metrics_by_host(metrics_data: Optional[Dict[str, Any]]) -> Dic
 def _get_hypervisor_display_map() -> Dict[str, str]:
     """Map hypervisor hostnames to display names."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
-            """
-            SELECT hostname, raw_json
-            FROM hypervisors
-            WHERE hostname IS NOT NULL
-            """
-        )
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                """
+                SELECT hostname, raw_json
+                FROM hypervisors
+                WHERE hostname IS NOT NULL
+                """
+            )
+            rows = cursor.fetchall()
+            cursor.close()
 
-        display_map: Dict[str, str] = {}
-        for row in rows:
-            hostname = row.get("hostname")
-            if not hostname:
-                continue
+            display_map: Dict[str, str] = {}
+            for row in rows:
+                hostname = row.get("hostname")
+                if not hostname:
+                    continue
 
-            display_name = hostname
-            raw_json = row.get("raw_json") or {}
-            if isinstance(raw_json, dict):
-                display_name = (
-                    raw_json.get("hypervisor_hostname")
-                    or raw_json.get("name")
-                    or raw_json.get("hostname")
-                    or hostname
-                )
+                display_name = hostname
+                raw_json = row.get("raw_json") or {}
+                if isinstance(raw_json, dict):
+                    display_name = (
+                        raw_json.get("hypervisor_hostname")
+                        or raw_json.get("name")
+                        or raw_json.get("hostname")
+                        or hostname
+                    )
 
-                host_ip = raw_json.get("host_ip") or raw_json.get("service_ip")
-                if host_ip:
-                    display_map[_normalize_host_key(host_ip)] = display_name
+                    host_ip = raw_json.get("host_ip") or raw_json.get("service_ip")
+                    if host_ip:
+                        display_map[_normalize_host_key(host_ip)] = display_name
 
-            display_map[_normalize_host_key(hostname)] = display_name
+                display_map[_normalize_host_key(hostname)] = display_name
 
-        return display_map
+            return display_map
     except Exception:
         return {}
 
 
 def _compute_snapshot_compliance_by_tenant() -> Dict[str, Dict[str, Any]]:
     """Compute snapshot compliance warning counts by tenant."""
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute(
-        """
-        SELECT 
-            p.id as tenant_id,
-            p.name as tenant_name,
-            v.id as volume_id,
-            v.raw_json,
-            COUNT(s.id) as snapshot_count,
-            MAX(s.created_at) as latest_snapshot_at
-        FROM projects p
-        LEFT JOIN volumes v ON v.project_id = p.id
-        LEFT JOIN snapshots s ON s.volume_id = v.id
-        WHERE v.id IS NOT NULL
-        GROUP BY p.id, p.name, v.id, v.raw_json
-        ORDER BY p.name
-        """
-    )
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    with get_connection() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            """
+            SELECT 
+                p.id as tenant_id,
+                p.name as tenant_name,
+                v.id as volume_id,
+                v.raw_json,
+                COUNT(s.id) as snapshot_count,
+                MAX(s.created_at) as latest_snapshot_at
+            FROM projects p
+            LEFT JOIN volumes v ON v.project_id = p.id
+            LEFT JOIN snapshots s ON s.volume_id = v.id
+            WHERE v.id IS NOT NULL
+            GROUP BY p.id, p.name, v.id, v.raw_json
+            ORDER BY p.name
+            """
+        )
+        rows = cursor.fetchall()
+        cursor.close()
 
-    compliance_by_tenant: Dict[str, Dict[str, Any]] = {}
+        compliance_by_tenant: Dict[str, Dict[str, Any]] = {}
 
-    for row in rows:
-        tenant_id = row["tenant_id"]
-        tenant_name = row["tenant_name"]
-        snapshot_count = row["snapshot_count"]
-        latest_snapshot = row["latest_snapshot_at"]
+        for row in rows:
+            tenant_id = row["tenant_id"]
+            tenant_name = row["tenant_name"]
+            snapshot_count = row["snapshot_count"]
+            latest_snapshot = row["latest_snapshot_at"]
 
-        warning = False
-        if row["raw_json"] and "metadata" in row["raw_json"]:
-            metadata = row["raw_json"]["metadata"]
-            auto_snapshot = metadata.get("auto_snapshot", "").lower() in ("true", "yes", "1")
-            snapshot_policies = metadata.get("snapshot_policies", "")
+            warning = False
+            if row["raw_json"] and "metadata" in row["raw_json"]:
+                metadata = row["raw_json"]["metadata"]
+                auto_snapshot = metadata.get("auto_snapshot", "").lower() in ("true", "yes", "1")
+                snapshot_policies = metadata.get("snapshot_policies", "")
 
-            if auto_snapshot and snapshot_policies:
-                policies = [p.strip() for p in snapshot_policies.split(",")]
-                for policy in policies:
-                    retention_key = f"retention_{policy}"
-                    required_retention = int(metadata.get(retention_key, 1))
-                    if snapshot_count < required_retention:
-                        warning = True
+                if auto_snapshot and snapshot_policies:
+                    policies = [p.strip() for p in snapshot_policies.split(",")]
+                    for policy in policies:
+                        retention_key = f"retention_{policy}"
+                        required_retention = int(metadata.get(retention_key, 1))
+                        if snapshot_count < required_retention:
+                            warning = True
 
-        if tenant_id not in compliance_by_tenant:
-            compliance_by_tenant[tenant_id] = {
-                "tenant_id": tenant_id,
-                "tenant_name": tenant_name,
-                "warning_volumes": 0,
-                "total_volumes": 0,
-                "latest_snapshot_at": latest_snapshot.isoformat() if latest_snapshot else None,
-            }
+            if tenant_id not in compliance_by_tenant:
+                compliance_by_tenant[tenant_id] = {
+                    "tenant_id": tenant_id,
+                    "tenant_name": tenant_name,
+                    "warning_volumes": 0,
+                    "total_volumes": 0,
+                    "latest_snapshot_at": latest_snapshot.isoformat() if latest_snapshot else None,
+                }
 
-        compliance_by_tenant[tenant_id]["total_volumes"] += 1
-        if warning:
-            compliance_by_tenant[tenant_id]["warning_volumes"] += 1
+            compliance_by_tenant[tenant_id]["total_volumes"] += 1
+            if warning:
+                compliance_by_tenant[tenant_id]["warning_volumes"] += 1
 
-    return compliance_by_tenant
+        return compliance_by_tenant
 
 
 def _calculate_tenant_risk_scores() -> List[Dict[str, Any]]:
     """Calculate tenant risk scores based on snapshot coverage and staleness."""
-    conn = get_db_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute(
-        """
-        WITH volume_latest AS (
-            SELECT v.id,
-                   v.project_id,
-                   MAX(s.created_at) as latest_snapshot
-            FROM volumes v
-            LEFT JOIN snapshots s ON s.volume_id = v.id
-            GROUP BY v.id, v.project_id
+    with get_connection() as conn:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            """
+            WITH volume_latest AS (
+                SELECT v.id,
+                       v.project_id,
+                       MAX(s.created_at) as latest_snapshot
+                FROM volumes v
+                LEFT JOIN snapshots s ON s.volume_id = v.id
+                GROUP BY v.id, v.project_id
+            )
+            SELECT p.id as tenant_id,
+                   p.name as tenant_name,
+                   COUNT(vl.id) as total_volumes,
+                   COUNT(*) FILTER (WHERE vl.latest_snapshot IS NOT NULL) as volumes_with_snapshots,
+                   COUNT(*) FILTER (WHERE vl.latest_snapshot IS NULL) as volumes_without_snapshots,
+                   COUNT(*) FILTER (
+                       WHERE vl.latest_snapshot IS NOT NULL
+                         AND vl.latest_snapshot < now() - interval '7 days'
+                   ) as stale_snapshot_volumes
+            FROM projects p
+            LEFT JOIN volume_latest vl ON vl.project_id = p.id
+            GROUP BY p.id, p.name
+            HAVING COUNT(vl.id) > 0
+            ORDER BY p.name
+            """
         )
-        SELECT p.id as tenant_id,
-               p.name as tenant_name,
-               COUNT(vl.id) as total_volumes,
-               COUNT(*) FILTER (WHERE vl.latest_snapshot IS NOT NULL) as volumes_with_snapshots,
-               COUNT(*) FILTER (WHERE vl.latest_snapshot IS NULL) as volumes_without_snapshots,
-               COUNT(*) FILTER (
-                   WHERE vl.latest_snapshot IS NOT NULL
-                     AND vl.latest_snapshot < now() - interval '7 days'
-               ) as stale_snapshot_volumes
-        FROM projects p
-        LEFT JOIN volume_latest vl ON vl.project_id = p.id
-        GROUP BY p.id, p.name
-        HAVING COUNT(vl.id) > 0
-        ORDER BY p.name
-        """
-    )
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
+        rows = cursor.fetchall()
+        cursor.close()
 
-    tenants = []
-    for row in rows:
-        total = row.get("total_volumes", 0) or 0
-        no_snap = row.get("volumes_without_snapshots", 0) or 0
-        stale = row.get("stale_snapshot_volumes", 0) or 0
+        tenants = []
+        for row in rows:
+            total = row.get("total_volumes", 0) or 0
+            no_snap = row.get("volumes_without_snapshots", 0) or 0
+            stale = row.get("stale_snapshot_volumes", 0) or 0
 
-        coverage = round(((total - no_snap) / total) * 100, 1) if total else 0
-        risk_ratio = (no_snap + (stale * 0.5)) / total if total else 0
-        risk_score = min(100, round(risk_ratio * 100, 1))
+            coverage = round(((total - no_snap) / total) * 100, 1) if total else 0
+            risk_ratio = (no_snap + (stale * 0.5)) / total if total else 0
+            risk_score = min(100, round(risk_ratio * 100, 1))
 
-        if risk_score >= 50:
-            risk_level = "high"
-        elif risk_score >= 20:
-            risk_level = "medium"
-        else:
-            risk_level = "low"
+            if risk_score >= 50:
+                risk_level = "high"
+            elif risk_score >= 20:
+                risk_level = "medium"
+            else:
+                risk_level = "low"
 
-        tenants.append({
-            "tenant_id": row.get("tenant_id"),
-            "tenant_name": row.get("tenant_name"),
-            "total_volumes": total,
-            "coverage_percent": coverage,
-            "volumes_without_snapshots": no_snap,
-            "stale_snapshot_volumes": stale,
-            "risk_score": risk_score,
-            "risk_level": risk_level,
-        })
+            tenants.append({
+                "tenant_id": row.get("tenant_id"),
+                "tenant_name": row.get("tenant_name"),
+                "total_volumes": total,
+                "coverage_percent": coverage,
+                "volumes_without_snapshots": no_snap,
+                "stale_snapshot_volumes": stale,
+                "risk_score": risk_score,
+                "risk_level": risk_level,
+            })
 
-    return tenants
+        return tenants
 
 
 def _safe_count_query(cursor: RealDictCursor, query: str, params: tuple) -> int:
@@ -510,75 +506,74 @@ async def get_health_summary():
     - Alert/warning/critical counts
     """
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Get resource counts
-        cursor.execute("""
-            SELECT 
-                COUNT(DISTINCT p.id) as total_tenants,
-                COUNT(DISTINCT s.id) as total_vms,
-                COUNT(DISTINCT v.id) as total_volumes,
-                COUNT(DISTINCT n.id) as total_networks
-            FROM projects p
-            LEFT JOIN servers s ON s.project_id = p.id
-            LEFT JOIN volumes v ON v.project_id = p.id
-            LEFT JOIN networks n ON n.project_id = p.id
-        """)
+            # Get resource counts
+            cursor.execute("""
+                SELECT 
+                    COUNT(DISTINCT p.id) as total_tenants,
+                    COUNT(DISTINCT s.id) as total_vms,
+                    COUNT(DISTINCT v.id) as total_volumes,
+                    COUNT(DISTINCT n.id) as total_networks
+                FROM projects p
+                LEFT JOIN servers s ON s.project_id = p.id
+                LEFT JOIN volumes v ON v.project_id = p.id
+                LEFT JOIN networks n ON n.project_id = p.id
+            """)
         
-        counts = dict(cursor.fetchone() or {})
+            counts = dict(cursor.fetchone() or {})
         
-        # Get running VM count
-        cursor.execute("SELECT COUNT(*) as running_vms FROM servers WHERE status = 'ACTIVE'")
-        running = dict(cursor.fetchone() or {})
+            # Get running VM count
+            cursor.execute("SELECT COUNT(*) as running_vms FROM servers WHERE status = 'ACTIVE'")
+            running = dict(cursor.fetchone() or {})
 
-        # Get total hosts (hypervisors)
-        cursor.execute("SELECT COUNT(*) as total_hosts FROM hypervisors")
-        hosts_count = dict(cursor.fetchone() or {})
+            # Get total hosts (hypervisors)
+            cursor.execute("SELECT COUNT(*) as total_hosts FROM hypervisors")
+            hosts_count = dict(cursor.fetchone() or {})
 
-        # Snapshot coverage and freshness
-        cursor.execute("SELECT COUNT(*) as total_snapshots FROM snapshots")
-        snapshots_count = dict(cursor.fetchone() or {})
+            # Snapshot coverage and freshness
+            cursor.execute("SELECT COUNT(*) as total_snapshots FROM snapshots")
+            snapshots_count = dict(cursor.fetchone() or {})
 
-        cursor.execute("SELECT COUNT(*) as snapshots_last_24h FROM snapshots WHERE created_at > now() - interval '24 hours'")
-        snapshots_last_24h = dict(cursor.fetchone() or {})
+            cursor.execute("SELECT COUNT(*) as snapshots_last_24h FROM snapshots WHERE created_at > now() - interval '24 hours'")
+            snapshots_last_24h = dict(cursor.fetchone() or {})
 
-        cursor.execute(
-            """
-            SELECT COUNT(*) as volumes_without_snapshots
-            FROM volumes v
-            LEFT JOIN snapshots s ON s.volume_id = v.id
-            WHERE s.id IS NULL
-            """
-        )
-        volumes_without_snapshots = dict(cursor.fetchone() or {})
+            cursor.execute(
+                """
+                SELECT COUNT(*) as volumes_without_snapshots
+                FROM volumes v
+                LEFT JOIN snapshots s ON s.volume_id = v.id
+                WHERE s.id IS NULL
+                """
+            )
+            volumes_without_snapshots = dict(cursor.fetchone() or {})
         
-        cursor.close()
-        conn.close()
+            cursor.close()
         
-        # Try to load metrics from cache for utilization data
-        metrics_data = _load_metrics_cache()
-        metrics_summary = _calculate_metrics_summary(metrics_data)
+            # Try to load metrics from cache for utilization data
+            metrics_data = _load_metrics_cache()
+            metrics_summary = _calculate_metrics_summary(metrics_data)
         
-        return {
-            "total_tenants": counts.get("total_tenants", 0),
-            "total_vms": counts.get("total_vms", 0),
-            "running_vms": running.get("running_vms", 0),
-            "total_volumes": counts.get("total_volumes", 0),
-            "total_networks": counts.get("total_networks", 0),
-            "avg_cpu_utilization": round(metrics_summary["avg_cpu"], 1),
-            "avg_memory_utilization": round(metrics_summary["avg_memory"], 1),
-            "total_hosts": hosts_count.get("total_hosts", 0),
-            "total_snapshots": snapshots_count.get("total_snapshots", 0),
-            "snapshots_last_24h": snapshots_last_24h.get("snapshots_last_24h", 0),
-            "volumes_without_snapshots": volumes_without_snapshots.get("volumes_without_snapshots", 0),
-            "metrics_host_count": metrics_summary["metrics_host_count"],
-            "metrics_last_update": metrics_summary["metrics_last_update"],
-            "alerts_count": 0,  # Placeholder - can be enhanced
-            "critical_count": 0,  # Placeholder - can be enhanced
-            "warnings_count": 0,  # Placeholder - can be enhanced
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
+            return {
+                "total_tenants": counts.get("total_tenants", 0),
+                "total_vms": counts.get("total_vms", 0),
+                "running_vms": running.get("running_vms", 0),
+                "total_volumes": counts.get("total_volumes", 0),
+                "total_networks": counts.get("total_networks", 0),
+                "avg_cpu_utilization": round(metrics_summary["avg_cpu"], 1),
+                "avg_memory_utilization": round(metrics_summary["avg_memory"], 1),
+                "total_hosts": hosts_count.get("total_hosts", 0),
+                "total_snapshots": snapshots_count.get("total_snapshots", 0),
+                "snapshots_last_24h": snapshots_last_24h.get("snapshots_last_24h", 0),
+                "volumes_without_snapshots": volumes_without_snapshots.get("volumes_without_snapshots", 0),
+                "metrics_host_count": metrics_summary["metrics_host_count"],
+                "metrics_last_update": metrics_summary["metrics_last_update"],
+                "alerts_count": 0,  # Placeholder - can be enhanced
+                "critical_count": 0,  # Placeholder - can be enhanced
+                "warnings_count": 0,  # Placeholder - can be enhanced
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
     except Exception as e:
         logger.error(f"Error in get_health_summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -604,123 +599,122 @@ async def get_snapshot_sla_compliance():
     - Violations/warnings
     """
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Get all volumes with metadata
-        cursor.execute("""
-            SELECT 
-                p.id as tenant_id,
-                p.name as tenant_name,
-                v.id as volume_id,
-                v.name as volume_name,
-                v.size_gb,
-                v.status,
-                v.created_at,
-                v.raw_json,
-                COUNT(s.id) as snapshot_count,
-                MAX(s.created_at) as latest_snapshot_at
-            FROM projects p
-            LEFT JOIN volumes v ON v.project_id = p.id
-            LEFT JOIN snapshots s ON s.volume_id = v.id
-            WHERE v.id IS NOT NULL
-            GROUP BY p.id, p.name, v.id, v.raw_json
-            ORDER BY p.name, v.name
-        """)
+            # Get all volumes with metadata
+            cursor.execute("""
+                SELECT 
+                    p.id as tenant_id,
+                    p.name as tenant_name,
+                    v.id as volume_id,
+                    v.name as volume_name,
+                    v.size_gb,
+                    v.status,
+                    v.created_at,
+                    v.raw_json,
+                    COUNT(s.id) as snapshot_count,
+                    MAX(s.created_at) as latest_snapshot_at
+                FROM projects p
+                LEFT JOIN volumes v ON v.project_id = p.id
+                LEFT JOIN snapshots s ON s.volume_id = v.id
+                WHERE v.id IS NOT NULL
+                GROUP BY p.id, p.name, v.id, v.raw_json
+                ORDER BY p.name, v.name
+            """)
         
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+            rows = cursor.fetchall()
+            cursor.close()
         
-        # Process compliance data
-        compliance_by_tenant = {}
+            # Process compliance data
+            compliance_by_tenant = {}
         
-        for row in rows:
-            tenant_id = row["tenant_id"]
-            volume_data = {
-                "volume_id": row["volume_id"],
-                "volume_name": row["volume_name"],
-                "size_gb": row["size_gb"],
-                "snapshot_count": row["snapshot_count"],
-                "latest_snapshot_at": row["latest_snapshot_at"].isoformat() if row["latest_snapshot_at"] else None,
-                "status": "compliant",
-                "warning": None
-            }
-            
-            # Extract metadata if exists
-            if row["raw_json"] and "metadata" in row["raw_json"]:
-                metadata = row["raw_json"]["metadata"]
-                
-                # Check if volume has auto_snapshot enabled
-                auto_snapshot = metadata.get("auto_snapshot", "").lower() in ("true", "yes", "1")
-                snapshot_policies = metadata.get("snapshot_policies", "")
-                
-                if auto_snapshot and snapshot_policies:
-                    # Check each policy
-                    policies = [p.strip() for p in snapshot_policies.split(",")]
-                    
-                    for policy in policies:
-                        retention_key = f"retention_{policy}"
-                        required_retention = int(metadata.get(retention_key, 1))
-                        
-                        # Check if we have enough snapshots for this policy
-                        if row["snapshot_count"] < required_retention:
-                            volume_data["status"] = "warning"
-                            volume_data["warning"] = f"Policy {policy} requires {required_retention} snapshots, has {row['snapshot_count']}"
-            
-            # Group by tenant
-            if tenant_id not in compliance_by_tenant:
-                compliance_by_tenant[tenant_id] = {
-                    "tenant_id": tenant_id,
-                    "tenant_name": row["tenant_name"],
-                    "compliant_count": 0,
-                    "warning_count": 0,
-                    "critical_count": 0,
-                    "total_volumes": 0,
-                    "volumes": [],
-                    "warnings": []
+            for row in rows:
+                tenant_id = row["tenant_id"]
+                volume_data = {
+                    "volume_id": row["volume_id"],
+                    "volume_name": row["volume_name"],
+                    "size_gb": row["size_gb"],
+                    "snapshot_count": row["snapshot_count"],
+                    "latest_snapshot_at": row["latest_snapshot_at"].isoformat() if row["latest_snapshot_at"] else None,
+                    "status": "compliant",
+                    "warning": None
                 }
             
-            compliance_by_tenant[tenant_id]["total_volumes"] += 1
+                # Extract metadata if exists
+                if row["raw_json"] and "metadata" in row["raw_json"]:
+                    metadata = row["raw_json"]["metadata"]
+                
+                    # Check if volume has auto_snapshot enabled
+                    auto_snapshot = metadata.get("auto_snapshot", "").lower() in ("true", "yes", "1")
+                    snapshot_policies = metadata.get("snapshot_policies", "")
+                
+                    if auto_snapshot and snapshot_policies:
+                        # Check each policy
+                        policies = [p.strip() for p in snapshot_policies.split(",")]
+                    
+                        for policy in policies:
+                            retention_key = f"retention_{policy}"
+                            required_retention = int(metadata.get(retention_key, 1))
+                        
+                            # Check if we have enough snapshots for this policy
+                            if row["snapshot_count"] < required_retention:
+                                volume_data["status"] = "warning"
+                                volume_data["warning"] = f"Policy {policy} requires {required_retention} snapshots, has {row['snapshot_count']}"
             
-            if volume_data["status"] == "compliant":
-                compliance_by_tenant[tenant_id]["compliant_count"] += 1
-            else:
-                compliance_by_tenant[tenant_id]["warning_count"] += 1
-                compliance_by_tenant[tenant_id]["warnings"].append(volume_data)
+                # Group by tenant
+                if tenant_id not in compliance_by_tenant:
+                    compliance_by_tenant[tenant_id] = {
+                        "tenant_id": tenant_id,
+                        "tenant_name": row["tenant_name"],
+                        "compliant_count": 0,
+                        "warning_count": 0,
+                        "critical_count": 0,
+                        "total_volumes": 0,
+                        "volumes": [],
+                        "warnings": []
+                    }
             
-            compliance_by_tenant[tenant_id]["volumes"].append(volume_data)
+                compliance_by_tenant[tenant_id]["total_volumes"] += 1
+            
+                if volume_data["status"] == "compliant":
+                    compliance_by_tenant[tenant_id]["compliant_count"] += 1
+                else:
+                    compliance_by_tenant[tenant_id]["warning_count"] += 1
+                    compliance_by_tenant[tenant_id]["warnings"].append(volume_data)
+            
+                compliance_by_tenant[tenant_id]["volumes"].append(volume_data)
         
-        # Calculate compliance percentages
-        for tenant_data in compliance_by_tenant.values():
-            total = tenant_data["total_volumes"]
-            if total > 0:
-                compliance_pct = ((total - tenant_data["warning_count"] - tenant_data["critical_count"]) / total) * 100
-                tenant_data["compliance_percentage"] = round(compliance_pct, 1)
-            else:
-                tenant_data["compliance_percentage"] = 100
+            # Calculate compliance percentages
+            for tenant_data in compliance_by_tenant.values():
+                total = tenant_data["total_volumes"]
+                if total > 0:
+                    compliance_pct = ((total - tenant_data["warning_count"] - tenant_data["critical_count"]) / total) * 100
+                    tenant_data["compliance_percentage"] = round(compliance_pct, 1)
+                else:
+                    tenant_data["compliance_percentage"] = 100
         
-        # Calculate overall summary
-        total_volumes = sum(t["total_volumes"] for t in compliance_by_tenant.values())
-        compliant_volumes = sum(t["compliant_count"] for t in compliance_by_tenant.values())
-        warning_volumes = sum(t["warning_count"] for t in compliance_by_tenant.values())
-        critical_volumes = sum(t["critical_count"] for t in compliance_by_tenant.values())
+            # Calculate overall summary
+            total_volumes = sum(t["total_volumes"] for t in compliance_by_tenant.values())
+            compliant_volumes = sum(t["compliant_count"] for t in compliance_by_tenant.values())
+            warning_volumes = sum(t["warning_count"] for t in compliance_by_tenant.values())
+            critical_volumes = sum(t["critical_count"] for t in compliance_by_tenant.values())
         
-        overall_compliance = 0
-        if total_volumes > 0:
-            overall_compliance = round((compliant_volumes / total_volumes) * 100, 1)
+            overall_compliance = 0
+            if total_volumes > 0:
+                overall_compliance = round((compliant_volumes / total_volumes) * 100, 1)
         
-        return {
-            "compliance_data": list(compliance_by_tenant.values()),
-            "summary": {
-                "total_volumes": total_volumes,
-                "total_compliant": compliant_volumes,
-                "total_warning": warning_volumes,
-                "total_critical": critical_volumes,
-                "overall_compliance_percentage": overall_compliance
-            },
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
+            return {
+                "compliance_data": list(compliance_by_tenant.values()),
+                "summary": {
+                    "total_volumes": total_volumes,
+                    "total_compliant": compliant_volumes,
+                    "total_warning": warning_volumes,
+                    "total_critical": critical_volumes,
+                    "overall_compliance_percentage": overall_compliance
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
         
     except Exception as e:
         logger.error(f"Error in get_snapshot_sla_compliance: {e}")
@@ -850,46 +844,45 @@ async def get_top_hosts_utilization(limit: int = Query(5, ge=1, le=20), sort: st
             }
 
         # Fallback: show inventory hosts without utilization
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
-            """
-            SELECT hostname, vcpus, memory_mb
-            FROM hypervisors
-            WHERE hostname IS NOT NULL
-            ORDER BY hostname
-            """
-        )
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                """
+                SELECT hostname, vcpus, memory_mb
+                FROM hypervisors
+                WHERE hostname IS NOT NULL
+                ORDER BY hostname
+                """
+            )
+            rows = cursor.fetchall()
+            cursor.close()
 
-        fallback_hosts = []
-        for row in rows[:limit]:
-            hostname = row.get("hostname")
-            host_key = _normalize_host_key(hostname)
-            display_name = display_map.get(host_key, hostname)
-            fallback_hosts.append({
-                "hostname": hostname,
-                "host_display_name": display_name,
-                "cpu_utilization_percent": None,
-                "memory_utilization_percent": None,
-                "vm_count": int(vm_counts.get(host_key, 0)),
-                "capacity_vcpus": row.get("vcpus"),
-                "capacity_memory_mb": row.get("memory_mb"),
-                "is_critical": False,
-            })
+            fallback_hosts = []
+            for row in rows[:limit]:
+                hostname = row.get("hostname")
+                host_key = _normalize_host_key(hostname)
+                display_name = display_map.get(host_key, hostname)
+                fallback_hosts.append({
+                    "hostname": hostname,
+                    "host_display_name": display_name,
+                    "cpu_utilization_percent": None,
+                    "memory_utilization_percent": None,
+                    "vm_count": int(vm_counts.get(host_key, 0)),
+                    "capacity_vcpus": row.get("vcpus"),
+                    "capacity_memory_mb": row.get("memory_mb"),
+                    "is_critical": False,
+                })
 
-        return {
-            "hosts": fallback_hosts,
-            "sort_by": sort,
-            "metrics_status": {
-                "source": "inventory",
-                "host_count": len(rows),
-                "last_updated": metrics_last_update,
-            },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+            return {
+                "hosts": fallback_hosts,
+                "sort_by": sort,
+                "metrics_status": {
+                    "source": "inventory",
+                    "host_count": len(rows),
+                    "last_updated": metrics_last_update,
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
         
     except Exception as e:
         logger.error(f"Error in get_top_hosts_utilization: {e}")
@@ -914,122 +907,121 @@ async def get_recent_changes(hours: int = Query(24, ge=1, le=720)):
     - hours: Look back window in hours (1-720, default 24)
     """
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+            since = datetime.now(timezone.utc) - timedelta(hours=hours)
         
-        # New VMs
-        cursor.execute("""
-            SELECT 
-                'vm' as resource_type,
-                'created' as action,
-                s.server_id as resource_id,
-                s.name as resource_name,
-                p.name as tenant_name,
-                s.recorded_at as occurred_at
-            FROM servers_history s
-            LEFT JOIN projects p ON s.project_id = p.id
-            WHERE s.recorded_at > %s
-              AND s.recorded_at = (
-                SELECT MIN(recorded_at) 
-                FROM servers_history 
-                WHERE server_id = s.server_id
-              )
-            ORDER BY s.recorded_at DESC
-            LIMIT 20
-        """, (since,))
+            # New VMs
+            cursor.execute("""
+                SELECT 
+                    'vm' as resource_type,
+                    'created' as action,
+                    s.server_id as resource_id,
+                    s.name as resource_name,
+                    p.name as tenant_name,
+                    s.recorded_at as occurred_at
+                FROM servers_history s
+                LEFT JOIN projects p ON s.project_id = p.id
+                WHERE s.recorded_at > %s
+                  AND s.recorded_at = (
+                    SELECT MIN(recorded_at) 
+                    FROM servers_history 
+                    WHERE server_id = s.server_id
+                  )
+                ORDER BY s.recorded_at DESC
+                LIMIT 20
+            """, (since,))
         
-        new_vms = cursor.fetchall()
+            new_vms = cursor.fetchall()
         
-        # Deleted volumes
-        cursor.execute("""
-            SELECT 
-                'volume' as resource_type,
-                'deleted' as action,
-                resource_id,
-                resource_name,
-                NULL as tenant_name,
-                deleted_at as occurred_at
-            FROM deletions_history
-            WHERE resource_type = 'volume'
-              AND deleted_at > %s
-            ORDER BY deleted_at DESC
-            LIMIT 20
-        """, (since,))
+            # Deleted volumes
+            cursor.execute("""
+                SELECT 
+                    'volume' as resource_type,
+                    'deleted' as action,
+                    resource_id,
+                    resource_name,
+                    NULL as tenant_name,
+                    deleted_at as occurred_at
+                FROM deletions_history
+                WHERE resource_type = 'volume'
+                  AND deleted_at > %s
+                ORDER BY deleted_at DESC
+                LIMIT 20
+            """, (since,))
         
-        deleted_volumes = cursor.fetchall()
+            deleted_volumes = cursor.fetchall()
         
-        # New users (simplified - track by checking user_sessions)
-        cursor.execute("""
-            SELECT DISTINCT 
-                'user' as resource_type,
-                'created' as action,
-                username as resource_id,
-                username as resource_name,
-                NULL as tenant_name,
-                created_at as occurred_at
-            FROM user_sessions
-            WHERE created_at > %s
-            ORDER BY created_at DESC
-            LIMIT 10
-        """, (since,))
+            # New users (simplified - track by checking user_sessions)
+            cursor.execute("""
+                SELECT DISTINCT 
+                    'user' as resource_type,
+                    'created' as action,
+                    username as resource_id,
+                    username as resource_name,
+                    NULL as tenant_name,
+                    created_at as occurred_at
+                FROM user_sessions
+                WHERE created_at > %s
+                ORDER BY created_at DESC
+                LIMIT 10
+            """, (since,))
         
-        new_users = cursor.fetchall()
+            new_users = cursor.fetchall()
         
-        cursor.close()
-        conn.close()
+            cursor.close()
         
-        # Combine and sort by time
-        all_changes = []
+            # Combine and sort by time
+            all_changes = []
         
-        for vm in new_vms:
-            all_changes.append({
-                "resource_type": vm["resource_type"],
-                "resource_id": vm["resource_id"],
-                "resource_name": vm["resource_name"],
-                "action": vm["action"],
-                "tenant_name": vm["tenant_name"],
-                "timestamp": vm["occurred_at"].isoformat() if vm["occurred_at"] else None
-            })
+            for vm in new_vms:
+                all_changes.append({
+                    "resource_type": vm["resource_type"],
+                    "resource_id": vm["resource_id"],
+                    "resource_name": vm["resource_name"],
+                    "action": vm["action"],
+                    "tenant_name": vm["tenant_name"],
+                    "timestamp": vm["occurred_at"].isoformat() if vm["occurred_at"] else None
+                })
         
-        for vol in deleted_volumes:
-            all_changes.append({
-                "resource_type": vol["resource_type"],
-                "resource_id": vol["resource_id"],
-                "resource_name": vol["resource_name"],
-                "action": vol["action"],
-                "tenant_name": vol["tenant_name"],
-                "timestamp": vol["occurred_at"].isoformat() if vol["occurred_at"] else None
-            })
+            for vol in deleted_volumes:
+                all_changes.append({
+                    "resource_type": vol["resource_type"],
+                    "resource_id": vol["resource_id"],
+                    "resource_name": vol["resource_name"],
+                    "action": vol["action"],
+                    "tenant_name": vol["tenant_name"],
+                    "timestamp": vol["occurred_at"].isoformat() if vol["occurred_at"] else None
+                })
         
-        for user in new_users:
-            all_changes.append({
-                "resource_type": user["resource_type"],
-                "resource_id": user["resource_id"],
-                "resource_name": user["resource_name"],
-                "action": user["action"],
-                "tenant_name": user["tenant_name"],
-                "timestamp": user["occurred_at"].isoformat() if user["occurred_at"] else None
-            })
+            for user in new_users:
+                all_changes.append({
+                    "resource_type": user["resource_type"],
+                    "resource_id": user["resource_id"],
+                    "resource_name": user["resource_name"],
+                    "action": user["action"],
+                    "tenant_name": user["tenant_name"],
+                    "timestamp": user["occurred_at"].isoformat() if user["occurred_at"] else None
+                })
         
-        # Sort by timestamp descending
-        all_changes.sort(key=lambda x: x["timestamp"] or "", reverse=True)
+            # Sort by timestamp descending
+            all_changes.sort(key=lambda x: x["timestamp"] or "", reverse=True)
         
-        # Group by type for summary
-        summary = {
-            "new_vms": len([c for c in all_changes if c["resource_type"] == "vm" and c["action"] == "created"]),
-            "deleted_volumes": len([c for c in all_changes if c["resource_type"] == "volume" and c["action"] == "deleted"]),
-            "new_users": len([c for c in all_changes if c["resource_type"] == "user" and c["action"] == "created"]),
-            "total_changes": len(all_changes)
-        }
+            # Group by type for summary
+            summary = {
+                "new_vms": len([c for c in all_changes if c["resource_type"] == "vm" and c["action"] == "created"]),
+                "deleted_volumes": len([c for c in all_changes if c["resource_type"] == "volume" and c["action"] == "deleted"]),
+                "new_users": len([c for c in all_changes if c["resource_type"] == "user" and c["action"] == "created"]),
+                "total_changes": len(all_changes)
+            }
         
-        return {
-            "summary": summary,
-            "changes": all_changes,
-            "hours_lookback": hours,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
+            return {
+                "summary": summary,
+                "changes": all_changes,
+                "hours_lookback": hours,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
         
     except Exception as e:
         logger.error(f"Error in get_recent_changes: {e}")
@@ -1043,99 +1035,98 @@ async def get_recent_changes(hours: int = Query(24, ge=1, le=720)):
 async def get_coverage_risks():
     """Return snapshot coverage risk metrics and lowest coverage tenants."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        cursor.execute("SELECT COUNT(*) as total_volumes FROM volumes")
-        total_volumes = (cursor.fetchone() or {}).get("total_volumes", 0)
+            cursor.execute("SELECT COUNT(*) as total_volumes FROM volumes")
+            total_volumes = (cursor.fetchone() or {}).get("total_volumes", 0)
 
-        cursor.execute("SELECT COUNT(*) as total_snapshots FROM snapshots")
-        total_snapshots = (cursor.fetchone() or {}).get("total_snapshots", 0)
+            cursor.execute("SELECT COUNT(*) as total_snapshots FROM snapshots")
+            total_snapshots = (cursor.fetchone() or {}).get("total_snapshots", 0)
 
-        cursor.execute("SELECT COUNT(*) as snapshots_last_24h FROM snapshots WHERE created_at > now() - interval '24 hours'")
-        snapshots_last_24h = (cursor.fetchone() or {}).get("snapshots_last_24h", 0)
+            cursor.execute("SELECT COUNT(*) as snapshots_last_24h FROM snapshots WHERE created_at > now() - interval '24 hours'")
+            snapshots_last_24h = (cursor.fetchone() or {}).get("snapshots_last_24h", 0)
 
-        cursor.execute(
-            """
-            SELECT COUNT(*) as volumes_without_snapshots
-            FROM volumes v
-            LEFT JOIN snapshots s ON s.volume_id = v.id
-            WHERE s.id IS NULL
-            """
-        )
-        volumes_without_snapshots = (cursor.fetchone() or {}).get("volumes_without_snapshots", 0)
-
-        cursor.execute(
-            """
-            SELECT COUNT(*) as volumes_with_stale_snapshots
-            FROM (
-                SELECT v.id, MAX(s.created_at) as latest_snapshot
+            cursor.execute(
+                """
+                SELECT COUNT(*) as volumes_without_snapshots
                 FROM volumes v
                 LEFT JOIN snapshots s ON s.volume_id = v.id
-                GROUP BY v.id
-            ) t
-            WHERE t.latest_snapshot IS NOT NULL
-              AND t.latest_snapshot < now() - interval '7 days'
-            """
-        )
-        volumes_with_stale_snapshots = (cursor.fetchone() or {}).get("volumes_with_stale_snapshots", 0)
+                WHERE s.id IS NULL
+                """
+            )
+            volumes_without_snapshots = (cursor.fetchone() or {}).get("volumes_without_snapshots", 0)
 
-        cursor.execute(
-            """
-            SELECT p.name as tenant_name,
-                   COUNT(DISTINCT v.id) as total_volumes,
-                   COUNT(DISTINCT s.volume_id) as covered_volumes,
-                   COUNT(DISTINCT s.id) as snapshot_count
-            FROM projects p
-            LEFT JOIN volumes v ON v.project_id = p.id
-            LEFT JOIN snapshots s ON s.volume_id = v.id
-            GROUP BY p.name
-            HAVING COUNT(DISTINCT v.id) > 0
-            ORDER BY (COUNT(DISTINCT s.volume_id)::float / COUNT(DISTINCT v.id)) ASC
-            LIMIT 5
-            """
-        )
-        tenant_rows = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT COUNT(*) as volumes_with_stale_snapshots
+                FROM (
+                    SELECT v.id, MAX(s.created_at) as latest_snapshot
+                    FROM volumes v
+                    LEFT JOIN snapshots s ON s.volume_id = v.id
+                    GROUP BY v.id
+                ) t
+                WHERE t.latest_snapshot IS NOT NULL
+                  AND t.latest_snapshot < now() - interval '7 days'
+                """
+            )
+            volumes_with_stale_snapshots = (cursor.fetchone() or {}).get("volumes_with_stale_snapshots", 0)
 
-        cursor.close()
-        conn.close()
+            cursor.execute(
+                """
+                SELECT p.name as tenant_name,
+                       COUNT(DISTINCT v.id) as total_volumes,
+                       COUNT(DISTINCT s.volume_id) as covered_volumes,
+                       COUNT(DISTINCT s.id) as snapshot_count
+                FROM projects p
+                LEFT JOIN volumes v ON v.project_id = p.id
+                LEFT JOIN snapshots s ON s.volume_id = v.id
+                GROUP BY p.name
+                HAVING COUNT(DISTINCT v.id) > 0
+                ORDER BY (COUNT(DISTINCT s.volume_id)::float / COUNT(DISTINCT v.id)) ASC
+                LIMIT 5
+                """
+            )
+            tenant_rows = cursor.fetchall()
 
-        coverage_pct = 0
-        snapshot_density = 0
-        if total_volumes:
-            covered = total_volumes - volumes_without_snapshots
-            coverage_pct = round((covered / total_volumes) * 100, 1)
-            snapshot_density = round((total_snapshots / total_volumes), 2)
+            cursor.close()
 
-        lowest_coverage = []
-        for row in tenant_rows:
-            total = row.get("total_volumes", 0)
-            covered = row.get("covered_volumes", 0)
-            snapshots = row.get("snapshot_count", 0)
-            pct = round((covered / total) * 100, 1) if total else 0
-            density = round((snapshots / total), 2) if total else 0
-            lowest_coverage.append({
-                "tenant_name": row.get("tenant_name"),
-                "total_volumes": total,
-                "covered_volumes": covered,
-                "snapshot_count": snapshots,
-                "snapshot_density": density,
-                "coverage_percent": pct,
-            })
+            coverage_pct = 0
+            snapshot_density = 0
+            if total_volumes:
+                covered = total_volumes - volumes_without_snapshots
+                coverage_pct = round((covered / total_volumes) * 100, 1)
+                snapshot_density = round((total_snapshots / total_volumes), 2)
 
-        return {
-            "summary": {
-                "total_volumes": total_volumes,
-                "total_snapshots": total_snapshots,
-                "snapshots_last_24h": snapshots_last_24h,
-                "volumes_without_snapshots": volumes_without_snapshots,
-                "volumes_with_stale_snapshots": volumes_with_stale_snapshots,
-                "coverage_percent": coverage_pct,
-                "snapshot_density": snapshot_density,
-            },
-            "lowest_coverage_tenants": lowest_coverage,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+            lowest_coverage = []
+            for row in tenant_rows:
+                total = row.get("total_volumes", 0)
+                covered = row.get("covered_volumes", 0)
+                snapshots = row.get("snapshot_count", 0)
+                pct = round((covered / total) * 100, 1) if total else 0
+                density = round((snapshots / total), 2) if total else 0
+                lowest_coverage.append({
+                    "tenant_name": row.get("tenant_name"),
+                    "total_volumes": total,
+                    "covered_volumes": covered,
+                    "snapshot_count": snapshots,
+                    "snapshot_density": density,
+                    "coverage_percent": pct,
+                })
+
+            return {
+                "summary": {
+                    "total_volumes": total_volumes,
+                    "total_snapshots": total_snapshots,
+                    "snapshots_last_24h": snapshots_last_24h,
+                    "volumes_without_snapshots": volumes_without_snapshots,
+                    "volumes_with_stale_snapshots": volumes_with_stale_snapshots,
+                    "coverage_percent": coverage_pct,
+                    "snapshot_density": snapshot_density,
+                },
+                "lowest_coverage_tenants": lowest_coverage,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
     except Exception as e:
         logger.error(f"Error in get_coverage_risks: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1148,59 +1139,58 @@ async def get_coverage_risks():
 async def get_capacity_pressure():
     """Return top tenants by resource pressure and active VM counts."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        cursor.execute(
-            """
-            SELECT p.id as tenant_id,
-                   p.name as tenant_name,
-                   COUNT(DISTINCT s.id) as vm_count,
-                   COUNT(DISTINCT v.id) as volume_count,
-                   COALESCE(SUM(v.size_gb), 0) as volume_gb
-            FROM projects p
-            LEFT JOIN servers s ON s.project_id = p.id
-            LEFT JOIN volumes v ON v.project_id = p.id
-            GROUP BY p.id, p.name
-            ORDER BY vm_count DESC
-            LIMIT 5
-            """
-        )
-        top_by_vms = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT p.id as tenant_id,
+                       p.name as tenant_name,
+                       COUNT(DISTINCT s.id) as vm_count,
+                       COUNT(DISTINCT v.id) as volume_count,
+                       COALESCE(SUM(v.size_gb), 0) as volume_gb
+                FROM projects p
+                LEFT JOIN servers s ON s.project_id = p.id
+                LEFT JOIN volumes v ON v.project_id = p.id
+                GROUP BY p.id, p.name
+                ORDER BY vm_count DESC
+                LIMIT 5
+                """
+            )
+            top_by_vms = cursor.fetchall()
 
-        cursor.execute(
-            """
-            SELECT p.id as tenant_id,
-                   p.name as tenant_name,
-                   COUNT(DISTINCT v.id) as volume_count,
-                   COALESCE(SUM(v.size_gb), 0) as volume_gb
-            FROM projects p
-            LEFT JOIN volumes v ON v.project_id = p.id
-            GROUP BY p.id, p.name
-            ORDER BY volume_gb DESC
-            LIMIT 5
-            """
-        )
-        top_by_storage = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT p.id as tenant_id,
+                       p.name as tenant_name,
+                       COUNT(DISTINCT v.id) as volume_count,
+                       COALESCE(SUM(v.size_gb), 0) as volume_gb
+                FROM projects p
+                LEFT JOIN volumes v ON v.project_id = p.id
+                GROUP BY p.id, p.name
+                ORDER BY volume_gb DESC
+                LIMIT 5
+                """
+            )
+            top_by_storage = cursor.fetchall()
 
-        cursor.execute("SELECT COUNT(*) as active_vms FROM servers WHERE status = 'ACTIVE'")
-        active_vms = (cursor.fetchone() or {}).get("active_vms", 0)
+            cursor.execute("SELECT COUNT(*) as active_vms FROM servers WHERE status = 'ACTIVE'")
+            active_vms = (cursor.fetchone() or {}).get("active_vms", 0)
 
-        cursor.execute("SELECT COUNT(*) as total_vms FROM servers")
-        total_vms = (cursor.fetchone() or {}).get("total_vms", 0)
+            cursor.execute("SELECT COUNT(*) as total_vms FROM servers")
+            total_vms = (cursor.fetchone() or {}).get("total_vms", 0)
 
-        cursor.close()
-        conn.close()
+            cursor.close()
 
-        return {
-            "summary": {
-                "active_vms": active_vms,
-                "total_vms": total_vms,
-            },
-            "top_by_vms": top_by_vms,
-            "top_by_storage": top_by_storage,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+            return {
+                "summary": {
+                    "active_vms": active_vms,
+                    "total_vms": total_vms,
+                },
+                "top_by_vms": top_by_vms,
+                "top_by_storage": top_by_storage,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
     except Exception as e:
         logger.error(f"Error in get_capacity_pressure: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1253,41 +1243,40 @@ async def get_vm_hotspots(limit: int = Query(5, ge=1, le=20), sort: str = Query(
 async def get_change_compliance(hours: int = Query(24, ge=1, le=720)):
     """Return change and compliance summary for the last N hours."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        cursor.execute("SELECT COUNT(*) as new_vms FROM servers WHERE created_at > %s", (since,))
-        new_vms = (cursor.fetchone() or {}).get("new_vms", 0)
+            cursor.execute("SELECT COUNT(*) as new_vms FROM servers WHERE created_at > %s", (since,))
+            new_vms = (cursor.fetchone() or {}).get("new_vms", 0)
 
-        cursor.execute("SELECT COUNT(*) as snapshots_created FROM snapshots WHERE created_at > %s", (since,))
-        snapshots_created = (cursor.fetchone() or {}).get("snapshots_created", 0)
+            cursor.execute("SELECT COUNT(*) as snapshots_created FROM snapshots WHERE created_at > %s", (since,))
+            snapshots_created = (cursor.fetchone() or {}).get("snapshots_created", 0)
 
-        deleted_resources = _safe_count_query(
-            cursor,
-            "SELECT COUNT(*) as deletions FROM deletions_history WHERE deleted_at > %s",
-            (since,),
-        )
+            deleted_resources = _safe_count_query(
+                cursor,
+                "SELECT COUNT(*) as deletions FROM deletions_history WHERE deleted_at > %s",
+                (since,),
+            )
 
-        new_users = _safe_count_query(
-            cursor,
-            "SELECT COUNT(*) as new_users FROM user_sessions WHERE created_at > %s",
-            (since,),
-        )
+            new_users = _safe_count_query(
+                cursor,
+                "SELECT COUNT(*) as new_users FROM user_sessions WHERE created_at > %s",
+                (since,),
+            )
 
-        cursor.close()
-        conn.close()
+            cursor.close()
 
-        return {
-            "summary": {
-                "new_vms": new_vms,
-                "snapshots_created": snapshots_created,
-                "deleted_resources": deleted_resources,
-                "new_users": new_users,
-            },
-            "hours_lookback": hours,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+            return {
+                "summary": {
+                    "new_vms": new_vms,
+                    "snapshots_created": snapshots_created,
+                    "deleted_resources": deleted_resources,
+                    "new_users": new_users,
+                },
+                "hours_lookback": hours,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
     except Exception as e:
         logger.error(f"Error in get_change_compliance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1333,51 +1322,17 @@ async def get_tenant_risk_heatmap():
 async def get_trendlines(days: int = Query(14, ge=7, le=90)):
     """Return daily trendlines for key activity signals."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        base_query = """
-            WITH days AS (
-                SELECT generate_series(current_date - (%s::int - 1), current_date, interval '1 day')::date AS day
-            )
-            SELECT d.day,
-                   COALESCE(vms.new_vms, 0) AS new_vms,
-                   COALESCE(snaps.snapshots_created, 0) AS snapshots_created,
-                   COALESCE(dels.deleted_resources, 0) AS deleted_resources
-            FROM days d
-            LEFT JOIN (
-                SELECT created_at::date AS day, COUNT(*) AS new_vms
-                FROM servers
-                WHERE created_at >= current_date - (%s::int - 1)
-                GROUP BY created_at::date
-            ) vms ON vms.day = d.day
-            LEFT JOIN (
-                SELECT created_at::date AS day, COUNT(*) AS snapshots_created
-                FROM snapshots
-                WHERE created_at >= current_date - (%s::int - 1)
-                GROUP BY created_at::date
-            ) snaps ON snaps.day = d.day
-            LEFT JOIN (
-                SELECT deleted_at::date AS day, COUNT(*) AS deleted_resources
-                FROM deletions_history
-                WHERE deleted_at >= current_date - (%s::int - 1)
-                GROUP BY deleted_at::date
-            ) dels ON dels.day = d.day
-            ORDER BY d.day
-        """
-
-        try:
-            cursor.execute(base_query, (days, days, days, days))
-            rows = cursor.fetchall()
-        except Exception:
-            fallback_query = """
+            base_query = """
                 WITH days AS (
                     SELECT generate_series(current_date - (%s::int - 1), current_date, interval '1 day')::date AS day
                 )
                 SELECT d.day,
                        COALESCE(vms.new_vms, 0) AS new_vms,
                        COALESCE(snaps.snapshots_created, 0) AS snapshots_created,
-                       0 AS deleted_resources
+                       COALESCE(dels.deleted_resources, 0) AS deleted_resources
                 FROM days d
                 LEFT JOIN (
                     SELECT created_at::date AS day, COUNT(*) AS new_vms
@@ -1391,28 +1346,61 @@ async def get_trendlines(days: int = Query(14, ge=7, le=90)):
                     WHERE created_at >= current_date - (%s::int - 1)
                     GROUP BY created_at::date
                 ) snaps ON snaps.day = d.day
+                LEFT JOIN (
+                    SELECT deleted_at::date AS day, COUNT(*) AS deleted_resources
+                    FROM deletions_history
+                    WHERE deleted_at >= current_date - (%s::int - 1)
+                    GROUP BY deleted_at::date
+                ) dels ON dels.day = d.day
                 ORDER BY d.day
             """
-            cursor.execute(fallback_query, (days, days, days))
-            rows = cursor.fetchall()
 
-        cursor.close()
-        conn.close()
+            try:
+                cursor.execute(base_query, (days, days, days, days))
+                rows = cursor.fetchall()
+            except Exception:
+                fallback_query = """
+                    WITH days AS (
+                        SELECT generate_series(current_date - (%s::int - 1), current_date, interval '1 day')::date AS day
+                    )
+                    SELECT d.day,
+                           COALESCE(vms.new_vms, 0) AS new_vms,
+                           COALESCE(snaps.snapshots_created, 0) AS snapshots_created,
+                           0 AS deleted_resources
+                    FROM days d
+                    LEFT JOIN (
+                        SELECT created_at::date AS day, COUNT(*) AS new_vms
+                        FROM servers
+                        WHERE created_at >= current_date - (%s::int - 1)
+                        GROUP BY created_at::date
+                    ) vms ON vms.day = d.day
+                    LEFT JOIN (
+                        SELECT created_at::date AS day, COUNT(*) AS snapshots_created
+                        FROM snapshots
+                        WHERE created_at >= current_date - (%s::int - 1)
+                        GROUP BY created_at::date
+                    ) snaps ON snaps.day = d.day
+                    ORDER BY d.day
+                """
+                cursor.execute(fallback_query, (days, days, days))
+                rows = cursor.fetchall()
 
-        trendlines = []
-        for row in rows:
-            trendlines.append({
-                "day": row["day"].isoformat(),
-                "new_vms": int(row["new_vms"]),
-                "snapshots_created": int(row["snapshots_created"]),
-                "deleted_resources": int(row["deleted_resources"]),
-            })
+            cursor.close()
 
-        return {
-            "days": days,
-            "trendlines": trendlines,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+            trendlines = []
+            for row in rows:
+                trendlines.append({
+                    "day": row["day"].isoformat(),
+                    "new_vms": int(row["new_vms"]),
+                    "snapshots_created": int(row["snapshots_created"]),
+                    "deleted_resources": int(row["deleted_resources"]),
+                })
+
+            return {
+                "days": days,
+                "trendlines": trendlines,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
     except Exception as e:
         logger.error(f"Error in get_trendlines: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1425,53 +1413,52 @@ async def get_trendlines(days: int = Query(14, ge=7, le=90)):
 async def get_capacity_trends(days: int = Query(30, ge=7, le=180)):
     """Return capacity trends for VMs and volumes."""
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        query = """
-            WITH days AS (
-                SELECT generate_series(current_date - (%s::int - 1), current_date, interval '1 day')::date AS day
-            )
-            SELECT d.day,
-                   COALESCE(vms.new_vms, 0) AS new_vms,
-                   COALESCE(vols.new_volumes, 0) AS new_volumes,
-                   COALESCE(vols.new_volume_gb, 0) AS new_volume_gb
-            FROM days d
-            LEFT JOIN (
-                SELECT created_at::date AS day, COUNT(*) AS new_vms
-                FROM servers
-                WHERE created_at >= current_date - (%s::int - 1)
-                GROUP BY created_at::date
-            ) vms ON vms.day = d.day
-            LEFT JOIN (
-                SELECT created_at::date AS day,
-                       COUNT(*) AS new_volumes,
-                       COALESCE(SUM(size_gb), 0) AS new_volume_gb
-                FROM volumes
-                WHERE created_at >= current_date - (%s::int - 1)
-                GROUP BY created_at::date
-            ) vols ON vols.day = d.day
-            ORDER BY d.day
-        """
-        cursor.execute(query, (days, days, days))
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+            query = """
+                WITH days AS (
+                    SELECT generate_series(current_date - (%s::int - 1), current_date, interval '1 day')::date AS day
+                )
+                SELECT d.day,
+                       COALESCE(vms.new_vms, 0) AS new_vms,
+                       COALESCE(vols.new_volumes, 0) AS new_volumes,
+                       COALESCE(vols.new_volume_gb, 0) AS new_volume_gb
+                FROM days d
+                LEFT JOIN (
+                    SELECT created_at::date AS day, COUNT(*) AS new_vms
+                    FROM servers
+                    WHERE created_at >= current_date - (%s::int - 1)
+                    GROUP BY created_at::date
+                ) vms ON vms.day = d.day
+                LEFT JOIN (
+                    SELECT created_at::date AS day,
+                           COUNT(*) AS new_volumes,
+                           COALESCE(SUM(size_gb), 0) AS new_volume_gb
+                    FROM volumes
+                    WHERE created_at >= current_date - (%s::int - 1)
+                    GROUP BY created_at::date
+                ) vols ON vols.day = d.day
+                ORDER BY d.day
+            """
+            cursor.execute(query, (days, days, days))
+            rows = cursor.fetchall()
+            cursor.close()
 
-        trendlines = []
-        for row in rows:
-            trendlines.append({
-                "day": row["day"].isoformat(),
-                "new_vms": int(row["new_vms"]),
-                "new_volumes": int(row["new_volumes"]),
-                "new_volume_gb": float(row["new_volume_gb"]),
-            })
+            trendlines = []
+            for row in rows:
+                trendlines.append({
+                    "day": row["day"].isoformat(),
+                    "new_vms": int(row["new_vms"]),
+                    "new_volumes": int(row["new_volumes"]),
+                    "new_volume_gb": float(row["new_volume_gb"]),
+                })
 
-        return {
-            "days": days,
-            "trendlines": trendlines,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+            return {
+                "days": days,
+                "trendlines": trendlines,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
     except Exception as e:
         logger.error(f"Error in get_capacity_trends: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1486,61 +1473,60 @@ async def get_compliance_drift():
     try:
         tenant_compliance = _compute_snapshot_compliance_by_tenant()
 
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
-            """
-            WITH volume_latest AS (
-                SELECT v.id,
-                       v.project_id,
-                       MAX(s.created_at) as latest_snapshot
-                FROM volumes v
-                LEFT JOIN snapshots s ON s.volume_id = v.id
-                GROUP BY v.id, v.project_id
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                """
+                WITH volume_latest AS (
+                    SELECT v.id,
+                           v.project_id,
+                           MAX(s.created_at) as latest_snapshot
+                    FROM volumes v
+                    LEFT JOIN snapshots s ON s.volume_id = v.id
+                    GROUP BY v.id, v.project_id
+                )
+                SELECT p.id as tenant_id,
+                       p.name as tenant_name,
+                       COUNT(vl.id) as total_volumes,
+                       COUNT(*) FILTER (WHERE vl.latest_snapshot IS NULL) as volumes_without_snapshots,
+                       COUNT(*) FILTER (
+                           WHERE vl.latest_snapshot IS NOT NULL
+                             AND vl.latest_snapshot < now() - interval '7 days'
+                       ) as stale_snapshot_volumes
+                FROM projects p
+                LEFT JOIN volume_latest vl ON vl.project_id = p.id
+                GROUP BY p.id, p.name
+                HAVING COUNT(vl.id) > 0
+                ORDER BY p.name
+                """
             )
-            SELECT p.id as tenant_id,
-                   p.name as tenant_name,
-                   COUNT(vl.id) as total_volumes,
-                   COUNT(*) FILTER (WHERE vl.latest_snapshot IS NULL) as volumes_without_snapshots,
-                   COUNT(*) FILTER (
-                       WHERE vl.latest_snapshot IS NOT NULL
-                         AND vl.latest_snapshot < now() - interval '7 days'
-                   ) as stale_snapshot_volumes
-            FROM projects p
-            LEFT JOIN volume_latest vl ON vl.project_id = p.id
-            GROUP BY p.id, p.name
-            HAVING COUNT(vl.id) > 0
-            ORDER BY p.name
-            """
-        )
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+            rows = cursor.fetchall()
+            cursor.close()
 
-        drift_tenants = []
-        for row in rows:
-            tenant_id = row.get("tenant_id")
-            compliance = tenant_compliance.get(tenant_id, {})
-            drift_tenants.append({
-                "tenant_id": tenant_id,
-                "tenant_name": row.get("tenant_name"),
-                "total_volumes": row.get("total_volumes", 0),
-                "volumes_without_snapshots": row.get("volumes_without_snapshots", 0),
-                "stale_snapshot_volumes": row.get("stale_snapshot_volumes", 0),
-                "warning_volumes": compliance.get("warning_volumes", 0),
-            })
+            drift_tenants = []
+            for row in rows:
+                tenant_id = row.get("tenant_id")
+                compliance = tenant_compliance.get(tenant_id, {})
+                drift_tenants.append({
+                    "tenant_id": tenant_id,
+                    "tenant_name": row.get("tenant_name"),
+                    "total_volumes": row.get("total_volumes", 0),
+                    "volumes_without_snapshots": row.get("volumes_without_snapshots", 0),
+                    "stale_snapshot_volumes": row.get("stale_snapshot_volumes", 0),
+                    "warning_volumes": compliance.get("warning_volumes", 0),
+                })
 
-        summary = {
-            "total_warning_volumes": sum(t["warning_volumes"] for t in drift_tenants),
-            "total_stale_volumes": sum(t["stale_snapshot_volumes"] for t in drift_tenants),
-            "total_volumes_without_snapshots": sum(t["volumes_without_snapshots"] for t in drift_tenants),
-        }
+            summary = {
+                "total_warning_volumes": sum(t["warning_volumes"] for t in drift_tenants),
+                "total_stale_volumes": sum(t["stale_snapshot_volumes"] for t in drift_tenants),
+                "total_volumes_without_snapshots": sum(t["volumes_without_snapshots"] for t in drift_tenants),
+            }
 
-        return {
-            "summary": summary,
-            "tenants": drift_tenants,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+            return {
+                "summary": summary,
+                "tenants": drift_tenants,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
     except Exception as e:
         logger.error(f"Error in get_compliance_drift: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1557,40 +1543,39 @@ async def get_tenant_summary():
     Used by landing dashboard for tenant list.
     """
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        cursor.execute("""
-            SELECT 
-                p.id as tenant_id,
-                p.name as tenant_name,
-                COUNT(DISTINCT s.id) as vm_count,
-                COUNT(DISTINCT v.id) as volume_count,
-                COUNT(DISTINCT n.id) as network_count,
-                (SELECT COUNT(DISTINCT user_id) FROM role_assignments 
-                 WHERE resource_id = p.id) as user_count
-            FROM projects p
-            LEFT JOIN servers s ON s.project_id = p.id
-            LEFT JOIN volumes v ON v.project_id = p.id
-            LEFT JOIN networks n ON n.project_id = p.id
-            GROUP BY p.id, p.name
-            ORDER BY p.name
-        """)
+            cursor.execute("""
+                SELECT 
+                    p.id as tenant_id,
+                    p.name as tenant_name,
+                    COUNT(DISTINCT s.id) as vm_count,
+                    COUNT(DISTINCT v.id) as volume_count,
+                    COUNT(DISTINCT n.id) as network_count,
+                    (SELECT COUNT(DISTINCT user_id) FROM role_assignments 
+                     WHERE resource_id = p.id) as user_count
+                FROM projects p
+                LEFT JOIN servers s ON s.project_id = p.id
+                LEFT JOIN volumes v ON v.project_id = p.id
+                LEFT JOIN networks n ON n.project_id = p.id
+                GROUP BY p.id, p.name
+                ORDER BY p.name
+            """)
         
-        tenants = cursor.fetchall()
-        cursor.close()
-        conn.close()
+            tenants = cursor.fetchall()
+            cursor.close()
         
-        # Enrich with compliance status (simplified)
-        for tenant in tenants:
-            # This could be cached/optimized, but for now a simple check
-            tenant["snapshot_sla_status"] = "compliant"  # Placeholder
-            tenant["recent_errors"] = 0  # Placeholder
+            # Enrich with compliance status (simplified)
+            for tenant in tenants:
+                # This could be cached/optimized, but for now a simple check
+                tenant["snapshot_sla_status"] = "compliant"  # Placeholder
+                tenant["recent_errors"] = 0  # Placeholder
         
-        return {
-            "tenants": tenants,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
+            return {
+                "tenants": tenants,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
         
     except Exception as e:
         logger.error(f"Error in get_tenant_summary: {e}")

@@ -24,6 +24,8 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 
+from db_pool import get_connection
+
 # Configuration from environment
 ENABLE_AUTHENTICATION = os.getenv("ENABLE_AUTHENTICATION", "true").lower() == "true"
 LDAP_SERVER = os.getenv("LDAP_SERVER", "localhost")
@@ -74,14 +76,12 @@ class UserRole(BaseModel):
 
 # Database connection helper
 def get_auth_db_conn():
-    """Get database connection for authentication operations"""
-    return psycopg2.connect(
-        host=os.getenv("PF9_DB_HOST", "localhost"),
-        port=int(os.getenv("PF9_DB_PORT", "5432")),
-        dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
-        user=os.getenv("PF9_DB_USER", "pf9"),
-        password=os.getenv("PF9_DB_PASSWORD", ""),
-    )
+    """Get database connection for authentication operations.
+    DEPRECATED: prefer `with get_connection() as conn:` from db_pool.
+    Kept for backward compat — returns a pooled connection.
+    """
+    from db_pool import get_pool
+    return get_pool().getconn()
 
 # LDAP Authentication
 class LDAPAuthenticator:
@@ -301,22 +301,22 @@ def verify_token(token: str) -> Optional[TokenData]:
 def get_user_role(username: str) -> Optional[str]:
     """Get user role from database"""
     try:
-        conn = get_auth_db_conn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT role FROM user_roles 
-                WHERE username = %s AND is_active = true
-            """, (username,))
-            result = cur.fetchone()
-            if result:
-                return result['role']
-            
-            # If no role found, assign default role for known admin
-            if username == DEFAULT_ADMIN_USER:
-                return "superadmin"
-            
-            # Default role for new users
-            return "viewer"
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT role FROM user_roles 
+                    WHERE username = %s AND is_active = true
+                """, (username,))
+                result = cur.fetchone()
+                if result:
+                    return result['role']
+                
+                # If no role found, assign default role for known admin
+                if username == DEFAULT_ADMIN_USER:
+                    return "superadmin"
+                
+                # Default role for new users
+                return "viewer"
             
     except Exception as e:
         print(f"Error getting user role: {e}")
@@ -325,27 +325,26 @@ def get_user_role(username: str) -> Optional[str]:
 def set_user_role(username: str, role: str, granted_by: str = "system") -> bool:
     """Set user role in database"""
     try:
-        conn = get_auth_db_conn()
-        with conn.cursor() as cur:
-            # Check if user already exists
-            cur.execute("SELECT id FROM user_roles WHERE username = %s", (username,))
-            existing = cur.fetchone()
-            
-            if existing:
-                # Update existing role
-                cur.execute("""
-                    UPDATE user_roles 
-                    SET role = %s, granted_by = %s, is_active = true
-                    WHERE username = %s
-                """, (role, granted_by, username))
-            else:
-                # Insert new role
-                cur.execute("""
-                    INSERT INTO user_roles (username, role, granted_by, granted_at, is_active)
-                    VALUES (%s, %s, %s, now(), true)
-                """, (username, role, granted_by))
-            
-            conn.commit()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Check if user already exists
+                cur.execute("SELECT id FROM user_roles WHERE username = %s", (username,))
+                existing = cur.fetchone()
+                
+                if existing:
+                    # Update existing role
+                    cur.execute("""
+                        UPDATE user_roles 
+                        SET role = %s, granted_by = %s, is_active = true
+                        WHERE username = %s
+                    """, (role, granted_by, username))
+                else:
+                    # Insert new role
+                    cur.execute("""
+                        INSERT INTO user_roles (username, role, granted_by, granted_at, is_active)
+                        VALUES (%s, %s, %s, now(), true)
+                    """, (username, role, granted_by))
+            # auto-commit via context manager
             return True
     except Exception as e:
         print(f"Error setting user role: {e}")
@@ -361,25 +360,25 @@ def has_permission(username: str, resource: str, permission: str) -> bool:
         return False
         
     try:
-        conn = get_auth_db_conn()
-        with conn.cursor() as cur:
-            # Check for specific action (read, write, admin)
-            cur.execute("""
-                SELECT 1 FROM role_permissions 
-                WHERE role = %s AND resource = %s 
-                AND (action = %s OR action = 'admin')
-            """, (role, resource, permission))
-            result = cur.fetchone()
-            if result:
-                return True
-            
-            # Also check for wildcard resource
-            cur.execute("""
-                SELECT 1 FROM role_permissions 
-                WHERE role = %s AND resource = '*'
-                AND (action = %s OR action = 'admin')
-            """, (role, permission))
-            return cur.fetchone() is not None
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Check for specific action (read, write, admin)
+                cur.execute("""
+                    SELECT 1 FROM role_permissions 
+                    WHERE role = %s AND resource = %s 
+                    AND (action = %s OR action = 'admin')
+                """, (role, resource, permission))
+                result = cur.fetchone()
+                if result:
+                    return True
+                
+                # Also check for wildcard resource
+                cur.execute("""
+                    SELECT 1 FROM role_permissions 
+                    WHERE role = %s AND resource = '*'
+                    AND (action = %s OR action = 'admin')
+                """, (role, permission))
+                return cur.fetchone() is not None
     except Exception as e:
         print(f"Error checking permissions: {e}")
         return False
@@ -388,31 +387,29 @@ def has_permission(username: str, resource: str, permission: str) -> bool:
 def create_user_session(username: str, role: str, token: str, ip_address: str = None, user_agent: str = None):
     """Create user session record"""
     try:
-        conn = get_auth_db_conn()
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        expires_at = datetime.utcnow() + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
-        
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO user_sessions (username, role, token_hash, expires_at, ip_address, user_agent)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (username, role, token_hash, expires_at, ip_address, user_agent))
-            conn.commit()
+        with get_connection() as conn:
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            expires_at = datetime.utcnow() + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+            
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO user_sessions (username, role, token_hash, expires_at, ip_address, user_agent)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (username, role, token_hash, expires_at, ip_address, user_agent))
     except Exception as e:
         print(f"Error creating session: {e}")
 
 def invalidate_user_session(token: str):
     """Invalidate user session"""
     try:
-        conn = get_auth_db_conn()
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE user_sessions SET is_active = false 
-                WHERE token_hash = %s
-            """, (token_hash,))
-            conn.commit()
+        with get_connection() as conn:
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE user_sessions SET is_active = false 
+                    WHERE token_hash = %s
+                """, (token_hash,))
     except Exception as e:
         print(f"Error invalidating session: {e}")
 
@@ -420,14 +417,13 @@ def log_auth_event(username: str, action: str, success: bool = True, ip_address:
                    user_agent: str = None, resource: str = None, endpoint: str = None, details: dict = None):
     """Log authentication/authorization events"""
     try:
-        conn = get_auth_db_conn()
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO auth_audit_log (username, action, success, ip_address, user_agent, 
-                                           resource, endpoint, details)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (username, action, success, ip_address, user_agent, resource, endpoint, details))
-            conn.commit()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO auth_audit_log (username, action, success, ip_address, user_agent, 
+                                               resource, endpoint, details)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (username, action, success, ip_address, user_agent, resource, endpoint, details))
     except Exception as e:
         print(f"Error logging auth event: {e}")
 

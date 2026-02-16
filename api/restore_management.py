@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 import requests as http_requests
 
 from auth import require_permission, get_current_user, User
+from db_pool import get_connection
 
 logger = logging.getLogger("pf9.restore")
 
@@ -554,8 +555,7 @@ class RestorePlanner:
         """
         Build a restore plan. Returns the plan dict to be stored in restore_jobs.plan_json.
         """
-        conn = self.db_conn_fn()
-        try:
+        with get_connection() as conn:
             # 1. Fetch VM baseline from DB
             vm_data = self._get_vm_from_db(conn, req.vm_id)
             if not vm_data:
@@ -682,9 +682,6 @@ class RestorePlanner:
             plan["job_id"] = job_id
 
             return plan
-
-        finally:
-            conn.close()
 
     def _get_vm_from_db(self, conn, vm_id: str) -> Optional[dict]:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1069,7 +1066,6 @@ class RestorePlanner:
                     (job_id, idx + 1, action["step"], Json(action.get("details", {}))),
                 )
 
-        conn.commit()
         return job_id
 
 
@@ -1090,8 +1086,7 @@ class RestoreExecutor:
     async def execute_job(self, job_id: str):
         """Main entry: run all steps for a job."""
         # Each DB operation uses its own connection for thread-safety
-        conn = self.db_conn_fn()
-        try:
+        with get_connection() as conn:
             # Load the job
             job = self._load_job(conn, job_id)
             if not job:
@@ -1109,8 +1104,6 @@ class RestoreExecutor:
 
             # Mark job as RUNNING
             self._update_job_status(conn, job_id, "RUNNING")
-        finally:
-            conn.close()
 
         # Authenticate service user for this project
         try:
@@ -1166,11 +1159,8 @@ class RestoreExecutor:
 
     def _with_conn(self, fn):
         """Execute a function with a fresh DB connection that is closed after use."""
-        conn = self.db_conn_fn()
-        try:
+        with get_connection() as conn:
             return fn(conn)
-        finally:
-            conn.close()
 
     async def _execute_step(
         self, session: http_requests.Session, project_id: str,
@@ -1635,14 +1625,12 @@ class RestoreExecutor:
                     "UPDATE restore_jobs SET status=%s, last_heartbeat=now() WHERE id=%s",
                     (status, job_id),
                 )
-        conn.commit()
 
     def _heartbeat(self, conn, job_id: str):
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE restore_jobs SET last_heartbeat=now() WHERE id=%s", (job_id,)
             )
-        conn.commit()
 
     def _update_step_status(
         self, conn, job_id: str, step_id: int, status: str,
@@ -1664,7 +1652,6 @@ class RestoreExecutor:
                     "UPDATE restore_job_steps SET status=%s, finished_at=now(), error_text=%s WHERE id=%s",
                     (status, error, step_id),
                 )
-        conn.commit()
 
     def _fail_job(self, conn, job_id: str, reason: str):
         with conn.cursor() as cur:
@@ -1674,7 +1661,6 @@ class RestoreExecutor:
                    WHERE id=%s""",
                 (reason, job_id),
             )
-        conn.commit()
 
     def _complete_job(self, conn, job_id: str, resources: dict):
         with conn.cursor() as cur:
@@ -1684,7 +1670,6 @@ class RestoreExecutor:
                    WHERE id=%s""",
                 (Json(resources), job_id),
             )
-        conn.commit()
 
 
 # ============================================================================
@@ -1702,8 +1687,7 @@ def setup_restore_routes(app, db_conn_fn):
     # Startup: recover stale jobs left in PENDING/RUNNING from a crash
     # ------------------------------------------------------------------
     try:
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """UPDATE restore_jobs
@@ -1713,11 +1697,8 @@ def setup_restore_routes(app, db_conn_fn):
                        WHERE status IN ('PENDING','RUNNING')"""
                 )
                 count = cur.rowcount
-            conn.commit()
             if count:
                 logger.warning(f"Marked {count} stale restore job(s) as INTERRUPTED on startup")
-        finally:
-            conn.close()
     except Exception as e:
         logger.error(f"Failed to recover stale restore jobs on startup: {e}")
 
@@ -1872,8 +1853,7 @@ def setup_restore_routes(app, db_conn_fn):
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")
 
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Get VM details
                 cur.execute("SELECT id, name, project_id, flavor_id, raw_json FROM servers WHERE id = %s", (vm_id,))
@@ -2004,8 +1984,6 @@ def setup_restore_routes(app, db_conn_fn):
                         else "This VM uses boot-from-image. Snapshot restore for image-booted VMs is not yet supported."
                     ),
                 }
-        finally:
-            conn.close()
 
     # ------------------------------------------------------------------
     # POST /restore/plan  — build a restore plan
@@ -2042,8 +2020,7 @@ def setup_restore_routes(app, db_conn_fn):
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")
 
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (req.plan_id,))
                 job = cur.fetchone()
@@ -2076,10 +2053,6 @@ def setup_restore_routes(app, db_conn_fn):
                     """UPDATE restore_jobs SET status='PENDING', executed_by=%s WHERE id=%s""",
                     (current_user.username, req.plan_id),
                 )
-            conn.commit()
-
-        finally:
-            conn.close()
 
         # Launch execution as background task
         asyncio.create_task(executor.execute_job(req.plan_id))
@@ -2110,8 +2083,7 @@ def setup_restore_routes(app, db_conn_fn):
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")
 
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             conditions = []
             params = []
 
@@ -2166,8 +2138,6 @@ def setup_restore_routes(app, db_conn_fn):
                         j[key] = j[key].isoformat()
 
             return {"total": total, "jobs": jobs, "limit": limit, "offset": offset}
-        finally:
-            conn.close()
 
     # ------------------------------------------------------------------
     # GET /restore/jobs/{job_id}  — full job detail with steps
@@ -2182,8 +2152,7 @@ def setup_restore_routes(app, db_conn_fn):
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")
 
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (job_id,))
                 job = cur.fetchone()
@@ -2223,8 +2192,6 @@ def setup_restore_routes(app, db_conn_fn):
                     "percent": round(completed_steps / total_steps * 100) if total_steps > 0 else 0,
                 },
             }
-        finally:
-            conn.close()
 
     # ------------------------------------------------------------------
     # POST /restore/jobs/{job_id}/cancel  — cancel a running job
@@ -2237,8 +2204,7 @@ def setup_restore_routes(app, db_conn_fn):
         _perm: bool = Depends(require_permission("restore", "write")),
     ):
         """Cancel a running or pending restore job (best effort)."""
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT status FROM restore_jobs WHERE id = %s", (job_id,))
                 job = cur.fetchone()
@@ -2257,11 +2223,8 @@ def setup_restore_routes(app, db_conn_fn):
                        WHERE id=%s""",
                     (f"Canceled by {current_user.username}: {reason}", job_id),
                 )
-            conn.commit()
 
             return {"job_id": job_id, "status": "CANCELED", "message": "Job cancellation requested"}
-        finally:
-            conn.close()
 
     # ------------------------------------------------------------------
     # POST /restore/jobs/{job_id}/cleanup  — clean up orphaned resources
@@ -2280,8 +2243,7 @@ def setup_restore_routes(app, db_conn_fn):
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")
 
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (job_id,))
                 job = cur.fetchone()
@@ -2296,8 +2258,6 @@ def setup_restore_routes(app, db_conn_fn):
                     (job_id,),
                 )
                 steps = cur.fetchall()
-        finally:
-            conn.close()
 
         plan = job["plan_json"]
         if isinstance(plan, str):
@@ -2357,8 +2317,7 @@ def setup_restore_routes(app, db_conn_fn):
                 cleaned["volume"] = f"{resources_to_clean['volume_id']} (preserved — use delete_volume=true to remove)"
 
         # Update job status to reflect cleanup
-        conn2 = db_conn_fn()
-        try:
+        with get_connection() as conn2:
             with conn2.cursor() as cur:
                 cur.execute(
                     """UPDATE restore_jobs
@@ -2366,9 +2325,6 @@ def setup_restore_routes(app, db_conn_fn):
                        WHERE id = %s""",
                     (f"\n[Cleanup by {current_user.username}: {json.dumps(cleaned)}]", job_id),
                 )
-            conn2.commit()
-        finally:
-            conn2.close()
 
         return {
             "job_id": job_id,
@@ -2395,8 +2351,7 @@ def setup_restore_routes(app, db_conn_fn):
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")
 
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (job_id,))
                 job = cur.fetchone()
@@ -2404,8 +2359,6 @@ def setup_restore_routes(app, db_conn_fn):
                     raise HTTPException(404, f"Restore job {job_id} not found")
                 if job["status"] != "COMPLETED":
                     raise HTTPException(400, f"Storage cleanup is only for COMPLETED jobs, got '{job['status']}'")
-        finally:
-            conn.close()
 
         plan = job["plan_json"]
         if isinstance(plan, str):
@@ -2464,8 +2417,7 @@ def setup_restore_routes(app, db_conn_fn):
                 result["skipped"].append("No snapshot ID in restore plan")
 
         # Audit log
-        conn2 = db_conn_fn()
-        try:
+        with get_connection() as conn2:
             with conn2.cursor() as cur:
                 cur.execute(
                     """UPDATE restore_jobs
@@ -2473,9 +2425,6 @@ def setup_restore_routes(app, db_conn_fn):
                        WHERE id = %s""",
                     (f"\n[Storage cleanup by {current_user.username}: {json.dumps(result)}]", job_id),
                 )
-            conn2.commit()
-        finally:
-            conn2.close()
 
         return {
             "job_id": job_id,
@@ -2501,8 +2450,7 @@ def setup_restore_routes(app, db_conn_fn):
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")
 
-        conn = db_conn_fn()
-        try:
+        with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (job_id,))
                 job = cur.fetchone()
@@ -2530,8 +2478,6 @@ def setup_restore_routes(app, db_conn_fn):
                     (job_id,),
                 )
                 steps = cur.fetchall()
-        finally:
-            conn.close()
 
         plan = job["plan_json"]
         if isinstance(plan, str):
@@ -2585,8 +2531,7 @@ def setup_restore_routes(app, db_conn_fn):
 
         # Create a new job for the retry
         new_job_id = str(uuid.uuid4())
-        conn2 = db_conn_fn()
-        try:
+        with get_connection() as conn2:
             with conn2.cursor() as cur:
                 cur.execute(
                     """INSERT INTO restore_jobs
@@ -2620,18 +2565,12 @@ def setup_restore_routes(app, db_conn_fn):
                        WHERE id = %s""",
                     (f"\n[Retried as job {new_job_id} by {current_user.username}]", job_id),
                 )
-            conn2.commit()
-        finally:
-            conn2.close()
 
         # Launch execution with pre-existing resources
         async def retry_with_resources():
             """Custom execution that pre-populates resources from the original job."""
-            conn3 = db_conn_fn()
-            try:
+            with get_connection() as conn3:
                 executor._update_job_status(conn3, new_job_id, "RUNNING")
-            finally:
-                conn3.close()
 
             try:
                 session = os_client.authenticate_service_user(job["project_id"])

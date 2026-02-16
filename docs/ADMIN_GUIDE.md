@@ -2,7 +2,14 @@
 
 ## Recent Major Enhancements
 
-### Email Notifications (v1.11 - NEW ✨)
+### Multi-User Concurrency (v1.12 - NEW ✨)
+- **Gunicorn + 4 Workers**: API now runs 4 parallel uvicorn worker processes via Gunicorn for 10+ concurrent users
+- **Database Connection Pool**: Centralized `ThreadedConnectionPool` (db_pool.py) replaces per-request connections — min 2, max 10 per worker
+- **Thread-Safe Metrics**: `PerformanceMetrics` class now uses `threading.Lock` for safe concurrent access
+- **97 Connection Leaks Fixed**: All endpoint handlers converted to `with get_connection() as conn:` context manager
+- **Configurable Pool**: `DB_POOL_MIN_CONN` / `DB_POOL_MAX_CONN` env vars for tuning
+
+### Email Notifications (v1.11)
 - **🔔 Notifications Tab**: Per-user email notification preferences, delivery history, and admin SMTP settings
 - **Event Types**: Drift alerts, snapshot failures, compliance violations, and tenant health score drops
 - **Notification Worker**: Background container (`pf9_notification_worker`) polls DB every 120s for new events

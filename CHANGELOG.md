@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-02-16
+
+### Added
+- **Multi-Worker Concurrency**: Switched from single uvicorn worker to gunicorn with 4 uvicorn workers for parallel request handling, supporting 10+ concurrent users
+- **Database Connection Pool** (`api/db_pool.py`): Centralized `ThreadedConnectionPool` (min=2, max=10 per worker) replacing per-request `psycopg2.connect()` calls. Provides `get_connection()` context manager with auto-commit, auto-rollback, and auto-return-to-pool
+- **Thread-Safe Performance Metrics**: Added `threading.Lock` to `PerformanceMetrics` class — all read/write operations now use lock-protected snapshots
+- **Configurable Pool Sizing**: New env vars `DB_POOL_MIN_CONN` (default 2) and `DB_POOL_MAX_CONN` (default 10) for tuning per-worker pool size
+
+### Fixed
+- **Critical Connection Leaks in auth.py**: 6 functions (`get_user_role`, `set_user_role`, `has_permission`, `create_user_session`, `invalidate_user_session`, `log_auth_event`) never closed database connections — leaked 2+ connections per authenticated request
+- **Connection Leaks in main.py**: 24 endpoints (`/audit/*`, `/history/*`, `/users`, `/roles`, `/role-assignments`, branding, drift) never called `conn.close()`; 13 more had `conn.close()` outside `try/finally` (leaked on exceptions)
+- **Connection Leaks in dashboards.py**: 16 endpoints had `conn.close()` on happy path but no `finally` block
+- **Connection Leaks in notification_routes.py**: 6 endpoints had same pattern
+- **Connection Leaks in snapshot_management.py**: 22 endpoints — all converted to pool context manager
+- **Connection Leaks in restore_management.py**: 16 endpoints — all converted to pool context manager
+- **Total**: 97 connection leak sites fixed across 6 files
+
+### Changed
+- `api/Dockerfile`: CMD changed from `uvicorn main:app` to `gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --timeout 120`
+- `api/requirements.txt`: Added `gunicorn==22.0.0`
+- All DB connection functions (`db_conn()`, `get_auth_db_conn()`, `get_db_connection()`) now return connections from the shared pool
+- All endpoint handlers now use `with get_connection() as conn:` context manager pattern
+
 ## [1.11.0] - 2026-02-16
 
 ### Added
