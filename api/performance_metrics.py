@@ -3,6 +3,7 @@ Performance monitoring middleware for FastAPI
 Tracks request duration, status codes, and endpoint usage
 """
 import time
+import threading
 from typing import Callable
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -11,9 +12,10 @@ from datetime import datetime, timedelta
 import json
 
 class PerformanceMetrics:
-    """In-memory performance metrics storage"""
+    """Thread-safe in-memory performance metrics storage"""
     
     def __init__(self, max_history: int = 1000):
+        self._lock = threading.Lock()
         self.request_count = defaultdict(int)
         self.request_duration = defaultdict(list)
         self.status_codes = defaultdict(int)
@@ -23,19 +25,9 @@ class PerformanceMetrics:
         self.start_time = datetime.now()
     
     def record_request(self, method: str, path: str, status_code: int, duration: float, user: str = None):
-        """Record a request"""
+        """Record a request (thread-safe)"""
         endpoint = f"{method} {path}"
         
-        # Update counters
-        self.request_count[endpoint] += 1
-        self.status_codes[status_code] += 1
-        
-        # Track duration
-        if endpoint not in self.request_duration:
-            self.request_duration[endpoint] = deque(maxlen=100)
-        self.request_duration[endpoint].append(duration)
-        
-        # Record in recent requests
         request_info = {
             "timestamp": datetime.now().isoformat(),
             "method": method,
@@ -44,24 +36,44 @@ class PerformanceMetrics:
             "duration_ms": round(duration * 1000, 2),
             "user": user
         }
-        self.recent_requests.append(request_info)
         
-        # Track slow requests (>1 second)
-        if duration > 1.0:
-            self.slow_requests.append(request_info)
-        
-        # Track errors (4xx, 5xx)
-        if status_code >= 400:
-            self.error_requests.append(request_info)
+        with self._lock:
+            # Update counters
+            self.request_count[endpoint] += 1
+            self.status_codes[status_code] += 1
+            
+            # Track duration
+            if endpoint not in self.request_duration:
+                self.request_duration[endpoint] = deque(maxlen=100)
+            self.request_duration[endpoint].append(duration)
+            
+            # Record in recent requests
+            self.recent_requests.append(request_info)
+            
+            # Track slow requests (>1 second)
+            if duration > 1.0:
+                self.slow_requests.append(request_info)
+            
+            # Track errors (4xx, 5xx)
+            if status_code >= 400:
+                self.error_requests.append(request_info)
     
     def get_stats(self):
-        """Get statistics summary"""
-        total_requests = sum(self.request_count.values())
-        uptime = (datetime.now() - self.start_time).total_seconds()
+        """Get statistics summary (thread-safe)"""
+        with self._lock:
+            total_requests = sum(self.request_count.values())
+            uptime = (datetime.now() - self.start_time).total_seconds()
+            
+            # Snapshot data under lock
+            request_count_snap = dict(self.request_count)
+            status_codes_snap = dict(self.status_codes)
+            duration_snap = {k: list(v) for k, v in self.request_duration.items()}
+            slow_snap = list(self.slow_requests)
+            error_snap = list(self.error_requests)
         
         # Calculate duration stats per endpoint (seconds)
         duration_stats = {}
-        for endpoint, durations in self.request_duration.items():
+        for endpoint, durations in duration_snap.items():
             if not durations:
                 continue
 
@@ -95,7 +107,7 @@ class PerformanceMetrics:
 
         # All endpoints (with counts and duration stats)
         all_endpoints = sorted(
-            self.request_count.items(),
+            request_count_snap.items(),
             key=lambda x: x[1],
             reverse=True
         )
@@ -107,7 +119,7 @@ class PerformanceMetrics:
             "uptime_seconds": round(uptime, 2),
             "total_requests": total_requests,
             "requests_per_second": round(total_requests / uptime if uptime > 0 else 0, 2),
-            "status_codes": dict(self.status_codes),
+            "status_codes": status_codes_snap,
             "top_endpoints": [
                 {
                     "endpoint": ep,
@@ -132,14 +144,16 @@ class PerformanceMetrics:
                 }
                 for ep, stats in slow_endpoints
             ],
-            "recent_slow_requests": list(self.slow_requests)[-10:],
-            "recent_errors": list(self.error_requests)[-10:],
+            "recent_slow_requests": slow_snap[-10:],
+            "recent_errors": error_snap[-10:],
         }
     
     def get_endpoint_stats(self, method: str, path: str):
-        """Get stats for specific endpoint"""
+        """Get stats for specific endpoint (thread-safe)"""
         endpoint = f"{method} {path}"
-        durations = self.request_duration.get(endpoint, [])
+        with self._lock:
+            durations = list(self.request_duration.get(endpoint, []))
+            count = self.request_count[endpoint]
         
         if not durations:
             return None
@@ -147,7 +161,7 @@ class PerformanceMetrics:
         sorted_durations = sorted(durations)
         return {
             "endpoint": endpoint,
-            "request_count": self.request_count[endpoint],
+            "request_count": count,
             "avg_duration_ms": round(sum(durations) / len(durations) * 1000, 2),
             "min_duration_ms": round(min(durations) * 1000, 2),
             "max_duration_ms": round(max(durations) * 1000, 2),

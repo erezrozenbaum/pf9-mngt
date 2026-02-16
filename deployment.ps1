@@ -362,6 +362,53 @@ if (-not (Test-Path ".env")) {
         Set-EnvValue "RESTORE_CLEANUP_VOLUMES" "false"
     }
 
+    # --- Email Notifications (SMTP) ---
+    Write-Host ""
+    Write-Host "── Email Notifications (SMTP) ──" -ForegroundColor Yellow
+    Write-Info "Email notifications can alert on drift events, snapshot failures, and compliance issues."
+    $smtpEnabled = Prompt-Value "Enable email notifications? (true/false)" "false"
+    Set-EnvValue "SMTP_ENABLED" $smtpEnabled
+
+    if ($smtpEnabled -eq "true") {
+        $smtpHost = Prompt-Value "SMTP server hostname or IP" ""
+        $smtpPort = Prompt-Value "SMTP port" "25"
+        $smtpTls = Prompt-Value "Use TLS? (true/false)" "false"
+        Set-EnvValue "SMTP_HOST" $smtpHost
+        Set-EnvValue "SMTP_PORT" $smtpPort
+        Set-EnvValue "SMTP_USE_TLS" $smtpTls
+
+        $smtpAuth = Prompt-Value "SMTP requires authentication? (y/n)" "n"
+        if ($smtpAuth -eq 'y' -or $smtpAuth -eq 'Y') {
+            $smtpUser = Prompt-Value "SMTP Username" ""
+            $smtpPass = Prompt-Value "SMTP Password" "" $true
+            Set-EnvValue "SMTP_USERNAME" $smtpUser
+            Set-EnvValue "SMTP_PASSWORD" $smtpPass
+        } else {
+            Set-EnvValue "SMTP_USERNAME" ""
+            Set-EnvValue "SMTP_PASSWORD" ""
+        }
+
+        $smtpFrom = Prompt-Value "From address for notification emails" "pf9-mgmt@$ldapDomain"
+        Set-EnvValue "SMTP_FROM_ADDRESS" $smtpFrom
+
+        $pollInterval = Prompt-Value "Notification poll interval in seconds" "120"
+        Set-EnvValue "NOTIFICATION_POLL_INTERVAL_SECONDS" $pollInterval
+        Set-EnvValue "NOTIFICATION_DIGEST_ENABLED" "true"
+        Set-EnvValue "NOTIFICATION_DIGEST_HOUR_UTC" "8"
+        Set-EnvValue "NOTIFICATION_LOOKBACK_SECONDS" "300"
+        Set-EnvValue "HEALTH_ALERT_THRESHOLD" "50"
+
+        Write-Success "SMTP notification settings configured"
+    } else {
+        Set-EnvValue "SMTP_HOST" ""
+        Set-EnvValue "SMTP_PORT" "25"
+        Set-EnvValue "SMTP_USE_TLS" "false"
+        Set-EnvValue "SMTP_USERNAME" ""
+        Set-EnvValue "SMTP_PASSWORD" ""
+        Set-EnvValue "SMTP_FROM_ADDRESS" ""
+        Write-Info "Email notifications disabled (can be enabled later in .env)"
+    }
+
     # --- JWT Secret ---
     Write-Host ""
     Write-Host "── Security ──" -ForegroundColor Yellow
@@ -701,7 +748,8 @@ if (-not $SkipHealthCheck) {
         @{Name="API Docs"; Url="http://localhost:8000/docs"; Critical=$false},
         @{Name="Monitoring"; Url="http://localhost:8001/health"; Critical=$true},
         @{Name="UI"; Url="http://localhost:5173"; Critical=$true},
-        @{Name="pgAdmin"; Url="http://localhost:8080"; Critical=$false}
+        @{Name="pgAdmin"; Url="http://localhost:8080"; Critical=$false},
+        @{Name="Notification Worker"; Url=$null; Critical=$false}
     )
 
     $allOk = $true
@@ -710,7 +758,24 @@ if (-not $SkipHealthCheck) {
     foreach ($check in $checks) {
         Write-Info "Testing $($check.Name)..."
         Start-Sleep -Seconds 2
-        
+
+        if ($null -eq $check.Url) {
+            # Container-only check (no HTTP endpoint)
+            try {
+                $containerStatus = docker inspect --format '{{.State.Status}}' pf9_notification_worker 2>&1
+                if ($containerStatus -eq 'running') {
+                    Write-Success "$($check.Name) container is running"
+                } else {
+                    Write-Warning "$($check.Name) container status: $containerStatus"
+                    $allOk = $false
+                }
+            } catch {
+                Write-Warning "$($check.Name) container not found (not critical)"
+                $allOk = $false
+            }
+            continue
+        }
+
         if (Test-Http $check.Url) {
             Write-Success "$($check.Name) is responding"
         } else {
@@ -818,6 +883,26 @@ if ($restoreEnabledVal -eq "true") {
     Write-Host "  Feature:               DISABLED (default)" -ForegroundColor Yellow
     Write-Host "  To enable:             Set RESTORE_ENABLED=true in .env" -ForegroundColor Yellow
     Write-Host "                         See docs/RESTORE_GUIDE.md" -ForegroundColor Yellow
+}
+Write-Host ""
+
+Write-Host "Email Notifications:" -ForegroundColor Cyan
+$smtpEnabledVal = $envMap['SMTP_ENABLED']
+$smtpHostVal = $envMap['SMTP_HOST']
+if ($smtpEnabledVal -eq "true" -and -not [string]::IsNullOrWhiteSpace($smtpHostVal)) {
+    $smtpPortVal = $envMap['SMTP_PORT']
+    $smtpFromVal = $envMap['SMTP_FROM_ADDRESS']
+    $smtpAuthVal = if ([string]::IsNullOrWhiteSpace($envMap['SMTP_USERNAME'])) { "No" } else { "Yes" }
+    Write-Host "  Feature:               ENABLED" -ForegroundColor Green
+    Write-Host "  SMTP Server:           ${smtpHostVal}:${smtpPortVal}" -ForegroundColor White
+    Write-Host "  From Address:          $smtpFromVal" -ForegroundColor White
+    Write-Host "  Authentication:        $smtpAuthVal" -ForegroundColor White
+    Write-Host "  Worker Container:      pf9_notification_worker" -ForegroundColor White
+    Write-Host "  UI Tab:                Notifications (preferences, history, settings)" -ForegroundColor White
+} else {
+    Write-Host "  Feature:               DISABLED" -ForegroundColor Yellow
+    Write-Host "  To enable:             Set SMTP_ENABLED=true and SMTP_HOST in .env" -ForegroundColor Yellow
+    Write-Host "  Documentation:         See SMTP section in docs/DEPLOYMENT_GUIDE.md" -ForegroundColor Yellow
 }
 Write-Host ""
 

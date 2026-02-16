@@ -14,6 +14,7 @@ import logging
 import os
 
 from auth import require_permission, get_current_user, User
+from db_pool import get_connection
 
 logger = logging.getLogger("snapshot_management")
 
@@ -333,39 +334,37 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get all snapshot policy sets with optional filtering"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            query = """
-                SELECT id, name, description, is_global, tenant_id, tenant_name,
-                       policies, retention_map, priority, is_active,
-                       created_at, created_by, updated_at, updated_by
-                FROM snapshot_policy_sets
-                WHERE 1=1
-            """
-            params = []
-            
-            if is_global is not None:
-                query += " AND is_global = %s"
-                params.append(is_global)
-            
-            if tenant_id is not None:
-                query += " AND tenant_id = %s"
-                params.append(tenant_id)
-            
-            if is_active is not None:
-                query += " AND is_active = %s"
-                params.append(is_active)
-            
-            query += " ORDER BY priority DESC, created_at DESC"
-            
-            cur.execute(query, params)
-            results = cur.fetchall()
-            cur.close()
-            conn.close()
-            
-            return {"policy_sets": results, "count": len(results)}
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                query = """
+                    SELECT id, name, description, is_global, tenant_id, tenant_name,
+                           policies, retention_map, priority, is_active,
+                           created_at, created_by, updated_at, updated_by
+                    FROM snapshot_policy_sets
+                    WHERE 1=1
+                """
+                params = []
+
+                if is_global is not None:
+                    query += " AND is_global = %s"
+                    params.append(is_global)
+
+                if tenant_id is not None:
+                    query += " AND tenant_id = %s"
+                    params.append(tenant_id)
+
+                if is_active is not None:
+                    query += " AND is_active = %s"
+                    params.append(is_active)
+
+                query += " ORDER BY priority DESC, created_at DESC"
+
+                cur.execute(query, params)
+                results = cur.fetchall()
+
+                return {"policy_sets": results, "count": len(results)}
+
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -380,36 +379,33 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Create a new snapshot policy set"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cur.execute("""
-                INSERT INTO snapshot_policy_sets 
-                (name, description, is_global, tenant_id, tenant_name, policies, 
-                 retention_map, priority, created_by, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
-                RETURNING id, name, description, is_global, tenant_id, tenant_name,
-                          policies, retention_map, priority, is_active, created_at
-            """, (
-                policy_set.name,
-                policy_set.description,
-                policy_set.is_global,
-                policy_set.tenant_id,
-                policy_set.tenant_name,
-                json.dumps(policy_set.policies),
-                json.dumps(policy_set.retention_map),
-                policy_set.priority,
-                current_user.username,
-                current_user.username
-            ))
-            
-            result = cur.fetchone()
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    INSERT INTO snapshot_policy_sets 
+                    (name, description, is_global, tenant_id, tenant_name, policies, 
+                     retention_map, priority, created_by, updated_by)
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
+                    RETURNING id, name, description, is_global, tenant_id, tenant_name,
+                              policies, retention_map, priority, is_active, created_at
+                """, (
+                    policy_set.name,
+                    policy_set.description,
+                    policy_set.is_global,
+                    policy_set.tenant_id,
+                    policy_set.tenant_name,
+                    json.dumps(policy_set.policies),
+                    json.dumps(policy_set.retention_map),
+                    policy_set.priority,
+                    current_user.username,
+                    current_user.username
+                ))
+
+                result = cur.fetchone()
+
+                return result
+
         except psycopg2.IntegrityError as e:
             if "unique_global_policy_name" in str(e):
                 raise HTTPException(
@@ -434,29 +430,27 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get a specific snapshot policy set by ID"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cur.execute("""
-                SELECT id, name, description, is_global, tenant_id, tenant_name,
-                       policies, retention_map, priority, is_active,
-                       created_at, created_by, updated_at, updated_by
-                FROM snapshot_policy_sets
-                WHERE id = %s
-            """, (policy_set_id,))
-            
-            result = cur.fetchone()
-            cur.close()
-            conn.close()
-            
-            if not result:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Policy set {policy_set_id} not found"
-                )
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    SELECT id, name, description, is_global, tenant_id, tenant_name,
+                           policies, retention_map, priority, is_active,
+                           created_at, created_by, updated_at, updated_by
+                    FROM snapshot_policy_sets
+                    WHERE id = %s
+                """, (policy_set_id,))
+
+                result = cur.fetchone()
+
+                if not result:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Policy set {policy_set_id} not found"
+                    )
+
+                return result
+
         except HTTPException:
             raise
         except Exception as e:
@@ -474,68 +468,64 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Update an existing snapshot policy set"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            # Build dynamic UPDATE query
-            update_fields = []
-            params = []
-            
-            if updates.name is not None:
-                update_fields.append("name = %s")
-                params.append(updates.name)
-            if updates.description is not None:
-                update_fields.append("description = %s")
-                params.append(updates.description)
-            if updates.policies is not None:
-                update_fields.append("policies = %s::jsonb")
-                params.append(json.dumps(updates.policies))
-            if updates.retention_map is not None:
-                update_fields.append("retention_map = %s::jsonb")
-                params.append(json.dumps(updates.retention_map))
-            if updates.priority is not None:
-                update_fields.append("priority = %s")
-                params.append(updates.priority)
-            if updates.is_active is not None:
-                update_fields.append("is_active = %s")
-                params.append(updates.is_active)
-            
-            if not update_fields:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No fields to update"
-                )
-            
-            update_fields.append("updated_by = %s")
-            params.append(current_user.username)
-            update_fields.append("updated_at = now()")
-            
-            params.append(policy_set_id)
-            
-            query = f"""
-                UPDATE snapshot_policy_sets
-                SET {', '.join(update_fields)}
-                WHERE id = %s
-                RETURNING id, name, description, is_global, tenant_id, tenant_name,
-                          policies, retention_map, priority, is_active,
-                          created_at, updated_at, updated_by
-            """
-            
-            cur.execute(query, params)
-            result = cur.fetchone()
-            
-            if not result:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Policy set {policy_set_id} not found"
-                )
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                # Build dynamic UPDATE query
+                update_fields = []
+                params = []
+
+                if updates.name is not None:
+                    update_fields.append("name = %s")
+                    params.append(updates.name)
+                if updates.description is not None:
+                    update_fields.append("description = %s")
+                    params.append(updates.description)
+                if updates.policies is not None:
+                    update_fields.append("policies = %s::jsonb")
+                    params.append(json.dumps(updates.policies))
+                if updates.retention_map is not None:
+                    update_fields.append("retention_map = %s::jsonb")
+                    params.append(json.dumps(updates.retention_map))
+                if updates.priority is not None:
+                    update_fields.append("priority = %s")
+                    params.append(updates.priority)
+                if updates.is_active is not None:
+                    update_fields.append("is_active = %s")
+                    params.append(updates.is_active)
+
+                if not update_fields:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="No fields to update"
+                    )
+
+                update_fields.append("updated_by = %s")
+                params.append(current_user.username)
+                update_fields.append("updated_at = now()")
+
+                params.append(policy_set_id)
+
+                query = f"""
+                    UPDATE snapshot_policy_sets
+                    SET {', '.join(update_fields)}
+                    WHERE id = %s
+                    RETURNING id, name, description, is_global, tenant_id, tenant_name,
+                              policies, retention_map, priority, is_active,
+                              created_at, updated_at, updated_by
+                """
+
+                cur.execute(query, params)
+                result = cur.fetchone()
+
+                if not result:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Policy set {policy_set_id} not found"
+                    )
+
+                return result
+
         except HTTPException:
             raise
         except Exception as e:
@@ -552,21 +542,17 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Delete a snapshot policy set"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor()
-            
-            cur.execute("DELETE FROM snapshot_policy_sets WHERE id = %s", (policy_set_id,))
-            
-            if cur.rowcount == 0:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Policy set {policy_set_id} not found"
-                )
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-        
+            with get_connection() as conn:
+                cur = conn.cursor()
+
+                cur.execute("DELETE FROM snapshot_policy_sets WHERE id = %s", (policy_set_id,))
+
+                if cur.rowcount == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Policy set {policy_set_id} not found"
+                    )
+
         except HTTPException:
             raise
         except Exception as e:
@@ -593,46 +579,44 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get snapshot assignments with optional filtering"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            query = """
-                SELECT id, volume_id, volume_name, tenant_id, tenant_name,
-                       project_id, project_name, vm_id, vm_name, policy_set_id,
-                       auto_snapshot, policies, retention_map, assignment_source,
-                       matched_rules, created_at, created_by, updated_at, updated_by,
-                       last_verified_at
-                FROM snapshot_assignments
-                WHERE 1=1
-            """
-            params = []
-            
-            if volume_id:
-                query += " AND volume_id = %s"
-                params.append(volume_id)
-            if tenant_id:
-                query += " AND tenant_id = %s"
-                params.append(tenant_id)
-            if project_id:
-                query += " AND project_id = %s"
-                params.append(project_id)
-            if vm_id:
-                query += " AND vm_id = %s"
-                params.append(vm_id)
-            if auto_snapshot is not None:
-                query += " AND auto_snapshot = %s"
-                params.append(auto_snapshot)
-            
-            query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
-            params.extend([limit, offset])
-            
-            cur.execute(query, params)
-            results = cur.fetchall()
-            cur.close()
-            conn.close()
-            
-            return {"assignments": results, "count": len(results), "limit": limit, "offset": offset}
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                query = """
+                    SELECT id, volume_id, volume_name, tenant_id, tenant_name,
+                           project_id, project_name, vm_id, vm_name, policy_set_id,
+                           auto_snapshot, policies, retention_map, assignment_source,
+                           matched_rules, created_at, created_by, updated_at, updated_by,
+                           last_verified_at
+                    FROM snapshot_assignments
+                    WHERE 1=1
+                """
+                params = []
+
+                if volume_id:
+                    query += " AND volume_id = %s"
+                    params.append(volume_id)
+                if tenant_id:
+                    query += " AND tenant_id = %s"
+                    params.append(tenant_id)
+                if project_id:
+                    query += " AND project_id = %s"
+                    params.append(project_id)
+                if vm_id:
+                    query += " AND vm_id = %s"
+                    params.append(vm_id)
+                if auto_snapshot is not None:
+                    query += " AND auto_snapshot = %s"
+                    params.append(auto_snapshot)
+
+                query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+                cur.execute(query, params)
+                results = cur.fetchall()
+
+                return {"assignments": results, "count": len(results), "limit": limit, "offset": offset}
+
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -647,38 +631,35 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Create a new snapshot assignment for a volume"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cur.execute("""
-                INSERT INTO snapshot_assignments
-                (volume_id, volume_name, tenant_id, tenant_name, project_id, project_name,
-                 vm_id, vm_name, policy_set_id, auto_snapshot, policies, retention_map,
-                 assignment_source, matched_rules, created_by, updated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, %s)
-                RETURNING id, volume_id, volume_name, tenant_id, tenant_name, project_id,
-                          project_name, vm_id, vm_name, policy_set_id, auto_snapshot,
-                          policies, retention_map, assignment_source, created_at
-            """, (
-                assignment.volume_id, assignment.volume_name,
-                assignment.tenant_id, assignment.tenant_name,
-                assignment.project_id, assignment.project_name,
-                assignment.vm_id, assignment.vm_name,
-                assignment.policy_set_id, assignment.auto_snapshot,
-                json.dumps(assignment.policies),
-                json.dumps(assignment.retention_map),
-                assignment.assignment_source,
-                json.dumps(assignment.matched_rules) if assignment.matched_rules else None,
-                current_user.username, current_user.username
-            ))
-            
-            result = cur.fetchone()
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    INSERT INTO snapshot_assignments
+                    (volume_id, volume_name, tenant_id, tenant_name, project_id, project_name,
+                     vm_id, vm_name, policy_set_id, auto_snapshot, policies, retention_map,
+                     assignment_source, matched_rules, created_by, updated_by)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, %s)
+                    RETURNING id, volume_id, volume_name, tenant_id, tenant_name, project_id,
+                              project_name, vm_id, vm_name, policy_set_id, auto_snapshot,
+                              policies, retention_map, assignment_source, created_at
+                """, (
+                    assignment.volume_id, assignment.volume_name,
+                    assignment.tenant_id, assignment.tenant_name,
+                    assignment.project_id, assignment.project_name,
+                    assignment.vm_id, assignment.vm_name,
+                    assignment.policy_set_id, assignment.auto_snapshot,
+                    json.dumps(assignment.policies),
+                    json.dumps(assignment.retention_map),
+                    assignment.assignment_source,
+                    json.dumps(assignment.matched_rules) if assignment.matched_rules else None,
+                    current_user.username, current_user.username
+                ))
+
+                result = cur.fetchone()
+
+                return result
+
         except psycopg2.IntegrityError as e:
             if "unique_volume_assignment" in str(e):
                 raise HTTPException(
@@ -703,31 +684,29 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get snapshot assignment for a specific volume"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cur.execute("""
-                SELECT id, volume_id, volume_name, tenant_id, tenant_name,
-                       project_id, project_name, vm_id, vm_name, policy_set_id,
-                       auto_snapshot, policies, retention_map, assignment_source,
-                       matched_rules, created_at, created_by, updated_at, updated_by,
-                       last_verified_at
-                FROM snapshot_assignments
-                WHERE volume_id = %s
-            """, (volume_id,))
-            
-            result = cur.fetchone()
-            cur.close()
-            conn.close()
-            
-            if not result:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No assignment found for volume {volume_id}"
-                )
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    SELECT id, volume_id, volume_name, tenant_id, tenant_name,
+                           project_id, project_name, vm_id, vm_name, policy_set_id,
+                           auto_snapshot, policies, retention_map, assignment_source,
+                           matched_rules, created_at, created_by, updated_at, updated_by,
+                           last_verified_at
+                    FROM snapshot_assignments
+                    WHERE volume_id = %s
+                """, (volume_id,))
+
+                result = cur.fetchone()
+
+                if not result:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"No assignment found for volume {volume_id}"
+                    )
+
+                return result
+
         except HTTPException:
             raise
         except Exception as e:
@@ -745,61 +724,57 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Update an existing snapshot assignment"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            update_fields = []
-            params = []
-            
-            if updates.auto_snapshot is not None:
-                update_fields.append("auto_snapshot = %s")
-                params.append(updates.auto_snapshot)
-            if updates.policies is not None:
-                update_fields.append("policies = %s::jsonb")
-                params.append(json.dumps(updates.policies))
-            if updates.retention_map is not None:
-                update_fields.append("retention_map = %s::jsonb")
-                params.append(json.dumps(updates.retention_map))
-            if updates.policy_set_id is not None:
-                update_fields.append("policy_set_id = %s")
-                params.append(updates.policy_set_id)
-            
-            if not update_fields:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No fields to update"
-                )
-            
-            update_fields.append("updated_by = %s")
-            params.append(current_user.username)
-            update_fields.append("updated_at = now()")
-            
-            params.append(volume_id)
-            
-            query = f"""
-                UPDATE snapshot_assignments
-                SET {', '.join(update_fields)}
-                WHERE volume_id = %s
-                RETURNING id, volume_id, volume_name, tenant_id, tenant_name,
-                          project_id, project_name, vm_id, vm_name, policy_set_id,
-                          auto_snapshot, policies, retention_map, updated_at, updated_by
-            """
-            
-            cur.execute(query, params)
-            result = cur.fetchone()
-            
-            if not result:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No assignment found for volume {volume_id}"
-                )
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                update_fields = []
+                params = []
+
+                if updates.auto_snapshot is not None:
+                    update_fields.append("auto_snapshot = %s")
+                    params.append(updates.auto_snapshot)
+                if updates.policies is not None:
+                    update_fields.append("policies = %s::jsonb")
+                    params.append(json.dumps(updates.policies))
+                if updates.retention_map is not None:
+                    update_fields.append("retention_map = %s::jsonb")
+                    params.append(json.dumps(updates.retention_map))
+                if updates.policy_set_id is not None:
+                    update_fields.append("policy_set_id = %s")
+                    params.append(updates.policy_set_id)
+
+                if not update_fields:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="No fields to update"
+                    )
+
+                update_fields.append("updated_by = %s")
+                params.append(current_user.username)
+                update_fields.append("updated_at = now()")
+
+                params.append(volume_id)
+
+                query = f"""
+                    UPDATE snapshot_assignments
+                    SET {', '.join(update_fields)}
+                    WHERE volume_id = %s
+                    RETURNING id, volume_id, volume_name, tenant_id, tenant_name,
+                              project_id, project_name, vm_id, vm_name, policy_set_id,
+                              auto_snapshot, policies, retention_map, updated_at, updated_by
+                """
+
+                cur.execute(query, params)
+                result = cur.fetchone()
+
+                if not result:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"No assignment found for volume {volume_id}"
+                    )
+
+                return result
+
         except HTTPException:
             raise
         except Exception as e:
@@ -816,21 +791,17 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Delete a snapshot assignment"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor()
-            
-            cur.execute("DELETE FROM snapshot_assignments WHERE volume_id = %s", (volume_id,))
-            
-            if cur.rowcount == 0:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No assignment found for volume {volume_id}"
-                )
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-        
+            with get_connection() as conn:
+                cur = conn.cursor()
+
+                cur.execute("DELETE FROM snapshot_assignments WHERE volume_id = %s", (volume_id,))
+
+                if cur.rowcount == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"No assignment found for volume {volume_id}"
+                    )
+
         except HTTPException:
             raise
         except Exception as e:
@@ -853,36 +824,34 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get snapshot exclusions with optional filtering"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            query = """
-                SELECT id, volume_id, volume_name, tenant_id, tenant_name,
-                       project_id, project_name, exclusion_reason, exclusion_source,
-                       created_at, created_by, expires_at
-                FROM snapshot_exclusions
-                WHERE 1=1
-            """
-            params = []
-            
-            if volume_id:
-                query += " AND volume_id = %s"
-                params.append(volume_id)
-            if tenant_id:
-                query += " AND tenant_id = %s"
-                params.append(tenant_id)
-            if not include_expired:
-                query += " AND (expires_at IS NULL OR expires_at > now())"
-            
-            query += " ORDER BY created_at DESC"
-            
-            cur.execute(query, params)
-            results = cur.fetchall()
-            cur.close()
-            conn.close()
-            
-            return {"exclusions": results, "count": len(results)}
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                query = """
+                    SELECT id, volume_id, volume_name, tenant_id, tenant_name,
+                           project_id, project_name, exclusion_reason, exclusion_source,
+                           created_at, created_by, expires_at
+                    FROM snapshot_exclusions
+                    WHERE 1=1
+                """
+                params = []
+
+                if volume_id:
+                    query += " AND volume_id = %s"
+                    params.append(volume_id)
+                if tenant_id:
+                    query += " AND tenant_id = %s"
+                    params.append(tenant_id)
+                if not include_expired:
+                    query += " AND (expires_at IS NULL OR expires_at > now())"
+
+                query += " ORDER BY created_at DESC"
+
+                cur.execute(query, params)
+                results = cur.fetchall()
+
+                return {"exclusions": results, "count": len(results)}
+
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -897,32 +866,29 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Create a new snapshot exclusion for a volume"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cur.execute("""
-                INSERT INTO snapshot_exclusions
-                (volume_id, volume_name, tenant_id, tenant_name, project_id, project_name,
-                 exclusion_reason, exclusion_source, created_by, expires_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, volume_id, volume_name, tenant_id, tenant_name,
-                          project_id, project_name, exclusion_reason, exclusion_source,
-                          created_at, created_by, expires_at
-            """, (
-                exclusion.volume_id, exclusion.volume_name,
-                exclusion.tenant_id, exclusion.tenant_name,
-                exclusion.project_id, exclusion.project_name,
-                exclusion.exclusion_reason, exclusion.exclusion_source,
-                current_user.username, exclusion.expires_at
-            ))
-            
-            result = cur.fetchone()
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    INSERT INTO snapshot_exclusions
+                    (volume_id, volume_name, tenant_id, tenant_name, project_id, project_name,
+                     exclusion_reason, exclusion_source, created_by, expires_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, volume_id, volume_name, tenant_id, tenant_name,
+                              project_id, project_name, exclusion_reason, exclusion_source,
+                              created_at, created_by, expires_at
+                """, (
+                    exclusion.volume_id, exclusion.volume_name,
+                    exclusion.tenant_id, exclusion.tenant_name,
+                    exclusion.project_id, exclusion.project_name,
+                    exclusion.exclusion_reason, exclusion.exclusion_source,
+                    current_user.username, exclusion.expires_at
+                ))
+
+                result = cur.fetchone()
+
+                return result
+
         except psycopg2.IntegrityError as e:
             if "unique_volume_exclusion" in str(e):
                 raise HTTPException(
@@ -947,21 +913,17 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Delete a snapshot exclusion"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor()
-            
-            cur.execute("DELETE FROM snapshot_exclusions WHERE volume_id = %s", (volume_id,))
-            
-            if cur.rowcount == 0:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No exclusion found for volume {volume_id}"
-                )
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-        
+            with get_connection() as conn:
+                cur = conn.cursor()
+
+                cur.execute("DELETE FROM snapshot_exclusions WHERE volume_id = %s", (volume_id,))
+
+                if cur.rowcount == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"No exclusion found for volume {volume_id}"
+                    )
+
         except HTTPException:
             raise
         except Exception as e:
@@ -985,36 +947,34 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get snapshot runs with optional filtering"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            query = """
-                SELECT id, run_type, started_at, finished_at, status, total_volumes,
-                       snapshots_created, snapshots_deleted, snapshots_failed,
-                       volumes_skipped, dry_run, triggered_by, trigger_source,
-                       execution_host, error_summary, created_at
-                FROM snapshot_runs
-                WHERE 1=1
-            """
-            params = []
-            
-            if run_type:
-                query += " AND run_type = %s"
-                params.append(run_type)
-            if status_filter:
-                query += " AND status = %s"
-                params.append(status_filter)
-            
-            query += " ORDER BY started_at DESC LIMIT %s OFFSET %s"
-            params.extend([limit, offset])
-            
-            cur.execute(query, params)
-            results = cur.fetchall()
-            cur.close()
-            conn.close()
-            
-            return {"runs": results, "count": len(results), "limit": limit, "offset": offset}
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                query = """
+                    SELECT id, run_type, started_at, finished_at, status, total_volumes,
+                           snapshots_created, snapshots_deleted, snapshots_failed,
+                           volumes_skipped, dry_run, triggered_by, trigger_source,
+                           execution_host, error_summary, created_at
+                    FROM snapshot_runs
+                    WHERE 1=1
+                """
+                params = []
+
+                if run_type:
+                    query += " AND run_type = %s"
+                    params.append(run_type)
+                if status_filter:
+                    query += " AND status = %s"
+                    params.append(status_filter)
+
+                query += " ORDER BY started_at DESC LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+                cur.execute(query, params)
+                results = cur.fetchall()
+
+                return {"runs": results, "count": len(results), "limit": limit, "offset": offset}
+
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1029,27 +989,24 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Create/start a new snapshot run"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cur.execute("""
-                INSERT INTO snapshot_runs
-                (run_type, dry_run, triggered_by, trigger_source, execution_host, status)
-                VALUES (%s, %s, %s, %s, %s, 'running')
-                RETURNING id, run_type, started_at, status, dry_run, triggered_by,
-                          trigger_source, execution_host, created_at
-            """, (
-                run.run_type, run.dry_run, current_user.username,
-                run.trigger_source, run.execution_host
-            ))
-            
-            result = cur.fetchone()
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    INSERT INTO snapshot_runs
+                    (run_type, dry_run, triggered_by, trigger_source, execution_host, status)
+                    VALUES (%s, %s, %s, %s, %s, 'running')
+                    RETURNING id, run_type, started_at, status, dry_run, triggered_by,
+                              trigger_source, execution_host, created_at
+                """, (
+                    run.run_type, run.dry_run, current_user.username,
+                    run.trigger_source, run.execution_host
+                ))
+
+                result = cur.fetchone()
+
+                return result
+
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1064,44 +1021,41 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get a specific snapshot run with details"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cur.execute("""
-                SELECT id, run_type, started_at, finished_at, status, total_volumes,
-                       snapshots_created, snapshots_deleted, snapshots_failed,
-                       volumes_skipped, dry_run, triggered_by, trigger_source,
-                       execution_host, error_summary, raw_logs, created_at
-                FROM snapshot_runs
-                WHERE id = %s
-            """, (run_id,))
-            
-            result = cur.fetchone()
-            
-            if not result:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Snapshot run {run_id} not found"
-                )
-            
-            # Get related snapshot records
-            cur.execute("""
-                SELECT id, action, snapshot_id, snapshot_name, volume_id, volume_name,
-                       tenant_name, project_name, vm_name, policy_name, size_gb,
-                       status, error_message, created_at
-                FROM snapshot_records
-                WHERE snapshot_run_id = %s
-                ORDER BY created_at DESC
-            """, (run_id,))
-            
-            records = cur.fetchall()
-            result['records'] = records
-            
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    SELECT id, run_type, started_at, finished_at, status, total_volumes,
+                           snapshots_created, snapshots_deleted, snapshots_failed,
+                           volumes_skipped, dry_run, triggered_by, trigger_source,
+                           execution_host, error_summary, raw_logs, created_at
+                    FROM snapshot_runs
+                    WHERE id = %s
+                """, (run_id,))
+
+                result = cur.fetchone()
+
+                if not result:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Snapshot run {run_id} not found"
+                    )
+
+                # Get related snapshot records
+                cur.execute("""
+                    SELECT id, action, snapshot_id, snapshot_name, volume_id, volume_name,
+                           tenant_name, project_name, vm_name, policy_name, size_gb,
+                           status, error_message, created_at
+                    FROM snapshot_records
+                    WHERE snapshot_run_id = %s
+                    ORDER BY created_at DESC
+                """, (run_id,))
+
+                records = cur.fetchall()
+                result['records'] = records
+
+                return result
+
         except HTTPException:
             raise
         except Exception as e:
@@ -1125,60 +1079,56 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Update a snapshot run (typically to mark as completed/failed)"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            update_fields = ["status = %s"]
-            params = [status_update]
-            
-            if status_update in ['completed', 'failed', 'partial']:
-                update_fields.append("finished_at = now()")
-            
-            if total_volumes is not None:
-                update_fields.append("total_volumes = %s")
-                params.append(total_volumes)
-            if snapshots_created is not None:
-                update_fields.append("snapshots_created = %s")
-                params.append(snapshots_created)
-            if snapshots_deleted is not None:
-                update_fields.append("snapshots_deleted = %s")
-                params.append(snapshots_deleted)
-            if snapshots_failed is not None:
-                update_fields.append("snapshots_failed = %s")
-                params.append(snapshots_failed)
-            if volumes_skipped is not None:
-                update_fields.append("volumes_skipped = %s")
-                params.append(volumes_skipped)
-            if error_summary is not None:
-                update_fields.append("error_summary = %s")
-                params.append(error_summary)
-            
-            params.append(run_id)
-            
-            query = f"""
-                UPDATE snapshot_runs
-                SET {', '.join(update_fields)}
-                WHERE id = %s
-                RETURNING id, run_type, started_at, finished_at, status,
-                          total_volumes, snapshots_created, snapshots_deleted,
-                          snapshots_failed, volumes_skipped
-            """
-            
-            cur.execute(query, params)
-            result = cur.fetchone()
-            
-            if not result:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Snapshot run {run_id} not found"
-                )
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                update_fields = ["status = %s"]
+                params = [status_update]
+
+                if status_update in ['completed', 'failed', 'partial']:
+                    update_fields.append("finished_at = now()")
+
+                if total_volumes is not None:
+                    update_fields.append("total_volumes = %s")
+                    params.append(total_volumes)
+                if snapshots_created is not None:
+                    update_fields.append("snapshots_created = %s")
+                    params.append(snapshots_created)
+                if snapshots_deleted is not None:
+                    update_fields.append("snapshots_deleted = %s")
+                    params.append(snapshots_deleted)
+                if snapshots_failed is not None:
+                    update_fields.append("snapshots_failed = %s")
+                    params.append(snapshots_failed)
+                if volumes_skipped is not None:
+                    update_fields.append("volumes_skipped = %s")
+                    params.append(volumes_skipped)
+                if error_summary is not None:
+                    update_fields.append("error_summary = %s")
+                    params.append(error_summary)
+
+                params.append(run_id)
+
+                query = f"""
+                    UPDATE snapshot_runs
+                    SET {', '.join(update_fields)}
+                    WHERE id = %s
+                    RETURNING id, run_type, started_at, finished_at, status,
+                              total_volumes, snapshots_created, snapshots_deleted,
+                              snapshots_failed, volumes_skipped
+                """
+
+                cur.execute(query, params)
+                result = cur.fetchone()
+
+                if not result:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Snapshot run {run_id} not found"
+                    )
+
+                return result
+
         except HTTPException:
             raise
         except Exception as e:
@@ -1204,43 +1154,41 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get snapshot records with optional filtering"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            query = """
-                SELECT id, snapshot_run_id, action, snapshot_id, snapshot_name,
-                       volume_id, volume_name, tenant_id, tenant_name, project_id,
-                       project_name, vm_id, vm_name, policy_name, size_gb,
-                       created_at, deleted_at, retention_days, status, error_message,
-                       openstack_created_at
-                FROM snapshot_records
-                WHERE 1=1
-            """
-            params = []
-            
-            if snapshot_run_id:
-                query += " AND snapshot_run_id = %s"
-                params.append(snapshot_run_id)
-            if volume_id:
-                query += " AND volume_id = %s"
-                params.append(volume_id)
-            if tenant_id:
-                query += " AND tenant_id = %s"
-                params.append(tenant_id)
-            if action:
-                query += " AND action = %s"
-                params.append(action)
-            
-            query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
-            params.extend([limit, offset])
-            
-            cur.execute(query, params)
-            results = cur.fetchall()
-            cur.close()
-            conn.close()
-            
-            return {"records": results, "count": len(results), "limit": limit, "offset": offset}
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                query = """
+                    SELECT id, snapshot_run_id, action, snapshot_id, snapshot_name,
+                           volume_id, volume_name, tenant_id, tenant_name, project_id,
+                           project_name, vm_id, vm_name, policy_name, size_gb,
+                           created_at, deleted_at, retention_days, status, error_message,
+                           openstack_created_at
+                    FROM snapshot_records
+                    WHERE 1=1
+                """
+                params = []
+
+                if snapshot_run_id:
+                    query += " AND snapshot_run_id = %s"
+                    params.append(snapshot_run_id)
+                if volume_id:
+                    query += " AND volume_id = %s"
+                    params.append(volume_id)
+                if tenant_id:
+                    query += " AND tenant_id = %s"
+                    params.append(tenant_id)
+                if action:
+                    query += " AND action = %s"
+                    params.append(action)
+
+                query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+                cur.execute(query, params)
+                results = cur.fetchall()
+
+                return {"records": results, "count": len(results), "limit": limit, "offset": offset}
+
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1255,36 +1203,33 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Create a new snapshot record"""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            cur.execute("""
-                INSERT INTO snapshot_records
-                (snapshot_run_id, action, snapshot_id, snapshot_name, volume_id,
-                 volume_name, tenant_id, tenant_name, project_id, project_name,
-                 vm_id, vm_name, policy_name, size_gb, retention_days, status,
-                 error_message, openstack_created_at, raw_snapshot_json)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                RETURNING id, snapshot_run_id, action, snapshot_id, snapshot_name,
-                          volume_id, volume_name, tenant_name, project_name, vm_name,
-                          policy_name, size_gb, status, created_at
-            """, (
-                record.snapshot_run_id, record.action, record.snapshot_id,
-                record.snapshot_name, record.volume_id, record.volume_name,
-                record.tenant_id, record.tenant_name, record.project_id,
-                record.project_name, record.vm_id, record.vm_name,
-                record.policy_name, record.size_gb, record.retention_days,
-                record.status, record.error_message, record.openstack_created_at,
-                json.dumps(record.raw_snapshot_json) if record.raw_snapshot_json else None
-            ))
-            
-            result = cur.fetchone()
-            conn.commit()
-            cur.close()
-            conn.close()
-            
-            return result
-        
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    INSERT INTO snapshot_records
+                    (snapshot_run_id, action, snapshot_id, snapshot_name, volume_id,
+                     volume_name, tenant_id, tenant_name, project_id, project_name,
+                     vm_id, vm_name, policy_name, size_gb, retention_days, status,
+                     error_message, openstack_created_at, raw_snapshot_json)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    RETURNING id, snapshot_run_id, action, snapshot_id, snapshot_name,
+                              volume_id, volume_name, tenant_name, project_name, vm_name,
+                              policy_name, size_gb, status, created_at
+                """, (
+                    record.snapshot_run_id, record.action, record.snapshot_id,
+                    record.snapshot_name, record.volume_id, record.volume_name,
+                    record.tenant_id, record.tenant_name, record.project_id,
+                    record.project_name, record.vm_id, record.vm_name,
+                    record.policy_name, record.size_gb, record.retention_days,
+                    record.status, record.error_message, record.openstack_created_at,
+                    json.dumps(record.raw_snapshot_json) if record.raw_snapshot_json else None
+                ))
+
+                result = cur.fetchone()
+
+                return result
+
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1315,72 +1260,69 @@ def setup_snapshot_routes(app, get_db_connection):
         metadata).  These are never touched by retention / cleanup.
         """
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
 
-            rows = _build_compliance_from_volumes(
-                cur, days, tenant_id, project_id, policy
-            )
+                rows = _build_compliance_from_volumes(
+                    cur, days, tenant_id, project_id, policy
+                )
 
-            # ---- manual snapshots detail -----------------------------------
-            cur.execute(
-                """
-                SELECT s.id            AS snapshot_id,
-                       s.name          AS snapshot_name,
-                       s.volume_id,
-                       v.name          AS volume_name,
-                       s.project_id,
-                       proj.name       AS project_name,
-                       proj.domain_id  AS tenant_id,
-                       dom.name        AS tenant_name,
-                       s.size_gb,
-                       s.status,
-                       s.created_at
-                FROM snapshots s
-                LEFT JOIN volumes  v    ON v.id    = s.volume_id
-                LEFT JOIN projects proj ON proj.id = s.project_id
-                LEFT JOIN domains  dom  ON dom.id  = proj.domain_id
-                WHERE s.status IN ('available', 'in-use')
-                  AND (s.raw_json->'metadata'->>'created_by' IS NULL
-                       OR s.raw_json->'metadata'->>'created_by'
-                              != 'p9_auto_snapshots')
-                ORDER BY s.created_at DESC
-                """
-            )
-            manual_snapshots = []
-            for r in cur.fetchall():
-                manual_snapshots.append({
-                    "snapshot_id":   r["snapshot_id"],
-                    "snapshot_name": r["snapshot_name"] or r["snapshot_id"],
-                    "volume_id":     r["volume_id"] or "",
-                    "volume_name":   r["volume_name"] or r["volume_id"] or "",
-                    "project_id":    r["project_id"] or "",
-                    "project_name":  r["project_name"] or r["project_id"] or "",
-                    "tenant_id":     r["tenant_id"] or "",
-                    "tenant_name":   r["tenant_name"] or r["tenant_id"] or "",
-                    "size_gb":       r["size_gb"],
-                    "status":        r["status"],
-                    "created_at":    r["created_at"],
-                })
+                # ---- manual snapshots detail -----------------------------------
+                cur.execute(
+                    """
+                    SELECT s.id            AS snapshot_id,
+                           s.name          AS snapshot_name,
+                           s.volume_id,
+                           v.name          AS volume_name,
+                           s.project_id,
+                           proj.name       AS project_name,
+                           proj.domain_id  AS tenant_id,
+                           dom.name        AS tenant_name,
+                           s.size_gb,
+                           s.status,
+                           s.created_at
+                    FROM snapshots s
+                    LEFT JOIN volumes  v    ON v.id    = s.volume_id
+                    LEFT JOIN projects proj ON proj.id = s.project_id
+                    LEFT JOIN domains  dom  ON dom.id  = proj.domain_id
+                    WHERE s.status IN ('available', 'in-use')
+                      AND (s.raw_json->'metadata'->>'created_by' IS NULL
+                           OR s.raw_json->'metadata'->>'created_by'
+                                  != 'p9_auto_snapshots')
+                    ORDER BY s.created_at DESC
+                    """
+                )
+                manual_snapshots = []
+                for r in cur.fetchall():
+                    manual_snapshots.append({
+                        "snapshot_id":   r["snapshot_id"],
+                        "snapshot_name": r["snapshot_name"] or r["snapshot_id"],
+                        "volume_id":     r["volume_id"] or "",
+                        "volume_name":   r["volume_name"] or r["volume_id"] or "",
+                        "project_id":    r["project_id"] or "",
+                        "project_name":  r["project_name"] or r["project_id"] or "",
+                        "tenant_id":     r["tenant_id"] or "",
+                        "tenant_name":   r["tenant_name"] or r["tenant_id"] or "",
+                        "size_gb":       r["size_gb"],
+                        "status":        r["status"],
+                        "created_at":    r["created_at"],
+                    })
 
-            cur.close()
-            conn.close()
+                compliant_count = sum(1 for r in rows if r.get("status") == "compliant")
+                noncompliant_count = sum(1 for r in rows if r.get("status") == "missing")
+                pending_count = sum(1 for r in rows if r.get("status") == "pending")
 
-            compliant_count = sum(1 for r in rows if r.get("status") == "compliant")
-            noncompliant_count = sum(1 for r in rows if r.get("status") == "missing")
-            pending_count = sum(1 for r in rows if r.get("status") == "pending")
-
-            return {
-                "rows": rows,
-                "count": len(rows),
-                "summary": {
-                    "compliant": compliant_count,
-                    "noncompliant": noncompliant_count,
-                    "pending": pending_count,
-                    "days": days,
-                },
-                "manual_snapshots": manual_snapshots,
-            }
+                return {
+                    "rows": rows,
+                    "count": len(rows),
+                    "summary": {
+                        "compliant": compliant_count,
+                        "noncompliant": noncompliant_count,
+                        "pending": pending_count,
+                        "days": days,
+                    },
+                    "manual_snapshots": manual_snapshots,
+                }
 
         except Exception as e:
             raise HTTPException(
@@ -1404,49 +1346,44 @@ def setup_snapshot_routes(app, get_db_connection):
         Returns immediately with a job ID; poll GET /snapshot/run-now/status.
         """
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
 
-            # Reject if a run is already pending or running
-            cur.execute("""
-                SELECT job_id FROM snapshot_on_demand_runs
-                WHERE status IN ('pending', 'running')
-                ORDER BY created_at DESC LIMIT 1
-            """)
-            active = cur.fetchone()
-            if active:
-                cur.close()
-                conn.close()
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="An on-demand snapshot pipeline is already pending or running."
-                )
+                # Reject if a run is already pending or running
+                cur.execute("""
+                    SELECT job_id FROM snapshot_on_demand_runs
+                    WHERE status IN ('pending', 'running')
+                    ORDER BY created_at DESC LIMIT 1
+                """)
+                active = cur.fetchone()
+                if active:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="An on-demand snapshot pipeline is already pending or running."
+                    )
 
-            import uuid
-            job_id = str(uuid.uuid4())
+                import uuid
+                job_id = str(uuid.uuid4())
 
-            initial_steps = json.dumps([
-                {"key": "policy_assign", "label": "Policy Assignment", "status": "pending"},
-                {"key": "rvtools_pre", "label": "Inventory Sync (pre-snapshot)", "status": "pending"},
-                {"key": "auto_snapshots", "label": "Auto Snapshots", "status": "pending"},
-                {"key": "rvtools_post", "label": "Inventory Sync (post-snapshot)", "status": "pending"},
-            ])
+                initial_steps = json.dumps([
+                    {"key": "policy_assign", "label": "Policy Assignment", "status": "pending"},
+                    {"key": "rvtools_pre", "label": "Inventory Sync (pre-snapshot)", "status": "pending"},
+                    {"key": "auto_snapshots", "label": "Auto Snapshots", "status": "pending"},
+                    {"key": "rvtools_post", "label": "Inventory Sync (post-snapshot)", "status": "pending"},
+                ])
 
-            cur.execute("""
-                INSERT INTO snapshot_on_demand_runs
-                    (job_id, status, triggered_by, steps)
-                VALUES (%s, 'pending', %s, %s)
-                RETURNING job_id
-            """, (job_id, current_user.username, initial_steps))
-            conn.commit()
-            cur.close()
-            conn.close()
+                cur.execute("""
+                    INSERT INTO snapshot_on_demand_runs
+                        (job_id, status, triggered_by, steps)
+                    VALUES (%s, 'pending', %s, %s)
+                    RETURNING job_id
+                """, (job_id, current_user.username, initial_steps))
 
-            return {
-                "job_id": job_id,
-                "status": "pending",
-                "message": "Snapshot pipeline queued. The worker will pick it up within 10 seconds. Poll /snapshot/run-now/status for progress.",
-            }
+                return {
+                    "job_id": job_id,
+                    "status": "pending",
+                    "message": "Snapshot pipeline queued. The worker will pick it up within 10 seconds. Poll /snapshot/run-now/status for progress.",
+                }
 
         except HTTPException:
             raise
@@ -1464,31 +1401,29 @@ def setup_snapshot_routes(app, get_db_connection):
     ):
         """Get the status of the most recent on-demand snapshot pipeline run."""
         try:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute("""
-                SELECT job_id, status, triggered_by, started_at, finished_at,
-                       steps, error, created_at
-                FROM snapshot_on_demand_runs
-                ORDER BY created_at DESC
-                LIMIT 1
-            """)
-            row = cur.fetchone()
-            cur.close()
-            conn.close()
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+                cur.execute("""
+                    SELECT job_id, status, triggered_by, started_at, finished_at,
+                           steps, error, created_at
+                    FROM snapshot_on_demand_runs
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                row = cur.fetchone()
 
-            if not row:
-                return {"status": "idle", "message": "No on-demand run has been triggered yet."}
+                if not row:
+                    return {"status": "idle", "message": "No on-demand run has been triggered yet."}
 
-            return {
-                "job_id": str(row["job_id"]),
-                "status": row["status"],
-                "triggered_by": row["triggered_by"],
-                "started_at": row["started_at"].isoformat() if row["started_at"] else None,
-                "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
-                "steps": row["steps"] if isinstance(row["steps"], list) else json.loads(row["steps"]) if row["steps"] else [],
-                "error": row["error"],
-            }
+                return {
+                    "job_id": str(row["job_id"]),
+                    "status": row["status"],
+                    "triggered_by": row["triggered_by"],
+                    "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+                    "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+                    "steps": row["steps"] if isinstance(row["steps"], list) else json.loads(row["steps"]) if row["steps"] else [],
+                    "error": row["error"],
+                }
 
         except Exception as e:
             logger.error(f"Failed to get on-demand status: {e}")

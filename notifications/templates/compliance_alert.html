@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f4f6f9; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #f39c12, #e67e22); padding: 24px; border-radius: 8px 8px 0 0; }
+    .header h1 { color: #fff; margin: 0; font-size: 20px; }
+    .header .subtitle { color: rgba(255,255,255,0.8); font-size: 13px; margin-top: 4px; }
+    .body { background: #fff; padding: 24px; border-radius: 0 0 8px 8px; border: 1px solid #e0e0e0; border-top: 0; }
+    .detail-table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+    .detail-table td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .detail-table td:first-child { color: #666; font-weight: 500; width: 140px; }
+    .status-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+    .status-noncompliant { background: #fde8e8; color: #c0392b; }
+    .status-nosnapshots { background: #fff3cd; color: #856404; }
+    .footer { text-align: center; padding: 16px; color: #999; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>⚠️ Compliance Violation</h1>
+      <div class="subtitle">Platform9 Management System &middot; {{ timestamp }}</div>
+    </div>
+    <div class="body">
+      <p style="font-size: 15px; color: #333; line-height: 1.5;">
+        {{ event.summary }}
+      </p>
+
+      <table class="detail-table">
+        <tr><td>Volume</td><td>{{ event.resource_name or event.resource_id }}</td></tr>
+        <tr>
+          <td>Status</td>
+          <td>
+            {% if event.compliance_status == 'Non-Compliant' %}
+              <span class="status-badge status-noncompliant">{{ event.compliance_status }}</span>
+            {% else %}
+              <span class="status-badge status-nosnapshots">{{ event.compliance_status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% if event.project_name %}
+        <tr><td>Project</td><td>{{ event.project_name }}</td></tr>
+        {% endif %}
+        <tr><td>Last Snapshot</td><td>{{ event.last_snapshot_date or 'Never' }}</td></tr>
+        <tr><td>Report Date</td><td>{{ event.report_date }}</td></tr>
+      </table>
+
+      <p style="font-size: 13px; color: #666;">
+        This volume does not meet the snapshot SLA policy. Review it in the
+        Snapshot Compliance tab.
+      </p>
+    </div>
+    <div class="footer">
+      PF9 Management System &middot; You received this because you subscribed to compliance_violation notifications.
+    </div>
+  </div>
+</body>
+</html>

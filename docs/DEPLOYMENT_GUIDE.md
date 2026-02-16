@@ -102,6 +102,7 @@ docker-compose ps
 | LDAP | 389 | LDAP | Internal only |
 | LDAP SSL | 636 | LDAP+TLS | Internal only |
 | LDAP Admin UI | 8081 | HTTP | Internal only |
+| SMTP (outbound) | 25/587 | SMTP/TLS | Outbound to mail server |
 
 ### Disk Space Breakdown
 
@@ -294,6 +295,7 @@ docker-compose ps
 # pf9_monitoring  Up (healthy)     0.0.0.0:8001->8001/tcp
 # pf9_pgadmin     Up (healthy)     0.0.0.0:8080->80/tcp
 # phpldapadmin    Up (healthy)     0.0.0.0:8081->80/tcp
+# pf9_notification_worker  Up       (background worker, no port)
 ```
 
 ### Step 6: Verify Database Initialization
@@ -484,11 +486,44 @@ RESTORE_CLEANUP_VOLUMES=false
 
 See [RESTORE_GUIDE.md](RESTORE_GUIDE.md) for full feature documentation.
 
+#### Email Notification Configuration
+
+```bash
+# Enable email notifications (disabled by default)
+SMTP_ENABLED=false
+
+# SMTP server settings
+SMTP_HOST=mail.example.com
+SMTP_PORT=25                  # 25 for plain, 587 for STARTTLS, 465 for SSL
+SMTP_USE_TLS=false            # Set to true for TLS-enabled servers
+
+# SMTP authentication (leave empty for unauthenticated relay)
+SMTP_USERNAME=
+SMTP_PASSWORD=
+
+# From address for notification emails
+SMTP_FROM_ADDRESS=pf9-mgmt@pf9mgmt.local
+
+# Worker behavior
+NOTIFICATION_POLL_INTERVAL_SECONDS=120    # How often to check for new events
+NOTIFICATION_DIGEST_ENABLED=true          # Enable daily digest emails
+NOTIFICATION_DIGEST_HOUR_UTC=8            # Hour (UTC) to send daily digest
+NOTIFICATION_LOOKBACK_SECONDS=300         # How far back to look for events each poll
+HEALTH_ALERT_THRESHOLD=50                 # Tenant health score below this triggers alert
+```
+
+> **Note**: The notification worker runs as a separate container (`pf9_notification_worker`). When `SMTP_ENABLED=false`, the worker starts but does not send emails. Users can still configure preferences via the UI.
+
 #### Optional Advanced Configuration
 
 ```bash
 # CORS Origins (restrict cross-origin requests)
 CORS_ORIGINS=http://localhost:5173,https://pf9-mgmt.company.com
+
+# Database Connection Pool (per worker process)
+DB_POOL_MIN_CONN=2            # Minimum connections per worker (default: 2)
+DB_POOL_MAX_CONN=10           # Maximum connections per worker (default: 10)
+# With 4 Gunicorn workers: max 40 total connections (PostgreSQL default max: 100)
 
 # Database Connection Tuning
 POSTGRES_INITDB_ARGS="-c max_connections=200 -c shared_buffers=256MB"
@@ -598,6 +633,7 @@ After `docker-compose up -d` and services are healthy:
 | **Monitoring** | http://localhost:8001/health | None | Health status |
 | **pgAdmin** | http://localhost:8080 | $PGADMIN_EMAIL / $PGADMIN_PASSWORD | Database management |
 | **LDAP Admin** | http://localhost:8081 | cn=admin / $LDAP_ADMIN_PASSWORD | LDAP user management |
+| **Notification Worker** | (no web UI) | N/A | Check: `docker logs pf9_notification_worker` |
 
 ### Admin User and Superadmin Permissions Are Automated
 
@@ -711,8 +747,17 @@ else
     echo "✗ Monitoring returned HTTP $MON_STATUS"
 fi
 
-# 6. LDAP
-echo -e "\n6. Testing LDAP..."
+# 6. Notification Worker
+echo -e "\n6. Testing Notification Worker..."
+NOTIF_STATUS=$(docker inspect --format '{{.State.Status}}' pf9_notification_worker 2>/dev/null)
+if [ "$NOTIF_STATUS" = "running" ]; then
+    echo "✓ Notification worker is running"
+else
+    echo "⚠ Notification worker status: $NOTIF_STATUS (non-critical)"
+fi
+
+# 7. LDAP
+echo -e "\n7. Testing LDAP..."
 LDAP_TEST=$(docker-compose exec -T ldap ldapsearch -x -H ldap://localhost \
   -D "cn=admin,${LDAP_BASE_DN}" -w "${LDAP_ADMIN_PASSWORD}" \
   -b "${LDAP_BASE_DN}" -s base 2>/dev/null)
@@ -1205,7 +1250,10 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_se
 # 3. Apply restore tables migration (v1.2+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_restore_tables.sql
 
-# 4. Verify schema
+# 4. Apply notifications migration (v1.11+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_notifications.sql
+
+# 5. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 

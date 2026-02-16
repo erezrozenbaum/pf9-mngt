@@ -86,6 +86,20 @@ services:
       PF9_SSH_USER: ${PF9_SSH_USER:-pf9}
       PF9_SSH_PASSWORD: ${PF9_SSH_PASSWORD:-}
       PF9_SSH_KEY_PATH: ${PF9_SSH_KEY_PATH:-}
+
+      # === Email Notifications ===
+      SMTP_ENABLED: ${SMTP_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-pf9-mgmt@example.com}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Platform9 Management}
+
+      # === Connection Pool Tuning ===
+      DB_POOL_MIN_CONN: ${DB_POOL_MIN_CONN:-2}
+      DB_POOL_MAX_CONN: ${DB_POOL_MAX_CONN:-10}
     ports:
       - "8000:8000"
     volumes:
@@ -202,6 +216,37 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Email Notification Worker
+  notification_worker:
+    build:
+      context: ./notifications
+    container_name: pf9_notification_worker
+    environment:
+      PF9_DB_HOST: db
+      PF9_DB_PORT: "5432"
+      PF9_DB_NAME: ${POSTGRES_DB}
+      PF9_DB_USER: ${POSTGRES_USER}
+      PF9_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      SMTP_ENABLED: ${SMTP_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-pf9-mgmt@example.com}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Platform9 Management}
+      NOTIFICATION_POLL_INTERVAL_SECONDS: ${NOTIFICATION_POLL_INTERVAL_SECONDS:-120}
+      NOTIFICATION_DIGEST_ENABLED: ${NOTIFICATION_DIGEST_ENABLED:-true}
+      NOTIFICATION_DIGEST_HOUR_UTC: ${NOTIFICATION_DIGEST_HOUR_UTC:-8}
+      NOTIFICATION_LOOKBACK_SECONDS: ${NOTIFICATION_LOOKBACK_SECONDS:-300}
+      HEALTH_ALERT_THRESHOLD: ${HEALTH_ALERT_THRESHOLD:-50}
+      LOG_FILE: /app/logs/pf9_notifications.log
+    volumes:
+      - app_logs:/app/logs
+    depends_on:
+      - db
+    restart: unless-stopped
 
   # LDAP Administration Interface (Optional - can be disabled in production)
   phpldapadmin:
