@@ -767,13 +767,25 @@ export default function TenantHealthView({
             Each tile represents a tenant. Size reflects VM count. Color reflects
             utilization (green&nbsp;=&nbsp;high active&nbsp;%, red&nbsp;=&nbsp;low
             / issues).
+            {search && (
+              <span style={{ marginLeft: 8, fontWeight: 600 }}>
+                Filtered by: "{search}"
+              </span>
+            )}
           </p>
           {heatmapLoading ? (
             <div className="th-loading">Loading heatmap…</div>
-          ) : heatmapData.length === 0 ? (
+          ) : (() => {
+            const filteredHeatmap = search
+              ? heatmapData.filter(
+                  (t) =>
+                    t.project_name.toLowerCase().includes(search.toLowerCase())
+                )
+              : heatmapData;
+            return filteredHeatmap.length === 0 ? (
             <div className="th-empty">
               <div className="th-empty-icon">🗺️</div>
-              <p>No tenants with resources found.</p>
+                <p>No tenants with resources found{search ? ` matching "${search}"` : ""}.</p>
             </div>
           ) : (
             <>
@@ -798,7 +810,7 @@ export default function TenantHealthView({
                 <span className="th-heatmap-legend-label">High</span>
               </div>
               <div className="th-heatmap-grid">
-                {heatmapData.map((t) => {
+                {filteredHeatmap.map((t) => {
                   const size = Math.max(
                     90,
                     Math.min(200, 90 + t.total_servers * 15)
@@ -832,7 +844,8 @@ export default function TenantHealthView({
                 })}
               </div>
             </>
-          )}
+          );
+          })()}
         </div>
       )}
 
@@ -865,6 +878,93 @@ export default function TenantHealthView({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────── */
+/*  Resource Usage Bars (DB-based fallback when quota unavail)  */
+/* ──────────────────────────────────────────────────────────── */
+
+function UsageBar({
+  label,
+  used,
+  total,
+  unit,
+}: {
+  label: string;
+  used: number;
+  total: number;
+  unit?: string;
+}) {
+  const hasTotal = total > 0;
+  const usedPct = hasTotal ? Math.min(100, (used / total) * 100) : 0;
+  const cls = usedPct >= 90 ? "critical" : usedPct >= 70 ? "warning" : "healthy";
+  return (
+    <div className="th-usage-item">
+      <div className="th-usage-header">
+        <span className="th-usage-label">{label}</span>
+        <span className="th-usage-values">
+          {used}{unit ? ` ${unit}` : ""}
+          {hasTotal ? ` / ${total}${unit ? ` ${unit}` : ""}` : ""}
+        </span>
+      </div>
+      {hasTotal && (
+        <>
+          <div className="th-usage-bar-track">
+            <div
+              className={`th-usage-bar-fill ${cls}`}
+              style={{ width: `${usedPct}%` }}
+            />
+          </div>
+          <div className="th-usage-pct">{usedPct.toFixed(0)}% used</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ResourceUsageBars({ tenant }: { tenant: TenantHealth }) {
+  const t = tenant;
+  return (
+    <div className="th-usage-grid">
+      <UsageBar
+        label="Active VMs"
+        used={t.active_servers}
+        total={t.total_servers}
+        unit="instances"
+      />
+      <UsageBar
+        label="Active vCPUs"
+        used={t.active_vcpus}
+        total={t.total_vcpus}
+        unit="cores"
+      />
+      <UsageBar
+        label="Active RAM"
+        used={t.active_ram_mb}
+        total={t.total_ram_mb}
+        unit="MB"
+      />
+      <UsageBar
+        label="Volumes In-Use"
+        used={t.in_use_volumes}
+        total={t.total_volumes}
+      />
+      <UsageBar
+        label="Volume Storage"
+        used={t.total_volume_gb}
+        total={0}
+        unit="GB"
+      />
+      <UsageBar
+        label="Snapshots"
+        used={t.total_snapshots}
+        total={0}
+      />
+      <div className="th-usage-note">
+        Resource usage from database inventory. Quota limits from OpenStack are not available.
+      </div>
     </div>
   );
 }
@@ -1207,25 +1307,10 @@ function DetailContent({
             </div>
           )}
         {!quotaLoading && quota && !quota.available && (
-          <p
-            style={{
-              color: "var(--color-text-secondary, #64748b)",
-              fontSize: "0.85rem",
-            }}
-          >
-            Quota data unavailable:{" "}
-            {quota.reason || "OpenStack credentials not configured"}
-          </p>
+          <ResourceUsageBars tenant={t} />
         )}
         {!quotaLoading && !quota && (
-          <p
-            style={{
-              color: "var(--color-text-secondary, #64748b)",
-              fontSize: "0.85rem",
-            }}
-          >
-            Quota data not loaded.
-          </p>
+          <ResourceUsageBars tenant={t} />
         )}
       </div>
 

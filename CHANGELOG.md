@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.1] - 2026-02-16
+
+### Fixed
+- **Dark Mode**: Comprehensive dark mode fix for Tenant Health View — all text elements (summary card values/labels, compute row values, table cells, detail panel headers/stats, heatmap labels, quota labels, power state labels, status legends, buttons) now have proper contrast on dark backgrounds
+- **Quota Fallback**: When OpenStack quota API is unavailable, the detail panel now shows DB-based resource usage bars (Active VMs, Active vCPUs, Active RAM, Volumes In-Use, Volume Storage, Snapshots) with color-coded progress bars instead of just "Quota data unavailable"
+- **Heatmap Filtering**: Search input now filters the heatmap view (not just the table view). Typing a tenant name filters heatmap tiles and shows "Filtered by" indicator
+
+### Added
+- `ResourceUsageBars` component — DB-driven usage visualization with `UsageBar` sub-component showing percentage-based progress bars with healthy/warning/critical color coding
+- New CSS classes for resource usage bars (`.th-usage-grid`, `.th-usage-bar-track`, `.th-usage-bar-fill`, etc.) with full dark mode support
+
 ## [1.10.0] - 2026-02-16
 
 ### Added
