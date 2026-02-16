@@ -71,6 +71,8 @@ from db_writer import (
     write_roles,          # ✅ Roles (NEW)
     write_role_assignments, # ✅ Role Assignments (NEW)
     write_groups,         # ✅ Groups (NEW)
+    upsert_security_groups,      # ✅ Security Groups
+    upsert_security_group_rules, # ✅ Security Group Rules
 )
 
 STATE_FILE = "p9_rvtools_state.json"
@@ -399,15 +401,19 @@ def enrich_servers_with_ports(servers, ports, networks):
 def enrich_all_with_project_and_tenant(projects, domains,
                                        servers, volumes, snapshots,
                                        images, networks, subnets,
-                                       ports, routers, floatingips):
+                                       ports, routers, floatingips,
+                                       security_groups=None, security_group_rules=None):
     project_by_id, domain_by_id = build_project_domain_maps(projects, domains)
 
     # Projects get tenant/domain names directly
     enrich_project_records(projects, domain_by_id)
 
     # For all other resource lists, attach project_name + tenant/domain_name
-    for coll in (servers, volumes, snapshots, images,
-                 networks, subnets, ports, routers, floatingips):
+    all_collections = [servers, volumes, snapshots, images,
+                       networks, subnets, ports, routers, floatingips]
+    if security_groups:
+        all_collections.append(security_groups)
+    for coll in all_collections:
         for obj in coll:
             attach_project_info(obj, project_by_id, domain_by_id)
 
@@ -416,6 +422,85 @@ def enrich_all_with_project_and_tenant(projects, domains,
 
     # NEW: enrich servers with network/port/IP info
     enrich_servers_with_ports(servers, ports, networks)
+
+    # Enrich security groups with VM + network associations
+    if security_groups:
+        enrich_security_groups(security_groups, security_group_rules or [], ports, servers, networks)
+
+
+def enrich_security_groups(security_groups, rules, ports, servers, networks):
+    """
+    Enrich security groups with associated VMs, networks, and rule summaries.
+    """
+    sg_by_id = {sg.get("id"): sg for sg in security_groups if sg.get("id")}
+    server_by_id = {s.get("id"): s for s in servers if s.get("id")}
+    net_by_id = {n.get("id"): n for n in networks if n.get("id")}
+
+    # Build mapping: security_group_id -> list of ports
+    sg_ports = {}
+    for p in ports:
+        if not isinstance(p, dict):
+            continue
+        sgs = p.get("security_groups", [])
+        if not isinstance(sgs, list):
+            continue
+        for sg_id in sgs:
+            sg_ports.setdefault(sg_id, []).append(p)
+
+    # Build mapping: security_group_id -> list of rules
+    sg_rules = {}
+    for r in rules:
+        sg_id = r.get("security_group_id")
+        if sg_id:
+            sg_rules.setdefault(sg_id, []).append(r)
+
+    for sg in security_groups:
+        sg_id = sg.get("id")
+        if not sg_id:
+            continue
+
+        associated_ports = sg_ports.get(sg_id, [])
+
+        # Attached VMs
+        vm_ids = set()
+        vm_names = []
+        net_ids = set()
+        net_names = []
+
+        for p in associated_ports:
+            dev_id = p.get("device_id")
+            dev_owner = p.get("device_owner", "")
+            if dev_id and "compute" in dev_owner:
+                vm_ids.add(dev_id)
+                srv = server_by_id.get(dev_id)
+                if srv:
+                    vm_names.append(srv.get("name", dev_id))
+                else:
+                    vm_names.append(dev_id)
+
+            net_id = p.get("network_id")
+            if net_id and net_id not in net_ids:
+                net_ids.add(net_id)
+                net = net_by_id.get(net_id)
+                if net:
+                    net_names.append(net.get("name", net_id))
+                else:
+                    net_names.append(net_id)
+
+        sg["attached_vm_ids"] = ", ".join(sorted(vm_ids))
+        sg["attached_vm_names"] = ", ".join(sorted(set(vm_names)))
+        sg["attached_vm_count"] = len(vm_ids)
+        sg["attached_network_ids"] = ", ".join(sorted(net_ids))
+        sg["attached_network_names"] = ", ".join(sorted(set(net_names)))
+        sg["attached_network_count"] = len(net_ids)
+
+        # Rule counts
+        my_rules = sg_rules.get(sg_id, [])
+        ingress = [r for r in my_rules if r.get("direction") == "ingress"]
+        egress = [r for r in my_rules if r.get("direction") == "egress"]
+        sg["ingress_rule_count"] = len(ingress)
+        sg["egress_rule_count"] = len(egress)
+        sg["total_rule_count"] = len(my_rules)
 
 
 # ------------------------------------------------------------------
@@ -485,6 +570,12 @@ def main():
     routers     = neutron_list(session, "routers")
     floatingips = neutron_list(session, "floatingips")
 
+    # Security Groups (Neutron)
+    print("    [NET] Collecting security groups...")
+    security_groups = neutron_list(session, "security-groups")
+    security_group_rules = neutron_list(session, "security-group-rules")
+    print(f"    [OK] Found {len(security_groups)} security groups, {len(security_group_rules)} rules")
+
     # --------------------------------------------------------------
     # Enrich records with project_name + tenant_name/domain_name
     # + server network/port/IP info
@@ -494,6 +585,8 @@ def main():
         servers, volumes, snapshots,
         images, networks, subnets,
         ports, routers, floatingips,
+        security_groups=security_groups,
+        security_group_rules=security_group_rules,
     )
 
     # --------------------------------------------------------------
@@ -562,6 +655,8 @@ def main():
             n_ports        = upsert_ports(conn, ports, run_id=run_id)
             n_routers      = upsert_routers(conn, routers, run_id=run_id)
             n_fips         = upsert_floating_ips(conn, floatingips, run_id=run_id)
+            n_sgs          = upsert_security_groups(conn, security_groups, run_id=run_id)
+            n_sg_rules     = upsert_security_group_rules(conn, security_group_rules, run_id=run_id)
 
             notes = (
                 f"domains={n_domains}, projects={n_projects}, "
@@ -570,7 +665,8 @@ def main():
                 f"hypervisors={n_hv}, servers={n_servers}, "
                 f"volumes={n_vols}, snapshots={n_snaps}, "
                 f"networks={n_nets}, subnets={n_subnets}, ports={n_ports}, "
-                f"routers={n_routers}, floating_ips={n_fips}"
+                f"routers={n_routers}, floating_ips={n_fips}, "
+                f"security_groups={n_sgs}, security_group_rules={n_sg_rules}"
             )
             finish_inventory_run(conn, run_id, status="success", notes=notes)
             
@@ -646,6 +742,8 @@ def main():
         ("Ports", ports),
         ("Routers", routers),
         ("FloatingIPs", floatingips),
+        ("SecurityGroups", security_groups),
+        ("SecurityGroupRules", security_group_rules),
     ]
 
     for name, data in sheets:

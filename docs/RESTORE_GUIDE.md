@@ -32,7 +32,7 @@
 The Snapshot Restore feature allows operators to restore a virtual machine from a Cinder volume snapshot. The system creates a complete restore plan, validates resources, and executes a multi-step workflow:
 
 1. **Plan** — Validate the VM, detect its boot mode, check quotas, and build an ordered action list
-2. **Execute** — Create volume from snapshot → create network ports → launch new server → wait for ACTIVE
+2. **Execute** — Create volume from snapshot → create network ports (with security groups) → launch new server → wait for ACTIVE
 3. **Track** — Per-step progress stored in `restore_job_steps` table with real-time polling
 
 The restore is fully asynchronous — the API returns immediately after starting execution, and the UI polls for progress updates.
@@ -194,7 +194,8 @@ The Restore tab in the management UI provides a 3-screen guided wizard:
 2. Choose restore mode: **NEW** (default) or **REPLACE**
 3. Optionally set a custom name for the restored VM (NEW mode only)
 4. Choose IP strategy: **NEW_IPS**, **TRY_SAME_IPS**, or **SAME_IPS_OR_FAIL**
-5. Click "Generate Plan" to see the detailed action plan
+5. Select security groups to attach to the restored VM's network ports (optional — the "default" SG is auto-selected; checkbox list shows all SGs available in the tenant)
+6. Click "Generate Plan" to see the detailed action plan
 
 ### Screen 3: Execute & Progress
 1. Review the generated plan (shows each step and its dependencies)
@@ -249,7 +250,8 @@ Content-Type: application/json
   "restore_point_id": "snapshot-uuid",
   "mode": "NEW",
   "new_vm_name": "my-restored-vm",
-  "ip_strategy": "TRY_SAME_IPS"
+  "ip_strategy": "TRY_SAME_IPS",
+  "security_group_ids": ["sg-uuid-1", "sg-uuid-2"]
 }
 ```
 
@@ -300,6 +302,56 @@ When `RESTORE_CLEANUP_VOLUMES=true` and a restore job fails:
 When `false` (default):
 - Failed restore volumes are left in place for manual inspection
 - This is safer for debugging failed restores
+
+---
+
+## Post-Restore Storage Cleanup
+
+After a successful **REPLACE** mode restore, two storage resources may be left behind:
+1. **The original VM's root volume** — orphaned because the VM was deleted but the volume persists (especially when `delete_on_termination=false`)
+2. **The source Cinder snapshot** — the snapshot used to create the new volume is no longer needed
+
+### Automatic Cleanup (at plan time)
+
+When creating a restore plan, set these options:
+```json
+{
+  "cleanup_old_storage": true,
+  "delete_source_snapshot": true
+}
+```
+
+This adds a `CLEANUP_OLD_STORAGE` step at the end of the restore workflow (after FINALIZE). It will:
+- Verify the old volume is not attached before deleting
+- Verify the snapshot is in "available" status before deleting
+- Failures in this step do **not** fail the restore itself
+
+### Manual Cleanup (after the fact)
+
+For already-completed REPLACE restore jobs, use the cleanup-storage endpoint:
+
+```bash
+# Delete just the orphaned old volume
+curl -X POST "$API_URL/restore/jobs/$JOB_ID/cleanup-storage?delete_old_volume=true&delete_source_snapshot=false" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Delete both old volume and source snapshot
+curl -X POST "$API_URL/restore/jobs/$JOB_ID/cleanup-storage?delete_old_volume=true&delete_source_snapshot=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Safety checks prevent accidental data loss:
+- Won't delete volumes still attached to any server
+- Won't delete volumes in "in-use" status
+- Won't delete snapshots not in "available" status
+- Only works on COMPLETED jobs in REPLACE mode
+
+### UI Cleanup Buttons
+
+The Restore Wizard's success panel shows **Storage Leftovers** buttons for REPLACE mode restores:
+- **Delete Old Volume** — deletes the original VM's orphaned root volume
+- **Delete Source Snapshot** — deletes the Cinder snapshot
+- **Delete Both** — deletes both in one action
 
 ---
 
@@ -387,7 +439,43 @@ See [SNAPSHOT_SERVICE_USER.md](SNAPSHOT_SERVICE_USER.md) for detailed setup inst
 
 ### Volumes Left After Failed Restore
 - **Symptom**: Orphaned volumes with names like `restored-<name>-<timestamp>`
-- **Fix**: Either set `RESTORE_CLEANUP_VOLUMES=true` for automatic cleanup, or manually delete orphaned volumes via the Platform9 UI
+- **Fix**: Use the **Recovery Options** panel in the Restore Wizard UI:
+  - Click **🧹 Cleanup (keep volume)** to remove orphaned ports but keep the volume for manual inspection
+  - Click **🗑️ Cleanup (delete all)** to remove all orphaned resources including the volume
+  - Or use the API: `POST /restore/jobs/{job_id}/cleanup` with `{"delete_volume": true}`
+  - Legacy: Set `RESTORE_CLEANUP_VOLUMES=true` for automatic volume cleanup on future failures
+
+### Restore Fails at "Create Network Ports" (IP Not Available)
+- **Symptom**: Step "Create network ports" fails with `IP x.x.x.x is not available on network <name>`
+- **Cause**: In REPLACE mode, old ports may not be immediately released after VM deletion (OpenStack race condition or externally-created ports)
+- **Fix (v1.7.0+)**: This is now handled automatically by the `CLEANUP_OLD_PORTS` step which explicitly deletes old ports before creating new ones. If it still fails (e.g., IP held by a completely different VM), use one of:
+  - Click **🔄 Retry (allow new IPs if needed)** — switches IP strategy from `SAME_IPS_OR_FAIL` to `TRY_SAME_IPS` so the restore can proceed with new IPs
+  - Click **🔄 Retry from Failed Step** — retries with the same settings after the IP has been released
+  - Or use the API: `POST /restore/jobs/{job_id}/retry` with `{"ip_strategy_override": "TRY_SAME_IPS"}`
+
+### Retrying a Failed Restore
+- **When**: A restore failed mid-process and you want to resume rather than start from scratch
+- **How**: In the Restore Wizard, the **Recovery Options** panel appears automatically on failure:
+  - **Retry from Failed Step**: Reuses already-created resources (volumes, ports) and resumes from the step that failed
+  - **Retry with IP override**: Changes IP strategy for the retry (useful when SAME_IPS_OR_FAIL fails because IPs are unavailable)
+  - **Cleanup then restart**: Use Cleanup first to remove orphaned resources, then start a fresh restore
+- **API**: `POST /restore/jobs/{job_id}/retry` with optional `ip_strategy_override`
+
+### Understanding the Restore Steps
+| Step | Description |
+|------|-------------|
+| VALIDATE_LIVE_STATE | Verify VM and snapshot still exist in OpenStack |
+| ENSURE_SERVICE_USER | Authenticate service user for target project |
+| QUOTA_CHECK | Verify sufficient quota |
+| DELETE_EXISTING_VM | (REPLACE only) Delete the existing VM |
+| WAIT_VM_DELETED | (REPLACE only) Wait for VM to be fully removed |
+| CLEANUP_OLD_PORTS | (REPLACE only) Explicitly delete old ports and free IPs |
+| CREATE_VOLUME_FROM_SNAPSHOT | Create a new bootable volume from the snapshot |
+| WAIT_VOLUME_AVAILABLE | Wait for volume to become available |
+| CREATE_PORTS | Create network ports (with retry logic for IP availability) |
+| CREATE_SERVER | Create the new VM with restored configuration |
+| WAIT_SERVER_ACTIVE | Wait for VM to reach ACTIVE state |
+| FINALIZE | Record results and update audit trail |
 
 ---
 
