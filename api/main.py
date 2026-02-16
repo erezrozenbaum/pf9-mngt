@@ -47,6 +47,9 @@ from dashboards import router as dashboard_router
 # Notification endpoints
 from notification_routes import router as notification_router
 
+# Backup management endpoints
+from backup_routes import router as backup_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -251,6 +254,7 @@ async def shutdown_event():
 # Include routers
 app.include_router(dashboard_router)
 app.include_router(notification_router)
+app.include_router(backup_router)
 
 # Rate limiting setup
 app.state.limiter = limiter

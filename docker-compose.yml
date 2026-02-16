@@ -248,6 +248,26 @@ services:
       - db
     restart: unless-stopped
 
+  # Database Backup Worker
+  backup_worker:
+    build:
+      context: ./backup_worker
+    container_name: pf9_backup_worker
+    environment:
+      BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASS: ${POSTGRES_PASSWORD}
+      NFS_BACKUP_PATH: ${NFS_BACKUP_PATH:-/backups}
+      POLL_INTERVAL: ${BACKUP_POLL_INTERVAL:-3600}
+    volumes:
+      - ${BACKUP_VOLUME:-./backups}:/backups
+    depends_on:
+      - db
+    restart: unless-stopped
+
   # LDAP Administration Interface (Optional - can be disabled in production)
   phpldapadmin:
     image: osixia/phpldapadmin:latest

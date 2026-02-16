@@ -2,6 +2,18 @@
 
 ## Recent Major Enhancements
 
+### Database Backup & Restore (v1.13 - NEW ✨)
+- **💾 Backup Tab**: Automated database backup management with scheduling, retention, and one-click restore
+- **Backup Worker**: New `pf9_backup_worker` container runs `pg_dump` on a daily/weekly schedule or on-demand
+- **Backup Settings**: Enable/disable automation, set schedule type (manual/daily/weekly), UTC time, retention count & days, NFS path
+- **Backup History**: Paginated list of all backup/restore jobs with status badges, file size, duration, and action buttons
+- **One-Click Restore**: Restore the database from any completed backup (superadmin only) via confirmation dialog
+- **Retention Enforcement**: Automatically deletes old backups beyond the configured count or age
+- **RBAC**: `backup:read`/`backup:write` for Admin, `backup:admin` for Superadmin
+- **DB Migration**: `db/migrate_backup.sql` for existing databases (2 new tables: `backup_config`, `backup_history`)
+- **Docker**: New `backup_worker` service in `docker-compose.yml` with PostgreSQL 16 image, NFS volume mount
+- **Env Vars**: `NFS_BACKUP_PATH`, `BACKUP_VOLUME`, `BACKUP_POLL_INTERVAL`
+
 ### Multi-User Concurrency (v1.12 - NEW ✨)
 - **Gunicorn + 4 Workers**: API now runs 4 parallel uvicorn worker processes via Gunicorn for 10+ concurrent users
 - **Database Connection Pool**: Centralized `ThreadedConnectionPool` (db_pool.py) replaces per-request connections — min 2, max 10 per worker
