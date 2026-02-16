@@ -16,6 +16,7 @@ import { APIMetricsTab } from "./components/APIMetricsTab";
 import { SystemLogsTab } from "./components/SystemLogsTab";
 import { API_BASE, MONITORING_BASE } from "./config";
 import SecurityGroupsTab from "./components/SecurityGroupsTab";
+import DriftDetection from "./components/DriftDetection";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -393,7 +394,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -434,6 +435,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "monitoring",           label: "Monitoring" },
   { id: "snapshot-policies",    label: "📸🔧 Snapshot Policies",  actionStyle: true },
   { id: "snapshot-audit",       label: "📋 Snapshot Audit" },
+  { id: "drift",                label: "🔍 Drift Detection" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2521,6 +2523,7 @@ const App: React.FC = () => {
     "restore",
     "restore_audit",
     "security_groups",
+    "drift",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------
@@ -4728,6 +4731,14 @@ const App: React.FC = () => {
                 </div>
               )}
             </div>
+          )}
+
+          {/* Drift Detection Section */}
+          {activeTab === "drift" && (
+            <DriftDetection
+              selectedDomain={selectedDomain}
+              selectedTenant={selectedTenant}
+            />
           )}
 
 

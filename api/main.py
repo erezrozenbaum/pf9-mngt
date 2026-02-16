@@ -336,6 +336,7 @@ async def rbac_middleware(request: Request, call_next):
         "restore": "restore",
         "security-groups": "security_groups",
         "security-group-rules": "security_groups",
+        "drift": "drift",
     }
 
     resource = resource_map.get(segment)
@@ -4830,169 +4831,316 @@ def set_user_preference(pref_key: str, payload: dict, current_user: User = Depen
 
 
 # ---------------------------------------------------------------------------
-# Branding / App Settings  (public GET, admin PUT)
+# Drift Detection Engine
 # ---------------------------------------------------------------------------
 
-@app.get("/settings/branding")
-def get_branding():
-    """
-    Return app branding settings (company name, logo, colors, hero text).
-    Public endpoint - used on the login page before authentication.
-    """
+VALID_DRIFT_EVENT_SORT_COLUMNS = {
+    "detected_at": "de.detected_at",
+    "severity": "de.severity",
+    "resource_type": "de.resource_type",
+    "resource_name": "de.resource_name",
+    "field_changed": "de.field_changed",
+    "acknowledged": "de.acknowledged",
+}
+
+
+@app.get("/drift/summary")
+def get_drift_summary(
+    domain_id: str = None,
+    project_id: str = None,
+    current_user: User = Depends(require_authentication),
+):
+    """Return drift overview: totals, by-severity, by-resource-type, 7-day trend."""
     try:
         conn = db_conn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT key, value FROM app_settings")
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
-        settings = {r["key"]: r["value"] for r in rows}
-        if "login_hero_features" in settings:
-            try:
-                settings["login_hero_features"] = json.loads(settings["login_hero_features"])
-            except Exception:
-                settings["login_hero_features"] = []
-        return settings
-    except Exception as e:
-        logger.error(f"Failed to fetch branding settings: {e}")
+
+        # Build optional WHERE clause for domain/project filtering
+        where_parts = []
+        where_params: list = []
+        if domain_id:
+            where_parts.append("domain_id = %s")
+            where_params.append(domain_id)
+        if project_id:
+            where_parts.append("project_id = %s")
+            where_params.append(project_id)
+        where_clause = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+        ack_prefix = (" AND " + " AND ".join(where_parts)) if where_parts else ""
+
+        # totals
+        cur.execute(f"""
+            SELECT
+                COUNT(*)                                       AS total,
+                COUNT(*) FILTER (WHERE NOT acknowledged)       AS unacknowledged,
+                COUNT(*) FILTER (WHERE acknowledged)           AS acknowledged,
+                COUNT(*) FILTER (WHERE severity = 'critical' AND NOT acknowledged) AS critical_open,
+                COUNT(*) FILTER (WHERE severity = 'warning'  AND NOT acknowledged) AS warning_open,
+                COUNT(*) FILTER (WHERE severity = 'info'     AND NOT acknowledged) AS info_open
+            FROM drift_events
+            {where_clause}
+        """, where_params)
+        totals = cur.fetchone()
+
+        # by severity
+        cur.execute(f"""
+            SELECT severity, COUNT(*) AS count
+            FROM drift_events WHERE NOT acknowledged {ack_prefix}
+            GROUP BY severity ORDER BY severity
+        """, where_params)
+        by_severity = cur.fetchall()
+
+        # by resource type
+        cur.execute(f"""
+            SELECT resource_type, COUNT(*) AS count
+            FROM drift_events WHERE NOT acknowledged {ack_prefix}
+            GROUP BY resource_type ORDER BY count DESC
+        """, where_params)
+        by_resource = cur.fetchall()
+
+        # 7-day trend
+        trend_where = "WHERE detected_at >= now() - interval '7 days'"
+        if where_parts:
+            trend_where += " AND " + " AND ".join(where_parts)
+        cur.execute(f"""
+            SELECT detected_at::date AS day, COUNT(*) AS count
+            FROM drift_events
+            {trend_where}
+            GROUP BY day ORDER BY day
+        """, where_params)
+        trend = cur.fetchall()
+
+        cur.close(); conn.close()
         return {
-            "company_name": "PF9 Management System",
-            "company_subtitle": "Platform9 Infrastructure Management",
-            "login_hero_title": "Welcome to PF9 Management",
-            "login_hero_description": "Comprehensive Platform9 infrastructure management.",
-            "login_hero_features": [],
-            "company_logo_url": "",
-            "primary_color": "#667eea",
-            "secondary_color": "#764ba2",
+            "totals": totals,
+            "by_severity": by_severity,
+            "by_resource_type": by_resource,
+            "trend_7d": [{"day": str(r["day"]), "count": r["count"]} for r in trend],
         }
+    except Exception as e:
+        logger.error(f"Drift summary error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/admin/settings/branding")
-@limiter.limit("10/minute")
-def update_branding(
-    request: Request,
-    payload: dict,
-    authenticated: bool = Depends(verify_admin_credentials),
+@app.get("/drift/events")
+def list_drift_events(
+    resource_type: str = None,
+    severity: str = None,
+    project_id: str = None,
+    domain_id: str = None,
+    acknowledged: bool = None,
+    search: str = None,
+    days: int = 30,
+    page: int = 1,
+    page_size: int = 50,
+    sort_by: str = "detected_at",
+    sort_dir: str = "desc",
+    current_user: User = Depends(require_authentication),
 ):
-    """Update one or more branding settings. Requires admin credentials."""
-    ALLOWED_KEYS = {
-        "company_name", "company_subtitle",
-        "login_hero_title", "login_hero_description", "login_hero_features",
-        "company_logo_url", "primary_color", "secondary_color",
-    }
-    updates = {k: v for k, v in payload.items() if k in ALLOWED_KEYS}
-    if not updates:
-        raise HTTPException(status_code=400, detail="No valid settings keys provided")
+    """List drift events with filters and pagination."""
     try:
-        conn = db_conn()
-        cur = conn.cursor()
-        for key, value in updates.items():
-            val = json.dumps(value) if isinstance(value, (list, dict)) else str(value)
-            cur.execute(
-                """INSERT INTO app_settings (key, value, updated_at, updated_by)
-                   VALUES (%s, %s, now(), %s)
-                   ON CONFLICT (key) DO UPDATE
-                   SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
-                (key, val, "admin"),
+        order_col = VALID_DRIFT_EVENT_SORT_COLUMNS.get(sort_by, "de.detected_at")
+        direction = "ASC" if sort_dir.lower() == "asc" else "DESC"
+        offset = (max(page, 1) - 1) * page_size
+
+        conditions = ["de.detected_at >= now() - make_interval(days => %(days)s)"]
+        params: dict = {"days": days, "limit": page_size, "offset": offset}
+
+        if resource_type:
+            conditions.append("de.resource_type = %(resource_type)s")
+            params["resource_type"] = resource_type
+        if severity:
+            conditions.append("de.severity = %(severity)s")
+            params["severity"] = severity
+        if project_id:
+            conditions.append("de.project_id = %(project_id)s")
+            params["project_id"] = project_id
+        if domain_id:
+            conditions.append("de.domain_id = %(domain_id)s")
+            params["domain_id"] = domain_id
+        if acknowledged is not None:
+            conditions.append("de.acknowledged = %(ack)s")
+            params["ack"] = acknowledged
+        if search:
+            conditions.append(
+                "(de.resource_name ILIKE %(search)s OR de.field_changed ILIKE %(search)s "
+                "OR de.old_value ILIKE %(search)s OR de.new_value ILIKE %(search)s "
+                "OR de.description ILIKE %(search)s)"
             )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"status": "success", "updated_keys": list(updates.keys())}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update branding: {e}")
+            params["search"] = f"%{search}%"
 
-
-@app.post("/admin/settings/branding/logo")
-@limiter.limit("5/minute")
-async def upload_branding_logo(
-    request: Request,
-    authenticated: bool = Depends(verify_admin_credentials),
-):
-    """Upload a company logo image (PNG/JPEG/GIF/SVG/WebP, max 2MB)."""
-    content_type = request.headers.get("content-type", "")
-    ext_map = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/svg+xml": "svg", "image/webp": "webp"}
-    ext = ext_map.get(content_type.split(";")[0].strip().lower())
-    if not ext:
-        raise HTTPException(status_code=400, detail=f"Unsupported Content-Type: {content_type}")
-    body = await request.body()
-    if len(body) > 2 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Logo file must be under 2 MB")
-    if len(body) == 0:
-        raise HTTPException(status_code=400, detail="Empty file body")
-    static_dir = os.path.join(os.path.dirname(__file__), "static")
-    os.makedirs(static_dir, exist_ok=True)
-    for old in os.listdir(static_dir):
-        if old.startswith("logo."):
-            os.remove(os.path.join(static_dir, old))
-    filename = f"logo.{ext}"
-    filepath = os.path.join(static_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(body)
-    logo_url = f"/static/{filename}"
-    try:
+        where = " AND ".join(conditions)
+        sql = f"""
+            WITH cte AS (
+                SELECT de.*,
+                       dr.description AS rule_description,
+                       COUNT(*) OVER() AS _total
+                FROM drift_events de
+                LEFT JOIN drift_rules dr ON dr.id = de.rule_id
+                WHERE {where}
+                ORDER BY {order_col} {direction}
+                LIMIT %(limit)s OFFSET %(offset)s
+            )
+            SELECT * FROM cte
+        """
         conn = db_conn()
-        cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO app_settings (key, value, updated_at, updated_by)
-               VALUES ('company_logo_url', %s, now(), 'admin')
-               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = 'admin'""",
-            (logo_url,),
-        )
-        conn.commit(); cur.close(); conn.close()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+        total = rows[0]["_total"] if rows else 0
+        for r in rows:
+            r.pop("_total", None)
+        cur.close(); conn.close()
+        return {
+            "events": rows,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, -(-total // page_size)),
+        }
     except Exception as e:
-        logger.error(f"Failed to save logo URL to DB: {e}")
-    return {"status": "success", "logo_url": logo_url}
+        logger.error(f"Drift events list error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# Serve static files (uploaded logos)
-from fastapi.staticfiles import StaticFiles as _StaticFiles
-_static_dir = os.path.join(os.path.dirname(__file__), "static")
-os.makedirs(_static_dir, exist_ok=True)
-app.mount("/static", _StaticFiles(directory=_static_dir), name="static")
-
-
-# ---------------------------------------------------------------------------
-# User Preferences  (tab order, etc.)
-# ---------------------------------------------------------------------------
-
-@app.get("/user/preferences")
-def get_user_preferences(current_user: User = Depends(require_authentication)):
-    """Return all preferences for the authenticated user."""
+@app.get("/drift/events/{event_id}")
+def get_drift_event(event_id: int, current_user: User = Depends(require_authentication)):
+    """Return a single drift event with rule info."""
     try:
         conn = db_conn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT pref_key, pref_value FROM user_preferences WHERE username = %s", (current_user.username,))
+        cur.execute("""
+            SELECT de.*, dr.description AS rule_description, dr.field_name AS rule_field
+            FROM drift_events de
+            LEFT JOIN drift_rules dr ON dr.id = de.rule_id
+            WHERE de.id = %s
+        """, (event_id,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Drift event not found")
+        return row
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/drift/events/{event_id}/acknowledge")
+def acknowledge_drift_event(
+    event_id: int,
+    payload: dict = None,
+    current_user: User = Depends(require_authentication),
+):
+    """Acknowledge a single drift event."""
+    note = (payload or {}).get("note", "")
+    try:
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE drift_events
+            SET acknowledged = TRUE,
+                acknowledged_by = %s,
+                acknowledged_at = now(),
+                acknowledge_note = %s
+            WHERE id = %s AND NOT acknowledged
+        """, (current_user.username, note, event_id))
+        updated = cur.rowcount
+        conn.commit(); cur.close(); conn.close()
+        if updated == 0:
+            raise HTTPException(status_code=404, detail="Event not found or already acknowledged")
+        return {"status": "success", "acknowledged": event_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/drift/events/bulk-acknowledge")
+def bulk_acknowledge_drift(
+    payload: dict,
+    current_user: User = Depends(require_authentication),
+):
+    """Acknowledge many drift events at once. Body: { "event_ids": [1,2,3], "note": "..." }"""
+    event_ids = payload.get("event_ids", [])
+    if not event_ids or not isinstance(event_ids, list):
+        raise HTTPException(status_code=400, detail="Provide a non-empty 'event_ids' list")
+    note = payload.get("note", "")
+    try:
+        conn = db_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE drift_events
+            SET acknowledged = TRUE,
+                acknowledged_by = %s,
+                acknowledged_at = now(),
+                acknowledge_note = %s
+            WHERE id = ANY(%s) AND NOT acknowledged
+        """, (current_user.username, note, event_ids))
+        updated = cur.rowcount
+        conn.commit(); cur.close(); conn.close()
+        return {"status": "success", "acknowledged_count": updated}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Drift Rules Management
+# ---------------------------------------------------------------------------
+
+@app.get("/drift/rules")
+def list_drift_rules(current_user: User = Depends(require_authentication)):
+    """Return all drift rules with their open-event counts."""
+    try:
+        conn = db_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT dr.*,
+                   COALESCE(ec.cnt, 0) AS open_events
+            FROM drift_rules dr
+            LEFT JOIN (
+                SELECT rule_id, COUNT(*) AS cnt
+                FROM drift_events WHERE NOT acknowledged
+                GROUP BY rule_id
+            ) ec ON ec.rule_id = dr.id
+            ORDER BY dr.resource_type, dr.field_name
+        """)
         rows = cur.fetchall()
         cur.close(); conn.close()
-        prefs = {}
-        for r in rows:
-            try:
-                prefs[r["pref_key"]] = json.loads(r["pref_value"])
-            except Exception:
-                prefs[r["pref_key"]] = r["pref_value"]
-        return prefs
+        return {"rules": rows, "total": len(rows)}
     except Exception as e:
-        logger.error(f"Failed to fetch preferences for {current_user.username}: {e}")
-        return {}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/user/preferences/{pref_key}")
-def set_user_preference(pref_key: str, payload: dict, current_user: User = Depends(require_authentication)):
-    """Set a single preference. Body: { "value": <any JSON-serializable> }"""
-    if "value" not in payload:
-        raise HTTPException(status_code=400, detail="Body must contain 'value'")
-    val = json.dumps(payload["value"]) if isinstance(payload["value"], (list, dict)) else str(payload["value"])
+@app.put("/drift/rules/{rule_id}")
+def update_drift_rule(
+    rule_id: int,
+    payload: dict,
+    current_user: User = Depends(require_authentication),
+):
+    """Update a drift rule (toggle enabled, change severity)."""
+    sets = []
+    params = []
+    if "enabled" in payload:
+        sets.append("enabled = %s")
+        params.append(bool(payload["enabled"]))
+    if "severity" in payload:
+        if payload["severity"] not in ("critical", "warning", "info"):
+            raise HTTPException(status_code=400, detail="severity must be critical, warning, or info")
+        sets.append("severity = %s")
+        params.append(payload["severity"])
+    if not sets:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    params.append(rule_id)
     try:
         conn = db_conn()
         cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO user_preferences (username, pref_key, pref_value, updated_at)
-               VALUES (%s, %s, %s, now())
-               ON CONFLICT (username, pref_key) DO UPDATE SET pref_value = EXCLUDED.pref_value, updated_at = now()""",
-            (current_user.username, pref_key, val),
-        )
+        cur.execute(f"UPDATE drift_rules SET {', '.join(sets)} WHERE id = %s", params)
+        if cur.rowcount == 0:
+            cur.close(); conn.close()
+            raise HTTPException(status_code=404, detail="Rule not found")
         conn.commit(); cur.close(); conn.close()
-        return {"status": "success", "pref_key": pref_key}
+        return {"status": "success", "rule_id": rule_id}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save preference: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

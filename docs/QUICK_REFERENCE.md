@@ -24,6 +24,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Compliance Drift, Capacity Trends, Trendlines, Change Compliance
   - Tenant Risk Heatmap, Tenant Summary
   - Auto-refresh every 30 seconds, Dark/Light mode support
+- **Drift Detection Tab** (v1.9 - NEW ✨):
+  - "🔍 Drift Detection" tab with real-time infrastructure drift event monitoring
+  - 24 built-in rules across 8 resource types (servers, volumes, networks, subnets, ports, floating IPs, security groups, snapshots)
+  - Detection hook in `db_writer.py` fires during each inventory sync
+  - Filter by resource type, severity, domain, tenant, acknowledgement status
+  - Single & bulk acknowledge, CSV export, rules management panel
+  - RBAC: `drift:read` (all roles), `drift:write` (Operator+)
 - **Branding & Login Customization** (v1.8 - NEW ✨):
   - White-label login page with two-column layout (login form + branded hero panel)
   - Admin Panel “Branding” tab for company name, subtitle, colors, logo, hero content, feature highlights
@@ -91,6 +98,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Modern React UI**: TypeScript-based with Vite build system and theme support
 - **REST API**: FastAPI with OpenAPI docs + dedicated monitoring service
 - **Database Integration**: PostgreSQL 16 with 19+ tables for historical tracking
+- **Drift Detection**: Automated field-level change monitoring with 24 rules across 8 resource types
 - **Administrative Operations**: Create/delete flavors and networks directly from UI
 
 ---
@@ -662,6 +670,18 @@ curl "http://localhost:8001/metrics/hosts"       # Host resource metrics
 curl "http://localhost:8001/metrics/summary"     # Summary statistics
 curl "http://localhost:8001/metrics/vms"         # VM metrics (future)
 curl "http://localhost:8001/metrics/alerts"      # Active alerts (future)
+
+# Drift Detection endpoints
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/drift/summary"      # Drift overview
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/drift/events"       # List drift events
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/drift/events/1"     # Event detail
+curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  "http://localhost:8000/drift/events/1/acknowledge"                                # Acknowledge event
+curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"event_ids":[1,2,3]}' "http://localhost:8000/drift/events/bulk-acknowledge"  # Bulk acknowledge
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/drift/rules"        # List rules
+curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"enabled":false}' "http://localhost:8000/drift/rules/4"                     # Disable a rule
 ```
 
 ### Query Parameters

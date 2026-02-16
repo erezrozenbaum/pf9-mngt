@@ -183,6 +183,15 @@ GET  /restore/jobs                     # List restore jobs
 GET  /restore/jobs/{job_id}            # Job details + step progress
 POST /restore/cancel/{job_id}          # Cancel running restore
 
+# Drift Detection (api/main.py - 7 endpoints)
+GET  /drift/summary                    # Aggregate drift overview
+GET  /drift/events                     # List drift events (filtered/paginated)
+GET  /drift/events/{id}                # Single drift event detail
+PUT  /drift/events/{id}/acknowledge    # Acknowledge single event
+PUT  /drift/events/bulk-acknowledge    # Bulk acknowledge events
+GET  /drift/rules                      # List 24 built-in rules
+PUT  /drift/rules/{rule_id}            # Enable/disable a rule
+
 # System Health & Testing
 GET  /health                     # Service health check
 GET  /simple-test                # Basic functionality test
@@ -312,6 +321,9 @@ security_groups, security_group_rules
 deletions_history, inventory_runs
 -- Plus individual *_history tables for each resource type
 
+-- Drift Detection (2 tables)
+drift_rules, drift_events
+
 -- Advanced Views
 v_comprehensive_changes, v_volumes_full, v_security_groups_full
 ```
@@ -320,6 +332,7 @@ v_comprehensive_changes, v_volumes_full, v_security_groups_full
 - **Comprehensive Foreign Keys**: Full referential integrity across all relationships
 - **JSONB Metadata Storage**: Flexible attribute storage with GIN indexing
 - **Historical Tracking**: Complete audit trail with change hash detection
+- **Drift Detection**: Real-time field-level change monitoring with 24 built-in rules across 8 resource types
 - **Composite Indexes**: Multi-column indexes for efficient filtering and sorting
 - **Timestamp Precision**: Accurate change attribution with millisecond precision
 - **Deletion Tracking**: Comprehensive deletion history across all resource types
@@ -461,6 +474,22 @@ graph TD
     L --> M[Wait for ACTIVE]
     M --> N[Mark COMPLETED]
     I -->|Failure| O[Rollback + Mark FAILED]
+```
+
+### 5. Drift Detection Flow
+```mermaid
+graph TD
+    A[pf9_rvtools.py / db_writer.py] --> B[Inventory Sync]
+    B --> C{Field Changed?}
+    C -->|Yes| D[Match Against drift_rules]
+    D --> E{Rule Enabled?}
+    E -->|Yes| F[Create drift_event]
+    F --> G[Store in PostgreSQL]
+    G --> H[API: GET /drift/events]
+    H --> I[React UI: Drift Detection Tab]
+    I --> J[Acknowledge / Export CSV]
+    E -->|No| K[Skip - Rule Disabled]
+    C -->|No| K
 ```
 
 ## 🚀 Deployment Architecture
