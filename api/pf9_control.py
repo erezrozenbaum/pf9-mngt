@@ -158,6 +158,96 @@ class Pf9Client:
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
+    # ---------------------------
+    # Security Groups (Neutron)
+    # ---------------------------
+    def list_security_groups(self, project_id: Optional[str] = None) -> list:
+        self.authenticate()
+        assert self.neutron_endpoint
+        url = f"{self.neutron_endpoint}/v2.0/security-groups"
+        params = {}
+        if project_id:
+            params["project_id"] = project_id
+        r = self.session.get(url, headers=self._headers(), params=params)
+        r.raise_for_status()
+        return r.json().get("security_groups", [])
+
+    def get_security_group(self, sg_id: str) -> Dict[str, Any]:
+        self.authenticate()
+        assert self.neutron_endpoint
+        url = f"{self.neutron_endpoint}/v2.0/security-groups/{sg_id}"
+        r = self.session.get(url, headers=self._headers())
+        r.raise_for_status()
+        return r.json().get("security_group", {})
+
+    def create_security_group(
+        self,
+        name: str,
+        description: str = "",
+        project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        self.authenticate()
+        assert self.neutron_endpoint
+        url = f"{self.neutron_endpoint}/v2.0/security-groups"
+        body: Dict[str, Any] = {"name": name, "description": description}
+        if project_id:
+            body["project_id"] = project_id
+        r = self.session.post(url, headers=self._headers(), json={"security_group": body})
+        r.raise_for_status()
+        return r.json()
+
+    def delete_security_group(self, sg_id: str) -> None:
+        self.authenticate()
+        assert self.neutron_endpoint
+        url = f"{self.neutron_endpoint}/v2.0/security-groups/{sg_id}"
+        r = self.session.delete(url, headers=self._headers())
+        if r.status_code not in (202, 204, 404):
+            r.raise_for_status()
+
+    def create_security_group_rule(
+        self,
+        security_group_id: str,
+        direction: str,
+        protocol: Optional[str] = None,
+        port_range_min: Optional[int] = None,
+        port_range_max: Optional[int] = None,
+        remote_ip_prefix: Optional[str] = None,
+        remote_group_id: Optional[str] = None,
+        ethertype: str = "IPv4",
+        description: str = "",
+    ) -> Dict[str, Any]:
+        self.authenticate()
+        assert self.neutron_endpoint
+        url = f"{self.neutron_endpoint}/v2.0/security-group-rules"
+        body: Dict[str, Any] = {
+            "security_group_id": security_group_id,
+            "direction": direction,
+            "ethertype": ethertype,
+        }
+        if protocol:
+            body["protocol"] = protocol
+        if port_range_min is not None:
+            body["port_range_min"] = port_range_min
+        if port_range_max is not None:
+            body["port_range_max"] = port_range_max
+        if remote_ip_prefix:
+            body["remote_ip_prefix"] = remote_ip_prefix
+        if remote_group_id:
+            body["remote_group_id"] = remote_group_id
+        if description:
+            body["description"] = description
+        r = self.session.post(url, headers=self._headers(), json={"security_group_rule": body})
+        r.raise_for_status()
+        return r.json()
+
+    def delete_security_group_rule(self, rule_id: str) -> None:
+        self.authenticate()
+        assert self.neutron_endpoint
+        url = f"{self.neutron_endpoint}/v2.0/security-group-rules/{rule_id}"
+        r = self.session.delete(url, headers=self._headers())
+        if r.status_code not in (202, 204, 404):
+            r.raise_for_status()
+
 
 # A single global client for the FastAPI app
 _client: Optional[Pf9Client] = None

@@ -2,6 +2,17 @@
 
 ## Recent Major Enhancements
 
+### Security Groups Management (v1.7 - NEW ✨)
+- **Full CRUD**: Create, view, and delete security groups and firewall rules from the UI
+- **🔒 Security Groups Tab**: Dedicated tab with list/detail layout, filter/sort/pagination, color-coded ingress/egress rule badges
+- **Detail Panel**: Shows all rules (ingress/egress), attached VMs, and attached networks
+- **Admin Operations**: Create security groups with project picker, add/delete individual rules (direction, protocol, ports, remote prefix)
+- **Rule Template Presets**: One-click quick-add buttons for common firewall rules — SSH, HTTP, HTTPS, RDP, ICMP, DNS
+- **Export CSV**: Export current filtered security groups list to CSV from the tab toolbar
+- **Restore Integration**: Security group multi-select picker in restore wizard; "default" SG auto-selected; selected SGs attached to restored VM ports
+- **API Endpoints**: 7 new endpoints (list, detail, rules list, CRUD for groups and rules)
+- **DB Migration**: `db/migrate_security_groups.sql` for existing databases (idempotent — safe to re-run)
+
 ### Monitoring & Restore Audit (v1.4 - NEW ✨)
 - **Restore Audit Tab**: Full audit trail for restore operations with search, filters, pagination, step-level drill-down, CSV export
 - **Monitoring hostname resolution**: Hosts displayed by friendly name via `PF9_HOST_MAP` env var (API/DNS fallback)
@@ -161,7 +172,7 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 - **Enterprise Authentication**: LDAP integration with JWT token management
 - **Role-Based Access Control**: 4-tier permission system with automatic enforcement
 - **Audit & Compliance**: 90-day authentication event tracking and permission logging
-- **Comprehensive Inventory Management**: Real-time tracking of VMs, volumes, snapshots, networks, subnets, ports, floating IPs, hypervisors, flavors, and images
+- **Comprehensive Inventory Management**: Real-time tracking of VMs, volumes, snapshots, networks, subnets, ports, floating IPs, security groups, security group rules, hypervisors, flavors, and images
 - **Automated Snapshot Management**: Policy-driven snapshot creation with cross-tenant support via dedicated service user, configurable retention periods, and hourly scheduling (default 60 min)
 - **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" UI button and `POST /snapshot/run-now` API for immediate policy assignment and snapshot creation
 - **Compliance Reporting**: Detailed compliance reports with policy adherence tracking
@@ -179,7 +190,7 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 - **Multi-Policy Snapshot Support**: Volume-level metadata-driven snapshot policies
 - **Historical Data Tracking**: Complete audit trail with delta reporting
 - **Customer Data Masking**: Privacy-compliant data exports
-- **Administrative Functions**: Create/delete flavors and networks (permission-controlled)
+- **Administrative Functions**: Create/delete flavors, networks, and security groups (permission-controlled)
 - **Database-Driven Architecture**: PostgreSQL persistence with full relational integrity
 - **Container-Native Deployment**: Docker Compose orchestration with LDAP server
 

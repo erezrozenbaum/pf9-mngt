@@ -84,6 +84,8 @@ ENABLE_AUTHENTICATION=true
 | Subnets | read | read | write | admin |
 | Ports | read | read | read | admin |
 | Floating IPs | read | read | write | admin |
+| Security Groups | read | read | write | admin |
+| Security Group Rules | read | read | write | admin |
 | Flavors | read | write | write | admin |
 | Images | read | read | read | admin |
 | Users | - | - | - | admin |

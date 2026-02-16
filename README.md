@@ -67,6 +67,12 @@ The enhanced inventory and monitoring experience is built on a few principles:
 ### API Performance
 ![API Performance](docs/images/API%20Performance.png)
 
+### Snapshot Restore Process
+![Snapshot Restore Process](docs/images/snapshot-restore-process.png)
+
+### Snapshot Restore Audit
+![Snapshot Restore Audit](docs/images/Snapshot-rostore-audit.png)
+
 ## 📚 Documentation
 
 - **[Deployment Guide](docs/DEPLOYMENT_GUIDE.md)** — Step-by-step deployment instructions
@@ -86,8 +92,8 @@ The enhanced inventory and monitoring experience is built on a few principles:
 ## 🚀 System Architecture
 
 **Enterprise microservices-based platform** with 8 containerized services plus host-based automation:
-- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 18 management tabs + admin panel
-- **Backend API** (FastAPI/Python) - Port 8000 - 88+ REST endpoints with RBAC middleware
+- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 19 management tabs + admin panel
+- **Backend API** (FastAPI/Python) - Port 8000 - 95+ REST endpoints with RBAC middleware
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
 - **LDAP Admin** (phpLDAPadmin) - Port 8081 - Web-based LDAP management
 - **Monitoring Service** (FastAPI/Python) - Port 8001 - Real-time metrics collection via Prometheus
@@ -140,7 +146,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Full RBAC**: Viewer/Operator=read, Admin=write (NEW mode), Superadmin=admin (REPLACE mode)
 
 ### Modern Web Management Interface
-- **React 19.2+ Dashboard**: 18+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
+- **React 19.2+ Dashboard**: 19+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
 - **Landing Dashboard Features** (All Users):
   - **Health Summary Card**: System-wide metrics (VMs, volumes, networks, resource utilization)
   - **Snapshot SLA Compliance**: Tenant-level compliance tracking with warning/critical alerting
@@ -153,7 +159,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
   - **Compliance Drift Tracking**: Policy adherence trending
   - **Capacity Trends**: 7-day resource utilization forecasting
   - **Trendlines**: Infrastructure growth patterns and velocity metrics
-- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit
+- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit
 - **History Tab Features**:
   - Filter by resource type (server, volume, snapshot, deletion, etc.), project, domain, and free-text search
   - Sortable column headers (Time, Type, Resource, Project, Domain, Description) with ascending/descending indicators
@@ -165,7 +171,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Secure Login**: LDAP authentication with JWT token management and session tracking
 - **Real-Time Data**: Auto-refresh every 30 seconds on dashboard, efficient pagination across all endpoints
 - **Advanced Filtering**: Multi-field filtering, sorting, and search across all 19+ resource types
-- **Administrative Operations**: Create/delete flavors and networks, user management, role assignments (admin+ only)
+- **Administrative Operations**: Create/delete flavors, networks, and security groups, user management, role assignments (admin+ only)
 - **Historical Analysis**: Resource timeline tracking, change velocity metrics, compliance dashboards
 - **Theme Support**: Light/dark mode toggle with persistent preferences and responsive design
 
@@ -748,9 +754,21 @@ If you find this project useful, please consider:
 
 **Project Status**: Active Development  
 **Last Updated**: February 2026  
-**Version**: 1.6.0
+**Version**: 1.7.0
 
 ## 🎯 Recent Updates
+
+### Security Groups Management (v1.7)
+- ✅ **Full CRUD for security groups & rules** — 7 new API endpoints (list, detail, rules, create/delete groups & rules)
+- ✅ **🔒 Security Groups Tab** — Dedicated management tab with list/detail layout, ingress/egress rule badges, filter/sort/pagination
+- ✅ **Detail panel** — All rules, attached VMs, and attached networks for each security group
+- ✅ **Admin operations** — Create security groups (with project picker), add/delete individual rules (protocol, ports, direction, remote prefix)
+- ✅ **Rule template presets** — One-click quick-add buttons for SSH, HTTP, HTTPS, RDP, ICMP, DNS firewall rules
+- ✅ **Export CSV** — Export current filtered security group list to CSV from the tab toolbar
+- ✅ **Restore integration** — Security group multi-select picker in restore wizard; "default" SG auto-selected; selected SGs attached to restored VM ports
+- ✅ **Collection & enrichment** — Neutron security-groups/rules collected, enriched, stored with change-tracking history
+- ✅ **DB migration script** — `db/migrate_security_groups.sql` for existing databases (idempotent, safe to re-run)
+- ✅ **Complete History tab coverage** — Expanded `v_comprehensive_changes` view from 4 to 17 resource types; all tracked entities (servers, volumes, snapshots, networks, subnets, ports, floating IPs, security groups, SG rules, domains, projects, flavors, images, hypervisors, users, roles, deletions) now surface in the History tab
 
 ### Manual IP Selection & Restore Audit Enhancements (v1.6)
 - ✅ **Manual IP selection during restore** — new "Select IPs manually" IP strategy lets users pick from available IPs on each network or enter a specific IP
