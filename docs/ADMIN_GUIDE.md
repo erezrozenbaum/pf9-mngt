@@ -2,6 +2,27 @@
 
 ## Recent Major Enhancements
 
+### Drift Detection Engine (v1.9 - NEW ✨)
+- **🔍 Drift Detection Tab**: Dedicated UI tab for viewing, filtering, and managing infrastructure drift events
+- **24 Built-In Rules**: Monitors field-level changes across 8 resource types during inventory sync
+  - **Servers**: flavor_id, status, vm_state, hypervisor_hostname
+  - **Volumes**: status, size, volume_type, server_id
+  - **Networks**: admin_state_up, shared
+  - **Subnets**: gateway_ip, cidr, enable_dhcp
+  - **Ports**: device_id, mac_address, status
+  - **Floating IPs**: port_id, router_id, status
+  - **Security Groups**: description
+  - **Snapshots**: status, size
+- **Detection Hook**: Integrated into `db_writer.py` — automatically detects field changes during each inventory sync cycle
+- **Database Tables**: `drift_rules` (24 built-in rules) and `drift_events` (detected changes)
+- **7 API Endpoints**: Summary, event listing, event detail, acknowledge, bulk acknowledge, rules list, rule toggle
+- **RBAC**: `drift:read` for all roles, `drift:write` (acknowledge/toggle rules) for Operator and above
+- **Domain/Tenant Filtering**: Events respect the caller's domain and tenant scope
+- **CSV Export**: Export filtered drift events to CSV from the tab toolbar
+- **Bulk Acknowledge**: Select and acknowledge multiple events in one action
+- **Rules Management Panel**: Enable/disable individual detection rules from the UI
+- **DB Migration**: `db/migrate_drift_detection.sql` for existing databases (idempotent — safe to re-run)
+
 ### Branding & Login Customization (v1.8 - NEW ✨)
 - **White-Label Login Page**: Two-column layout with branded hero panel (title, description, feature highlights, stats)
 - **Admin Branding Tab**: "🎨 Branding & Login Page Settings" in Admin Panel — company name, subtitle, colors, logo upload, hero content
@@ -142,6 +163,10 @@
 - **v_comprehensive_changes** (View): Unified change tracking with accurate temporal attribution
 - **{resource}_history** tables: Individual history tracking for each resource type with change hash detection
 
+#### Drift Detection (2 tables)
+- **drift_rules**: 24 built-in detection rules covering 8 resource types, with enabled/disabled toggle per rule
+- **drift_events**: Detected field-level changes with resource context, severity, old/new values, and acknowledgement tracking
+
 #### Performance Optimizations & Advanced Features
 - **RBAC Middleware**: HTTP middleware enforces permissions before request processing
 - **Composite Indexes**: Multi-column indexes on (domain_id, project_id, last_seen_at) for efficient filtering
@@ -157,7 +182,8 @@
 2. [Architecture & Components](#architecture--components)
 3. [Authentication & Authorization](#authentication--authorization)
 4. [Real-Time Monitoring System](#real-time-monitoring-system)
-5. [Production Features](#production-features)
+5. [Drift Detection](#drift-detection)
+6. [Production Features](#production-features)
    - [Startup Configuration Validation](#1-startup-configuration-validation-)
    - [API Performance Metrics](#2-api-performance-metrics-)
    - [Structured Logging](#3-structured-logging-centralized-logging-foundation-)
@@ -681,6 +707,103 @@ python snapshots/p9_snapshot_compliance_report.py  # Compliance reporting
 - ✅ Cross-tenant snapshots via service user (configured via `SNAPSHOT_SERVICE_USER_EMAIL`)
 - ❌ No database storage (optional)
 - ❌ No web UI access
+
+---
+
+## Drift Detection
+
+### Overview
+The Drift Detection Engine (v1.9) automatically monitors infrastructure field-level changes during each inventory sync cycle. When `db_writer.py` upserts a resource and detects that a monitored field has changed, it creates a drift event in the `drift_events` table based on the matching rule in `drift_rules`.
+
+### How It Works
+1. **Detection Hook**: During each inventory sync, `db_writer.py` compares incoming resource data against the current database state
+2. **Rule Matching**: If a monitored field has changed, the system checks `drift_rules` for an enabled rule matching the resource type and field
+3. **Event Creation**: A `drift_event` record is created with the old value, new value, severity, and resource context (domain, tenant)
+4. **UI Notification**: The "🔍 Drift Detection" tab displays events with filtering, sorting, and acknowledgement controls
+
+### Database Tables
+- **`drift_rules`**: 24 built-in rules covering 8 resource types. Each rule specifies the resource type, field name, severity, and enabled status
+- **`drift_events`**: Stores detected changes with `resource_type`, `resource_id`, `resource_name`, `field_name`, `old_value`, `new_value`, `severity`, `detected_at`, `acknowledged`, `acknowledged_by`, `acknowledged_at`, `domain_name`, `tenant_name`
+
+**Migration**: Run `db/migrate_drift_detection.sql` on existing databases. The migration is idempotent — safe to re-run.
+
+### Viewing Drift Events
+1. Navigate to the **🔍 Drift Detection** tab in the UI
+2. Use filters to narrow by resource type, severity, acknowledgement status, domain, or tenant
+3. Use the search box for free-text search across resource name/ID
+4. Click an event row to view full detail (old/new values, rule info, timestamps)
+
+### Acknowledging Drift
+- **Single**: Click the acknowledge button on any event row or detail view
+- **Bulk**: Select multiple events via checkboxes, then click "Acknowledge Selected"
+- Acknowledged events record the user and timestamp, and can be filtered out of the default view
+
+### Managing Rules
+1. Open the **Rules Management** panel in the Drift Detection tab
+2. Toggle individual rules on/off to control which field changes generate events
+3. Rules cover 8 resource types with 24 fields total:
+
+| Resource Type | Monitored Fields |
+|---------------|-----------------|
+| Server | flavor_id, status, vm_state, hypervisor_hostname |
+| Volume | status, size, volume_type, server_id |
+| Network | admin_state_up, shared |
+| Subnet | gateway_ip, cidr, enable_dhcp |
+| Port | device_id, mac_address, status |
+| Floating IP | port_id, router_id, status |
+| Security Group | description |
+| Snapshot | status, size |
+
+### Exporting Drift Data
+Click **Export CSV** in the tab toolbar to download the current filtered view of drift events. The export respects all active filters (resource type, severity, domain, tenant, acknowledged status).
+
+### RBAC Permissions
+| Permission | Roles | Description |
+|------------|-------|-------------|
+| `drift:read` | Viewer, Operator, Admin, Superadmin | View drift events, summary, and rules |
+| `drift:write` | Operator, Admin, Superadmin | Acknowledge events, enable/disable rules |
+
+### API Endpoints
+```python
+GET  /drift/summary                    # Aggregate drift overview
+GET  /drift/events                     # List drift events (filtered/paginated)
+GET  /drift/events/{id}                # Single drift event detail
+PUT  /drift/events/{id}/acknowledge    # Acknowledge single event
+PUT  /drift/events/bulk-acknowledge    # Bulk acknowledge events
+GET  /drift/rules                      # List 24 built-in rules
+PUT  /drift/rules/{rule_id}            # Enable/disable a rule
+```
+
+### Troubleshooting
+
+**No drift events appearing**:
+```bash
+# Verify drift_rules table is populated
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT COUNT(*) FROM drift_rules;"
+# Should return 24
+
+# Check if rules are enabled
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT resource_type, field_name, enabled FROM drift_rules;"
+
+# Verify detection hook is active — run an inventory sync
+python pf9_rvtools.py
+
+# Check for drift events after sync
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT COUNT(*) FROM drift_events;"
+```
+
+**Too many drift events**:
+```bash
+# Disable noisy rules via API
+curl -X PUT http://localhost:8000/drift/rules/<rule_id> \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+
+# Or disable directly in database
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c \
+  "UPDATE drift_rules SET enabled = false WHERE rule_name = 'Server Migration Detected';"
+```
 
 ---
 

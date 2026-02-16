@@ -66,6 +66,64 @@ def _compute_change_hash(record: Dict[str, Any], exclude_fields: List[str] = Non
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def _load_drift_rules(cur, resource_type: str) -> List[Dict[str, Any]]:
+    """Load enabled drift rules for a given resource type (cached per connection)."""
+    try:
+        cur.execute(
+            "SELECT id, field_name, severity, description FROM drift_rules "
+            "WHERE resource_type = %s AND enabled = TRUE",
+            (resource_type,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
+                   new_record: Dict[str, Any], rules: List[Dict[str, Any]]):
+    """Compare old vs new fields and insert drift_events for any matching rules."""
+    if not rules or not old_row:
+        return
+    for rule in rules:
+        field = rule["field_name"]
+        old_val = str(old_row.get(field, "")) if old_row.get(field) is not None else None
+        new_val = str(new_record.get(field, "")) if new_record.get(field) is not None else None
+        if old_val == new_val:
+            continue
+        # Field changed — emit drift event
+        try:
+            cur.execute("""
+                INSERT INTO drift_events
+                    (rule_id, resource_type, resource_id, resource_name,
+                     project_id, project_name, domain_id, domain_name,
+                     severity, field_changed, old_value, new_value, description)
+                VALUES (%s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s)
+            """, (
+                rule["id"],
+                table_name,
+                record_id,
+                new_record.get("name") or new_record.get("hostname") or str(record_id),
+                new_record.get("project_id") or old_row.get("project_id"),
+                new_record.get("project_name") or old_row.get("project_name"),
+                new_record.get("domain_id") or old_row.get("domain_id"),
+                new_record.get("domain_name") or old_row.get("domain_name"),
+                rule["severity"],
+                field,
+                old_val,
+                new_val,
+                rule["description"],
+            ))
+        except Exception as drift_err:
+            # Non-fatal — log but don't break inventory sync
+            import logging
+            logging.getLogger("db_writer").warning(
+                "Drift event insert failed for %s/%s field %s: %s",
+                table_name, record_id, field, drift_err,
+            )
+
+
 def _upsert_with_history(
     conn,
     table_name: str,
@@ -74,8 +132,9 @@ def _upsert_with_history(
     run_id: Optional[int] = None
 ) -> int:
     """
-    Generic upsert function with history tracking
-    Updates the main table and inserts into history table if changed
+    Generic upsert function with history tracking and drift detection.
+    Updates the main table, inserts into history table if changed,
+    and emits drift events for field-level changes matching enabled rules.
     """
     if not records:
         return 0
@@ -95,13 +154,27 @@ def _upsert_with_history(
             last_seen_at = NOW()
     """
     
-    # Prepare values
-    values = [[record.get(col) for col in columns] for record in records]
-    
-    with conn.cursor() as cur:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        # ---- Load drift rules for this resource type ----
+        drift_rules = _load_drift_rules(cur, table_name)
+
+        # ---- Snapshot old rows BEFORE the upsert (for drift detection) ----
+        old_rows: Dict[str, Dict] = {}
+        if drift_rules:
+            record_ids = [r[id_field] for r in records if r.get(id_field)]
+            if record_ids:
+                cur.execute(
+                    f"SELECT * FROM {table_name} WHERE {id_field} = ANY(%s)",
+                    (record_ids,),
+                )
+                for row in cur.fetchall():
+                    old_rows[str(row[id_field])] = dict(row)
+
+        # ---- Perform the upsert ----
+        values = [[record.get(col) for col in columns] for record in records]
         execute_values(cur, insert_query, values)
         
-        # Insert into history table if it exists
+        # ---- History tracking + drift detection ----
         history_table = f"{table_name}_history"
         try:
             for record in records:
@@ -136,6 +209,13 @@ def _upsert_with_history(
                         INSERT INTO {history_table} ({", ".join(hist_cols)})
                         VALUES ({", ".join(["%s"] * len(hist_vals))})
                     """, hist_vals)
+
+                    # ---- Drift detection ----
+                    rid = str(record[id_field])
+                    old_row = old_rows.get(rid)
+                    if old_row and drift_rules:
+                        _detect_drift(cur, table_name, rid, old_row, record, drift_rules)
+
         except psycopg2.errors.UndefinedTable:
             # History table doesn't exist, skip
             pass
