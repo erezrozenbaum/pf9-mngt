@@ -91,15 +91,16 @@ The enhanced inventory and monitoring experience is built on a few principles:
 
 ## 🚀 System Architecture
 
-**Enterprise microservices-based platform** with 8 containerized services plus host-based automation:
-- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 19 management tabs + admin panel
-- **Backend API** (FastAPI/Python) - Port 8000 - 95+ REST endpoints with RBAC middleware
+**Enterprise microservices-based platform** with 9 containerized services plus host-based automation:
+- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 20 management tabs + admin panel
+- **Backend API** (FastAPI/Python) - Port 8000 - 100+ REST endpoints with RBAC middleware
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
 - **LDAP Admin** (phpLDAPadmin) - Port 8081 - Web-based LDAP management
 - **Monitoring Service** (FastAPI/Python) - Port 8001 - Real-time metrics collection via Prometheus
-- **Database** (PostgreSQL 16) - Port 5432 - 22+ tables with history tracking + auth audit
+- **Database** (PostgreSQL 16) - Port 5432 - 26+ tables with history tracking + auth audit
 - **Database Admin** (pgAdmin4) - Port 8080 - Web-based PostgreSQL management
 - **Snapshot Worker** (Python) - Background service for automated snapshot management
+- **Notification Worker** (Python) - Background service for email alerts (drift, snapshots, compliance, health)
 - **Host Scripts** (Python) - Scheduled automation via Windows Task Scheduler
 
 ## 🌟 Key Features
@@ -145,6 +146,16 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Safety First**: Disabled by default, dry-run mode, destructive confirmation, volume cleanup option
 - **Full RBAC**: Viewer/Operator=read, Admin=write (NEW mode), Superadmin=admin (REPLACE mode)
 
+### Email Notifications (NEW - v1.11)
+- **Event-Driven Alerts**: Automatic email notifications for drift events, snapshot failures, compliance violations, and health score drops
+- **Per-User Preferences**: Subscribe to specific event types with severity-level filtering (info/warning/critical)
+- **Daily Digest**: Configurable daily summary email aggregating all events from the past 24 hours
+- **SMTP Flexibility**: Supports both authenticated and unauthenticated SMTP relay servers, optional TLS
+- **HTML Templates**: Professional Jinja2 email templates for each event type
+- **Notification History**: Full delivery log with status tracking and retry information
+- **Admin Dashboard**: SMTP status, delivery statistics, and test email functionality
+- **Full RBAC**: Viewer/Operator=read+write, Admin/Superadmin=admin
+
 ### Modern Web Management Interface
 - **React 19.2+ Dashboard**: 19+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
 - **Landing Dashboard Features** (All Users):
@@ -159,7 +170,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
   - **Compliance Drift Tracking**: Policy adherence trending
   - **Capacity Trends**: 7-day resource utilization forecasting
   - **Trendlines**: Infrastructure growth patterns and velocity metrics
-- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit
+- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit, Notifications
 - **History Tab Features**:
   - Filter by resource type (server, volume, snapshot, deletion, etc.), project, domain, and free-text search
   - Sortable column headers (Time, Type, Resource, Project, Domain, Description) with ascending/descending indicators

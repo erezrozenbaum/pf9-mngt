@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-02-16
+
+### Added
+- **Email Notifications System**: Full-stack email notification feature with per-user preferences, deduplication, and digest support
+  - **Database**: New tables `notification_preferences` (per-user subscriptions by event type), `notification_log` (sent notification tracking with dedup keys), `notification_digests` (daily digest batching), `notification_channels` (SMTP config). Migration script `db/migrate_notifications.sql`. RBAC permissions added for all roles (viewer: read/write, operator: read/write, admin/superadmin: admin)
+  - **Notification Worker** (`notifications/`): New microservice container that polls the database for triggerable events and dispatches emails via SMTP. Event collectors for 4 event sources:
+    - **Drift events**: Unacknowledged critical/warning/info drift from `drift_events`
+    - **Snapshot failures**: Failed or partial runs from `snapshot_runs`
+    - **Compliance violations**: Non-compliant volumes from `compliance_details`
+    - **Health score drops**: Tenants below configurable threshold from `v_tenant_health`
+    - Deduplication via SHA-256 hash of (event_type + resource_id + event_id)
+    - Immediate delivery for real-time alerts, daily digest mode for batched summaries
+    - Auto-reconnects to database, auto-creates tables on startup
+  - **Email Templates** (`notifications/templates/`): 6 Jinja2 HTML templates with responsive design — `drift_alert.html` (severity-colored badges, old→new value diff), `snapshot_failure.html` (created/failed stat cards), `compliance_alert.html` (status badges per volume), `health_alert.html` (score circle with contributing factors), `digest.html` (daily summary with critical/warning/info breakdown), `generic_alert.html` (fallback)
+  - **API Endpoints** (`api/notification_routes.py`): 6 new endpoints —
+    - `GET /notifications/smtp-status` — SMTP configuration status (no secrets exposed)
+    - `GET /notifications/preferences` — current user's notification subscriptions
+    - `PUT /notifications/preferences` — bulk upsert subscriptions (event type, severity threshold, delivery mode)
+    - `DELETE /notifications/preferences/{event_type}` — remove a subscription
+    - `GET /notifications/history` — paginated notification log with filters
+    - `POST /notifications/test-email` — send test email to verify SMTP
+    - `GET /notifications/admin/stats` — admin-only system-wide notification statistics
+  - **UI Tab** (`NotificationSettings.tsx`): New "🔔 Notifications" tab with three sub-views:
+    - **Preferences**: Card-based grid for each event type with toggle switches, min severity selector, delivery mode (immediate/digest), email input. Bulk save
+    - **History**: Paginated table of sent notifications with status badges (✅ sent, ❌ failed, 📬 digest queued, ⏳ pending), event type filter, subject preview
+    - **Settings**: SMTP status display, test email sender, admin stats dashboard with delivery counts, 7-day breakdown by event type with visual bars
+    - Full dark mode support, CSS toggle switches, responsive grid layout
+  - **Docker**: New `notification_worker` service in `docker-compose.yml`, SMTP env vars added to API service
+  - **Configuration**: 11 new environment variables — `SMTP_ENABLED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USE_TLS`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, `SMTP_FROM_NAME`, `NOTIFICATION_POLL_INTERVAL_SECONDS`, `NOTIFICATION_DIGEST_ENABLED`, `NOTIFICATION_DIGEST_HOUR_UTC`
+
 ## [1.10.1] - 2026-02-16
 
 ### Fixed
