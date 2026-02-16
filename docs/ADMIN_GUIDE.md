@@ -2,6 +2,15 @@
 
 ## Recent Major Enhancements
 
+### Tenant Health View (v1.10 - NEW ✨)
+- **🏥 Tenant Health Tab**: Per-project health scoring with 0–100 health score, summary cards, sortable/searchable tenant table, and click-to-expand detail panels
+- **Database View**: `v_tenant_health` SQL view aggregating per-project health metrics from all resource tables
+- **Health Score**: Starts at 100 with deductions for error VMs/volumes/snapshots, low compliance, and critical/warning drift events
+- **3 API Endpoints**: Overview (all tenants, filterable/sortable), detail (single tenant with resource breakdown), trends (daily drift/snapshot counts for charts)
+- **RBAC**: `tenant_health:read` for all roles, `tenant_health:admin` for Admin/Superadmin
+- **UI Features**: Summary cards, sortable table, detail panel with status bars, volume table, drift timeline, CSV export, domain/tenant filter integration, dark mode
+- **DB Migration**: `db/migrate_tenant_health.sql` for existing databases (idempotent — safe to re-run)
+
 ### Drift Detection Engine (v1.9 - NEW ✨)
 - **🔍 Drift Detection Tab**: Dedicated UI tab for viewing, filtering, and managing infrastructure drift events
 - **24 Built-In Rules**: Monitors field-level changes across 8 resource types during inventory sync
@@ -167,6 +176,9 @@
 - **drift_rules**: 24 built-in detection rules covering 8 resource types, with enabled/disabled toggle per rule
 - **drift_events**: Detected field-level changes with resource context, severity, old/new values, and acknowledgement tracking
 
+#### Tenant Health (1 view)
+- **v_tenant_health** (View): Aggregates per-project health metrics from all resource tables — server/volume/snapshot/network counts, compliance percentage, drift events, and computed health score (0–100)
+
 #### Performance Optimizations & Advanced Features
 - **RBAC Middleware**: HTTP middleware enforces permissions before request processing
 - **Composite Indexes**: Multi-column indexes on (domain_id, project_id, last_seen_at) for efficient filtering
@@ -183,22 +195,23 @@
 3. [Authentication & Authorization](#authentication--authorization)
 4. [Real-Time Monitoring System](#real-time-monitoring-system)
 5. [Drift Detection](#drift-detection)
-6. [Production Features](#production-features)
+6. [Tenant Health Monitoring](#tenant-health-monitoring)
+7. [Production Features](#production-features)
    - [Startup Configuration Validation](#1-startup-configuration-validation-)
    - [API Performance Metrics](#2-api-performance-metrics-)
    - [Structured Logging](#3-structured-logging-centralized-logging-foundation-)
    - [Automated Metrics Collection](#4-automated-metrics-collection-)
-6. [Core Components Deep Dive](#core-components-deep-dive)
-7. [Installation & Deployment](#installation--deployment)
-8. [Security Considerations](#security-considerations)
-9. [Database Management](#database-management)
-10. [API Operations](#api-operations)
-11. [UI Management](#ui-management)
-12. [Data Collection & Reporting](#data-collection--reporting)
-13. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
-14. [Maintenance & Updates](#maintenance--updates)
-15. [Code Quality Issues](#code-quality-issues)
-16. [Recommended Improvements](#recommended-improvements)
+8. [Core Components Deep Dive](#core-components-deep-dive)
+9. [Installation & Deployment](#installation--deployment)
+10. [Security Considerations](#security-considerations)
+11. [Database Management](#database-management)
+12. [API Operations](#api-operations)
+13. [UI Management](#ui-management)
+14. [Data Collection & Reporting](#data-collection--reporting)
+15. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
+16. [Maintenance & Updates](#maintenance--updates)
+17. [Code Quality Issues](#code-quality-issues)
+18. [Recommended Improvements](#recommended-improvements)
 
 ---
 
@@ -762,6 +775,95 @@ Click **Export CSV** in the tab toolbar to download the current filtered view of
 |------------|-------|-------------|
 | `drift:read` | Viewer, Operator, Admin, Superadmin | View drift events, summary, and rules |
 | `drift:write` | Operator, Admin, Superadmin | Acknowledge events, enable/disable rules |
+
+---
+
+## Tenant Health Monitoring
+
+### Overview
+The Tenant Health feature (v1.10) provides a consolidated view of per-project health across your entire OpenStack environment. A database view (`v_tenant_health`) aggregates metrics from all resource tables into a single health score (0–100) per tenant, displayed in the **🏥 Tenant Health** UI tab.
+
+### How Health Scores Work
+Each tenant starts with a score of **100**. Deductions are applied for:
+- **Error VMs/Volumes/Snapshots**: Resources in error state reduce the score
+- **Low Compliance**: Snapshot compliance percentage below threshold causes deductions
+- **Critical/Warning Drift**: Recent drift events of critical or warning severity reduce the score
+
+**Health Status Thresholds**:
+| Status | Score Range | Color |
+|--------|-------------|-------|
+| Healthy | 80–100 | Green |
+| Warning | 50–79 | Yellow/Orange |
+| Critical | 0–49 | Red |
+
+### Database View
+The `v_tenant_health` SQL view aggregates per-project health metrics from all resource tables:
+- Server counts (total, active, error)
+- Volume counts (total, in-use, error)
+- Snapshot counts and compliance percentage
+- Network counts
+- Drift event counts (total, critical, warning)
+- Computed health score with deductions
+
+**Migration**: Run `db/migrate_tenant_health.sql` on existing databases. The migration is idempotent — safe to re-run.
+
+### Using the Tenant Health Tab
+1. Navigate to the **🏥 Tenant Health** tab in the UI
+2. **Summary Cards**: View aggregate counts of healthy, warning, and critical tenants plus average health score
+3. **Tenant Table**: Sortable and searchable table of all tenants with health scores
+   - Sort by: health score, project name, domain name, total servers, total volumes, total networks, total drift events, compliance percentage
+   - Filter by domain using the domain filter dropdown
+   - Search by tenant or domain name
+4. **Detail Panel**: Click any tenant row to open a detail panel showing:
+   - Resource status bars (VMs, volumes, snapshots by status)
+   - Top volumes table
+   - Recent drift event timeline
+5. **CSV Export**: Export the current filtered tenant health data to CSV
+6. **Dark Mode**: Full dark mode support with theme-aware styling
+
+### RBAC Permissions
+| Permission | Roles | Description |
+|------------|-------|-------------|
+| `tenant_health:read` | Viewer, Operator, Admin, Superadmin | View tenant health overview, detail, and trends |
+| `tenant_health:admin` | Admin, Superadmin | Administrative access to tenant health data |
+
+### API Endpoints
+```python
+GET  /tenant-health/overview              # All tenants with health scores (filterable, sortable)
+GET  /tenant-health/{project_id}          # Full detail for one tenant
+GET  /tenant-health/trends/{project_id}   # Daily drift/snapshot trend counts for charts
+```
+
+### Troubleshooting
+
+**No tenant health data appearing**:
+```bash
+# Verify the v_tenant_health view exists
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT COUNT(*) FROM v_tenant_health;"
+
+# If missing, run the migration
+docker exec -i pf9_db psql -U pf9 -d pf9_mgmt < db/migrate_tenant_health.sql
+
+# Verify projects table is populated (v_tenant_health depends on it)
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT COUNT(*) FROM projects;"
+```
+
+**Health scores all showing 100**:
+```bash
+# Check if resource data is populated
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT COUNT(*) FROM servers;"
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT COUNT(*) FROM volumes;"
+
+# Run an inventory sync to populate data
+python pf9_rvtools.py
+```
+
+**Health scores seem incorrect**:
+```bash
+# Inspect raw view data for a specific tenant
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c \
+  "SELECT project_name, health_score, total_servers, error_servers, compliance_pct, total_drift_events FROM v_tenant_health ORDER BY health_score ASC LIMIT 10;"
+```
 
 ### API Endpoints
 ```python

@@ -87,7 +87,7 @@ src/
 **Technology**: FastAPI + Python 3.11+
 **Port**: 8000
 **Responsibilities**:
-- RESTful API endpoints (88+ routes across infrastructure, analytics, and restore)
+- RESTful API endpoints (91+ routes across infrastructure, analytics, tenant health, and restore)
 - Database operations and queries
 - Platform9 integration proxy
 - Administrative operations
@@ -106,7 +106,7 @@ api/
 └── Dockerfile          # Container configuration
 ```
 
-**API Endpoints** (80+ total across two modules):
+**API Endpoints** (83+ total across two modules):
 
 **Dashboard Analytics Endpoints** (api/dashboards.py - 14 endpoints):
 ```python
@@ -191,6 +191,13 @@ PUT  /drift/events/{id}/acknowledge    # Acknowledge single event
 PUT  /drift/events/bulk-acknowledge    # Bulk acknowledge events
 GET  /drift/rules                      # List 24 built-in rules
 PUT  /drift/rules/{rule_id}            # Enable/disable a rule
+
+# Tenant Health (api/main.py - 5 endpoints)
+GET  /tenant-health/overview              # All tenants with health scores + compute stats
+GET  /tenant-health/heatmap               # Per-tenant utilization heatmap data
+GET  /tenant-health/{project_id}          # Full detail for one tenant (vCPUs, RAM, power state)
+GET  /tenant-health/trends/{project_id}   # Daily drift/snapshot trend counts
+GET  /tenant-health/quota/{project_id}    # Live OpenStack quota vs usage
 
 # System Health & Testing
 GET  /health                     # Service health check
@@ -325,7 +332,8 @@ deletions_history, inventory_runs
 drift_rules, drift_events
 
 -- Advanced Views
-v_comprehensive_changes, v_volumes_full, v_security_groups_full
+v_comprehensive_changes, v_volumes_full, v_security_groups_full,
+v_tenant_health  -- per-project health score aggregation
 ```
 
 **Enhanced Schema Features**:
@@ -490,6 +498,19 @@ graph TD
     I --> J[Acknowledge / Export CSV]
     E -->|No| K[Skip - Rule Disabled]
     C -->|No| K
+```
+
+### 6. Tenant Health Flow
+```mermaid
+graph TD
+    A[v_tenant_health SQL View] --> B[Aggregate per-project metrics]
+    B --> C[Compute health score 0-100]
+    C --> D[API: GET /tenant-health/overview]
+    D --> E[React UI: Tenant Health Tab]
+    E --> F[Summary Cards + Sortable Table]
+    E --> G[Click Tenant → Detail Panel]
+    G --> H[Status Bars + Volume Table + Drift Timeline]
+    E --> I[CSV Export]
 ```
 
 ## 🚀 Deployment Architecture

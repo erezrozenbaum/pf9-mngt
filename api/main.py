@@ -337,6 +337,7 @@ async def rbac_middleware(request: Request, call_next):
         "security-groups": "security_groups",
         "security-group-rules": "security_groups",
         "drift": "drift",
+        "tenant-health": "tenant_health",
     }
 
     resource = resource_map.get(segment)
@@ -412,7 +413,7 @@ async def access_log_middleware(request: Request, call_next):
 
 # Import snapshot management routes
 from snapshot_management import setup_snapshot_routes
-from restore_management import setup_restore_routes
+from restore_management import setup_restore_routes, RestoreOpenStackClient
 
 # Startup event
 @app.on_event("startup")
@@ -4704,9 +4705,11 @@ def get_branding():
 def update_branding(
     request: Request,
     payload: dict,
-    authenticated: bool = Depends(verify_admin_credentials),
+    current_user: User = Depends(require_authentication),
 ):
-    """Update one or more branding settings. Requires admin credentials."""
+    """Update one or more branding settings. Requires admin/superadmin role."""
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin role required")
     ALLOWED_KEYS = {
         "company_name", "company_subtitle",
         "login_hero_title", "login_hero_description", "login_hero_features",
@@ -4739,9 +4742,11 @@ def update_branding(
 @limiter.limit("5/minute")
 async def upload_branding_logo(
     request: Request,
-    authenticated: bool = Depends(verify_admin_credentials),
+    current_user: User = Depends(require_authentication),
 ):
     """Upload a company logo image (PNG/JPEG/GIF/SVG/WebP, max 2MB)."""
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Admin role required")
     content_type = request.headers.get("content-type", "")
     ext_map = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/svg+xml": "svg", "image/webp": "webp"}
     ext = ext_map.get(content_type.split(";")[0].strip().lower())
@@ -5144,3 +5149,263 @@ def update_drift_rule(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+#  Tenant Health View
+# ---------------------------------------------------------------------------
+
+
+@app.get("/tenant-health/overview")
+def tenant_health_overview(
+    domain_id: str = None,
+    sort_by: str = "health_score",
+    sort_dir: str = "asc",
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Returns all tenants with aggregated health metrics.
+    Optionally filter by domain_id.  Sort by any column (default: health_score ASC).
+    """
+    allowed_sort = {
+        "health_score", "project_name", "domain_name",
+        "total_servers", "total_volumes", "total_networks",
+        "total_drift_events", "compliance_pct",
+    }
+    col = sort_by if sort_by in allowed_sort else "health_score"
+    direction = "DESC" if sort_dir.upper() == "DESC" else "ASC"
+
+    sql = f"SELECT * FROM v_tenant_health"
+    params: list = []
+    if domain_id:
+        sql += " WHERE domain_id = %s"
+        params.append(domain_id)
+    sql += f" ORDER BY {col} {direction}"
+
+    rows = run_query(sql, tuple(params))
+    # Compute global aggregates
+    total_tenants = len(rows)
+    healthy = sum(1 for r in rows if r["health_score"] >= 80)
+    warning = sum(1 for r in rows if 50 <= r["health_score"] < 80)
+    critical = sum(1 for r in rows if r["health_score"] < 50)
+    avg_score = round(sum(r["health_score"] for r in rows) / max(total_tenants, 1), 1)
+    return {
+        "summary": {
+            "total_tenants": total_tenants,
+            "healthy": healthy,
+            "warning": warning,
+            "critical": critical,
+            "avg_health_score": avg_score,
+        },
+        "tenants": rows,
+    }
+
+
+@app.get("/tenant-health/heatmap")
+def tenant_health_heatmap(
+    domain_id: str = None,
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Returns per-tenant resource utilization data for a heatmap visualization.
+    Each tenant gets a utilization score based on active VMs, vCPUs, storage, and issues.
+    """
+    base_sql = """
+        SELECT project_id, project_name, domain_name, health_score,
+               total_servers, active_servers, shutoff_servers, error_servers,
+               total_vcpus, total_ram_mb, active_vcpus, active_ram_mb,
+               power_on_pct, hypervisor_count,
+               total_volumes, total_volume_gb, in_use_volumes,
+               total_floating_ips, total_security_groups,
+               total_drift_events, critical_drift, compliance_pct
+        FROM v_tenant_health
+    """
+    params: list = []
+    if domain_id:
+        base_sql += " WHERE domain_id = %s"
+        params.append(domain_id)
+    base_sql += " ORDER BY total_servers DESC"
+
+    rows = run_query(base_sql, tuple(params))
+
+    # Compute utilization category for each tenant
+    heatmap_data = []
+    for r in rows:
+        # Skip tenants with zero resources
+        total_res = r["total_servers"] + r["total_volumes"] + r["total_floating_ips"]
+        if total_res == 0:
+            continue
+        # Utilization: ratio of active resources
+        vm_util = (r["active_servers"] / max(r["total_servers"], 1)) * 100.0
+        vol_util = (r["in_use_volumes"] / max(r["total_volumes"], 1)) * 100.0
+        # Weighted overall utilization
+        util_score = round((vm_util * 0.6 + vol_util * 0.4), 1)
+        heatmap_data.append({
+            "project_id": r["project_id"],
+            "project_name": r["project_name"],
+            "domain_name": r["domain_name"],
+            "health_score": r["health_score"],
+            "total_servers": r["total_servers"],
+            "active_servers": r["active_servers"],
+            "shutoff_servers": r["shutoff_servers"],
+            "error_servers": r["error_servers"],
+            "total_vcpus": r["total_vcpus"],
+            "active_vcpus": r["active_vcpus"],
+            "total_ram_mb": r["total_ram_mb"],
+            "active_ram_mb": r["active_ram_mb"],
+            "power_on_pct": float(r["power_on_pct"]),
+            "total_volumes": r["total_volumes"],
+            "total_volume_gb": r["total_volume_gb"],
+            "total_drift_events": r["total_drift_events"],
+            "critical_drift": r["critical_drift"],
+            "compliance_pct": float(r["compliance_pct"]),
+            "utilization_score": util_score,
+        })
+
+    return {"tenants": heatmap_data}
+
+
+@app.get("/tenant-health/{project_id}")
+def tenant_health_detail(
+    project_id: str,
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Returns full health detail for a single tenant/project.
+    Includes resource breakdown, recent drift events, and compliance summary.
+    """
+    rows = run_query(
+        "SELECT * FROM v_tenant_health WHERE project_id = %s", (project_id,)
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Project not found")
+    tenant = rows[0]
+
+    # Recent drift events for this tenant (last 30 days, max 20)
+    drift_events = run_query(
+        """SELECT id, severity, resource_type, resource_name,
+                  field_changed, old_value, new_value,
+                  description, detected_at, acknowledged
+           FROM drift_events
+           WHERE project_id = %s AND detected_at >= NOW() - INTERVAL '30 days'
+           ORDER BY detected_at DESC LIMIT 20""",
+        (project_id,),
+    )
+
+    # Resource status breakdown for charts
+    server_status = run_query(
+        """SELECT status, COUNT(*) AS count
+           FROM servers WHERE project_id = %s GROUP BY status ORDER BY count DESC""",
+        (project_id,),
+    )
+    volume_status = run_query(
+        """SELECT status, COUNT(*) AS count
+           FROM volumes WHERE project_id = %s GROUP BY status ORDER BY count DESC""",
+        (project_id,),
+    )
+
+    # Top resources by size
+    top_volumes = run_query(
+        """SELECT id, name, size_gb, status
+           FROM volumes WHERE project_id = %s ORDER BY size_gb DESC LIMIT 10""",
+        (project_id,),
+    )
+
+    return {
+        "tenant": tenant,
+        "recent_drift_events": drift_events,
+        "server_status_breakdown": server_status,
+        "volume_status_breakdown": volume_status,
+        "top_volumes": top_volumes,
+    }
+
+
+@app.get("/tenant-health/trends/{project_id}")
+def tenant_health_trends(
+    project_id: str,
+    days: int = 30,
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Returns daily drift event counts and snapshot counts for trend charts.
+    """
+    if days < 1 or days > 365:
+        days = 30
+
+    drift_trend = run_query(
+        """SELECT DATE(detected_at) AS date,
+                  COUNT(*) AS total,
+                  COUNT(*) FILTER (WHERE severity = 'critical') AS critical,
+                  COUNT(*) FILTER (WHERE severity = 'warning') AS warning,
+                  COUNT(*) FILTER (WHERE severity = 'info') AS info
+           FROM drift_events
+           WHERE project_id = %s AND detected_at >= NOW() - make_interval(days => %s)
+           GROUP BY DATE(detected_at)
+           ORDER BY date""",
+        (project_id, days),
+    )
+
+    snapshot_trend = run_query(
+        """SELECT DATE(created_at) AS date, COUNT(*) AS total
+           FROM snapshots
+           WHERE project_id = %s AND created_at >= NOW() - make_interval(days => %s)
+           GROUP BY DATE(created_at)
+           ORDER BY date""",
+        (project_id, days),
+    )
+
+    return {
+        "project_id": project_id,
+        "days": days,
+        "drift_trend": drift_trend,
+        "snapshot_trend": snapshot_trend,
+    }
+
+
+@app.get("/tenant-health/quota/{project_id}")
+def tenant_health_quota(
+    project_id: str,
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Fetch live quota usage from OpenStack for a single project.
+    Returns compute (instances, cores, ram) and storage (volumes, gigabytes, snapshots) quota.
+    Best-effort — returns empty result if OpenStack credentials are not configured.
+    """
+    import os as _os
+    pf9_auth = _os.getenv("PF9_AUTH_URL", "")
+    if not pf9_auth:
+        return {"available": False, "reason": "OpenStack credentials not configured"}
+    try:
+        os_client = RestoreOpenStackClient()
+        session = os_client.authenticate_admin()
+        nova_q = os_client.get_project_quota(session, project_id)
+        cinder_q = os_client.get_volume_quota(session, project_id)
+
+        def _extract(q, key):
+            v = q.get(key, {})
+            if isinstance(v, dict):
+                return {
+                    "limit": v.get("limit", -1),
+                    "in_use": v.get("in_use", 0),
+                    "reserved": v.get("reserved", 0),
+                }
+            return {"limit": -1, "in_use": 0, "reserved": 0}
+
+        return {
+            "available": True,
+            "project_id": project_id,
+            "compute": {
+                "instances": _extract(nova_q, "instances"),
+                "cores": _extract(nova_q, "cores"),
+                "ram_mb": _extract(nova_q, "ram"),
+            },
+            "storage": {
+                "volumes": _extract(cinder_q, "volumes"),
+                "gigabytes": _extract(cinder_q, "gigabytes"),
+                "snapshots": _extract(cinder_q, "snapshots"),
+            },
+        }
+    except Exception as e:
+        logger.warning(f"Quota fetch failed for {project_id}: {e}")
+        return {"available": False, "reason": str(e)}
