@@ -223,9 +223,9 @@ export default function ReportsTab({ isAdmin }: Props) {
   const searchStyle: React.CSSProperties = {
     padding: "8px 14px",
     borderRadius: "6px",
-    border: "1px solid var(--pf9-border, #374151)",
-    background: "var(--pf9-input-bg, #1f2937)",
-    color: "var(--pf9-text, #e5e7eb)",
+    border: "1px solid var(--pf9-border, #d1d5db)",
+    background: "var(--pf9-input-bg, #ffffff)",
+    color: "var(--pf9-text, #111827)",
     fontSize: "14px",
     width: "240px",
   };
@@ -255,12 +255,14 @@ export default function ReportsTab({ isAdmin }: Props) {
   const cardStyle = (selected: boolean): React.CSSProperties => ({
     padding: "16px",
     borderRadius: "10px",
-    border: `2px solid ${selected ? "#3b82f6" : "var(--pf9-border, #374151)"}`,
+    border: `2px solid ${selected ? "#3b82f6" : "var(--pf9-border, #d1d5db)"}`,
     background: selected
-      ? "var(--pf9-hover, #1e3a5f)"
-      : "var(--pf9-card-bg, #111827)",
+      ? "var(--pf9-hover, #eff6ff)"
+      : "var(--pf9-card-bg, #ffffff)",
     cursor: "pointer",
     transition: "all 0.2s",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+    color: "var(--pf9-text, #111827)",
   });
   const badgeStyle = (color: string): React.CSSProperties => ({
     display: "inline-block",
@@ -275,9 +277,10 @@ export default function ReportsTab({ isAdmin }: Props) {
   const sectionStyle: React.CSSProperties = {
     padding: "20px",
     borderRadius: "10px",
-    border: "1px solid var(--pf9-border, #374151)",
-    background: "var(--pf9-card-bg, #111827)",
+    border: "1px solid var(--pf9-border, #d1d5db)",
+    background: "var(--pf9-card-bg, #ffffff)",
     marginBottom: "20px",
+    color: "var(--pf9-text, #111827)",
   };
   const btnStyle = (variant: string): React.CSSProperties => ({
     padding: "8px 20px",
@@ -298,9 +301,9 @@ export default function ReportsTab({ isAdmin }: Props) {
   const selectStyle: React.CSSProperties = {
     padding: "6px 10px",
     borderRadius: "6px",
-    border: "1px solid var(--pf9-border, #374151)",
-    background: "var(--pf9-input-bg, #1f2937)",
-    color: "var(--pf9-text, #e5e7eb)",
+    border: "1px solid var(--pf9-border, #d1d5db)",
+    background: "var(--pf9-input-bg, #ffffff)",
+    color: "var(--pf9-text, #111827)",
     fontSize: "13px",
   };
   const inputStyle: React.CSSProperties = {
@@ -312,16 +315,16 @@ export default function ReportsTab({ isAdmin }: Props) {
     maxHeight: "500px",
     overflowY: "auto",
     borderRadius: "8px",
-    border: "1px solid var(--pf9-border, #374151)",
+    border: "1px solid var(--pf9-border, #d1d5db)",
   };
   const thStyle: React.CSSProperties = {
     padding: "8px 12px",
     textAlign: "left",
     fontSize: "12px",
     fontWeight: 600,
-    color: "var(--pf9-text-secondary, #9ca3af)",
-    background: "var(--pf9-header-bg, #1f2937)",
-    borderBottom: "1px solid var(--pf9-border, #374151)",
+    color: "var(--pf9-text-secondary, #6b7280)",
+    background: "var(--pf9-header-bg, #f3f4f6)",
+    borderBottom: "1px solid var(--pf9-border, #d1d5db)",
     whiteSpace: "nowrap",
     position: "sticky",
     top: 0,
@@ -330,11 +333,12 @@ export default function ReportsTab({ isAdmin }: Props) {
   const tdStyle: React.CSSProperties = {
     padding: "6px 12px",
     fontSize: "13px",
-    borderBottom: "1px solid var(--pf9-border, #374151)",
+    borderBottom: "1px solid var(--pf9-border, #e5e7eb)",
     whiteSpace: "nowrap",
     maxWidth: "300px",
     overflow: "hidden",
     textOverflow: "ellipsis",
+    color: "var(--pf9-text, #111827)",
   };
 
   return (
@@ -448,7 +452,7 @@ export default function ReportsTab({ isAdmin }: Props) {
 
           {/* Parameters */}
           {selectedReport.parameters.length > 0 && (
-            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "16px", padding: "12px", borderRadius: "8px", background: "var(--pf9-input-bg, #1f2937)" }}>
+            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "16px", padding: "12px", borderRadius: "8px", background: "var(--pf9-input-bg, #f3f4f6)" }}>
               {selectedReport.parameters.includes("domain_id") && (
                 <label style={{ fontSize: "13px" }}>
                   Domain:{" "}
@@ -576,7 +580,7 @@ export default function ReportsTab({ isAdmin }: Props) {
                           background:
                             i % 2 === 0
                               ? "transparent"
-                              : "var(--pf9-row-alt, #1f293710)",
+                              : "var(--pf9-row-alt, #f9fafb)",
                         }}
                       >
                         {Object.values(row).map((val: any, j) => (

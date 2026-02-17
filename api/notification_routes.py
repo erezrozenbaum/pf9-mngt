@@ -44,8 +44,10 @@ VALID_EVENT_TYPES = [
     "drift_critical", "drift_warning", "drift_info",
     "snapshot_failure", "compliance_violation",
     "health_score_drop",
-    "resource_deleted", "domain_deleted", "domain_toggled",
+    "resource_created", "resource_updated", "resource_deleted",
+    "domain_deleted", "domain_toggled",
     "tenant_provisioned",
+    "report_exported",
 ]
 
 VALID_SEVERITIES = ["info", "warning", "critical"]
