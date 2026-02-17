@@ -80,6 +80,10 @@ const EVENT_TYPE_META: Record<string, { label: string; icon: string; description
   snapshot_failure:     { label: "Snapshot Failure",       icon: "📸", description: "Failed or partial snapshot pipeline runs" },
   compliance_violation: { label: "Compliance Violation",   icon: "⚠️",  description: "Non-compliant volumes exceeding SLA" },
   health_score_drop:    { label: "Health Score Drop",      icon: "🏥", description: "Tenant health score below threshold" },
+  resource_deleted:     { label: "Resource Deleted",       icon: "🗑️", description: "OpenStack resource deleted from domain management" },
+  domain_deleted:       { label: "Domain Deleted",         icon: "🏢", description: "Keystone domain permanently deleted" },
+  domain_toggled:       { label: "Domain Enable/Disable",  icon: "⏸️", description: "Keystone domain enabled or disabled" },
+  tenant_provisioned:   { label: "Tenant Provisioned",     icon: "🚀", description: "New customer environment provisioned" },
 };
 
 const SEVERITY_OPTIONS = ["info", "warning", "critical"];

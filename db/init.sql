@@ -1043,6 +1043,22 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('admin', 'mfa', 'write'),
 ('superadmin', 'mfa', 'admin'),
 
+-- Provisioning & Domain Management permissions
+('admin', 'provisioning', 'read'),
+('admin', 'provisioning', 'write'),
+('admin', 'provisioning', 'admin'),
+('superadmin', 'provisioning', 'read'),
+('superadmin', 'provisioning', 'write'),
+('superadmin', 'provisioning', 'admin'),
+
+-- Granular tenant & resource deletion permissions
+('admin', 'provisioning', 'tenant_disable'),
+('superadmin', 'provisioning', 'tenant_disable'),
+('admin', 'provisioning', 'tenant_delete'),
+('superadmin', 'provisioning', 'tenant_delete'),
+('admin', 'provisioning', 'resource_delete'),
+('superadmin', 'provisioning', 'resource_delete'),
+
 ON CONFLICT (role, resource, action) DO NOTHING;
 
 -- =====================================================================
@@ -1810,3 +1826,86 @@ CREATE TABLE IF NOT EXISTS user_mfa (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_mfa_username ON user_mfa(username);
+
+-- =====================================================================
+-- CUSTOMER PROVISIONING TABLES
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS provisioning_jobs (
+    id              BIGSERIAL PRIMARY KEY,
+    job_id          TEXT      NOT NULL UNIQUE DEFAULT gen_random_uuid()::text,
+    domain_name     TEXT      NOT NULL,
+    project_name    TEXT      NOT NULL,
+    username        TEXT      NOT NULL,
+    user_email      TEXT,
+    user_role       TEXT      NOT NULL DEFAULT 'member',
+    network_name    TEXT,
+    network_type    TEXT      DEFAULT 'vlan',
+    vlan_id         INTEGER,
+    subnet_cidr     TEXT,
+    gateway_ip      TEXT,
+    dns_nameservers TEXT[]    DEFAULT ARRAY['8.8.8.8', '8.8.4.4'],
+    quota_compute   JSONB     DEFAULT '{}',
+    quota_network   JSONB     DEFAULT '{}',
+    quota_storage   JSONB     DEFAULT '{}',
+    status          TEXT      NOT NULL DEFAULT 'pending',
+    domain_id       TEXT,
+    project_id      TEXT,
+    user_id         TEXT,
+    network_id      TEXT,
+    subnet_id       TEXT,
+    security_group_id TEXT,
+    created_by      TEXT      NOT NULL DEFAULT 'system',
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    error_message   TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_status     ON provisioning_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_created_at ON provisioning_jobs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_provisioning_jobs_domain     ON provisioning_jobs(domain_name);
+
+CREATE TABLE IF NOT EXISTS provisioning_steps (
+    id          BIGSERIAL PRIMARY KEY,
+    job_id      TEXT        NOT NULL REFERENCES provisioning_jobs(job_id) ON DELETE CASCADE,
+    step_number INTEGER     NOT NULL,
+    step_name   TEXT        NOT NULL,
+    description TEXT,
+    status      TEXT        NOT NULL DEFAULT 'pending',
+    resource_id TEXT,
+    detail      JSONB       DEFAULT '{}',
+    error       TEXT,
+    started_at  TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_provisioning_steps_job ON provisioning_steps(job_id, step_number);
+
+-- =====================================================================
+-- ACTIVITY LOG — Central audit trail for provisioning & domain mgmt
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id              SERIAL PRIMARY KEY,
+    timestamp       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actor           TEXT NOT NULL,
+    action          TEXT NOT NULL,
+    resource_type   TEXT NOT NULL,
+    resource_id     TEXT,
+    resource_name   TEXT,
+    domain_id       TEXT,
+    domain_name     TEXT,
+    details         JSONB DEFAULT '{}',
+    ip_address      TEXT,
+    result          TEXT NOT NULL DEFAULT 'success',
+    error_message   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp     ON activity_log (timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_log_actor         ON activity_log (actor);
+CREATE INDEX IF NOT EXISTS idx_activity_log_action        ON activity_log (action);
+CREATE INDEX IF NOT EXISTS idx_activity_log_resource_type ON activity_log (resource_type);
+CREATE INDEX IF NOT EXISTS idx_activity_log_domain_id     ON activity_log (domain_id);
+CREATE INDEX IF NOT EXISTS idx_activity_log_result        ON activity_log (result);

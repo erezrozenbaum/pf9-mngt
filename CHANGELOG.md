@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-02-18
+
+### Added
+- **Customer Provisioning System**: Full-stack tenant onboarding with a guided 5-step wizard
+  - **Backend** (`api/provisioning_routes.py`): ~1750-line module with complete OpenStack resource lifecycle — domain, project, user, role, quota, network, subnet, security group creation via Keystone, Nova, Cinder, Neutron APIs
+  - **5-Step Wizard UI** (`CustomerProvisioningTab.tsx`): Guided provisioning flow:
+    1. **Domain & Project** — Create or reuse existing domains/projects with naming convention enforcement and existence checks
+    2. **User & Role** — Create user with dynamically-fetched role dropdown from Keystone (filters internal roles)
+    3. **Quotas** — Tabbed quota editor (Compute, Block Storage, Network) matching OpenStack Horizon layout with "Set Unlimited" toggles per field
+    4. **Network & Security** — Physical network auto-discovery dropdown from Neutron, VLAN/flat/VXLAN type selector, CIDR/gateway/DNS, security group with custom port rules
+    5. **Review & Provision** — Full summary with email opt-in, editable recipient list, customer welcome email template
+  - **Database**: New `provisioning_jobs` and `provisioning_steps` tables (`db/migrate_provisioning.sql`) tracking every provisioning run with step-level progress, JSONB quota snapshots, and result IDs
+  - **API Endpoints** (`api/provisioning_routes.py`): 12+ new endpoints —
+    - `POST /api/provisioning/provision` — execute full provisioning workflow
+    - `GET /api/provisioning/jobs` — list provisioning jobs with status
+    - `GET /api/provisioning/jobs/{job_id}` — job detail with steps
+    - `GET /api/provisioning/roles` — dynamic Keystone role list (filters internal roles like `load-balancer_*`, `heat_stack_*`)
+    - `GET /api/provisioning/networks` — physical network discovery from Neutron
+    - `GET /api/provisioning/domains` — domain listing with project/user counts
+    - `GET /api/provisioning/domains/{id}/inspect` — full resource inspection (projects, users, servers, volumes, networks, routers, floating IPs, security groups)
+    - `PUT /api/provisioning/domains/{id}/toggle` — enable/disable domain
+    - `DELETE /api/provisioning/domains/{id}` — delete domain with typed "approve delete" confirmation
+    - `DELETE /api/provisioning/resources/{type}/{id}` — 8 resource deletion endpoints (servers, volumes, networks, routers, floating_ips, security_groups, users, subnets)
+  - **RBAC**: Separate permissions — `provisioning:admin`, `provisioning:tenant_disable`, `provisioning:tenant_delete`, `provisioning:resource_delete` (`db/migrate_tenant_permissions.sql`)
+  - **Customer Welcome Email**: HTML template (`notifications/templates/customer_welcome.html`) sent on successful provisioning with email opt-in toggle and editable recipient list
+
+- **Domain Management Tab** (`DomainManagementTab.tsx`): Dedicated domain lifecycle management
+  - Domain list with status badges (enabled/disabled), project count, user count
+  - **Resource Inspection Panel**: Side-by-side flex layout — compact 320px domain list (reduced columns when inspecting) + full-width inspection panel showing projects, users, servers, volumes, networks, routers, floating IPs, security groups per domain
+  - Enable/disable toggle, delete with typed "approve delete" confirmation dialog
+  - Full dark mode support with CSS variables
+
+- **Central Activity Log**: Audit trail for all provisioning and domain management operations
+  - **Database**: New `activity_log` table (`db/migrate_activity_log.sql`) with indexes on timestamp, actor, action, resource_type, domain_id, result
+  - **API Endpoints**: `GET /api/activity-log` with filters (actor, action, resource_type, date range, search), pagination, and sorting
+  - **UI** (`ActivityLogTab.tsx`): Filterable, paginated activity log viewer with action badges, result indicators, expandable detail rows
+  - Events logged: provisioning (start/complete/fail), domain create/delete/toggle, resource deletion (all 8 types)
+
+- **Notification Event Types**: 4 new notification event types — `resource_deleted`, `domain_deleted`, `domain_toggled`, `tenant_provisioned` — with labels and icons in NotificationSettings.tsx
+
+### Fixed
+- **Role Name Bug**: Fixed `ROLE_MAP` in provisioning backend — was mapping `"member"` → `"_member_"` and `"service"` → `"_member_"` (legacy OpenStack convention). PF9 Keystone uses direct role names (`member`, `admin`, `service`). Added case-insensitive role matching as safety net and improved error messages to list available roles on failure
+- **Dynamic Role Dropdown**: Frontend role selector now fetches roles dynamically from `/api/provisioning/roles` instead of using a hardcoded list; falls back to hardcoded set if API is unavailable
+- **Dark Mode — CSS Variable System**: Declared 25+ `--pf9-*` CSS variables in both `:root` (light) and `:root[data-theme="dark"]` blocks in `index.css`. Variables cover text, backgrounds, borders, badges, toggles, alerts (info/warning/danger/safe), headings, and accent colors. Previously these variables were referenced in inline styles but never declared — all fallbacks were light-mode colors
+- **Dark Mode — Customer Provisioning Tab**: Replaced ~50 hardcoded hex color values with CSS variables for full dark mode support across wizard steps, quota editor, info/warning/danger boxes, status badges, toggle switches, buttons, and review panel
+- **Dark Mode — Domain Management Tab**: Replaced ~60 hardcoded hex color values with CSS variables for domain list, status badges, action buttons, inspection panel, error boxes, and confirmation dialogs
+- **Inspection Panel Layout**: Changed from overlay slide-out (which hid the domain list) to side-by-side flex layout with compact domain table (320px) and flexible inspection panel taking remaining space
+
+### Changed
+- **Provisioning Role Validator**: Relaxed from strict enum (`member`/`admin`/`service`) to accept any role name — validated against Keystone at provision time
+- **Frontend `user_role` Type**: Changed from `"member" | "admin" | "service"` union to `string` to support dynamic role fetching
+
 ## [1.15.1] - 2026-02-17
 
 ### Fixed
@@ -604,7 +656,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Snapshot service user password supports Fernet encryption at rest
 - JWT secret auto-generated during deployment
 
-[unreleased]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.4.1...HEAD
+[unreleased]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.16.0...HEAD
+[1.16.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.15.1...v1.16.0
+[1.15.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.15.0...v1.15.1
+[1.15.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.14.1...v1.15.0
+[1.14.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.14.0...v1.14.1
+[1.14.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.13.0...v1.14.0
+[1.13.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.12.0...v1.13.0
+[1.12.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.11.0...v1.12.0
+[1.11.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.10.1...v1.11.0
+[1.10.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.10.0...v1.10.1
+[1.10.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.9.0...v1.10.0
+[1.9.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.8.0...v1.9.0
+[1.8.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.7.1...v1.8.0
+[1.7.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.7.0...v1.7.1
+[1.7.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.6.4...v1.7.0
+[1.6.4]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.6.3...v1.6.4
+[1.6.3]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.6.2...v1.6.3
+[1.6.2]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.5.1...v1.6.0
+[1.5.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.2.0...v1.3.0
