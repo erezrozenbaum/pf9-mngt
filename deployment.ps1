@@ -409,6 +409,25 @@ if (-not (Test-Path ".env")) {
         Write-Info "Email notifications disabled (can be enabled later in .env)"
     }
 
+    # --- Metering Configuration ---
+    Write-Host ""
+    Write-Host "── Metering Configuration ──" -ForegroundColor Yellow
+    Write-Info "Operational metering collects resource usage, snapshot, restore, and API metrics."
+    $meteringEnabled = Prompt-Value "Enable operational metering? (true/false)" "true"
+    Set-EnvValue "METERING_ENABLED" $meteringEnabled
+
+    if ($meteringEnabled -eq "true") {
+        $meteringInterval = Prompt-Value "Metering collection interval in minutes" "15"
+        Set-EnvValue "METERING_POLL_INTERVAL" $meteringInterval
+        $meteringRetention = Prompt-Value "Metering data retention in days" "90"
+        Set-EnvValue "METERING_RETENTION_DAYS" $meteringRetention
+        Write-Success "Metering configured (interval: ${meteringInterval}m, retention: ${meteringRetention}d)"
+    } else {
+        Set-EnvValue "METERING_POLL_INTERVAL" "15"
+        Set-EnvValue "METERING_RETENTION_DAYS" "90"
+        Write-Info "Metering disabled (can be enabled later in .env or via API)"
+    }
+
     # --- JWT Secret ---
     Write-Host ""
     Write-Host "── Security ──" -ForegroundColor Yellow
@@ -699,6 +718,17 @@ try {
     Write-Info "Database may still be starting up - check with: docker-compose logs db"
 }
 
+# Step 8a: Run Metering Migration
+Write-Section "Step 8a: Running Metering Migration"
+Write-Info "Applying metering schema migration..."
+try {
+    Get-Content "db\migrate_metering.sql" | docker exec -i pf9_db psql -U $envMap['POSTGRES_USER'] -d pf9_mgmt 2>&1 | Out-Null
+    Write-Success "Metering tables created/verified"
+} catch {
+    Write-Warning "Metering migration may have partially failed (non-critical)"
+    Write-Info "Run manually: Get-Content db\migrate_metering.sql | docker exec -i pf9_db psql -U <user> -d pf9_mgmt"
+}
+
 # Step 8b: Ensure admin user and superadmin permissions
 Write-Section "Step 8b: Ensuring Admin User and Superadmin Permissions"
 $defaultAdminUser = $envMap['DEFAULT_ADMIN_USER']
@@ -750,7 +780,8 @@ if (-not $SkipHealthCheck) {
         @{Name="UI"; Url="http://localhost:5173"; Critical=$true},
         @{Name="pgAdmin"; Url="http://localhost:8080"; Critical=$false},
         @{Name="Notification Worker"; Url=$null; Container="pf9_notification_worker"; Critical=$false},
-        @{Name="Backup Worker"; Url=$null; Container="pf9_backup_worker"; Critical=$false}
+        @{Name="Backup Worker"; Url=$null; Container="pf9_backup_worker"; Critical=$false},
+        @{Name="Metering Worker"; Url=$null; Container="pf9_metering_worker"; Critical=$false}
     )
 
     $allOk = $true
@@ -884,6 +915,25 @@ if ($restoreEnabledVal -eq "true") {
     Write-Host "  Feature:               DISABLED (default)" -ForegroundColor Yellow
     Write-Host "  To enable:             Set RESTORE_ENABLED=true in .env" -ForegroundColor Yellow
     Write-Host "                         See docs/RESTORE_GUIDE.md" -ForegroundColor Yellow
+}
+Write-Host ""
+
+Write-Host "Operational Metering:" -ForegroundColor Cyan
+$meteringEnabledVal = $envMap['METERING_ENABLED']
+$meteringIntervalVal = $envMap['METERING_POLL_INTERVAL']
+if (-not $meteringIntervalVal) { $meteringIntervalVal = "15" }
+if ($meteringEnabledVal -eq "true" -or -not $envMap.ContainsKey('METERING_ENABLED')) {
+    Write-Host "  Feature:               ENABLED" -ForegroundColor Green
+    Write-Host "  Collection Interval:   Every ${meteringIntervalVal} minutes" -ForegroundColor White
+    Write-Host "  Worker Container:      pf9_metering_worker" -ForegroundColor White
+    Write-Host "  UI Tab:                Metering (8 sub-tabs: overview, resources, snapshots, restores, API, efficiency, pricing, export)" -ForegroundColor White
+    Write-Host "  API Endpoints:         /api/metering/* (20 endpoints + 6 CSV exports)" -ForegroundColor White
+    Write-Host "  Pricing:               Multi-category (flavor, storage, snapshot, restore, volume, network)" -ForegroundColor White
+    Write-Host "  Filters:               Dropdown selects populated from actual tenant/domain data" -ForegroundColor White
+} else {
+    Write-Host "  Feature:               DISABLED" -ForegroundColor Yellow
+    Write-Host "  To enable:             Set METERING_ENABLED=true in .env" -ForegroundColor Yellow
+    Write-Host "  Documentation:         See Metering section in docs/ADMIN_GUIDE.md" -ForegroundColor Yellow
 }
 Write-Host ""
 

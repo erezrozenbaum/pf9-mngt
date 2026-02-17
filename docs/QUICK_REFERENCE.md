@@ -17,7 +17,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Activity Monitoring**: User last-seen timestamps, account status, and authentication tracking
 - **Role Inference System**: Intelligent role assignment detection when API access is limited
 
-#### Modern React UI Features (18+ Comprehensive Tabs)
+#### Modern React UI Features (21+ Comprehensive Tabs)
 - **Dashboard Tab** (NEW ✨): Landing Dashboard with 14 real-time analytics endpoints
   - Health Summary, Snapshot SLA Compliance, Host Utilization, Recent Activity
   - Coverage Risks, Capacity Pressure, VM Hotspots, Tenant Risk Scores
@@ -70,6 +70,16 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Most frequently changed resources with direct history navigation
   - Configurable timeframe: 1 hour, 24 hours, 3 days, 1 week
 - **Admin Tabs**: API Metrics, System Logs (Admin/Superadmin only)
+- **Metering Tab** (v1.15 + v1.15.1 Pricing ✨):
+  - "📊 Metering" tab with 8 sub-tabs: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export
+  - Per-VM resource tracking (vCPUs, RAM, disk allocation + actual usage, network I/O) — deduplicated to latest per VM
+  - Snapshot and restore operation metering with compliance tracking
+  - API usage tracking (call counts, error rates, latency percentiles)
+  - VM efficiency scoring with classification (excellent/good/fair/poor/idle)
+  - **Multi-category pricing**: Flavor (auto-synced from system), storage/GB, snapshot/GB, restore, volume, network — hourly + monthly rates
+  - **Filter dropdowns**: Project/domain selectors populated from actual tenant data
+  - Chargeback export with per-category cost breakdown (compute, storage, snapshot, restore, volume, network, TOTAL)
+  - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
 
 #### Advanced Snapshot Management
@@ -114,7 +124,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **RVTools Compatibility**: Excel/CSV exports with delta tracking and customer data masking
 - **Modern React UI**: TypeScript-based with Vite build system and theme support
 - **REST API**: FastAPI with OpenAPI docs + dedicated monitoring service
-- **Database Integration**: PostgreSQL 16 with 19+ tables for historical tracking
+- **Database Integration**: PostgreSQL 16 with 33+ tables for historical tracking + metering
 - **Drift Detection**: Automated field-level change monitoring with 24 rules across 8 resource types
 - **Administrative Operations**: Create/delete flavors and networks directly from UI
 
@@ -432,6 +442,7 @@ docker exec pf9_api printenv | grep PF9_
 - **pgAdmin**: http://localhost:8080
 - **Database Direct**: localhost:5432
 - **Notification Worker**: (no web UI — check logs: `docker logs pf9_notification_worker`)
+- **Metering Worker**: (no web UI — check logs: `docker logs pf9_metering_worker`)
 
 ## Essential Commands
 
@@ -723,6 +734,24 @@ curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/jso
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/history?limit=50"         # Delivery history
 curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"recipient":"admin@company.com"}' "http://localhost:8000/notifications/test-email"  # Send test email (admin only)
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/admin/stats"              # Admin delivery statistics
+
+# Metering endpoints (v1.15 + v1.15.1 - Admin/Superadmin)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/config"                    # Metering configuration
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/filters"                   # Filter dropdown data (projects, domains, flavors)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/overview"                  # High-level metering dashboard
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/resources?hours=24"        # Per-VM resource metering (deduplicated)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/snapshots?hours=24"        # Snapshot metering records
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/restores?hours=168"        # Restore operation metering
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/api-usage?hours=24"        # API usage metering
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/efficiency?hours=24"       # VM efficiency scores (deduplicated)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/pricing"                   # Multi-category pricing list
+curl -X POST -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/pricing/sync-flavors"  # Auto-import flavors from system
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/resources"          # CSV export: resources
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/snapshots"          # CSV export: snapshots
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/restores"           # CSV export: restores
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/api-usage"          # CSV export: API usage
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/efficiency"         # CSV export: efficiency
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/chargeback"         # CSV export: chargeback report
 ```
 
 ### Query Parameters
@@ -844,6 +873,11 @@ NOTIFICATION_POLL_INTERVAL_SECONDS=120
 NOTIFICATION_DIGEST_ENABLED=true
 NOTIFICATION_DIGEST_HOUR_UTC=8
 HEALTH_ALERT_THRESHOLD=50
+
+# Metering Configuration (v1.15)
+METERING_ENABLED=true
+METERING_POLL_INTERVAL=15          # Collection interval in minutes
+METERING_RETENTION_DAYS=90         # Data retention period
 ```
 
 ## Emergency Procedures
