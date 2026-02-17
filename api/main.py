@@ -657,7 +657,7 @@ async def get_roles(current_user: dict = Depends(get_current_user)):
         logger.info(f"[/auth/roles] Got {len(users)} users from LDAP: {[u.get('id') or u.get('username') for u in users]}")
         
         # Count roles from actual user data
-        role_counts = {"superadmin": 0, "admin": 0, "operator": 0, "viewer": 0}
+        role_counts = {"superadmin": 0, "admin": 0, "technical": 0, "operator": 0, "viewer": 0}
         logger.info(f"[/auth/roles] Initialized role_counts: {role_counts}")
         
         for user in users:
@@ -679,8 +679,9 @@ async def get_roles(current_user: dict = Depends(get_current_user)):
         return [
             {"id": 1, "name": "superadmin", "description": "Full system access", "userCount": role_counts["superadmin"]},
             {"id": 2, "name": "admin", "description": "Administrative access", "userCount": role_counts["admin"]},
-            {"id": 3, "name": "operator", "description": "Operational access", "userCount": role_counts["operator"]},
-            {"id": 4, "name": "viewer", "description": "Read-only access", "userCount": role_counts["viewer"]}
+            {"id": 3, "name": "technical", "description": "Technical access — read all, create tenants/orgs, no delete", "userCount": role_counts["technical"]},
+            {"id": 4, "name": "operator", "description": "Operational access", "userCount": role_counts["operator"]},
+            {"id": 5, "name": "viewer", "description": "Read-only access", "userCount": role_counts["viewer"]}
         ]
         
     except Exception as e:
@@ -691,19 +692,22 @@ async def get_roles(current_user: dict = Depends(get_current_user)):
         return [
             {"id": 1, "name": "superadmin", "description": "Full system access", "userCount": 0},
             {"id": 2, "name": "admin", "description": "Administrative access", "userCount": 0},
-            {"id": 3, "name": "operator", "description": "Operational access", "userCount": 0},
-            {"id": 4, "name": "viewer", "description": "Read-only access", "userCount": 0}
+            {"id": 3, "name": "technical", "description": "Technical access — read all, create tenants/orgs, no delete", "userCount": 0},
+            {"id": 4, "name": "operator", "description": "Operational access", "userCount": 0},
+            {"id": 5, "name": "viewer", "description": "Read-only access", "userCount": 0}
         ]
 
 @app.get("/auth/permissions")
 async def get_permissions(current_user: dict = Depends(get_current_user)):
     """Get all permission definitions from database, filtered to main UI resources only"""
-    # Define main UI tab resources (exclude internal/backend-only resources)
+    # Define main UI tab resources (all resources that correspond to UI tabs/features)
     MAIN_UI_RESOURCES = [
         'servers', 'volumes', 'snapshots', 'networks', 'subnets', 'ports',
         'floatingips', 'domains', 'projects', 'flavors', 'images',
         'hypervisors', 'users', 'monitoring', 'history', 'audit',
-        'api_metrics', 'system_logs', 'restore'
+        'api_metrics', 'system_logs', 'restore', 'security_groups',
+        'dashboard', 'drift', 'tenant_health', 'notifications', 'backup',
+        'mfa', 'metering', 'provisioning', 'reports', 'resources', 'branding',
     ]
     
     try:
@@ -716,8 +720,9 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
                     CASE role 
                         WHEN 'superadmin' THEN 1 
                         WHEN 'admin' THEN 2 
-                        WHEN 'operator' THEN 3 
-                        WHEN 'viewer' THEN 4 
+                        WHEN 'technical' THEN 3
+                        WHEN 'operator' THEN 4 
+                        WHEN 'viewer' THEN 5 
                     END
                 ) as roles
                 FROM role_permissions

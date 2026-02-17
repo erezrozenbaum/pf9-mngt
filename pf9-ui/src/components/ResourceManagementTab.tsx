@@ -33,7 +33,7 @@ interface DomainOption { id: string; name: string; }
 interface ProjectOption { id: string; name: string; domain_id: string; domain_name: string; }
 interface ExtNetOption { id: string; name: string; }
 
-type ResourceSection = "users" | "flavors" | "networks" | "routers" | "floating_ips" | "volumes" | "security_groups" | "images" | "quotas";
+type ResourceSection = "users" | "flavors" | "networks" | "routers" | "floating_ips" | "volumes" | "security_groups" | "images" | "quotas" | "audit_log";
 
 interface Props { isAdmin?: boolean; }
 
@@ -47,6 +47,7 @@ const SECTIONS: { id: ResourceSection; label: string; icon: string }[] = [
   { id: "security_groups", label: "Security Groups", icon: "🔒" },
   { id: "images", label: "Images", icon: "📀" },
   { id: "quotas", label: "Quotas", icon: "📏" },
+  { id: "audit_log", label: "Audit Log", icon: "📋" },
 ];
 
 const ROLE_LABELS: Record<string, string> = {
@@ -127,6 +128,11 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   // Confirm delete
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
 
+  // Audit log state
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditDays, setAuditDays] = useState(7);
+  const [auditLoading, setAuditLoading] = useState(false);
+
   // Load context
   useEffect(() => {
     apiFetch<{ data: DomainOption[] }>("/api/resources/context/domains")
@@ -161,11 +167,19 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
         security_groups: "/api/resources/security-groups",
         images: "/api/resources/images",
         quotas: "", // handled separately
+        audit_log: "", // handled separately
       };
 
       if (activeSection === "quotas") {
         setData([]);
         setLoading(false);
+        return;
+      }
+
+      if (activeSection === "audit_log") {
+        setData([]);
+        setLoading(false);
+        loadAuditLog();
         return;
       }
 
@@ -180,6 +194,27 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
       setLoading(false);
     }
   }, [activeSection, filterDomainId, filterProjectId]);
+
+  // Load audit log data from activity-log-export report
+  const loadAuditLog = useCallback(async () => {
+    setAuditLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("days", String(auditDays));
+      const result = await apiFetch<{ data: any[]; count: number }>(
+        `/api/reports/activity-log-export?${params.toString()}`
+      );
+      // Filter to resource management resource types
+      const resourceTypes = new Set(["user", "flavor", "network", "router", "floating_ip", "volume", "security_group", "quotas"]);
+      const filtered = (result.data || []).filter((row: any) => resourceTypes.has(row.resource_type));
+      setAuditLogs(filtered);
+    } catch (e: any) {
+      setAuditLogs([]);
+      setError(e.message);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [auditDays]);
 
   useEffect(() => {
     loadData();
@@ -371,7 +406,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   const containerStyle: React.CSSProperties = { display: "flex", minHeight: "600px" };
   const sidebarStyle: React.CSSProperties = {
     width: "200px",
-    borderRight: "1px solid var(--pf9-border, #374151)",
+    borderRight: "1px solid var(--pf9-border, #d1d5db)",
     padding: "12px 0",
     flexShrink: 0,
   };
@@ -383,8 +418,8 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
     cursor: "pointer",
     fontSize: "13px",
     fontWeight: active ? 600 : 400,
-    color: active ? "#3b82f6" : "var(--pf9-text, #e5e7eb)",
-    background: active ? "var(--pf9-hover, #1e3a5f)" : "transparent",
+    color: active ? "#3b82f6" : "var(--pf9-text, #111827)",
+    background: active ? "var(--pf9-hover, #dbeafe)" : "transparent",
     borderLeft: active ? "3px solid #3b82f6" : "3px solid transparent",
     transition: "all 0.15s",
   });
@@ -396,16 +431,16 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   const btnStyle = (variant: string, small = false): React.CSSProperties => ({
     padding: small ? "4px 12px" : "8px 18px",
     borderRadius: "6px",
-    border: variant === "outline" ? "1px solid var(--pf9-border, #374151)" : "none",
+    border: variant === "outline" ? "1px solid var(--pf9-border, #d1d5db)" : "none",
     fontWeight: 600, fontSize: small ? "12px" : "13px", cursor: "pointer",
-    color: variant === "danger" ? "#fff" : variant === "outline" ? "var(--pf9-text, #e5e7eb)" : "#fff",
+    color: variant === "danger" ? "#fff" : variant === "outline" ? "var(--pf9-text, #111827)" : "#fff",
     background: variant === "primary" ? "#3b82f6" : variant === "danger" ? "#ef4444" : variant === "success" ? "#10b981" : "transparent",
   });
   const selectStyle: React.CSSProperties = {
     padding: "6px 10px", borderRadius: "6px",
-    border: "1px solid var(--pf9-border, #374151)",
-    background: "var(--pf9-input-bg, #1f2937)",
-    color: "var(--pf9-text, #e5e7eb)", fontSize: "13px",
+    border: "1px solid var(--pf9-border, #d1d5db)",
+    background: "var(--pf9-input-bg, #ffffff)",
+    color: "var(--pf9-text, #111827)", fontSize: "13px",
   };
   const inputStyle: React.CSSProperties = { ...selectStyle, minWidth: "180px" };
   const formGroupStyle: React.CSSProperties = {
@@ -417,22 +452,22 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   const labelStyle: React.CSSProperties = { fontSize: "12px", fontWeight: 600, color: "var(--pf9-text-secondary, #9ca3af)" };
   const tableContainerStyle: React.CSSProperties = {
     overflowX: "auto", borderRadius: "8px",
-    border: "1px solid var(--pf9-border, #374151)",
+    border: "1px solid var(--pf9-border, #d1d5db)",
   };
   const thStyle: React.CSSProperties = {
     padding: "8px 12px", textAlign: "left", fontSize: "12px", fontWeight: 600,
-    color: "var(--pf9-text-secondary, #9ca3af)",
-    background: "var(--pf9-header-bg, #1f2937)",
-    borderBottom: "1px solid var(--pf9-border, #374151)", whiteSpace: "nowrap",
+    color: "var(--pf9-text-secondary, #6b7280)",
+    background: "var(--pf9-header-bg, #f3f4f6)",
+    borderBottom: "1px solid var(--pf9-border, #d1d5db)", whiteSpace: "nowrap",
   };
   const tdStyle: React.CSSProperties = {
-    padding: "6px 12px", fontSize: "13px",
-    borderBottom: "1px solid var(--pf9-border, #374151)", whiteSpace: "nowrap",
+    padding: "6px 12px", fontSize: "13px", color: "var(--pf9-text, #111827)",
+    borderBottom: "1px solid var(--pf9-border, #d1d5db)", whiteSpace: "nowrap",
   };
   const formPanelStyle: React.CSSProperties = {
     padding: "16px", borderRadius: "10px",
-    border: "1px solid var(--pf9-border, #374151)",
-    background: "var(--pf9-card-bg, #111827)", marginBottom: "16px",
+    border: "1px solid var(--pf9-border, #d1d5db)",
+    background: "var(--pf9-card-bg, #ffffff)", marginBottom: "16px",
   };
   const statusBadge = (color: string): React.CSSProperties => ({
     display: "inline-block", padding: "2px 8px", borderRadius: "10px",
@@ -720,6 +755,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   // -----------------------------------------------------------------------
   const renderTable = () => {
     if (activeSection === "quotas") return renderQuotas();
+    if (activeSection === "audit_log") return renderAuditLog();
     if (loading) return <div style={{ textAlign: "center", padding: "40px", color: "var(--pf9-text-secondary)" }}>Loading...</div>;
     if (data.length === 0) return <div style={{ textAlign: "center", padding: "40px", color: "var(--pf9-text-secondary)" }}>No {activeSection.replace("_", " ")} found{filterProjectId ? " for this tenant" : ""}.</div>;
 
@@ -735,6 +771,81 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
       default: return null;
     }
   };
+
+  const actionColor = (action: string) => {
+    if (action.startsWith("create") || action === "allocate") return "#10b981";
+    if (action.startsWith("delete") || action === "release") return "#ef4444";
+    if (action.startsWith("update") || action.includes("interface") || action === "assign_role") return "#f59e0b";
+    return "#6b7280";
+  };
+
+  const renderAuditLog = () => (
+    <div>
+      <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "16px" }}>
+        <label style={labelStyle}>Time Range:</label>
+        <select value={auditDays} onChange={(e) => setAuditDays(Number(e.target.value))} style={selectStyle}>
+          <option value={1}>Last 24 hours</option>
+          <option value={7}>Last 7 days</option>
+          <option value={30}>Last 30 days</option>
+          <option value={90}>Last 90 days</option>
+        </select>
+        <button style={btnStyle("primary", true)} onClick={loadAuditLog}>
+          🔄 Refresh
+        </button>
+        <span style={{ fontSize: "12px", color: "var(--pf9-text-secondary, #9ca3af)" }}>
+          {auditLogs.length} entries
+        </span>
+      </div>
+      {auditLoading ? (
+        <div style={{ textAlign: "center", padding: "40px", color: "var(--pf9-text-secondary)" }}>Loading audit log...</div>
+      ) : auditLogs.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px", color: "var(--pf9-text-secondary)" }}>No resource management activity found.</div>
+      ) : (
+        <div style={tableContainerStyle}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Timestamp</th>
+                <th style={thStyle}>Actor</th>
+                <th style={thStyle}>Action</th>
+                <th style={thStyle}>Resource Type</th>
+                <th style={thStyle}>Resource Name</th>
+                <th style={thStyle}>Resource ID</th>
+                <th style={thStyle}>Domain</th>
+                <th style={thStyle}>IP Address</th>
+                <th style={thStyle}>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditLogs.map((log: any, i: number) => (
+                <tr key={i} style={i % 2 === 1 ? { background: "var(--pf9-row-alt, transparent)" } : undefined}>
+                  <td style={tdStyle}>{log.timestamp ? new Date(log.timestamp).toLocaleString() : ""}</td>
+                  <td style={tdStyle}><strong>{log.actor}</strong></td>
+                  <td style={tdStyle}>
+                    <span style={{ ...statusBadge(actionColor(log.action || "")), textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                      {(log.action || "").replace(/_/g, " ")}
+                    </span>
+                  </td>
+                  <td style={tdStyle}>{(log.resource_type || "").replace(/_/g, " ")}</td>
+                  <td style={tdStyle}>{log.resource_name || "—"}</td>
+                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "11px" }}>
+                    {log.resource_id ? `${log.resource_id.substring(0, 8)}...` : "—"}
+                  </td>
+                  <td style={tdStyle}>{log.domain_name || "—"}</td>
+                  <td style={tdStyle}>{log.ip_address || "—"}</td>
+                  <td style={tdStyle}>
+                    <span style={statusBadge(log.result === "success" ? "#10b981" : "#ef4444")}>
+                      {log.result}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 
   const renderUsersTable = () => (
     <div style={tableContainerStyle}>
@@ -1100,13 +1211,13 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   // -----------------------------------------------------------------------
   // Main render
   // -----------------------------------------------------------------------
-  const canCreate = activeSection !== "images" && activeSection !== "quotas";
+  const canCreate = activeSection !== "images" && activeSection !== "quotas" && activeSection !== "audit_log";
 
   return (
     <div style={containerStyle}>
       {/* Sidebar */}
       <div style={sidebarStyle}>
-        <div style={{ padding: "8px 16px 16px", borderBottom: "1px solid var(--pf9-border, #374151)", marginBottom: "8px" }}>
+        <div style={{ padding: "8px 16px 16px", borderBottom: "1px solid var(--pf9-border, #d1d5db)", marginBottom: "8px" }}>
           <h3 style={{ margin: 0, fontSize: "15px" }}>🔧 Resources</h3>
           <p style={{ margin: "4px 0 0", fontSize: "11px", color: "var(--pf9-text-secondary, #9ca3af)" }}>
             Manage & provision

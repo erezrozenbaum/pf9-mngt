@@ -115,6 +115,15 @@ class Pf9Client:
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
+    def list_flavors(self) -> List[Dict[str, Any]]:
+        """List all Nova flavors with details."""
+        self.authenticate()
+        assert self.nova_endpoint
+        url = f"{self.nova_endpoint}/flavors/detail"
+        r = self.session.get(url, headers=self._headers())
+        r.raise_for_status()
+        return r.json().get("flavors", [])
+
     def create_flavor(
         self,
         name: str,

@@ -735,7 +735,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_provisioning.sql"; Desc="Provisioning tables (provisioning_jobs, provisioning_steps)"},
     @{File="db\migrate_activity_log.sql"; Desc="Activity log table"},
     @{File="db\migrate_tenant_permissions.sql"; Desc="Tenant disable/delete/resource_delete permissions"},
-    @{File="db\migrate_reports_resources.sql"; Desc="Reports & Resource Management RBAC permissions"}
+    @{File="db\migrate_reports_resources.sql"; Desc="Reports & Resource Management RBAC permissions"},
+    @{File="db\migrate_technical_role_permissions.sql"; Desc="Technical role + missing resource permissions"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
