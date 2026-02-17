@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1] - 2026-02-17
+
+### Fixed
+- **Metering Resource Deduplication**: Resources and Efficiency tabs now use `DISTINCT ON (vm_id)` queries, returning only the latest record per VM instead of showing duplicate rows from each collection cycle (e.g. 12 unique VMs shown instead of 96+ duplicate rows)
+- **Overview vCPU Count**: Fixed 0 vCPU display — monitoring service does not return vCPUs, so the metering worker now looks up vCPU counts from the `flavors` table by matching flavor name. Backfilled all existing metering data
+- **Snapshot/Efficiency Overview Dedup**: Overview sub-queries for snapshots and efficiency now use `DISTINCT ON` subqueries with 24-hour window (was 1 hour) to avoid stale/missing data
+
+### Added
+- **Unified Multi-Category Pricing System**: Complete replacement of the flavor-only pricing with a comprehensive pricing model supporting 7 categories:
+  - **Flavor (Compute)**: Auto-populated from OpenStack flavors with "Sync Flavors from System" button (imports all 38 flavors with vCPU/RAM/disk specs)
+  - **Storage per GB**: Base storage pricing per gigabyte
+  - **Snapshot per GB**: Snapshot storage pricing per gigabyte
+  - **Restore per Operation**: Per-restore-job pricing
+  - **Volume**: Base per-volume pricing
+  - **Network**: Base per-network pricing
+  - **Custom**: User-defined pricing entries
+  - Each entry supports both **hourly** and **monthly** rates — the system auto-converts between them as needed (monthly ÷ 730 = hourly)
+  - New database table `metering_pricing` with `UNIQUE (category, item_name)` constraint
+  - New API endpoints: `GET/POST /api/metering/pricing`, `PUT/DELETE /api/metering/pricing/{id}`, `POST /api/metering/pricing/sync-flavors`
+  - Legacy compatibility: `GET /api/metering/flavor-pricing` still works (returns flavor category only)
+- **Filter Dropdowns**: Project and Domain filters across all metering tabs now use dropdown selects populated from actual data instead of free-text inputs
+  - New `GET /api/metering/filters` endpoint returns projects (from metering data), domains, all tenants (from projects table), and flavors (from flavors table)
+- **Enhanced Chargeback Export**: Chargeback CSV now includes per-tenant cost breakdown across all pricing categories:
+  - Compute cost (flavor-based with fallback to vCPU/RAM rates)
+  - Storage cost (per GB × disk allocation)
+  - Snapshot cost (per GB × snapshot storage)
+  - Restore cost (per operation count)
+  - Volume and network costs
+  - **TOTAL Cost** column aggregating all categories
+
+### Changed
+- **Pricing Tab UI**: Completely redesigned with category-based table, color-coded category badges, quick-add cards for common categories, category filter dropdown, and specs column showing vCPU/RAM/disk for flavor entries
+- **DB Schema**: New `metering_pricing` table replaces `metering_flavor_pricing` for unified multi-category pricing (`db/migrate_metering.sql`)
+
+## [1.15.0] - 2026-02-17
+
+### Added
+- **Operational Metering System (Phase 1 — Foundation)**: Full-stack metering infrastructure for resource usage, snapshots, restores, API usage, efficiency scoring, and chargeback export
+  - **Database** (`db/migrate_metering.sql`): 7 new tables — `metering_config` (single-row global settings with cost model), `metering_resources` (per-VM CPU/RAM/disk/network snapshots), `metering_snapshots` (snapshot storage & compliance), `metering_restores` (restore operations & SLA), `metering_api_usage` (API call volume & latency), `metering_quotas` (per-project quota tracking), `metering_efficiency` (per-VM efficiency scores & classification). RBAC permissions: admin → `metering:read`, superadmin → `metering:read` + `metering:write`
+  - **Metering Worker** (`metering_worker/`): New long-lived container that collects metering data on a configurable interval (default 15 min). Data sources: monitoring service (per-VM CPU/RAM/disk/network from PCD Prometheus exporter), database (snapshots, restores), API service (endpoint call counts, latency percentiles). Computes weighted efficiency scores (CPU 40% / RAM 35% / Disk 25%) with classifications: excellent / good / fair / poor / idle. Automatic retention pruning of old records
+  - **API Endpoints** (`api/metering_routes.py`): 12 new endpoints —
+    - `GET /api/metering/config` — current metering configuration & cost model
+    - `PUT /api/metering/config` — update metering settings (superadmin only)
+    - `GET /api/metering/overview` — MSP executive dashboard with aggregate totals across all metering categories
+    - `GET /api/metering/resources` — per-VM resource usage with project/domain/hours filters
+    - `GET /api/metering/snapshots` — snapshot metering with compliance data
+    - `GET /api/metering/restores` — restore operation metering
+    - `GET /api/metering/api-usage` — API call volume & latency per endpoint
+    - `GET /api/metering/efficiency` — per-VM efficiency scores & recommendations
+    - `GET /api/metering/export/resources` — CSV export of resource metering
+    - `GET /api/metering/export/snapshots` — CSV export of snapshot metering
+    - `GET /api/metering/export/restores` — CSV export of restore metering
+    - `GET /api/metering/export/api-usage` — CSV export of API usage
+    - `GET /api/metering/export/efficiency` — CSV export of efficiency scores
+    - `GET /api/metering/export/chargeback` — per-tenant chargeback report with configurable cost model
+  - **UI** (`pf9-ui/src/components/MeteringTab.tsx`): New "📊 Metering" top-level tab (admin only) with 7 sub-tabs:
+    - **Overview** — MSP executive dashboard: summary cards for VMs metered, total vCPUs/RAM/disk, avg CPU/RAM usage, snapshot totals & compliance, restore stats, API call volume, efficiency distribution. Per-tenant/domain filtering. Configuration summary card
+    - **Resources** — per-VM table: VM Name, VM ID, Tenant/Project, Domain, Host, Flavor, vCPUs Allocated, RAM Allocated, Disk Allocated, CPU/RAM/Disk usage percentages, Network RX/TX, Storage I/O. Human-readable byte formatting, tooltips with full IDs
+    - **Snapshots** — snapshot table: Snapshot Name, Snapshot ID, Volume Name/ID, Tenant/Project, Domain, Size (GB), Status, Policy, Compliance badge, Created At
+    - **Restores** — restore table: Restore ID, Snapshot Name/ID, Target Server Name/ID, Tenant/Project, Domain, Status (color-coded), Duration, Initiated By/At
+    - **API Usage** — endpoint table: Method (color-coded badge), Endpoint, Total Calls, Errors, Avg/P95/P99 latency, Interval range
+    - **Efficiency** — per-VM table: CPU/RAM/Storage efficiency, Overall Score, Classification badge (colour-coded: green→excellent through red→idle), Recommendation text
+    - **Export** — download hub with 6 export cards: Resources, Snapshots, Restores, API Usage, Efficiency, Chargeback Report. All exports honour tenant/project/domain filters. CSV columns use user-friendly headers with raw IDs included
+  - **Docker** (`docker-compose.yml`): New `metering_worker` service container with DB, monitoring, and API connectivity. Configurable poll interval via `METERING_POLL_INTERVAL` env var
+
 ## [1.14.1] - 2026-02-17
 
 ### Added

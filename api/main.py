@@ -53,6 +53,9 @@ from backup_routes import router as backup_router
 # MFA (TOTP) management endpoints
 from mfa_routes import router as mfa_router
 
+# Metering endpoints
+from metering_routes import router as metering_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -259,6 +262,7 @@ app.include_router(dashboard_router)
 app.include_router(notification_router)
 app.include_router(backup_router)
 app.include_router(mfa_router)
+app.include_router(metering_router)
 
 # Rate limiting setup
 app.state.limiter = limiter
@@ -313,20 +317,24 @@ async def rbac_middleware(request: Request, call_next):
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
         response = JSONResponse(status_code=401, content={"detail": "Not authenticated"})
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        origin = request.headers.get("origin", "")
+        if origin in ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
 
     token = auth_header[7:]
     token_data = verify_token(token)
     if not token_data:
         response = JSONResponse(status_code=401, content={"detail": "Invalid token"})
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        origin = request.headers.get("origin", "")
+        if origin in ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
 
     # Extract segment (first path component) without query parameters

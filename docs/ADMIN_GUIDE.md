@@ -2,6 +2,22 @@
 
 ## Recent Major Enhancements
 
+### Operational Metering (v1.15 + v1.15.1 Pricing Overhaul ✨)
+- **📊 Metering Tab**: Comprehensive operational resource metering with 8 sub-tabs (Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export)
+- **Metering Worker**: `pf9_metering_worker` container collects resource, snapshot, restore, API usage, and efficiency metrics on a configurable interval (default 15 minutes). vCPU data resolved from flavors table
+- **Resource Metering**: Per-VM tracking of vCPUs, RAM, disk allocation + actual usage (CPU%, RAM%, disk%), network I/O — deduplicated to latest record per VM
+- **Snapshot Metering**: Snapshot count, total size, policy compliance tracking per collection cycle
+- **Restore Metering**: Restore operation tracking (status, duration, mode, data transferred)
+- **API Usage Metering**: Endpoint-level call counts, error rates, avg/p95/p99 latency
+- **Efficiency Scoring**: Per-VM efficiency scores with classification (excellent/good/fair/poor/idle) based on CPU, RAM, disk utilization
+- **Chargeback Export**: CSV export with per-tenant cost aggregation across all pricing categories: compute (flavor-based), storage per GB, snapshot per GB, restore per operation, volume, network — with TOTAL cost column
+- **Multi-Category Pricing**: Unified pricing system with 7 categories (flavor, storage_gb, snapshot_gb, restore, volume, network, custom) — auto-populate flavors from system, set hourly + monthly rates
+- **Filter Dropdowns**: Project and domain filters use dropdown selects populated from actual data via `/api/metering/filters`
+- **6 CSV Exports**: Resources, snapshots, restores, API usage, efficiency, and chargeback reports
+- **RBAC**: Admin = `metering:read`, Superadmin = `metering:read` + `metering:write` (config + pricing changes)
+- **20 API Endpoints**: Config (GET/PUT), filters, overview, resources, snapshots, restores, api-usage, efficiency, pricing CRUD (5), sync-flavors + 6 export routes
+- **DB Migration**: `db/migrate_metering.sql` — 8 tables (`metering_config`, `metering_resources`, `metering_snapshots`, `metering_restores`, `metering_api_usage`, `metering_quotas`, `metering_efficiency`, `metering_pricing`)
+
 ### LDAP Backup & MFA (v1.14 - NEW ✨)
 - **📁 LDAP Backup**: Automated LDAP directory backups via `ldapsearch` → gzip LDIF export alongside existing database backups
   - Separate scheduling and retention for LDAP vs database targets
@@ -177,7 +193,7 @@
 - **Comprehensive Audit Dashboard**: Added storage summaries, network distribution, flavor analytics, and change velocity metrics
 - **Resource History API**: Standardized history endpoints for all resource types with proper data transformation
 
-### Database Schema Overview (22+ Tables)
+### Database Schema Overview (29+ Tables)
 
 #### Authentication & Authorization (3 tables)
 - **user_roles**: User-to-role mappings with active status tracking
@@ -230,6 +246,15 @@
 - **notification_preferences**: Per-user, per-event-type subscription settings with severity filtering and delivery mode
 - **notification_log**: Complete delivery history with status tracking, error messages, and retry counts
 - **notification_digests**: Daily digest tracking to prevent duplicate sends
+
+#### Metering (7 tables)
+- **metering_config**: Single-row global settings (enabled, interval, retention, cost model per resource type)
+- **metering_resources**: Periodic per-VM resource snapshots (vCPUs, RAM, disk allocation + actual usage, network I/O)
+- **metering_snapshots**: Snapshot metering records (size, policy, compliance status per collection cycle)
+- **metering_restores**: Restore operation metering (status, duration, mode, data transferred)
+- **metering_api_usage**: API endpoint usage tracking (total calls, error count, avg/p95/p99 latency)
+- **metering_quotas**: Per-project resource quota tracking (allocated vs. used for vCPUs, RAM, storage)
+- **metering_efficiency**: Per-VM efficiency scores with classification (excellent/good/fair/poor/idle)
 
 #### Performance Optimizations & Advanced Features
 - **RBAC Middleware**: HTTP middleware enforces permissions before request processing
