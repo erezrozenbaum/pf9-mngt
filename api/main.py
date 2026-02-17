@@ -59,6 +59,12 @@ from metering_routes import router as metering_router
 # Provisioning & domain management endpoints
 from provisioning_routes import router as provisioning_router
 
+# Reports endpoints
+from reports import router as reports_router
+
+# Resource management endpoints
+from resource_management import router as resource_management_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -267,6 +273,8 @@ app.include_router(backup_router)
 app.include_router(mfa_router)
 app.include_router(metering_router)
 app.include_router(provisioning_router)
+app.include_router(reports_router)
+app.include_router(resource_management_router)
 
 # Rate limiting setup
 app.state.limiter = limiter
@@ -369,6 +377,8 @@ async def rbac_middleware(request: Request, call_next):
         "security-group-rules": "security_groups",
         "drift": "drift",
         "tenant-health": "tenant_health",
+        "reports": "reports",
+        "resources": "resources",
     }
 
     resource = resource_map.get(segment)
