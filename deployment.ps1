@@ -734,7 +734,8 @@ Write-Section "Step 8a2: Running Provisioning & Activity Log Migrations"
 $provisioningMigrations = @(
     @{File="db\migrate_provisioning.sql"; Desc="Provisioning tables (provisioning_jobs, provisioning_steps)"},
     @{File="db\migrate_activity_log.sql"; Desc="Activity log table"},
-    @{File="db\migrate_tenant_permissions.sql"; Desc="Tenant disable/delete/resource_delete permissions"}
+    @{File="db\migrate_tenant_permissions.sql"; Desc="Tenant disable/delete/resource_delete permissions"},
+    @{File="db\migrate_reports_resources.sql"; Desc="Reports & Resource Management RBAC permissions"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
