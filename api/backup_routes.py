@@ -44,6 +44,10 @@ class BackupConfigResponse(BaseModel):
     retention_count: int
     retention_days: int
     last_backup_at: Optional[str] = None
+    ldap_backup_enabled: bool = False
+    ldap_retention_count: int = 7
+    ldap_retention_days: int = 30
+    last_ldap_backup_at: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -56,12 +60,16 @@ class BackupConfigUpdate(BaseModel):
     schedule_day_of_week: Optional[int] = Field(None, ge=0, le=6)
     retention_count: Optional[int] = Field(None, ge=1)
     retention_days: Optional[int] = Field(None, ge=1)
+    ldap_backup_enabled: Optional[bool] = None
+    ldap_retention_count: Optional[int] = Field(None, ge=1)
+    ldap_retention_days: Optional[int] = Field(None, ge=1)
 
 
 class BackupHistoryItem(BaseModel):
     id: int
     status: str
     backup_type: str
+    backup_target: str = "database"
     file_name: Optional[str] = None
     file_path: Optional[str] = None
     file_size_bytes: Optional[int] = None
@@ -158,31 +166,37 @@ async def update_backup_config(
 # ---------------------------------------------------------------------------
 @router.post("/run", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_manual_backup(
+    target: str = "database",
     _perm=Depends(require_permission("backup", "write")),
     current_user: User = Depends(get_current_user),
 ):
-    """Queue a manual backup job. The backup worker will pick it up."""
+    """Queue a manual backup job. target can be 'database' or 'ldap'."""
+    if target not in ("database", "ldap"):
+        raise HTTPException(status_code=400, detail="target must be 'database' or 'ldap'")
+
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Prevent duplicate if one is already pending/running
+            # Prevent duplicate if one is already pending/running for this target
             cur.execute(
-                "SELECT id FROM backup_history WHERE status IN ('pending', 'running') LIMIT 1"
+                "SELECT id FROM backup_history WHERE status IN ('pending', 'running') "
+                "AND backup_target = %s LIMIT 1",
+                (target,),
             )
             if cur.fetchone():
                 raise HTTPException(
                     status_code=409,
-                    detail="A backup job is already pending or running",
+                    detail=f"A {target} backup job is already pending or running",
                 )
 
             cur.execute(
-                "INSERT INTO backup_history (status, backup_type, initiated_by) "
-                "VALUES ('pending', 'manual', %s) RETURNING *",
-                (current_user.username,),
+                "INSERT INTO backup_history (status, backup_type, backup_target, initiated_by) "
+                "VALUES ('pending', 'manual', %s, %s) RETURNING *",
+                (target, current_user.username),
             )
             row = cur.fetchone()
         conn.commit()
 
-    logger.info("Manual backup queued by %s – job %s", current_user.username, row["id"])
+    logger.info("Manual %s backup queued by %s – job %s", target, current_user.username, row["id"])
     return _row_to_dict(row)
 
 
@@ -194,15 +208,21 @@ async def get_backup_history(
     limit: int = 50,
     offset: int = 0,
     status_filter: Optional[str] = None,
+    target_filter: Optional[str] = None,
     _perm=Depends(require_permission("backup", "read")),
     current_user: User = Depends(get_current_user),
 ):
-    """Return paginated backup history."""
-    where = ""
+    """Return paginated backup history. Optionally filter by status and/or target."""
+    conditions = []
     params: list = []
     if status_filter:
-        where = "WHERE status = %s"
+        conditions.append("status = %s")
         params.append(status_filter)
+    if target_filter:
+        conditions.append("backup_target = %s")
+        params.append(target_filter)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -303,11 +323,12 @@ async def trigger_restore(
                     status_code=409, detail="A restore job is already in progress"
                 )
 
-            # Insert restore job
+            # Insert restore job (preserve the same backup_target as source)
+            restore_target = source.get("backup_target", "database")
             cur.execute(
-                "INSERT INTO backup_history (status, backup_type, file_name, file_path, initiated_by) "
-                "VALUES ('pending', 'restore', %s, %s, %s) RETURNING *",
-                (source.get("file_name"), source_path, current_user.username),
+                "INSERT INTO backup_history (status, backup_type, backup_target, file_name, file_path, initiated_by) "
+                "VALUES ('pending', 'restore', %s, %s, %s, %s) RETURNING *",
+                (restore_target, source.get("file_name"), source_path, current_user.username),
             )
             row = cur.fetchone()
         conn.commit()

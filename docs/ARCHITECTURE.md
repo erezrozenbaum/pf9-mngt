@@ -623,6 +623,15 @@ graph TD
 - Role-based access control (RBAC) with superadmin, admin, viewer roles
 - `user_roles` and `role_permissions` database tables for authorization
 
+**Multi-Factor Authentication (MFA)**:
+- TOTP-based two-factor authentication (Google Authenticator compatible)
+- Two-step JWT challenge flow: login → `mfa_token` (5 min TTL) → TOTP verify → full JWT
+- QR code enrollment with manual key fallback
+- 8 one-time SHA-256 hashed backup recovery codes
+- `user_mfa` database table (username, totp_secret, is_enabled, backup_codes)
+- Self-service setup/disable via MFASettings modal, admin user list view
+- Dependencies: `pyotp` (TOTP), `qrcode[pil]` (QR generation)
+
 **Snapshot Service User**:
 - Dedicated service account (configured via `SNAPSHOT_SERVICE_USER_EMAIL`) for cross-tenant operations
 - Admin role automatically assigned per-project via Keystone API

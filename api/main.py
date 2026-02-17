@@ -50,6 +50,9 @@ from notification_routes import router as notification_router
 # Backup management endpoints
 from backup_routes import router as backup_router
 
+# MFA (TOTP) management endpoints
+from mfa_routes import router as mfa_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -255,6 +258,7 @@ async def shutdown_event():
 app.include_router(dashboard_router)
 app.include_router(notification_router)
 app.include_router(backup_router)
+app.include_router(mfa_router)
 
 # Rate limiting setup
 app.state.limiter = limiter
@@ -462,6 +466,38 @@ async def login(request: Request, login_data: LoginRequest):
     
     # Get user role
     role = get_user_role(login_data.username)
+    
+    # ── MFA check ──────────────────────────────────────────────────
+    # If the user has MFA enabled, return a short-lived mfa_token
+    # instead of the real JWT.  The client must call POST /auth/mfa/verify.
+    try:
+        from mfa_routes import _get_mfa_record
+        mfa_record = _get_mfa_record(login_data.username)
+        if mfa_record and mfa_record.get("is_enabled"):
+            # Issue a short-lived token that can only be used for MFA verification
+            mfa_expires = timedelta(minutes=5)
+            mfa_token = create_access_token(
+                data={"sub": login_data.username, "role": role, "mfa_pending": True},
+                expires_delta=mfa_expires,
+            )
+            log_auth_event(login_data.username, "mfa_challenge", True, client_ip, user_agent)
+            return {
+                "access_token": mfa_token,
+                "token_type": "bearer",
+                "expires_in": 300,
+                "expires_at": (datetime.utcnow() + mfa_expires).isoformat() + "Z",
+                "refresh_token": None,
+                "mfa_required": True,
+                "user": {
+                    "username": login_data.username,
+                    "role": role,
+                    "is_active": True,
+                },
+            }
+    except Exception as exc:
+        # If MFA check fails, log but proceed without MFA
+        logger.warning("MFA check error for %s: %s", login_data.username, exc)
+    # ── End MFA check ─────────────────────────────────────────────
     
     # Create JWT token
     access_token_expires = timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)

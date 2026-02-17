@@ -19,7 +19,7 @@ except ImportError:
     # python-dotenv not installed; parse .env manually
     _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.isfile(_env_path):
-        with open(_env_path, "r") as _f:
+        with open(_env_path, "r", encoding="utf-8") as _f:
             for _line in _f:
                 _line = _line.strip()
                 if not _line or _line.startswith("#") or "=" not in _line:

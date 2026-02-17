@@ -1282,7 +1282,10 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_re
 # 4. Apply notifications migration (v1.11+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_notifications.sql
 
-# 5. Verify schema
+# 5. Apply LDAP backup + MFA migration (v1.14+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_ldap_backup_mfa.sql
+
+# 6. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 

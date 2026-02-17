@@ -17,6 +17,7 @@
 8. **SQL Injection Prevention**: Parameterized queries throughout codebase
 9. **Git Security**: Credentials excluded from version control via .gitignore
 10. **Type Safety**: TypeScript usage in UI prevents certain classes of vulnerabilities
+11. **Multi-Factor Authentication (MFA)**: TOTP-based 2FA with Google Authenticator, backup recovery codes, and two-step JWT challenge flow
 
 ---
 
@@ -61,6 +62,33 @@ ENABLE_AUTHENTICATION=true
 - Bearer token format
 - Includes username and role claims
 - Tracked in `user_sessions` table with IP and user agent
+
+### Multi-Factor Authentication (MFA)
+
+**TOTP-Based Two-Factor Authentication** (v1.14+):
+- Compatible with Google Authenticator, Authy, and any TOTP app (RFC 6238)
+- Self-service enrollment via QR code scan or manual secret key entry
+- Two-step JWT challenge flow:
+  1. User authenticates with LDAP credentials
+  2. If MFA enabled: API returns short-lived `mfa_token` (5-minute TTL)
+  3. Client submits TOTP code with `mfa_token` → receives full session JWT
+- 8 one-time backup recovery codes (SHA-256 hashed, consumed on use)
+- MFA secrets stored in `user_mfa` database table
+
+**API Endpoints**:
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/auth/mfa/setup` | POST | Generate TOTP secret + QR code |
+| `/auth/mfa/verify-setup` | POST | Confirm enrollment, returns backup codes |
+| `/auth/mfa/verify` | POST | Login MFA challenge verification |
+| `/auth/mfa/disable` | POST | Disable MFA (requires TOTP code) |
+| `/auth/mfa/status` | GET | Current user's MFA status |
+| `/auth/mfa/users` | GET | Admin: all users' MFA enrollment |
+
+**Security Recommendations**:
+- Enforce MFA for admin and superadmin accounts
+- Store backup codes securely (encrypted vault or printed hardcopy)
+- Rotate TOTP secrets periodically by disabling and re-enrolling
 
 ### Role-Based Access Control (RBAC)
 

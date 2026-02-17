@@ -1,10 +1,10 @@
 /**
  * Backup Management Tab
  *
- * Database backup & restore management UI. Three sub-views:
+ * Database & LDAP backup/restore management UI.  Three sub-views:
  *   1) Status    – dashboard with current status, stats, and manual trigger
  *   2) History   – paginated list of all backup/restore jobs
- *   3) Settings  – backup schedule, retention, and NFS path configuration
+ *   3) Settings  – backup schedule, retention, NFS path, LDAP backup config
  */
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -23,6 +23,10 @@ interface BackupConfig {
   retention_count: number;
   retention_days: number;
   last_backup_at: string | null;
+  ldap_backup_enabled: boolean;
+  ldap_retention_count: number;
+  ldap_retention_days: number;
+  last_ldap_backup_at: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -31,6 +35,7 @@ interface BackupHistoryItem {
   id: number;
   status: string;
   backup_type: string;
+  backup_target: string;
   file_name: string | null;
   file_path: string | null;
   file_size_bytes: number | null;
@@ -126,6 +131,7 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyPage, setHistoryPage] = useState(0);
   const [historyFilter, setHistoryFilter] = useState<string>("");
+  const [historyTargetFilter, setHistoryTargetFilter] = useState<string>("");
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Settings state
@@ -166,6 +172,7 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
         offset: String(historyPage * PAGE_SIZE),
       });
       if (historyFilter) params.set("status_filter", historyFilter);
+      if (historyTargetFilter) params.set("target_filter", historyTargetFilter);
 
       const data = await apiFetch<{
         items: BackupHistoryItem[];
@@ -178,7 +185,7 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
     } finally {
       setLoadingHistory(false);
     }
-  }, [historyPage, historyFilter]);
+  }, [historyPage, historyFilter, historyTargetFilter]);
 
   // ─── Load config ────────────────────────────────────────────────────────────
   const loadConfig = useCallback(async () => {
@@ -207,12 +214,13 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
   }, [subTab, loadConfig]);
 
   // ─── Trigger manual backup ─────────────────────────────────────────────────
-  const triggerBackup = async () => {
+  const triggerBackup = async (target: "database" | "ldap" = "database") => {
     setTriggering(true);
     setTriggerMsg(null);
     try {
-      await apiFetch("/api/backup/run", { method: "POST" });
-      setTriggerMsg({ type: "ok", text: "Backup job queued successfully" });
+      await apiFetch(`/api/backup/run?target=${target}`, { method: "POST" });
+      const label = target === "ldap" ? "LDAP" : "Database";
+      setTriggerMsg({ type: "ok", text: `${label} backup job queued successfully` });
       setTimeout(loadStatus, 2000);
     } catch (e: any) {
       setTriggerMsg({ type: "err", text: e.message || "Failed to trigger backup" });
@@ -278,9 +286,9 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
   return (
     <div className="backup-container">
       <div className="backup-header">
-        <h2>💾 Database Backup &amp; Restore</h2>
+        <h2>💾 Backup &amp; Restore</h2>
         <p>
-          Manage scheduled and manual database backups, view history, and restore from
+          Manage scheduled and manual database &amp; LDAP backups, view history, and restore from
           previous backups.
         </p>
       </div>
@@ -377,16 +385,24 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
           <div className="backup-card">
             <h3>Manual Backup</h3>
             <p style={{ color: "var(--backup-text-secondary)", fontSize: "0.9rem", margin: "0 0 14px" }}>
-              Trigger an immediate database backup. The backup worker will execute a
-              full <code>pg_dump</code> and compress the output.
+              Trigger an immediate backup. The backup worker will execute the job
+              and compress the output.
             </p>
-            <div className="backup-save-row">
+            <div className="backup-save-row" style={{ gap: "10px" }}>
               <button
                 className="backup-btn backup-btn-primary"
                 disabled={triggering || backupStatus?.running}
-                onClick={triggerBackup}
+                onClick={() => triggerBackup("database")}
               >
-                {triggering ? "Queuing…" : backupStatus?.running ? "Backup Running…" : "🚀 Run Backup Now"}
+                {triggering ? "Queuing…" : backupStatus?.running ? "Backup Running…" : "🚀 Database Backup"}
+              </button>
+              <button
+                className="backup-btn backup-btn-outline"
+                disabled={triggering || backupStatus?.running}
+                onClick={() => triggerBackup("ldap")}
+                title="Export all LDAP entries (users, groups) as compressed LDIF"
+              >
+                {triggering ? "Queuing…" : "📁 LDAP Backup"}
               </button>
               {triggerMsg && (
                 <span className={`backup-msg ${triggerMsg.type}`}>{triggerMsg.text}</span>
@@ -400,7 +416,7 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
       {subTab === "history" && (
         <>
           {/* Filter */}
-          <div style={{ display: "flex", gap: "12px", marginBottom: "16px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "12px", marginBottom: "16px", alignItems: "center", flexWrap: "wrap" }}>
             <select
               value={historyFilter}
               onChange={(e) => {
@@ -422,6 +438,25 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
               <option value="pending">Pending</option>
               <option value="failed">Failed</option>
               <option value="deleted">Deleted</option>
+            </select>
+            <select
+              value={historyTargetFilter}
+              onChange={(e) => {
+                setHistoryTargetFilter(e.target.value);
+                setHistoryPage(0);
+              }}
+              style={{
+                padding: "7px 12px",
+                borderRadius: "6px",
+                border: "1px solid var(--backup-border)",
+                fontSize: "0.9rem",
+                background: "var(--backup-surface)",
+                color: "var(--backup-text-primary)",
+              }}
+            >
+              <option value="">All targets</option>
+              <option value="database">Database</option>
+              <option value="ldap">LDAP</option>
             </select>
             <button className="backup-btn backup-btn-outline" onClick={loadHistory}>
               🔄 Refresh
@@ -446,6 +481,7 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
                     <tr>
                       <th>ID</th>
                       <th>Status</th>
+                      <th>Target</th>
                       <th>Type</th>
                       <th>File</th>
                       <th>Size</th>
@@ -463,6 +499,11 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
                         <td>
                           <span className={`backup-badge ${item.status}`}>
                             {item.status}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`backup-badge ${item.backup_target === "ldap" ? "ldap" : "database"}`}>
+                            {item.backup_target === "ldap" ? "📁 LDAP" : "🗄️ DB"}
                           </span>
                         </td>
                         <td>
@@ -694,6 +735,63 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
             </div>
           </div>
 
+          {/* LDAP Backup */}
+          <div className="backup-card">
+            <h3>📁 LDAP Backup</h3>
+            <p style={{ color: "var(--backup-text-secondary)", fontSize: "0.9rem", margin: "0 0 14px" }}>
+              When enabled, the backup worker will also export all LDAP directory entries
+              (users, groups, OUs) as compressed LDIF files on the same schedule as database backups.
+            </p>
+
+            <div className="backup-toggle-row">
+              <span>LDAP Scheduled Backup</span>
+              <label className="backup-switch">
+                <input
+                  type="checkbox"
+                  checked={effective.ldap_backup_enabled ?? false}
+                  onChange={(e) =>
+                    setConfigDraft((d) => ({ ...d, ldap_backup_enabled: e.target.checked }))
+                  }
+                />
+                <span className="backup-slider"></span>
+              </label>
+              <span style={{ color: "var(--backup-text-secondary)", fontSize: "0.85rem" }}>
+                {effective.ldap_backup_enabled ? "Enabled" : "Disabled"}
+              </span>
+            </div>
+
+            <div className="backup-field-row">
+              <div className="backup-field">
+                <label>Keep Last N LDAP Backups</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={effective.ldap_retention_count ?? 7}
+                  onChange={(e) =>
+                    setConfigDraft((d) => ({
+                      ...d,
+                      ldap_retention_count: Math.max(1, Number(e.target.value)),
+                    }))
+                  }
+                />
+              </div>
+              <div className="backup-field">
+                <label>LDAP Retention Days</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={effective.ldap_retention_days ?? 30}
+                  onChange={(e) =>
+                    setConfigDraft((d) => ({
+                      ...d,
+                      ldap_retention_days: Math.max(1, Number(e.target.value)),
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Save */}
           <div className="backup-save-row">
             <button
@@ -720,14 +818,18 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
           {config && (
             <div className="backup-card" style={{ marginTop: "20px" }}>
               <h3>Current Configuration</h3>
-              <div className="backup-field-row" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+              <div className="backup-field-row" style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
                 <div className="backup-field">
                   <label>Last Updated</label>
                   <div style={{ fontSize: "0.9rem" }}>{formatDate(config.updated_at)}</div>
                 </div>
                 <div className="backup-field">
-                  <label>Last Backup</label>
+                  <label>Last DB Backup</label>
                   <div style={{ fontSize: "0.9rem" }}>{formatDate(config.last_backup_at)}</div>
+                </div>
+                <div className="backup-field">
+                  <label>Last LDAP Backup</label>
+                  <div style={{ fontSize: "0.9rem" }}>{formatDate(config.last_ldap_backup_at)}</div>
                 </div>
                 <div className="backup-field">
                   <label>Config ID</label>
