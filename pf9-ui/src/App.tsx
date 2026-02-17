@@ -25,6 +25,8 @@ import MFASettings from "./components/MFASettings";
 import CustomerProvisioningTab from "./components/CustomerProvisioningTab";
 import DomainManagementTab from "./components/DomainManagementTab";
 import ActivityLogTab from "./components/ActivityLogTab";
+import ReportsTab from "./components/ReportsTab";
+import ResourceManagementTab from "./components/ResourceManagementTab";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -403,7 +405,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -451,6 +453,8 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "metering",             label: "📊 Metering",             adminOnly: true, actionStyle: true },
   { id: "provisioning",        label: "🚀 Provisioning",        adminOnly: true, actionStyle: true },
   { id: "domain_management",   label: "🏢 Domain Mgmt",         adminOnly: true, actionStyle: true },
+  { id: "reports",              label: "📊 Reports",             adminOnly: true, actionStyle: true },
+  { id: "resource_management",  label: "🔧 Resources",           adminOnly: true, actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -5032,6 +5036,20 @@ const App: React.FC = () => {
           {/* Domain Management */}
           {activeTab === "domain_management" && (
             <DomainManagementTab
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+            />
+          )}
+
+          {/* Reports */}
+          {activeTab === "reports" && (
+            <ReportsTab
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+            />
+          )}
+
+          {/* Resource Management */}
+          {activeTab === "resource_management" && (
+            <ResourceManagementTab
               isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
             />
           )}
