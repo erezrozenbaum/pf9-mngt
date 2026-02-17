@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2026-02-19
+
+### Added
+- **Reports System** — Comprehensive reporting engine with 15 report types across 6 categories:
+  - **Capacity**: Tenant Quota Usage, Capacity Planning
+  - **Inventory**: Domain Overview, Resource Inventory, Flavor Usage
+  - **Compliance**: Snapshot Compliance, Drift Summary
+  - **Billing**: Metering Summary, Cost Allocation
+  - **Security**: User & Role Audit, Security Group Audit
+  - **Audit**: Activity Log Export, Backup Status, Network Topology, Idle Resources
+  - Each report supports JSON preview and CSV export via `?format=csv` parameter
+  - Report catalog endpoint (`GET /api/reports/catalog`) with categories and parameter schemas
+  - RBAC-gated: `reports:read` permission for admin and superadmin roles
+  - Frontend: ReportsTab with category filter chips, search bar, parameter configuration panel, data preview table, and CSV download
+
+- **Resource Management Tool** — Full CRUD operations for 9 OpenStack resource types:
+  - **Users**: List, create, delete with role assignment and last-user protection
+  - **Flavors**: List, create, delete with in-use protection (shows instance count)
+  - **Networks**: List, create (with optional subnet + DHCP), delete
+  - **Routers**: List, create (with external gateway), delete, add/remove interfaces
+  - **Floating IPs**: List, allocate from external network, release
+  - **Volumes**: List, create, delete with attached-volume safety check
+  - **Security Groups**: List, create, delete (default SG protected), add/remove rules
+  - **Images**: List with status, visibility, size, and format metadata
+  - **Quotas**: View and edit compute/network/storage quotas per tenant with live editing grid
+  - Context helpers: domain, project, and external network dropdowns for filtering
+  - Permission tiers: `resources:read` (viewer), `resources:write` (operator), `resources:admin` (admin)
+  - Activity logging for all create/delete operations
+  - Frontend: ResourceManagementTab with left sidebar navigation, domain/project filters, per-resource data tables, create forms with validation, and confirmation dialogs for deletions
+
+- **Database Migration**: `migrate_reports_resources.sql` — RBAC permissions for reports and resources modules across all role tiers
+
+### Changed
+- **RBAC Resource Map**: Added `reports` and `resources` to the middleware resource map for permission checks
+- **Navigation**: Two new admin-only tabs — "📊 Reports" and "🔧 Resources" — added to the tab bar
+
 ## [1.16.1] - 2026-02-17
 
 ### Fixed

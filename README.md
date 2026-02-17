@@ -173,6 +173,17 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Full RBAC**: Admin=read, Superadmin=read+write (config + pricing)
 
 ### Customer Provisioning & Domain Management (NEW - v1.16)
+
+### Reports & Resource Management (NEW - v1.17)
+- **15 Report Types**: Tenant Quota Usage, Domain Overview, Snapshot Compliance, Flavor Usage, Metering Summary, Resource Inventory, User/Role Audit, Idle Resources, Security Group Audit, Capacity Planning, Backup Status, Activity Log, Network Topology, Cost Allocation, Drift Summary
+- **CSV Export**: All reports support JSON preview and one-click CSV download
+- **Resource Provisioning Tool**: Full CRUD for Users, Flavors, Networks, Routers, Floating IPs, Volumes, Security Groups across all tenants with domain/project context filters
+- **Quota Management**: View and live-edit compute, network, and storage quotas per tenant
+- **Image Browser**: Read-only image catalog with status, visibility, size, format metadata
+- **Safety Protections**: Last-user guard, in-use flavor check, attached-volume block, default SG protection
+- **Three-Tier RBAC**: Viewer (read), Operator (read+write), Admin (read+write+delete)
+
+### Customer Provisioning & Domain Management (v1.16)
 - **5-Step Provisioning Wizard**: Guided tenant onboarding — Domain → Project → User/Role → Quotas → Network/Security Group
 - **Domain & Project Handling**: Create new or reuse existing domains/projects with naming convention enforcement and existence checks
 - **Dynamic Keystone Roles**: Role dropdown fetches available roles from PF9 Keystone (filters internal roles like `load-balancer_*`, `heat_stack_*`)
@@ -188,7 +199,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Full Dark Mode**: 25+ CSS variables for light/dark themes; ~110 hardcoded hex colors replaced across provisioning and domain management components
 
 ### Modern Web Management Interface
-- **React 19.2+ Dashboard**: 24+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
+- **React 19.2+ Dashboard**: 26+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
 - **Landing Dashboard Features** (All Users):
   - **Health Summary Card**: System-wide metrics (VMs, volumes, networks, resource utilization)
   - **Snapshot SLA Compliance**: Tenant-level compliance tracking with warning/critical alerting
@@ -801,9 +812,20 @@ If you find this project useful, please consider:
 
 **Project Status**: Active Development  
 **Last Updated**: February 2026  
-**Version**: 1.16.1
+**Version**: 1.17.0
 
 ## 🎯 Recent Updates
+
+### Reports & Resource Management (v1.17.0)
+- ✅ **15 Report Types** — Tenant Quota Usage, Domain Overview, Snapshot Compliance, Flavor Usage, Metering Summary, Resource Inventory, User & Role Audit, Idle Resources, Security Group Audit, Capacity Planning, Backup Status, Activity Log Export, Network Topology, Cost Allocation, Drift Summary
+- ✅ **CSV Export** — All reports support one-click CSV download via `?format=csv`
+- ✅ **Report Catalog & Filters** — Category chips (Capacity, Inventory, Compliance, Billing, Security, Audit), search, domain/project parameter panels
+- ✅ **Resource Provisioning Tool** — Create, list, and delete Users, Flavors, Networks, Routers, Floating IPs, Volumes, Security Groups across tenants
+- ✅ **Image Browser** — Read-only image catalog with status, visibility, size, and format metadata
+- ✅ **Quota Management** — View and live-edit compute/network/storage quotas per tenant with inline grid editor
+- ✅ **Safety Checks** — Last-user protection, in-use flavor protection, attached-volume guard, default SG protection
+- ✅ **Activity Logging** — All resource create/delete operations logged to the central activity audit trail
+- ✅ **Three-Tier RBAC** — Viewer (read), Operator (read+write), Admin (read+write+delete) across resource management
 
 ### Bug Fixes & Enhancements (v1.16.1)
 - ✅ **PF9-Compatible Role Assignment** — Role dropdown shows "Self-service User", "Administrator", "Read Only User" (removed non-PF9 `service` role, added `reader`)
