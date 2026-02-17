@@ -91,17 +91,18 @@ The enhanced inventory and monitoring experience is built on a few principles:
 
 ## 🚀 System Architecture
 
-**Enterprise microservices-based platform** with 10 containerized services plus host-based automation:
-- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 20 management tabs + admin panel
-- **Backend API** (FastAPI/Gunicorn/Python) - Port 8000 - 100+ REST endpoints with RBAC middleware, 4 worker processes, connection pooling
+**Enterprise microservices-based platform** with 11 containerized services plus host-based automation:
+- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 21 management tabs + admin panel
+- **Backend API** (FastAPI/Gunicorn/Python) - Port 8000 - 112+ REST endpoints with RBAC middleware, 4 worker processes, connection pooling
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
 - **LDAP Admin** (phpLDAPadmin) - Port 8081 - Web-based LDAP management
 - **Monitoring Service** (FastAPI/Python) - Port 8001 - Real-time metrics collection via Prometheus
-- **Database** (PostgreSQL 16) - Port 5432 - 26+ tables with history tracking + auth audit
+- **Database** (PostgreSQL 16) - Port 5432 - 33+ tables with history tracking + auth audit + metering
 - **Database Admin** (pgAdmin4) - Port 8080 - Web-based PostgreSQL management
 - **Snapshot Worker** (Python) - Background service for automated snapshot management
 - **Notification Worker** (Python) - Background service for email alerts (drift, snapshots, compliance, health)
 - **Backup Worker** (Python/PostgreSQL 16) - Background service for scheduled/manual database backups and restores
+- **Metering Worker** (Python/PostgreSQL) - Background service for operational resource metering (resources, snapshots, restores, API usage, efficiency)
 - **Host Scripts** (Python) - Scheduled automation via Windows Task Scheduler
 
 ## 🌟 Key Features
@@ -157,8 +158,22 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **Admin Dashboard**: SMTP status, delivery statistics, and test email functionality
 - **Full RBAC**: Viewer/Operator=read+write, Admin/Superadmin=admin
 
+### Operational Metering (NEW - v1.15 + v1.15.1 Pricing)
+- **Resource Metering**: Per-VM tracking of vCPU, RAM, disk allocation + actual usage, network I/O (deduplicated to latest per VM)
+- **Snapshot Metering**: Count, size, policy compliance tracking per collection cycle
+- **Restore Metering**: Operation tracking (status, duration, mode, data transferred)
+- **API Usage Metering**: Endpoint-level call counts, error rates, latency percentiles (avg/p95/p99)
+- **Efficiency Scoring**: Per-VM scores with classification (excellent/good/fair/poor/idle)
+- **Multi-Category Pricing**: Flavor (auto-synced from OpenStack), storage/GB, snapshot/GB, restore, volume, network pricing with hourly + monthly rates
+- **Chargeback Export**: Per-tenant cost breakdown across all categories (compute, storage, snapshot, restore, volume, network, TOTAL)
+- **Filter Dropdowns**: Project/domain selectors populated from actual tenant data
+- **Metering Worker**: Background container collecting metrics every 15 minutes (configurable)
+- **8 Sub-Tab UI**: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, Pricing, Export
+- **6 CSV Exports**: Resources, snapshots, restores, API usage, efficiency, chargeback report
+- **Full RBAC**: Admin=read, Superadmin=read+write (config + pricing)
+
 ### Modern Web Management Interface
-- **React 19.2+ Dashboard**: 19+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
+- **React 19.2+ Dashboard**: 21+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
 - **Landing Dashboard Features** (All Users):
   - **Health Summary Card**: System-wide metrics (VMs, volumes, networks, resource utilization)
   - **Snapshot SLA Compliance**: Tenant-level compliance tracking with warning/critical alerting
@@ -171,7 +186,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
   - **Compliance Drift Tracking**: Policy adherence trending
   - **Capacity Trends**: 7-day resource utilization forecasting
   - **Trendlines**: Infrastructure growth patterns and velocity metrics
-- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit, Notifications
+- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit, Notifications, Metering
 - **History Tab Features**:
   - Filter by resource type (server, volume, snapshot, deletion, etc.), project, domain, and free-text search
   - Sortable column headers (Time, Type, Resource, Project, Domain, Description) with ascending/descending indicators

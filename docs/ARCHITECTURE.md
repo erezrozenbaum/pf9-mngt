@@ -14,9 +14,9 @@ The Platform9 Management System is a **microservices-based enterprise platform**
 │  React/TS    │   FastAPI    │   FastAPI    │ PostgreSQL16 │    Python       │
 │  Port: 5173  │  Port: 8000  │  Port: 8001  │ Port: 5432   │   Scheduled     │
 ├──────────────┴──────────────┴──────────────┴──────────────┴─────────────────┤
-│  Notification Worker │  Snapshot Worker                                     │
-│  (Python/SMTP)       │  (Python)                                            │
-└──────────────────────┴──────────────────────────────────────────────────────┘
+│  Notification Worker │  Snapshot Worker  │  Metering Worker                 │
+│  (Python/SMTP)       │  (Python)         │  (Python/PostgreSQL)             │
+└──────────────────────┴───────────────────┴─────────────────────────────────┘
                                     │
                        ┌─────────────────────────┐
                        │      Platform9          │
@@ -91,7 +91,7 @@ src/
 **Port**: 8000
 **Workers**: 4 uvicorn workers via Gunicorn (configurable)
 **Responsibilities**:
-- RESTful API endpoints (98+ routes across infrastructure, analytics, tenant health, notifications, and restore)
+- RESTful API endpoints (112+ routes across infrastructure, analytics, tenant health, notifications, restore, and metering)
 - Database operations via connection pool (psycopg2 ThreadedConnectionPool)
 - Platform9 integration proxy
 - Administrative operations
@@ -107,13 +107,14 @@ api/
 ├── dashboards.py        # Analytics dashboard routes (14 endpoints)
 ├── notification_routes.py # Email notification management (7 endpoints)
 ├── restore_management.py # Snapshot restore planner + executor (8 endpoints)
+├── metering_routes.py    # Operational metering endpoints (14 endpoints + 6 CSV exports)
 ├── performance_metrics.py # Thread-safe request tracking with locking
 ├── pf9_control.py       # Platform9 API integration
 ├── requirements.txt     # Python dependencies (incl. gunicorn)
 └── Dockerfile          # Container configuration (gunicorn CMD)
 ```
 
-**API Endpoints** (83+ total across two modules):
+**API Endpoints** (112+ total across modules):
 
 **Dashboard Analytics Endpoints** (api/dashboards.py - 14 endpoints):
 ```python
@@ -215,9 +216,83 @@ GET  /notifications/history                # Notification delivery history
 POST /notifications/test-email             # Send test email
 GET  /notifications/admin/stats            # Admin notification statistics
 
+# Metering (api/metering_routes.py - 20 endpoints + 6 CSV exports)
+GET  /api/metering/config                  # Metering configuration
+PUT  /api/metering/config                  # Update metering config (superadmin)
+GET  /api/metering/filters                 # Filter dropdown data (projects, domains, flavors)
+GET  /api/metering/overview                # High-level metering dashboard
+GET  /api/metering/resources               # Per-VM resource metering (DISTINCT per VM)
+GET  /api/metering/snapshots               # Snapshot metering records
+GET  /api/metering/restores                # Restore operation metering
+GET  /api/metering/api-usage               # API usage metering
+GET  /api/metering/efficiency              # VM efficiency scores (DISTINCT per VM)
+GET  /api/metering/pricing                 # Unified multi-category pricing list
+POST /api/metering/pricing                 # Create pricing entry
+PUT  /api/metering/pricing/{id}            # Update pricing entry
+DELETE /api/metering/pricing/{id}          # Delete pricing entry
+POST /api/metering/pricing/sync-flavors    # Auto-import flavors from system
+GET  /api/metering/flavor-pricing          # Legacy: flavor pricing (compat)
+GET  /api/metering/export/resources        # CSV export: resources
+GET  /api/metering/export/snapshots        # CSV export: snapshots
+GET  /api/metering/export/restores         # CSV export: restores
+GET  /api/metering/export/api-usage        # CSV export: API usage
+GET  /api/metering/export/efficiency       # CSV export: efficiency
+GET  /api/metering/export/chargeback       # CSV export: chargeback report (multi-category)
+
 # System Health & Testing
 GET  /health                     # Service health check
 GET  /simple-test                # Basic functionality test
+```
+
+### Metering Worker
+**Technology**: Python 3.11 + psycopg2 + requests + schedule
+**Container**: pf9_metering_worker (background, no port)
+**Responsibilities**:
+- Periodic collection of resource, snapshot, restore, and API usage metrics
+- Efficiency scoring per VM (CPU, RAM, disk utilization classification)
+- Configurable collection interval (default 15 minutes)
+- Automatic data retention pruning
+
+```python
+# Metering Worker Structure
+metering_worker/
+├── main.py              # Long-running collector with 5 collection tasks
+├── requirements.txt     # Dependencies (psycopg2-binary, requests, schedule)
+└── Dockerfile          # Python 3.11-slim container
+```
+
+**Collection Pipeline**:
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Metering Worker Architecture                      │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Data Sources                                                        │
+│    ├─ Monitoring Service (:8001)  → VM resource allocation + usage   │
+│    ├─ PostgreSQL (metering_*)     → Snapshots, restores from DB      │
+│    ├─ API Service (:8000)         → API usage metrics (/metrics)     │
+│    └─ Computed                    → Efficiency scores per VM         │
+│                     │                                                │
+│                     ▼                                                │
+│  Metering Worker (Every N minutes, configurable)                     │
+│    ├─ collect_resources()     → metering_resources table             │
+│    ├─ collect_snapshots()     → metering_snapshots table             │
+│    ├─ collect_restores()      → metering_restores table              │
+│    ├─ collect_api_usage()     → metering_api_usage table             │
+│    ├─ collect_efficiency()    → metering_efficiency table            │
+│    └─ prune_old_data()        → Retention cleanup (default 90 days)  │
+│                     │                                                │
+│                     ▼                                                │
+│  API (20 endpoints + 6 CSV exports)                                  │
+│    └─ metering_routes.py → Overview, Resources, Snapshots,           │
+│       Restores, API Usage, Efficiency, Pricing, Chargeback Export    │
+│                     │                                                │
+│                     ▼                                                │
+│  React UI - Metering Tab (8 sub-tabs, admin-only)                    │
+│    └─ Overview │ Resources │ Snapshots │ Restores │ API Usage │      │
+│       Efficiency │ Pricing │ Export                                  │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Monitoring Service
@@ -354,6 +429,11 @@ v_tenant_health  -- per-project health score aggregation
 -- Notifications (4 tables)
 notification_channels, notification_preferences,
 notification_log, notification_digests
+
+-- Metering (7 tables)
+metering_config, metering_resources, metering_snapshots,
+metering_restores, metering_api_usage, metering_quotas,
+metering_efficiency
 ```
 
 **Enhanced Schema Features**:

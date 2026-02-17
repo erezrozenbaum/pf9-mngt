@@ -297,6 +297,7 @@ docker-compose ps
 # phpldapadmin    Up (healthy)     0.0.0.0:8081->80/tcp
 # pf9_notification_worker  Up       (background worker, no port)
 # pf9_backup_worker         Up       (background worker, no port)
+# pf9_metering_worker       Up       (background worker, no port)
 ```
 
 ### Step 6: Verify Database Initialization
@@ -529,6 +530,21 @@ BACKUP_POLL_INTERVAL=30
 ```
 
 > **Note**: The backup worker runs as a separate container (`pf9_backup_worker`) based on PostgreSQL 16 (includes `pg_dump`/`pg_restore`). Configure schedule, retention, and NFS path via the 💾 Backup tab in the UI.
+
+#### Metering Configuration
+
+```bash
+# Enable/disable operational metering
+METERING_ENABLED=true
+
+# Collection interval in minutes (default: 15)
+METERING_POLL_INTERVAL=15
+
+# Data retention in days (default: 90)
+METERING_RETENTION_DAYS=90
+```
+
+> **Note**: The metering worker runs as a separate container (`pf9_metering_worker`). It collects resource usage, snapshot, restore, API usage, and efficiency metrics from the monitoring service, API, and database. vCPU data is resolved from the flavors table. Configure cost model via the unified multi-category pricing system (flavors auto-synced from system, storage/snapshot/restore/volume/network pricing with hourly + monthly rates). Toggle metering via the 📊 Metering tab in the UI (superadmin only). When `METERING_ENABLED=false`, the worker starts but does not collect data.
 
 #### Optional Advanced Configuration
 
@@ -1285,7 +1301,10 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_no
 # 5. Apply LDAP backup + MFA migration (v1.14+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_ldap_backup_mfa.sql
 
-# 6. Verify schema
+# 6. Apply metering migration (v1.15+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_metering.sql
+
+# 7. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 

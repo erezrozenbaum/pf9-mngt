@@ -106,6 +106,7 @@ services:
       - app_logs:/app/logs
       - ./monitoring/cache:/app/monitoring/cache:ro
       - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports:ro
+      - ./api/static:/app/static
     depends_on:
       - db
       - ldap
@@ -286,6 +287,26 @@ services:
       - "${LDAP_ADMIN_PORT:-8081}:80"
     depends_on:
       - ldap
+    restart: unless-stopped
+
+  # Operational Metering Worker
+  metering_worker:
+    build:
+      context: ./metering_worker
+    container_name: pf9_metering_worker
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASS: ${POSTGRES_PASSWORD}
+      MONITORING_URL: http://pf9_monitoring:8001
+      API_URL: http://pf9_api:8000
+      METERING_POLL_INTERVAL: ${METERING_POLL_INTERVAL:-60}
+    depends_on:
+      - db
+      - pf9_monitoring
+      - pf9_api
     restart: unless-stopped
 
 volumes:

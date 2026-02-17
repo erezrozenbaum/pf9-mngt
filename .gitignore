@@ -43,6 +43,7 @@ C:/Reports/
 .idea/
 *.swp
 *.swo
+*.bak
 *~
 .DS_Store
 
@@ -63,6 +64,9 @@ pgadmin_data/
 ldap_data/
 ldap_config/
 ldap_database/
+
+# Uploaded branding assets (user-uploaded logos)
+api/static/logo.*
 
 # Node modules (for pf9-ui)
 node_modules/
