@@ -2,6 +2,21 @@
 
 ## Recent Major Enhancements
 
+### LDAP Backup & MFA (v1.14 - NEW ✨)
+- **📁 LDAP Backup**: Automated LDAP directory backups via `ldapsearch` → gzip LDIF export alongside existing database backups
+  - Separate scheduling and retention for LDAP vs database targets
+  - "Database Backup" and "LDAP Backup" trigger buttons in Backup tab
+  - Target filter on backup history, LDAP-specific settings card
+  - `backup_worker` container now includes `ldap-utils` for LDAP backup/restore
+- **🔐 Multi-Factor Authentication (MFA)**: TOTP-based 2FA with Google Authenticator
+  - Self-service MFA enrollment: scan QR code, verify with first TOTP code
+  - 8 one-time backup recovery codes for account recovery
+  - Two-step login: LDAP credentials → MFA code → full session JWT
+  - "🔐 MFA" button in header for all users, admin can view all users' MFA status
+  - API endpoints: `/auth/mfa/setup`, `/auth/mfa/verify-setup`, `/auth/mfa/verify`, `/auth/mfa/disable`, `/auth/mfa/status`, `/auth/mfa/users`
+  - Dependencies: `pyotp` (TOTP), `qrcode[pil]` (QR generation)
+  - DB Migration: `db/migrate_ldap_backup_mfa.sql` (new `user_mfa` table, LDAP columns in backup tables)
+
 ### Database Backup & Restore (v1.13 - NEW ✨)
 - **💾 Backup Tab**: Automated database backup management with scheduling, retention, and one-click restore
 - **Backup Worker**: New `pf9_backup_worker` container runs `pg_dump` on a daily/weekly schedule or on-demand
