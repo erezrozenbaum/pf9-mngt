@@ -812,9 +812,17 @@ If you find this project useful, please consider:
 
 **Project Status**: Active Development  
 **Last Updated**: February 2026  
-**Version**: 1.17.0
+**Version**: 1.17.1
 
 ## 🎯 Recent Updates
+
+### Reports & Resource Management Enhancements (v1.17.1)
+- ✅ **16 Report Types** — Added VM Report with full VM details (flavor, host, IPs, volumes, power state)
+- ✅ **Enhanced Domain Overview** — Full quota aggregation with utilization percentages across all projects per domain
+- ✅ **Flavor Name Resolution** — Flavor Usage report now shows actual names, vCPUs, RAM, disk from flavor catalog
+- ✅ **Light Mode Fix** — All CSS fallbacks corrected for Reports and Resource Management tabs
+- ✅ **Resource Notifications** — All resource CRUD operations fire notification events for subscribers
+- ✅ **Audit Log Tab** — Resource Management now includes filterable activity log (24h–90d)
 
 ### Reports & Resource Management (v1.17.0)
 - ✅ **15 Report Types** — Tenant Quota Usage, Domain Overview, Snapshot Compliance, Flavor Usage, Metering Summary, Resource Inventory, User & Role Audit, Idle Resources, Security Group Audit, Capacity Planning, Backup Status, Activity Log Export, Network Topology, Cost Allocation, Drift Summary

@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.1] - 2026-02-19
+
+### Fixed
+- **Light mode readability** — Fixed all CSS variable fallbacks in ReportsTab and ResourceManagementTab to use light-mode defaults (borders, backgrounds, text colors) so both tabs are readable in light mode
+- **Flavor Usage report** — Now fetches full flavor catalog via `list_flavors()` to resolve flavor names, vCPUs, RAM, and disk instead of relying on incomplete server embed data that often only contains UUIDs
+- **Admin permissions tab** — Expanded MAIN_UI_RESOURCES to 31 resources so the permissions management UI shows all tabs (reports, resources, metering, provisioning, notifications, backup, drift, tenant_health, security_groups, dashboard, mfa, branding)
+- **VM Report disk showing 0 GB** — Volume-backed instances now correctly show storage via attached volumes; added "Volume Storage (GB)" and "Total Storage (GB)" columns
+
+### Enhanced
+- **Domain Overview report** — Complete rewrite with full quota aggregation across all projects per domain: vCPUs, RAM, instances, volumes, storage, networks, floating IPs with utilization percentages; added active/shutoff VM counts, network counts, and floating IP counts
+- **VM Report (new)** — Added 16th report type: comprehensive VM details with name, status, power state, flavor specs, hypervisor, fixed/floating IPs, attached volumes, tenant/domain, availability zone, key pair, and image ID
+- **VM Report quota context** — Added per-project quota vs usage columns: vCPU Quota/Used, RAM Quota/Used (MB), Storage Quota/Used (GB), Instance Quota/Count; pre-aggregates usage from all servers and volumes per project
+- **Resource Management notifications** — All create, delete, update, and quota operations now fire notification events (`resource_created`, `resource_updated`, `resource_deleted`) through the notification system with email delivery for immediate subscribers
+- **Resource Management audit log** — New "Audit Log" section in the Resource Management sidebar showing a filterable activity log (24h/7d/30d/90d) of all resource provisioning actions with actor, action type, resource details, IP address, and result status
+- **New notification event types** — Added `resource_created`, `resource_updated`, and `report_exported` to the valid event types for subscription
+
+### Added
+- **Technical role** — New RBAC role between admin and operator: read access on all resources, write access on resources/provisioning/networks/flavors/snapshots, no delete or admin permissions. Ideal for technical users who can create tenants and manage resources but cannot perform destructive operations
+- **Technical role migration** — `db/migrate_technical_role_permissions.sql` adds the technical role permissions and fills in missing permissions for all roles on newer UI tabs (reports, resources, metering, branding)
+
 ## [1.17.0] - 2026-02-19
 
 ### Added
