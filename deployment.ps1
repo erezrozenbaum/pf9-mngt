@@ -729,6 +729,24 @@ try {
     Write-Info "Run manually: Get-Content db\migrate_metering.sql | docker exec -i pf9_db psql -U <user> -d pf9_mgmt"
 }
 
+# Step 8a2: Run Provisioning & Activity Log Migrations
+Write-Section "Step 8a2: Running Provisioning & Activity Log Migrations"
+$provisioningMigrations = @(
+    @{File="db\migrate_provisioning.sql"; Desc="Provisioning tables (provisioning_jobs, provisioning_steps)"},
+    @{File="db\migrate_activity_log.sql"; Desc="Activity log table"},
+    @{File="db\migrate_tenant_permissions.sql"; Desc="Tenant disable/delete/resource_delete permissions"}
+)
+foreach ($mig in $provisioningMigrations) {
+    Write-Info "Applying $($mig.Desc)..."
+    try {
+        Get-Content $mig.File | docker exec -i pf9_db psql -U $envMap['POSTGRES_USER'] -d pf9_mgmt 2>&1 | Out-Null
+        Write-Success "$($mig.Desc) — OK"
+    } catch {
+        Write-Warning "$($mig.Desc) migration may have partially failed (non-critical)"
+        Write-Info "Run manually: Get-Content $($mig.File) | docker exec -i pf9_db psql -U <user> -d pf9_mgmt"
+    }
+}
+
 # Step 8b: Ensure admin user and superadmin permissions
 Write-Section "Step 8b: Ensuring Admin User and Superadmin Permissions"
 $defaultAdminUser = $envMap['DEFAULT_ADMIN_USER']
@@ -955,6 +973,16 @@ if ($smtpEnabledVal -eq "true" -and -not [string]::IsNullOrWhiteSpace($smtpHostV
     Write-Host "  To enable:             Set SMTP_ENABLED=true and SMTP_HOST in .env" -ForegroundColor Yellow
     Write-Host "  Documentation:         See SMTP section in docs/DEPLOYMENT_GUIDE.md" -ForegroundColor Yellow
 }
+Write-Host ""
+
+Write-Host "Customer Provisioning:" -ForegroundColor Cyan
+Write-Host "  Feature:               ENABLED" -ForegroundColor Green
+Write-Host "  UI Tabs:               Customer Provisioning, Domain Management, Activity Log" -ForegroundColor White
+Write-Host "  API Endpoints:         /api/provisioning/* (12+ endpoints)" -ForegroundColor White
+Write-Host "  Wizard:                5-step (Domain → Project → User/Role → Quotas → Network/SG)" -ForegroundColor White
+Write-Host "  Domain Management:     Enable/disable/delete domains with resource inspection" -ForegroundColor White
+Write-Host "  Activity Log:          Central audit trail for all provisioning operations" -ForegroundColor White
+Write-Host "  RBAC:                  admin/superadmin with granular tenant_disable/tenant_delete/resource_delete" -ForegroundColor White
 Write-Host ""
 
 Write-Success "System is ready for use!"

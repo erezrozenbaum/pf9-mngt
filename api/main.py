@@ -56,6 +56,9 @@ from mfa_routes import router as mfa_router
 # Metering endpoints
 from metering_routes import router as metering_router
 
+# Provisioning & domain management endpoints
+from provisioning_routes import router as provisioning_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -263,6 +266,7 @@ app.include_router(notification_router)
 app.include_router(backup_router)
 app.include_router(mfa_router)
 app.include_router(metering_router)
+app.include_router(provisioning_router)
 
 # Rate limiting setup
 app.state.limiter = limiter

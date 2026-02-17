@@ -92,12 +92,12 @@ The enhanced inventory and monitoring experience is built on a few principles:
 ## 🚀 System Architecture
 
 **Enterprise microservices-based platform** with 11 containerized services plus host-based automation:
-- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 21 management tabs + admin panel
-- **Backend API** (FastAPI/Gunicorn/Python) - Port 8000 - 112+ REST endpoints with RBAC middleware, 4 worker processes, connection pooling
+- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 24 management tabs + admin panel
+- **Backend API** (FastAPI/Gunicorn/Python) - Port 8000 - 130+ REST endpoints with RBAC middleware, 4 worker processes, connection pooling
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
 - **LDAP Admin** (phpLDAPadmin) - Port 8081 - Web-based LDAP management
 - **Monitoring Service** (FastAPI/Python) - Port 8001 - Real-time metrics collection via Prometheus
-- **Database** (PostgreSQL 16) - Port 5432 - 33+ tables with history tracking + auth audit + metering
+- **Database** (PostgreSQL 16) - Port 5432 - 38+ tables with history tracking + auth audit + metering + provisioning
 - **Database Admin** (pgAdmin4) - Port 8080 - Web-based PostgreSQL management
 - **Snapshot Worker** (Python) - Background service for automated snapshot management
 - **Notification Worker** (Python) - Background service for email alerts (drift, snapshots, compliance, health)
@@ -172,8 +172,23 @@ The enhanced inventory and monitoring experience is built on a few principles:
 - **6 CSV Exports**: Resources, snapshots, restores, API usage, efficiency, chargeback report
 - **Full RBAC**: Admin=read, Superadmin=read+write (config + pricing)
 
+### Customer Provisioning & Domain Management (NEW - v1.16)
+- **5-Step Provisioning Wizard**: Guided tenant onboarding — Domain → Project → User/Role → Quotas → Network/Security Group
+- **Domain & Project Handling**: Create new or reuse existing domains/projects with naming convention enforcement and existence checks
+- **Dynamic Keystone Roles**: Role dropdown fetches available roles from PF9 Keystone (filters internal roles like `load-balancer_*`, `heat_stack_*`)
+- **Tabbed Quota Editor**: Compute, Block Storage, and Network quota tabs matching OpenStack Horizon layout with "Set Unlimited" toggles per field
+- **Network Auto-Discovery**: Physical network dropdown populated from Neutron; VLAN/flat/VXLAN type selector, CIDR/gateway/DNS configuration
+- **Security Group with Custom Ports**: Create security group with custom ingress/egress rules during provisioning
+- **Customer Welcome Email**: HTML email template with opt-in toggle and editable recipient list
+- **Domain Management Tab**: Full domain lifecycle — enable/disable toggle, typed "approve delete" confirmation, resource inspection
+- **Resource Inspection Panel**: Side-by-side flex layout showing all OpenStack resources per domain (projects, users, servers, volumes, networks, routers, floating IPs, security groups)
+- **Resource Deletion**: 8 DELETE endpoints for individual resources (servers, volumes, networks, routers, floating IPs, security groups, users, subnets)
+- **Central Activity Log**: Audit trail for all provisioning, domain, and resource operations with filtering, pagination, and actor tracking
+- **Granular RBAC**: Separate permissions for `tenant_disable`, `tenant_delete`, `resource_delete`
+- **Full Dark Mode**: 25+ CSS variables for light/dark themes; ~110 hardcoded hex colors replaced across provisioning and domain management components
+
 ### Modern Web Management Interface
-- **React 19.2+ Dashboard**: 21+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
+- **React 19.2+ Dashboard**: 24+ comprehensive management tabs including **Landing Dashboard** with real-time operational intelligence
 - **Landing Dashboard Features** (All Users):
   - **Health Summary Card**: System-wide metrics (VMs, volumes, networks, resource utilization)
   - **Snapshot SLA Compliance**: Tenant-level compliance tracking with warning/critical alerting
@@ -186,7 +201,7 @@ The enhanced inventory and monitoring experience is built on a few principles:
   - **Compliance Drift Tracking**: Policy adherence trending
   - **Capacity Trends**: 7-day resource utilization forecasting
   - **Trendlines**: Infrastructure growth patterns and velocity metrics
-- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit, Notifications, Metering
+- **Management Tabs**: Servers, Volumes, Snapshots, Networks, Security Groups, Subnets, Ports, Floating IPs, Domains, Projects, Flavors, Images, Hypervisors, Users, Roles, Snapshot Policies, History, Audit, Monitoring, Restore, Restore Audit, Notifications, Metering, Customer Provisioning, Domain Management, Activity Log
 - **History Tab Features**:
   - Filter by resource type (server, volume, snapshot, deletion, etc.), project, domain, and free-text search
   - Sortable column headers (Time, Type, Resource, Project, Domain, Description) with ascending/descending indicators
@@ -786,71 +801,25 @@ If you find this project useful, please consider:
 
 **Project Status**: Active Development  
 **Last Updated**: February 2026  
-**Version**: 1.7.0
+**Version**: 1.16.0
 
 ## 🎯 Recent Updates
 
-### Security Groups Management (v1.7)
-- ✅ **Full CRUD for security groups & rules** — 7 new API endpoints (list, detail, rules, create/delete groups & rules)
-- ✅ **🔒 Security Groups Tab** — Dedicated management tab with list/detail layout, ingress/egress rule badges, filter/sort/pagination
-- ✅ **Detail panel** — All rules, attached VMs, and attached networks for each security group
-- ✅ **Admin operations** — Create security groups (with project picker), add/delete individual rules (protocol, ports, direction, remote prefix)
-- ✅ **Rule template presets** — One-click quick-add buttons for SSH, HTTP, HTTPS, RDP, ICMP, DNS firewall rules
-- ✅ **Export CSV** — Export current filtered security group list to CSV from the tab toolbar
-- ✅ **Restore integration** — Security group multi-select picker in restore wizard; "default" SG auto-selected; selected SGs attached to restored VM ports
-- ✅ **Collection & enrichment** — Neutron security-groups/rules collected, enriched, stored with change-tracking history
-- ✅ **DB migration script** — `db/migrate_security_groups.sql` for existing databases (idempotent, safe to re-run)
-- ✅ **Complete History tab coverage** — Expanded `v_comprehensive_changes` view from 4 to 17 resource types; all tracked entities (servers, volumes, snapshots, networks, subnets, ports, floating IPs, security groups, SG rules, domains, projects, flavors, images, hypervisors, users, roles, deletions) now surface in the History tab
-
-### Manual IP Selection & Restore Audit Enhancements (v1.6)
-- ✅ **Manual IP selection during restore** — new "Select IPs manually" IP strategy lets users pick from available IPs on each network or enter a specific IP
-- ✅ **Available IPs API** — `GET /restore/networks/{network_id}/available-ips` lists free IPs per subnet from Neutron
-- ✅ **Original VM config in audit trail** — restore audit detail now shows the deleted VM's flavor, vCPUs, RAM, disk, status, and original IPs
-
-### Bugfixes (v1.5.1)
-- ✅ **On-demand pipeline fix** — rearchitected from subprocess to DB-based signaling; API queues jobs, snapshot worker executes them
-- ✅ **Restore auth fix** — service user password now decrypted from Fernet-encrypted env vars, fixing 401 errors on cross-tenant restore
-
-### Hourly Scheduler & On-Demand Snapshots (v1.5)
-- ✅ **Snapshot scheduler now runs hourly** — default interval changed from 1440 min (daily) to 60 min (hourly); newly created VMs are protected within one hour
-- ✅ **"Sync & Snapshot Now" button** — on-demand full pipeline trigger from Delete & Restore UI with real-time step progress
-- ✅ **On-demand API** — `POST /snapshot/run-now` with job status polling, concurrency guard, admin-only RBAC
-
-### Cloud-Init Preservation (v1.4.1)
-- ✅ **user_data preserved on restore** — restored VMs receive original cloud-init data, preventing credential resets
-
-### Monitoring & Restore Audit (v1.4)
-- ✅ **Restore Audit Tab** — full audit trail with search, filters, pagination, step-level drill-down, and CSV export
-- ✅ **Monitoring hostname resolution** — hosts displayed by name instead of IP via `PF9_HOST_MAP` env var
-- ✅ **Monitoring data fixes** — VM IPs, storage metrics, and network rx/tx bytes now display correctly
-- ✅ **Docker cache mount fix** — monitoring cache uses directory mount for reliable Windows/Docker sync
-- ✅ **MONITORING_BASE config** — UI supports `VITE_MONITORING_BASE` for monitoring service URL override
-
-### Cross-Tenant Snapshot Service User (v1.2)
-- ✅ **Cross-tenant snapshot creation** — snapshots now land in the correct tenant project
-- ✅ Dedicated service user with automatic per-project admin role assignment (configurable via `SNAPSHOT_SERVICE_USER_EMAIL`)
-- ✅ Dual-session architecture: admin session for listing, service user session for creating
-- ✅ Fernet-encrypted password support for secure credential storage
-- ✅ Graceful fallback to admin session if service user is unavailable
-- ✅ `deployment.ps1` validates snapshot service user configuration
-- ✅ Comprehensive documentation updates across all guides
-
-### Landing Dashboard Implementation (v1.1)
-- ✅ 14 New Dashboard REST Endpoints with comprehensive operational intelligence
-- ✅ Real-time health summary with system-wide metrics
-- ✅ Snapshot SLA compliance monitoring with tenant-level tracking
-- ✅ Host utilization tracking with critical threshold alerting
-- ✅ Recent changes timeline (24-hour activity feed)
-- ✅ Coverage risk analysis for unprotected volumes
-- ✅ Capacity pressure indicators and forecasting
-- ✅ VM hotspots identification across CPU/memory/storage
-- ✅ Tenant risk scoring with multi-factor analysis
-- ✅ Compliance drift tracking and trending
-- ✅ Trendlines for infrastructure growth patterns
-- ✅ Auto-refresh every 30 seconds on dashboard
-- ✅ Database schema enhancements for user management and history tracking
-- ✅ Complete db_writer.py module for RVTools database integration
-- ✅ Foreign key validation and transaction management improvements
+### Customer Provisioning & Domain Management (v1.16)
+- ✅ **5-Step Provisioning Wizard** — Domain → Project → User/Role → Quotas → Network/SG with full OpenStack API integration
+- ✅ **Domain & Project Handling** — Create new or reuse existing, naming convention enforcement, existence checks
+- ✅ **Dynamic Keystone Role Dropdown** — Fetches roles from PF9 Keystone, filters internal roles (`load-balancer_*`, `heat_stack_*`)
+- ✅ **Tabbed Quota Editor** — Compute, Block Storage, Network tabs with "Set Unlimited" toggles matching OpenStack Horizon
+- ✅ **Network Auto-Discovery** — Physical networks from Neutron with VLAN/flat/VXLAN type selection
+- ✅ **Domain Management Tab** — Enable/disable/delete with typed "approve delete" confirmation, resource inspection panel
+- ✅ **Resource Inspection** — Side-by-side flex layout showing all OpenStack resources per domain
+- ✅ **8 Resource Deletion Endpoints** — Servers, volumes, networks, routers, floating IPs, security groups, users, subnets
+- ✅ **Central Activity Log** — Full audit trail for provisioning, domain, and resource operations
+- ✅ **4 New Notification Events** — resource_deleted, domain_deleted, domain_toggled, tenant_provisioned
+- ✅ **Customer Welcome Email** — HTML template with opt-in toggle and editable recipients
+- ✅ **Dark Mode Fix** — 25+ CSS variables declared, ~110 hardcoded hex colors replaced across provisioning/domain components
+- ✅ **Role Name Bug Fix** — Fixed legacy `_member_` mapping, case-insensitive matching, dynamic role fetching
+- ✅ **Granular RBAC** — Separate permissions for tenant_disable, tenant_delete, resource_delete
 
 ---
 

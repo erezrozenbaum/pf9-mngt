@@ -107,6 +107,7 @@ services:
       - ./monitoring/cache:/app/monitoring/cache:ro
       - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports:ro
       - ./api/static:/app/static
+      - ./notifications/templates:/app/notification_templates:ro
     depends_on:
       - db
       - ldap

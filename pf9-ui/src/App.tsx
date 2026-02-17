@@ -22,6 +22,9 @@ import NotificationSettings from "./components/NotificationSettings";
 import BackupManagement from "./components/BackupManagement";
 import MeteringTab from "./components/MeteringTab";
 import MFASettings from "./components/MFASettings";
+import CustomerProvisioningTab from "./components/CustomerProvisioningTab";
+import DomainManagementTab from "./components/DomainManagementTab";
+import ActivityLogTab from "./components/ActivityLogTab";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -400,7 +403,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -446,6 +449,8 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "notifications",        label: "🔔 Notifications" },
   { id: "backup",               label: "💾 Backup",               adminOnly: true, actionStyle: true },
   { id: "metering",             label: "📊 Metering",             adminOnly: true, actionStyle: true },
+  { id: "provisioning",        label: "🚀 Provisioning",        adminOnly: true, actionStyle: true },
+  { id: "domain_management",   label: "🏢 Domain Mgmt",         adminOnly: true, actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -928,6 +933,37 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// System Logs + Activity Log wrapper (sub-tabs)
+// ---------------------------------------------------------------------------
+const SystemLogsWithActivityLog: React.FC = () => {
+  const [subTab, setSubTab] = useState<"system" | "activity">("activity");
+  const tabBtn = (id: "system" | "activity", label: string) => (
+    <button
+      onClick={() => setSubTab(id)}
+      style={{
+        padding: "8px 20px", borderRadius: "8px 8px 0 0", fontSize: 13, fontWeight: subTab === id ? 700 : 400,
+        border: subTab === id ? "1px solid var(--pf9-border, #e2e8f0)" : "1px solid transparent",
+        borderBottom: subTab === id ? "2px solid #4299e1" : "1px solid var(--pf9-border, #e2e8f0)",
+        background: subTab === id ? "var(--pf9-bg-card, #fff)" : "transparent",
+        color: subTab === id ? "#4299e1" : "var(--pf9-text-secondary, #718096)",
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 2, marginBottom: 16, borderBottom: "1px solid var(--pf9-border, #e2e8f0)" }}>
+        {tabBtn("activity", "📋 Activity Log")}
+        {tabBtn("system", "🖥️ System Logs")}
+      </div>
+      {subTab === "activity" ? <ActivityLogTab /> : <SystemLogsTab />}
     </div>
   );
 };
@@ -2827,7 +2863,7 @@ const App: React.FC = () => {
             : activeTab === "api_metrics"
             ? "API performance metrics · latency · error rates"
             : activeTab === "system_logs"
-            ? "Centralized system logs · filtering · diagnostics"
+            ? "Activity log · system logs · central audit trail · diagnostics"
             : activeTab === "restore"
             ? "Snapshot restore wizard · plan · execute · monitor progress"
             : activeTab === "restore_audit"
@@ -2856,6 +2892,10 @@ const App: React.FC = () => {
             ? "Database backup management · scheduling · restore"
             : activeTab === "metering"
             ? "Operational metering · resource usage · efficiency · chargeback export"
+            : activeTab === "provisioning"
+            ? "Customer provisioning · domain setup · quotas · network · security group"
+            : activeTab === "domain_management"
+            ? "Domain management · enable/disable · delete · resource inspection"
             : "Platform9 management"}
       </section>
 
@@ -4599,7 +4639,7 @@ const App: React.FC = () => {
 
           {/* System Logs Section */}
           {activeTab === "system_logs" && (
-            <SystemLogsTab />
+            <SystemLogsWithActivityLog />
           )}
 
           {/* Snapshot Monitor Section */}
@@ -4978,6 +5018,20 @@ const App: React.FC = () => {
           {/* Operational Metering */}
           {activeTab === "metering" && (
             <MeteringTab
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+            />
+          )}
+
+          {/* Customer Provisioning */}
+          {activeTab === "provisioning" && (
+            <CustomerProvisioningTab
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+            />
+          )}
+
+          {/* Domain Management */}
+          {activeTab === "domain_management" && (
+            <DomainManagementTab
               isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
             />
           )}
