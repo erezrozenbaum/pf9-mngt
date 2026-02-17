@@ -213,6 +213,13 @@ const BrandingSettings: React.FC = () => {
 };
 
 
+// MFA user entry from admin endpoint
+interface MFAUserEntry {
+  username: string;
+  mfa_enabled: boolean;
+  created_at: string | null;
+}
+
 const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -225,6 +232,10 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({});
   const [error, setError] = useState('');
+  // MFA tab state
+  const [mfaUsers, setMfaUsers] = useState<MFAUserEntry[]>([]);
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const [mfaMsg, setMfaMsg] = useState('');
   
   // Audit log filters
   const [auditFilters, setAuditFilters] = useState({
@@ -242,7 +253,27 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     if (activeTab === 'audit') {
       loadAuditLogs();
     }
+    if (activeTab === 'mfa') {
+      loadMfaUsers();
+    }
   }, [activeTab, auditFilters]);
+
+  const loadMfaUsers = async () => {
+    setMfaLoading(true); setMfaMsg('');
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch(`${API_BASE}/auth/mfa/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Failed to load MFA users');
+      const data: MFAUserEntry[] = await res.json();
+      setMfaUsers(data);
+    } catch (e: any) {
+      setMfaMsg(`⚠️ ${e.message}`);
+    } finally {
+      setMfaLoading(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -671,6 +702,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 'users', label: 'LDAP Users', icon: '👥', adminOnly: true },
           { id: 'roles', label: 'Roles', icon: '🛡️', adminOnly: true },
           { id: 'permissions', label: 'Permissions', icon: '🔑', adminOnly: true },
+          { id: 'mfa', label: 'MFA', icon: '🔐', adminOnly: true },
           { id: 'audit', label: 'System Audit', icon: '📋', adminOnly: false },
           { id: 'branding', label: 'Branding', icon: '🎨', adminOnly: true }
         ]
@@ -921,6 +953,100 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* MFA Management Tab */}
+      {activeTab === 'mfa' && (
+        <div className="bg-white rounded-lg border">
+          <div style={{ padding: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>🔐 Multi-Factor Authentication</h3>
+                <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#888' }}>
+                  View and manage MFA enrollment for all users. Users can self-enroll via the 🔐 MFA button in the header.
+                </p>
+              </div>
+              <button
+                onClick={loadMfaUsers}
+                disabled={mfaLoading}
+                style={{ padding: '6px 14px', background: '#6366f1', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
+              >
+                {mfaLoading ? '⏳ Loading...' : '🔄 Refresh'}
+              </button>
+            </div>
+
+            {mfaMsg && (
+              <div style={{ padding: '10px', borderRadius: '6px', marginBottom: '12px', background: mfaMsg.startsWith('✅') ? '#dcfce7' : '#fee2e2', color: mfaMsg.startsWith('✅') ? '#166534' : '#991b1b', fontSize: '0.85rem' }}>
+                {mfaMsg}
+              </div>
+            )}
+
+            {/* Summary cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+              <div style={{ padding: '14px', borderRadius: '10px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)', textAlign: 'center' }}>
+                <div style={{ fontSize: '1.8rem', fontWeight: 700, color: '#6366f1' }}>{mfaUsers.length}</div>
+                <div style={{ fontSize: '0.8rem', color: '#888' }}>Total Users</div>
+              </div>
+              <div style={{ padding: '14px', borderRadius: '10px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)', textAlign: 'center' }}>
+                <div style={{ fontSize: '1.8rem', fontWeight: 700, color: '#22c55e' }}>{mfaUsers.filter(u => u.mfa_enabled).length}</div>
+                <div style={{ fontSize: '0.8rem', color: '#888' }}>MFA Enabled</div>
+              </div>
+              <div style={{ padding: '14px', borderRadius: '10px', background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)', textAlign: 'center' }}>
+                <div style={{ fontSize: '1.8rem', fontWeight: 700, color: '#f59e0b' }}>{mfaUsers.filter(u => !u.mfa_enabled).length}</div>
+                <div style={{ fontSize: '0.8rem', color: '#888' }}>Not Enrolled</div>
+              </div>
+            </div>
+
+            {/* Users table */}
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Username</th>
+                    <th className="px-4 py-3 text-center text-sm font-medium text-gray-900">MFA Status</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Enrolled Date</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {mfaUsers.length === 0 && !mfaLoading ? (
+                    <tr><td colSpan={3} className="px-4 py-8 text-center text-sm text-gray-500">No users found</td></tr>
+                  ) : (
+                    mfaUsers.map(u => (
+                      <tr key={u.username} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm font-medium">{u.username}</td>
+                        <td className="px-4 py-3 text-sm text-center">
+                          {u.mfa_enabled ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 10px', borderRadius: '12px', background: '#dcfce7', color: '#166534', fontSize: '0.8rem', fontWeight: 600 }}>
+                              ✅ Enabled
+                            </span>
+                          ) : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 10px', borderRadius: '12px', background: '#f3f4f6', color: '#6b7280', fontSize: '0.8rem' }}>
+                              — Not Enrolled
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-500">
+                          {u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Info box */}
+            <div style={{ marginTop: '20px', padding: '14px', borderRadius: '8px', background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.12)', fontSize: '0.82rem', color: '#555' }}>
+              <strong>ℹ️ How MFA Works:</strong>
+              <ul style={{ margin: '8px 0 0', paddingLeft: '20px', lineHeight: '1.7' }}>
+                <li>Users click the <strong>🔐 MFA</strong> button in the top header bar to enable MFA on their account</li>
+                <li>They scan a QR code with <strong>Google Authenticator</strong> (or any TOTP app) and confirm with a 6-digit code</li>
+                <li>Once enabled, login requires both LDAP password + TOTP code from the authenticator app</li>
+                <li>8 one-time backup codes are provided during setup for account recovery</li>
+              </ul>
+            </div>
           </div>
         </div>
       )}
