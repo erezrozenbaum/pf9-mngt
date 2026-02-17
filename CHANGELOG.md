@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.1] - 2026-02-17
+
+### Fixed
+- **Role Assignment — PF9 Compatibility**: Provisioning role dropdown now shows only PF9-compatible tenant roles with proper labels:
+  - `member` → "Self-service User"
+  - `admin` → "Administrator"
+  - `reader` → "Read Only User"
+  - Removed `service` role (not a PF9 tenant role — assigning it succeeded via Keystone API but PF9 UI showed no role attached)
+  - `/api/provisioning/roles` endpoint now returns only PF9-compatible roles with human-readable `label` field
+  - Fallback roles updated from `[member, admin, service]` to `[member, admin, reader]` with labels
+- **Welcome Email Not Received**: User email now auto-enables the "Include created user email as recipient" checkbox when entering an email address during provisioning (previously required manual opt-in, causing emails to silently not send)
+- **Default Security Group Deletion**: OpenStack auto-created "default" security groups (one per project, protected from deletion) now return a clear 502 error message explaining why deletion failed, instead of silently succeeding while the resource remains
+- **Resource Deletion Email — Missing Context**: Deletion notification emails now include Domain name, Tenant/Project name, and "Performed By" (actor) fields. Previously only showed Event Type, Resource name, Severity, and Time
+
+### Added
+- **Domain Search / Filter**: Added search bar to Domain Management tab — filters domains by name, description, or ID with result count indicator and "Clear search" link
+- **Domain Management — Activity / Audit Log Tab**: New "Activity Log" sub-tab within Domain Management showing a filterable, paginated audit trail of all domain management and resource operations
+  - Filters: Action (delete/disable/enable/provision), Resource Type (9 types), Result (success/failure)
+  - Columns: Time, Actor, Action (color-coded badge), Resource Type, Resource Name + ID, Domain, Result, IP Address
+  - Pagination with 30 entries per page
+- **Subnet DHCP & Allocation Pool**: Network provisioning step now includes:
+  - DHCP enable/disable toggle (default: enabled)
+  - Allocation Pool start/end IP fields for DHCP IP range configuration
+  - Backend `create_subnet()` passes `allocation_pools` and `enable_dhcp` to Neutron API
+  - Review step displays DHCP status and allocation pool range
+
+### Changed
+- **Delete API Endpoints**: All 8 resource deletion endpoints now accept `domain_name` and `project_name` query parameters for enriched audit logging and notification emails
+- **Notification System**: `_fire_notification()` now accepts optional `domain_name`, `project_name`, and `actor` parameters for contextual email alerts
+
 ## [1.16.0] - 2026-02-18
 
 ### Added
@@ -657,6 +687,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JWT secret auto-generated during deployment
 
 [unreleased]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.16.0...HEAD
+[1.16.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.16.0...v1.16.1
 [1.16.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.15.1...v1.16.0
 [1.15.1]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.15.0...v1.15.1
 [1.15.0]: https://github.com/erezrozenbaum/pf9-mngt/compare/v1.14.1...v1.15.0

@@ -322,6 +322,12 @@ class Pf9Client:
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/security-groups/{sg_id}"
         r = self.session.delete(url, headers=self._headers())
+        if r.status_code == 409:
+            raise Exception(
+                "Cannot delete this security group — it is the OpenStack "
+                "default security group which is auto-created per project "
+                "and protected from deletion."
+            )
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -658,6 +664,7 @@ class Pf9Client:
         dns_nameservers: Optional[List[str]] = None,
         ip_version: int = 4,
         enable_dhcp: bool = True,
+        allocation_pools: Optional[List[Dict[str, str]]] = None,
         project_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         self.authenticate()
@@ -675,6 +682,8 @@ class Pf9Client:
             body["gateway_ip"] = gateway_ip
         if dns_nameservers:
             body["dns_nameservers"] = dns_nameservers
+        if allocation_pools:
+            body["allocation_pools"] = allocation_pools
         if project_id:
             body["tenant_id"] = project_id
         r = self.session.post(url, headers=self._headers(), json={"subnet": body})

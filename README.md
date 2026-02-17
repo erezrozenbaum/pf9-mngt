@@ -801,11 +801,20 @@ If you find this project useful, please consider:
 
 **Project Status**: Active Development  
 **Last Updated**: February 2026  
-**Version**: 1.16.0
+**Version**: 1.16.1
 
 ## 🎯 Recent Updates
 
-### Customer Provisioning & Domain Management (v1.16)
+### Bug Fixes & Enhancements (v1.16.1)
+- ✅ **PF9-Compatible Role Assignment** — Role dropdown shows "Self-service User", "Administrator", "Read Only User" (removed non-PF9 `service` role, added `reader`)
+- ✅ **Welcome Email Auto-Send** — User email auto-enables recipient opt-in (no longer silently skipped)
+- ✅ **Default SG Delete Protection** — Clear error when attempting to delete OpenStack's protected default security group
+- ✅ **Enriched Deletion Notifications** — Emails now include Domain, Tenant, and Performed By context
+- ✅ **Domain Search / Filter** — Filter domains by name, description, or ID in Domain Management tab
+- ✅ **Domain Audit Log Tab** — Activity trail with action/type/result filters and pagination within Domain Management
+- ✅ **DHCP & Allocation Pool** — Network step includes DHCP toggle and allocation pool IP range for subnet provisioning
+
+### Customer Provisioning & Domain Management (v1.16.0)
 - ✅ **5-Step Provisioning Wizard** — Domain → Project → User/Role → Quotas → Network/SG with full OpenStack API integration
 - ✅ **Domain & Project Handling** — Create new or reuse existing, naming convention enforcement, existence checks
 - ✅ **Dynamic Keystone Role Dropdown** — Fetches roles from PF9 Keystone, filters internal roles (`load-balancer_*`, `heat_stack_*`)

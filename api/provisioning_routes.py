@@ -164,6 +164,9 @@ def _fire_notification(
     resource_id: str = "",
     resource_name: str = "",
     details: dict = None,
+    domain_name: str = "",
+    project_name: str = "",
+    actor: str = "",
 ):
     """Insert a notification event for each subscriber and attempt to send
     email for 'immediate' delivery mode subscribers."""
@@ -197,6 +200,15 @@ def _fire_notification(
                     status = "pending"
                     sent_at = None
                     if sub["delivery_mode"] == "immediate" and SMTP_ENABLED:
+                        # Build optional context rows for the email
+                        context_rows = ""
+                        if domain_name:
+                            context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Domain:</td><td>{domain_name}</td></tr>\n'
+                        if project_name:
+                            context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Tenant:</td><td>{project_name}</td></tr>\n'
+                        if actor:
+                            context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Performed By:</td><td>{actor}</td></tr>\n'
+
                         html_body = f"""
                         <html><body style="font-family:sans-serif;padding:20px;">
                         <h2 style="color:#1a73e8;">🔔 {subject}</h2>
@@ -204,6 +216,7 @@ def _fire_notification(
                         <table style="margin:12px 0;font-size:14px;">
                           <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Event Type:</td><td>{event_type}</td></tr>
                           <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Resource:</td><td>{resource_name or resource_id or 'N/A'}</td></tr>
+                          {context_rows}
                           <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Severity:</td><td>{severity}</td></tr>
                           <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Time:</td><td>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</td></tr>
                         </table>
@@ -306,6 +319,9 @@ class ProvisionRequest(BaseModel):
     vlan_id: Optional[int] = None
     subnet_cidr: str = "10.0.0.0/24"
     gateway_ip: str = ""
+    enable_dhcp: bool = True
+    allocation_pool_start: str = ""
+    allocation_pool_end: str = ""
     dns_nameservers: List[str] = ["8.8.8.8", "8.8.4.4"]
     # Security group
     create_security_group: bool = True
@@ -400,11 +416,24 @@ def _update_step(conn, job_id: str, step_number: int,
         conn.commit()
 
 
-# The PF9 role name mapping — maps UI labels to actual Keystone role names
+# PF9 role mapping — maps our provisioning labels to actual Keystone role names.
+# PF9 Private Cloud Director recognises these three tenant roles:
+#   "Self-service User"  →  Keystone "member"
+#   "Administrator"      →  Keystone "admin"
+#   "Read Only User"     →  Keystone "reader"
+# Other Keystone roles (service, manager, …) are NOT visible in the PF9 UI
+# tenant assignment dropdown, so assigning them appears as "no role".
 ROLE_MAP = {
     "member": "member",
     "admin": "admin",
-    "service": "service",
+    "reader": "reader",
+}
+
+# Human-friendly labels matching PF9 Private Cloud Director UI
+PF9_ROLE_LABELS = {
+    "member": "Self-service User",
+    "admin": "Administrator",
+    "reader": "Read Only User",
 }
 
 
@@ -563,6 +592,10 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
 
             # Create subnet
             sub_name = f"{net_name}-subnet"
+            # Build allocation pools if specified
+            alloc_pools = None
+            if req.allocation_pool_start and req.allocation_pool_end:
+                alloc_pools = [{"start": req.allocation_pool_start, "end": req.allocation_pool_end}]
             subnet = run_step(
                 "create_subnet",
                 f"Create subnet {req.subnet_cidr} on {net_name}",
@@ -572,6 +605,8 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                     name=sub_name,
                     gateway_ip=req.gateway_ip or None,
                     dns_nameservers=req.dns_nameservers,
+                    enable_dhcp=req.enable_dhcp,
+                    allocation_pools=alloc_pools,
                     project_id=project_id,
                 ),
             )
@@ -1113,23 +1148,35 @@ async def list_physical_networks(
 async def list_keystone_roles(
     user=Depends(require_permission("provisioning", "read")),
 ):
-    """List available Keystone roles for assignment during provisioning."""
+    """List available Keystone roles for tenant assignment during provisioning.
+
+    Only returns PF9-compatible roles that are visible in the Platform9
+    Private Cloud Director Tenant Assignment dropdown:
+      - member  → "Self-service User"
+      - admin   → "Administrator"
+      - reader  → "Read Only User"
+    """
     client = get_client()
     client.token = None
     try:
         roles = client.list_roles()
     except Exception as e:
         raise HTTPException(502, f"Failed to list roles: {e}")
-    # Filter out internal / load-balancer roles that shouldn't be user-assignable
-    HIDDEN_PREFIXES = ("load-balancer_", "heat_stack_")
-    HIDDEN_NAMES = {"network-vlan-creator"}
-    filtered = [
-        {"id": r["id"], "name": r["name"]}
-        for r in roles
-        if r["name"] not in HIDDEN_NAMES
-        and not any(r["name"].startswith(p) for p in HIDDEN_PREFIXES)
-    ]
-    filtered.sort(key=lambda r: r["name"])
+
+    # Only return roles that PF9 UI recognises for tenant assignment
+    PF9_TENANT_ROLES = {"member", "admin", "reader"}
+    filtered = []
+    for r in roles:
+        name = r["name"]
+        if name in PF9_TENANT_ROLES:
+            filtered.append({
+                "id": r["id"],
+                "name": name,
+                "label": PF9_ROLE_LABELS.get(name, name),
+            })
+    # Sort: member first, admin second, reader last
+    SORT_ORDER = {"member": 0, "admin": 1, "reader": 2}
+    filtered.sort(key=lambda r: SORT_ORDER.get(r["name"], 99))
     return {"roles": filtered}
 
 
@@ -1348,6 +1395,8 @@ async def delete_server_resource(
     server_id: str,
     request: Request,
     resource_name: Optional[str] = Query(None),
+    domain_name: Optional[str] = Query(None),
+    project_name: Optional[str] = Query(None),
     user=Depends(require_permission("provisioning", "resource_delete")),
 ):
     """Delete a specific server (VM)."""
@@ -1359,15 +1408,16 @@ async def delete_server_resource(
         client.delete_server(server_id)
         _log_activity(actor=actor, action="delete", resource_type="server",
                        resource_id=server_id, resource_name=resource_name,
-                       ip_address=client_ip, result="success")
+                       domain_name=domain_name, ip_address=client_ip, result="success")
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"Server '{resource_name or server_id}' deleted by {actor}",
-                           resource_id=server_id, resource_name=resource_name or server_id)
+                           resource_id=server_id, resource_name=resource_name or server_id,
+                           domain_name=domain_name or "", project_name=project_name or "", actor=actor)
         return {"message": f"Server {server_id} deleted", "resource_type": "server"}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="server",
                        resource_id=server_id, resource_name=resource_name,
-                       ip_address=client_ip, result="failure", error_message=str(e))
+                       domain_name=domain_name, ip_address=client_ip, result="failure", error_message=str(e))
         raise HTTPException(502, f"Failed to delete server: {e}")
 
 
@@ -1377,6 +1427,8 @@ async def delete_volume_resource(
     request: Request,
     force: bool = Query(False),
     resource_name: Optional[str] = Query(None),
+    domain_name: Optional[str] = Query(None),
+    project_name: Optional[str] = Query(None),
     user=Depends(require_permission("provisioning", "resource_delete")),
 ):
     """Delete a specific volume."""
@@ -1388,15 +1440,16 @@ async def delete_volume_resource(
         client.delete_volume(volume_id, force=force)
         _log_activity(actor=actor, action="delete", resource_type="volume",
                        resource_id=volume_id, resource_name=resource_name,
-                       ip_address=client_ip, result="success", details={"force": force})
+                       domain_name=domain_name, ip_address=client_ip, result="success", details={"force": force})
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"Volume '{resource_name or volume_id}' deleted by {actor}",
-                           resource_id=volume_id, resource_name=resource_name or volume_id)
+                           resource_id=volume_id, resource_name=resource_name or volume_id,
+                           domain_name=domain_name or "", project_name=project_name or "", actor=actor)
         return {"message": f"Volume {volume_id} deleted", "resource_type": "volume"}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="volume",
                        resource_id=volume_id, resource_name=resource_name,
-                       ip_address=client_ip, result="failure", error_message=str(e))
+                       domain_name=domain_name, ip_address=client_ip, result="failure", error_message=str(e))
         raise HTTPException(502, f"Failed to delete volume: {e}")
 
 
@@ -1405,6 +1458,8 @@ async def delete_network_resource(
     network_id: str,
     request: Request,
     resource_name: Optional[str] = Query(None),
+    domain_name: Optional[str] = Query(None),
+    project_name: Optional[str] = Query(None),
     user=Depends(require_permission("provisioning", "resource_delete")),
 ):
     """Delete a specific network."""
@@ -1416,15 +1471,16 @@ async def delete_network_resource(
         client.delete_network(network_id)
         _log_activity(actor=actor, action="delete", resource_type="network",
                        resource_id=network_id, resource_name=resource_name,
-                       ip_address=client_ip, result="success")
+                       domain_name=domain_name, ip_address=client_ip, result="success")
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"Network '{resource_name or network_id}' deleted by {actor}",
-                           resource_id=network_id, resource_name=resource_name or network_id)
+                           resource_id=network_id, resource_name=resource_name or network_id,
+                           domain_name=domain_name or "", project_name=project_name or "", actor=actor)
         return {"message": f"Network {network_id} deleted", "resource_type": "network"}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="network",
                        resource_id=network_id, resource_name=resource_name,
-                       ip_address=client_ip, result="failure", error_message=str(e))
+                       domain_name=domain_name, ip_address=client_ip, result="failure", error_message=str(e))
         raise HTTPException(502, f"Failed to delete network: {e}")
 
 
@@ -1433,6 +1489,8 @@ async def delete_router_resource(
     router_id: str,
     request: Request,
     resource_name: Optional[str] = Query(None),
+    domain_name: Optional[str] = Query(None),
+    project_name: Optional[str] = Query(None),
     user=Depends(require_permission("provisioning", "resource_delete")),
 ):
     """Delete a specific router."""
@@ -1444,15 +1502,16 @@ async def delete_router_resource(
         client.delete_router(router_id)
         _log_activity(actor=actor, action="delete", resource_type="router",
                        resource_id=router_id, resource_name=resource_name,
-                       ip_address=client_ip, result="success")
+                       domain_name=domain_name, ip_address=client_ip, result="success")
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"Router '{resource_name or router_id}' deleted by {actor}",
-                           resource_id=router_id, resource_name=resource_name or router_id)
+                           resource_id=router_id, resource_name=resource_name or router_id,
+                           domain_name=domain_name or "", project_name=project_name or "", actor=actor)
         return {"message": f"Router {router_id} deleted", "resource_type": "router"}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="router",
                        resource_id=router_id, resource_name=resource_name,
-                       ip_address=client_ip, result="failure", error_message=str(e))
+                       domain_name=domain_name, ip_address=client_ip, result="failure", error_message=str(e))
         raise HTTPException(502, f"Failed to delete router: {e}")
 
 
@@ -1461,6 +1520,8 @@ async def delete_floating_ip_resource(
     floatingip_id: str,
     request: Request,
     resource_name: Optional[str] = Query(None),
+    domain_name: Optional[str] = Query(None),
+    project_name: Optional[str] = Query(None),
     user=Depends(require_permission("provisioning", "resource_delete")),
 ):
     """Delete a specific floating IP."""
@@ -1472,15 +1533,16 @@ async def delete_floating_ip_resource(
         client.delete_floating_ip(floatingip_id)
         _log_activity(actor=actor, action="delete", resource_type="floating_ip",
                        resource_id=floatingip_id, resource_name=resource_name,
-                       ip_address=client_ip, result="success")
+                       domain_name=domain_name, ip_address=client_ip, result="success")
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"Floating IP '{resource_name or floatingip_id}' deleted by {actor}",
-                           resource_id=floatingip_id, resource_name=resource_name or floatingip_id)
+                           resource_id=floatingip_id, resource_name=resource_name or floatingip_id,
+                           domain_name=domain_name or "", project_name=project_name or "", actor=actor)
         return {"message": f"Floating IP {floatingip_id} deleted", "resource_type": "floating_ip"}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="floating_ip",
                        resource_id=floatingip_id, resource_name=resource_name,
-                       ip_address=client_ip, result="failure", error_message=str(e))
+                       domain_name=domain_name, ip_address=client_ip, result="failure", error_message=str(e))
         raise HTTPException(502, f"Failed to delete floating IP: {e}")
 
 
@@ -1489,6 +1551,8 @@ async def delete_security_group_resource(
     sg_id: str,
     request: Request,
     resource_name: Optional[str] = Query(None),
+    domain_name: Optional[str] = Query(None),
+    project_name: Optional[str] = Query(None),
     user=Depends(require_permission("provisioning", "resource_delete")),
 ):
     """Delete a specific security group."""
@@ -1500,15 +1564,16 @@ async def delete_security_group_resource(
         client.delete_security_group(sg_id)
         _log_activity(actor=actor, action="delete", resource_type="security_group",
                        resource_id=sg_id, resource_name=resource_name,
-                       ip_address=client_ip, result="success")
+                       domain_name=domain_name, ip_address=client_ip, result="success")
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"Security group '{resource_name or sg_id}' deleted by {actor}",
-                           resource_id=sg_id, resource_name=resource_name or sg_id)
+                           resource_id=sg_id, resource_name=resource_name or sg_id,
+                           domain_name=domain_name or "", project_name=project_name or "", actor=actor)
         return {"message": f"Security group {sg_id} deleted", "resource_type": "security_group"}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="security_group",
                        resource_id=sg_id, resource_name=resource_name,
-                       ip_address=client_ip, result="failure", error_message=str(e))
+                       domain_name=domain_name, ip_address=client_ip, result="failure", error_message=str(e))
         raise HTTPException(502, f"Failed to delete security group: {e}")
 
 
@@ -1517,6 +1582,8 @@ async def delete_user_resource(
     user_id: str,
     request: Request,
     resource_name: Optional[str] = Query(None),
+    domain_name: Optional[str] = Query(None),
+    project_name: Optional[str] = Query(None),
     user=Depends(require_permission("provisioning", "resource_delete")),
 ):
     """Delete a specific Keystone user."""
@@ -1528,15 +1595,16 @@ async def delete_user_resource(
         client.delete_user(user_id)
         _log_activity(actor=actor, action="delete", resource_type="user",
                        resource_id=user_id, resource_name=resource_name,
-                       ip_address=client_ip, result="success")
+                       domain_name=domain_name, ip_address=client_ip, result="success")
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"User '{resource_name or user_id}' deleted by {actor}",
-                           resource_id=user_id, resource_name=resource_name or user_id)
+                           resource_id=user_id, resource_name=resource_name or user_id,
+                           domain_name=domain_name or "", project_name=project_name or "", actor=actor)
         return {"message": f"User {user_id} deleted", "resource_type": "user"}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="user",
                        resource_id=user_id, resource_name=resource_name,
-                       ip_address=client_ip, result="failure", error_message=str(e))
+                       domain_name=domain_name, ip_address=client_ip, result="failure", error_message=str(e))
         raise HTTPException(502, f"Failed to delete user: {e}")
 
 
@@ -1545,6 +1613,8 @@ async def delete_project_resource(
     project_id: str,
     request: Request,
     resource_name: Optional[str] = Query(None),
+    domain_name: Optional[str] = Query(None),
+    project_name: Optional[str] = Query(None),
     user=Depends(require_permission("provisioning", "resource_delete")),
 ):
     """Delete a specific Keystone project."""
@@ -1556,15 +1626,16 @@ async def delete_project_resource(
         client.delete_project(project_id)
         _log_activity(actor=actor, action="delete", resource_type="project",
                        resource_id=project_id, resource_name=resource_name,
-                       ip_address=client_ip, result="success")
+                       domain_name=domain_name, ip_address=client_ip, result="success")
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"Project '{resource_name or project_id}' deleted by {actor}",
-                           resource_id=project_id, resource_name=resource_name or project_id)
+                           resource_id=project_id, resource_name=resource_name or project_id,
+                           domain_name=domain_name or "", project_name=project_name or "", actor=actor)
         return {"message": f"Project {project_id} deleted", "resource_type": "project"}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="project",
                        resource_id=project_id, resource_name=resource_name,
-                       ip_address=client_ip, result="failure", error_message=str(e))
+                       domain_name=domain_name, ip_address=client_ip, result="failure", error_message=str(e))
         raise HTTPException(502, f"Failed to delete project: {e}")
 
 
