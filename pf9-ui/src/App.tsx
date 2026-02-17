@@ -20,6 +20,7 @@ import DriftDetection from "./components/DriftDetection";
 import TenantHealthView from "./components/TenantHealthView";
 import NotificationSettings from "./components/NotificationSettings";
 import BackupManagement from "./components/BackupManagement";
+import MFASettings from "./components/MFASettings";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -36,6 +37,7 @@ type LoginResponse = {
   token_type: string;
   expires_in: number;
   expires_at?: string;
+  mfa_required?: boolean;
   user: AuthUser;
 };
 
@@ -540,9 +542,13 @@ interface LoginPageProps {
   isLoggingIn: boolean;
   loginError: string;
   handleLogin: (username: string, password: string) => void;
+  mfaPending?: boolean;
+  mfaUser?: AuthUser | null;
+  handleMfaVerify?: (code: string) => void;
+  onMfaCancel?: () => void;
 }
 
-const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLogin }) => {
+const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLogin, mfaPending, mfaUser, handleMfaVerify, onMfaCancel }) => {
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
   const [branding, setBranding] = useState<BrandingSettings>(DEFAULT_BRANDING);
@@ -640,79 +646,173 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
             </p>
           </div>
 
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.currentTarget);
-            handleLogin(formData.get('username') as string, formData.get('password') as string);
-          }}>
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{ display: 'block', marginBottom: '6px', color: isDark ? 'rgba(255,255,255,0.7)' : '#555', fontWeight: 500, fontSize: '0.9rem' }}>
-                Username
-              </label>
-              <input
-                type="text" name="username" required autoFocus
-                placeholder="user@example.com"
-                style={{
-                  width: '100%', padding: '0.7rem 0.85rem', fontSize: '0.95rem',
-                  border: isDark ? '1.5px solid rgba(255,255,255,0.15)' : '1.5px solid #e0e0e0',
-                  borderRadius: '8px', transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box',
-                  background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa',
-                  color: isDark ? '#fff' : '#333',
-                  outline: 'none',
-                }}
-                onFocus={(e) => { e.target.style.borderColor = branding.primary_color; e.target.style.boxShadow = `0 0 0 3px ${branding.primary_color}22`; }}
-                onBlur={(e) => { e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.15)' : '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{ display: 'block', marginBottom: '6px', color: isDark ? 'rgba(255,255,255,0.7)' : '#555', fontWeight: 500, fontSize: '0.9rem' }}>
-                Password
-              </label>
-              <input
-                type="password" name="password" required
-                placeholder="••••••"
-                style={{
-                  width: '100%', padding: '0.7rem 0.85rem', fontSize: '0.95rem',
-                  border: isDark ? '1.5px solid rgba(255,255,255,0.15)' : '1.5px solid #e0e0e0',
-                  borderRadius: '8px', transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box',
-                  background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa',
-                  color: isDark ? '#fff' : '#333',
-                  outline: 'none',
-                }}
-                onFocus={(e) => { e.target.style.borderColor = branding.primary_color; e.target.style.boxShadow = `0 0 0 3px ${branding.primary_color}22`; }}
-                onBlur={(e) => { e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.15)' : '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
-              />
-            </div>
-
-            {loginError && (
+          {mfaPending ? (
+            /* ---- MFA Verification Form ---- */
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const code = formData.get('mfa_code') as string;
+              if (handleMfaVerify && code) handleMfaVerify(code);
+            }}>
               <div style={{
-                padding: '0.7rem', marginBottom: '1rem',
-                background: isDark ? 'rgba(255,50,50,0.15)' : '#fff0f0',
-                border: isDark ? '1px solid rgba(255,100,100,0.3)' : '1px solid #fcc',
-                borderRadius: '8px', color: isDark ? '#ff6b6b' : '#c33', fontSize: '0.85rem'
+                textAlign: 'center', marginBottom: '1.5rem', padding: '1rem',
+                background: isDark ? 'rgba(99,102,241,0.1)' : '#f0f0ff',
+                borderRadius: '12px', border: isDark ? '1px solid rgba(99,102,241,0.2)' : '1px solid #e0e0ff',
               }}>
-                ⚠️ {loginError}
+                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🔐</div>
+                <p style={{ color: isDark ? 'rgba(255,255,255,0.8)' : '#444', fontSize: '0.9rem', margin: 0 }}>
+                  Two-Factor Authentication
+                </p>
+                {mfaUser && (
+                  <p style={{ color: isDark ? 'rgba(255,255,255,0.5)' : '#888', fontSize: '0.8rem', margin: '4px 0 0' }}>
+                    Signing in as <strong>{mfaUser.username}</strong>
+                  </p>
+                )}
               </div>
-            )}
 
-            <button type="submit" disabled={isLoggingIn} style={{
-              width: '100%', padding: '0.8rem', fontSize: '1rem', fontWeight: 600, color: 'white',
-              background: isLoggingIn ? (isDark ? '#444' : '#bbb')
-                : `linear-gradient(135deg, ${branding.primary_color} 0%, ${branding.secondary_color} 100%)`,
-              border: 'none', borderRadius: '8px',
-              cursor: isLoggingIn ? 'not-allowed' : 'pointer',
-              transition: 'transform 0.1s, box-shadow 0.2s',
-              boxShadow: isLoggingIn ? 'none' : `0 4px 15px ${branding.primary_color}44`,
-              letterSpacing: '0.3px',
-            }}
-              onMouseDown={(e) => !isLoggingIn && (e.currentTarget.style.transform = 'scale(0.98)')}
-              onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
-              onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
-            >
-              {isLoggingIn ? 'Signing in...' : 'Sign In'}
-            </button>
-          </form>
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label style={{ display: 'block', marginBottom: '6px', color: isDark ? 'rgba(255,255,255,0.7)' : '#555', fontWeight: 500, fontSize: '0.9rem' }}>
+                  Authentication Code
+                </label>
+                <input
+                  type="text" name="mfa_code" required autoFocus
+                  placeholder="000000"
+                  maxLength={8}
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  style={{
+                    width: '100%', padding: '0.9rem 0.85rem', fontSize: '1.5rem',
+                    border: isDark ? '1.5px solid rgba(255,255,255,0.15)' : '1.5px solid #e0e0e0',
+                    borderRadius: '8px', transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box',
+                    background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa',
+                    color: isDark ? '#fff' : '#333',
+                    outline: 'none', textAlign: 'center', letterSpacing: '0.5em', fontFamily: 'monospace',
+                  }}
+                  onFocus={(e) => { e.target.style.borderColor = branding.primary_color; e.target.style.boxShadow = `0 0 0 3px ${branding.primary_color}22`; }}
+                  onBlur={(e) => { e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.15)' : '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
+                />
+                <p style={{ fontSize: '0.75rem', color: isDark ? 'rgba(255,255,255,0.4)' : '#999', margin: '6px 0 0', textAlign: 'center' }}>
+                  Enter the 6-digit code from your authenticator app or a backup code
+                </p>
+              </div>
+
+              {loginError && (
+                <div style={{
+                  padding: '0.7rem', marginBottom: '1rem',
+                  background: isDark ? 'rgba(255,50,50,0.15)' : '#fff0f0',
+                  border: isDark ? '1px solid rgba(255,100,100,0.3)' : '1px solid #fcc',
+                  borderRadius: '8px', color: isDark ? '#ff6b6b' : '#c33', fontSize: '0.85rem'
+                }}>
+                  ⚠️ {loginError}
+                </div>
+              )}
+
+              <button type="submit" disabled={isLoggingIn} style={{
+                width: '100%', padding: '0.8rem', fontSize: '1rem', fontWeight: 600, color: 'white',
+                background: isLoggingIn ? (isDark ? '#444' : '#bbb')
+                  : `linear-gradient(135deg, ${branding.primary_color} 0%, ${branding.secondary_color} 100%)`,
+                border: 'none', borderRadius: '8px',
+                cursor: isLoggingIn ? 'not-allowed' : 'pointer',
+                transition: 'transform 0.1s, box-shadow 0.2s',
+                boxShadow: isLoggingIn ? 'none' : `0 4px 15px ${branding.primary_color}44`,
+                letterSpacing: '0.3px',
+              }}
+                onMouseDown={(e) => !isLoggingIn && (e.currentTarget.style.transform = 'scale(0.98)')}
+                onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              >
+                {isLoggingIn ? 'Verifying...' : '🔑 Verify Code'}
+              </button>
+
+              <button type="button" onClick={onMfaCancel} style={{
+                width: '100%', padding: '0.6rem', fontSize: '0.85rem', fontWeight: 500,
+                color: isDark ? 'rgba(255,255,255,0.5)' : '#888',
+                background: 'none', border: 'none', borderRadius: '8px',
+                cursor: 'pointer', marginTop: '0.75rem',
+                transition: 'color 0.2s',
+              }}
+                onMouseEnter={(e) => e.currentTarget.style.color = isDark ? '#fff' : '#333'}
+                onMouseLeave={(e) => e.currentTarget.style.color = isDark ? 'rgba(255,255,255,0.5)' : '#888'}
+              >
+                ← Back to Sign In
+              </button>
+            </form>
+          ) : (
+            /* ---- Normal Login Form ---- */
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              handleLogin(formData.get('username') as string, formData.get('password') as string);
+            }}>
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label style={{ display: 'block', marginBottom: '6px', color: isDark ? 'rgba(255,255,255,0.7)' : '#555', fontWeight: 500, fontSize: '0.9rem' }}>
+                  Username
+                </label>
+                <input
+                  type="text" name="username" required autoFocus
+                  placeholder="user@example.com"
+                  style={{
+                    width: '100%', padding: '0.7rem 0.85rem', fontSize: '0.95rem',
+                    border: isDark ? '1.5px solid rgba(255,255,255,0.15)' : '1.5px solid #e0e0e0',
+                    borderRadius: '8px', transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box',
+                    background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa',
+                    color: isDark ? '#fff' : '#333',
+                    outline: 'none',
+                  }}
+                  onFocus={(e) => { e.target.style.borderColor = branding.primary_color; e.target.style.boxShadow = `0 0 0 3px ${branding.primary_color}22`; }}
+                  onBlur={(e) => { e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.15)' : '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label style={{ display: 'block', marginBottom: '6px', color: isDark ? 'rgba(255,255,255,0.7)' : '#555', fontWeight: 500, fontSize: '0.9rem' }}>
+                  Password
+                </label>
+                <input
+                  type="password" name="password" required
+                  placeholder="••••••"
+                  style={{
+                    width: '100%', padding: '0.7rem 0.85rem', fontSize: '0.95rem',
+                    border: isDark ? '1.5px solid rgba(255,255,255,0.15)' : '1.5px solid #e0e0e0',
+                    borderRadius: '8px', transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box',
+                    background: isDark ? 'rgba(255,255,255,0.04)' : '#fafafa',
+                    color: isDark ? '#fff' : '#333',
+                    outline: 'none',
+                  }}
+                  onFocus={(e) => { e.target.style.borderColor = branding.primary_color; e.target.style.boxShadow = `0 0 0 3px ${branding.primary_color}22`; }}
+                  onBlur={(e) => { e.target.style.borderColor = isDark ? 'rgba(255,255,255,0.15)' : '#e0e0e0'; e.target.style.boxShadow = 'none'; }}
+                />
+              </div>
+
+              {loginError && (
+                <div style={{
+                  padding: '0.7rem', marginBottom: '1rem',
+                  background: isDark ? 'rgba(255,50,50,0.15)' : '#fff0f0',
+                  border: isDark ? '1px solid rgba(255,100,100,0.3)' : '1px solid #fcc',
+                  borderRadius: '8px', color: isDark ? '#ff6b6b' : '#c33', fontSize: '0.85rem'
+                }}>
+                  ⚠️ {loginError}
+                </div>
+              )}
+
+              <button type="submit" disabled={isLoggingIn} style={{
+                width: '100%', padding: '0.8rem', fontSize: '1rem', fontWeight: 600, color: 'white',
+                background: isLoggingIn ? (isDark ? '#444' : '#bbb')
+                  : `linear-gradient(135deg, ${branding.primary_color} 0%, ${branding.secondary_color} 100%)`,
+                border: 'none', borderRadius: '8px',
+                cursor: isLoggingIn ? 'not-allowed' : 'pointer',
+                transition: 'transform 0.1s, box-shadow 0.2s',
+                boxShadow: isLoggingIn ? 'none' : `0 4px 15px ${branding.primary_color}44`,
+                letterSpacing: '0.3px',
+              }}
+                onMouseDown={(e) => !isLoggingIn && (e.currentTarget.style.transform = 'scale(0.98)')}
+                onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+              >
+                {isLoggingIn ? 'Signing in...' : 'Sign In'}
+              </button>
+            </form>
+          )}
 
           <div style={{ 
             marginTop: '1.5rem', paddingTop: '1.25rem',
@@ -842,6 +942,12 @@ const App: React.FC = () => {
   const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string>("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  // MFA challenge state
+  const [mfaPending, setMfaPending] = useState(false);
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaUser, setMfaUser] = useState<AuthUser | null>(null);
+  // MFA settings modal
+  const [showMfaSettings, setShowMfaSettings] = useState(false);
 
   // Check for existing token on mount
   useEffect(() => {
@@ -921,6 +1027,14 @@ const App: React.FC = () => {
       }
 
       const data: LoginResponse = await response.json();
+
+      // Check if MFA is required
+      if (data.mfa_required) {
+        setMfaPending(true);
+        setMfaToken(data.access_token);
+        setMfaUser(data.user);
+        return;
+      }
       
       // Store auth data including expiration time
       localStorage.setItem('auth_token', data.access_token);
@@ -935,6 +1049,47 @@ const App: React.FC = () => {
       setIsAuthenticated(true);
     } catch (error: any) {
       setLoginError(error.message || 'Login failed');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  // MFA verification handler
+  const handleMfaVerify = async (code: string) => {
+    setIsLoggingIn(true);
+    setLoginError("");
+    try {
+      const response = await fetch(`${API_BASE}/auth/mfa/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${mfaToken}`,
+        },
+        body: JSON.stringify({ code })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Invalid MFA code');
+      }
+
+      const data: LoginResponse = await response.json();
+
+      localStorage.setItem('auth_token', data.access_token);
+      localStorage.setItem('auth_user', JSON.stringify(data.user));
+      if (data.expires_at) {
+        localStorage.setItem('token_expires_at', data.expires_at);
+        setTokenExpiresAt(data.expires_at);
+      }
+
+      setAuthToken(data.access_token);
+      setAuthUser(data.user);
+      setIsAuthenticated(true);
+      setMfaPending(false);
+      setMfaToken(null);
+      setMfaUser(null);
+    } catch (error: any) {
+      setLoginError(error.message || 'MFA verification failed');
     } finally {
       setIsLoggingIn(false);
     }
@@ -2545,6 +2700,15 @@ const App: React.FC = () => {
           isLoggingIn={isLoggingIn}
           loginError={loginError}
           handleLogin={handleLogin}
+          mfaPending={mfaPending}
+          mfaUser={mfaUser}
+          handleMfaVerify={handleMfaVerify}
+          onMfaCancel={() => {
+            setMfaPending(false);
+            setMfaToken(null);
+            setMfaUser(null);
+            setLoginError("");
+          }}
         />
       </ThemeProvider>
     );
@@ -2562,6 +2726,21 @@ const App: React.FC = () => {
                 <span style={{ fontSize: '0.9rem', color: '#666' }}>
                   👤 {authUser.username} ({authUser.role})
                 </span>
+                <button
+                  onClick={() => setShowMfaSettings(true)}
+                  title="MFA Settings"
+                  style={{
+                    padding: '6px 12px',
+                    fontSize: '0.85rem',
+                    background: '#6366f1',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  🔐 MFA
+                </button>
                 <button
                   onClick={handleLogout}
                   style={{
@@ -5146,6 +5325,13 @@ const App: React.FC = () => {
         </div>
         )}
       </section>
+
+      {/* MFA Settings Modal */}
+      <MFASettings
+        isOpen={showMfaSettings}
+        onClose={() => setShowMfaSettings(false)}
+        isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+      />
     </div>
     </ThemeProvider>
   );

@@ -248,7 +248,7 @@ services:
       - db
     restart: unless-stopped
 
-  # Database Backup Worker
+  # Database & LDAP Backup Worker
   backup_worker:
     build:
       context: ./backup_worker
@@ -262,10 +262,17 @@ services:
       DB_PASS: ${POSTGRES_PASSWORD}
       NFS_BACKUP_PATH: ${NFS_BACKUP_PATH:-/backups}
       POLL_INTERVAL: ${BACKUP_POLL_INTERVAL:-3600}
+      # LDAP backup settings
+      LDAP_HOST: ldap
+      LDAP_PORT: "389"
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}
+      LDAP_ADMIN_DN: "cn=admin,${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}"
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
     volumes:
       - ${BACKUP_VOLUME:-./backups}:/backups
     depends_on:
       - db
+      - ldap
     restart: unless-stopped
 
   # LDAP Administration Interface (Optional - can be disabled in production)
