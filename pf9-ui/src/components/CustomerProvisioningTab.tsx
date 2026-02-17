@@ -709,7 +709,15 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span style={{ fontWeight: 600, fontSize: 13 }}>Email</span>
                 <input type="email" value={form.user_email}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("user_email", e.target.value)}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    const val = e.target.value;
+                    setForm((p: ProvisionForm) => ({
+                      ...p,
+                      user_email: val,
+                      // Auto-enable include_user_email when a valid email is entered
+                      include_user_email: val.includes("@") ? true : p.include_user_email,
+                    }));
+                  }}
                   placeholder="user@example.com" style={inputStyle} />
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>

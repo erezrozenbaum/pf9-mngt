@@ -162,6 +162,20 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Search / filter
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Active view: "domains" or "audit"
+  const [activeView, setActiveView] = useState<"domains" | "audit">("domains");
+
+  // Activity / Audit log state
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditTotal, setAuditTotal] = useState(0);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditPage, setAuditPage] = useState(0);
+  const [auditFilter, setAuditFilter] = useState({ action: "", resource_type: "", result: "" });
+  const AUDIT_PAGE_SIZE = 30;
+
   // Inspection state
   const [inspecting, setInspecting] = useState<string | null>(null);
   const [resourceDetail, setResourceDetail] = useState<DomainResourceDetail | null>(null);
@@ -206,6 +220,31 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
   }, []);
 
   useEffect(() => { fetchDomains(); }, [fetchDomains]);
+
+  // ── Fetch audit logs ──
+  const fetchAuditLogs = useCallback(async () => {
+    setAuditLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", String(AUDIT_PAGE_SIZE));
+      params.set("offset", String(auditPage * AUDIT_PAGE_SIZE));
+      if (auditFilter.action) params.set("action", auditFilter.action);
+      if (auditFilter.resource_type) params.set("resource_type", auditFilter.resource_type);
+      if (auditFilter.result) params.set("result", auditFilter.result);
+      const res = await fetch(`${API_BASE}/api/provisioning/activity-log?${params}`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setAuditLogs(data.logs || []);
+        setAuditTotal(data.total || 0);
+      }
+    } catch (e) {
+      console.error("Failed to fetch audit logs:", e);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [auditPage, auditFilter]);
+
+  useEffect(() => { if (activeView === "audit") fetchAuditLogs(); }, [activeView, fetchAuditLogs]);
 
   // ── Inspect domain ──
   const inspectDomain = async (domainId: string) => {
@@ -284,6 +323,22 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
     setResourceDeleteInput("");
     setDeletingResource(resourceId);
     setDeleteMsg(null);
+
+    // Resolve domain/project context for audit trail
+    const domainName = resourceDetail?.domain?.name || "";
+    // Try to find project_name from resource data
+    let projectName = "";
+    const allResources = [
+      ...(resourceDetail?.servers || []),
+      ...(resourceDetail?.volumes || []),
+      ...(resourceDetail?.networks || []),
+      ...(resourceDetail?.routers || []),
+      ...(resourceDetail?.floating_ips || []),
+      ...(resourceDetail?.security_groups || []),
+    ] as any[];
+    const match = allResources.find((r: any) => r.id === resourceId);
+    if (match?.project_name) projectName = match.project_name;
+
     try {
       const urlMap: Record<string, string> = {
         server: `/api/provisioning/resources/server/${resourceId}`,
@@ -295,8 +350,11 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
         user: `/api/provisioning/resources/user/${resourceId}`,
         project: `/api/provisioning/resources/project/${resourceId}`,
       };
-      const sep = urlMap[resourceType].includes("?") ? "&" : "?";
-      const url = `${API_BASE}${urlMap[resourceType]}${sep}resource_name=${encodeURIComponent(resourceName)}`;
+      const params = new URLSearchParams();
+      params.set("resource_name", resourceName);
+      if (domainName) params.set("domain_name", domainName);
+      if (projectName) params.set("project_name", projectName);
+      const url = `${API_BASE}${urlMap[resourceType]}?${params}`;
       const res = await fetch(url, { method: "DELETE", headers: authHeaders() });
       if (res.ok) {
         setDeleteMsg({ type: "success", text: `${resourceType} "${resourceName}" deleted successfully` });
@@ -349,9 +407,147 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
 
   return (
     <div style={{ padding: "0 8px" }}>
+      {/* View toggle tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: "2px solid var(--pf9-border)", paddingBottom: 8 }}>
+        <button onClick={() => setActiveView("domains")}
+          style={{ padding: "6px 16px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: activeView === "domains" ? 700 : 400, background: "none", color: "var(--pf9-text)", borderBottom: activeView === "domains" ? "3px solid var(--pf9-toggle-active)" : "3px solid transparent" }}>
+          🏢 Domains
+        </button>
+        <button onClick={() => setActiveView("audit")}
+          style={{ padding: "6px 16px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: activeView === "audit" ? 700 : 400, background: "none", color: "var(--pf9-text)", borderBottom: activeView === "audit" ? "3px solid var(--pf9-toggle-active)" : "3px solid transparent" }}>
+          📋 Activity Log
+        </button>
+      </div>
+
+      {/* ===== Activity / Audit Log View ===== */}
+      {activeView === "audit" && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <h3 style={{ margin: 0, color: "var(--pf9-text)" }}>📋 Domain Activity / Audit Log</h3>
+            <button onClick={fetchAuditLogs} style={refreshBtn}>🔄 Refresh</button>
+          </div>
+          {/* Filters */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <select value={auditFilter.action} onChange={(e) => { setAuditFilter(a => ({ ...a, action: e.target.value })); setAuditPage(0); }}
+              style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--pf9-border)", background: "var(--pf9-bg-input)", color: "var(--pf9-text)", fontSize: 12 }}>
+              <option value="">All Actions</option>
+              <option value="delete">Delete</option>
+              <option value="disable">Disable</option>
+              <option value="enable">Enable</option>
+              <option value="provision">Provision</option>
+            </select>
+            <select value={auditFilter.resource_type} onChange={(e) => { setAuditFilter(a => ({ ...a, resource_type: e.target.value })); setAuditPage(0); }}
+              style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--pf9-border)", background: "var(--pf9-bg-input)", color: "var(--pf9-text)", fontSize: 12 }}>
+              <option value="">All Types</option>
+              <option value="domain">Domain</option>
+              <option value="project">Project</option>
+              <option value="user">User</option>
+              <option value="server">Server</option>
+              <option value="volume">Volume</option>
+              <option value="network">Network</option>
+              <option value="router">Router</option>
+              <option value="floating_ip">Floating IP</option>
+              <option value="security_group">Security Group</option>
+            </select>
+            <select value={auditFilter.result} onChange={(e) => { setAuditFilter(a => ({ ...a, result: e.target.value })); setAuditPage(0); }}
+              style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--pf9-border)", background: "var(--pf9-bg-input)", color: "var(--pf9-text)", fontSize: 12 }}>
+              <option value="">All Results</option>
+              <option value="success">Success</option>
+              <option value="failure">Failure</option>
+            </select>
+            <span style={{ fontSize: 12, color: "var(--pf9-text-muted)" }}>{auditTotal} total entries</span>
+          </div>
+          {auditLoading ? (
+            <div style={{ textAlign: "center", padding: 30, color: "var(--pf9-text-muted)" }}>Loading audit log...</div>
+          ) : auditLogs.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 30, color: "var(--pf9-text-muted)" }}>No activity logs found.</div>
+          ) : (
+            <>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "var(--pf9-bg-header)", textAlign: "left" }}>
+                    <th style={thStyle}>Time</th>
+                    <th style={thStyle}>Actor</th>
+                    <th style={thStyle}>Action</th>
+                    <th style={thStyle}>Resource Type</th>
+                    <th style={thStyle}>Resource Name</th>
+                    <th style={thStyle}>Domain</th>
+                    <th style={thStyle}>Result</th>
+                    <th style={thStyle}>IP</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLogs.map((log: any, idx: number) => (
+                    <tr key={idx} style={{ borderBottom: "1px solid var(--pf9-border)" }}>
+                      <td style={tdStyle}>{log.created_at ? new Date(log.created_at).toLocaleString() : "—"}</td>
+                      <td style={tdStyle}><strong>{log.actor || "system"}</strong></td>
+                      <td style={tdStyle}>
+                        <span style={{
+                          padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600,
+                          background: log.action === "delete" ? "var(--pf9-danger-bg)"
+                            : log.action === "provision" ? "#e6fffa"
+                            : log.action === "disable" ? "var(--pf9-warning-bg)"
+                            : "var(--pf9-safe-bg)",
+                          color: log.action === "delete" ? "var(--pf9-danger-text)"
+                            : log.action === "provision" ? "#234e52"
+                            : log.action === "disable" ? "var(--pf9-warning-text)"
+                            : "var(--pf9-safe-text)",
+                        }}>{log.action}</span>
+                      </td>
+                      <td style={tdStyle}>{log.resource_type}</td>
+                      <td style={tdStyle}>
+                        {log.resource_name || "—"}
+                        {log.resource_id && <div style={{ fontSize: 10, color: "var(--pf9-id-color)", fontFamily: "monospace" }}>{log.resource_id.substring(0, 12)}...</div>}
+                      </td>
+                      <td style={tdStyle}>{log.domain_name || "—"}</td>
+                      <td style={tdStyle}>
+                        <span style={{
+                          padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600,
+                          background: log.result === "success" ? "var(--pf9-safe-bg)" : "var(--pf9-danger-bg)",
+                          color: log.result === "success" ? "var(--pf9-safe-text)" : "var(--pf9-danger-text)",
+                        }}>{log.result === "success" ? "✅" : "❌"} {log.result}</span>
+                      </td>
+                      <td style={tdStyle}><span style={{ fontSize: 11, fontFamily: "monospace" }}>{log.ip_address || "—"}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {/* Pagination */}
+              <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12, alignItems: "center" }}>
+                <button disabled={auditPage === 0} onClick={() => setAuditPage(p => p - 1)}
+                  style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid var(--pf9-border)", background: "var(--pf9-bg-card)", cursor: auditPage === 0 ? "not-allowed" : "pointer", fontSize: 12, color: "var(--pf9-text)" }}>
+                  ← Prev
+                </button>
+                <span style={{ fontSize: 12, color: "var(--pf9-text-secondary)" }}>
+                  Page {auditPage + 1} of {Math.max(1, Math.ceil(auditTotal / AUDIT_PAGE_SIZE))}
+                </span>
+                <button disabled={(auditPage + 1) * AUDIT_PAGE_SIZE >= auditTotal} onClick={() => setAuditPage(p => p + 1)}
+                  style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid var(--pf9-border)", background: "var(--pf9-bg-card)", cursor: (auditPage + 1) * AUDIT_PAGE_SIZE >= auditTotal ? "not-allowed" : "pointer", fontSize: 12, color: "var(--pf9-text)" }}>
+                  Next →
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ===== Domains View ===== */}
+      {activeView === "domains" && (<>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h3 style={{ margin: 0, color: "var(--pf9-text)" }}>🏢 Domain / Tenant Management</h3>
-        <button onClick={fetchDomains} style={refreshBtn}>🔄 Refresh</button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="🔍 Search domains..."
+            style={{
+              padding: "6px 12px", borderRadius: 6, border: "1px solid var(--pf9-border)",
+              background: "var(--pf9-bg-input)", color: "var(--pf9-text)", fontSize: 13, width: 220,
+            }}
+          />
+          <button onClick={fetchDomains} style={refreshBtn}>🔄 Refresh</button>
+        </div>
       </div>
 
       {error && <div style={errorBox}>⚠️ {error}</div>}
@@ -362,10 +558,20 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
         <div style={{ textAlign: "center", padding: 40, color: "var(--pf9-text-muted)" }}>
           No customer domains found. Use the Provisioning tab to create one.
         </div>
-      ) : (
+      ) : (() => {
+        const q = searchQuery.toLowerCase().trim();
+        const filtered = q
+          ? domains.filter(d => d.name.toLowerCase().includes(q) || d.description?.toLowerCase().includes(q) || d.id.toLowerCase().includes(q))
+          : domains;
+        return filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 40, color: "var(--pf9-text-muted)" }}>
+            No domains match "{searchQuery}". <button onClick={() => setSearchQuery("")} style={{ background: "none", border: "none", color: "#4299e1", cursor: "pointer", textDecoration: "underline" }}>Clear search</button>
+          </div>
+        ) : (
         <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
           {/* Domain table */}
           <div style={{ flex: inspecting ? "0 0 320px" : "1 1 auto", overflowX: "auto", minWidth: 0 }}>
+            {q && <div style={{ fontSize: 12, color: "var(--pf9-text-muted)", marginBottom: 8 }}>Showing {filtered.length} of {domains.length} domains</div>}
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: inspecting ? 12 : 13 }}>
               <thead>
                 <tr style={{ background: "var(--pf9-bg-header)", textAlign: "left" }}>
@@ -377,7 +583,7 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
                 </tr>
               </thead>
               <tbody>
-                {domains.map((domain) => (
+                {filtered.map((domain) => (
                   <tr key={domain.id} style={{
                     borderBottom: "1px solid var(--pf9-border)",
                     background: inspecting === domain.id ? "var(--pf9-bg-selected)" : "transparent",
@@ -805,7 +1011,9 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
+      </>)}
 
       {/* ===== Toggle domain confirmation dialog ===== */}
       {toggleTarget && (

@@ -322,6 +322,12 @@ class Pf9Client:
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/security-groups/{sg_id}"
         r = self.session.delete(url, headers=self._headers())
+        if r.status_code == 409:
+            raise Exception(
+                "Cannot delete this security group — it is the OpenStack "
+                "default security group which is auto-created per project "
+                "and protected from deletion."
+            )
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
