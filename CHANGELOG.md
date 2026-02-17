@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.1] - 2026-02-17
+
+### Added
+- **MFA Admin Tab**: New "🔐 MFA" tab in the Admin panel (UserManagement) showing MFA enrollment status for all users
+  - Summary cards: total users, MFA enabled count, not enrolled count
+  - Full user table with MFA status badges and enrollment dates
+  - Info box explaining self-service enrollment flow via the header MFA button
+  - Refresh button for live status updates
+
 ## [1.14.0] - 2026-02-16
 
 ### Added
