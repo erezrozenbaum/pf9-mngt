@@ -658,6 +658,7 @@ class Pf9Client:
         dns_nameservers: Optional[List[str]] = None,
         ip_version: int = 4,
         enable_dhcp: bool = True,
+        allocation_pools: Optional[List[Dict[str, str]]] = None,
         project_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         self.authenticate()
@@ -675,6 +676,8 @@ class Pf9Client:
             body["gateway_ip"] = gateway_ip
         if dns_nameservers:
             body["dns_nameservers"] = dns_nameservers
+        if allocation_pools:
+            body["allocation_pools"] = allocation_pools
         if project_id:
             body["tenant_id"] = project_id
         r = self.session.post(url, headers=self._headers(), json={"subnet": body})

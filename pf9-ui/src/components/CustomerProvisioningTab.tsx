@@ -74,6 +74,9 @@ interface ProvisionForm {
   subnet_cidr: string;
   gateway_ip: string;
   dns_nameservers: string;
+  enable_dhcp: boolean;
+  allocation_pool_start: string;
+  allocation_pool_end: string;
   create_security_group: boolean;
   security_group_name: string;
   custom_sg_rules: CustomSgRule[];
@@ -192,6 +195,7 @@ const INIT_FORM: ProvisionForm = {
   create_network: true, network_name: "", network_type: "vlan",
   physical_network: "", vlan_id: "", subnet_cidr: "10.0.0.0/24",
   gateway_ip: "", dns_nameservers: "8.8.8.8, 8.8.4.4",
+  enable_dhcp: true, allocation_pool_start: "", allocation_pool_end: "",
   create_security_group: true, security_group_name: "default-sg",
   custom_sg_rules: [], send_welcome_email: true, include_user_email: false, email_recipients: "",
   compute_quotas: { ...DEFAULT_COMPUTE_QUOTAS },
@@ -373,7 +377,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
   const [physNetsLoading, setPhysNetsLoading] = useState(false);
 
   // Keystone roles
-  const [keystoneRoles, setKeystoneRoles] = useState<{ id: string; name: string }[]>([]);
+  const [keystoneRoles, setKeystoneRoles] = useState<{ id: string; name: string; label?: string }[]>([]);
 
   const domainCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const projectCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -420,7 +424,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
     } catch (e) {
       console.error("Failed to fetch roles:", e);
       // Fallback to default set if API fails
-      setKeystoneRoles([{ id: "1", name: "member" }, { id: "2", name: "admin" }, { id: "3", name: "service" }]);
+      setKeystoneRoles([{ id: "1", name: "member", label: "Self-service User" }, { id: "2", name: "admin", label: "Administrator" }, { id: "3", name: "reader", label: "Read Only User" }]);
     }
   }, []);
 
@@ -720,12 +724,12 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                   onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateForm("user_role", e.target.value)}
                   style={inputStyle}>
                   {keystoneRoles.length > 0 ? keystoneRoles.map(r => (
-                    <option key={r.id} value={r.name}>{r.name.charAt(0).toUpperCase() + r.name.slice(1)}</option>
+                    <option key={r.id} value={r.name}>{r.label || r.name.charAt(0).toUpperCase() + r.name.slice(1)}</option>
                   )) : (
                     <>
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                      <option value="service">Service</option>
+                      <option value="member">Self-service User</option>
+                      <option value="admin">Administrator</option>
+                      <option value="reader">Read Only User</option>
                     </>
                   )}
                 </select>
@@ -904,6 +908,32 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("dns_nameservers", e.target.value)}
                       placeholder="8.8.8.8, 8.8.4.4" style={inputStyle} />
                   </label>
+
+                  {/* DHCP Toggle */}
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: "span 2", cursor: "pointer", marginTop: 4 }}>
+                    <input type="checkbox" checked={form.enable_dhcp}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("enable_dhcp", e.target.checked)} />
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>Enable DHCP</span>
+                    <span style={{ fontSize: 11, color: "var(--pf9-text-muted)" }}>(allocates IPs automatically to instances on this subnet)</span>
+                  </label>
+
+                  {/* Allocation Pool (shown when DHCP is enabled) */}
+                  {form.enable_dhcp && (
+                    <>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>Allocation Pool Start <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
+                        <input value={form.allocation_pool_start}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("allocation_pool_start", e.target.value)}
+                          placeholder="e.g. 10.0.0.10" style={inputStyle} />
+                      </label>
+                      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>Allocation Pool End <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
+                        <input value={form.allocation_pool_end}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("allocation_pool_end", e.target.value)}
+                          placeholder="e.g. 10.0.0.254" style={inputStyle} />
+                      </label>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -1076,7 +1106,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                 <h4 style={summaryTitle}>👤 User</h4>
                 <div style={summaryRow}><span>Username:</span> <strong>{form.username}</strong></div>
                 <div style={summaryRow}><span>Email:</span> <strong>{form.user_email || "\u2014"}</strong></div>
-                <div style={summaryRow}><span>Role:</span> <strong>{form.user_role}</strong></div>
+                <div style={summaryRow}><span>Role:</span> <strong>{keystoneRoles.find(r => r.name === form.user_role)?.label || form.user_role}</strong></div>
                 <div style={summaryRow}><span>Password:</span> <strong>{form.user_password ? "Custom" : "Auto-generated"}</strong></div>
               </div>
               <div style={summaryCard}>
@@ -1086,6 +1116,10 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                   <div style={summaryRow}><span>Physical Net:</span> <strong>{form.physical_network}</strong></div>
                   <div style={summaryRow}><span>CIDR:</span> <strong>{form.subnet_cidr}</strong></div>
                   {form.vlan_id && <div style={summaryRow}><span>VLAN ID:</span> <strong>{form.vlan_id}</strong></div>}
+                  <div style={summaryRow}><span>DHCP:</span> <strong>{form.enable_dhcp ? "Enabled" : "Disabled"}</strong></div>
+                  {form.enable_dhcp && form.allocation_pool_start && form.allocation_pool_end && (
+                    <div style={summaryRow}><span>Allocation Pool:</span> <strong>{form.allocation_pool_start} — {form.allocation_pool_end}</strong></div>
+                  )}
                 </>) : <div style={{ fontSize: 13, color: "var(--pf9-text-muted)" }}>Skipped</div>}
               </div>
             </div>
