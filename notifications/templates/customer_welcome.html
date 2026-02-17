@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to Platform9</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f7fafc; margin: 0; padding: 20px;">
+  <div style="max-width: 700px; margin: 0 auto;">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #1a365d 0%, #2b6cb0 100%); color: white; padding: 30px; border-radius: 8px 8px 0 0; text-align: center;">
+      <h1 style="margin: 0 0 8px 0; font-size: 24px;">🎉 Welcome to Platform9</h1>
+      <p style="margin: 0; opacity: 0.9; font-size: 14px;">Your cloud environment is ready</p>
+    </div>
+
+    <!-- Body -->
+    <div style="background: white; border: 1px solid #e2e8f0; border-top: 0; padding: 30px; border-radius: 0 0 8px 8px;">
+      <p style="font-size: 16px; color: #2d3748;">Hello <strong>{{ username }}</strong>,</p>
+      <p style="font-size: 14px; color: #4a5568; line-height: 1.6;">
+        Your Platform9 account has been provisioned and is ready to use.
+        Below are your login credentials and complete environment details.
+      </p>
+
+      <!-- Login Details Card -->
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">🔐 Login Details</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 160px; font-size: 13px;">Login URL</td>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px;">
+              <a href="{{ login_url }}" style="color: #2b6cb0; text-decoration: none;">{{ login_url }}</a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Username</td>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px;">
+              <code style="background: #edf2f7; padding: 2px 8px; border-radius: 4px;">{{ username }}</code>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Temporary Password</td>
+            <td style="padding: 10px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px;">
+              <code style="background: #fef3c7; padding: 2px 8px; border-radius: 4px; color: #92400e;">{{ password }}</code>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Password Change Warning -->
+      <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 14px 16px; margin: 20px 0; border-radius: 0 4px 4px 0;">
+        <strong style="color: #92400e;">⚠️ Important:</strong>
+        <span style="color: #92400e; font-size: 14px;">You must change your password upon first login.</span>
+      </div>
+
+      <!-- Environment Details -->
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">☁️ Environment Details</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 160px; font-size: 13px;">Domain</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">
+              {{ domain_name }}
+              {% if domain_description %}<span style="color: #a0aec0;"> — {{ domain_description }}</span>{% endif %}
+            </td>
+          </tr>
+          {% if subscription_id %}
+          <tr>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Subscription ID</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ subscription_id }}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Project</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">
+              {{ project_name }}
+              {% if project_description %}<span style="color: #a0aec0;"> — {{ project_description }}</span>{% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 12px; font-weight: 600; color: #4a5568; font-size: 13px;">Role</td>
+            <td style="padding: 8px 12px; font-size: 13px; color: #2d3748;">
+              {% if user_role == 'admin' %}
+                <span style="background: #fed7d7; color: #9b2c2c; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Admin</span>
+              {% elif user_role == 'service' %}
+                <span style="background: #c6f6d5; color: #276749; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Service User</span>
+              {% else %}
+                <span style="background: #bee3f8; color: #2a4365; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Member</span>
+              {% endif %}
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Network Details -->
+      {% if create_network %}
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">🌐 Network Configuration</h3>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 160px; font-size: 13px;">Network Name</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ network_name }}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Network Type</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ network_type | upper }}</td>
+          </tr>
+          {% if vlan_id %}
+          <tr>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">VLAN ID</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ vlan_id }}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Subnet CIDR</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ subnet_cidr }}</td>
+          </tr>
+          {% if gateway_ip %}
+          <tr>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Gateway IP</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ gateway_ip }}</td>
+          </tr>
+          {% endif %}
+          {% if dns_nameservers %}
+          <tr>
+            <td style="padding: 8px 12px; font-weight: 600; color: #4a5568; font-size: 13px;">DNS Nameservers</td>
+            <td style="padding: 8px 12px; font-size: 13px; color: #2d3748;">{{ dns_nameservers | join(', ') }}</td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+      {% endif %}
+
+      <!-- Security Group Rules -->
+      {% if security_group_name and sg_rules %}
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">🔒 Security Group: {{ security_group_name }}</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+          <thead>
+            <tr style="background: #edf2f7;">
+              <th style="padding: 8px 10px; text-align: left; border-bottom: 2px solid #e2e8f0; color: #4a5568;">Direction</th>
+              <th style="padding: 8px 10px; text-align: left; border-bottom: 2px solid #e2e8f0; color: #4a5568;">Protocol</th>
+              <th style="padding: 8px 10px; text-align: left; border-bottom: 2px solid #e2e8f0; color: #4a5568;">Port(s)</th>
+              <th style="padding: 8px 10px; text-align: left; border-bottom: 2px solid #e2e8f0; color: #4a5568;">Source/Dest</th>
+              <th style="padding: 8px 10px; text-align: left; border-bottom: 2px solid #e2e8f0; color: #4a5568;">Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rule in sg_rules %}
+            <tr>
+              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; text-transform: capitalize;">{{ rule.direction }}</td>
+              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; text-transform: uppercase;">{{ rule.protocol }}</td>
+              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0;">{{ rule.port }}</td>
+              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0;">{{ rule.remote_ip_prefix | default('0.0.0.0/0') }}</td>
+              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; color: #718096;">{{ rule.description }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      <!-- Compute Quotas -->
+      {% if compute_quotas %}
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">🖥️ Compute Quotas</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          {% for key, value in compute_quotas.items() %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 200px;">{{ key | replace('_', ' ') | title }}</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{% if value == -1 %}Unlimited{% else %}{{ value }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% endif %}
+
+      <!-- Network Quotas -->
+      {% if network_quotas %}
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">🌐 Network Quotas</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          {% for key, value in network_quotas.items() %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 200px;">{{ key | replace('_', ' ') | title }}</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{% if value == -1 %}Unlimited{% else %}{{ value }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% endif %}
+
+      <!-- Storage Quotas -->
+      {% if storage_quotas %}
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">💾 Storage Quotas</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          {% for key, value in storage_quotas.items() %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 200px;">{{ key | replace('_', ' ') | title }}</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{% if value == -1 %}Unlimited{% else %}{{ value }}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% endif %}
+
+      <!-- Login Button -->
+      <div style="text-align: center; margin: 24px 0;">
+        <a href="{{ login_url }}" style="display: inline-block; background: #2b6cb0; color: white; text-decoration: none; padding: 12px 32px; border-radius: 6px; font-weight: 600; font-size: 14px;">
+          Log In to Platform9 →
+        </a>
+      </div>
+
+      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;">
+
+      <p style="font-size: 12px; color: #a0aec0; text-align: center; line-height: 1.5;">
+        This is an automated message from Platform9 Management.<br>
+        If you did not expect this email, please contact your administrator.
+      </p>
+    </div>
+  </div>
+</body>
+</html>
