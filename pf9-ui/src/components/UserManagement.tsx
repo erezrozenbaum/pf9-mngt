@@ -316,8 +316,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
         setRoles([
           { id: 1, name: 'superadmin', description: 'Full system access', userCount: users.filter(u => u.role === 'superadmin').length },
           { id: 2, name: 'admin', description: 'Administrative access', userCount: users.filter(u => u.role === 'admin').length },
-          { id: 3, name: 'operator', description: 'Operational access', userCount: users.filter(u => u.role === 'operator').length },
-          { id: 4, name: 'viewer', description: 'Read-only access', userCount: users.filter(u => u.role === 'viewer').length }
+          { id: 3, name: 'technical', description: 'Technical access — read all, create tenants/orgs, no delete', userCount: users.filter(u => u.role === 'technical').length },
+          { id: 4, name: 'operator', description: 'Operational access', userCount: users.filter(u => u.role === 'operator').length },
+          { id: 5, name: 'viewer', description: 'Read-only access', userCount: users.filter(u => u.role === 'viewer').length }
         ]);
       }
       
@@ -334,21 +335,32 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
         console.warn('Permissions API not available:', err);
         // Fallback to basic permissions matching actual UI resources
         setPermissions([
-          { id: 1, resource: 'servers', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 1, resource: 'servers', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
           { id: 2, resource: 'servers', action: 'admin', roles: ['admin', 'superadmin'] },
-          { id: 3, resource: 'volumes', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
+          { id: 3, resource: 'volumes', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
           { id: 4, resource: 'volumes', action: 'admin', roles: ['admin', 'superadmin'] },
-          { id: 5, resource: 'snapshots', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
-          { id: 6, resource: 'snapshots', action: 'write', roles: ['admin', 'superadmin'] },
-          { id: 7, resource: 'networks', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
-          { id: 8, resource: 'networks', action: 'write', roles: ['operator', 'admin', 'superadmin'] },
+          { id: 5, resource: 'snapshots', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 6, resource: 'snapshots', action: 'write', roles: ['technical', 'admin', 'superadmin'] },
+          { id: 7, resource: 'networks', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 8, resource: 'networks', action: 'write', roles: ['operator', 'technical', 'admin', 'superadmin'] },
           { id: 9, resource: 'users', action: 'admin', roles: ['superadmin'] },
-          { id: 10, resource: 'monitoring', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
-          { id: 11, resource: 'hypervisors', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
-          { id: 12, resource: 'flavors', action: 'write', roles: ['operator', 'admin', 'superadmin'] },
-          { id: 13, resource: 'restore', action: 'read', roles: ['viewer', 'operator', 'admin', 'superadmin'] },
-          { id: 14, resource: 'restore', action: 'write', roles: ['admin', 'superadmin'] },
-          { id: 15, resource: 'restore', action: 'admin', roles: ['superadmin'] }
+          { id: 10, resource: 'monitoring', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 11, resource: 'hypervisors', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 12, resource: 'flavors', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 13, resource: 'flavors', action: 'write', roles: ['operator', 'technical', 'admin', 'superadmin'] },
+          { id: 14, resource: 'restore', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 15, resource: 'restore', action: 'write', roles: ['admin', 'superadmin'] },
+          { id: 16, resource: 'restore', action: 'admin', roles: ['superadmin'] },
+          { id: 17, resource: 'reports', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 18, resource: 'resources', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 19, resource: 'resources', action: 'write', roles: ['technical', 'admin', 'superadmin'] },
+          { id: 20, resource: 'provisioning', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 21, resource: 'provisioning', action: 'write', roles: ['technical', 'admin', 'superadmin'] },
+          { id: 22, resource: 'metering', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 23, resource: 'notifications', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 24, resource: 'backup', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 25, resource: 'dashboard', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] },
+          { id: 26, resource: 'branding', action: 'read', roles: ['viewer', 'operator', 'technical', 'admin', 'superadmin'] }
         ]);
       }
     } catch (error) {

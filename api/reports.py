@@ -2,7 +2,7 @@
 Reports API Routes
 ==================
 Comprehensive reporting system for PF9 management platform.
-Provides 15 report types with JSON preview and CSV export.
+Provides 16 report types with JSON preview and CSV export.
 
 RBAC
 ----
@@ -17,7 +17,7 @@ Reports Catalog
   9. Security Group Audit           10. Capacity Planning
   11. Backup Status                 12. Activity / Change Log
   13. Network Topology              14. Cost Allocation by Domain
-  15. Drift Detection Summary
+  15. Drift Detection Summary       16. Virtual Machine Report
 """
 
 from __future__ import annotations
@@ -208,6 +208,13 @@ REPORT_CATALOG = [
         "category": "compliance",
         "parameters": [],
     },
+    {
+        "id": "vm-report",
+        "name": "Virtual Machine Report",
+        "description": "All VMs with name, status, flavor details, host, IP addresses, attached volumes, created time, and power state.",
+        "category": "inventory",
+        "parameters": ["domain_id", "project_id"],
+    },
 ]
 
 
@@ -348,6 +355,8 @@ async def report_domain_overview(
         users = client.list_users()
         servers = client.list_servers(all_tenants=True)
         volumes = client.list_volumes(all_tenants=True)
+        networks = client.list_networks()
+        floating_ips = client.list_floating_ips()
 
         # Index by domain
         projects_by_domain: Dict[str, list] = {}
@@ -360,17 +369,25 @@ async def report_domain_overview(
             did = u.get("domain_id", "")
             users_by_domain.setdefault(did, []).append(u)
 
-        servers_by_project: Dict[str, int] = {}
+        servers_by_project: Dict[str, list] = {}
         for s in servers:
             pid = s.get("tenant_id") or s.get("project_id", "")
-            servers_by_project[pid] = servers_by_project.get(pid, 0) + 1
+            servers_by_project.setdefault(pid, []).append(s)
 
-        volumes_by_project: Dict[str, int] = {}
-        storage_by_project: Dict[str, int] = {}
+        volumes_by_project: Dict[str, list] = {}
         for v in volumes:
             pid = v.get("os-vol-tenant-attr:tenant_id") or v.get("project_id", "")
-            volumes_by_project[pid] = volumes_by_project.get(pid, 0) + 1
-            storage_by_project[pid] = storage_by_project.get(pid, 0) + (v.get("size", 0) or 0)
+            volumes_by_project.setdefault(pid, []).append(v)
+
+        networks_by_project: Dict[str, int] = {}
+        for n in networks:
+            pid = n.get("tenant_id") or n.get("project_id", "")
+            networks_by_project[pid] = networks_by_project.get(pid, 0) + 1
+
+        fips_by_project: Dict[str, int] = {}
+        for f in floating_ips:
+            pid = f.get("tenant_id") or f.get("project_id", "")
+            fips_by_project[pid] = fips_by_project.get(pid, 0) + 1
 
         rows = []
         for dom in domains:
@@ -379,9 +396,78 @@ async def report_domain_overview(
             dom_projects = projects_by_domain.get(did, [])
             dom_users = users_by_domain.get(did, [])
 
-            total_vms = sum(servers_by_project.get(p["id"], 0) for p in dom_projects)
-            total_volumes = sum(volumes_by_project.get(p["id"], 0) for p in dom_projects)
-            total_storage = sum(storage_by_project.get(p["id"], 0) for p in dom_projects)
+            # Aggregate resource usage across all projects in this domain
+            total_vms = 0
+            active_vms = 0
+            shutoff_vms = 0
+            total_volumes = 0
+            total_storage_gb = 0
+            total_networks = 0
+            total_fips = 0
+            used_vcpus = 0
+            used_ram_mb = 0
+
+            # Aggregate quotas across all projects in this domain
+            quota_vcpus = 0
+            quota_ram_mb = 0
+            quota_instances = 0
+            quota_volumes = 0
+            quota_storage_gb = 0
+            quota_networks = 0
+            quota_fips = 0
+
+            for p in dom_projects:
+                pid = p["id"]
+                proj_servers = servers_by_project.get(pid, [])
+                proj_volumes = volumes_by_project.get(pid, [])
+
+                total_vms += len(proj_servers)
+                active_vms += sum(1 for s in proj_servers if s.get("status", "").upper() == "ACTIVE")
+                shutoff_vms += sum(1 for s in proj_servers if s.get("status", "").upper() == "SHUTOFF")
+                total_volumes += len(proj_volumes)
+                total_storage_gb += sum(v.get("size", 0) or 0 for v in proj_volumes)
+                total_networks += networks_by_project.get(pid, 0)
+                total_fips += fips_by_project.get(pid, 0)
+
+                # Used compute from server flavors
+                for s in proj_servers:
+                    flv = s.get("flavor", {})
+                    if isinstance(flv, dict):
+                        used_vcpus += flv.get("vcpus", 0)
+                        used_ram_mb += flv.get("ram", 0)
+
+                # Fetch quotas
+                try:
+                    cq = client.get_compute_quotas(pid)
+                    qv = cq.get("cores", cq.get("maxTotalCores", 0))
+                    qr = cq.get("ram", cq.get("maxTotalRAMSize", 0))
+                    qi = cq.get("instances", cq.get("maxTotalInstances", 0))
+                    if qv > 0: quota_vcpus += qv
+                    if qr > 0: quota_ram_mb += qr
+                    if qi > 0: quota_instances += qi
+                except Exception:
+                    pass
+                try:
+                    sq = client.get_storage_quotas(pid)
+                    qvol = sq.get("volumes", 0)
+                    qgb = sq.get("gigabytes", 0)
+                    if qvol > 0: quota_volumes += qvol
+                    if qgb > 0: quota_storage_gb += qgb
+                except Exception:
+                    pass
+                try:
+                    nq = client.get_network_quotas(pid)
+                    qn = nq.get("network", 0)
+                    qf = nq.get("floatingip", 0)
+                    if qn > 0: quota_networks += qn
+                    if qf > 0: quota_fips += qf
+                except Exception:
+                    pass
+
+            def pct(used, quota):
+                if not quota or quota < 0:
+                    return 0
+                return round(used / quota * 100, 1)
 
             tenant_names = ", ".join(p.get("name", "") for p in dom_projects)
 
@@ -394,8 +480,24 @@ async def report_domain_overview(
                 "Tenant Names": tenant_names,
                 "User Count": len(dom_users),
                 "Total VMs": total_vms,
+                "Active VMs": active_vms,
+                "Shutoff VMs": shutoff_vms,
                 "Total Volumes": total_volumes,
-                "Total Storage (GB)": total_storage,
+                "Total Storage (GB)": total_storage_gb,
+                "Total Networks": total_networks,
+                "Total Floating IPs": total_fips,
+                "Quota vCPUs": quota_vcpus,
+                "Used vCPUs": used_vcpus,
+                "vCPU Util %": pct(used_vcpus, quota_vcpus),
+                "Quota RAM (MB)": quota_ram_mb,
+                "Used RAM (MB)": used_ram_mb,
+                "RAM Util %": pct(used_ram_mb, quota_ram_mb),
+                "Quota Instances": quota_instances,
+                "Instance Util %": pct(total_vms, quota_instances),
+                "Quota Volumes": quota_volumes,
+                "Volume Util %": pct(total_volumes, quota_volumes),
+                "Quota Storage (GB)": quota_storage_gb,
+                "Storage Util %": pct(total_storage_gb, quota_storage_gb),
             })
 
         return _maybe_csv(rows, format, "domain_overview")
@@ -508,20 +610,45 @@ async def report_flavor_usage(
         servers = client.list_servers(all_tenants=True)
         projects = {p["id"]: p.get("name", "") for p in client.list_projects()}
 
+        # Fetch all flavors to get proper name/specs (Nova server flavor embed is often incomplete)
+        all_flavors = client.list_flavors()
+        flavor_details: Dict[str, Dict[str, Any]] = {}
+        for f in all_flavors:
+            fid = f.get("id", "")
+            flavor_details[fid] = {
+                "name": f.get("name", fid),
+                "vcpus": f.get("vcpus", 0),
+                "ram": f.get("ram", 0),
+                "disk": f.get("disk", 0),
+            }
+
         # Build flavor → usage map
         flavor_map: Dict[str, Dict[str, Any]] = {}
         for s in servers:
             flv = s.get("flavor", {})
             if isinstance(flv, dict):
-                fname = flv.get("original_name") or flv.get("id", "unknown")
                 fid = flv.get("id", "")
-                vcpus = flv.get("vcpus", 0)
-                ram = flv.get("ram", 0)
-                disk = flv.get("disk", 0)
+                # Prefer the full flavor catalog info over the embedded server data
+                if fid and fid in flavor_details:
+                    fname = flavor_details[fid]["name"]
+                    vcpus = flavor_details[fid]["vcpus"]
+                    ram = flavor_details[fid]["ram"]
+                    disk = flavor_details[fid]["disk"]
+                else:
+                    fname = flv.get("original_name") or flv.get("id", "unknown")
+                    vcpus = flv.get("vcpus", 0)
+                    ram = flv.get("ram", 0)
+                    disk = flv.get("disk", 0)
             else:
-                fname = str(flv)
-                fid = ""
-                vcpus = ram = disk = 0
+                fid = str(flv)
+                if fid in flavor_details:
+                    fname = flavor_details[fid]["name"]
+                    vcpus = flavor_details[fid]["vcpus"]
+                    ram = flavor_details[fid]["ram"]
+                    disk = flavor_details[fid]["disk"]
+                else:
+                    fname = str(flv)
+                    vcpus = ram = disk = 0
 
             if fname not in flavor_map:
                 flavor_map[fname] = {
@@ -1344,4 +1471,188 @@ async def report_drift_summary(
         raise
     except Exception as e:
         logger.error(f"Report drift-summary failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# 16. Virtual Machine Report
+# ---------------------------------------------------------------------------
+
+@router.get("/vm-report")
+async def report_vm_report(
+    domain_id: Optional[str] = Query(None, description="Filter by domain ID"),
+    project_id: Optional[str] = Query(None, description="Filter by project ID"),
+    format: str = Query("json", description="json or csv"),
+    user: User = Depends(require_permission("reports", "read")),
+):
+    """Detailed report of all VMs with flavor, host, IPs, volumes, quota context, and status."""
+    try:
+        client = get_client()
+        projects = client.list_projects(domain_id=domain_id)
+        domains = {d["id"]: d["name"] for d in client.list_domains()}
+        project_map = {p["id"]: p for p in projects}
+
+        if project_id:
+            projects = [p for p in projects if p["id"] == project_id]
+            project_map = {p["id"]: p for p in projects}
+
+        valid_pids = set(project_map.keys())
+
+        # Fetch all data
+        servers = client.list_servers(all_tenants=True)
+        all_flavors = client.list_flavors()
+        volumes = client.list_volumes(all_tenants=True)
+
+        # Build lookup maps
+        flavor_details = {}
+        for f in all_flavors:
+            fid = f.get("id", "")
+            flavor_details[fid] = {
+                "name": f.get("name", fid),
+                "vcpus": f.get("vcpus", 0),
+                "ram_mb": f.get("ram", 0),
+                "disk_gb": f.get("disk", 0),
+            }
+
+        # Index volumes by server attachment
+        volume_by_server: Dict[str, list] = {}
+        for v in volumes:
+            for att in v.get("attachments", []):
+                sid = att.get("server_id", "")
+                if sid:
+                    volume_by_server.setdefault(sid, []).append({
+                        "name": v.get("name", v.get("id", "")),
+                        "size_gb": v.get("size", 0),
+                        "status": v.get("status", ""),
+                    })
+
+        # Pre-fetch quotas per project for allocation context
+        project_quotas: Dict[str, dict] = {}
+        project_usage: Dict[str, dict] = {}
+        for pid in valid_pids:
+            try:
+                cq = client.get_compute_quotas(pid)
+                sq = client.get_storage_quotas(pid)
+                project_quotas[pid] = {
+                    "vcpu_quota": cq.get("quota", {}).get("cores", cq.get("cores", -1)),
+                    "ram_quota_mb": cq.get("quota", {}).get("ram", cq.get("ram", -1)),
+                    "instances_quota": cq.get("quota", {}).get("instances", cq.get("instances", -1)),
+                    "storage_quota_gb": sq.get("quota", {}).get("gigabytes", sq.get("gigabytes", -1)),
+                }
+            except Exception:
+                project_quotas[pid] = {}
+
+        # Aggregate usage per project from servers + volumes
+        for s in servers:
+            pid = s.get("tenant_id") or s.get("project_id", "")
+            if pid not in valid_pids:
+                continue
+            if pid not in project_usage:
+                project_usage[pid] = {"vcpus_used": 0, "ram_used_mb": 0, "instances": 0, "storage_used_gb": 0}
+            fl_id = ""
+            flav = s.get("flavor", {})
+            if isinstance(flav, dict):
+                fl_id = flav.get("id", "")
+            fl = flavor_details.get(fl_id, {})
+            project_usage[pid]["vcpus_used"] += fl.get("vcpus", 0)
+            project_usage[pid]["ram_used_mb"] += fl.get("ram_mb", 0)
+            project_usage[pid]["instances"] += 1
+
+        for v in volumes:
+            pid = v.get("os-vol-tenant-attr:tenant_id") or v.get("project_id", "")
+            if pid not in valid_pids:
+                continue
+            if pid not in project_usage:
+                project_usage[pid] = {"vcpus_used": 0, "ram_used_mb": 0, "instances": 0, "storage_used_gb": 0}
+            project_usage[pid]["storage_used_gb"] += v.get("size", 0) or 0
+
+        rows = []
+        for s in servers:
+            pid = s.get("tenant_id") or s.get("project_id", "")
+            if valid_pids and pid not in valid_pids:
+                continue
+
+            proj = project_map.get(pid, {})
+            did = proj.get("domain_id", "")
+            sid = s.get("id", "")
+
+            # Flavor info
+            flavor = s.get("flavor", {})
+            fid = flavor.get("id", "") if isinstance(flavor, dict) else ""
+            fl = flavor_details.get(fid, {})
+            flavor_name = fl.get("name", flavor.get("original_name", fid) if isinstance(flavor, dict) else fid)
+            vcpus = fl.get("vcpus", flavor.get("vcpus", 0) if isinstance(flavor, dict) else 0)
+            ram_mb = fl.get("ram_mb", flavor.get("ram", 0) if isinstance(flavor, dict) else 0)
+            disk_gb = fl.get("disk_gb", flavor.get("disk", 0) if isinstance(flavor, dict) else 0)
+
+            # Extract IP addresses
+            addresses = s.get("addresses", {})
+            fixed_ips = []
+            floating_ips = []
+            for net_name, addrs in addresses.items():
+                for addr in addrs:
+                    ip = addr.get("addr", "")
+                    atype = addr.get("OS-EXT-IPS:type", "fixed")
+                    if atype == "floating":
+                        floating_ips.append(ip)
+                    else:
+                        fixed_ips.append(ip)
+
+            # Attached volumes summary + total storage
+            vm_volumes = volume_by_server.get(sid, [])
+            vol_summary = "; ".join(
+                f"{v['name']} ({v['size_gb']}GB)" for v in vm_volumes
+            ) if vm_volumes else "None"
+            vol_storage_gb = sum(v.get("size_gb", 0) for v in vm_volumes)
+
+            # Power state mapping
+            power_state_map = {0: "NO_STATE", 1: "RUNNING", 3: "PAUSED", 4: "SHUTDOWN", 6: "CRASHED", 7: "SUSPENDED"}
+            ps = s.get("OS-EXT-STS:power_state", 0)
+            power_label = power_state_map.get(ps, str(ps))
+
+            # Project quota context
+            pq = project_quotas.get(pid, {})
+            pu = project_usage.get(pid, {})
+
+            rows.append({
+                "VM Name": s.get("name", ""),
+                "VM ID": sid,
+                "Status": s.get("status", ""),
+                "Power State": power_label,
+                "Flavor": flavor_name,
+                "vCPUs": vcpus,
+                "RAM (MB)": ram_mb,
+                "Ephemeral Disk (GB)": disk_gb,
+                "Volume Storage (GB)": vol_storage_gb,
+                "Total Storage (GB)": disk_gb + vol_storage_gb,
+                "Hypervisor": s.get("OS-EXT-SRV-ATTR:hypervisor_hostname", ""),
+                "Host": s.get("OS-EXT-SRV-ATTR:host", ""),
+                "Fixed IPs": ", ".join(fixed_ips) if fixed_ips else "",
+                "Floating IPs": ", ".join(floating_ips) if floating_ips else "",
+                "Attached Volumes": vol_summary,
+                "Volume Count": len(vm_volumes),
+                "Tenant": proj.get("name", pid),
+                "Tenant ID": pid,
+                "Domain": domains.get(did, did),
+                "Domain ID": did,
+                "Project vCPU Quota": pq.get("vcpu_quota", ""),
+                "Project vCPU Used": pu.get("vcpus_used", ""),
+                "Project RAM Quota (MB)": pq.get("ram_quota_mb", ""),
+                "Project RAM Used (MB)": pu.get("ram_used_mb", ""),
+                "Project Storage Quota (GB)": pq.get("storage_quota_gb", ""),
+                "Project Storage Used (GB)": pu.get("storage_used_gb", ""),
+                "Project Instance Quota": pq.get("instances_quota", ""),
+                "Project Instance Count": pu.get("instances", ""),
+                "Created": s.get("created", ""),
+                "Updated": s.get("updated", ""),
+                "Availability Zone": s.get("OS-EXT-AZ:availability_zone", ""),
+                "Key Pair": s.get("key_name", ""),
+                "Image ID": s.get("image", {}).get("id", "") if isinstance(s.get("image"), dict) else s.get("image", ""),
+            })
+
+        return _maybe_csv(rows, format, "vm_report")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Report vm-report failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

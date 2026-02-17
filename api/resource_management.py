@@ -79,6 +79,25 @@ def _get_ip(request: Request) -> str:
     return request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
 
 
+def _notify(event_type: str, summary: str, severity: str = "info",
+            resource_id: str = "", resource_name: str = "",
+            details: dict = None, actor: str = ""):
+    """Fire a notification event (delegates to provisioning_routes helper)."""
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type=event_type,
+            summary=summary,
+            severity=severity,
+            resource_id=resource_id,
+            resource_name=resource_name,
+            details=details,
+            actor=actor,
+        )
+    except Exception as e:
+        logger.error(f"Resource notification failed ({event_type}): {e}")
+
+
 # ---------------------------------------------------------------------------
 # Pydantic Models
 # ---------------------------------------------------------------------------
@@ -282,6 +301,8 @@ async def add_user(
             details={"role": body.role, "project_id": body.project_id},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_created", f"User '{body.username}' created with role '{body.role}'",
+                resource_id=user_id, resource_name=body.username, actor=actor)
 
         return {"detail": f"User '{body.username}' created and assigned role '{body.role}'", "user_id": user_id}
     except HTTPException:
@@ -336,6 +357,8 @@ async def remove_user(
             ip_address=_get_ip(request) if request else "unknown",
             result="success",
         )
+        _notify("resource_deleted", f"User '{username}' deleted",
+                resource_id=user_id, resource_name=username, actor=actor)
 
         return {"detail": f"User '{username}' deleted"}
     except HTTPException:
@@ -369,6 +392,8 @@ async def assign_role(
             details={"role": body.role_name, "project_id": body.project_id},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_updated", f"Role '{body.role_name}' assigned to user",
+                resource_id=body.user_id, actor=actor)
 
         return {"detail": f"Role '{body.role_name}' assigned to user on project"}
     except HTTPException:
@@ -453,6 +478,8 @@ async def create_flavor(
             details={"vcpus": body.vcpus, "ram_mb": body.ram_mb, "disk_gb": body.disk_gb},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_created", f"Flavor '{body.name}' created ({body.vcpus} vCPUs, {body.ram_mb}MB RAM)",
+                resource_id=flavor_id, resource_name=body.name, actor=actor)
 
         return {"detail": f"Flavor '{body.name}' created", "flavor": result.get("flavor", result)}
     except HTTPException:
@@ -493,6 +520,8 @@ async def delete_flavor(
             ip_address=_get_ip(request) if request else "unknown",
             result="success",
         )
+        _notify("resource_deleted", f"Flavor '{flavor_id}' deleted",
+                resource_id=flavor_id, actor=actor)
 
         return {"detail": "Flavor deleted"}
     except HTTPException:
@@ -603,6 +632,8 @@ async def create_network(
             details={"project_id": body.project_id, "external": body.external, "shared": body.shared},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_created", f"Network '{body.name}' created",
+                resource_id=net_id, resource_name=body.name, actor=actor)
 
         return {"detail": f"Network '{body.name}' created", "network": net_data, "subnet": subnet_data}
     except HTTPException:
@@ -631,6 +662,8 @@ async def delete_network(
             ip_address=_get_ip(request) if request else "unknown",
             result="success",
         )
+        _notify("resource_deleted", f"Network '{network_id}' deleted",
+                resource_id=network_id, actor=actor)
 
         return {"detail": "Network deleted"}
     except HTTPException:
@@ -700,6 +733,8 @@ async def create_router(
             details={"project_id": body.project_id, "external_network_id": body.external_network_id},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_created", f"Router '{body.name}' created",
+                resource_id=rtr_id, resource_name=body.name, actor=actor)
 
         return {"detail": f"Router '{body.name}' created", "router": rtr_data}
     except HTTPException:
@@ -728,6 +763,8 @@ async def delete_router(
             ip_address=_get_ip(request) if request else "unknown",
             result="success",
         )
+        _notify("resource_deleted", f"Router '{router_id}' deleted",
+                resource_id=router_id, actor=actor)
 
         return {"detail": "Router deleted"}
     except HTTPException:
@@ -760,6 +797,8 @@ async def add_router_interface(
             details={"subnet_id": body.subnet_id},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_updated", f"Interface added to router '{router_id}'",
+                resource_id=router_id, actor=actor)
 
         return {"detail": "Interface added to router", "result": r.json()}
     except HTTPException:
@@ -792,6 +831,8 @@ async def remove_router_interface(
             details={"subnet_id": body.subnet_id},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_updated", f"Interface removed from router '{router_id}'",
+                resource_id=router_id, actor=actor)
 
         return {"detail": "Interface removed from router", "result": r.json()}
     except HTTPException:
@@ -870,6 +911,8 @@ async def allocate_floating_ip(
             details={"project_id": body.project_id, "network_id": body.floating_network_id},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_created", f"Floating IP {fip.get('floating_ip_address', '')} allocated",
+                resource_id=fip.get("id", ""), resource_name=fip.get("floating_ip_address", ""), actor=actor)
 
         return {"detail": f"Floating IP {fip.get('floating_ip_address', '')} allocated", "floating_ip": fip}
     except HTTPException:
@@ -898,6 +941,8 @@ async def release_floating_ip(
             ip_address=_get_ip(request) if request else "unknown",
             result="success",
         )
+        _notify("resource_deleted", f"Floating IP '{fip_id}' released",
+                resource_id=fip_id, actor=actor)
 
         return {"detail": "Floating IP released"}
     except HTTPException:
@@ -983,6 +1028,8 @@ async def create_volume(
             details={"size_gb": body.size_gb, "project_id": body.project_id},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_created", f"Volume '{body.name}' created ({body.size_gb} GB)",
+                resource_id=vol.get("id", ""), resource_name=body.name, actor=actor)
 
         return {"detail": f"Volume '{body.name}' created ({body.size_gb} GB)", "volume": vol}
     except HTTPException:
@@ -1025,6 +1072,8 @@ async def delete_volume(
             ip_address=_get_ip(request) if request else "unknown",
             result="success",
         )
+        _notify("resource_deleted", f"Volume '{target.get('name', volume_id) if target else volume_id}' deleted",
+                resource_id=volume_id, resource_name=target.get("name", "") if target else "", actor=actor)
 
         return {"detail": "Volume deleted"}
     except HTTPException:
@@ -1094,6 +1143,8 @@ async def create_security_group(
             details={"project_id": body.project_id},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_created", f"Security group '{body.name}' created",
+                resource_id=sg_data.get("id", ""), resource_name=body.name, actor=actor)
 
         return {"detail": f"Security group '{body.name}' created", "security_group": sg_data}
     except HTTPException:
@@ -1122,6 +1173,8 @@ async def delete_security_group(
             ip_address=_get_ip(request) if request else "unknown",
             result="success",
         )
+        _notify("resource_deleted", f"Security group '{sg_id}' deleted",
+                resource_id=sg_id, actor=actor)
 
         return {"detail": "Security group deleted"}
     except HTTPException:
@@ -1162,6 +1215,8 @@ async def create_sg_rule(
                      "port_range": f"{body.port_range_min}-{body.port_range_max}"},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_created", f"Security group rule created ({body.direction} {body.protocol})",
+                resource_id=body.security_group_id, actor=actor)
 
         return {"detail": "Security group rule created", "rule": rule_data}
     except HTTPException:
@@ -1190,6 +1245,8 @@ async def delete_sg_rule(
             ip_address=_get_ip(request) if request else "unknown",
             result="success",
         )
+        _notify("resource_deleted", f"Security group rule '{rule_id}' deleted",
+                resource_id=rule_id, actor=actor)
 
         return {"detail": "Security group rule deleted"}
     except HTTPException:
@@ -1336,6 +1393,8 @@ async def update_quotas(
             details={"compute": compute_updates, "network": network_updates, "storage": storage_updates},
             ip_address=_get_ip(request), result="success",
         )
+        _notify("resource_updated", f"Quotas updated for project '{body.project_id}'",
+                resource_id=body.project_id, actor=actor)
 
         return {"detail": "Quotas updated", "results": results}
     except HTTPException:
