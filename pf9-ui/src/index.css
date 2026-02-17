@@ -61,6 +61,40 @@
   --secondary-color: #E0E0E0;
   --secondary-dark: #BDBDBD;
 
+  /* Component-level (--pf9-*) aliases used by inline styles */
+  --pf9-text: #2d3748;
+  --pf9-text-secondary: #718096;
+  --pf9-text-muted: #a0aec0;
+  --pf9-border: #e2e8f0;
+  --pf9-bg-input: #ffffff;
+  --pf9-bg-card: #f7fafc;
+  --pf9-bg-muted: #edf2f7;
+  --pf9-bg-header: #edf2f7;
+  --pf9-bg-selected: #ebf8ff;
+  --pf9-heading: #1a365d;
+  --pf9-success: #48bb78;
+  --pf9-warning-bg: #fffaf0;
+  --pf9-warning-border: #ed8936;
+  --pf9-warning-text: #c05621;
+  --pf9-info-bg: #ebf8ff;
+  --pf9-info-border: #4299e1;
+  --pf9-info-text: #2b6cb0;
+  --pf9-danger-bg: #fff5f5;
+  --pf9-danger-border: #fed7d7;
+  --pf9-danger-text: #c53030;
+  --pf9-safe-bg: #f0fff4;
+  --pf9-safe-border: #c6f6d5;
+  --pf9-safe-text: #276749;
+  --pf9-badge-enabled-bg: #c6f6d5;
+  --pf9-badge-enabled-text: #276749;
+  --pf9-badge-disabled-bg: #fed7d7;
+  --pf9-badge-disabled-text: #9b2c2c;
+  --pf9-id-color: #cbd5e0;
+  --pf9-toggle-active: #4299e1;
+  --pf9-toggle-inactive: #cbd5e0;
+  --pf9-accent-orange: #c05621;
+  --pf9-tooltip-bg: #2d3748;
+
   /* Theme transition */
   transition: background-color 0.3s ease, color 0.3s ease;
 }
@@ -118,6 +152,40 @@
   --primary-dark: #5C6BC0;
   --secondary-color: #37474F;
   --secondary-dark: #455A64;
+
+  /* Component-level (--pf9-*) aliases – dark overrides */
+  --pf9-text: #E2E8F0;
+  --pf9-text-secondary: #A0B4C0;
+  --pf9-text-muted: #8899A6;
+  --pf9-border: #37474F;
+  --pf9-bg-input: #1A1D23;
+  --pf9-bg-card: #1E2330;
+  --pf9-bg-muted: #1F2937;
+  --pf9-bg-header: #1F2937;
+  --pf9-bg-selected: #263040;
+  --pf9-heading: #90CAF9;
+  --pf9-success: #66BB6A;
+  --pf9-warning-bg: #332B1A;
+  --pf9-warning-border: #B8860B;
+  --pf9-warning-text: #FFB74D;
+  --pf9-info-bg: #1A2636;
+  --pf9-info-border: #42A5F5;
+  --pf9-info-text: #90CAF9;
+  --pf9-danger-bg: #2D1A1A;
+  --pf9-danger-border: #7F3333;
+  --pf9-danger-text: #EF9A9A;
+  --pf9-safe-bg: #1A2D1A;
+  --pf9-safe-border: #2E7D32;
+  --pf9-safe-text: #A5D6A7;
+  --pf9-badge-enabled-bg: #1B3A2A;
+  --pf9-badge-enabled-text: #81C784;
+  --pf9-badge-disabled-bg: #3A1B1B;
+  --pf9-badge-disabled-text: #EF9A9A;
+  --pf9-id-color: #607D8B;
+  --pf9-toggle-active: #42A5F5;
+  --pf9-toggle-inactive: #546E7A;
+  --pf9-accent-orange: #FFB74D;
+  --pf9-tooltip-bg: #37474F;
 }
 
 /* Global theme application */
