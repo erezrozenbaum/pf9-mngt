@@ -20,6 +20,7 @@ import DriftDetection from "./components/DriftDetection";
 import TenantHealthView from "./components/TenantHealthView";
 import NotificationSettings from "./components/NotificationSettings";
 import BackupManagement from "./components/BackupManagement";
+import MeteringTab from "./components/MeteringTab";
 import MFASettings from "./components/MFASettings";
 
 // ---------------------------------------------------------------------------
@@ -399,7 +400,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -444,6 +445,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "tenant_health",        label: "🏥 Tenant Health" },
   { id: "notifications",        label: "🔔 Notifications" },
   { id: "backup",               label: "💾 Backup",               adminOnly: true, actionStyle: true },
+  { id: "metering",             label: "📊 Metering",             adminOnly: true, actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2852,6 +2854,8 @@ const App: React.FC = () => {
             ? "Email notification preferences · delivery history · SMTP settings"
             : activeTab === "backup"
             ? "Database backup management · scheduling · restore"
+            : activeTab === "metering"
+            ? "Operational metering · resource usage · efficiency · chargeback export"
             : "Platform9 management"}
       </section>
 
@@ -4967,6 +4971,13 @@ const App: React.FC = () => {
           {/* Backup Management */}
           {activeTab === "backup" && (
             <BackupManagement
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+            />
+          )}
+
+          {/* Operational Metering */}
+          {activeTab === "metering" && (
+            <MeteringTab
               isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
             />
           )}

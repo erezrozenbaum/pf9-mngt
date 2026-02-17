@@ -1753,3 +1753,405 @@ Response:
   }
 }
 ```
+
+---
+
+## Metering Endpoints
+
+All metering endpoints require `metering:read` permission (admin/superadmin). Config update requires `metering:write` (superadmin only).
+
+### Get Metering Configuration
+**GET** `/api/metering/config`  
+*Requires: `metering:read`*
+
+Response:
+```json
+{
+  "enabled": true,
+  "collection_interval_min": 15,
+  "retention_days": 90,
+  "cost_per_vcpu_hour": 0.05,
+  "cost_per_gb_ram_hour": 0.01,
+  "cost_per_gb_storage_month": 0.10,
+  "cost_per_snapshot_gb_month": 0.05,
+  "cost_per_api_call": 0.0001,
+  "cost_currency": "USD",
+  "updated_at": "2026-02-20T10:00:00Z"
+}
+```
+
+### Update Metering Configuration
+**PUT** `/api/metering/config`  
+*Requires: `metering:write`*
+
+Request (all fields optional):
+```json
+{
+  "enabled": true,
+  "collection_interval_min": 30,
+  "retention_days": 120,
+  "cost_per_vcpu_hour": 0.08,
+  "cost_per_gb_ram_hour": 0.02,
+  "cost_per_gb_storage_month": 0.15,
+  "cost_per_snapshot_gb_month": 0.08,
+  "cost_per_api_call": 0.0002,
+  "cost_currency": "EUR"
+}
+```
+
+Response: Same as GET config.
+
+### Metering Overview
+**GET** `/api/metering/overview`  
+*Requires: `metering:read`*
+
+Query Parameters:
+- `project` (optional) - Filter by project name
+- `domain` (optional) - Filter by domain
+
+Response:
+```json
+{
+  "total_vms_metered": 145,
+  "resources": {
+    "total_vcpus": 580,
+    "total_ram_mb": 1187840,
+    "total_disk_gb": 14500,
+    "avg_cpu_usage": 42.5,
+    "avg_ram_usage": 65.3,
+    "avg_disk_usage": 55.8
+  },
+  "snapshots": {
+    "total_snapshots": 267,
+    "total_snapshot_gb": 1840,
+    "compliant_count": 245,
+    "non_compliant_count": 22
+  },
+  "restores": {
+    "total_restores": 12,
+    "successful": 10,
+    "failed": 2,
+    "avg_duration_sec": 180.5
+  },
+  "api_usage": {
+    "total_api_calls": 15420,
+    "total_api_errors": 23,
+    "avg_api_latency_ms": 45.2
+  },
+  "efficiency": {
+    "avg_efficiency": 72.5,
+    "excellent_count": 25,
+    "good_count": 60,
+    "fair_count": 35,
+    "poor_count": 15,
+    "idle_count": 10
+  }
+}
+```
+
+### Resource Metering
+**GET** `/api/metering/resources`  
+*Requires: `metering:read`*
+
+Query Parameters:
+- `project` (optional) - Filter by project name
+- `domain` (optional) - Filter by domain
+- `vm_id` (optional) - Filter by VM ID
+- `hours` (default: 24, max: 2160) - Lookback window
+- `limit` (default: 500, max: 10000) - Result limit
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "collected_at": "2026-02-20T10:15:00Z",
+      "vm_id": "vm-abc123",
+      "vm_name": "web-server-01",
+      "project_name": "Production",
+      "domain": "Default",
+      "host": "compute-01",
+      "flavor": "m1.large",
+      "vcpus_allocated": 4,
+      "ram_allocated_mb": 8192,
+      "disk_allocated_gb": 80,
+      "cpu_usage_percent": 45.2,
+      "ram_usage_mb": 6144.0,
+      "ram_usage_percent": 75.0,
+      "disk_used_gb": 52.3,
+      "disk_usage_percent": 65.4,
+      "network_rx_bytes": 1048576,
+      "network_tx_bytes": 524288,
+      "status": "ACTIVE",
+      "power_state": "running"
+    }
+  ],
+  "count": 1
+}
+```
+
+### Snapshot Metering
+**GET** `/api/metering/snapshots`  
+*Requires: `metering:read`*
+
+Query Parameters:
+- `project` (optional) - Filter by project name
+- `domain` (optional) - Filter by domain
+- `hours` (default: 24, max: 2160) - Lookback window
+- `limit` (default: 500, max: 10000) - Result limit
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "collected_at": "2026-02-20T10:15:00Z",
+      "snapshot_id": "snap-xyz789",
+      "snapshot_name": "daily-backup-vol-01",
+      "volume_id": "vol-456",
+      "project_name": "Production",
+      "domain": "Default",
+      "size_gb": 50.0,
+      "status": "available",
+      "policy": "daily_5",
+      "is_compliant": true,
+      "created_at": "2026-02-20T02:00:00Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+### Restore Metering
+**GET** `/api/metering/restores`  
+*Requires: `metering:read`*
+
+Query Parameters:
+- `project` (optional) - Filter by project name
+- `domain` (optional) - Filter by domain
+- `hours` (default: 168, max: 2160) - Lookback window
+- `limit` (default: 200, max: 5000) - Result limit
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "collected_at": "2026-02-20T10:15:00Z",
+      "restore_job_id": "job-abc123",
+      "vm_id": "vm-old-456",
+      "vm_name": "database-master",
+      "project_name": "Production",
+      "domain": "Default",
+      "snapshot_id": "snap-xyz789",
+      "mode": "NEW",
+      "status": "completed",
+      "duration_seconds": 145,
+      "initiated_by": "admin",
+      "data_transferred_gb": 50.0
+    }
+  ],
+  "count": 1
+}
+```
+
+### API Usage Metering
+**GET** `/api/metering/api-usage`  
+*Requires: `metering:read`*
+
+Query Parameters:
+- `endpoint` (optional) - Filter by endpoint path (partial match)
+- `hours` (default: 24, max: 2160) - Lookback window
+- `limit` (default: 500, max: 10000) - Result limit
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "collected_at": "2026-02-20T10:15:00Z",
+      "endpoint": "/servers",
+      "method": "GET",
+      "total_calls": 250,
+      "error_count": 2,
+      "avg_latency_ms": 45.2,
+      "p95_latency_ms": 120.0,
+      "p99_latency_ms": 350.0
+    }
+  ],
+  "count": 1
+}
+```
+
+### Efficiency Scores
+**GET** `/api/metering/efficiency`  
+*Requires: `metering:read`*
+
+Query Parameters:
+- `project` (optional) - Filter by project name
+- `domain` (optional) - Filter by domain
+- `classification` (optional) - Filter: `excellent`, `good`, `fair`, `poor`, `idle`
+- `hours` (default: 24, max: 2160) - Lookback window
+- `limit` (default: 500, max: 10000) - Result limit
+
+Response:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "collected_at": "2026-02-20T10:15:00Z",
+      "vm_id": "vm-abc123",
+      "vm_name": "web-server-01",
+      "project_name": "Production",
+      "domain": "Default",
+      "cpu_score": 75.0,
+      "ram_score": 80.0,
+      "disk_score": 65.0,
+      "overall_score": 73.3,
+      "classification": "good",
+      "recommendation": "Consider right-sizing disk allocation"
+    }
+  ],
+  "count": 1
+}
+```
+
+### CSV Export Endpoints
+
+All export endpoints return `text/csv` responses with `Content-Disposition` header.
+
+| Endpoint | Description | Parameters |
+|----------|-------------|------------|
+| `GET /api/metering/export/resources` | Resource metering CSV | `project`, `domain`, `hours` |
+| `GET /api/metering/export/snapshots` | Snapshot metering CSV | `project`, `domain`, `hours` |
+| `GET /api/metering/export/restores` | Restore metering CSV | `project`, `domain`, `hours` |
+| `GET /api/metering/export/api-usage` | API usage CSV | `hours` |
+| `GET /api/metering/export/efficiency` | Efficiency scores CSV | `project`, `domain`, `hours` |
+| `GET /api/metering/export/chargeback` | Chargeback report CSV | `project`, `domain`, `hours` |
+
+*All require: `metering:read`*
+
+**Chargeback Report** aggregates per-tenant resource usage and applies cost rates from both `metering_pricing` (multi-category: flavor, storage, snapshot, restore, volume, network) and fallback rates from `metering_config`. Output includes per-category cost columns and a TOTAL cost per tenant.
+
+---
+
+## Metering Pricing Endpoints
+
+All pricing endpoints require `metering:read` for GET and `metering:write` for POST/PUT/DELETE.
+
+### List All Pricing
+**GET** `/api/metering/pricing`  
+*Requires: `metering:read`*
+
+Response:
+```json
+[
+  {
+    "id": 1,
+    "category": "flavor",
+    "item_name": "m1.large",
+    "unit": "per hour",
+    "cost_per_hour": 0.12,
+    "cost_per_month": 87.60,
+    "currency": "USD",
+    "notes": null,
+    "vcpus": 4,
+    "ram_gb": 8.0,
+    "disk_gb": 80.0,
+    "auto_populated": false,
+    "created_at": "2026-02-17T10:00:00Z",
+    "updated_at": "2026-02-17T10:00:00Z"
+  },
+  {
+    "id": 2,
+    "category": "storage_gb",
+    "item_name": "Storage (per GB)",
+    "unit": "per GB/month",
+    "cost_per_hour": 0,
+    "cost_per_month": 0.10,
+    "currency": "USD",
+    "notes": "Block storage",
+    "vcpus": null,
+    "ram_gb": null,
+    "disk_gb": null,
+    "auto_populated": false,
+    "created_at": "2026-02-17T10:00:00Z",
+    "updated_at": "2026-02-17T10:00:00Z"
+  }
+]
+```
+
+Categories: `flavor`, `storage_gb`, `snapshot_gb`, `restore`, `volume`, `network`, `custom`
+
+### Create Pricing Entry
+**POST** `/api/metering/pricing`  
+*Requires: `metering:write`*
+
+Request:
+```json
+{
+  "category": "storage_gb",
+  "item_name": "Storage (per GB)",
+  "unit": "per GB/month",
+  "cost_per_hour": 0,
+  "cost_per_month": 0.10,
+  "currency": "USD",
+  "notes": "Block storage pricing"
+}
+```
+
+### Update Pricing Entry
+**PUT** `/api/metering/pricing/{id}`  
+*Requires: `metering:write`*
+
+Request (all fields optional):
+```json
+{
+  "cost_per_hour": 0.15,
+  "cost_per_month": 109.50
+}
+```
+
+### Delete Pricing Entry
+**DELETE** `/api/metering/pricing/{id}`  
+*Requires: `metering:write`*
+
+### Sync Flavors from System
+**POST** `/api/metering/pricing/sync-flavors`  
+*Requires: `metering:write`*
+
+Imports all flavors from the OpenStack flavors table into pricing. Skips flavors that already have a pricing entry.
+
+Response:
+```json
+{
+  "detail": "Synced 38 new flavors (0 already existed)",
+  "inserted": 38
+}
+```
+
+### Get Filter Data
+**GET** `/api/metering/filters`  
+*Requires: `metering:read`*
+
+Returns dropdown filter options populated from actual data.
+
+Response:
+```json
+{
+  "projects": ["ISP2", "Oded-Test-1", "ORG1", "service"],
+  "domains": ["ccc.co.il", "org1.com"],
+  "all_tenants": [
+    {"project": "ISP2", "domain": "ISP2"},
+    {"project": "ORG1", "domain": "ORG1"}
+  ],
+  "flavors": [
+    {"name": "m1.large", "vcpus": 4, "ram_mb": 8192, "disk_gb": 80}
+  ]
+}
+```
