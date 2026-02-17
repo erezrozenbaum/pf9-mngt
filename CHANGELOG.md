@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-02-16
+
+### Added
+- **LDAP Backup & Restore**: Extend the backup system to include full LDAP directory backups alongside database backups
+  - **Database**: New columns in `backup_config` — `ldap_backup_enabled`, `ldap_retention_count`, `ldap_retention_days`, `last_ldap_backup_at`. New `backup_target` column in `backup_history` (`database` | `ldap`). Migration: `db/migrate_ldap_backup_mfa.sql`
+  - **Backup Worker**: Generates LDAP backups via `ldapsearch` → gzip LDIF export. Restores via `gunzip | ldapadd -c`. Independent scheduling and retention enforcement for database and LDAP targets. Container Dockerfile now installs `ldap-utils`
+  - **Docker**: `backup_worker` service now receives LDAP credentials (`LDAP_HOST`, `LDAP_PORT`, `LDAP_BASE_DN`, `LDAP_ADMIN_DN`, `LDAP_ADMIN_PASSWORD`) and depends on `ldap` service
+  - **API**: `POST /api/backup/run` accepts `target` query param (`database` | `ldap`). `GET /api/backup/history` accepts `target_filter` param. Restore preserves `backup_target` from source backup
+  - **UI**: BackupManagement tab now shows separate "Database Backup" / "LDAP Backup" trigger buttons, target filter on history, "Target" column in history table, and LDAP-specific settings card (enable toggle, retention count/days)
+
+- **Multi-Factor Authentication (MFA)**: TOTP-based two-factor authentication with Google Authenticator support
+  - **Database**: New `user_mfa` table (username, totp_secret, is_enabled, backup_codes, timestamps). MFA permissions added to admin/superadmin roles
+  - **Backend** (`api/mfa_routes.py`): 6 new endpoints —
+    - `POST /auth/mfa/setup` — generate TOTP secret + QR code (base64 PNG)
+    - `POST /auth/mfa/verify-setup` — confirm enrollment with first TOTP code, returns 8 one-time backup codes
+    - `POST /auth/mfa/verify` — login MFA challenge verification (exchanges `mfa_token` for full JWT)
+    - `POST /auth/mfa/disable` — disable MFA (requires current TOTP code)
+    - `GET /auth/mfa/status` — current user's MFA status
+    - `GET /auth/mfa/users` — admin view of all users' MFA enrollment
+  - **Login Flow**: Two-step JWT challenge — login returns short-lived `mfa_token` (5 min) when MFA is enabled, client verifies TOTP code, then receives full session JWT
+  - **Backup Codes**: 8 one-time recovery codes stored as SHA-256 hashes, consumed on use
+  - **UI Login**: MFA code input form with monospace 6-digit entry, "Back to Sign In" cancel flow
+  - **MFASettings Component** (`MFASettings.tsx`): Self-service modal for MFA enrollment (QR code scan), setup verification, backup code display/copy, MFA disable with confirmation, and admin user list view
+  - **Header Integration**: "🔐 MFA" button in app header opens MFA settings for any authenticated user
+  - **Dependencies**: `pyotp==2.9.0` (TOTP), `qrcode[pil]==7.4.2` (QR generation)
+
 ## [1.13.0] - 2026-02-16
 
 ### Added

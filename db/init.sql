@@ -1038,6 +1038,11 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('admin', 'backup', 'write'),
 ('superadmin', 'backup', 'admin'),
 
+-- MFA permissions (admins can view MFA status list; users manage own MFA in code)
+('admin', 'mfa', 'read'),
+('admin', 'mfa', 'write'),
+('superadmin', 'mfa', 'admin'),
+
 ON CONFLICT (role, resource, action) DO NOTHING;
 
 -- =====================================================================
@@ -1752,6 +1757,11 @@ CREATE TABLE IF NOT EXISTS backup_config (
     retention_days      INT NOT NULL DEFAULT 30
                         CHECK (retention_days >= 1),
     last_backup_at      TIMESTAMPTZ,
+    -- LDAP backup settings
+    ldap_backup_enabled  BOOLEAN NOT NULL DEFAULT false,
+    ldap_retention_count INT NOT NULL DEFAULT 7 CHECK (ldap_retention_count >= 1),
+    ldap_retention_days  INT NOT NULL DEFAULT 30 CHECK (ldap_retention_days >= 1),
+    last_ldap_backup_at  TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1768,6 +1778,8 @@ CREATE TABLE IF NOT EXISTS backup_history (
                     CHECK (status IN ('pending', 'running', 'completed', 'failed', 'deleted')),
     backup_type     TEXT NOT NULL DEFAULT 'manual'
                     CHECK (backup_type IN ('manual', 'scheduled', 'restore')),
+    backup_target   TEXT NOT NULL DEFAULT 'database'
+                    CHECK (backup_target IN ('database', 'ldap')),
     file_name       TEXT,
     file_path       TEXT,
     file_size_bytes BIGINT,
@@ -1781,3 +1793,20 @@ CREATE TABLE IF NOT EXISTS backup_history (
 
 CREATE INDEX IF NOT EXISTS idx_backup_history_status ON backup_history(status);
 CREATE INDEX IF NOT EXISTS idx_backup_history_created ON backup_history(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backup_history_target ON backup_history(backup_target);
+
+-- =====================================================================
+-- MFA / TOTP TABLE
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS user_mfa (
+    id              SERIAL PRIMARY KEY,
+    username        TEXT NOT NULL UNIQUE,
+    totp_secret     TEXT NOT NULL,
+    is_enabled      BOOLEAN NOT NULL DEFAULT false,
+    backup_codes    TEXT[],
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_mfa_username ON user_mfa(username);
