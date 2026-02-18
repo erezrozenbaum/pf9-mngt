@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.3] - 2026-02-18
+
+### Added
+- **Chargeback: actual resource counting** — Volume, network, subnet, router, and floating IP counts are now queried from real inventory tables (joined via projects + domains), replacing the previous per-VM approximation.
+- **Chargeback: snapshot operation + public IP costs** — `snapshot_op` and `public_ip` pricing categories are now included in the chargeback total. Snapshot cost = storage GB cost + per-operation cost. Public IP cost = actual floating IP count × monthly rate.
+- **Chargeback: ephemeral disk cost** — If a flavor has `disk_cost_per_gb` configured, the cost is added to compute cost in the report.
+- **Chargeback: unified tenant set** — Report now includes tenants that have volumes, networks, or IPs but no VMs, ensuring all billable resources are captured.
+
+### Changed
+- **Chargeback currency from pricing** — Currency is now resolved from: query parameter → first pricing row → `metering_config.cost_currency` → `USD`. Previously hardcoded fallback to "USD".
+- **Export card subtitle** — Changed from "Per-tenant cost aggregation in USD" to "according to pricing currency" with actual currency shown dynamically.
+- **Export notes** — Updated to document that volumes, networks, and floating IPs are counted from actual inventory, not approximated.
+- **Pricing documentation** — Updated "How pricing works" section to clarify volume/network/IP are counted from inventory.
+
+### Fixed
+- **Chargeback missing volumes** — Volumes were not actually counted; cost was approximated as `vm_count × rate`. Now uses real `COUNT(*)` from the `volumes` table.
+- **Chargeback missing networks** — Networks, subnets, and routers were not counted. Now queries actual inventory with per-tenant breakdown.
+- **Chargeback missing floating IPs** — Floating IPs were not counted at all. Now queries the `floating_ips` table and applies the `public_ip` monthly rate.
+- **Chargeback CSV columns** — Added: Volumes, Volume GB, Networks, Subnets, Routers, Floating IPs, Public IP Cost columns.
+
 ## [1.19.2] - 2026-02-18
 
 ### Added
