@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.5] - 2026-02-18
+
+### Fixed
+- **Domain Overview: vCPU/RAM always zero** — Added flavor catalog lookup to resolve vCPU and RAM from flavor IDs, matching the fix applied to the Quota report in v1.19.4.
+- **Snapshot Compliance: table does not exist** — Changed query from non-existent `snapshot_policy_assignments` to actual `snapshot_assignments` table; added Cinder volume snapshot counts and fixed `metering_snapshots` lookup to use `project_name`.
+- **Metering Summary: "No data found"** — Domain filter was comparing `metering_resources.domain` (stores email domains) against OpenStack domain name. Rewrote to filter by `project_name IN (projects WHERE domain_id = ?)` and resolve actual domain names via project→domain join.
+- **Resource Inventory: tenant dropdown not filtered by domain** — Frontend now filters the project dropdown to only show projects belonging to the selected domain, and resets the tenant selection when domain changes.
+- **User & Role Audit: missing role column** — Added Keystone `role_assignments` API call (`list_role_assignments`) with scope resolution to show each user's role name and detailed assignments.
+- **Capacity Planning: allocated = 0** — Added flavor catalog lookup to resolve allocated vCPU, RAM, and disk from flavor IDs (same root cause as Domain Overview).
+- **Backup Status: table does not exist** — Rewrote from non-existent `backup_jobs` table to actual `backup_history` table with correct schema (backup_type, file_path, size_bytes, status, created_at).
+- **Network Topology: external networks not detected** — External flag now checks both `router:external` and `is_external` fields in network response.
+- **Cost Allocation: shows email domains instead of OpenStack domains** — Complete rewrite to aggregate costs by actual OpenStack domain name via project→domain join, replacing the incorrect grouping by email domain column.
+- **Drift Detection: table does not exist** — Changed from non-existent `drift_detections` to actual `drift_events` table; remapped all column references (field_changed, old_value, new_value, description, acknowledged).
+
+### Added
+- **`list_role_assignments` client method** — New helper on the OpenStack control client to fetch Keystone role assignments with `include_names=true`, supporting user-level and full listing.
+
 ## [1.19.4] - 2026-02-18
 
 ### Fixed
