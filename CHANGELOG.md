@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] - 2026-02-18
+
+### Added
+- **Nav Item Active/Action toggles in Admin UI** — Navigation Catalog now shows `Active` and `Action` columns for each nav item. `Active` controls whether the item appears in navigation; `Action` controls orange accent color-coding. Both toggleable in edit mode.
+- **Nav color-coding via `is_action` DB flag** — Replaced the broken `action_resources` approach (which colored all items orange) with a per-item `is_action` boolean in the `nav_items` table. 16 action/config items correctly marked.
+- **Metering Pricing: sortable table** — All pricing columns (Category, Item Name, Unit, Cost/Hour, Cost/Month, Currency, Notes) are now clickable to sort ascending/descending.
+- **Metering Pricing: search** — Search bar filters pricing entries by name, category, unit, or notes with live count.
+- **Metering Pricing: Disk Price per GB** — New `disk_cost_per_gb` column for flavor pricing. Ephemeral VM flavors can have per-GB disk cost tracked and displayed.
+- **Metering Pricing: Snapshot Operation category** — New `snapshot_op` pricing category for per-snapshot-creation charges.
+- **Metering Pricing: Public IP category** — New `public_ip` pricing category for per-IP monthly charges.
+- **Metering Pricing: duplicate prevention** — `UNIQUE(category, item_name)` constraint on the pricing table. Custom category validates cross-category overlap on creation.
+- **RBAC middleware hardening** — Added 15+ missing resource mappings to the RBAC middleware (`snapshot-runs`, `volumes-with-metadata`, `roles`, `admin`/branding, `backup`, `metering`, `notifications`, `mfa`, `provisioning`, `api-metrics`, `system-logs`, etc.). Removed test endpoints from auth bypass list.
+
+### Fixed
+- **Nav colors all same** — Previously every nav item appeared with the same color because the `action_resources` approach checked system-wide permissions (every resource has write actions for admin). Now uses per-item `is_action` flag set in the database.
+- **Category duplicates in pricing** — Added unique constraint and cross-category validation. Custom category renamed to "Custom (other)" with helper text.
+
+### Security
+- **Removed leaked real domain** `ccc.co.il` from API_REFERENCE.md examples — replaced with `example.com`
+- **Removed real project names** (`ISP2`, `Oded-Test-1`, `ORG1`) from API_REFERENCE.md examples
+- **Removed internal SMTP IP** `172.16.33.74` from docs — replaced with `smtp.example.com`
+- **Replaced `company.com`** in UI placeholder with RFC-reserved `example.com`
+
+### Database
+- New column: `nav_items.is_action BOOLEAN NOT NULL DEFAULT false`
+- New column: `metering_pricing.disk_cost_per_gb NUMERIC(12,6) NOT NULL DEFAULT 0`
+- New constraint: `UNIQUE(category, item_name)` on `metering_pricing`
+- Updated migration files: `migrate_departments_navigation.sql`, `migrate_metering.sql`, `init.sql`
+
+## [1.18.0] - 2026-02-18
+
+### Added
+- **3-Layer Authorization Model** — New department-based visibility layer on top of existing RBAC. Users now belong to a department, and departments control which navigation groups/items are visible in the UI. Roles still control what actions are allowed (security unchanged).
+- **Departments** — CRUD for departments (Tier1 Support, Tier2 Support, Tier3 Support, Engineering, Sales, Marketing, Management). Each user assigned to exactly one department.
+- **Navigation Catalog** — 7 top-level nav groups (Inventory, Snapshot Management, Change Management & Logs, Customer Onboarding, Metering & Reporting, Admin Tools, Technical Tools) with all existing tabs mapped as nav items. Admin-managed catalog stored in DB.
+- **Department Visibility** — Checkbox matrix to control which nav groups and items are visible per department. Toggling a group toggles all items within it.
+- **Per-User Visibility Overrides** — Optional grant/deny overrides per user per nav item, for edge cases where a user needs more or fewer items than their department allows.
+- **Grouped Navigation Bar** — New 2-level frontend navigation: top-level group pills + tab items within the active group. Falls back to legacy flat tab bar if navigation data is not yet available.
+- **`/auth/me/navigation` endpoint** — Single API call returns user profile (department, role), nav tree (groups → items), and permission list. This is the frontend's single source of truth after login.
+- **Backend API endpoints** — Full CRUD for departments, nav groups, nav items, department visibility, user-department assignment, per-user overrides, and a bulk visibility matrix for the admin UI.
+- **Admin UI tabs** — Three new sub-tabs under Admin → Authentication Management: Departments, Navigation Catalog, Department Visibility editor.
+- **User table department column** — Users tab now shows a department dropdown to assign users directly.
+- **Migration SQL** — `db/migrate_departments_navigation.sql` creates all new tables, seeds departments/groups/items, and grants all departments full visibility (backward compatible — nothing hidden until admin changes it).
+- **Renamed "CCC Authentication Management"** — Now "Authentication Management" (white-label friendly).
+
+### Database
+- New tables: `departments`, `nav_groups`, `nav_items`, `department_nav_groups`, `department_nav_items`, `user_nav_overrides`
+- New column: `user_roles.department_id` (FK to departments)
+- New role_permissions: `departments:read/admin`, `navigation:read/admin` for all roles
+
 ## [1.17.1] - 2026-02-19
 
 ### Fixed

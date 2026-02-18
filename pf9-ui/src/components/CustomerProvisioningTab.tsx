@@ -768,7 +768,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                     <span style={{ fontSize: 13, fontWeight: 500 }}>Email Recipients <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(comma-separated)</span></span>
                     <input value={form.email_recipients}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("email_recipients", e.target.value)}
-                      placeholder="admin@company.com, noc@company.com" style={inputStyle} />
+                      placeholder="admin@example.com, noc@example.com" style={inputStyle} />
                   </label>
                   <div style={{ fontSize: 12, color: "var(--pf9-text-secondary)" }}>
                     {(() => {

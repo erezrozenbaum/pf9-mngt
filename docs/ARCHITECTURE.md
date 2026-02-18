@@ -108,13 +108,14 @@ api/
 ├── notification_routes.py # Email notification management (7 endpoints)
 ├── restore_management.py # Snapshot restore planner + executor (8 endpoints)
 ├── metering_routes.py    # Operational metering endpoints (14 endpoints + 6 CSV exports)
+├── navigation_routes.py  # Department & navigation visibility management (15+ endpoints)
 ├── performance_metrics.py # Thread-safe request tracking with locking
 ├── pf9_control.py       # Platform9 API integration
 ├── requirements.txt     # Python dependencies (incl. gunicorn)
 └── Dockerfile          # Container configuration (gunicorn CMD)
 ```
 
-**API Endpoints** (112+ total across modules):
+**API Endpoints** (140+ total across modules):
 
 **Dashboard Analytics Endpoints** (api/dashboards.py - 14 endpoints):
 ```python
@@ -700,8 +701,9 @@ graph TD
 **LDAP + JWT Authentication**:
 - LDAP directory service for user management (OpenLDAP)
 - JWT-based authentication with configurable token expiry
-- Role-based access control (RBAC) with superadmin, admin, viewer roles
-- `user_roles` and `role_permissions` database tables for authorization
+- Role-based access control (RBAC) with superadmin, admin, operator, viewer, technical roles
+- 3-layer authorization: Authentication (LDAP) → Authorization (RBAC) → Visibility (departments + navigation)
+- `user_roles`, `role_permissions`, `departments`, `nav_groups`, `nav_items` database tables for authorization
 
 **Multi-Factor Authentication (MFA)**:
 - TOTP-based two-factor authentication (Google Authenticator compatible)

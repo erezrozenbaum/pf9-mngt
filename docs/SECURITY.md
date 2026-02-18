@@ -98,30 +98,33 @@ ENABLE_AUTHENTICATION=true
 |------|-------------|--------------|-----------|
 | **Viewer** | Read-only | View all resources | No Admin tab, only System Audit |
 | **Operator** | Read + Limited Write | View all, modify networks/flavors | No Admin tab |
-| **Admin** | Full Operational | Manage servers/volumes/snapshots, modify networks/flavors | Full Admin panel |
+| **Admin** | Full Operational | Manage servers/volumes/snapshots, departments, navigation | Full Admin panel |
 | **Superadmin** | Complete System | All operations including user management | Full Admin panel with all tabs |
+| **Technical** | Read + Provisioning | Read all, create tenants/orgs, NO delete | Limited Admin access |
 
 #### Permission Matrix
 
-| Resource | Viewer | Operator | Admin | Superadmin |
-|----------|--------|----------|-------|------------|
-| Servers | read | read | admin | admin |
-| Volumes | read | read | admin | admin |
-| Snapshots | read | read | admin | admin |
-| Networks | read | write | write | admin |
-| Subnets | read | read | write | admin |
-| Ports | read | read | read | admin |
-| Floating IPs | read | read | write | admin |
-| Security Groups | read | read | write | admin |
-| Security Group Rules | read | read | write | admin |
-| Flavors | read | write | write | admin |
-| Images | read | read | read | admin |
-| Users | - | - | - | admin |
-| Domains | read | read | read | admin |
-| Projects | read | read | read | admin |
-| Restore | read | read | write | admin |
-| Settings/Branding | - | - | admin | admin |
-| Notifications | read, write | read, write | admin | admin |
+| Resource | Viewer | Operator | Admin | Superadmin | Technical |
+|----------|--------|----------|-------|------------|----------|
+| Servers | read | read | admin | admin | read |
+| Volumes | read | read | admin | admin | read |
+| Snapshots | read | read | admin | admin | read |
+| Networks | read | write | write | admin | write |
+| Subnets | read | read | write | admin | read |
+| Ports | read | read | read | admin | read |
+| Floating IPs | read | read | write | admin | read |
+| Security Groups | read | read | write | admin | read |
+| Security Group Rules | read | read | write | admin | read |
+| Flavors | read | write | write | admin | write |
+| Images | read | read | read | admin | read |
+| Users | - | - | - | admin | - |
+| Domains | read | read | read | admin | read |
+| Projects | read | read | read | admin | read |
+| Restore | read | read | write | admin | read |
+| Settings/Branding | - | - | admin | admin | read |
+| Notifications | read, write | read, write | admin | admin | read, write |
+| Departments | read | read | admin | admin | read |
+| Navigation | read | read | admin | admin | read |
 
 ### Public (Unauthenticated) Endpoints
 

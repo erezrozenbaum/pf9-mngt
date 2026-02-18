@@ -92,12 +92,12 @@ The enhanced inventory and monitoring experience is built on a few principles:
 ## 🚀 System Architecture
 
 **Enterprise microservices-based platform** with 11 containerized services plus host-based automation:
-- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 24 management tabs + admin panel
-- **Backend API** (FastAPI/Gunicorn/Python) - Port 8000 - 130+ REST endpoints with RBAC middleware, 4 worker processes, connection pooling
+- **Frontend UI** (React 19.2+/TypeScript/Vite) - Port 5173 - 24 management tabs (grouped navigation) + admin panel
+- **Backend API** (FastAPI/Gunicorn/Python) - Port 8000 - 140+ REST endpoints with RBAC middleware, 4 worker processes, connection pooling
 - **LDAP Server** (OpenLDAP) - Port 389 - Enterprise authentication directory
 - **LDAP Admin** (phpLDAPadmin) - Port 8081 - Web-based LDAP management
 - **Monitoring Service** (FastAPI/Python) - Port 8001 - Real-time metrics collection via Prometheus
-- **Database** (PostgreSQL 16) - Port 5432 - 38+ tables with history tracking + auth audit + metering + provisioning
+- **Database** (PostgreSQL 16) - Port 5432 - 44+ tables with history tracking + auth audit + metering + provisioning + departments/navigation
 - **Database Admin** (pgAdmin4) - Port 8080 - Web-based PostgreSQL management
 - **Snapshot Worker** (Python) - Background service for automated snapshot management
 - **Notification Worker** (Python) - Background service for email alerts (drift, snapshots, compliance, health)

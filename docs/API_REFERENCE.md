@@ -1524,6 +1524,117 @@ Response includes:
 
 ---
 
+## Department & Navigation Visibility Endpoints
+
+### List Departments
+**GET** `/api/departments`
+*Requires: `departments:read`*
+
+Returns all active departments.
+
+### Create Department
+**POST** `/api/departments`
+*Requires: `departments:admin`*
+
+```json
+{ "name": "Engineering", "description": "Engineering team", "sort_order": 1 }
+```
+
+### Update Department
+**PUT** `/api/departments/{id}`
+*Requires: `departments:admin`*
+
+### Delete Department
+**DELETE** `/api/departments/{id}`
+*Requires: `departments:admin`*
+
+### List Navigation Groups
+**GET** `/api/nav/groups`
+*Requires: `navigation:read`*
+
+### Create Navigation Group
+**POST** `/api/nav/groups`
+*Requires: `navigation:admin`*
+
+### Update Navigation Group
+**PUT** `/api/nav/groups/{id}`
+*Requires: `navigation:admin`*
+
+### Delete Navigation Group
+**DELETE** `/api/nav/groups/{id}`
+*Requires: `navigation:admin`*
+
+### List Navigation Items
+**GET** `/api/nav/items`
+*Requires: `navigation:read`*
+
+### Create Navigation Item
+**POST** `/api/nav/items`
+*Requires: `navigation:admin`*
+
+### Update Navigation Item
+**PUT** `/api/nav/items/{id}`
+*Requires: `navigation:admin`*
+
+### Delete Navigation Item
+**DELETE** `/api/nav/items/{id}`
+*Requires: `navigation:admin`*
+
+### Get Department Visibility
+**GET** `/api/departments/{id}/visibility`
+*Requires: `navigation:read`*
+
+Returns which nav groups and items are visible for a department.
+
+### Update Department Visibility
+**PUT** `/api/departments/{id}/visibility`
+*Requires: `navigation:admin`*
+
+```json
+{ "nav_group_ids": [1, 2, 3], "nav_item_ids": [1, 2, 5, 8] }
+```
+
+### Get Visibility Matrix
+**GET** `/api/departments/visibility/matrix`
+*Requires: `navigation:admin`*
+
+Returns the full department × nav item visibility matrix for the admin checkbox editor.
+
+### Get User Navigation Overrides
+**GET** `/api/nav/overrides/{username}`
+*Requires: `navigation:admin`*
+
+### Set User Navigation Override
+**POST** `/api/nav/overrides/{username}`
+*Requires: `navigation:admin`*
+
+```json
+{ "nav_item_id": 5, "override_type": "deny", "reason": "Not needed for this user" }
+```
+
+### Delete User Navigation Override
+**DELETE** `/api/nav/overrides/{username}/{nav_item_id}`
+*Requires: `navigation:admin`*
+
+### Assign User Department
+**PUT** `/api/auth/users/{username}/department`
+*Requires: `users:admin`*
+
+```json
+{ "department_id": 3 }
+```
+
+### Get My Navigation
+**GET** `/api/auth/me/navigation`
+*Requires: authentication*
+
+Returns the current user's complete navigation tree, including:
+- User profile (username, role, department)
+- Grouped navigation items (filtered by department visibility + per-user overrides)
+- Permission entries for RBAC checks
+
+---
+
 ## Branding & Settings Endpoints
 
 ### Get Branding
@@ -1625,7 +1736,7 @@ Response:
 ```json
 {
   "smtp_enabled": true,
-  "smtp_host": "172.16.33.74",
+  "smtp_host": "smtp.example.com",
   "smtp_port": 25,
   "smtp_use_tls": false,
   "smtp_has_auth": false,
@@ -2144,11 +2255,11 @@ Returns dropdown filter options populated from actual data.
 Response:
 ```json
 {
-  "projects": ["ISP2", "Oded-Test-1", "ORG1", "service"],
-  "domains": ["ccc.co.il", "org1.com"],
+  "projects": ["project-alpha", "project-beta", "org-main", "service"],
+  "domains": ["example.com", "org1.example.com"],
   "all_tenants": [
-    {"project": "ISP2", "domain": "ISP2"},
-    {"project": "ORG1", "domain": "ORG1"}
+    {"project": "project-alpha", "domain": "project-alpha"},
+    {"project": "org-main", "domain": "org-main"}
   ],
   "flavors": [
     {"name": "m1.large", "vcpus": 4, "ram_mb": 8192, "disk_gb": 80}
