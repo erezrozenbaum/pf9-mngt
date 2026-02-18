@@ -458,7 +458,7 @@ export default function ReportsTab({ isAdmin }: Props) {
                   Domain:{" "}
                   <select
                     value={domainId}
-                    onChange={(e) => setDomainId(e.target.value)}
+                    onChange={(e) => { setDomainId(e.target.value); setProjectId(""); }}
                     style={selectStyle}
                   >
                     <option value="">All Domains</option>
@@ -479,7 +479,9 @@ export default function ReportsTab({ isAdmin }: Props) {
                     style={selectStyle}
                   >
                     <option value="">All Tenants</option>
-                    {projects.map((p) => (
+                    {projects
+                      .filter((p) => !domainId || p.domain_id === domainId)
+                      .map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name} ({p.domain_name})
                       </option>
