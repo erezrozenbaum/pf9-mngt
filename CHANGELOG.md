@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.2] - 2026-02-18
+
+### Added
+- **Manual Inventory Refresh** — Superadmin "🔄 Refresh Inventory" button on all inventory tabs. Calls `POST /admin/inventory/refresh` which fetches live OpenStack data for every resource type and deletes stale rows that no longer exist in Platform9. Returns per-resource summary.
+- **Comprehensive stale-resource cleanup** — `cleanup_old_records()` (pf9_rvtools.py) now covers all 15 inventory tables: `security_group_rules`, `security_groups`, `snapshots`, `images`, `flavors`, `servers`, `volumes`, `floating_ips`, `ports`, `routers`, `subnets`, `networks`, `hypervisors`, `projects`, `domains`. Previously 6 tables (flavors, hypervisors, domains, projects, security_groups, security_group_rules) were missing.
+- **Metering pricing auto-cleanup** — When stale flavors are removed, matching `metering_pricing` rows (category=flavor) are also purged.
+
+### Fixed
+- **Deleted flavors persisting in Inventory** — Flavors removed from Platform9 were never cleaned from the database, so they kept appearing in the Inventory Flavors tab.
+- **Deleted resources persisting across all Inventory tabs** — Hypervisors, domains, projects, security groups, and security group rules that were deleted in Platform9 remained visible due to missing cleanup entries.
+- **Metering sync-flavors one-way sync** — `POST /pricing/sync-flavors` now fetches live data from OpenStack and removes stale entries (previously only added, never removed).
+- **Login page dark mode** — Hero container background changed to transparent to prevent visible rectangle against page background; removed radial glow overlay and left panel box-shadow in dark mode.
+
 ## [1.19.1] - 2026-02-18
 
 ### Added
