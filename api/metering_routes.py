@@ -922,7 +922,7 @@ async def export_chargeback(
 # Each row: category, item_name, unit, cost_per_hour, cost_per_month, currency
 
 class PricingItemCreate(BaseModel):
-    category: str = Field(..., description="flavor|storage_gb|snapshot_gb|restore|volume|network|custom")
+    category: str = Field(..., description="flavor|storage_gb|snapshot_gb|snapshot_op|restore|volume|network|public_ip|custom")
     item_name: str = Field(..., min_length=1, max_length=200)
     unit: str = Field("per hour", max_length=50, description="e.g. per hour, per GB/month, per operation")
     cost_per_hour: float = Field(0, ge=0)
@@ -933,6 +933,7 @@ class PricingItemCreate(BaseModel):
     vcpus: Optional[int] = None
     ram_gb: Optional[float] = None
     disk_gb: Optional[float] = None
+    disk_cost_per_gb: Optional[float] = Field(None, ge=0, description="Cost per GB for ephemeral disk in flavors")
 
 
 class PricingItemUpdate(BaseModel):
@@ -946,6 +947,7 @@ class PricingItemUpdate(BaseModel):
     vcpus: Optional[int] = None
     ram_gb: Optional[float] = None
     disk_gb: Optional[float] = None
+    disk_cost_per_gb: Optional[float] = Field(None, ge=0)
 
 
 @router.get("/pricing")
@@ -977,15 +979,33 @@ async def create_pricing(
     """Create a new pricing entry."""
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                INSERT INTO metering_pricing
-                    (category, item_name, unit, cost_per_hour, cost_per_month, currency, notes, vcpus, ram_gb, disk_gb)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING *
-            """, (body.category, body.item_name, body.unit, body.cost_per_hour,
-                  body.cost_per_month, body.currency, body.notes,
-                  body.vcpus, body.ram_gb, body.disk_gb))
-            row = cur.fetchone()
+            # Check for duplicate item_name in other categories (cross-category overlap)
+            if body.category == "custom":
+                cur.execute(
+                    "SELECT category FROM metering_pricing WHERE item_name = %s AND category != 'custom' LIMIT 1",
+                    (body.item_name,),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"An item named '{body.item_name}' already exists in category '{existing['category']}'. Use a different name for custom items.",
+                    )
+            try:
+                cur.execute("""
+                    INSERT INTO metering_pricing
+                        (category, item_name, unit, cost_per_hour, cost_per_month, currency, notes, vcpus, ram_gb, disk_gb, disk_cost_per_gb)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING *
+                """, (body.category, body.item_name, body.unit, body.cost_per_hour,
+                      body.cost_per_month, body.currency, body.notes,
+                      body.vcpus, body.ram_gb, body.disk_gb, body.disk_cost_per_gb or 0))
+                row = cur.fetchone()
+            except Exception as e:
+                conn.rollback()
+                if "uq_pricing_category_name" in str(e):
+                    raise HTTPException(status_code=409, detail=f"A pricing entry for '{body.item_name}' in category '{body.category}' already exists.")
+                raise
         conn.commit()
     d = dict(row)
     for k in list(d.keys()):

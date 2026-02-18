@@ -27,6 +27,8 @@ import DomainManagementTab from "./components/DomainManagementTab";
 import ActivityLogTab from "./components/ActivityLogTab";
 import ReportsTab from "./components/ReportsTab";
 import ResourceManagementTab from "./components/ResourceManagementTab";
+import GroupedNavBar from "./components/GroupedNavBar";
+import { useNavigation } from "./hooks/useNavigation";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -991,6 +993,20 @@ const App: React.FC = () => {
   // MFA settings modal
   const [showMfaSettings, setShowMfaSettings] = useState(false);
 
+  // Navigation (3-layer visibility model)
+  const {
+    navData,
+    activeGroupKey,
+    setActiveGroupKey,
+    activeGroup,
+    isTabVisible,
+    hasPermission: navHasPermission,
+    refreshNavigation,
+    reorderGroups,
+    reorderItems,
+    resetOrder,
+  } = useNavigation(isAuthenticated);
+
   // Check for existing token on mount
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -1197,13 +1213,51 @@ const App: React.FC = () => {
     return m;
   }, []);
 
-  // Ordered & filtered tabs for rendering
+  // Ordered & filtered tabs for rendering (legacy flat bar, used when navData not available)
   const visibleTabs = useMemo(() => {
     const isAdmin = authUser && (authUser.role === 'admin' || authUser.role === 'superadmin');
     return tabOrder
       .map(id => tabDefMap.get(id))
       .filter((t): t is TabDef => !!t && (!t.adminOnly || !!isAdmin));
   }, [tabOrder, tabDefMap, authUser]);
+
+  // Whether the grouped (2-level) nav is active
+  const useGroupedNav = !!navData && navData.nav.length > 0;
+
+  // Track which group's second layer (items row) is expanded.
+  // The default group (is_default=true) auto-expands on login;
+  // other groups expand only when clicked and collapse on re-click.
+  const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
+
+  // Auto-expand the default group when navData first loads
+  useEffect(() => {
+    if (navData && navData.nav.length > 0 && expandedGroupKey === null) {
+      const defaultGroup = navData.nav.find((g: any) => g.is_default);
+      if (defaultGroup) {
+        setExpandedGroupKey(defaultGroup.key);
+        // Also auto-select the first item in the default group as active tab
+        if (defaultGroup.items && defaultGroup.items.length > 0) {
+          setActiveTab(defaultGroup.items[0].key as ActiveTab);
+        }
+      } else {
+        // No default group — expand the active group
+        setExpandedGroupKey(activeGroupKey);
+      }
+    }
+  }, [navData]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleToggleExpand = useCallback((groupKey: string) => {
+    setExpandedGroupKey((prev) => {
+      // If clicking the already-expanded group, collapse it
+      // UNLESS it's the default group (default stays expanded)
+      if (prev === groupKey) {
+        const group = navData?.nav.find((g: any) => g.key === groupKey);
+        if (group?.is_default) return prev; // Keep default expanded
+        return null; // Collapse non-default
+      }
+      return groupKey; // Expand the clicked group
+    });
+  }, [navData]);
 
   // Persist tab order
   const persistTabOrder = useCallback((order: ActiveTab[]) => {
@@ -2718,6 +2772,14 @@ const App: React.FC = () => {
 
   const isTableTab = tableTabs.has(activeTab);
   const hideDetailsPanel = [
+    "admin",
+    "dashboard",
+    "notifications",
+    "backup",
+    "metering",
+    "provisioning",
+    "domain_management",
+    "reports",
     "snapshot-policies",
     "snapshot-audit",
     "snapshot_monitor",
@@ -2799,34 +2861,49 @@ const App: React.FC = () => {
                 </button>
               </div>
             )}
-            <div className="pf9-tabs">
-              {visibleTabs.map(tab => (
+            {useGroupedNav ? (
+              <GroupedNavBar
+                groups={navData!.nav}
+                activeGroupKey={activeGroupKey}
+                activeTabKey={activeTab}
+                expandedGroupKey={expandedGroupKey}
+                onGroupChange={setActiveGroupKey}
+                onTabChange={(key) => setActiveTab(key as ActiveTab)}
+                onToggleExpand={handleToggleExpand}
+                onGroupReorder={reorderGroups}
+                onItemReorder={reorderItems}
+                onResetOrder={resetOrder}
+              />
+            ) : (
+              <div className="pf9-tabs">
+                {visibleTabs.map(tab => (
+                  <button
+                    key={tab.id}
+                    className={[
+                      'pf9-tab',
+                      tab.actionStyle ? 'pf9-tab-action' : '',
+                      activeTab === tab.id ? 'pf9-tab-active' : '',
+                    ].filter(Boolean).join(' ')}
+                    onClick={() => setActiveTab(tab.id)}
+                    draggable
+                    onDragStart={() => handleTabDragStart(tab.id)}
+                    onDragOver={(e) => handleTabDragOver(e, tab.id)}
+                    onDrop={handleTabDrop}
+                    title="Drag to reorder"
+                  >
+                    {tab.label}
+                  </button>
+                ))}
                 <button
-                  key={tab.id}
-                  className={[
-                    'pf9-tab',
-                    tab.actionStyle ? 'pf9-tab-action' : '',
-                    activeTab === tab.id ? 'pf9-tab-active' : '',
-                  ].filter(Boolean).join(' ')}
-                  onClick={() => setActiveTab(tab.id)}
-                  draggable
-                  onDragStart={() => handleTabDragStart(tab.id)}
-                  onDragOver={(e) => handleTabDragOver(e, tab.id)}
-                  onDrop={handleTabDrop}
-                  title="Drag to reorder"
+                  className="pf9-tab"
+                  onClick={handleResetTabOrder}
+                  title="Reset tab order to default"
+                  style={{ fontSize: '0.75rem', opacity: 0.6, padding: '4px 8px', minWidth: 'auto' }}
                 >
-                  {tab.label}
+                  ↩
                 </button>
-              ))}
-              <button
-                className="pf9-tab"
-                onClick={handleResetTabOrder}
-                title="Reset tab order to default"
-                style={{ fontSize: '0.75rem', opacity: 0.6, padding: '4px 8px', minWidth: 'auto' }}
-              >
-                ↩
-              </button>
-            </div>
+              </div>
+            )}
             <ThemeToggle />
           </div>
         </header>

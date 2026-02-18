@@ -98,6 +98,109 @@
   border-left: 3px solid var(--color-action-accent-dark);
 }
 
+/* ── Grouped navigation (2-level) ── */
+.pf9-grouped-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.pf9-nav-groups {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pf9-nav-group-pill {
+  padding: 8px 18px;
+  border-radius: 20px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: var(--shadow-sm);
+  user-select: none;
+}
+
+.pf9-nav-group-pill:hover {
+  background: var(--color-primary-light);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.pf9-nav-group-active {
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+  color: white;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.pf9-nav-group-icon {
+  font-size: 15px;
+}
+
+.pf9-nav-items {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* Drag-and-drop visual feedback */
+.pf9-nav-dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+}
+
+/* Action / write-capable group pill accent */
+.pf9-nav-group-action:not(.pf9-nav-group-active) {
+  border-color: var(--color-action-accent-border);
+  background: var(--color-action-accent-bg);
+}
+
+.pf9-nav-group-action:not(.pf9-nav-group-active):hover {
+  background: var(--color-action-accent);
+  color: white;
+  border-color: var(--color-action-accent);
+}
+
+.pf9-nav-group-action.pf9-nav-group-active {
+  background: linear-gradient(135deg, var(--color-action-accent), var(--color-action-accent-dark));
+  border-color: var(--color-action-accent);
+}
+
+.pf9-nav-group-expanded:not(.pf9-nav-group-active) {
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 0 1px var(--color-primary-light);
+}
+
+.pf9-nav-default-badge {
+  font-size: 10px;
+  color: #fbbf24;
+  margin-left: 2px;
+}
+
+.pf9-nav-reset-btn {
+  font-size: 0.75rem !important;
+  opacity: 0.5;
+  padding: 4px 10px !important;
+  min-width: auto;
+  transition: opacity 0.2s;
+}
+.pf9-nav-reset-btn:hover {
+  opacity: 1;
+}
+
 /* Enhanced Theme Toggle Styles */
 .theme-toggle {
   background: var(--color-surface);
