@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.1] - 2026-02-18
+
+### Added
+- **Editable Permission Matrix** — Superadmin users can now click permission checkboxes to toggle role-resource-action grants in real time. Changes are persisted to the database immediately via `PUT /auth/permissions`. Non-superadmin users see a read-only matrix.
+
+### Fixed
+- **Permission checkboxes disabled** — Previously all permission checkboxes in the admin Permissions tab were hardcoded as disabled with no backend endpoint to update them. Now superadmin can toggle any permission.
+
+### Security
+- **CHANGELOG sanitized** — Removed real domain names, IPs, and org names that were inadvertently included in the v1.19.0 security section notes.
+
 ## [1.19.0] - 2026-02-18
 
 ### Added
@@ -23,10 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Category duplicates in pricing** — Added unique constraint and cross-category validation. Custom category renamed to "Custom (other)" with helper text.
 
 ### Security
-- **Removed leaked real domain** `ccc.co.il` from API_REFERENCE.md examples — replaced with `example.com`
-- **Removed real project names** (`ISP2`, `Oded-Test-1`, `ORG1`) from API_REFERENCE.md examples
-- **Removed internal SMTP IP** `172.16.33.74` from docs — replaced with `smtp.example.com`
-- **Replaced `company.com`** in UI placeholder with RFC-reserved `example.com`
+- **Sanitized documentation** — Replaced real domain names, project names, and internal IPs in API_REFERENCE.md and QUICK_REFERENCE.md with RFC-reserved example values (`example.com`, `smtp.example.com`)
+- **UI placeholder sanitization** — Replaced non-RFC domain in provisioning form placeholder with `example.com`
 
 ### Database
 - New column: `nav_items.is_action BOOLEAN NOT NULL DEFAULT false`

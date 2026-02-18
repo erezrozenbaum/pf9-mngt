@@ -825,6 +825,64 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
             {"id": 29, "resource": "restore", "action": "admin", "roles": ["superadmin"]}
         ]
 
+class PermissionToggle(BaseModel):
+    role: str
+    resource: str
+    action: str
+    enabled: bool
+
+@app.put("/auth/permissions")
+async def update_permission(
+    request: Request,
+    body: PermissionToggle,
+    current_user: User = Depends(require_authentication),
+):
+    """Toggle a single role-permission entry (superadmin only).
+    If enabled=true, INSERT the row (ON CONFLICT DO NOTHING).
+    If enabled=false, DELETE the row.
+    """
+    if current_user.role != "superadmin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only superadmin can edit permissions",
+        )
+
+    valid_roles = ["viewer", "operator", "technical", "admin", "superadmin"]
+    valid_actions = ["read", "write", "admin", "resource_delete", "tenant_delete", "tenant_disable"]
+    if body.role not in valid_roles:
+        raise HTTPException(400, f"Invalid role. Must be one of: {', '.join(valid_roles)}")
+    if body.action not in valid_actions:
+        raise HTTPException(400, f"Invalid action. Must be one of: {', '.join(valid_actions)}")
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                if body.enabled:
+                    cur.execute("""
+                        INSERT INTO role_permissions (role, resource, action)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (role, resource, action) DO NOTHING
+                    """, (body.role, body.resource, body.action))
+                else:
+                    cur.execute("""
+                        DELETE FROM role_permissions
+                        WHERE role = %s AND resource = %s AND action = %s
+                    """, (body.role, body.resource, body.action))
+
+        log_auth_event(
+            username=current_user.username,
+            action="permission_changed",
+            success=True,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            resource=body.resource,
+            endpoint=f"/auth/permissions",
+        )
+        return {"ok": True, "role": body.role, "resource": body.resource, "action": body.action, "enabled": body.enabled}
+    except Exception as e:
+        logger.error(f"Error updating permission: {e}")
+        raise HTTPException(500, f"Failed to update permission: {str(e)}")
+
 @app.post("/auth/users")
 async def create_user(request: Request, user_data: dict, current_user: User = Depends(require_authentication)):
     """Create a new LDAP user (requires superadmin)"""
