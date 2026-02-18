@@ -241,10 +241,25 @@ async def report_tenant_quota_usage(
         client = get_client()
         projects = client.list_projects(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
+
+        # Fetch all resources
         servers = client.list_servers(all_tenants=True)
         volumes = client.list_volumes(all_tenants=True)
+        networks = client.list_networks()
+        floating_ips = client.list_floating_ips()
+        security_groups = client.list_security_groups()
+        try:
+            vol_snapshots = client.list_volume_snapshots(all_tenants=True)
+        except Exception:
+            vol_snapshots = []
 
-        # Index servers and volumes by project
+        # Build flavor lookup (servers/detail may omit inline vcpus/ram)
+        flavors = client.list_flavors()
+        flavor_map: Dict[str, Dict[str, Any]] = {}
+        for f in flavors:
+            flavor_map[f["id"]] = f
+
+        # Index resources by project
         servers_by_project: Dict[str, list] = {}
         for s in servers:
             pid = s.get("tenant_id") or s.get("project_id", "")
@@ -254,6 +269,26 @@ async def report_tenant_quota_usage(
         for v in volumes:
             pid = v.get("os-vol-tenant-attr:tenant_id") or v.get("project_id", "")
             volumes_by_project.setdefault(pid, []).append(v)
+
+        networks_by_project: Dict[str, list] = {}
+        for n in networks:
+            pid = n.get("tenant_id") or n.get("project_id", "")
+            networks_by_project.setdefault(pid, []).append(n)
+
+        fips_by_project: Dict[str, list] = {}
+        for fip in floating_ips:
+            pid = fip.get("tenant_id") or fip.get("project_id", "")
+            fips_by_project.setdefault(pid, []).append(fip)
+
+        sgs_by_project: Dict[str, list] = {}
+        for sg in security_groups:
+            pid = sg.get("tenant_id") or sg.get("project_id", "")
+            sgs_by_project.setdefault(pid, []).append(sg)
+
+        snaps_by_project: Dict[str, list] = {}
+        for snap in vol_snapshots:
+            pid = snap.get("os-extended-snapshot-attributes:project_id") or snap.get("project_id", "")
+            snaps_by_project.setdefault(pid, []).append(snap)
 
         rows = []
         for proj in projects:
@@ -276,26 +311,40 @@ async def report_tenant_quota_usage(
             except Exception:
                 sq = {}
 
-            # Actual usage
+            # Actual usage — resolve vCPUs / RAM from flavor lookup
             proj_servers = servers_by_project.get(pid, [])
             proj_volumes = volumes_by_project.get(pid, [])
-            used_vcpus = sum(
-                (s.get("flavor", {}).get("vcpus", 0) if isinstance(s.get("flavor"), dict) else 0)
-                for s in proj_servers
-            )
-            used_ram_mb = sum(
-                (s.get("flavor", {}).get("ram", 0) if isinstance(s.get("flavor"), dict) else 0)
-                for s in proj_servers
-            )
+
+            used_vcpus = 0
+            used_ram_mb = 0
+            for s in proj_servers:
+                flav = s.get("flavor", {})
+                if isinstance(flav, dict):
+                    vcpus = flav.get("vcpus") or flav.get("original_name") and 0
+                    ram = flav.get("ram", 0)
+                    # If inline flavor data is missing, resolve from flavor_map
+                    if not vcpus or not ram:
+                        fid = flav.get("id", "")
+                        resolved = flavor_map.get(fid, {})
+                        vcpus = vcpus or resolved.get("vcpus", 0)
+                        ram = ram or resolved.get("ram", 0)
+                    used_vcpus += int(vcpus or 0)
+                    used_ram_mb += int(ram or 0)
+
             used_instances = len(proj_servers)
             used_volumes = len(proj_volumes)
             used_storage_gb = sum(v.get("size", 0) or 0 for v in proj_volumes)
+            used_networks = len(networks_by_project.get(pid, []))
+            used_fips = len(fips_by_project.get(pid, []))
+            used_sgs = len(sgs_by_project.get(pid, []))
+            used_snapshots = len(snaps_by_project.get(pid, []))
 
             q_vcpus = cq.get("cores", cq.get("maxTotalCores", 0))
             q_ram_mb = cq.get("ram", cq.get("maxTotalRAMSize", 0))
             q_instances = cq.get("instances", cq.get("maxTotalInstances", 0))
             q_volumes = sq.get("volumes", 0)
             q_storage_gb = sq.get("gigabytes", 0)
+            q_snapshots = sq.get("snapshots", 0)
             q_networks = nq.get("network", 0)
             q_floatingips = nq.get("floatingip", 0)
             q_sgs = nq.get("security_group", 0)
@@ -325,9 +374,18 @@ async def report_tenant_quota_usage(
                 "Quota Storage (GB)": q_storage_gb,
                 "Used Storage (GB)": used_storage_gb,
                 "Storage Util %": pct(used_storage_gb, q_storage_gb),
+                "Quota Snapshots": q_snapshots,
+                "Used Snapshots": used_snapshots,
+                "Snapshot Util %": pct(used_snapshots, q_snapshots),
                 "Quota Networks": q_networks,
+                "Used Networks": used_networks,
+                "Network Util %": pct(used_networks, q_networks),
                 "Quota Floating IPs": q_floatingips,
+                "Used Floating IPs": used_fips,
+                "Floating IP Util %": pct(used_fips, q_floatingips),
                 "Quota Security Groups": q_sgs,
+                "Used Security Groups": used_sgs,
+                "Security Group Util %": pct(used_sgs, q_sgs),
             })
 
         return _maybe_csv(rows, format, "tenant_quota_usage")
