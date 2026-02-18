@@ -416,6 +416,12 @@ async def report_domain_overview(
         networks = client.list_networks()
         floating_ips = client.list_floating_ips()
 
+        # Build flavor lookup (servers/detail may omit inline vcpus/ram)
+        all_flavors = client.list_flavors()
+        flavor_map: Dict[str, Dict[str, Any]] = {}
+        for f in all_flavors:
+            flavor_map[f["id"]] = f
+
         # Index by domain
         projects_by_domain: Dict[str, list] = {}
         for p in projects:
@@ -487,12 +493,19 @@ async def report_domain_overview(
                 total_networks += networks_by_project.get(pid, 0)
                 total_fips += fips_by_project.get(pid, 0)
 
-                # Used compute from server flavors
+                # Used compute from server flavors (resolve via flavor catalog)
                 for s in proj_servers:
                     flv = s.get("flavor", {})
                     if isinstance(flv, dict):
-                        used_vcpus += flv.get("vcpus", 0)
-                        used_ram_mb += flv.get("ram", 0)
+                        vcpus = flv.get("vcpus") or 0
+                        ram = flv.get("ram") or 0
+                        if not vcpus or not ram:
+                            fid = flv.get("id", "")
+                            resolved = flavor_map.get(fid, {})
+                            vcpus = vcpus or resolved.get("vcpus", 0)
+                            ram = ram or resolved.get("ram", 0)
+                        used_vcpus += int(vcpus)
+                        used_ram_mb += int(ram)
 
                 # Fetch quotas
                 try:
@@ -580,44 +593,55 @@ async def report_snapshot_compliance(
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Get snapshot policy assignments
+                # Get snapshot policy assignments (volume-level, grouped by tenant)
                 cur.execute("""
                     SELECT
                         p.name AS tenant_name,
                         p.id AS tenant_id,
                         d.name AS domain_name,
                         d.id AS domain_id,
-                        spa.policy_set_id,
+                        sa.policy_set_id,
                         sps.name AS policy_name,
-                        spa.created_at AS assigned_at
+                        MIN(sa.created_at) AS assigned_at,
+                        COUNT(DISTINCT sa.volume_id) AS assigned_volumes
                     FROM projects p
                     LEFT JOIN domains d ON d.id = p.domain_id
-                    LEFT JOIN snapshot_policy_assignments spa ON spa.project_id = p.id
-                    LEFT JOIN snapshot_policy_sets sps ON sps.id = spa.policy_set_id
+                    LEFT JOIN snapshot_assignments sa ON sa.project_id = p.id
+                    LEFT JOIN snapshot_policy_sets sps ON sps.id = sa.policy_set_id
                     WHERE 1=1
                     """ + (" AND p.domain_id = %s" if domain_id else "") + """
+                    GROUP BY p.name, p.id, d.name, d.id, sa.policy_set_id, sps.name
                     ORDER BY d.name, p.name
                 """, [domain_id] if domain_id else [])
                 assignments = cur.fetchall()
 
-                # Get latest snapshot per tenant
+                # Get latest snapshot per tenant from metering_snapshots
                 cur.execute("""
                     SELECT
-                        project_id,
+                        project_name,
                         MAX(collected_at) AS last_snapshot_time,
                         COUNT(*) AS total_snapshots,
                         COUNT(*) FILTER (WHERE is_compliant = true) AS compliant_count,
                         COUNT(*) FILTER (WHERE is_compliant = false) AS non_compliant_count
                     FROM metering_snapshots
                     WHERE collected_at > now() - interval '30 days'
-                    GROUP BY project_id
+                    GROUP BY project_name
                 """)
-                snap_stats = {r["project_id"]: r for r in cur.fetchall()}
+                snap_stats = {r["project_name"]: r for r in cur.fetchall()}
+
+                # Also count actual Cinder snapshots per tenant
+                cur.execute("""
+                    SELECT project_name, COUNT(*) AS cinder_count
+                    FROM snapshots
+                    GROUP BY project_name
+                """)
+                cinder_counts = {r["project_name"]: r["cinder_count"] for r in cur.fetchall()}
 
         rows = []
         for a in assignments:
             tid = a["tenant_id"]
-            ss = snap_stats.get(tid, {})
+            tname = a.get("tenant_name", "")
+            ss = snap_stats.get(tname, {})
             last_snap = ss.get("last_snapshot_time")
             total = ss.get("total_snapshots", 0)
             compliant = ss.get("compliant_count", 0)
@@ -634,12 +658,14 @@ async def report_snapshot_compliance(
 
             rows.append({
                 "Domain": a.get("domain_name", ""),
-                "Tenant": a.get("tenant_name", ""),
+                "Tenant": tname,
                 "Tenant ID": tid,
                 "Policy Assigned": a.get("policy_name") or "None",
+                "Assigned Volumes": a.get("assigned_volumes", 0),
                 "Assigned At": a.get("assigned_at"),
                 "Last Snapshot": last_snap,
-                "Total Snapshots (30d)": total,
+                "Cinder Snapshots": cinder_counts.get(tname, 0),
+                "Metering Snapshots (30d)": total,
                 "Compliant": compliant,
                 "Non-Compliant": non_compliant,
                 "Status": status,
@@ -771,10 +797,14 @@ async def report_metering_summary(
             domain_filter = ""
             params: list = [hours]
             if domain_id:
-                domain_filter = " AND domain = (SELECT name FROM domains WHERE id = %s)"
+                domain_filter = " AND project_name IN (SELECT name FROM projects WHERE domain_id = %s)"
                 params.append(domain_id)
 
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Build project→domain lookup
+                cur.execute("SELECT p.name AS pname, d.name AS dname FROM projects p LEFT JOIN domains d ON d.id = p.domain_id")
+                proj_domain = {r["pname"]: r["dname"] for r in cur.fetchall()}
+
                 cur.execute(f"""
                     WITH latest AS (
                         SELECT DISTINCT ON (vm_id) *
@@ -785,7 +815,6 @@ async def report_metering_summary(
                     )
                     SELECT
                         COALESCE(project_name, 'unknown') AS tenant,
-                        COALESCE(domain, '') AS domain,
                         COUNT(*) AS vm_count,
                         ROUND(SUM(COALESCE(vcpus_allocated, 0))::numeric, 0) AS total_vcpus,
                         ROUND(SUM(COALESCE(ram_allocated_mb, 0))::numeric / 1024, 2) AS total_ram_gb,
@@ -795,7 +824,7 @@ async def report_metering_summary(
                         ROUND(SUM(COALESCE(network_rx_bytes, 0))::numeric / 1073741824, 2) AS total_net_rx_gb,
                         ROUND(SUM(COALESCE(network_tx_bytes, 0))::numeric / 1073741824, 2) AS total_net_tx_gb
                     FROM latest
-                    GROUP BY project_name, domain
+                    GROUP BY project_name
                     ORDER BY project_name
                 """, params)
                 rows = cur.fetchall()
@@ -812,6 +841,8 @@ async def report_metering_summary(
             result = []
             for r in rows:
                 r = dict(r)
+                # Resolve domain name from project→domain mapping
+                r["domain"] = proj_domain.get(r.get("tenant", ""), "")
                 total_vcpus = float(r.get("total_vcpus", 0))
                 total_ram_gb = float(r.get("total_ram_gb", 0))
                 total_disk_gb = float(r.get("total_disk_gb", 0))
@@ -921,7 +952,7 @@ async def report_user_role_audit(
         client = get_client()
         all_users = client.list_users(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
-        projects = client.list_projects(domain_id=domain_id)
+        projects = {p["id"]: p.get("name", "") for p in client.list_projects(domain_id=domain_id)}
         roles = {r["id"]: r["name"] for r in client.list_roles()}
 
         ROLE_LABELS = {
@@ -930,16 +961,57 @@ async def report_user_role_audit(
             "reader": "Read Only User",
         }
 
+        # Fetch all role assignments with names
+        try:
+            all_assignments = client.list_role_assignments()
+        except Exception:
+            all_assignments = []
+
+        # Index role assignments by user
+        user_roles: Dict[str, list] = {}
+        for ra in all_assignments:
+            uid = ra.get("user", {}).get("id", "")
+            role_name = ra.get("role", {}).get("name", roles.get(ra.get("role", {}).get("id", ""), ""))
+            scope_parts = []
+            if ra.get("scope", {}).get("project"):
+                proj = ra["scope"]["project"]
+                pname = proj.get("name") or projects.get(proj.get("id", ""), proj.get("id", ""))
+                scope_parts.append(f"{role_name}@project:{pname}")
+            elif ra.get("scope", {}).get("domain"):
+                dom = ra["scope"]["domain"]
+                dname = dom.get("name") or domains.get(dom.get("id", ""), dom.get("id", ""))
+                scope_parts.append(f"{role_name}@domain:{dname}")
+            else:
+                scope_parts.append(role_name)
+            user_roles.setdefault(uid, []).extend(scope_parts)
+
         rows = []
         for u in all_users:
             did = u.get("domain_id", "")
+            uid = u.get("id", "")
+            role_list = user_roles.get(uid, [])
+            # Derive display-friendly role summary
+            role_names_set = set()
+            for r in role_list:
+                rname = r.split("@")[0] if "@" in r else r
+                role_names_set.add(rname)
+            primary_role = ""
+            for rn in ["admin", "member", "reader"]:
+                if rn in role_names_set:
+                    primary_role = ROLE_LABELS.get(rn, rn)
+                    break
+            if not primary_role and role_names_set:
+                primary_role = ", ".join(sorted(role_names_set))
+
             rows.append({
                 "Username": u.get("name", ""),
-                "User ID": u.get("id", ""),
+                "User ID": uid,
                 "Email": u.get("email", ""),
                 "Domain": domains.get(did, ""),
                 "Domain ID": did,
                 "Enabled": u.get("enabled", True),
+                "Role": primary_role or "No Role",
+                "Role Assignments": "; ".join(sorted(role_list)) if role_list else "None",
                 "Description": u.get("description", ""),
                 "Password Expires At": u.get("password_expires_at", ""),
             })
@@ -1139,6 +1211,12 @@ async def report_capacity_planning(
         client = get_client()
         servers = client.list_servers(all_tenants=True)
 
+        # Build flavor lookup (servers/detail may omit inline vcpus/ram)
+        all_flavors = client.list_flavors()
+        flavor_map: Dict[str, Dict[str, Any]] = {}
+        for f in all_flavors:
+            flavor_map[f["id"]] = f
+
         # Total allocated by servers
         total_alloc_vcpus = 0
         total_alloc_ram_mb = 0
@@ -1147,9 +1225,18 @@ async def report_capacity_planning(
         for s in servers:
             flv = s.get("flavor", {})
             if isinstance(flv, dict):
-                total_alloc_vcpus += flv.get("vcpus", 0)
-                total_alloc_ram_mb += flv.get("ram", 0)
-                total_alloc_disk_gb += flv.get("disk", 0)
+                vcpus = flv.get("vcpus") or 0
+                ram = flv.get("ram") or 0
+                disk = flv.get("disk") or 0
+                if not vcpus or not ram:
+                    fid = flv.get("id", "")
+                    resolved = flavor_map.get(fid, {})
+                    vcpus = vcpus or resolved.get("vcpus", 0)
+                    ram = ram or resolved.get("ram", 0)
+                    disk = disk or resolved.get("disk", 0)
+                total_alloc_vcpus += int(vcpus)
+                total_alloc_ram_mb += int(ram)
+                total_alloc_disk_gb += int(disk)
             host = s.get("OS-EXT-SRV-ATTR:hypervisor_hostname") or s.get("hypervisor_hostname", "")
             if host:
                 servers_per_host[host] = servers_per_host.get(host, 0) + 1
@@ -1227,39 +1314,38 @@ async def report_backup_status(
     format: str = Query("json", description="json or csv"),
     user: User = Depends(require_permission("reports", "read")),
 ):
-    """All tenants: backup status, last backup, size, success/failure."""
+    """System backup status: last backups, size, success/failure."""
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT
-                        p.name AS tenant_name,
-                        p.id AS tenant_id,
-                        d.name AS domain_name,
-                        bj.id AS job_id,
-                        bj.status,
-                        bj.started_at,
-                        bj.completed_at,
-                        bj.backup_size_bytes,
-                        bj.error_message
-                    FROM projects p
-                    LEFT JOIN domains d ON d.id = p.domain_id
-                    LEFT JOIN LATERAL (
-                        SELECT * FROM backup_jobs
-                        WHERE project_id = p.id
-                        ORDER BY started_at DESC
-                        LIMIT 1
-                    ) bj ON TRUE
-                    ORDER BY d.name, p.name
+                        id,
+                        backup_type,
+                        backup_target,
+                        status,
+                        file_name,
+                        file_size_bytes,
+                        duration_seconds,
+                        initiated_by,
+                        error_message,
+                        started_at,
+                        completed_at,
+                        created_at
+                    FROM backup_history
+                    ORDER BY started_at DESC NULLS LAST
+                    LIMIT 500
                 """)
                 rows = cur.fetchall()
 
         result = []
         for r in rows:
             r = dict(r)
-            size_bytes = r.get("backup_size_bytes") or 0
+            size_bytes = r.get("file_size_bytes") or 0
             r["Backup Size (MB)"] = round(size_bytes / (1024 * 1024), 2) if size_bytes else 0
-            if r.get("started_at") and r.get("completed_at"):
+            if r.get("duration_seconds"):
+                r["Duration (sec)"] = round(float(r["duration_seconds"]), 1)
+            elif r.get("started_at") and r.get("completed_at"):
                 try:
                     duration = (r["completed_at"] - r["started_at"]).total_seconds()
                     r["Duration (sec)"] = round(duration, 1)
@@ -1368,7 +1454,7 @@ async def report_network_topology(
                 "Tenant": project_names.get(pid, pid),
                 "Domain": domain_of_project.get(pid, ""),
                 "Shared": net.get("shared", False),
-                "External": net.get("router:external", False),
+                "External": net.get("router:external", net.get("is_external", False)),
                 "CIDRs": cidrs,
                 "Gateways": gateways,
                 "Subnet Count": len(net_subnets),
@@ -1434,6 +1520,10 @@ async def report_cost_allocation(
                 cur.execute("SELECT * FROM metering_config WHERE id = 1")
                 cfg = cur.fetchone()
 
+                # Build project→domain lookup
+                cur.execute("SELECT p.name AS pname, d.name AS dname FROM projects p LEFT JOIN domains d ON d.id = p.domain_id")
+                proj_domain = {r["pname"]: r["dname"] for r in cur.fetchall()}
+
                 cur.execute(f"""
                     WITH latest AS (
                         SELECT DISTINCT ON (vm_id) *
@@ -1442,41 +1532,67 @@ async def report_cost_allocation(
                         ORDER BY vm_id, collected_at DESC
                     )
                     SELECT
-                        COALESCE(domain, 'unknown') AS domain,
+                        COALESCE(project_name, 'unknown') AS project_name,
                         COUNT(*) AS vm_count,
                         ROUND(SUM(COALESCE(vcpus_allocated, 0))::numeric, 0) AS total_vcpus,
                         ROUND(SUM(COALESCE(ram_allocated_mb, 0))::numeric / 1024, 2) AS total_ram_gb,
                         ROUND(SUM(COALESCE(disk_allocated_gb, 0))::numeric, 1) AS total_disk_gb,
                         ROUND(AVG(COALESCE(cpu_usage_percent, 0))::numeric, 1) AS avg_cpu_pct,
-                        ROUND(AVG(COALESCE(ram_usage_percent, 0))::numeric, 1) AS avg_ram_pct,
-                        COUNT(DISTINCT project_name) AS tenant_count
+                        ROUND(AVG(COALESCE(ram_usage_percent, 0))::numeric, 1) AS avg_ram_pct
                     FROM latest
-                    GROUP BY domain
-                    ORDER BY domain
+                    GROUP BY project_name
+                    ORDER BY project_name
                 """, [hours])
-                rows = cur.fetchall()
+                project_rows = cur.fetchall()
 
             cost_vcpu = float(cfg.get("cost_per_vcpu_hour", 0)) if cfg else 0
             cost_ram = float(cfg.get("cost_per_gb_ram_hour", 0)) if cfg else 0
             cost_storage = float(cfg.get("cost_per_gb_storage_month", 0)) if cfg else 0
             currency = cfg.get("cost_currency", "USD") if cfg else "USD"
 
+            # Aggregate by actual domain
+            domain_agg: Dict[str, Dict] = {}
+            for pr in project_rows:
+                pr = dict(pr)
+                pname = pr.get("project_name", "unknown")
+                dname = proj_domain.get(pname, "unknown")
+                if dname not in domain_agg:
+                    domain_agg[dname] = {
+                        "domain": dname, "vm_count": 0, "total_vcpus": 0,
+                        "total_ram_gb": 0.0, "total_disk_gb": 0.0,
+                        "cpu_pcts": [], "ram_pcts": [], "tenant_names": set(),
+                    }
+                da = domain_agg[dname]
+                da["vm_count"] += int(pr.get("vm_count", 0))
+                da["total_vcpus"] += float(pr.get("total_vcpus", 0))
+                da["total_ram_gb"] += float(pr.get("total_ram_gb", 0))
+                da["total_disk_gb"] += float(pr.get("total_disk_gb", 0))
+                if pr.get("avg_cpu_pct"):
+                    da["cpu_pcts"].append(float(pr["avg_cpu_pct"]))
+                if pr.get("avg_ram_pct"):
+                    da["ram_pcts"].append(float(pr["avg_ram_pct"]))
+                da["tenant_names"].add(pname)
+
             result = []
-            for r in rows:
-                r = dict(r)
-                total_vcpus = float(r.get("total_vcpus", 0))
-                total_ram_gb = float(r.get("total_ram_gb", 0))
-                total_disk_gb = float(r.get("total_disk_gb", 0))
-                compute_cost = (total_vcpus * cost_vcpu + total_ram_gb * cost_ram) * hours
-                storage_cost = total_disk_gb * cost_storage
-                r[f"Compute Cost ({currency})"] = round(compute_cost, 2)
-                r[f"Storage Cost ({currency})"] = round(storage_cost, 2)
-                r[f"Total Cost ({currency})"] = round(compute_cost + storage_cost, 2)
-                r["Period (hours)"] = hours
-                for k in list(r.keys()):
-                    if hasattr(r[k], "as_tuple"):
-                        r[k] = float(r[k])
-                result.append(r)
+            for dname, da in sorted(domain_agg.items()):
+                avg_cpu = round(sum(da["cpu_pcts"]) / len(da["cpu_pcts"]), 1) if da["cpu_pcts"] else 0
+                avg_ram = round(sum(da["ram_pcts"]) / len(da["ram_pcts"]), 1) if da["ram_pcts"] else 0
+                compute_cost = (da["total_vcpus"] * cost_vcpu + da["total_ram_gb"] * cost_ram) * hours
+                storage_cost = da["total_disk_gb"] * cost_storage
+                result.append({
+                    "domain": dname,
+                    "vm_count": da["vm_count"],
+                    "total_vcpus": da["total_vcpus"],
+                    "total_ram_gb": da["total_ram_gb"],
+                    "total_disk_gb": da["total_disk_gb"],
+                    "avg_cpu_pct": avg_cpu,
+                    "avg_ram_pct": avg_ram,
+                    "tenant_count": len(da["tenant_names"]),
+                    f"Compute Cost ({currency})": round(compute_cost, 2),
+                    f"Storage Cost ({currency})": round(storage_cost, 2),
+                    f"Total Cost ({currency})": round(compute_cost + storage_cost, 2),
+                    "Period (hours)": hours,
+                })
 
         if format == "csv":
             return _rows_to_csv(result, f"cost_allocation_{_ts()}.csv")
@@ -1503,23 +1619,34 @@ async def report_drift_summary(
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT
-                        dd.resource_type,
-                        dd.resource_id,
-                        dd.resource_name,
-                        dd.project_id,
-                        p.name AS project_name,
-                        d.name AS domain_name,
-                        dd.drift_type,
-                        dd.severity,
-                        dd.detected_at,
-                        dd.resolved_at,
-                        dd.current_value,
-                        dd.expected_value
-                    FROM drift_detections dd
-                    LEFT JOIN projects p ON p.id = dd.project_id
-                    LEFT JOIN domains d ON d.id = p.domain_id
-                    WHERE dd.resolved_at IS NULL
-                    ORDER BY dd.severity DESC, dd.detected_at DESC
+                        de.resource_type,
+                        de.resource_id,
+                        de.resource_name,
+                        de.project_id,
+                        COALESCE(de.project_name, p.name) AS project_name,
+                        COALESCE(de.domain_name, d.name) AS domain_name,
+                        de.severity,
+                        de.field_changed,
+                        de.old_value,
+                        de.new_value,
+                        de.description,
+                        de.detected_at,
+                        de.acknowledged,
+                        de.acknowledged_by,
+                        de.acknowledged_at
+                    FROM drift_events de
+                    LEFT JOIN projects p ON p.id = de.project_id
+                    LEFT JOIN domains d ON d.id = de.domain_id
+                    WHERE de.acknowledged = false
+                    ORDER BY
+                        CASE de.severity
+                            WHEN 'critical' THEN 1
+                            WHEN 'high' THEN 2
+                            WHEN 'medium' THEN 3
+                            WHEN 'low' THEN 4
+                            ELSE 5
+                        END,
+                        de.detected_at DESC
                     LIMIT 5000
                 """)
                 rows = cur.fetchall()

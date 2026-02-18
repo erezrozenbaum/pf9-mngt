@@ -526,6 +526,17 @@ class Pf9Client:
         r.raise_for_status()
         return r.json().get("roles", [])
 
+    def list_role_assignments(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List Keystone role assignments, optionally filtered by user."""
+        self.authenticate()
+        url = f"{self.keystone_endpoint}/role_assignments"
+        params: Dict[str, str] = {"include_names": "true"}
+        if user_id:
+            params["user.id"] = user_id
+        r = self.session.get(url, headers=self._headers(), params=params)
+        r.raise_for_status()
+        return r.json().get("role_assignments", [])
+
     def assign_role_to_user_on_project(
         self, project_id: str, user_id: str, role_id: str
     ) -> None:
