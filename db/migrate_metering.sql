@@ -217,7 +217,7 @@ CREATE TABLE IF NOT EXISTS metering_flavor_pricing (
 
 -- ---------------------------------------------------------------------------
 -- metering_pricing – unified multi-category pricing for chargeback
--- Categories: flavor, storage_gb, snapshot_gb, restore, volume, network, custom
+-- Categories: flavor, storage_gb, snapshot_gb, snapshot_op, restore, volume, network, public_ip, custom
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS metering_pricing (
     id              SERIAL PRIMARY KEY,
@@ -231,11 +231,15 @@ CREATE TABLE IF NOT EXISTS metering_pricing (
     vcpus           INTEGER,
     ram_gb          NUMERIC(10, 2),
     disk_gb         NUMERIC(10, 2),
+    disk_cost_per_gb NUMERIC(12, 6) NOT NULL DEFAULT 0,
     auto_populated  BOOLEAN NOT NULL DEFAULT false,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (category, item_name)
 );
+
+-- Add disk_cost_per_gb for existing installations
+ALTER TABLE metering_pricing ADD COLUMN IF NOT EXISTS disk_cost_per_gb NUMERIC(12,6) NOT NULL DEFAULT 0;
 
 -- ---------------------------------------------------------------------------
 -- RBAC: Grant metering permissions to admin / superadmin

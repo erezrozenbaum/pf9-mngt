@@ -65,6 +65,9 @@ from reports import router as reports_router
 # Resource management endpoints
 from resource_management import router as resource_management_router
 
+# Navigation & department endpoints
+from navigation_routes import router as navigation_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -275,6 +278,7 @@ app.include_router(metering_router)
 app.include_router(provisioning_router)
 app.include_router(reports_router)
 app.include_router(resource_management_router)
+app.include_router(navigation_router)
 
 # Rate limiting setup
 app.state.limiter = limiter
@@ -319,7 +323,7 @@ async def rbac_middleware(request: Request, call_next):
         path.startswith("/auth") or
         path.startswith("/settings/") or
         path.startswith("/static/") or
-        path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/simple-test", "/test-users-db"]
+        path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc"]
     ):
         return await call_next(request)
 
@@ -359,11 +363,13 @@ async def rbac_middleware(request: Request, call_next):
         "projects": "projects",
         "servers": "servers",
         "snapshots": "snapshots",
+        "snapshot-runs": "snapshot_runs",
         "networks": "networks",
         "subnets": "subnets",
         "ports": "ports",
         "floatingips": "floatingips",
         "volumes": "volumes",
+        "volumes-with-metadata": "volumes",
         "flavors": "flavors",
         "images": "images",
         "hypervisors": "hypervisors",
@@ -371,6 +377,9 @@ async def rbac_middleware(request: Request, call_next):
         "audit": "audit",
         "monitoring": "monitoring",
         "users": "users",
+        "roles": "users",
+        "role-assignments": "users",
+        "user-activity-summary": "users",
         "dashboard": "dashboard",
         "restore": "restore",
         "security-groups": "security_groups",
@@ -379,6 +388,15 @@ async def rbac_middleware(request: Request, call_next):
         "tenant-health": "tenant_health",
         "reports": "reports",
         "resources": "resources",
+        "admin": "branding",
+        "backup": "backup",
+        "metering": "metering",
+        "notifications": "notifications",
+        "mfa": "mfa",
+        "provisioning": "provisioning",
+        "snapshot-management": "snapshot_policy_sets",
+        "api-metrics": "api_metrics",
+        "system-logs": "system_logs",
     }
 
     resource = resource_map.get(segment)
@@ -631,12 +649,34 @@ async def get_users(current_user: dict = Depends(get_current_user)):
         # Get users from LDAP
         users = ldap_auth.get_all_users()
         
+        # Build department lookup from DB
+        dept_map = {}
+        try:
+            with get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT ur.username, ur.department_id, d.name AS department_name
+                        FROM user_roles ur
+                        LEFT JOIN departments d ON d.id = ur.department_id
+                        WHERE ur.is_active = true
+                    """)
+                    for row in cur.fetchall():
+                        dept_map[row['username']] = {
+                            'department_id': row['department_id'],
+                            'department_name': row['department_name'],
+                        }
+        except Exception as e:
+            logger.warning(f"Could not load departments: {e}")
+        
         # Get roles from database for each user
         for user in users:
             role = get_user_role(user['username'])
             user['role'] = role if role else 'viewer'
             user['status'] = 'active'  # LDAP users are active by default
             user['lastLogin'] = None  # Could be enhanced to track this
+            dept_info = dept_map.get(user['username'], {})
+            user['department_id'] = dept_info.get('department_id')
+            user['department_name'] = dept_info.get('department_name')
         
         return users
     except Exception as e:
@@ -708,6 +748,7 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
         'api_metrics', 'system_logs', 'restore', 'security_groups',
         'dashboard', 'drift', 'tenant_health', 'notifications', 'backup',
         'mfa', 'metering', 'provisioning', 'reports', 'resources', 'branding',
+        'departments', 'navigation',
     ]
     
     try:

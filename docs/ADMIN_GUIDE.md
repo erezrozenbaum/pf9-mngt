@@ -193,15 +193,21 @@
 - **Comprehensive Audit Dashboard**: Added storage summaries, network distribution, flavor analytics, and change velocity metrics
 - **Resource History API**: Standardized history endpoints for all resource types with proper data transformation
 
-### Database Schema Overview (29+ Tables)
+### Database Schema Overview (35+ Tables)
 
-#### Authentication & Authorization (3 tables)
-- **user_roles**: User-to-role mappings with active status tracking
+#### Authentication, Authorization & Visibility (12 tables)
+- **user_roles**: User-to-role mappings with active status tracking and department assignment
 - **role_permissions**: Resource-level permission matrix (role → resource → action)
 - **auth_audit_log**: Authentication event logging (login, logout, permission denied) with 90-day retention
 - **user_sessions**: JWT session tracking with IP address and user agent
 - **app_settings**: Key/value store for application-wide settings (branding colors, company name, hero content)
 - **user_preferences**: Per-user preferences (tab order, UI settings) with JSONB value column
+- **departments**: Organisational groups for navigation visibility (Engineering, Support tiers, Sales, etc.)
+- **nav_groups**: Top-level navigation groups (Inventory, Snapshot Management, Admin Tools, etc.)
+- **nav_items**: Individual navigation tabs mapped to nav groups with route/resource_key
+- **department_nav_groups**: Many-to-many department ↔ nav group visibility
+- **department_nav_items**: Many-to-many department ↔ nav item visibility (fine-grained)
+- **user_nav_overrides**: Per-user grant/deny overrides for individual nav items
 
 #### Core Identity & Organization (3 tables)
 - **domains**: OpenStack domains with JSONB metadata and foreign key relationships

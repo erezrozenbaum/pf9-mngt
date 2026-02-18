@@ -217,6 +217,7 @@ interface FlavorPrice {
   vcpus: number | null;
   ram_gb: number | null;
   disk_gb: number | null;
+  disk_cost_per_gb: number | null;
   auto_populated: boolean;
 }
 
@@ -232,6 +233,7 @@ interface PricingItem {
   vcpus?: number;
   ram_gb?: number;
   disk_gb?: number;
+  disk_cost_per_gb?: number;
 }
 
 interface FiltersData {
@@ -378,6 +380,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
   // Flavor pricing edit
   const [editingPricing, setEditingPricing] = useState<Partial<PricingItem> | null>(null);
   const [pricingCategoryFilter, setPricingCategoryFilter] = useState<string>("all");
+  const [pricingSearchQuery, setPricingSearchQuery] = useState("");
+  const [pricingSortField, setPricingSortField] = useState<string>("category");
+  const [pricingSortDir, setPricingSortDir] = useState<"asc" | "desc">("asc");
 
   const handleSort = useCallback((field: string) => {
     setSortDir((prev) => (sortField === field ? (prev === "asc" ? "desc" : "asc") : "desc"));
@@ -1060,12 +1065,38 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                 <option value="flavor">Flavors (Compute)</option>
                 <option value="storage_gb">Storage (per GB)</option>
                 <option value="snapshot_gb">Snapshots (per GB)</option>
+                <option value="snapshot_op">Snapshots (per op)</option>
                 <option value="restore">Restores (per op)</option>
                 <option value="volume">Volumes</option>
                 <option value="network">Networks</option>
-                <option value="custom">Custom</option>
+                <option value="public_ip">Public IP</option>
+                <option value="custom">Custom (other)</option>
               </select>
             </label>
+          </div>
+
+          {/* Search bar */}
+          <div style={{ display: "flex", gap: 10, marginBottom: 12, alignItems: "center" }}>
+            <span style={{ fontSize: "0.85em" }}>🔍</span>
+            <input
+              type="text"
+              placeholder="Search by name, category, unit, notes..."
+              value={pricingSearchQuery}
+              onChange={(e) => setPricingSearchQuery(e.target.value)}
+              style={{ ...inputStyle, minWidth: 300 }}
+            />
+            {pricingSearchQuery && (
+              <button onClick={() => setPricingSearchQuery("")} style={{ ...btnOutline, padding: "2px 8px", fontSize: "0.8em" }}>✕ Clear</button>
+            )}
+            <span style={{ marginLeft: "auto", fontSize: "0.8em", color: "var(--color-text-secondary, #999)" }}>
+              {pricingItems
+                .filter((p) => pricingCategoryFilter === "all" || p.category === pricingCategoryFilter)
+                .filter((p) => {
+                  if (!pricingSearchQuery) return true;
+                  const q = pricingSearchQuery.toLowerCase();
+                  return p.item_name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q) || (p.unit || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q);
+                }).length} of {pricingItems.length} entries
+            </span>
           </div>
 
           {/* Editor modal */}
@@ -1079,11 +1110,18 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                     <option value="flavor">Flavor (Compute)</option>
                     <option value="storage_gb">Storage (per GB)</option>
                     <option value="snapshot_gb">Snapshot (per GB)</option>
+                    <option value="snapshot_op">Snapshot (per operation)</option>
                     <option value="restore">Restore (per operation)</option>
                     <option value="volume">Volume</option>
                     <option value="network">Network</option>
-                    <option value="custom">Custom</option>
+                    <option value="public_ip">Public IP</option>
+                    <option value="custom">Custom (other)</option>
                   </select>
+                  {editingPricing.category === "custom" && (
+                    <span style={{ fontSize: "0.75em", color: "var(--color-text-secondary, #999)", display: "block", marginTop: 2 }}>
+                      For items not covered by built-in categories. Use a unique name to avoid overlap.
+                    </span>
+                  )}
                 </label>
                 <label style={{ fontSize: "0.85em", color: "var(--color-text-primary)" }}>
                   Item Name
@@ -1121,6 +1159,13 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                       Disk (GB)
                       <input type="number" min={0} value={editingPricing.disk_gb || 0} onChange={(e) => setEditingPricing({ ...editingPricing, disk_gb: Number(e.target.value) })} style={{ ...inputStyle, width: "100%", marginLeft: 0, display: "block", marginTop: 4 }} />
                     </label>
+                    {(editingPricing.disk_gb || 0) > 0 && (
+                      <label style={{ fontSize: "0.85em", color: "var(--color-text-primary)" }}>
+                        Disk Price / GB / Month
+                        <input type="number" min={0} step={0.01} value={editingPricing.disk_cost_per_gb || 0} onChange={(e) => setEditingPricing({ ...editingPricing, disk_cost_per_gb: Number(e.target.value) })} style={{ ...inputStyle, width: "100%", marginLeft: 0, display: "block", marginTop: 4 }} />
+                        <span style={{ fontSize: "0.75em", color: "var(--color-text-secondary, #999)" }}>Ephemeral disk cost per GB per month</span>
+                      </label>
+                    )}
                   </>
                 )}
                 <label style={{ fontSize: "0.85em", color: "var(--color-text-primary)", gridColumn: "1 / -1" }}>
@@ -1140,20 +1185,52 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <table className="pf9-table" style={{ width: "100%", fontSize: "0.85em" }}>
               <thead>
                 <tr>
-                  <th>Category</th>
-                  <th>Item Name</th>
-                  <th>Unit</th>
-                  <th>Specs</th>
-                  <th>Cost / Hour</th>
-                  <th>Cost / Month</th>
-                  <th>Currency</th>
-                  <th>Notes</th>
-                  <th>Actions</th>
+                  {[
+                    { key: "category", label: "Category" },
+                    { key: "item_name", label: "Item Name" },
+                    { key: "unit", label: "Unit" },
+                    { key: "specs", label: "Specs", sortable: false },
+                    { key: "cost_per_hour", label: "Cost / Hour" },
+                    { key: "cost_per_month", label: "Cost / Month" },
+                    { key: "currency", label: "Currency" },
+                    { key: "notes", label: "Notes" },
+                    { key: "actions", label: "Actions", sortable: false },
+                  ].map((col) => (
+                    <th
+                      key={col.key}
+                      onClick={col.sortable !== false ? () => {
+                        if (pricingSortField === col.key) {
+                          setPricingSortDir(pricingSortDir === "asc" ? "desc" : "asc");
+                        } else {
+                          setPricingSortField(col.key);
+                          setPricingSortDir("asc");
+                        }
+                      } : undefined}
+                      style={{ cursor: col.sortable !== false ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}
+                    >
+                      {col.label}
+                      {col.sortable !== false && pricingSortField === col.key && (
+                        <span style={{ marginLeft: 4 }}>{pricingSortDir === "asc" ? "▲" : "▼"}</span>
+                      )}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {pricingItems
                   .filter((p) => pricingCategoryFilter === "all" || p.category === pricingCategoryFilter)
+                  .filter((p) => {
+                    if (!pricingSearchQuery) return true;
+                    const q = pricingSearchQuery.toLowerCase();
+                    return p.item_name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q) || (p.unit || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q);
+                  })
+                  .sort((a, b) => {
+                    const field = pricingSortField as keyof PricingItem;
+                    const av = a[field] ?? "";
+                    const bv = b[field] ?? "";
+                    const cmp = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
+                    return pricingSortDir === "asc" ? cmp : -cmp;
+                  })
                   .map((fp) => (
                   <tr key={fp.id}>
                     <td>
@@ -1168,20 +1245,25 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                           fp.category === "flavor" ? "#1976D2" :
                           fp.category === "storage_gb" ? "#7B1FA2" :
                           fp.category === "snapshot_gb" ? "#00796B" :
+                          fp.category === "snapshot_op" ? "#009688" :
                           fp.category === "restore" ? "#E64A19" :
                           fp.category === "volume" ? "#455A64" :
                           fp.category === "network" ? "#F57C00" :
+                          fp.category === "public_ip" ? "#5C6BC0" :
                           "#616161",
                         textTransform: "capitalize",
                       }}>
-                        {fp.category.replace("_gb", "").replace("_", " ")}
+                        {fp.category.replace("_gb", "").replace("_op", "").replace("_ip", " IP").replace("_", " ")}
                       </span>
                     </td>
                     <td style={{ fontWeight: 600 }}>{fp.item_name}</td>
                     <td style={{ fontSize: "0.85em", opacity: 0.7 }}>{fp.unit}</td>
                     <td style={{ fontSize: "0.82em" }}>
                       {fp.category === "flavor" && fp.vcpus != null ? (
-                        <span>{fp.vcpus} vCPU · {fp.ram_gb} GB RAM · {fp.disk_gb} GB Disk</span>
+                        <span>
+                          {fp.vcpus} vCPU · {fp.ram_gb} GB RAM · {fp.disk_gb} GB Disk
+                          {fp.disk_cost_per_gb ? <span style={{ marginLeft: 4, color: "#7B1FA2", fontWeight: 600 }}>(₪{fp.disk_cost_per_gb}/GB)</span> : null}
+                        </span>
                       ) : "—"}
                     </td>
                     <td style={{ fontFamily: "monospace" }}>{(fp.cost_per_hour || 0).toFixed(4)}</td>
@@ -1201,14 +1283,21 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                         vcpus: fp.vcpus || undefined,
                         ram_gb: fp.ram_gb || undefined,
                         disk_gb: fp.disk_gb || undefined,
+                        disk_cost_per_gb: fp.disk_cost_per_gb || undefined,
                       })} style={{ ...btnOutline, padding: "2px 10px", fontSize: "0.8em", marginRight: 4 }}>✏️</button>
                       <button onClick={() => deletePricingItem(fp.id)} style={{ ...btnOutline, padding: "2px 10px", fontSize: "0.8em", color: "#D32F2F", borderColor: "#D32F2F" }}>🗑</button>
                     </td>
                   </tr>
                 ))}
-                {pricingItems.filter((p) => pricingCategoryFilter === "all" || p.category === pricingCategoryFilter).length === 0 && (
+                {pricingItems
+                  .filter((p) => pricingCategoryFilter === "all" || p.category === pricingCategoryFilter)
+                  .filter((p) => {
+                    if (!pricingSearchQuery) return true;
+                    const q = pricingSearchQuery.toLowerCase();
+                    return p.item_name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q) || (p.unit || "").toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q);
+                  }).length === 0 && (
                   <tr><td colSpan={9} style={{ textAlign: "center", padding: 24, color: "var(--color-text-secondary, #999)" }}>
-                    No pricing configured yet. Click <strong>Sync Flavors from System</strong> to auto-populate flavor pricing, or add entries manually.
+                    {pricingSearchQuery ? "No entries match your search." : "No pricing configured yet. Click Sync Flavors from System to auto-populate flavor pricing, or add entries manually."}
                   </td></tr>
                 )}
               </tbody>
@@ -1219,10 +1308,12 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12, marginTop: 20 }}>
             {[
               { cat: "storage_gb", label: "Storage (per GB)", unit: "per GB/month", icon: "💾", desc: "Price per GB of block storage" },
-              { cat: "snapshot_gb", label: "Snapshot (per GB)", unit: "per GB/month", icon: "📸", desc: "Price per GB of snapshot storage" },
+              { cat: "snapshot_gb", label: "Snapshot Storage (per GB)", unit: "per GB/month", icon: "📸", desc: "Price per GB of snapshot storage" },
+              { cat: "snapshot_op", label: "Snapshot Operation", unit: "per operation", icon: "📷", desc: "Price per snapshot creation" },
               { cat: "restore", label: "Restore Operation", unit: "per operation", icon: "🔄", desc: "Price per restore operation" },
               { cat: "volume", label: "Volume", unit: "per volume/month", icon: "📦", desc: "Base price per volume" },
               { cat: "network", label: "Network", unit: "per network/month", icon: "🌐", desc: "Base price per network" },
+              { cat: "public_ip", label: "Public IP", unit: "per IP/month", icon: "🌍", desc: "Price per public/floating IP" },
             ].filter((c) => !pricingItems.some((p) => p.category === c.cat)).map((c) => (
               <div key={c.cat} style={{ ...cardStyle, cursor: "pointer", transition: "border-color 0.2s" }}
                 onClick={() => setEditingPricing({
@@ -1247,10 +1338,13 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <strong>💡 How pricing works:</strong> When generating chargeback reports, the system:
             <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
               <li><strong>Compute (Flavors):</strong> Matches each VM's flavor against the pricing table. Unmatched VMs use fallback vCPU/RAM rates from Metering Config.</li>
+              <li><strong>Ephemeral Disk:</strong> If a flavor has a disk price per GB, the ephemeral disk cost is added to the flavor cost.</li>
               <li><strong>Storage:</strong> Calculates cost based on total disk GB × storage rate per GB.</li>
-              <li><strong>Snapshots:</strong> Costs based on total snapshot GB × snapshot rate per GB.</li>
+              <li><strong>Snapshot Storage:</strong> Costs based on total snapshot GB × snapshot rate per GB.</li>
+              <li><strong>Snapshot Operations:</strong> Per-operation charge for each snapshot creation job.</li>
               <li><strong>Restores:</strong> Per-operation charge for each restore job.</li>
               <li><strong>Volumes / Networks:</strong> Base per-unit charges applied per tenant.</li>
+              <li><strong>Public IPs:</strong> Per-IP monthly charge for floating/public IP addresses.</li>
               <li><strong>Monthly ↔ Hourly:</strong> If only monthly rate is set, system divides by 730 hours for hourly cost (and vice versa).</li>
             </ul>
           </div>
