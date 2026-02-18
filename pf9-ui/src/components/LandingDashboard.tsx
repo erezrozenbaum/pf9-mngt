@@ -109,6 +109,11 @@ export const LandingDashboard: React.FC = () => {
         fetch(`${API_BASE}/dashboard/rvtools-last-run`, { headers }),
       ]);
 
+      // Helper: parse response or return null on failure (graceful degradation)
+      const safeJson = async (res: Response) => {
+        try { return res.ok ? await res.json() : null; } catch { return null; }
+      };
+
       // If we get a 401, clear the invalid token but don't reload - let the app show login page
       if (
         healthRes.status === 401 ||
@@ -136,26 +141,7 @@ export const LandingDashboard: React.FC = () => {
         return;
       }
 
-      if (
-        !healthRes.ok ||
-        !slaRes.ok ||
-        !hostsRes.ok ||
-        !activityRes.ok ||
-        !coverageRes.ok ||
-        !capacityRes.ok ||
-        !vmCpuRes.ok ||
-        !vmMemRes.ok ||
-        !vmStorageRes.ok ||
-        !changeComplianceRes.ok ||
-        !tenantRiskRes.ok ||
-        !trendlinesRes.ok ||
-        !tenantRiskHeatmapRes.ok ||
-        !capacityTrendsRes.ok ||
-        !complianceDriftRes.ok
-      ) {
-        throw new Error('Failed to fetch dashboard data');
-      }
-
+      // Gracefully degrade: parse each response individually; null on failure
       const [
         health,
         sla,
@@ -174,22 +160,22 @@ export const LandingDashboard: React.FC = () => {
         complianceDrift,
         rvtoolsLastRun
       ] = await Promise.all([
-        healthRes.json(),
-        slaRes.json(),
-        hostsRes.json(),
-        activityRes.json(),
-        coverageRes.json(),
-        capacityRes.json(),
-        vmCpuRes.json(),
-        vmMemRes.json(),
-        vmStorageRes.json(),
-        changeComplianceRes.json(),
-        tenantRiskRes.json(),
-        trendlinesRes.json(),
-        tenantRiskHeatmapRes.json(),
-        capacityTrendsRes.json(),
-        complianceDriftRes.json(),
-        rvtoolsRes.json(),
+        safeJson(healthRes),
+        safeJson(slaRes),
+        safeJson(hostsRes),
+        safeJson(activityRes),
+        safeJson(coverageRes),
+        safeJson(capacityRes),
+        safeJson(vmCpuRes),
+        safeJson(vmMemRes),
+        safeJson(vmStorageRes),
+        safeJson(changeComplianceRes),
+        safeJson(tenantRiskRes),
+        safeJson(trendlinesRes),
+        safeJson(tenantRiskHeatmapRes),
+        safeJson(capacityTrendsRes),
+        safeJson(complianceDriftRes),
+        safeJson(rvtoolsRes),
       ]);
 
       setData({

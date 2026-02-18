@@ -124,7 +124,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **RVTools Compatibility**: Excel/CSV exports with delta tracking and customer data masking
 - **Modern React UI**: TypeScript-based with Vite build system and theme support
 - **REST API**: FastAPI with OpenAPI docs + dedicated monitoring service
-- **Database Integration**: PostgreSQL 16 with 33+ tables for historical tracking + metering
+- **Database Integration**: PostgreSQL 16 with 44+ tables for historical tracking + metering + departments/navigation
 - **Drift Detection**: Automated field-level change monitoring with 24 rules across 8 resource types
 - **Administrative Operations**: Create/delete flavors and networks directly from UI
 
@@ -863,7 +863,7 @@ METRICS_CACHE_TTL=60
 
 # Email Notification Configuration (v1.11)
 SMTP_ENABLED=true
-SMTP_HOST=172.16.33.74
+SMTP_HOST=smtp.example.com
 SMTP_PORT=25
 SMTP_USE_TLS=false
 SMTP_USERNAME=

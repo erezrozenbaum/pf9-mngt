@@ -1304,7 +1304,10 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_ld
 # 6. Apply metering migration (v1.15+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_metering.sql
 
-# 7. Verify schema
+# 7. Apply departments & navigation visibility migration (v1.18+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_departments_navigation.sql
+
+# 8. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 
