@@ -972,6 +972,43 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     );
   };
 
+  const isSuperadmin = user?.role === 'superadmin';
+  const [permSaving, setPermSaving] = useState<string | null>(null); // "role:resource:action" currently saving
+
+  const handleTogglePermission = async (role: string, resource: string, action: string, currentlyEnabled: boolean) => {
+    const key = `${role}:${resource}:${action}`;
+    setPermSaving(key);
+    try {
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch(`${API_BASE}/auth/permissions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ role, resource, action, enabled: !currentlyEnabled }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        setError(err.detail || 'Failed to update permission');
+      } else {
+        // Optimistic update — flip the role in/out of the roles array
+        setPermissions(prev =>
+          prev.map(p => {
+            if (p.resource === resource && p.action === action) {
+              const newRoles = currentlyEnabled
+                ? p.roles.filter((r: string) => r !== role)
+                : [...p.roles, role];
+              return { ...p, roles: newRoles };
+            }
+            return p;
+          })
+        );
+      }
+    } catch (e) {
+      setError('Network error toggling permission');
+    } finally {
+      setPermSaving(null);
+    }
+  };
+
   const PermissionMatrix = () => {
     // Resource descriptions for human-readable display
     const resourceDescriptions: Record<string, string> = {
@@ -1187,10 +1224,14 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                         type="checkbox"
                         checked={permission.roles.includes(role.name)}
                         onChange={() => {
-                          console.log(`Toggle ${permission.resource}:${permission.action} for ${role.name}`);
+                          if (isSuperadmin) {
+                            handleTogglePermission(role.name, permission.resource, permission.action, permission.roles.includes(role.name));
+                          }
                         }}
                         className="permission-checkbox"
-                        disabled={true}
+                        disabled={!isSuperadmin || permSaving === `${role.name}:${permission.resource}:${permission.action}`}
+                        title={isSuperadmin ? `Click to ${permission.roles.includes(role.name) ? 'revoke' : 'grant'} ${permission.action} on ${permission.resource} for ${role.name}` : 'Only superadmin can edit permissions'}
+                        style={permSaving === `${role.name}:${permission.resource}:${permission.action}` ? { opacity: 0.4 } : undefined}
                       />
                     </td>
                   ))}
@@ -1389,6 +1430,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           <p className="text-sm text-gray-600 mb-4">
             This matrix shows which roles have access to each resource and action. Each resource maps to a feature area in the portal.
             <strong> read</strong> = View, <strong> write</strong> = Create/Edit, <strong> admin</strong> = Full control (delete, configure).
+            {isSuperadmin && <span className="ml-2 text-blue-600 font-medium">✏️ Click any checkbox to toggle permissions.</span>}
+            {!isSuperadmin && <span className="ml-2 text-gray-400 italic"> (Read-only — only superadmin can edit permissions)</span>}
           </p>
           <PermissionMatrix />
         </div>
