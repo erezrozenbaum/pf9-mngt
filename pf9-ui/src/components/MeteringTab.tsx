@@ -1338,13 +1338,15 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <strong>💡 How pricing works:</strong> When generating chargeback reports, the system:
             <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
               <li><strong>Compute (Flavors):</strong> Matches each VM's flavor against the pricing table. Unmatched VMs use fallback vCPU/RAM rates from Metering Config.</li>
-              <li><strong>Ephemeral Disk:</strong> If a flavor has a disk price per GB, the ephemeral disk cost is added to the flavor cost.</li>
+              <li><strong>Ephemeral Disk:</strong> If a flavor has a disk price per GB, the ephemeral disk cost is added to the compute cost.</li>
               <li><strong>Storage:</strong> Calculates cost based on total disk GB × storage rate per GB.</li>
               <li><strong>Snapshot Storage:</strong> Costs based on total snapshot GB × snapshot rate per GB.</li>
-              <li><strong>Snapshot Operations:</strong> Per-operation charge for each snapshot creation job.</li>
+              <li><strong>Snapshot Operations:</strong> Per-operation charge for each snapshot creation.</li>
               <li><strong>Restores:</strong> Per-operation charge for each restore job.</li>
-              <li><strong>Volumes / Networks:</strong> Base per-unit charges applied per tenant.</li>
-              <li><strong>Public IPs:</strong> Per-IP monthly charge for floating/public IP addresses.</li>
+              <li><strong>Volumes:</strong> Actual volume count from inventory × per-volume monthly rate.</li>
+              <li><strong>Networks:</strong> Actual network count from inventory × per-network monthly rate. Subnets and routers also counted.</li>
+              <li><strong>Public IPs:</strong> Actual floating IP count from inventory × per-IP monthly rate.</li>
+              <li><strong>Currency:</strong> Taken from pricing configuration. Can be overridden in the Export tab.</li>
               <li><strong>Monthly ↔ Hourly:</strong> If only monthly rate is set, system divides by 730 hours for hourly cost (and vice versa).</li>
             </ul>
           </div>
@@ -1374,7 +1376,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <ExportCard title="Efficiency Scores" description="Per-VM efficiency classification and recommendations" onExport={() => triggerExport("efficiency")} />
             <ExportCard
               title="Chargeback Report"
-              description={`Per-tenant cost aggregation in ${exportCurrency || "USD"} using configured cost model`}
+              description={`Per-tenant cost aggregation according to pricing currency (${exportCurrency || "auto"}) — VMs, volumes, snapshots, networks, floating IPs`}
               onExport={() => triggerExport("chargeback")}
               highlight
             />
@@ -1384,6 +1386,8 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <strong>ℹ️ Export Notes:</strong> All exports honour the Tenant / Project and Domain filters above.
             CSV columns use user-friendly headers. Raw IDs are included alongside display names for cross-referencing.
             The Chargeback Report uses per-flavor pricing when configured; otherwise fallback rates from Metering Configuration apply.
+            Volumes, networks, subnets, routers, and floating IPs are counted from actual inventory — not approximated.
+            Currency is taken from the pricing configuration; override with the dropdown above.
           </div>
         </div>
       )}

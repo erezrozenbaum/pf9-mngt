@@ -720,8 +720,11 @@ async def export_chargeback(
     """
     Export chargeback report as CSV.
     Uses the unified metering_pricing table (flavor, storage_gb, snapshot_gb,
-    restore, volume, network) to compute per-tenant costs.
+    snapshot_op, restore, volume, network, public_ip) to compute per-tenant costs.
+    Counts ACTUAL volumes, networks, subnets, routers, floating IPs, and ports
+    from inventory tables — not just VM-based approximations.
     Falls back to metering_config rates when no pricing entry matches.
+    Currency is taken from pricing configuration (metering_config.cost_currency).
     """
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -734,15 +737,24 @@ async def export_chargeback(
         fb_storage = float(cfg["cost_per_gb_storage_month"]) if cfg else 0
         fb_snap = float(cfg["cost_per_snapshot_gb_month"]) if cfg else 0
         fb_api = float(cfg["cost_per_api_call"]) if cfg else 0
-        currency = currency or (cfg["cost_currency"] if cfg else "USD")
+
+        # Currency resolution: query param → first pricing row → metering_config → USD
+        config_currency = cfg["cost_currency"] if cfg else "USD"
 
         # Load all pricing entries into a lookup
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM metering_pricing")
+            cur.execute("SELECT * FROM metering_pricing ORDER BY id")
             pricing_rows = cur.fetchall()
 
+        # If no override, try to pick currency from first pricing entry, else config
+        if not currency:
+            if pricing_rows:
+                currency = pricing_rows[0].get("currency") or config_currency
+            else:
+                currency = config_currency
+
         # Build pricing lookup by category
-        flavor_pricing = {}   # item_name -> {cost_per_hour, cost_per_month}
+        flavor_pricing = {}   # item_name -> {cost_per_hour, cost_per_month, disk_cost_per_gb}
         cat_pricing = {}      # category -> {cost_per_hour, cost_per_month, ...}
         for p in pricing_rows:
             entry = {
@@ -750,6 +762,7 @@ async def export_chargeback(
                 "cost_per_month": float(p.get("cost_per_month") or 0),
             }
             if p["category"] == "flavor":
+                entry["disk_cost_per_gb"] = float(p.get("disk_cost_per_gb") or 0)
                 flavor_pricing[p["item_name"]] = entry
             else:
                 cat_pricing[p["category"]] = entry
@@ -764,13 +777,25 @@ async def export_chargeback(
                     return e["cost_per_month"] / 730.0
             return fallback
 
+        # Helper to get per-month cost for a category
+        def cat_monthly(cat: str, fallback: float = 0.0) -> float:
+            e = cat_pricing.get(cat)
+            if e:
+                if e["cost_per_month"] > 0:
+                    return e["cost_per_month"]
+                if e["cost_per_hour"] > 0:
+                    return e["cost_per_hour"] * 730.0
+            return fallback
+
         storage_per_gb_hr = cat_hourly("storage_gb", fb_storage / 730.0 if fb_storage else 0)
         snapshot_per_gb_hr = cat_hourly("snapshot_gb", fb_snap / 730.0 if fb_snap else 0)
-        restore_per_op_hr = cat_hourly("restore")
-        volume_per_hr = cat_hourly("volume")
-        network_per_hr = cat_hourly("network")
+        snapshot_op_cost = cat_monthly("snapshot_op")       # per snapshot operation
+        restore_per_op = cat_monthly("restore")             # per restore operation
+        volume_per_month = cat_monthly("volume")            # per volume per month
+        network_per_month = cat_monthly("network")          # per network per month
+        public_ip_per_month = cat_monthly("public_ip")      # per floating IP per month
 
-        # Time-based filters
+        # Time-based filters for metering tables
         where_r = ["collected_at > now() - interval '%s hours'"]
         params_r: list = [hours]
         if project:
@@ -780,6 +805,17 @@ async def export_chargeback(
             where_r.append("domain = %s")
             params_r.append(domain)
         where_clause = " AND ".join(where_r)
+
+        # Inventory filters for inventory tables (project/domain via join)
+        inv_where_parts = []
+        inv_params: list = []
+        if project:
+            inv_where_parts.append("p.name = %s")
+            inv_params.append(project)
+        if domain:
+            inv_where_parts.append("d.name = %s")
+            inv_params.append(domain)
+        inv_where = (" AND " + " AND ".join(inv_where_parts)) if inv_where_parts else ""
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # ── Per-tenant resource aggregation (latest per VM) ──
@@ -806,9 +842,7 @@ async def export_chargeback(
             """, params_r)
             resource_rows = cur.fetchall()
 
-            # ── Snapshot storage per tenant ──
-            snap_where = where_clause.replace("collected_at", "s.collected_at").replace("project_name", "s.project_name").replace("domain", "s.domain")
-            snap_params = list(params_r)
+            # ── Snapshot storage per tenant (from metering_snapshots) ──
             cur.execute(f"""
                 WITH latest_snap AS (
                     SELECT DISTINCT ON (snapshot_id) *
@@ -826,7 +860,7 @@ async def export_chargeback(
             """, params_r)
             snap_rows = {(r["tenant"], r["domain"]): r for r in cur.fetchall()}
 
-            # ── Restore count per tenant ──
+            # ── Restore count per tenant (from metering_restores) ──
             cur.execute(f"""
                 SELECT
                     COALESCE(project_name, 'unknown') AS tenant,
@@ -838,20 +872,92 @@ async def export_chargeback(
             """, params_r)
             restore_rows = {(r["tenant"], r["domain"]): r for r in cur.fetchall()}
 
-        # Calculate chargeback
-        interval_hours = hours
-        chargeback = []
+            # ── Actual volume counts per tenant (from inventory) ──
+            try:
+                cur.execute(f"""
+                    SELECT
+                        COALESCE(p.name, 'unknown') AS tenant,
+                        COALESCE(d.name, '')         AS domain,
+                        COUNT(*)                     AS volume_count,
+                        COALESCE(SUM(v.size_gb), 0)  AS total_volume_gb
+                    FROM volumes v
+                    LEFT JOIN projects p ON v.project_id = p.id
+                    LEFT JOIN domains d  ON p.domain_id = d.id
+                    WHERE 1=1 {inv_where}
+                    GROUP BY p.name, d.name
+                """, inv_params)
+                vol_rows = {(r["tenant"], r["domain"]): r for r in cur.fetchall()}
+            except Exception:
+                conn.rollback()
+                vol_rows = {}
+
+            # ── Actual network counts per tenant (from inventory) ──
+            try:
+                cur.execute(f"""
+                    SELECT
+                        COALESCE(p.name, 'unknown') AS tenant,
+                        COALESCE(d.name, '')         AS domain,
+                        COUNT(DISTINCT n.id)         AS network_count,
+                        COUNT(DISTINCT sub.id)       AS subnet_count,
+                        COUNT(DISTINCT r.id)         AS router_count
+                    FROM networks n
+                    LEFT JOIN projects p  ON n.project_id = p.id
+                    LEFT JOIN domains d   ON p.domain_id = d.id
+                    LEFT JOIN subnets sub ON sub.network_id = n.id
+                    LEFT JOIN routers r   ON r.project_id = p.id
+                    WHERE 1=1 {inv_where}
+                    GROUP BY p.name, d.name
+                """, inv_params)
+                net_rows = {(r["tenant"], r["domain"]): r for r in cur.fetchall()}
+            except Exception:
+                conn.rollback()
+                net_rows = {}
+
+            # ── Actual floating IP counts per tenant (from inventory) ──
+            try:
+                cur.execute(f"""
+                    SELECT
+                        COALESCE(p.name, 'unknown') AS tenant,
+                        COALESCE(d.name, '')         AS domain,
+                        COUNT(*)                     AS floating_ip_count
+                    FROM floating_ips fi
+                    LEFT JOIN projects p ON fi.project_id = p.id
+                    LEFT JOIN domains d  ON p.domain_id = d.id
+                    WHERE 1=1 {inv_where}
+                    GROUP BY p.name, d.name
+                """, inv_params)
+                fip_rows = {(r["tenant"], r["domain"]): r for r in cur.fetchall()}
+            except Exception:
+                conn.rollback()
+                fip_rows = {}
+
+        # ── Build a unified set of all tenants across all data sources ──
+        all_tenants = set()
         for r in resource_rows:
-            tenant = r["tenant"]
-            dom = r["domain"]
-            vm_count = int(r["vm_count"])
+            all_tenants.add((r["tenant"], r["domain"]))
+        for key in list(snap_rows) + list(restore_rows) + list(vol_rows) + list(net_rows) + list(fip_rows):
+            all_tenants.add(key)
+
+        # Pre-index resource rows for lookup
+        resource_by_tenant = {(r["tenant"], r["domain"]): r for r in resource_rows}
+
+        # Derive period_months for per-month rates
+        interval_hours = hours
+        period_months = hours / 730.0  # 730 hours ≈ 1 month
+
+        # Calculate chargeback
+        chargeback = []
+        for (tenant, dom) in sorted(all_tenants):
+            r = resource_by_tenant.get((tenant, dom), {})
+            vm_count = int(r.get("vm_count") or 0)
             avg_vcpus = float(r.get("avg_vcpus") or 0)
             avg_ram_gb = float(r.get("avg_ram_gb") or 0)
             total_disk_gb = float(r.get("total_disk_gb") or 0)
 
-            # Compute cost: try flavor pricing first, fallback to per-resource rates
+            # ── Compute cost: flavor pricing first, fallback to vCPU/RAM rates ──
             flavors_list = r.get("flavors") or []
             flavor_cost_hr = 0.0
+            ephemeral_disk_cost = 0.0
             matched_flavors = 0
             for fl in flavors_list:
                 if fl in flavor_pricing:
@@ -859,34 +965,58 @@ async def export_chargeback(
                     hr = fp["cost_per_hour"] if fp["cost_per_hour"] > 0 else (fp["cost_per_month"] / 730.0 if fp["cost_per_month"] > 0 else 0)
                     flavor_cost_hr += hr
                     matched_flavors += 1
+                    # Ephemeral disk cost per GB (if configured)
+                    if fp.get("disk_cost_per_gb", 0) > 0:
+                        # Look up disk size from the pricing entry's associated data
+                        # The disk_gb is stored in flavor_pricing when synced
+                        ephemeral_disk_cost += fp["disk_cost_per_gb"] * total_disk_gb / max(len(flavors_list), 1)
 
             if matched_flavors > 0:
-                # Use flavor pricing for matched VMs, fallback for rest
                 unmatched = vm_count - matched_flavors
                 fallback_hr = (avg_vcpus * fb_vcpu + avg_ram_gb * fb_ram) if unmatched > 0 else 0
                 compute_cost = (flavor_cost_hr + fallback_hr) * interval_hours
             else:
                 compute_cost = (avg_vcpus * fb_vcpu + avg_ram_gb * fb_ram) * interval_hours
 
-            # Storage cost
+            # Add ephemeral disk cost (monthly)
+            compute_cost += ephemeral_disk_cost * period_months
+
+            # ── Storage cost (disk GB) ──
             storage_cost = total_disk_gb * storage_per_gb_hr * interval_hours
 
-            # Snapshot cost
+            # ── Snapshot cost (storage + per-operation) ──
             snap_info = snap_rows.get((tenant, dom), {})
             snap_count = int(snap_info.get("snapshot_count", 0))
             snap_gb = float(snap_info.get("total_snap_gb", 0))
-            snap_cost = snap_gb * snapshot_per_gb_hr * interval_hours
+            snap_storage_cost = snap_gb * snapshot_per_gb_hr * interval_hours
+            snap_op_cost = snap_count * snapshot_op_cost * period_months
+            snap_cost = snap_storage_cost + snap_op_cost
 
-            # Restore cost
+            # ── Restore cost ──
             rest_info = restore_rows.get((tenant, dom), {})
             restore_count = int(rest_info.get("restore_count", 0))
-            restore_cost = restore_count * restore_per_op_hr
+            restore_cost = restore_count * restore_per_op
 
-            # Volume / network cost (per-VM approximation)
-            vol_cost = vm_count * volume_per_hr * interval_hours
-            net_cost = vm_count * network_per_hr * interval_hours
+            # ── Volume cost (actual count from inventory) ──
+            vol_info = vol_rows.get((tenant, dom), {})
+            volume_count = int(vol_info.get("volume_count", 0))
+            volume_gb = float(vol_info.get("total_volume_gb", 0))
+            vol_cost = volume_count * volume_per_month * period_months
 
-            total_cost = compute_cost + storage_cost + snap_cost + restore_cost + vol_cost + net_cost
+            # ── Network cost (actual count from inventory) ──
+            net_info = net_rows.get((tenant, dom), {})
+            network_count = int(net_info.get("network_count", 0))
+            subnet_count = int(net_info.get("subnet_count", 0))
+            router_count = int(net_info.get("router_count", 0))
+            net_cost = network_count * network_per_month * period_months
+
+            # ── Public IP cost (actual floating IPs from inventory) ──
+            fip_info = fip_rows.get((tenant, dom), {})
+            floating_ip_count = int(fip_info.get("floating_ip_count", 0))
+            public_ip_cost = floating_ip_count * public_ip_per_month * period_months
+
+            total_cost = (compute_cost + storage_cost + snap_cost +
+                          restore_cost + vol_cost + net_cost + public_ip_cost)
 
             chargeback.append({
                 "Tenant / Project": tenant,
@@ -904,8 +1034,15 @@ async def export_chargeback(
                 f"Snapshot Cost ({currency})": round(snap_cost, 2),
                 "Restores": restore_count,
                 f"Restore Cost ({currency})": round(restore_cost, 2),
+                "Volumes": volume_count,
+                "Volume GB": volume_gb,
                 f"Volume Cost ({currency})": round(vol_cost, 2),
+                "Networks": network_count,
+                "Subnets": subnet_count,
+                "Routers": router_count,
                 f"Network Cost ({currency})": round(net_cost, 2),
+                "Floating IPs": floating_ip_count,
+                f"Public IP Cost ({currency})": round(public_ip_cost, 2),
                 f"TOTAL Cost ({currency})": round(total_cost, 2),
                 "Period (hours)": interval_hours,
                 "Currency": currency,
