@@ -2390,6 +2390,178 @@ def list_floating_ips(
 
 
 # ---------------------------------------------------------------------------
+#  Inventory Refresh — fetch live data from OpenStack & purge stale DB rows
+# ---------------------------------------------------------------------------
+
+@app.post("/admin/inventory/refresh")
+async def refresh_inventory(
+    request: Request,
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Refresh all inventory tables against live OpenStack data.
+    Removes stale resources that no longer exist in Platform9.
+    Superadmin only.
+    """
+    if current_user.role != "superadmin":
+        raise HTTPException(403, "Only superadmin can refresh inventory")
+
+    from pf9_control import get_client
+    try:
+        client = get_client()
+    except Exception as e:
+        raise HTTPException(502, f"Cannot connect to OpenStack: {e}")
+
+    summary = {}
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # --- Flavors ---
+            try:
+                live = client.list_flavors()
+                live_ids = {f["id"] for f in live}
+                cur.execute("SELECT id FROM flavors")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    cur.execute("DELETE FROM flavors WHERE id = ANY(%s)", (list(stale),))
+                    # Also clean metering_pricing for stale flavor names
+                    cur.execute("""
+                        DELETE FROM metering_pricing
+                        WHERE category = 'flavor'
+                          AND item_name NOT IN (SELECT name FROM flavors)
+                    """)
+                summary["flavors"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["flavors"] = {"error": str(e)}
+
+            # --- Servers ---
+            try:
+                live = client.list_servers()
+                live_ids = {s["id"] for s in live}
+                cur.execute("SELECT id FROM servers")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    cur.execute("DELETE FROM servers WHERE id = ANY(%s)", (list(stale),))
+                summary["servers"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["servers"] = {"error": str(e)}
+
+            # --- Volumes ---
+            try:
+                live = client.list_volumes()
+                live_ids = {v["id"] for v in live}
+                cur.execute("SELECT id FROM volumes")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    cur.execute("DELETE FROM volumes WHERE id = ANY(%s)", (list(stale),))
+                summary["volumes"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["volumes"] = {"error": str(e)}
+
+            # --- Networks ---
+            try:
+                live = client.list_networks()
+                live_ids = {n["id"] for n in live}
+                cur.execute("SELECT id FROM networks")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    # Delete children first (subnets, ports)
+                    cur.execute("DELETE FROM ports WHERE network_id = ANY(%s)", (list(stale),))
+                    cur.execute("DELETE FROM subnets WHERE network_id = ANY(%s)", (list(stale),))
+                    cur.execute("DELETE FROM networks WHERE id = ANY(%s)", (list(stale),))
+                summary["networks"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["networks"] = {"error": str(e)}
+
+            # --- Routers ---
+            try:
+                live = client.list_routers()
+                live_ids = {r["id"] for r in live}
+                cur.execute("SELECT id FROM routers")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    cur.execute("DELETE FROM routers WHERE id = ANY(%s)", (list(stale),))
+                summary["routers"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["routers"] = {"error": str(e)}
+
+            # --- Floating IPs ---
+            try:
+                live = client.list_floating_ips()
+                live_ids = {f["id"] for f in live}
+                cur.execute("SELECT id FROM floating_ips")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    cur.execute("DELETE FROM floating_ips WHERE id = ANY(%s)", (list(stale),))
+                summary["floating_ips"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["floating_ips"] = {"error": str(e)}
+
+            # --- Images ---
+            try:
+                live = client.list_images()
+                live_ids = {i["id"] for i in live}
+                cur.execute("SELECT id FROM images")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    cur.execute("DELETE FROM images WHERE id = ANY(%s)", (list(stale),))
+                summary["images"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["images"] = {"error": str(e)}
+
+            # --- Snapshots ---
+            try:
+                live = client.list_snapshots()
+                live_ids = {s["id"] for s in live}
+                cur.execute("SELECT id FROM snapshots")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    cur.execute("DELETE FROM snapshots WHERE id = ANY(%s)", (list(stale),))
+                summary["snapshots"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["snapshots"] = {"error": str(e)}
+
+            # --- Security Groups ---
+            try:
+                live = client.list_security_groups()
+                live_ids = {sg["id"] for sg in live}
+                cur.execute("SELECT id FROM security_groups")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    # Rules have ON DELETE CASCADE
+                    cur.execute("DELETE FROM security_groups WHERE id = ANY(%s)", (list(stale),))
+                summary["security_groups"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["security_groups"] = {"error": str(e)}
+
+            # --- Hypervisors ---
+            try:
+                live = client.list_hypervisors()
+                live_ids = {str(h["id"]) for h in live}
+                cur.execute("SELECT id FROM hypervisors")
+                db_ids = {r["id"] for r in cur.fetchall()}
+                stale = db_ids - live_ids
+                if stale:
+                    cur.execute("DELETE FROM hypervisors WHERE id = ANY(%s)", (list(stale),))
+                summary["hypervisors"] = {"live": len(live_ids), "removed": len(stale)}
+            except Exception as e:
+                summary["hypervisors"] = {"error": str(e)}
+
+        conn.commit()
+
+    return {"detail": "Inventory refresh complete", "summary": summary}
+
+
+# ---------------------------------------------------------------------------
 #  Flavors (read-only for UI, create/delete via /admin)
 # ---------------------------------------------------------------------------
 
