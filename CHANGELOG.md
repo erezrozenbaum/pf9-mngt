@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.6] - 2026-02-18
+
+### Fixed
+- **RBAC: operator role 403 on networks and flavors** — The `has_permission()` check treated `write` and `read` as independent actions, so operators who had `write` on networks/flavors could not perform `GET` (read) requests. Updated the permission logic so `write` implies `read` and `admin` implies both.
+- **RBAC: operator/viewer missing `users` read permission** — The operator and viewer roles had no `users` resource permission, blocking access to the PF9 inventory Users tab (Keystone users). Added `users:read` for both roles.
+- **RBAC: missing explicit `read` rows for write-only resources** — Added `read` rows for operator on `networks`, `flavors`, `snapshot_assignments`, and `snapshot_exclusions` in the DB seed to be consistent with the permission hierarchy.
+
+### Added
+- **`db/migrate_operator_permissions.sql`** — Migration script to add missing operator/viewer permissions to existing databases.
+
 ## [1.19.5] - 2026-02-18
 
 ### Fixed

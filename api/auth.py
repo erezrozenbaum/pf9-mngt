@@ -363,21 +363,43 @@ def has_permission(username: str, resource: str, permission: str) -> bool:
         with get_connection() as conn:
             with conn.cursor() as cur:
                 # Check for specific action (read, write, admin)
-                cur.execute("""
-                    SELECT 1 FROM role_permissions 
-                    WHERE role = %s AND resource = %s 
-                    AND (action = %s OR action = 'admin')
-                """, (role, resource, permission))
+                # write implies read, admin implies both read and write
+                if permission == 'read':
+                    action_clause = "action IN ('read', 'write', 'admin')"
+                elif permission == 'write':
+                    action_clause = "action IN ('write', 'admin')"
+                else:
+                    action_clause = "(action = %s OR action = 'admin')"
+                
+                if permission in ('read', 'write'):
+                    cur.execute(f"""
+                        SELECT 1 FROM role_permissions 
+                        WHERE role = %s AND resource = %s 
+                        AND {action_clause}
+                    """, (role, resource))
+                else:
+                    cur.execute("""
+                        SELECT 1 FROM role_permissions 
+                        WHERE role = %s AND resource = %s 
+                        AND (action = %s OR action = 'admin')
+                    """, (role, resource, permission))
                 result = cur.fetchone()
                 if result:
                     return True
                 
                 # Also check for wildcard resource
-                cur.execute("""
-                    SELECT 1 FROM role_permissions 
-                    WHERE role = %s AND resource = '*'
-                    AND (action = %s OR action = 'admin')
-                """, (role, permission))
+                if permission in ('read', 'write'):
+                    cur.execute(f"""
+                        SELECT 1 FROM role_permissions 
+                        WHERE role = %s AND resource = '*'
+                        AND {action_clause}
+                    """, (role,))
+                else:
+                    cur.execute("""
+                        SELECT 1 FROM role_permissions 
+                        WHERE role = %s AND resource = '*'
+                        AND (action = %s OR action = 'admin')
+                    """, (role, permission))
                 return cur.fetchone() is not None
     except Exception as e:
         print(f"Error checking permissions: {e}")
