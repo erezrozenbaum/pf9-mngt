@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.4] - 2026-02-18
+
+### Fixed
+- **Quota report: vCPU and RAM usage always zero** — Nova `/servers/detail` returns flavor as `{id}` without inline `vcpus`/`ram`. The report now fetches the full flavor catalog and resolves vCPU/RAM from it, so Used vCPUs and Used RAM are correctly populated.
+- **Quota report: missing Used columns** — Added Used Networks, Used Floating IPs, Used Security Groups, and corresponding utilization-% columns that were previously absent.
+- **Quota report: missing Snapshots** — Added Quota Snapshots, Used Snapshots, and Snapshot Util % columns (sourced from Cinder snapshots and storage quotas).
+
+### Added
+- **`list_volume_snapshots` client method** — New helper on the OpenStack control client to list Cinder volume snapshots across all tenants.
+
 ## [1.19.3] - 2026-02-18
 
 ### Added

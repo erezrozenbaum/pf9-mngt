@@ -578,6 +578,24 @@ class Pf9Client:
             r.raise_for_status()
 
     # ---------------------------
+    # Cinder – Volume Snapshots
+    # ---------------------------
+    def list_volume_snapshots(self, project_id: Optional[str] = None, all_tenants: bool = True) -> List[Dict[str, Any]]:
+        """List Cinder volume snapshots."""
+        self.authenticate()
+        if not self.cinder_endpoint:
+            return []
+        url = f"{self.cinder_endpoint}/snapshots/detail"
+        params: Dict[str, Any] = {}
+        if all_tenants:
+            params["all_tenants"] = "1"
+        if project_id:
+            params["project_id"] = project_id
+        r = self.session.get(url, headers=self._headers(), params=params)
+        r.raise_for_status()
+        return r.json().get("snapshots", [])
+
+    # ---------------------------
     # Nova – Quotas
     # ---------------------------
     def get_compute_quotas(self, project_id: str) -> Dict[str, Any]:
