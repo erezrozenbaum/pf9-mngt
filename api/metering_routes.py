@@ -1072,28 +1072,93 @@ async def sync_flavors_to_pricing(
     user: User = Depends(require_permission("metering", "write")),
 ):
     """
-    Import all flavors from the flavors table into pricing.
-    Skips flavors that already have a pricing entry (matched by item_name).
+    Sync flavors from live OpenStack into the flavors table AND metering_pricing.
+    1. Fetches live flavors from Nova via pf9_control.
+    2. Updates the flavors DB table: inserts new, removes deleted.
+    3. Adds new flavor pricing entries (cost defaults to 0).
+    4. Removes stale pricing entries for flavors that no longer exist.
     """
+    from pf9_control import get_client
+
+    try:
+        client = get_client()
+        live_flavors = client.list_flavors()
+    except Exception as e:
+        logger.error(f"Failed to fetch live flavors from OpenStack: {e}")
+        raise HTTPException(status_code=502, detail=f"Cannot reach OpenStack Nova to list flavors: {e}")
+
+    live_names = {f["name"] for f in live_flavors}
+
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT name, vcpus, ram_mb, disk_gb FROM flavors ORDER BY name")
-            all_flavors = cur.fetchall()
+            # ---- 1. Sync the flavors table ----
+            # Upsert live flavors
+            for f in live_flavors:
+                vcpus = f.get("vcpus", 0) or 0
+                ram_mb = f.get("ram", 0) or 0
+                disk_gb = f.get("disk", 0) or 0
+                ephemeral_gb = f.get("OS-FLV-EXT-DATA:ephemeral", 0) or 0
+                swap_mb = f.get("swap", 0) or 0
+                is_public = f.get("os-flavor-access:is_public", True)
+                cur.execute("""
+                    INSERT INTO flavors (id, name, vcpus, ram_mb, disk_gb, ephemeral_gb, swap_mb, is_public)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        vcpus = EXCLUDED.vcpus,
+                        ram_mb = EXCLUDED.ram_mb,
+                        disk_gb = EXCLUDED.disk_gb,
+                        ephemeral_gb = EXCLUDED.ephemeral_gb,
+                        swap_mb = EXCLUDED.swap_mb,
+                        is_public = EXCLUDED.is_public
+                """, (f["id"], f["name"], vcpus, ram_mb, disk_gb, ephemeral_gb, swap_mb, is_public))
 
+            # Remove flavors that no longer exist in OpenStack
+            if live_names:
+                cur.execute("SELECT name FROM flavors")
+                db_flavor_names = {r["name"] for r in cur.fetchall()}
+                stale_flavor_names = db_flavor_names - live_names
+                if stale_flavor_names:
+                    cur.execute("DELETE FROM flavors WHERE name = ANY(%s)", (list(stale_flavor_names),))
+            else:
+                stale_flavor_names = set()
+
+            # ---- 2. Sync metering_pricing ----
             cur.execute("SELECT item_name FROM metering_pricing WHERE category = 'flavor'")
-            existing = {r["item_name"] for r in cur.fetchall()}
+            existing_pricing = {r["item_name"] for r in cur.fetchall()}
 
+            # Add new
             inserted = 0
-            for f in all_flavors:
-                if f["name"] not in existing:
+            for f in live_flavors:
+                if f["name"] not in existing_pricing:
+                    vcpus = f.get("vcpus", 0) or 0
+                    ram_mb = f.get("ram", 0) or 0
+                    disk_gb = f.get("disk", 0) or 0
                     cur.execute("""
                         INSERT INTO metering_pricing
                             (category, item_name, unit, cost_per_hour, cost_per_month, currency, vcpus, ram_gb, disk_gb)
                         VALUES ('flavor', %s, 'per hour', 0, 0, 'USD', %s, %s, %s)
-                    """, (f["name"], f["vcpus"], round((f["ram_mb"] or 0) / 1024, 2), f["disk_gb"]))
+                    """, (f["name"], vcpus, round(ram_mb / 1024, 2), disk_gb))
                     inserted += 1
+
+            # Remove stale pricing
+            stale_pricing = existing_pricing - live_names
+            removed = 0
+            if stale_pricing:
+                cur.execute(
+                    "DELETE FROM metering_pricing WHERE category = 'flavor' AND item_name = ANY(%s)",
+                    (list(stale_pricing),),
+                )
+                removed = cur.rowcount
+
         conn.commit()
-    return {"detail": f"Synced {inserted} new flavors ({len(existing)} already existed)", "inserted": inserted}
+
+    return {
+        "detail": f"Synced from OpenStack: {inserted} added, {removed} removed, {len(existing_pricing) - removed} unchanged",
+        "inserted": inserted,
+        "removed": removed,
+        "live_count": len(live_names),
+    }
 
 
 # Legacy compatibility endpoint (redirects to new pricing)

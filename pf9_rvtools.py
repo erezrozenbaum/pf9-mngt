@@ -205,7 +205,12 @@ def build_project_domain_maps(projects, domains):
 
 
 def cleanup_old_records(conn):
-    """Clean up records that haven't been seen in recent scans"""
+    """Clean up records that haven't been seen in recent scans.
+    
+    Deletes rows whose last_seen_at is older than the cutoff (15 min).
+    Order respects foreign-key constraints (children before parents).
+    Every deletion is logged to deletions_history for the audit trail.
+    """
     from datetime import datetime, timedelta
     
     # Very aggressive cleanup - remove records older than 15 minutes
@@ -213,21 +218,35 @@ def cleanup_old_records(conn):
     cutoff = datetime.utcnow() - timedelta(minutes=15)
     
     with conn.cursor() as cur:
-        # Clean up each table - snapshots first since they don't have foreign key dependencies
-        tables = ['snapshots', 'images', 'servers', 'volumes', 'floating_ips', 
-                  'ports', 'routers', 'subnets', 'networks']
+        # Order matters: child tables first, then parent tables
+        # security_group_rules has ON DELETE CASCADE from security_groups so it's auto-handled,
+        # but we include it explicitly for audit logging.
+        tables = [
+            'security_group_rules', 'security_groups',
+            'snapshots', 'images', 'flavors',
+            'servers', 'volumes',
+            'floating_ips', 'ports', 'routers', 'subnets', 'networks',
+            'hypervisors',
+            'projects', 'domains',
+        ]
         
         # Map table names to their resource types for deletions_history
         resource_type_map = {
             'snapshots': 'snapshot',
             'images': 'image',
+            'flavors': 'flavor',
             'servers': 'server',
             'volumes': 'volume',
             'floating_ips': 'floating_ip',
             'ports': 'port',
             'routers': 'router',
             'subnets': 'subnet',
-            'networks': 'network'
+            'networks': 'network',
+            'hypervisors': 'hypervisor',
+            'domains': 'domain',
+            'projects': 'project',
+            'security_groups': 'security_group',
+            'security_group_rules': 'security_group_rule',
         }
         
         total_removed = 0
@@ -260,6 +279,22 @@ def cleanup_old_records(conn):
                 print(f"[DB] Warning: Could not clean {table}: {e}")
                 conn.rollback()
         
+        # Also clean up metering_pricing entries for flavors that no longer exist
+        try:
+            cur.execute("""
+                DELETE FROM metering_pricing
+                WHERE category = 'flavor'
+                  AND item_name NOT IN (SELECT name FROM flavors)
+            """)
+            pricing_removed = cur.rowcount
+            if pricing_removed > 0:
+                print(f"[DB] Cleaned {pricing_removed} stale flavor pricing entries")
+                total_removed += pricing_removed
+            conn.commit()
+        except Exception as e:
+            print(f"[DB] Warning: Could not clean stale pricing: {e}")
+            conn.rollback()
+
         if total_removed > 0:
             print(f"[DB] Total cleaned: {total_removed} old records (all logged to audit trail)")
         else:
