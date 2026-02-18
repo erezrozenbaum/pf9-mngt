@@ -586,6 +586,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
       margin: 0,
       padding: 0,
       overflow: 'hidden',
+      background: isDark ? '#1a1b2e' : undefined,
     }}>
       {/* Theme Toggle Button */}
       <button
@@ -629,7 +630,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
         justifyContent: 'center',
         padding: '2.5rem',
         background: isDark ? '#1a1b2e' : '#ffffff',
-        boxShadow: isDark ? '4px 0 40px rgba(0,0,0,0.6)' : '4px 0 40px rgba(0,0,0,0.1)',
+        boxShadow: isDark ? 'none' : '4px 0 40px rgba(0,0,0,0.1)',
         zIndex: 2,
         flexShrink: 0,
       }}>
@@ -851,7 +852,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
         position: 'relative',
         overflow: 'hidden',
         background: isDark
-          ? '#1a1b2e'
+          ? 'transparent'
           : `linear-gradient(135deg, ${branding.primary_color} 0%, ${branding.secondary_color} 100%)`,
       }}>
         {/* Decorative background shapes — light mode only */}
@@ -874,14 +875,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
             }} />
           </>
         )}
-        {/* Dark mode: subtle top-left glow */}
-        {isDark && (
-          <div style={{
-            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-            background: `radial-gradient(ellipse at 20% 20%, ${branding.primary_color}18 0%, transparent 60%)`,
-            pointerEvents: 'none',
-          }} />
-        )}
+
 
         <div style={{ position: 'relative', maxWidth: '520px', color: isDark ? 'rgba(255,255,255,0.92)' : 'white', zIndex: 1, textAlign: 'center' }}>
           <h2 style={{
@@ -1480,6 +1474,8 @@ const App: React.FC = () => {
   const [monitoringLoading, setMonitoringLoading] = useState(false);
   const [lastMetricsUpdate, setLastMetricsUpdate] = useState<string | null>(null);
   const [isRefreshingMetrics, setIsRefreshingMetrics] = useState(false);
+  const [isRefreshingInventory, setIsRefreshingInventory] = useState(false);
+  const [inventoryRefreshKey, setInventoryRefreshKey] = useState(0);
 
 
 
@@ -1598,6 +1594,29 @@ const App: React.FC = () => {
     }
   }
 
+  // Manual inventory refresh — removes stale resources from DB
+  async function handleRefreshInventory() {
+    if (isRefreshingInventory) return;
+    setIsRefreshingInventory(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/inventory/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Refresh failed (${res.status})`);
+      }
+      // Bump key to force all inventory useEffects to re-run
+      setInventoryRefreshKey(k => k + 1);
+    } catch (e: any) {
+      setError(e.message || 'Failed to refresh inventory');
+    } finally {
+      setIsRefreshingInventory(false);
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Load domains + tenants
   // -----------------------------------------------------------------------
@@ -1615,7 +1634,7 @@ const App: React.FC = () => {
       }
     }
     loadDomains();
-  }, []);
+  }, [inventoryRefreshKey]);
 
   useEffect(() => {
     async function loadTenants() {
@@ -1700,6 +1719,7 @@ const App: React.FC = () => {
     serverPageSize,
     serverSortBy,
     serverSortDir,
+    inventoryRefreshKey,
   ]);
 
   useEffect(() => {
@@ -1744,6 +1764,7 @@ const App: React.FC = () => {
     snapPageSize,
     snapSortBy,
     snapSortDir,
+    inventoryRefreshKey,
   ]);
 
   useEffect(() => {
@@ -1788,6 +1809,7 @@ const App: React.FC = () => {
     networkPageSize,
     networkSortBy,
     networkSortDir,
+    inventoryRefreshKey,
   ]);
 
   useEffect(() => {
@@ -1832,6 +1854,7 @@ const App: React.FC = () => {
     subnetPageSize,
     subnetSortBy,
     subnetSortDir,
+    inventoryRefreshKey,
   ]);
 
   useEffect(() => {
@@ -1877,6 +1900,7 @@ const App: React.FC = () => {
     volumePageSize,
     volumeSortBy,
     volumeSortDir,
+    inventoryRefreshKey,
   ]);
 
   // -----------------------------------------------------------------------
@@ -1910,7 +1934,7 @@ const App: React.FC = () => {
       }
     }
     loadFlavors();
-  }, [activeTab, flavorPage, flavorPageSize, flavorSortBy, flavorSortDir]);
+  }, [activeTab, flavorPage, flavorPageSize, flavorSortBy, flavorSortDir, inventoryRefreshKey]);
 
   // Load projects
   useEffect(() => {
@@ -1939,7 +1963,7 @@ const App: React.FC = () => {
       }
     }
     loadProjects();
-  }, [activeTab, projectPage, projectPageSize, projectSortBy, projectSortDir]);
+  }, [activeTab, projectPage, projectPageSize, projectSortBy, projectSortDir, inventoryRefreshKey]);
 
   // Load images
   useEffect(() => {
@@ -1968,7 +1992,7 @@ const App: React.FC = () => {
       }
     }
     loadImages();
-  }, [activeTab, imagePage, imagePageSize, imageSortBy, imageSortDir]);
+  }, [activeTab, imagePage, imagePageSize, imageSortBy, imageSortDir, inventoryRefreshKey]);
 
   // Load hypervisors
   useEffect(() => {
@@ -1997,7 +2021,7 @@ const App: React.FC = () => {
       }
     }
     loadHypervisors();
-  }, [activeTab, hypervisorPage, hypervisorPageSize, hypervisorSortBy, hypervisorSortDir]);
+  }, [activeTab, hypervisorPage, hypervisorPageSize, hypervisorSortBy, hypervisorSortDir, inventoryRefreshKey]);
 
   // Load users
   useEffect(() => {
@@ -2062,7 +2086,7 @@ const App: React.FC = () => {
       }
     }
     loadPorts();
-  }, [activeTab, selectedDomain, selectedTenant, portPage, portPageSize, portSortBy, portSortDir]);
+  }, [activeTab, selectedDomain, selectedTenant, portPage, portPageSize, portSortBy, portSortDir, inventoryRefreshKey]);
 
   // Load floating IPs
   useEffect(() => {
@@ -2098,7 +2122,7 @@ const App: React.FC = () => {
       }
     }
     loadFloatingIPs();
-  }, [activeTab, selectedDomain, selectedTenant, floatingIPPage, floatingIPPageSize, floatingIPSortBy, floatingIPSortDir]);
+  }, [activeTab, selectedDomain, selectedTenant, floatingIPPage, floatingIPPageSize, floatingIPSortBy, floatingIPSortDir, inventoryRefreshKey]);
 
   // -----------------------------------------------------------------------
   // Audit data loading (all data without filters)
@@ -3042,6 +3066,18 @@ const App: React.FC = () => {
           >
             Export CSV ({exportCount})
           </button>
+
+          {authUser?.role === 'superadmin' && (
+            <button
+              className="pf9-button"
+              style={{ marginLeft: 8, background: isRefreshingInventory ? '#555' : '#e67e22' }}
+              onClick={handleRefreshInventory}
+              disabled={isRefreshingInventory}
+              title="Remove stale resources that no longer exist in Platform9"
+            >
+              {isRefreshingInventory ? '⏳ Refreshing…' : '🔄 Refresh Inventory'}
+            </button>
+          )}
         </div>
 
         {error && <div className="pf9-error">Error: {error}</div>}
