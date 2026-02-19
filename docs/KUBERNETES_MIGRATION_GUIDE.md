@@ -302,7 +302,7 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 **Schema Analysis**:
 ```sql
 -- Database includes:
--- - 19+ tables with full referential integrity
+-- - 90+ tables with full referential integrity
 -- - JSONB fields with GIN indexing
 -- - Audit tables with historical tracking
 -- - No explicit partitioning (OK for current scale)

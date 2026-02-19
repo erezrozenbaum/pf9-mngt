@@ -101,7 +101,9 @@ INSERT INTO search_indexer_state (doc_type) VALUES
     ('snapshot_run'), ('snapshot_record'),
     ('restore_job'), ('backup'),
     ('notification'), ('provisioning'),
-    ('deletion')
+    ('deletion'),
+    ('domain'), ('project'),
+    ('role'), ('role_assignment'), ('group'), ('snapshot_policy')
 ON CONFLICT (doc_type) DO NOTHING;
 
 -- ── Helper function: ranked search ──────────────────────────

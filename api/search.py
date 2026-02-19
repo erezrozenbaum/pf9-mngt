@@ -2,8 +2,9 @@
 Search & Ops-Assistant API Routes
 =================================
 Provides unified full-text search, trigram similarity, indexer stats,
-and **intent detection** (v2.5) that routes recognized natural-language
-patterns to existing report endpoints.
+**intent detection** (v2.5), and **smart query templates** (v3) that
+execute parameterised SQL against live data and return structured
+answer cards inline.
 
 Endpoints
 ---------
@@ -12,6 +13,8 @@ Endpoints
   GET  /api/search/stats     – Indexer health / status
   POST /api/search/reindex   – Trigger an immediate re-index (admin only)
   GET  /api/search/intent    – Detect intent & suggest/redirect to reports
+  GET  /api/search/smart     – Smart query: live SQL answer cards (v3)
+  GET  /api/search/smart/help – List available smart query templates
 
 RBAC: search:read for all read endpoints, search:admin for reindex.
 """
@@ -29,6 +32,7 @@ from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, get_current_user, User
 from db_pool import get_connection
+from smart_queries import execute_smart_query, list_smart_queries
 
 logger = logging.getLogger("pf9.search")
 
@@ -347,4 +351,44 @@ async def detect_intent(
         "tenant_hint": tenant_hint,
         "has_intent": len(intents) > 0,
         "fallback_search": True,  # always also run FTS
+    }
+
+
+# ── 6. Smart Query Templates (v3) ────────────────────────────
+
+@router.get("/smart")
+async def smart_query(
+    q: str = Query(..., min_length=1, max_length=500, description="Natural-language question"),
+    _user: User = Depends(require_permission("search", "read")),
+):
+    """
+    Match a natural-language question against **smart query templates**
+    and return a structured answer card with live data from the DB.
+
+    Returns ``{ matched: false }`` if no template matches — the UI
+    should still show regular FTS results in that case.
+    """
+    with get_connection() as conn:
+        result = execute_smart_query(q, conn)
+
+    if result is None:
+        return {"matched": False, "query": q}
+
+    result["query"] = q
+    return result
+
+
+@router.get("/smart/help")
+async def smart_query_help(
+    _user: User = Depends(require_permission("search", "read")),
+):
+    """
+    List all available smart query templates so users know what
+    questions they can ask.
+    """
+    return {
+        "templates": list_smart_queries(),
+        "total": len(list_smart_queries()),
+        "usage": "Type a question in the search bar. If it matches a template, "
+                 "you'll get an instant answer card with live data.",
     }
