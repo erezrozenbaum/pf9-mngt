@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.7] - 2026-02-19
+
+### Added
+- **Rich admin provisioning notification** — The `tenant_provisioned` email sent to admin subscribers now includes full provisioning inventory: job ID, domain/project with OpenStack IDs, created user (name, email, role, user ID), network details (name, ID, type, VLAN, subnet CIDR, gateway, DNS), security group (name, ID), and compute/network/storage quotas. Uses a new Jinja2 template (`notifications/templates/tenant_provisioned.html`) instead of the generic inline HTML layout.
+- **Template-aware `_fire_notification()`** — The internal notification helper now accepts optional `template_name` and `template_vars` parameters. When a template is provided, it renders a Jinja2 template from `notifications/templates/`; otherwise it falls back to the existing inline HTML.
+
+### Fixed
+- **Security group rules blank in welcome email** — The customer-facing welcome email template referenced `rule.port` and `rule.remote_ip_prefix` but the Python code built dicts with `ports` and `cidr`. Fixed template field names to match.
+- **Welcome email showed wrong network name** — The welcome email used the old fallback `{domain}-ext-net` instead of the actual derived network name from Step 8. Now uses the real `net_name` value.
+
 ## [1.20.6] - 2026-02-19
 
 ### Changed

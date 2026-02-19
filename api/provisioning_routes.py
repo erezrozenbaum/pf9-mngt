@@ -167,9 +167,13 @@ def _fire_notification(
     domain_name: str = "",
     project_name: str = "",
     actor: str = "",
+    template_name: str = "",
+    template_vars: dict = None,
 ):
     """Insert a notification event for each subscriber and attempt to send
-    email for 'immediate' delivery mode subscribers."""
+    email for 'immediate' delivery mode subscribers.
+    If template_name is provided, renders a Jinja2 template from
+    notifications/templates/ instead of using the inline HTML layout."""
     try:
         from db_pool import get_connection
         import hashlib
@@ -191,6 +195,33 @@ def _fire_notification(
 
                 subject = f"PF9 Alert: {summary}"
 
+                # Try to render Jinja2 template if specified
+                rendered_template = None
+                if template_name:
+                    template_dirs = [
+                        os.path.join(os.path.dirname(__file__), "notification_templates"),
+                        os.path.join(os.path.dirname(__file__), "..", "notifications", "templates"),
+                    ]
+                    tpl_context = {
+                        "event_type": event_type, "summary": summary,
+                        "severity": severity, "resource_name": resource_name,
+                        "domain_name": domain_name, "project_name": project_name,
+                        "actor": actor,
+                        "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
+                        **(template_vars or {}),
+                    }
+                    for tpl_dir in template_dirs:
+                        tpl_path = os.path.join(tpl_dir, template_name)
+                        if os.path.exists(tpl_path):
+                            try:
+                                from jinja2 import Environment, FileSystemLoader
+                                env = Environment(loader=FileSystemLoader(tpl_dir), autoescape=True)
+                                tpl = env.get_template(template_name)
+                                rendered_template = tpl.render(**tpl_context)
+                            except Exception as te:
+                                logger.warning(f"Failed to render template {template_name}: {te}")
+                            break
+
                 for sub in subscribers:
                     min_rank = severity_rank.get(sub["severity_min"], 0)
                     if event_rank < min_rank:
@@ -200,29 +231,32 @@ def _fire_notification(
                     status = "pending"
                     sent_at = None
                     if sub["delivery_mode"] == "immediate" and SMTP_ENABLED:
-                        # Build optional context rows for the email
-                        context_rows = ""
-                        if domain_name:
-                            context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Domain:</td><td>{domain_name}</td></tr>\n'
-                        if project_name:
-                            context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Tenant:</td><td>{project_name}</td></tr>\n'
-                        if actor:
-                            context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Performed By:</td><td>{actor}</td></tr>\n'
+                        if rendered_template:
+                            html_body = rendered_template
+                        else:
+                            # Build optional context rows for the email
+                            context_rows = ""
+                            if domain_name:
+                                context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Domain:</td><td>{domain_name}</td></tr>\n'
+                            if project_name:
+                                context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Tenant:</td><td>{project_name}</td></tr>\n'
+                            if actor:
+                                context_rows += f'<tr><td style="padding:4px 12px 4px 0;font-weight:600;">Performed By:</td><td>{actor}</td></tr>\n'
 
-                        html_body = f"""
-                        <html><body style="font-family:sans-serif;padding:20px;">
-                        <h2 style="color:#1a73e8;">🔔 {subject}</h2>
-                        <p>{summary}</p>
-                        <table style="margin:12px 0;font-size:14px;">
-                          <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Event Type:</td><td>{event_type}</td></tr>
-                          <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Resource:</td><td>{resource_name or resource_id or 'N/A'}</td></tr>
-                          {context_rows}
-                          <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Severity:</td><td>{severity}</td></tr>
-                          <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Time:</td><td>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</td></tr>
-                        </table>
-                        <p style="color:#666;font-size:12px;">You are receiving this because you subscribed to '{event_type}' notifications.</p>
-                        </body></html>
-                        """
+                            html_body = f"""
+                            <html><body style="font-family:sans-serif;padding:20px;">
+                            <h2 style="color:#1a73e8;">🔔 {subject}</h2>
+                            <p>{summary}</p>
+                            <table style="margin:12px 0;font-size:14px;">
+                              <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Event Type:</td><td>{event_type}</td></tr>
+                              <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Resource:</td><td>{resource_name or resource_id or 'N/A'}</td></tr>
+                              {context_rows}
+                              <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Severity:</td><td>{severity}</td></tr>
+                              <tr><td style="padding:4px 12px 4px 0;font-weight:600;">Time:</td><td>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</td></tr>
+                            </table>
+                            <p style="color:#666;font-size:12px;">You are receiving this because you subscribed to '{event_type}' notifications.</p>
+                            </body></html>
+                            """
                         if _send_email(sub["email"], subject, html_body):
                             status = "sent"
                             sent_at = datetime.now(timezone.utc)
@@ -602,6 +636,7 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
             )
             network_id = network["id"]
             results["network_id"] = network_id
+            results["network_name"] = net_name
 
             # Create subnet
             sub_name = f"{net_name}-subnet"
@@ -729,7 +764,7 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                     project_name=req.project_name,
                     user_role=req.user_role,
                     subscription_id=req.subscription_id or "",
-                    network_name=req.network_name or f"{req.domain_name}-ext-net",
+                    network_name=net_name if req.create_network else "",
                     network_type=req.network_type,
                     vlan_id=req.vlan_id,
                     subnet_cidr=req.subnet_cidr,
@@ -962,12 +997,40 @@ async def provision_customer(
                 details={"job_id": job_id, "username": req.username, "role": req.user_role},
                 ip_address=client_ip, result="success",
             )
-            # Notification
+            # Notification — full provisioning inventory
             _fire_notification(
                 event_type="tenant_provisioned", severity="info",
                 summary=f"Tenant '{req.domain_name}/{req.project_name}' provisioned by {actor}",
                 resource_name=f"{req.domain_name}/{req.project_name}",
+                domain_name=req.domain_name,
+                project_name=req.project_name,
+                actor=actor,
                 details={"job_id": job_id, "actor": actor},
+                template_name="tenant_provisioned.html",
+                template_vars={
+                    "job_id": job_id,
+                    "username": req.username,
+                    "user_email": req.user_email,
+                    "user_role": req.user_role,
+                    "subscription_id": req.subscription_id or "",
+                    "domain_id": results.get("domain_id", ""),
+                    "project_id": results.get("project_id", ""),
+                    "user_id": results.get("user_id", ""),
+                    "network_id": results.get("network_id", ""),
+                    "network_name": results.get("network_name", ""),
+                    "network_type": req.network_type,
+                    "vlan_id": req.vlan_id,
+                    "subnet_id": results.get("subnet_id", ""),
+                    "subnet_cidr": req.subnet_cidr,
+                    "gateway_ip": req.gateway_ip,
+                    "dns_nameservers": req.dns_nameservers,
+                    "create_network": req.create_network,
+                    "security_group_id": results.get("security_group_id", ""),
+                    "security_group_name": req.security_group_name if req.create_security_group else "",
+                    "compute_quotas": results.get("compute_quotas", {}),
+                    "network_quotas": results.get("network_quotas", {}),
+                    "storage_quotas": results.get("storage_quotas", {}),
+                },
             )
 
             return {

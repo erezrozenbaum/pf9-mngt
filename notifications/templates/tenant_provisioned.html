@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tenant Provisioned</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f7fafc; margin: 0; padding: 20px;">
+  <div style="max-width: 700px; margin: 0 auto;">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #1a365d 0%, #2b6cb0 100%); color: white; padding: 24px 30px; border-radius: 8px 8px 0 0;">
+      <h1 style="margin: 0 0 6px 0; font-size: 22px;">🔔 Tenant Provisioned Successfully</h1>
+      <p style="margin: 0; opacity: 0.9; font-size: 13px;">{{ summary }}</p>
+    </div>
+
+    <!-- Body -->
+    <div style="background: white; border: 1px solid #e2e8f0; border-top: 0; padding: 24px 30px; border-radius: 0 0 8px 8px;">
+
+      <!-- Event Info -->
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 13px;">
+        <tr>
+          <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 150px;">Event Type</td>
+          <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ event_type }}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Performed By</td>
+          <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ actor }}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Time</td>
+          <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ timestamp }}</td>
+        </tr>
+        <tr>
+          <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Job ID</td>
+          <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><code style="background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 12px;">{{ job_id }}</code></td>
+        </tr>
+      </table>
+
+      <!-- Domain & Project -->
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;">
+        <h3 style="margin: 0 0 12px 0; color: #1a365d; font-size: 15px;">☁️ Domain & Project</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 150px;">Domain</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ domain_name }}</td>
+          </tr>
+          {% if domain_id %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Domain ID</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><code style="background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 11px;">{{ domain_id }}</code></td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Project</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ project_name }}</td>
+          </tr>
+          {% if project_id %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Project ID</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><code style="background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 11px;">{{ project_id }}</code></td>
+          </tr>
+          {% endif %}
+          {% if subscription_id %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Subscription ID</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ subscription_id }}</td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+
+      <!-- User Created -->
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;">
+        <h3 style="margin: 0 0 12px 0; color: #1a365d; font-size: 15px;">👤 User Created</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 150px;">Username</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><strong>{{ username }}</strong></td>
+          </tr>
+          {% if user_email %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Email</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ user_email }}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Role</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">
+              {% if user_role == 'admin' %}
+                <span style="background: #fed7d7; color: #9b2c2c; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Admin</span>
+              {% elif user_role == 'service' %}
+                <span style="background: #c6f6d5; color: #276749; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">Service</span>
+              {% else %}
+                <span style="background: #bee3f8; color: #2a4365; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">{{ user_role | title }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% if user_id %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">User ID</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><code style="background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 11px;">{{ user_id }}</code></td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+
+      <!-- Network Configuration -->
+      {% if create_network and network_name %}
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;">
+        <h3 style="margin: 0 0 12px 0; color: #1a365d; font-size: 15px;">🌐 Network Created</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 150px;">Network Name</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><strong>{{ network_name }}</strong></td>
+          </tr>
+          {% if network_id %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Network ID</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><code style="background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 11px;">{{ network_id }}</code></td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Network Type</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ network_type | upper }}</td>
+          </tr>
+          {% if vlan_id %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">VLAN ID</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ vlan_id }}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Subnet CIDR</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ subnet_cidr }}</td>
+          </tr>
+          {% if subnet_id %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Subnet ID</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><code style="background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 11px;">{{ subnet_id }}</code></td>
+          </tr>
+          {% endif %}
+          {% if gateway_ip %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Gateway IP</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ gateway_ip }}</td>
+          </tr>
+          {% endif %}
+          {% if dns_nameservers %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">DNS Nameservers</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;">{{ dns_nameservers | join(', ') }}</td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+      {% elif not create_network %}
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;">
+        <h3 style="margin: 0 0 8px 0; color: #1a365d; font-size: 15px;">🌐 Network</h3>
+        <p style="margin: 0; color: #718096; font-size: 13px;">Network creation was skipped.</p>
+      </div>
+      {% endif %}
+
+      <!-- Security Group -->
+      {% if security_group_name %}
+      <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;">
+        <h3 style="margin: 0 0 12px 0; color: #1a365d; font-size: 15px;">🔒 Security Group Created</h3>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 150px;">Name</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><strong>{{ security_group_name }}</strong></td>
+          </tr>
+          {% if security_group_id %}
+          <tr>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">Security Group ID</td>
+            <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; color: #2d3748;"><code style="background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 11px;">{{ security_group_id }}</code></td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+      {% endif %}
+
+      <!-- Quotas -->
+      <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+        {% if compute_quotas %}
+        <div style="flex: 1; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px;">
+          <h3 style="margin: 0 0 10px 0; color: #1a365d; font-size: 14px;">🖥️ Compute Quotas</h3>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            {% for key, value in compute_quotas.items() %}
+            <tr>
+              <td style="padding: 4px 8px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">{{ key | replace('_', ' ') | title }}</td>
+              <td style="padding: 4px 8px; border-bottom: 1px solid #e2e8f0; color: #2d3748; text-align: right;">{% if value == -1 %}Unlimited{% else %}{{ value }}{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+        {% endif %}
+
+        {% if network_quotas %}
+        <div style="flex: 1; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px;">
+          <h3 style="margin: 0 0 10px 0; color: #1a365d; font-size: 14px;">🌐 Network Quotas</h3>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            {% for key, value in network_quotas.items() %}
+            <tr>
+              <td style="padding: 4px 8px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">{{ key | replace('_', ' ') | title }}</td>
+              <td style="padding: 4px 8px; border-bottom: 1px solid #e2e8f0; color: #2d3748; text-align: right;">{% if value == -1 %}Unlimited{% else %}{{ value }}{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+        {% endif %}
+
+        {% if storage_quotas %}
+        <div style="flex: 1; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px;">
+          <h3 style="margin: 0 0 10px 0; color: #1a365d; font-size: 14px;">💾 Storage Quotas</h3>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            {% for key, value in storage_quotas.items() %}
+            <tr>
+              <td style="padding: 4px 8px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568;">{{ key | replace('_', ' ') | title }}</td>
+              <td style="padding: 4px 8px; border-bottom: 1px solid #e2e8f0; color: #2d3748; text-align: right;">{% if value == -1 %}Unlimited{% else %}{{ value }}{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+        {% endif %}
+      </div>
+
+      <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+
+      <p style="font-size: 11px; color: #a0aec0; text-align: center; line-height: 1.5;">
+        You are receiving this because you subscribed to '{{ event_type }}' notifications.<br>
+        This is an automated message from Platform9 Management.
+      </p>
+    </div>
+  </div>
+</body>
+</html>
