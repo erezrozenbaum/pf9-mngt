@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.1] - 2026-02-19
+
+### Changed
+- **Runbook execution results now visible to operators** — "My Executions" section added to the Runbooks tab so users who trigger a runbook can immediately see their results without navigating to Admin.
+- **Orphan Resource Cleanup defaults to all resource types** — Parameters schema now defaults to `["ports", "volumes", "floating_ips"]` instead of just `["ports"]`, making the full scope visible upfront.
+- **Friendly result rendering** — Execution results now display tenant names, resource names, IP addresses, and volume details instead of raw UUIDs. All engines (Stuck VM, Orphan Cleanup, SG Audit, Quota Check) now resolve project IDs to human-readable project names via Keystone.
+
+### Added
+- **`GET /api/runbooks/executions/mine`** — New endpoint returning executions filtered to the current user (uses `runbooks:read` permission).
+- **Approval notification events** — Two new notification event types: `runbook_approval_granted` and `runbook_approval_rejected`. Users who trigger a runbook receive email when their request is approved or rejected. Admins can subscribe to these events for visibility.
+- **Execution result tables** — Friendly tabular rendering for all 5 runbook engines in the UI: Stuck VM table (name, status, tenant, host), Orphan Resources by type (ports/volumes/floating IPs with tenant names), Security Group violations, and Quota alerts.
+
 ## [1.21.0] - 2026-02-19
 
 ### Added

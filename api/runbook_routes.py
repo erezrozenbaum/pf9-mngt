@@ -109,6 +109,18 @@ def register_engine(name: str):
     return decorator
 
 
+def _resolve_project_names(client, headers) -> Dict[str, str]:
+    """Build a project_id → project_name lookup from Keystone."""
+    try:
+        url = f"{client.keystone_endpoint}/projects"
+        resp = client.session.get(url, headers=headers)
+        resp.raise_for_status()
+        return {p["id"]: p.get("name", p["id"]) for p in resp.json().get("projects", [])}
+    except Exception as e:
+        logger.warning(f"Could not resolve project names: {e}")
+        return {}
+
+
 # ===== Engine: stuck_vm_remediation =======================================
 
 @register_engine("stuck_vm_remediation")
@@ -124,6 +136,7 @@ def _engine_stuck_vm(params: dict, dry_run: bool, actor: str) -> dict:
     client = get_client()
     client.authenticate()
     headers = {"X-Auth-Token": client.token}
+    project_names = _resolve_project_names(client, headers)
 
     stuck_states = {"BUILD", "ERROR", "MIGRATING", "RESIZE", "VERIFY_RESIZE",
                     "REVERT_RESIZE", "PAUSED", "SUSPENDED", "SHELVED",
@@ -165,6 +178,7 @@ def _engine_stuck_vm(params: dict, dry_run: bool, actor: str) -> dict:
             "status": vm_status,
             "task_state": task_state,
             "tenant_id": tenant_id,
+            "tenant_name": project_names.get(tenant_id, tenant_id),
             "host": s.get("OS-EXT-SRV-ATTR:host", ""),
             "updated": updated,
         })
@@ -221,13 +235,14 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
     """Find and optionally delete orphaned ports, volumes, and floating IPs."""
     from pf9_control import get_client
 
-    resource_types = params.get("resource_types", ["ports"])
+    resource_types = params.get("resource_types", ["ports", "volumes", "floating_ips"])
     age_days = params.get("age_threshold_days", 7)
     target_project = params.get("target_project", "")
 
     client = get_client()
     client.authenticate()
     headers = {"X-Auth-Token": client.token}
+    project_names = _resolve_project_names(client, headers)
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=age_days)
     result: Dict[str, Any] = {"orphans": {}, "deleted": {}, "errors": {}}
@@ -258,10 +273,13 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
                     pass
             if target_project and p.get("project_id", "") != target_project:
                 continue
+            pid = p.get("project_id", "")
             orphan_ports.append({
                 "port_id": p["id"],
+                "port_name": p.get("name", ""),
                 "network_id": p.get("network_id"),
-                "project_id": p.get("project_id", ""),
+                "project_id": pid,
+                "project_name": project_names.get(pid, pid),
                 "mac_address": p.get("mac_address", ""),
                 "created_at": created,
             })
@@ -314,9 +332,10 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
                 continue
             orphan_volumes.append({
                 "volume_id": v["id"],
-                "name": v.get("name", ""),
+                "name": v.get("name", "") or v["id"][:8],
                 "size_gb": v.get("size", 0),
                 "project_id": tenant_id,
+                "project_name": project_names.get(tenant_id, tenant_id),
                 "created_at": created,
             })
 
@@ -363,10 +382,12 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
                     pass
             if target_project and f.get("project_id", "") != target_project:
                 continue
+            fip_pid = f.get("project_id", "")
             orphan_fips.append({
                 "fip_id": f["id"],
                 "floating_ip_address": f.get("floating_ip_address", ""),
-                "project_id": f.get("project_id", ""),
+                "project_id": fip_pid,
+                "project_name": project_names.get(fip_pid, fip_pid),
                 "created_at": created,
             })
 
@@ -412,6 +433,7 @@ def _engine_sg_audit(params: dict, dry_run: bool, actor: str) -> dict:
     client = get_client()
     client.authenticate()
     headers = {"X-Auth-Token": client.token}
+    project_names = _resolve_project_names(client, headers)
 
     url = f"{client.neutron_endpoint}/v2.0/security-groups"
     resp = client.session.get(url, headers=headers)
@@ -439,10 +461,12 @@ def _engine_sg_audit(params: dict, dry_run: bool, actor: str) -> dict:
                     if port_min <= fp <= port_max:
                         flagged.append(fp)
             if flagged:
+                sg_pid = sg.get("project_id", "")
                 violations.append({
                     "sg_id": sg["id"],
                     "sg_name": sg.get("name", ""),
-                    "project_id": sg.get("project_id", ""),
+                    "project_id": sg_pid,
+                    "project_name": project_names.get(sg_pid, sg_pid),
                     "rule_id": rule.get("id", ""),
                     "protocol": rule.get("protocol", "any"),
                     "port_range": f"{port_min}-{port_max}" if port_min else "all",
@@ -866,6 +890,21 @@ async def approve_reject_execution(
             execution["parameters"], execution["dry_run"],
             execution["triggered_by"]
         )
+        _notify(
+            event_type="runbook_approval_granted",
+            summary=f"Runbook '{execution['runbook_name']}' approved by {username} — executing now",
+            severity="info",
+            resource_name=execution["runbook_name"],
+            actor=username,
+        )
+    else:
+        _notify(
+            event_type="runbook_approval_rejected",
+            summary=f"Runbook '{execution['runbook_name']}' rejected by {username}: {body.comment or 'no comment'}",
+            severity="warning",
+            resource_name=execution["runbook_name"],
+            actor=username,
+        )
 
     # Fetch final state
     with get_connection() as conn:
@@ -918,6 +957,48 @@ async def list_executions(
         params_list.append(status_filter)
 
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                SELECT e.*, r.display_name, r.category, r.risk_level
+                FROM runbook_executions e
+                LEFT JOIN runbooks r ON e.runbook_name = r.name
+                {where}
+                ORDER BY e.created_at DESC
+                LIMIT %s OFFSET %s
+            """, params_list + [limit, offset])
+            rows = cur.fetchall()
+
+            cur.execute(f"SELECT COUNT(*) FROM runbook_executions e {where}", params_list)
+            total = cur.fetchone()["count"]
+
+    return {"executions": [dict(r) for r in rows], "total": total}
+
+
+# ── My executions (operator-facing) ──────────────────────────────
+@router.get("/executions/mine")
+async def my_executions(
+    runbook_name: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    limit: int = Query(25, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user=Depends(require_permission("runbooks", "read")),
+):
+    """List executions triggered by the current user."""
+    username = current_user.username if hasattr(current_user, "username") else str(current_user)
+
+    clauses = ["e.triggered_by = %s"]
+    params_list: list = [username]
+
+    if runbook_name:
+        clauses.append("e.runbook_name = %s")
+        params_list.append(runbook_name)
+    if status_filter:
+        clauses.append("e.status = %s")
+        params_list.append(status_filter)
+
+    where = "WHERE " + " AND ".join(clauses)
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
