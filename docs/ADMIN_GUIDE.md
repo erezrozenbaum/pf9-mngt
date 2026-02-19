@@ -3,13 +3,15 @@
 ## Recent Major Enhancements
 
 ### Ops Assistant — Search & Similarity (v1.20 - NEW ✨)
-- **🔍 Ops Search Tab**: Full-text search across all 19+ resource types using PostgreSQL `tsvector` + `websearch_to_tsquery`. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination.
+- **🔍 Ops Search Tab**: Full-text search across all 29 resource types using PostgreSQL `tsvector` + `websearch_to_tsquery`. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination.
 - **Trigram Similarity (v2)**: "Show Similar" button on every search result uses `pg_trgm` extension to find related documents by title (60% weight) and body text (40% weight) similarity scoring.
 - **Intent Detection (v2.5)**: Natural-language queries like *"quota for projectX"*, *"capacity"*, *"idle resources"*, or *"drift"* trigger Smart Suggestions that link directly to the matching report endpoint. Extracts tenant hints for pre-filtering.
-- **Search Indexer Worker**: `pf9_search_worker` container incrementally indexes 19 document types on a configurable interval (default 5 min). Uses per-doc-type watermarks for efficient delta processing.
+- **Smart Query Templates (v3)**: 26 built-in question templates turn the search bar into an Ops Assistant. Questions like *"how many VMs are powered off?"*, *"quota for Org1"*, or *"show platform overview"* return live answer cards (table, number, key-value) inline above search results.
+- **Search Indexer Worker**: `pf9_search_worker` container incrementally indexes 29 document types on a configurable interval (default 5 min). Uses per-doc-type watermarks for efficient delta processing.
+  - **Indexed types**: vm, volume, snapshot, hypervisor, network, subnet, floating_ip, port, security_group, domain, project, user, flavor, image, router, role, role_assignment, group, snapshot_policy, activity, audit, drift_event, snapshot_run, snapshot_record, restore_job, backup, notification, provisioning, deletion
 - **Indexer Stats Dashboard**: In-tab panel showing per-doc-type document counts, last run time, and duration for operational visibility.
-- **5 API Endpoints**: `/api/search` (FTS), `/api/search/similar/{doc_id}`, `/api/search/intent`, `/api/search/stats`, `/api/search/reindex` (admin)
-- **RBAC**: viewer/operator get `search:read`, admin/superadmin get `search:admin` (includes re-index trigger)
+- **7 API Endpoints**: `/api/search` (FTS), `/api/search/similar/{doc_id}`, `/api/search/intent`, `/api/search/smart`, `/api/search/smart/help`, `/api/search/stats`, `/api/search/reindex` (admin)
+- **RBAC**: viewer/operator get `search:read`, admin/superadmin get `search:admin` (includes re-index trigger). `search` resource visible in Admin → Permissions panel.
 
 ### Operational Metering (v1.15 + v1.15.1 Pricing Overhaul ✨)
 - **📊 Metering Tab**: Comprehensive operational resource metering with 8 sub-tabs (Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export)
@@ -550,7 +552,7 @@ Get-Content monitoring\cache\metrics_cache.json | ConvertFrom-Json
 - **Host Timeout**: 10-second timeout per host for reliability
 
 ### Container Services
-1. **pf9_db** - PostgreSQL 16 database with 19+ tables and comprehensive schemas
+1. **pf9_db** - PostgreSQL 16 database with 90+ tables and comprehensive schemas
 2. **pf9_pgadmin** - Database administration (optional for production)
 3. **pf9_api** - FastAPI backend with 25+ REST endpoints and administrative operations
 4. **pf9_ui** - React 19.2 frontend with TypeScript, Vite build system, and modern UI components
@@ -584,7 +586,7 @@ Get-Content monitoring\cache\metrics_cache.json | ConvertFrom-Json
 
 ## Core Components Deep Dive
 
-### Database Schema (19+ Tables)
+### Database Schema (90+ Tables)
 ```sql
 -- Core Identity
 domains, projects, hypervisors
@@ -609,7 +611,7 @@ inventory_runs  -- Audit trail for data collection
 ```
 
 ### API Endpoints (40+ Routes)
-**Core Resource Endpoints** (19+ Resource Types):
+**Core Resource Endpoints** (29 Resource Types):
 - `GET /domains` - Domain/tenant hierarchy management
 - `GET /tenants` - Project listings with domain relationships
 - `GET /servers` - VM inventory with comprehensive filtering
@@ -1873,15 +1875,16 @@ docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT * FROM pg_stat_activity;"
 
 ## Ops Search (Ops Assistant)
 
-The Ops Search feature provides a unified full-text search across all indexed resources, events, and audit logs in the system.
+The Ops Search feature provides a unified full-text search across all indexed resources, events, and audit logs in the system. Results include **natural-language descriptions** with cross-reference counts, **structured metadata pill cards** for instant operational context, and **Smart Query answer cards** that execute live SQL to answer natural-language questions inline.
 
 ### Architecture
 
 | Component | Description |
 |---|---|
-| **Search Worker** (`pf9_search_worker`) | Background Python worker that incrementally indexes 19 doc types into `search_documents` table |
-| **Search API** (`api/search.py`) | 5 FastAPI endpoints for search, similarity, intent detection, stats, and re-index |
-| **UI Tab** (`OpsSearch.tsx`) | React component with search bar, type filters, results, similarity panel, and smart suggestions |
+| **Search Worker** (`pf9_search_worker`) | Background Python worker that incrementally indexes 29 doc types into `search_documents` table. Enriches each document with natural-language body text, cross-reference counts, and structured metadata. Cleans up stale documents for deleted resources. |
+| **Search API** (`api/search.py`) | 7 FastAPI endpoints for search, similarity, intent detection, smart queries, stats, and re-index |
+| **Smart Queries** (`api/smart_queries.py`) | 26 parameterised SQL templates matching natural-language questions to live answer cards |
+| **UI Tab** (`OpsSearch.tsx`) | React component with search bar, type filters, results with metadata pill cards, smart answer cards, similarity panel, and smart suggestions |
 | **Database** | `search_documents` table (tsvector + pg_trgm), `search_indexer_state` tracking table, 2 SQL functions |
 
 ### Configuration
@@ -1891,9 +1894,13 @@ The Ops Search feature provides a unified full-text search across all indexed re
 | `SEARCH_INDEX_INTERVAL` | `300` | Seconds between indexing cycles (default 5 minutes) |
 | `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASS` | Standard DB vars | Database connection for the search worker |
 
-### Indexed Document Types (19)
+### Indexed Document Types (29)
 
-`vm`, `volume`, `snapshot`, `hypervisor`, `network`, `subnet`, `floating_ip`, `port`, `security_group`, `activity`, `audit`, `drift_event`, `snapshot_run`, `snapshot_record`, `restore_job`, `backup`, `notification`, `provisioning`, `deletion`
+**Infrastructure**: `vm`, `volume`, `snapshot`, `hypervisor`, `network`, `subnet`, `floating_ip`, `port`, `security_group`, `router`, `flavor`, `image`
+
+**Identity & Access**: `domain`, `project`, `user`, `role`, `role_assignment`, `group`
+
+**Operations**: `activity`, `audit`, `drift_event`, `snapshot_run`, `snapshot_record`, `snapshot_policy`, `restore_job`, `backup`, `notification`, `provisioning`, `deletion`
 
 ### Usage
 
@@ -1903,6 +1910,7 @@ The Ops Search feature provides a unified full-text search across all indexed re
 4. Results show relevance-ranked matches with highlighted keyword snippets
 5. Click **Show Similar** on any result to find related documents
 6. For quota/capacity/drift queries, **Smart Suggestions** appear above results linking to the matching report
+7. For operational questions (e.g., "how many VMs are powered off?", "quota for Org1", "show hypervisor capacity"), a **Smart Query answer card** appears above results with a live data table, number, or key-value summary
 
 ### Admin Operations
 
@@ -1916,6 +1924,8 @@ The Ops Search feature provides a unified full-text search across all indexed re
 | `GET` | `/api/search?q=...` | `search:read` | Full-text search with filters and pagination |
 | `GET` | `/api/search/similar/{doc_id}` | `search:read` | Find documents similar to the given one |
 | `GET` | `/api/search/intent?q=...` | `search:read` | Detect intent and suggest report endpoints |
+| `GET` | `/api/search/smart?q=...` | `search:read` | Smart query: match question to SQL template and return answer card |
+| `GET` | `/api/search/smart/help` | `search:read` | List all 26 available smart query templates |
 | `GET` | `/api/search/stats` | `search:read` | Indexer status and document counts |
 | `POST` | `/api/search/reindex` | `search:admin` | Reset watermarks for full re-index |
 
@@ -1934,6 +1944,39 @@ docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT * FROM search_indexer_stat
 # Test search function directly
 docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT title, rank FROM search_ranked('my-vm-name') LIMIT 5;"
 ```
+
+### Data Freshness & Stale Cleanup
+
+The search index is **always up-to-date** with the live inventory:
+
+- **Incremental indexing**: Every cycle (default 5 min) picks up new and updated resources via per-doc-type watermarks.
+- **Stale document cleanup**: After each indexing cycle, the worker removes search documents for resources that no longer exist in their source tables. This covers 19 infrastructure doc types (VMs, volumes, networks, users, flavors, etc.). Event/log types (activity, audit, backup, snapshot_run, etc.) are excluded because those records are permanent and never deleted from source tables.
+- **Enriched results**: Each indexed document includes natural-language descriptions with cross-reference counts (e.g., "Domain ORG1 containing 5 projects, 42 users, and 18 VMs") and structured metadata rendered as labeled pill cards in the UI.
+
+This means: if a VM is deleted from Platform 9, it will be removed from search results within one indexing cycle (≤5 minutes by default).
+
+### Smart Query Templates (v3)
+
+Smart Queries turn the search bar into an **Ops Assistant** that answers natural-language questions with live data. When a question matches one of 26 built-in templates, a structured answer card (table, number, or key-value summary) appears above the regular search results.
+
+**Supported question categories (26 templates)**:
+
+| Category | Example Questions |
+|---|---|
+| **Infrastructure** | "VM status summary", "how many VMs?", "VMs per project", "all volumes", "images overview", "show networks", "floating IPs", "list routers", "show flavors" |
+| **Capacity** | "hypervisor capacity", "host utilization" |
+| **Quota** | "quota usage overview", "quota for Org1" |
+| **Operations** | "powered off VMs", "VMs in error state", "orphan volumes", "snapshot overview", "drift events summary", "recent activity", "resource efficiency" |
+| **Security** | "role assignments", "roles for user admin@example.com", "security groups overview" |
+| **General** | "platform overview", "show me everything", "environment summary" |
+
+**Answer card types**:
+- 🔢 **Number** — Single count (e.g., "53 projects")
+- 📋 **Table** — Multi-row results with sortable columns
+- 🗂️ **Key-Value** — Named metrics (e.g., platform overview with counts for VMs, volumes, networks)
+- ⚠️ **Error** — If the query fails, shows the error message
+
+Smart Queries execute read-only SQL against live database tables — no indexing delay, always real-time data. Use `GET /api/search/smart/help` to see all available templates.
 
 ---
 

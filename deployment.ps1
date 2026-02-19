@@ -995,7 +995,7 @@ Write-Host "  Feature:               ENABLED" -ForegroundColor Green
 Write-Host "  UI Tab:                Ops Search (full-text + similarity + intent detection)" -ForegroundColor White
 Write-Host "  Worker:                pf9_search_worker (incremental indexer, default 5-min interval)" -ForegroundColor White
 Write-Host "  API Endpoints:         /api/search (search, similar, intent, stats, reindex)" -ForegroundColor White
-Write-Host "  Doc Types:             19 indexed types (VMs, volumes, audit, drift, snapshots...)" -ForegroundColor White
+Write-Host "  Doc Types:             29 indexed types (VMs, volumes, users, audit, drift, snapshots, roles...)" -ForegroundColor White
 Write-Host "  RBAC:                  viewer/operator=search:read, admin/superadmin=search:admin" -ForegroundColor White
 Write-Host ""
 
