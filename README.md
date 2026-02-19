@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.20.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.21.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -107,11 +107,11 @@ Every service is containerized. That means **you decide**:
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
 | **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 27 management tabs + admin panel |
-| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 140+ REST endpoints, RBAC middleware, 4 workers |
+| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 155+ REST endpoints, RBAC middleware, 4 workers |
 | **LDAP Server** | OpenLDAP | 389 | Enterprise authentication directory |
 | **LDAP Admin** | phpLDAPadmin | 8081 | Web-based LDAP management |
 | **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
-| **Database** | PostgreSQL 16 | 5432 | 44+ tables, history tracking, audit, metering |
+| **Database** | PostgreSQL 16 | 5432 | 48+ tables, history tracking, audit, metering, runbooks |
 | **Database Admin** | pgAdmin4 | 8080 | Web-based PostgreSQL management |
 | **Snapshot Worker** | Python | — | Automated snapshot management |
 | **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
@@ -237,10 +237,18 @@ Every service is containerized. That means **you decide**:
 - **Paginated Results**: Relevance-ranked results with highlighted keyword snippets and metadata pill cards
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
-### 📈 27-Tab Management Dashboard
+### � Policy-as-Code Runbooks *(v1.21)*
+- **Runbook Catalogue**: Browse 5 built-in operational runbooks (Stuck VM Remediation, Orphan Resource Cleanup, Security Group Audit, Quota Threshold Check, Diagnostics Bundle) with schema-driven parameter forms
+- **Operator-Facing Trigger**: Tier 1 operators can browse and trigger runbooks with dry-run support — no admin access needed
+- **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: auto-approve, single approval, multi-approval
+- **Admin Governance**: Execution History, Approvals queue, and Approval Policies managed via 3 dedicated sub-tabs in the Admin panel
+- **Full Audit Trail**: Every execution records trigger user, approver, timestamps, parameters, results, items found/actioned
+- **Pluggable Engine Architecture**: `@register_engine` decorator pattern — add new runbooks with zero framework changes
+
+### 📈 28-Tab Management Dashboard
 A single engineering console covering every operational surface:
 
-> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search**
+> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks**
 
 <details>
 <summary><strong>Landing Dashboard Widgets</strong></summary>
@@ -430,7 +438,7 @@ docker stats
 
 ```
 pf9-mngt/
-├── api/                          # FastAPI backend (140+ endpoints)
+├── api/                          # FastAPI backend (155+ endpoints)
 ├── pf9-ui/                       # React 19 + TypeScript frontend
 ├── monitoring/                   # Prometheus metrics service
 ├── snapshots/                    # Snapshot automation engine
@@ -661,7 +669,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 120+ commits, 21 releases, 12 containerized services, 145+ API endpoints — built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 120+ commits, 22 releases, 12 containerized services, 160+ API endpoints — built alongside regular responsibilities.
 
 ---
 
@@ -673,4 +681,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.20.0 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.21.0 | **Last Updated**: February 2026

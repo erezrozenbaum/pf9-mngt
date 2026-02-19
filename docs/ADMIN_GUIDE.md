@@ -2,6 +2,17 @@
 
 ## Recent Major Enhancements
 
+### Policy-as-Code Runbooks (v1.21 - NEW ✨)
+- **📋 Runbooks Tab**: Operator-facing catalogue of 5 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
+- **5 Built-in Runbooks**: Stuck VM Remediation, Orphan Resource Cleanup, Security Group Audit, Quota Threshold Check, Diagnostics Bundle
+- **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout.
+- **Admin Governance Sub-Tabs**: Three new sub-tabs in Admin → Auth Management: Runbook Executions (filterable history with detail panel), Runbook Approvals (pending queue with approve/reject/cancel), Runbook Policies (per-runbook approval policy editor)
+- **Notification Events**: `runbook_approval_requested`, `runbook_completed`, `runbook_failed`
+- **16 API Endpoints**: `/api/runbooks` (list/get/trigger), `/api/runbooks/executions/*` (history/detail/approve/cancel), `/api/runbooks/approvals/pending`, `/api/runbooks/policies/*` (CRUD), `/api/runbooks/stats/summary`
+- **RBAC**: viewer=`runbooks:read`, operator=`runbooks:read+write`, admin/superadmin=`runbooks:read+write+admin`
+- **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
+- **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`)
+
 ### Ops Assistant — Search & Similarity (v1.20 - NEW ✨)
 - **🔍 Ops Search Tab**: Full-text search across all 29 resource types using PostgreSQL `tsvector` + `websearch_to_tsquery`. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination.
 - **Trigram Similarity (v2)**: "Show Similar" button on every search result uses `pg_trgm` extension to find related documents by title (60% weight) and body text (40% weight) similarity scoring.
@@ -204,7 +215,7 @@
 - **Comprehensive Audit Dashboard**: Added storage summaries, network distribution, flavor analytics, and change velocity metrics
 - **Resource History API**: Standardized history endpoints for all resource types with proper data transformation
 
-### Database Schema Overview (35+ Tables)
+### Database Schema Overview (39+ Tables)
 
 #### Authentication, Authorization & Visibility (12 tables)
 - **user_roles**: User-to-role mappings with active status tracking and department assignment
@@ -272,6 +283,12 @@
 - **metering_api_usage**: API endpoint usage tracking (total calls, error count, avg/p95/p99 latency)
 - **metering_quotas**: Per-project resource quota tracking (allocated vs. used for vCPUs, RAM, storage)
 - **metering_efficiency**: Per-VM efficiency scores with classification (excellent/good/fair/poor/idle)
+
+#### Runbooks (4 tables)
+- **runbooks**: Runbook definitions (name, category, risk level, dry-run support, JSON Schema parameters)
+- **runbook_approval_policies**: Per-runbook trigger→approver role mappings with approval mode and escalation timeout
+- **runbook_executions**: Full execution audit trail (status, parameters, results, timestamps, items found/actioned)
+- **runbook_approvals**: Individual approval records for multi-approval workflows
 
 #### Performance Optimizations & Advanced Features
 - **RBAC Middleware**: HTTP middleware enforces permissions before request processing
@@ -608,6 +625,9 @@ networks, subnets, ports, routers, floating_ips
 
 -- Operational Tables
 inventory_runs  -- Audit trail for data collection
+
+-- Runbooks (4 tables)
+runbooks, runbook_approval_policies, runbook_executions, runbook_approvals
 ```
 
 ### API Endpoints (40+ Routes)
@@ -1518,7 +1538,7 @@ Shows real-time user count for each role automatically updated from LDAP authent
 
 ##### 3. Permissions Tab
 View the Permission Matrix showing resource-level access control:
-- **Resource list**: servers, volumes, snapshots, networks, subnets, ports, floatingips, domains, projects, flavors, images, hypervisors, users, monitoring, history, audit
+- **Resource list**: servers, volumes, snapshots, networks, subnets, ports, floatingips, domains, projects, flavors, images, hypervisors, users, monitoring, history, audit, runbooks
 - **Actions**: read, write, admin (actions vary by resource)
 - **Role permissions**: Visual matrix showing which roles have access to each resource action
 - **Read-only display**: Current implementation shows permissions for reference
@@ -1534,6 +1554,9 @@ View the Permission Matrix showing resource-level access control:
 - `servers/admin`: admin, superadmin ✓
 - `users/admin`: superadmin only ✓
 - `volumes/read`: viewer, operator, admin, superadmin ✓
+- `runbooks/read`: viewer, operator, admin, superadmin ✓
+- `runbooks/write`: operator, admin, superadmin ✓
+- `runbooks/admin`: admin, superadmin ✓
 
 ##### 4. System Audit Tab
 Monitor authentication events and system access:
@@ -1562,7 +1585,7 @@ Customize the application’s login page and company identity:
 
 ### Notifications Tab
 The Notifications tab allows users to manage email alert preferences:
-- **Preferences Sub-Tab** — Toggle notifications for each event type (drift, snapshots, compliance, health), set minimum severity level, choose delivery mode (immediate or digest)
+- **Preferences Sub-Tab** — Toggle notifications for each event type (drift, snapshots, compliance, health, runbook approvals, runbook completions, runbook failures), set minimum severity level, choose delivery mode (immediate or digest)
 - **History Sub-Tab** — Paginated log of all sent notifications with status (sent/failed/pending), timestamps, and event details
 - **Settings Sub-Tab** (Admin only) — SMTP connection status, notification delivery statistics, and test email button
 - **RBAC** — All authenticated users can manage their own preferences; admin statistics require Admin/Superadmin role
@@ -1571,7 +1594,7 @@ The Notifications tab allows users to manage email alert preferences:
 Users can customize the order of navigation tabs:
 - **Drag-and-Drop** — Click and drag any tab to reorder; visual drop indicator shows placement
 - **Persistence** — Tab order saved to `localStorage` and synced to backend (`user_preferences` table) per user
-- **Reset** — Click the "↩" button to restore the default 27-tab order
+- **Reset** — Click the "↩" button to restore the default 28-tab order
 - **Data-Driven** — All tabs defined in `DEFAULT_TAB_ORDER` array with id, label, icon, category, RBAC permission, and feature-toggle metadata
 
 ### Admin Panel Authentication
