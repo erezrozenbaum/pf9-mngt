@@ -141,7 +141,7 @@ PF9_PASSWORD=your-pf9-password
 PF9_AUTH_URL=https://your-pf9-controller:5000/v3
 
 # Monitoring — comma-separated PF9 hypervisor IPs
-PF9_HOSTS=10.0.1.10,10.0.1.11,10.0.1.12
+PF9_HOSTS=<your-host-ip-1>,<your-host-ip-2>,<your-host-ip-3>
 
 # JWT secret (generate a random key)
 JWT_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
