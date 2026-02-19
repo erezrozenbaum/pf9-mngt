@@ -17,7 +17,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Activity Monitoring**: User last-seen timestamps, account status, and authentication tracking
 - **Role Inference System**: Intelligent role assignment detection when API access is limited
 
-#### Modern React UI Features (21+ Comprehensive Tabs)
+#### Modern React UI Features (22+ Comprehensive Tabs)
 - **Dashboard Tab** (NEW ✨): Landing Dashboard with 14 real-time analytics endpoints
   - Health Summary, Snapshot SLA Compliance, Host Utilization, Recent Activity
   - Coverage Risks, Capacity Pressure, VM Hotspots, Tenant Risk Scores
@@ -56,7 +56,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Tab Drag-and-Drop** (v1.8 - NEW ✨):
   - Reorder navigation tabs via drag-and-drop with visual drop indicator
   - Per-user persistence (localStorage + `user_preferences` backend table)
-  - Reset button ("↩") to restore default 27-tab order
+  - Reset button ("↩") to restore default 28-tab order
 - **Dark Mode Enhancements** (v1.8):
   - Comprehensive dark mode fixes across login page, branding settings, restore audit, and snapshot policy
   - CSS variable aliasing system ensuring all component styles resolve correctly in both themes
@@ -81,6 +81,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Chargeback export with per-category cost breakdown (compute, storage, snapshot, restore, volume, network, TOTAL)
   - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
+- **Runbooks Tab** (v1.21 - NEW ✨):
+  - "📋 Runbooks" tab with policy-as-code catalogue and one-click execution
+  - 5 built-in engines: Delete Errored VMs, Cleanup Orphan Volumes, Enforce Naming Convention, Reclaim Idle Floating IPs, Audit Security Groups
+  - Schema-driven parameter forms with dry-run toggle and risk-level badges
+  - Approval workflow: per-runbook policies with role-based trigger→approver mappings
+  - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
+  - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
 
 #### Advanced Snapshot Management
 - **Cross-Tenant Snapshots**: Snapshots created in correct tenant projects via dedicated service user
@@ -124,7 +131,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **RVTools Compatibility**: Excel/CSV exports with delta tracking and customer data masking
 - **Modern React UI**: TypeScript-based with Vite build system and theme support
 - **REST API**: FastAPI with OpenAPI docs + dedicated monitoring service
-- **Database Integration**: PostgreSQL 16 with 44+ tables for historical tracking + metering + departments/navigation
+- **Database Integration**: PostgreSQL 16 with 48+ tables for historical tracking + metering + departments/navigation + runbooks
 - **Drift Detection**: Automated field-level change monitoring with 24 rules across 8 resource types
 - **Administrative Operations**: Create/delete flavors and networks directly from UI
 
