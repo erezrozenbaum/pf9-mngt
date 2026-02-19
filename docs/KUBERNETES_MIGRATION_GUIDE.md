@@ -122,8 +122,8 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 │                                                                    │
 │  ┌─ Ingress Controller ─────────────────────────────────────────┐ │
 │  │  - HTTPS termination                                         │ │
-│  │  - Routing (pf9-ui.company.com → UI Service)               │ │
-│  │  - API routing (api.company.com → API Service)             │ │
+│  │  - Routing (<your-domain> → UI Service)                    │ │
+│  │  - API routing (<your-domain>/api → API Service)           │ │
 │  └──────────────────────────────────────────────────────────────┘ │
 │                                                                    │
 │  ┌─ pf9 Namespace ──────────────────────────────────────────────┐ │
@@ -704,7 +704,7 @@ spec:
     spec:
       containers:
       - name: pf9-ui
-        image: company-registry.azurecr.io/pf9-ui:latest
+        image: <your-registry>/pf9-ui:latest
         ports:
         - containerPort: 5173
         
@@ -807,7 +807,7 @@ spec:
       initContainers:
       # Run database migrations before starting
       - name: db-migrate
-        image: company-registry.azurecr.io/pf9-api:latest
+        image: <your-registry>/pf9-api:latest
         command: ["python", "db_migration.py"]
         envFrom:
         - configMapRef:
@@ -817,7 +817,7 @@ spec:
       
       containers:
       - name: pf9-api
-        image: company-registry.azurecr.io/pf9-api:latest
+        image: <your-registry>/pf9-api:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -1159,7 +1159,7 @@ spec:
     spec:
       containers:
       - name: pf9-monitoring
-        image: company-registry.azurecr.io/pf9-monitoring:latest
+        image: <your-registry>/pf9-monitoring:latest
         ports:
         - containerPort: 8001
         
@@ -1534,7 +1534,7 @@ spec:
             - -H
             - ldap://localhost
             - -D
-            - "cn=admin,dc=company,dc=local"
+            - "cn=admin,${LDAP_BASE_DN}"  # Derived from LDAP_DOMAIN env var
             - -w
             - "$(LDAP_ADMIN_PASSWORD)"
           initialDelaySeconds: 20
@@ -1547,7 +1547,7 @@ spec:
             - -H
             - ldap://localhost
             - -D
-            - "cn=admin,dc=company,dc=local"
+            - "cn=admin,${LDAP_BASE_DN}"  # Derived from LDAP_DOMAIN env var
             - -w
             - "$(LDAP_ADMIN_PASSWORD)"
           initialDelaySeconds: 10
@@ -1783,10 +1783,10 @@ metadata:
   namespace: pf9
 type: Opaque
 stringData:
-  SNAPSHOT_PASSWORD_KEY: <fernet-key>
-  SNAPSHOT_USER_PASSWORD_ENCRYPTED: <encrypted-password>
-  SNAPSHOT_SERVICE_USER_EMAIL: snapshot-svc@company.com
-  SNAPSHOT_SERVICE_USER_PASSWORD: <plaintext-fallback>
+  SNAPSHOT_PASSWORD_KEY: <your-fernet-key>           # From .env SNAPSHOT_PASSWORD_KEY
+  SNAPSHOT_USER_PASSWORD_ENCRYPTED: <your-encrypted>   # From .env
+  SNAPSHOT_SERVICE_USER_EMAIL: <your-service-email>     # From .env SNAPSHOT_SERVICE_USER_EMAIL
+  SNAPSHOT_SERVICE_USER_PASSWORD: <your-service-pass>   # From .env SNAPSHOT_SERVICE_USER_PASSWORD
 ```
 
 **Code Changes**: None required — the snapshot worker is already fully containerized.
@@ -2074,10 +2074,10 @@ metadata:
   namespace: pf9
 type: Opaque
 stringData:
-  SMTP_HOST: smtp.company.com
-  SMTP_USERNAME: <smtp-user>
-  SMTP_PASSWORD: <smtp-password>
-  SMTP_FROM_ADDRESS: pf9-mgmt@company.com
+  SMTP_HOST: <your-smtp-host>           # From .env SMTP_HOST
+  SMTP_USERNAME: <your-smtp-user>       # From .env SMTP_USERNAME
+  SMTP_PASSWORD: <your-smtp-password>   # From .env SMTP_PASSWORD
+  SMTP_FROM_ADDRESS: <your-from-email>  # From .env SMTP_FROM_ADDRESS
 ```
 
 **Code Changes**: None required.
@@ -2191,7 +2191,7 @@ keywords:
   - openstack
 maintainers:
   - name: Erez Rozenbaum
-    email: contact@company.com
+    email: <your-email>
 dependencies: []  # Can add external charts (cert-manager, etc.)
 ```
 
@@ -2204,7 +2204,7 @@ namespace: pf9
 
 # Container Registry
 registry:
-  name: company-registry.azurecr.io
+  name: <your-registry>.azurecr.io    # Replace with your container registry
   pullPolicy: IfNotPresent
   secret: regcred  # Docker registry credentials
 
@@ -2350,24 +2350,24 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: pf9-ui.company.com
+    - host: pf9-ui.<your-domain>        # Replace with your domain
       paths:
         - path: /
           pathType: Prefix
-    - host: pf9-api.company.com
+    - host: pf9-api.<your-domain>       # Replace with your domain
       paths:
         - path: /
           pathType: Prefix
-    - host: pf9-monitoring.company.com
+    - host: pf9-monitoring.<your-domain> # Replace with your domain
       paths:
         - path: /
           pathType: Prefix
   tls:
     - secretName: pf9-tls
       hosts:
-        - pf9-ui.company.com
-        - pf9-api.company.com
-        - pf9-monitoring.company.com
+        - pf9-ui.<your-domain>
+        - pf9-api.<your-domain>
+        - pf9-monitoring.<your-domain>
 
 # TLS Certificate
 certificates:
@@ -2432,7 +2432,7 @@ environment: production  # dev, staging, production
 
 ```bash
 # Add Helm chart repository (if published)
-helm repo add pf9 https://helm.company.com/pf9
+helm repo add pf9 <your-helm-repo-url>
 helm repo update
 
 # Install with default values
@@ -2445,7 +2445,7 @@ helm install pf9 pf9/pf9-management -n pf9 -f values-prod.yaml
 helm install pf9 pf9/pf9-management \
   -n pf9 \
   --set replicas.api=5 \
-  --set ingress.hosts[0].host=mycompany.com \
+  --set ingress.hosts[0].host=<your-domain> \
   --set persistence.postgres.size=1Ti
 
 # Upgrade deployment
@@ -2477,8 +2477,8 @@ metadata:
   namespace: pf9
 type: Opaque
 stringData:
-  POSTGRES_USER: pf9admin
-  POSTGRES_PASSWORD: <strong-password>  # 32+ chars, special chars
+  POSTGRES_USER: <your-db-user>           # From .env POSTGRES_USER (default: pf9)
+  POSTGRES_PASSWORD: <your-db-password>   # From .env POSTGRES_PASSWORD
 
 ---
 # 2. JWT Secrets
@@ -2513,9 +2513,9 @@ metadata:
   namespace: pf9
 type: Opaque
 stringData:
-  PF9_USERNAME: <pf9-user>
-  PF9_PASSWORD: <pf9-password>
-  PF9_AUTH_URL: https://pf9-controller.company.com:5000/v3
+  PF9_USERNAME: <your-pf9-user>       # From .env PF9_USERNAME
+  PF9_PASSWORD: <your-pf9-password>   # From .env PF9_PASSWORD
+  PF9_AUTH_URL: <your-pf9-auth-url>   # From .env PF9_AUTH_URL
 
 ---
 # 5. Snapshot Service User Credentials
@@ -2526,10 +2526,10 @@ metadata:
   namespace: pf9
 type: Opaque
 stringData:
-  SNAPSHOT_PASSWORD_KEY: <fernet-key>
-  SNAPSHOT_USER_PASSWORD_ENCRYPTED: <encrypted-password>
-  SNAPSHOT_SERVICE_USER_EMAIL: snapshot-svc@company.com
-  SNAPSHOT_SERVICE_USER_PASSWORD: <plaintext-fallback>
+  SNAPSHOT_PASSWORD_KEY: <your-fernet-key>           # From .env SNAPSHOT_PASSWORD_KEY
+  SNAPSHOT_USER_PASSWORD_ENCRYPTED: <your-encrypted>   # From .env
+  SNAPSHOT_SERVICE_USER_EMAIL: <your-service-email>     # From .env SNAPSHOT_SERVICE_USER_EMAIL
+  SNAPSHOT_SERVICE_USER_PASSWORD: <your-service-pass>   # From .env SNAPSHOT_SERVICE_USER_PASSWORD
 
 ---
 # 6. SMTP Credentials (Notification Worker)
@@ -2540,10 +2540,10 @@ metadata:
   namespace: pf9
 type: Opaque
 stringData:
-  SMTP_HOST: smtp.company.com
-  SMTP_USERNAME: <smtp-user>
-  SMTP_PASSWORD: <smtp-password>
-  SMTP_FROM_ADDRESS: pf9-mgmt@company.com
+  SMTP_HOST: <your-smtp-host>           # From .env SMTP_HOST
+  SMTP_USERNAME: <your-smtp-user>       # From .env SMTP_USERNAME
+  SMTP_PASSWORD: <your-smtp-password>   # From .env SMTP_PASSWORD
+  SMTP_FROM_ADDRESS: <your-from-email>  # From .env SMTP_FROM_ADDRESS
 ```
 
 **Best Practices**:
@@ -2595,11 +2595,11 @@ metadata:
   name: ldap-config
   namespace: pf9
 data:
-  LDAP_ORGANISATION: Company Inc.
-  LDAP_DOMAIN: company.local
-  LDAP_BASE_DN: dc=company,dc=local
-  LDAP_USER_DN: ou=users,dc=company,dc=local
-  LDAP_GROUP_DN: ou=groups,dc=company,dc=local
+  LDAP_ORGANISATION: <your-org-name>                   # From .env (default: Platform9 Management)
+  LDAP_DOMAIN: <your-ldap-domain>                       # From .env (default: pf9mgmt.local)
+  LDAP_BASE_DN: <your-base-dn>                          # From .env (default: dc=pf9mgmt,dc=local)
+  LDAP_USER_DN: <your-user-dn>                          # From .env (default: ou=users,dc=pf9mgmt,dc=local)
+  LDAP_GROUP_DN: <your-group-dn>                        # From .env (default: ou=groups,dc=pf9mgmt,dc=local)
 
 ---
 # Monitoring Configuration
@@ -2609,7 +2609,7 @@ metadata:
   name: monitoring-config
   namespace: pf9
 data:
-  PF9_HOSTS: "10.0.1.10,10.0.1.11,10.0.1.12"
+  PF9_HOSTS: "<your-host-ip-1>,<your-host-ip-2>"  # From .env PF9_HOSTS
   METRICS_CACHE_TTL: "60"
 
 ---
@@ -2620,7 +2620,7 @@ metadata:
   name: cronjob-config
   namespace: pf9
 data:
-  PF9_HOSTS: "10.0.1.10,10.0.1.11,10.0.1.12"
+  PF9_HOSTS: "<your-host-ip-1>,<your-host-ip-2>"  # From .env PF9_HOSTS
 
 ---
 # Snapshot Worker Configuration
@@ -2756,7 +2756,7 @@ spec:
   serviceAccountName: pf9-app
   containers:
   - name: api
-    image: company-registry.azurecr.io/pf9-api:latest
+    image: <your-registry>/pf9-api:latest
     volumeMounts:
     - name: secrets-store
       mountPath: /mnt/secrets-store
@@ -2847,7 +2847,7 @@ spec:
           restartPolicy: Never
           containers:
           - name: backup
-            image: company-registry.azurecr.io/pf9-backup:latest
+            image: <your-registry>/pf9-backup:latest
             command:
             - /bin/sh
             - -c
@@ -3218,7 +3218,7 @@ spec:
       - name: regcred
       containers:
       - name: api
-        image: company-registry.azurecr.io/pf9-api:v1.0
+        image: <your-registry>/pf9-api:v1.0
         imagePullPolicy: IfNotPresent
 
 ---
@@ -3434,7 +3434,7 @@ spec:
               topologyKey: topology.kubernetes.io/zone
       containers:
       - name: api
-        image: company-registry.azurecr.io/pf9-api:latest
+        image: <your-registry>/pf9-api:latest
 ```
 
 ---
@@ -3778,16 +3778,16 @@ async def track_metrics(request: Request, call_next):
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/company/pf9-management.git
-cd pf9-management
+git clone https://github.com/erezrozenbaum/pf9-mngt.git
+cd pf9-mngt
 
 # 2. Create namespace
 kubectl create namespace pf9
 
 # 3. Create secrets (DO NOT commit these)
 kubectl create secret generic db-credentials \
-  --from-literal=POSTGRES_USER=pf9admin \
-  --from-literal=POSTGRES_PASSWORD=$(openssl rand -base64 32) \
+  --from-literal=POSTGRES_USER=$POSTGRES_USER \     # From your .env
+  --from-literal=POSTGRES_PASSWORD=$POSTGRES_PASSWORD \  # From your .env
   -n pf9
 
 kubectl create secret generic jwt-secrets \
@@ -3795,7 +3795,7 @@ kubectl create secret generic jwt-secrets \
   -n pf9
 
 # 4. Install Helm chart
-helm repo add pf9 https://helm.company.com/pf9
+helm repo add pf9 <your-helm-repo-url>
 helm repo update
 helm install pf9 pf9/pf9-management \
   -n pf9 \
@@ -3854,13 +3854,13 @@ kubectl port-forward -n kube-monitoring svc/prometheus 9090:9090
 
 ```bash
 # Connect to database
-kubectl exec -it postgres-0 -n pf9 -- psql -U pf9admin -d platform9
+kubectl exec -it postgres-0 -n pf9 -- psql -U $POSTGRES_USER -d $POSTGRES_DB
 
 # Backup database
-kubectl exec -it postgres-0 -n pf9 -- pg_dump -U pf9admin platform9 > backup.sql
+kubectl exec -it postgres-0 -n pf9 -- pg_dump -U $POSTGRES_USER $POSTGRES_DB > backup.sql
 
 # Restore database
-kubectl exec -i postgres-0 -n pf9 -- psql -U pf9admin platform9 < backup.sql
+kubectl exec -i postgres-0 -n pf9 -- psql -U $POSTGRES_USER $POSTGRES_DB < backup.sql
 ```
 
 #### Rolling Updates
@@ -3868,7 +3868,7 @@ kubectl exec -i postgres-0 -n pf9 -- psql -U pf9admin platform9 < backup.sql
 ```bash
 # Update API to new version
 kubectl set image deployment/pf9-api \
-  pf9-api=company-registry.azurecr.io/pf9-api:v1.1.0 \
+  pf9-api=<your-registry>/pf9-api:v1.1.0 \
   -n pf9
 
 # Check rollout status
@@ -3918,7 +3918,7 @@ kubectl get networkpolicy -n pf9
 
 # Test connectivity from API pod
 kubectl exec -it deployment/pf9-api -n pf9 -- \
-  pg_isready -h postgres.pf9.svc.cluster.local -U pf9admin
+  pg_isready -h postgres.pf9.svc.cluster.local -U $POSTGRES_USER
 ```
 
 ### High Memory Usage
