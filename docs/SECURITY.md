@@ -126,6 +126,7 @@ ENABLE_AUTHENTICATION=true
 | Departments | read | read | admin | admin | read |
 | Navigation | read | read | admin | admin | read |
 | Search | read | read | admin | admin | read |
+| Runbooks | read | read, write | admin | admin | read |
 
 ### Public (Unauthenticated) Endpoints
 

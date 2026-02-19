@@ -2159,6 +2159,8 @@ data:
 
 **Database Migration**: Run `db/migrate_search.sql` against the PostgreSQL instance before starting the worker. This creates `search_documents`, `search_indexer_state` tables, the `pg_trgm` extension, and the `search_ranked()` / `search_similar()` SQL functions.
 
+**Runbooks Migration**: Run `db/migrate_runbooks.sql` to create the `runbooks`, `runbook_approval_policies`, `runbook_executions`, and `runbook_approvals` tables, seed built-in runbooks+policies, and register navigation items.
+
 **Code Changes**: None required.
 
 ---

@@ -460,7 +460,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "domain_management",   label: "🏢 Domain Mgmt",         adminOnly: true, actionStyle: true },
   { id: "reports",              label: "📊 Reports",             adminOnly: true, actionStyle: true },
   { id: "resource_management",  label: "🔧 Resources",           adminOnly: true, actionStyle: true },
-  { id: "runbooks",              label: "📋 Runbooks",            adminOnly: true, actionStyle: true },
+  { id: "runbooks",              label: "📋 Runbooks",            adminOnly: false, actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -3011,7 +3011,7 @@ const App: React.FC = () => {
             : activeTab === "search"
             ? "Ops Assistant · full-text search · similarity · smart report suggestions"
             : activeTab === "runbooks"
-            ? "Policy-as-code runbooks · approval workflows · execution audit trail"
+            ? "Policy-as-code operational runbooks · select and trigger with dry-run"
             : "Platform9 management"}
       </section>
 
@@ -5190,9 +5190,7 @@ const App: React.FC = () => {
 
           {/* Runbooks */}
           {activeTab === "runbooks" && (
-            <RunbooksTab
-              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
-            />
+            <RunbooksTab />
           )}
 
 
