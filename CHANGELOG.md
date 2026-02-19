@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] - 2026-02-20
+
+### Added
+- **Ops Assistant — Full-Text Search (v1)** — New `🔍 Ops Search` tab with PostgreSQL `tsvector` + `websearch_to_tsquery` full-text search across all 19+ resource types. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination, and per-doc-type pill filters.
+- **Trigram Similarity (v2)** — "Show Similar" button on every search result uses `pg_trgm` extension to find related documents by title (60% weight) and body text (40% weight) similarity scoring.
+- **Intent Detection (v2.5)** — Natural-language queries like *"quota for projectX"*, *"capacity"*, *"idle resources"*, or *"drift"* trigger Smart Suggestions that link directly to the matching report endpoint. Extracts tenant hints for pre-filtering.
+- **Search Indexer Worker** — New `search_worker` Docker service that incrementally indexes 19 document types (vm, volume, snapshot, hypervisor, network, subnet, floating_ip, port, security_group, activity, audit, drift_event, snapshot_run, snapshot_record, restore_job, backup, notification, provisioning, deletion) on a configurable interval (default: 5 min). Uses per-doc-type watermarks for efficient delta processing.
+- **Database Migration** — `db/migrate_search.sql` adds `search_documents` table with 7 indexes (GIN tsvector, GIN trigram on title + body, composite lookups), auto-update tsvector trigger, `search_indexer_state` tracking table, `search_ranked()` and `search_similar()` SQL functions, and RBAC permission grants for all 4 roles.
+- **Search API** — 5 new endpoints under `/api/search`: full-text search with pagination, similarity lookup, indexer stats, manual re-index trigger (admin), and intent detection.
+- **Indexer Stats Dashboard** — In-tab panel showing per-doc-type document counts, last run time, and duration for operational visibility.
+
+### Improved
+- **Tab count** — 26 → 27 management tabs (added Ops Search).
+- **Docker Compose** — Added `search_worker` service with configurable `SEARCH_INDEX_INTERVAL`.
+
 ## [1.19.9] - 2026-02-19
 
 ### Added
