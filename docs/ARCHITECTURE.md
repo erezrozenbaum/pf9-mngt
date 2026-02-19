@@ -137,6 +137,7 @@ This document covers:
 | **notification_worker** | pf9_db | TCP/PostgreSQL | Read events, log delivery | `POSTGRES_USER/PASSWORD` |
 | **notification_worker** | SMTP server | SMTP/TLS | Send emails | `SMTP_USER/PASSWORD` (optional) |
 | **backup_worker** | pf9_db | TCP/PostgreSQL | pg_dump/pg_restore | `POSTGRES_USER/PASSWORD` |
+| **search_worker** | pf9_db | TCP/PostgreSQL | Index documents for full-text search | `POSTGRES_USER/PASSWORD` |
 | **host_metrics_collector** | PF9 hosts (:9388) | HTTP | Scrape Prometheus node_exporter | — |
 
 ### Key Security Boundary
@@ -464,6 +465,13 @@ Every infrastructure resource follows a **dual-table pattern**:
 |---|---|
 | `drift_rules` | 24 built-in rules across 8 resource types (resource_type, field_name, severity, enabled) |
 | `drift_events` | Detected changes (old_value → new_value, field_changed, acknowledgment tracking) |
+
+#### Search (2 tables)
+
+| Table | Purpose |
+|---|---|
+| `search_documents` | Full-text search index — tsvector column with GIN index + pg_trgm indexes on title/body. 9 indexes total. |
+| `search_indexer_state` | Per-doc-type watermarks (last_id, last_updated_at, run_count, duration_ms) for incremental indexing |
 
 ### Key Database Views
 
@@ -877,6 +885,33 @@ metering_worker/
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
+### Search Worker
+**Technology**: Python + psycopg2 + PostgreSQL tsvector/pg_trgm
+**Port**: None (background worker, no HTTP server)  
+**Responsibilities**:
+- Incremental indexing of 19 document types into `search_documents` table
+- Per-doc-type watermark tracking for efficient delta processing
+- Full-text search vector generation using `to_tsvector('english', ...)`
+- Trigram index maintenance for similarity queries
+- Graceful shutdown via SIGTERM/SIGINT signal handling
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  Search Worker (pf9_search_worker)                          │
+│                                                              │
+│  main loop (every SEARCH_INDEX_INTERVAL seconds)             │
+│    ├─ For each of 19 doc types:                               │
+│    │   ├─ Read watermark from search_indexer_state              │
+│    │   ├─ SELECT new/updated rows since watermark               │
+│    │   ├─ UPSERT into search_documents (ON CONFLICT UPDATE)     │
+│    │   └─ Update watermark                                     │
+│    └─ Sleep until next interval                               │
+│                                                              │
+│  Environment: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS,   │
+│               SEARCH_INDEX_INTERVAL (default 300s)            │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
 ### Monitoring Service
 **Technology**: FastAPI + Prometheus Client + JSON Cache
 **Port**: 8001  
@@ -1195,11 +1230,31 @@ graph TD
     E --> I[CSV Export]
 ```
 
+### 7. Search Indexing Flow
+```mermaid
+graph TD
+    A[Search Worker wakes up] --> B[For each of 19 doc types]
+    B --> C[Read watermark from search_indexer_state]
+    C --> D[SELECT rows WHERE id > last_id OR updated_at > last_ts]
+    D --> E[Build title + body text, generate tsvector]
+    E --> F[UPSERT into search_documents]
+    F --> G[Update watermark]
+    G --> B
+    B --> H[Sleep SEARCH_INDEX_INTERVAL seconds]
+    H --> A
+    I[API: GET /api/search?q=...] --> J[search_ranked SQL function]
+    J --> K[websearch_to_tsquery + ts_rank_cd]
+    K --> L[Return ranked results with snippets]
+    M[API: GET /api/search/similar/ID] --> N[search_similar SQL function]
+    N --> O[pg_trgm similarity scoring]
+    O --> P[Return similar documents]
+```
+
 ## 🚀 Deployment Architecture
 
 ### Docker Compose Stack
 ```yaml
-# Service Dependencies
+# Service Dependencies (12 containers)
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │   pf9_ui    │───▶│   pf9_api   │───▶│   pf9_db    │
 │  (React)    │    │  (FastAPI)  │    │(PostgreSQL)│
@@ -1216,10 +1271,10 @@ graph TD
         │pf9_notification_    │    │pf9_snapshot_worker  │
         │worker (Python/SMTP) │    │   (Python)          │
         └─────────────────────┘    └─────────────────────┘
-                                   ┌─────────────────────┐
-                                   │pf9_backup_worker    │
-                                   │  (Python/pg_dump)   │
-                                   └─────────────────────┘
+        ┌─────────────────────┐    ┌─────────────────────┐
+        │pf9_backup_worker    │    │pf9_search_worker   │
+        │  (Python/pg_dump)   │    │  (Python/psycopg2)  │
+        └─────────────────────┘    └─────────────────────┘
 ```
 
 ### Host Integration Points
