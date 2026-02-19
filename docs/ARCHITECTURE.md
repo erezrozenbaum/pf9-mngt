@@ -889,7 +889,7 @@ metering_worker/
 **Technology**: Python + psycopg2 + PostgreSQL tsvector/pg_trgm
 **Port**: None (background worker, no HTTP server)  
 **Responsibilities**:
-- Incremental indexing of 19 document types into `search_documents` table
+- Incremental indexing of 29 document types into `search_documents` table
 - Per-doc-type watermark tracking for efficient delta processing
 - Full-text search vector generation using `to_tsvector('english', ...)`
 - Trigram index maintenance for similarity queries
@@ -900,11 +900,13 @@ metering_worker/
 │  Search Worker (pf9_search_worker)                          │
 │                                                              │
 │  main loop (every SEARCH_INDEX_INTERVAL seconds)             │
-│    ├─ For each of 19 doc types:                               │
+│    ├─ For each of 29 doc types:                               │
 │    │   ├─ Read watermark from search_indexer_state              │
 │    │   ├─ SELECT new/updated rows since watermark               │
 │    │   ├─ UPSERT into search_documents (ON CONFLICT UPDATE)     │
 │    │   └─ Update watermark                                     │
+│    ├─ Stale cleanup: DELETE search docs for resources that      │
+│    │   no longer exist in source tables (19 infra types)        │
 │    └─ Sleep until next interval                               │
 │                                                              │
 │  Environment: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS,   │
@@ -1015,7 +1017,7 @@ async def collect_vm_metrics(self, session, host):
 - Historical tracking
 - Performance optimization
 
-#### Database Schema (19+ Tables with History Tracking)
+#### Database Schema (90+ Tables with History Tracking)
 
 **Core Infrastructure Tables**:
 ```sql
@@ -1233,7 +1235,7 @@ graph TD
 ### 7. Search Indexing Flow
 ```mermaid
 graph TD
-    A[Search Worker wakes up] --> B[For each of 19 doc types]
+    A[Search Worker wakes up] --> B[For each of 29 doc types]
     B --> C[Read watermark from search_indexer_state]
     C --> D[SELECT rows WHERE id > last_id OR updated_at > last_ts]
     D --> E[Build title + body text, generate tsvector]
@@ -1248,6 +1250,10 @@ graph TD
     M[API: GET /api/search/similar/ID] --> N[search_similar SQL function]
     N --> O[pg_trgm similarity scoring]
     O --> P[Return similar documents]
+    Q[API: GET /api/search/smart?q=...] --> R[Smart Query engine]
+    R --> S[Match question against 26 regex templates]
+    S --> T[Execute parameterised SQL on live data]
+    T --> U[Return structured answer card]
 ```
 
 ## 🚀 Deployment Architecture

@@ -5,13 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.4] - 2026-02-20
+
+### Fixed
+- **User indexer pointed at wrong table** — The Ops Search user indexer was querying the internal `user_roles` table (7 rows) instead of the Platform 9 Keystone `users` table (127 rows). Rewrote the user indexer to query `users` joined with `domains`, indexing name, email, domain, enabled status, and description.
+- **Search missing from admin permissions UI** — The `search` resource was not listed in `MAIN_UI_RESOURCES` (API) or `resourceDescriptions` (UI), so admins could not assign Ops Search permissions through the Admin → Permissions panel. Added to both.
+- **Stale deleted resources appearing in search** — The search indexer only added/updated documents but never removed them when the source resource was deleted. Added a `cleanup_stale_documents()` step that runs after each indexing cycle, removing search documents for 19 infrastructure doc types whose source row no longer exists. Event/log types (activity, audit, backups, etc.) are excluded since their source records are never deleted.
+- **Quota smart query returning empty** — The `metering_quotas` table was always empty because no `collect_quota_usage()` function existed in the metering worker. Implemented the collector using LATERAL JOINs against `servers`, `volumes`, `snapshots`, `floating_ips`, `networks`, `ports`, and `security_groups` with flavor-based vCPU/RAM resolution. Data now populates automatically each metering cycle.
+- **vCPUs and RAM always zero in quota data** — Servers store a `flavor_id` reference, not inline vCPUs/RAM. Updated both the metering collector and smart query live-fallback SQL to join through `flavors` for accurate vCPU and RAM figures.
+- **Quota queries showed NULL quota columns** — Since Platform9 quota limits aren't available via API, the quota smart queries showed confusing NULL columns. Renamed templates to "Resource Usage" and stripped quota-limit columns, showing only actual usage (VMs, vCPUs, RAM, Volumes, Storage, Floating IPs). Both `quota_for_tenant` and `quota_usage_all` templates use `DISTINCT ON (project_id)` with metering data first, live-computed fallback second.
+
+### Added
+- **7 new search indexers** — Expanded search coverage from 22 to 29 document types. New indexers: `flavor`, `image`, `router`, `role`, `role_assignment`, `group`, `snapshot_policy`. Each includes domain/project attribution where applicable.
+- **Doc-type labels & colors** — All 29 document types now have named pill labels and distinct colors in the search results UI.
+- **Database seed updates** — `init.sql` and `migrate_search.sql` now seed `search_indexer_state` for all 29 doc types.
+- **Smart Query Templates (v3)** — A new Ops-Assistant layer that matches natural-language questions (e.g., "how many VMs are powered off?", "quota for Org1", "show platform overview") to 26 parameterised SQL templates and returns structured answer cards (table, key-value, number) rendered inline above search results. Covers VM status, hypervisor capacity, quota usage, volumes, networks, images, snapshots, drift events, role assignments, resource efficiency, and more. New endpoints: `GET /api/search/smart`, `GET /api/search/smart/help`.
+- **Quota/usage metering collector** — New `collect_quota_usage()` function in the metering worker computes per-project resource consumption (VMs, vCPUs, RAM, volumes, storage, snapshots, floating IPs, networks, ports, security groups) from live inventory tables and writes to `metering_quotas`.
+- **Smart Query discoverability UI** — New 🤖 button on the search bar opens a categorised help panel with 26 clickable example question chips (Infrastructure, Projects & Quotas, Storage, Networking, Security & Access, Operations). Clicking a chip auto-fills the search bar and executes immediately. The empty state also shows quick-start chips and directs users to the full help panel.
+
+### Improved
+- **AI-quality search results** — All 29 indexers now produce natural-language body text with cross-reference counts (e.g., "Domain org1 containing 5 projects, 42 users, and 18 VMs") instead of raw field dumps. Structured metadata (key-value pairs) is rendered as labeled pill cards in the UI, giving operators instant operational context without navigating away.
+- **Cross-reference enrichment** — Indexers for domains, projects, users, VMs, networks, flavors, hypervisors, security groups, and volumes now include SQL subqueries for related resource counts, member lists, and role assignments.
+- **Metadata pill cards** — The search result cards now display structured metadata as compact, labeled badges (e.g., "VMs: 18", "Status: ✅ Enabled", "RAM: 4,096 MB") using a new `METADATA_LABELS` map and `formatMetaValue` formatter in the UI.
+
+## [1.20.3] - 2026-02-20
+
+### Fixed
+- **Ops Search page appeared empty** — The `search` route was not in the `hideDetailsPanel` list in App.tsx, causing the details panel to render and squeeze the search UI to zero width. Added `search` (and `resource_management`) to the exclusion list.
+
+## [1.20.2] - 2026-02-20
+
+### Fixed
+- **Ops Search tab invisible in navigation** — The `search` nav item was not registered in the `nav_items` database table, so it never appeared in the sidebar. Added the entry to `init.sql`, `migrate_search.sql`, and inserted into the live database.
+
+## [1.20.1] - 2026-02-20
+
+### Fixed
+- **Ops Search missing from documentation & deployment scripts** — `init.sql`, `deployment.ps1`, `ADMIN_GUIDE.md`, `ARCHITECTURE.md`, Kubernetes Migration Guide, and Linux Deployment Guide were not updated for the search feature. All 6 files updated.
+
 ## [1.20.0] - 2026-02-20
 
 ### Added
-- **Ops Assistant — Full-Text Search (v1)** — New `🔍 Ops Search` tab with PostgreSQL `tsvector` + `websearch_to_tsquery` full-text search across all 19+ resource types. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination, and per-doc-type pill filters.
+- **Ops Assistant — Full-Text Search (v1)** — New `🔍 Ops Search` tab with PostgreSQL `tsvector` + `websearch_to_tsquery` full-text search across all 29 resource types. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination, and per-doc-type pill filters.
 - **Trigram Similarity (v2)** — "Show Similar" button on every search result uses `pg_trgm` extension to find related documents by title (60% weight) and body text (40% weight) similarity scoring.
 - **Intent Detection (v2.5)** — Natural-language queries like *"quota for projectX"*, *"capacity"*, *"idle resources"*, or *"drift"* trigger Smart Suggestions that link directly to the matching report endpoint. Extracts tenant hints for pre-filtering.
-- **Search Indexer Worker** — New `search_worker` Docker service that incrementally indexes 19 document types (vm, volume, snapshot, hypervisor, network, subnet, floating_ip, port, security_group, activity, audit, drift_event, snapshot_run, snapshot_record, restore_job, backup, notification, provisioning, deletion) on a configurable interval (default: 5 min). Uses per-doc-type watermarks for efficient delta processing.
+- **Search Indexer Worker** — New `search_worker` Docker service that incrementally indexes 29 document types on a configurable interval (default: 5 min). Uses per-doc-type watermarks for efficient delta processing.
 - **Database Migration** — `db/migrate_search.sql` adds `search_documents` table with 7 indexes (GIN tsvector, GIN trigram on title + body, composite lookups), auto-update tsvector trigger, `search_indexer_state` tracking table, `search_ranked()` and `search_similar()` SQL functions, and RBAC permission grants for all 4 roles.
 - **Search API** — 5 new endpoints under `/api/search`: full-text search with pagination, similarity lookup, indexer stats, manual re-index trigger (admin), and intent detection.
 - **Indexer Stats Dashboard** — In-tab panel showing per-doc-type document counts, last run time, and duration for operational visibility.

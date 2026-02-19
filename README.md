@@ -135,7 +135,7 @@ Every service is containerized. That means **you decide**:
 - **System Audit**: 90-day retention with filtering by user, action, date range, and IP address
 
 ### 📊 RVTools-Style Unified Inventory
-- **19+ Resource Types**: Domains, Projects, VMs, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Routers, Security Groups & Rules, Hypervisors, Flavors, Images, Volume Types
+- **29 Resource Types**: Domains, Projects, Users, VMs, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Routers, Security Groups, Hypervisors, Flavors, Images, Roles, Role Assignments, Groups, Snapshot Policies, and operational event types
 - **Human-Friendly Names**: UUID-to-name resolution across all resource types
 - **Local Persistent Store**: All metadata stored in your own PostgreSQL — independent of platform availability
 - **Excel/CSV Export**: Customer-data-safe with masking options and delta reporting
@@ -224,10 +224,11 @@ Every service is containerized. That means **you decide**:
 - **Three-Tier RBAC**: Viewer (read), Operator (read+write), Admin (read+write+delete)
 
 ### 🔍 Ops Assistant — Search & Similarity *(v1.20)*
-- **Full-Text Search**: PostgreSQL tsvector + websearch across all 19+ resource types, events, and audit logs
+- **Full-Text Search**: PostgreSQL tsvector + websearch across all 29 resource types, events, and audit logs
 - **Trigram Similarity**: "Show Similar" per result — finds related resources, errors, or configurations via pg_trgm
 - **Intent Detection**: Natural-language queries like *"quota for projectX"* or *"capacity"* auto-suggest the matching report endpoint
-- **19 Indexed Document Types**: VMs, volumes, snapshots, hypervisors, networks, subnets, floating IPs, ports, security groups, activity log, auth audit, drift events, snapshot runs/records, restore jobs, backups, notifications, provisioning, deletions
+- **Smart Query Templates (v3)**: 26 question templates turn the search bar into an Ops Assistant — ask *"how many VMs are powered off?"*, *"quota for Org1"*, or *"show platform overview"* and get live answer cards inline
+- **29 Indexed Document Types**: VMs, volumes, snapshots, hypervisors, networks, subnets, floating IPs, ports, security groups, domains, projects, users, flavors, images, routers, roles, role assignments, groups, snapshot policies, activity log, auth audit, drift events, snapshot runs/records, restore jobs, backups, notifications, provisioning, deletions
 - **Incremental Indexing**: Background worker with per-doc-type watermarks — only re-indexes changed rows
 - **Paginated Results**: Relevance-ranked results with highlighted keyword snippets
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health

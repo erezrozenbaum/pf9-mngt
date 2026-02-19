@@ -752,7 +752,7 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
         'api_metrics', 'system_logs', 'restore', 'security_groups',
         'dashboard', 'drift', 'tenant_health', 'notifications', 'backup',
         'mfa', 'metering', 'provisioning', 'reports', 'resources', 'branding',
-        'departments', 'navigation',
+        'departments', 'navigation', 'search',
     ]
     
     try:
