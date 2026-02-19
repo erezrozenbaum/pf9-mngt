@@ -537,3 +537,264 @@
   gap: 8px;
   margin-top: 16px;
 }
+
+/* ─── Section header for My Executions ───────────────────────────── */
+
+.rb-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  user-select: none;
+}
+
+.rb-section-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--color-text-primary);
+}
+
+.rb-section-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rb-select {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary);
+}
+
+.rb-btn.small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.rb-meta {
+  font-size: 11px;
+  color: var(--color-text-secondary, #888);
+}
+
+/* ─── Status badges (reusable) ───────────────────────────────────── */
+
+.rb-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+
+.rb-status-badge.completed { background: #dcfce7; color: #166534; }
+.rb-status-badge.failed    { background: #fee2e2; color: #991b1b; }
+.rb-status-badge.executing { background: #dbeafe; color: #1e40af; }
+.rb-status-badge.pending_approval { background: #fef9c3; color: #854d0e; }
+.rb-status-badge.approved  { background: #dbeafe; color: #1e40af; }
+.rb-status-badge.rejected  { background: #fee2e2; color: #991b1b; }
+.rb-status-badge.cancelled { background: #f3f4f6; color: #6b7280; }
+
+[data-theme="dark"] .rb-status-badge.completed { background: #14532d; color: #bbf7d0; }
+[data-theme="dark"] .rb-status-badge.failed    { background: #7f1d1d; color: #fecaca; }
+[data-theme="dark"] .rb-status-badge.executing { background: #1e3a5f; color: #bfdbfe; }
+[data-theme="dark"] .rb-status-badge.pending_approval { background: #713f12; color: #fef08a; }
+[data-theme="dark"] .rb-status-badge.rejected  { background: #7f1d1d; color: #fecaca; }
+[data-theme="dark"] .rb-status-badge.cancelled { background: #374151; color: #d1d5db; }
+
+/* ─── Execution table ────────────────────────────────────────────── */
+
+.rb-exec-table {
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.rb-exec-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.rb-exec-table thead {
+  background: var(--color-surface-alt, #f8fafc);
+}
+
+.rb-exec-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+  border-bottom: 1px solid var(--color-border, #e0e0e0);
+}
+
+.rb-exec-table td {
+  padding: 8px 12px;
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-light, #f0f0f0);
+}
+
+.rb-exec-table tbody tr:hover {
+  background: var(--color-surface-hover, rgba(0,0,0,0.02));
+}
+
+.rb-empty-row {
+  text-align: center;
+  padding: 32px 12px !important;
+  color: var(--color-text-secondary, #888);
+}
+
+/* ─── Detail panel (My Executions) ───────────────────────────────── */
+
+.rb-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.rb-detail-header h4 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+
+.rb-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px 16px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.rb-detail-error {
+  grid-column: 1 / -1;
+  color: #991b1b;
+}
+
+/* ─── Friendly result rendering ──────────────────────────────────── */
+
+.rb-result-section {
+  margin-top: 16px;
+}
+
+.rb-result-section h5 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.rb-result-friendly {
+  font-size: 13px;
+}
+
+.rb-result-summary {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: var(--color-text-secondary, #666);
+}
+
+.rb-result-empty {
+  color: var(--color-text-secondary, #888);
+  font-style: italic;
+}
+
+.rb-result-sub {
+  margin: 12px 0;
+}
+
+.rb-result-sub h6 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.rb-result-sub ul {
+  margin: 4px 0;
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.rb-result-sub ul li {
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.rb-result-errors h6 {
+  color: #991b1b;
+}
+
+.rb-result-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.rb-result-table th {
+  padding: 6px 10px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  background: var(--color-surface-alt, #f8fafc);
+  color: var(--color-text-secondary, #666);
+  border-bottom: 1px solid var(--color-border, #e0e0e0);
+}
+
+.rb-result-table td {
+  padding: 5px 10px;
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-light, #f0f0f0);
+}
+
+.rb-result-table tbody tr:hover {
+  background: var(--color-surface-hover, rgba(0,0,0,0.02));
+}
+
+.rb-result-raw summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text-secondary, #666);
+}
+
+.rb-result-raw pre {
+  background: var(--color-surface-alt, #f8fafc);
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-primary);
+}
+
+/* ─── Dark mode overrides for result tables ──────────────────────── */
+
+[data-theme="dark"] .rb-result-table th {
+  background: var(--color-surface-dark, #1e293b);
+}
+
+[data-theme="dark"] .rb-exec-table thead {
+  background: var(--color-surface-dark, #1e293b);
+}
+
+[data-theme="dark"] .rb-result-errors h6 {
+  color: #fca5a5;
+}
+
+[data-theme="dark"] .rb-detail-error {
+  color: #fca5a5;
+}
