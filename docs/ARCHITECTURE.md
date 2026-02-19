@@ -1,32 +1,147 @@
-# Platform9 Management System - Architecture Guide
+# Platform9 Management System — Architecture Guide
 
 ## System Overview
 
 The Platform9 Management System is a **microservices-based enterprise platform** designed for comprehensive OpenStack infrastructure management. The architecture follows modern cloud-native principles with containerized services, API-driven design, and real-time monitoring capabilities.
 
+This document covers:
+
+1. [High-Level Architecture & Trust Boundaries](#-high-level-architecture)
+2. [Service Map & Data Flows](#-services-data-flows--trust-boundaries)
+3. [Authentication & Authorization Flow](#-authentication--authorization-flow)
+4. [Data Model Overview](#-data-model-overview)
+5. [Restore Flow & Safety Checks](#-restore-flow--safety-checks)
+6. [Component Architecture](#-component-architecture) (all services)
+7. [Deployment, Performance & Security](#-deployment-architecture)
+8. [Architecture Decision Records](#-architecture-decision-records)
+
+---
+
 ## 🏗️ High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Platform9 Management System                             │
-├──────────────┬──────────────┬──────────────┬──────────────┬─────────────────┤
-│  Frontend UI │  Backend API │  Monitoring  │   Database   │  Host Scripts   │
-│  React/TS    │   FastAPI    │   FastAPI    │ PostgreSQL16 │    Python       │
-│  Port: 5173  │  Port: 8000  │  Port: 8001  │ Port: 5432   │   Scheduled     │
-├──────────────┴──────────────┴──────────────┴──────────────┴─────────────────┤
-│  Notification Worker │  Snapshot Worker  │  Metering Worker                 │
-│  (Python/SMTP)       │  (Python)         │  (Python/PostgreSQL)             │
-└──────────────────────┴───────────────────┴─────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                      Platform9 Management System                            │
+│                                                                              │
+│  ┌────────────┐   ┌────────────┐   ┌────────────┐   ┌────────────────────┐  │
+│  │  Frontend   │   │  Backend   │   │ Monitoring │   │     Database       │  │
+│  │  React/TS   │──▶│  FastAPI   │──▶│  FastAPI   │   │   PostgreSQL 16   │  │
+│  │  :5173      │   │  :8000     │──▶│  :8001     │   │   :5432           │  │
+│  └────────────┘   └─────┬──────┘   └────────────┘   └────────────────────┘  │
+│                         │                                     ▲              │
+│            ┌────────────┼────────────────────┐                │              │
+│            ▼            ▼                    ▼                │              │
+│  ┌──────────────┐ ┌──────────────┐ ┌─────────────────┐       │              │
+│  │  Snapshot     │ │ Notification │ │ Metering Worker │───────┘              │
+│  │  Worker       │ │ Worker       │ │ (Python)        │                      │
+│  │  (Python)     │ │ (Python/SMTP)│ └─────────────────┘                      │
+│  └──────┬───────┘ └──────────────┘                                           │
+│         │                                                                    │
+│  ┌──────┴───────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐ │
+│  │ Backup Worker│  │ LDAP Server  │  │ LDAP Admin   │  │  DB Admin        │ │
+│  │ (pg_dump)    │  │ OpenLDAP     │  │ phpLDAPadmin │  │  pgAdmin4        │ │
+│  │              │  │ :389 / :636  │  │ :8081        │  │  :8080           │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────┘ │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────────┐│
+│  │  Host Scripts (Windows Task Scheduler)                                   ││
+│  │  • host_metrics_collector.py  (every 30 min)                            ││
+│  │  • pf9_rvtools.py            (daily at 02:00)                           ││
+│  └──────────────────────────────────────────────────────────────────────────┘│
+└───────────────────────────────────┬──────────────────────────────────────────┘
                                     │
-                       ┌─────────────────────────┐
+                       ┌────────────▼────────────┐
                        │      Platform9          │
                        │   OpenStack APIs        │
-                       │ (Keystone, Nova,        │
-                       │ Neutron, Cinder,        │
-                       │ Glance) + Prometheus    │
-                       │ node_exporter (9388)    │
+                       │ Keystone · Nova ·       │
+                       │ Neutron · Cinder ·      │
+                       │ Glance                  │
+                       │ + Prometheus            │
+                       │ node_exporter (:9388)   │
                        └─────────────────────────┘
 ```
+
+---
+
+## 🔐 Services, Data Flows & Trust Boundaries
+
+### What talks to Platform9 — and how
+
+```
+                       TRUST BOUNDARY
+                   ════════════════════
+                            │
+ INTERNAL NETWORK           │            EXTERNAL (PF9 Cloud)
+                            │
+  ┌──────────┐              │
+  │ Browser  │              │
+  └────┬─────┘              │
+       │ HTTPS              │
+  ┌────▼─────┐              │
+  │ pf9_ui   │              │
+  │ :5173    │              │
+  └────┬─────┘              │
+       │ HTTP               │
+  ┌────▼──────────┐  Keystone/Nova  ┌──────────────────┐
+  │ pf9_api       │────────────────▶│  Platform9 APIs  │
+  │ :8000         │  Neutron/Cinder │  (Keystone v3    │
+  │               │◀────────────────│   Nova v2.1      │
+  │ Pf9Client     │                 │   Neutron v2.0   │
+  │ RestoreClient │                 │   Cinder v3)     │
+  └──┬──┬──┬──────┘                 └──────────────────┘
+     │  │  │                                 ▲
+     │  │  │                                 │
+     │  │  └──────────┐                      │
+     │  │             ▼                      │
+     │  │  ┌──────────────────┐              │
+     │  │  │ snapshot_worker  │──────────────┘
+     │  │  │ (Cinder/Nova)   │  Cross-tenant snapshots
+     │  │  └──────────────────┘  via service user
+     │  │
+     │  └──────────┐
+     │             ▼
+     │  ┌──────────────────┐      ┌──────────────────┐
+     │  │ pf9_monitoring   │◀─────│ host_metrics_    │
+     │  │ :8001            │ cache│ collector.py     │
+     │  └──────────────────┘      │ (scrapes :9388)  │
+     │                            └───────┬──────────┘
+     │                                    │ Prometheus
+     │                                    ▼
+     │                            ┌──────────────────┐
+     │                            │ PF9 Compute Hosts│
+     │                            │ node_exporter    │
+     │                            │ :9388            │
+     │                            └──────────────────┘
+     ▼
+  ┌──────────────┐    ┌──────────────┐
+  │ pf9_db       │    │ pf9_ldap     │
+  │ PostgreSQL   │    │ OpenLDAP     │
+  │ :5432        │    │ :389 / :636  │
+  └──────────────┘    └──────────────┘
+```
+
+### Service Communication Matrix
+
+| Source | Destination | Protocol | Purpose | Credentials held? |
+|---|---|---|---|---|
+| **Browser** | pf9_ui (:5173) | HTTP | Serve React SPA | — |
+| **pf9_ui** | pf9_api (:8000) | HTTP + JWT Bearer | All data & admin ops | JWT only |
+| **pf9_api** | pf9_db (:5432) | TCP/PostgreSQL | Read/write all tables | `POSTGRES_USER/PASSWORD` |
+| **pf9_api** | pf9_ldap (:389) | LDAP bind | Authentication | `LDAP_BIND_DN/PASSWORD` |
+| **pf9_api** | Platform9 Keystone/Nova/Neutron/Cinder | HTTPS | Proxy operations + provisioning | `PF9_USERNAME/PASSWORD` |
+| **pf9_api** | pf9_monitoring (:8001) | HTTP | Fetch cached metrics | — |
+| **snapshot_worker** | Platform9 Cinder/Nova/Keystone | HTTPS | Cross-tenant snapshot CRUD | `PF9_USERNAME` + `SNAPSHOT_SERVICE_USER` |
+| **snapshot_worker** | pf9_db | TCP/PostgreSQL | Store snapshot/compliance records | `POSTGRES_USER/PASSWORD` |
+| **metering_worker** | pf9_api (:8000) + pf9_monitoring (:8001) | HTTP | Collect metrics | — |
+| **metering_worker** | pf9_db | TCP/PostgreSQL | Store metering data | `POSTGRES_USER/PASSWORD` |
+| **notification_worker** | pf9_db | TCP/PostgreSQL | Read events, log delivery | `POSTGRES_USER/PASSWORD` |
+| **notification_worker** | SMTP server | SMTP/TLS | Send emails | `SMTP_USER/PASSWORD` (optional) |
+| **backup_worker** | pf9_db | TCP/PostgreSQL | pg_dump/pg_restore | `POSTGRES_USER/PASSWORD` |
+| **host_metrics_collector** | PF9 hosts (:9388) | HTTP | Scrape Prometheus node_exporter | — |
+
+### Key Security Boundary
+
+> **The API container (`pf9_api`) is the sole gateway** between the management system and Platform9/OpenStack APIs. All PF9 credentials are confined to the API container and the snapshot_worker container. No other service holds Platform9 credentials; the UI, workers, and admin tools communicate only through the API or directly with the local PostgreSQL/LDAP services.
 
 ## 🎯 Core Design Principles
 
@@ -52,6 +167,472 @@ The Platform9 Management System is a **microservices-based enterprise platform**
 - **JSON metadata storage** for flexible resource attributes
 - **Historical tracking** with audit trails and change detection
 - **Cache-based performance** for real-time monitoring
+
+---
+
+## 🔑 Authentication & Authorization Flow
+
+### Full Flow: LDAP Bind → JWT → MFA Challenge → RBAC
+
+```mermaid
+sequenceDiagram
+    participant U as Browser
+    participant UI as pf9_ui (React)
+    participant API as pf9_api (FastAPI)
+    participant LDAP as pf9_ldap (OpenLDAP)
+    participant DB as pf9_db (PostgreSQL)
+
+    U->>UI: Enter username + password
+    UI->>API: POST /auth/login {username, password}
+    Note over API: Rate limit: 10/min
+
+    API->>LDAP: simple_bind_s (cn=user,ou=users,dc=pf9)
+    alt LDAP bind succeeds
+        LDAP-->>API: OK
+    else CN fails, try UID
+        API->>LDAP: simple_bind_s (uid=user,ou=users,dc=pf9)
+        LDAP-->>API: OK/FAIL
+    end
+
+    API->>DB: SELECT role FROM user_roles WHERE username = ?
+    DB-->>API: role (viewer | operator | admin | superadmin | technical)
+    Note over API: Fallback: DEFAULT_ADMIN_USER → superadmin, others → viewer
+
+    API->>DB: SELECT * FROM user_mfa WHERE username = ?
+    alt MFA enabled
+        API-->>UI: {mfa_required: true, access_token: short-lived JWT (5 min)}
+        UI->>U: Show TOTP input
+        U->>UI: Enter 6-digit TOTP code
+        UI->>API: POST /auth/mfa/verify {code} + Bearer mfa_token
+        API->>API: pyotp.TOTP.verify(code, valid_window=1)
+        alt TOTP valid
+            API->>DB: INSERT INTO user_sessions (token_hash, username, role, ip, expires_at)
+            API-->>UI: {access_token: full JWT (480 min), role, username}
+        else TOTP invalid, try backup code
+            API->>DB: Check SHA-256(code) against backup_codes[]
+            alt Backup code matches
+                API->>DB: Remove used code from backup_codes[]
+                API-->>UI: {access_token: full JWT}
+            else All codes fail
+                API-->>UI: 401 Invalid MFA code
+            end
+        end
+    else MFA not enabled
+        API->>DB: INSERT INTO user_sessions (token_hash, username, role, ip)
+        API-->>UI: {access_token: full JWT (480 min), role, username}
+    end
+
+    Note over UI: All subsequent requests include Authorization: Bearer {JWT}
+
+    UI->>API: GET /servers (Bearer JWT)
+    API->>API: Decode JWT → extract sub (username), role
+    API->>DB: Validate session (token_hash is_active, not expired)
+    API->>DB: has_permission(username, "servers", "read")
+    Note over API: Permission hierarchy: admin > write > read
+    alt Permission granted
+        API-->>UI: 200 OK + data
+    else Permission denied
+        API->>DB: Log to auth_audit_log (permission_denied)
+        API-->>UI: 403 Insufficient permissions
+    end
+```
+
+### RBAC Enforcement — Two Layers
+
+| Layer | Where | What it does |
+|---|---|---|
+| **1. Global RBAC Middleware** | Runs on every HTTP request | Extracts JWT → maps URL path to resource name (35-entry lookup) → checks `GET` → `read`, all others → `write` → queries `role_permissions` table |
+| **2. Endpoint-Level Dependency** | Per-route `Depends(require_permission(...))` | Double-checks sensitive endpoints requiring elevated actions (e.g., `restore/execute` requires `admin` action, not just `write`) |
+
+**Bypass paths**: `/auth/*`, `/settings/*`, `/static/*`, `/health`, `/metrics`, `/openapi.json`, `/docs`, `/redoc`, `OPTIONS`
+
+### RBAC Permission Matrix (5 Roles)
+
+| Role | Read | Write | Admin | Delete | Notes |
+|---|---|---|---|---|---|
+| **viewer** | ✅ All resources | ❌ | ❌ | ❌ | Read-only access to all tabs |
+| **operator** | ✅ All resources | ✅ Networks, flavors, snapshots | ❌ | ❌ | Limited write operations |
+| **admin** | ✅ All resources | ✅ All resources | ✅ Most resources | ✅ Resources | Cannot manage users/RBAC |
+| **superadmin** | ✅ All resources | ✅ All resources | ✅ Everything | ✅ Everything | Full access including RBAC rules, destructive restore |
+| **technical** | ✅ All resources | ✅ Resources, provisioning | ❌ | ❌ | Read + write but no delete permissions |
+
+### MFA Enrollment Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as pf9_api
+    participant DB as pf9_db
+
+    U->>API: POST /auth/mfa/setup (Bearer JWT)
+    API->>API: Generate TOTP secret (pyotp.random_base32)
+    API->>API: Generate QR code (qrcode/PIL → base64 PNG)
+    API->>DB: UPSERT user_mfa (username, totp_secret, is_enabled=false)
+    API-->>U: {qr_code_base64, otpauth_uri, secret}
+
+    U->>U: Scan QR with authenticator app
+    U->>API: POST /auth/mfa/verify-setup {code}
+    API->>API: pyotp.TOTP.verify(code)
+    alt Valid
+        API->>API: Generate 8 hex backup codes (e.g., A1B2C3D4)
+        API->>DB: UPDATE user_mfa SET is_enabled=true, backup_codes=SHA256(codes)
+        API-->>U: {backup_codes: [plaintext, shown once]}
+    else Invalid
+        API-->>U: 400 Invalid code
+    end
+```
+
+---
+
+## 📊 Data Model Overview
+
+### Current State vs. History — The Core Pattern
+
+Every infrastructure resource follows a **dual-table pattern**:
+
+```
+┌──────────────────────┐         ┌──────────────────────────┐
+│  volumes (current)   │         │ volumes_history          │
+├──────────────────────┤         ├──────────────────────────┤
+│ id          TEXT PK  │    1──▶N│ id           BIGSERIAL   │
+│ name        TEXT     │         │ volume_id    TEXT         │
+│ project_id  TEXT FK  │         │ recorded_at  TIMESTAMPTZ │
+│ size_gb     INT      │         │ change_hash  TEXT        │
+│ status      TEXT     │         │ raw_json     JSONB       │
+│ raw_json    JSONB    │         │ run_id       BIGINT FK   │
+│ last_seen_at TSTAMPZ │         └──────────────────────────┘
+└──────────────────────┘
+       │
+       └─── If resource disappears between inventory runs:
+            ────▶ deletions_history row created
+```
+
+**How deduplication works**: Each collection run computes a `change_hash` (content hash) for every resource. A new history row is only inserted if the hash differs from the most recent record for that resource. This prevents unbounded growth while preserving every meaningful state change.
+
+**Retention strategy**: History deduplication via `change_hash` keeps only meaningful state changes. Metering data has configurable retention (default 90 days) with automatic pruning. Notification logs, audit logs, and backup history are retained indefinitely.
+
+### Entity Relationship Diagram
+
+```
+┌──────────┐    1   N  ┌──────────┐    1   N  ┌──────────┐
+│ domains  │──────────▶│ projects │──────────▶│ servers  │
+│          │           │          │           │          │
+│          │──────────▶│          │──────────▶│ volumes  │
+│          │ 1   N     │          │ 1   N     │          │
+└──────────┘           └──────────┘           └──────────┘
+     │                      │                      │
+     │ 1   N                │ 1   N                │ 1   N
+     ▼                      ▼                      ▼
+┌──────────┐          ┌──────────┐          ┌──────────────┐
+│  users   │          │ networks │          │  snapshots   │
+│          │          │          │          │ (volume_id)  │
+└──────────┘          └────┬─────┘          └──────────────┘
+     │                     │ 1  N
+     │                     ▼
+     │               ┌──────────┐          ┌──────────────┐
+     │               │ subnets  │          │   routers    │
+     │               └──────────┘          └──────────────┘
+     │                                           │
+     │                     ┌──────────┐          │
+     │                     │  ports   │──────────┘
+     │                     │(network) │    floating_ips
+     │                     └──────────┘    (port_id, router_id)
+     │
+     │               ┌───────────────┐    ┌───────────────────┐
+     │               │security_groups│───▶│security_group_rules│
+     │               │ (project_id)  │ 1 N│ (CASCADE delete)  │
+     │               └───────────────┘    └───────────────────┘
+     │
+     └──────────▶ role_assignments (role_id, user_id, project_id|domain_id)
+                  roles (id, name, domain_id)
+                  groups (id, name, domain_id)
+```
+
+### Table Catalog (44+ tables)
+
+#### Core Infrastructure (14 tables)
+
+| Table | PK | Key FKs | JSONB | Purpose |
+|---|---|---|---|---|
+| `domains` | `id` | — | `raw_json` | Keystone domains |
+| `projects` | `id` | `domain_id → domains` | `raw_json` | Keystone projects/tenants |
+| `servers` | `id` | `project_id → projects` | `raw_json` | Nova VMs |
+| `volumes` | `id` | `project_id → projects` | `raw_json` | Cinder volumes |
+| `snapshots` | `id` | `volume_id → volumes` | `raw_json` | Cinder volume snapshots |
+| `networks` | `id` | `project_id → projects` | `raw_json` | Neutron networks |
+| `subnets` | `id` | `network_id → networks` | `raw_json` | Neutron subnets |
+| `ports` | `id` | `network_id → networks`, `project_id → projects` | `raw_json`, `ip_addresses` | Neutron ports |
+| `routers` | `id` | `project_id → projects` | `raw_json` | Neutron routers |
+| `floating_ips` | `id` | `port_id → ports`, `project_id → projects`, `router_id → routers` | `raw_json` | Neutron floating IPs |
+| `security_groups` | `id` | `project_id → projects` | `raw_json` | Neutron SGs |
+| `security_group_rules` | `id` | `security_group_id → security_groups ON DELETE CASCADE` | — | Neutron SG rules |
+| `hypervisors` | `id` | — | `raw_json` | Nova hypervisors |
+| `flavors` | `id` | — | `raw_json` | Nova flavors |
+| `images` | `id` | — | `raw_json` | Glance images |
+
+#### Identity & Access (6 tables)
+
+| Table | Purpose |
+|---|---|
+| `users` | Keystone users (FKs to domains, projects) |
+| `roles` | Keystone roles |
+| `role_assignments` | Many-to-many user↔role↔project/domain scope (UNIQUE constraint) |
+| `groups` | Keystone groups |
+| `user_access_logs` | User access tracking for analytics (IP, action, success) |
+| `volume_types` | Cinder volume types |
+
+#### History & Audit (17 tables)
+
+| Table | Purpose |
+|---|---|
+| `*_history` (15 tables) | Per-resource change tracking: `domains`, `projects`, `servers`, `volumes`, `snapshots`, `networks`, `subnets`, `ports`, `routers`, `floating_ips`, `security_groups`, `security_group_rules`, `hypervisors`, `users`, `roles` — each with `change_hash` deduplication |
+| `deletions_history` | Cross-type deletion tracking (resource_type, resource_id, reason, last snapshot) |
+| `inventory_runs` | Per-collection-run metadata (status, source, host, duration) |
+
+#### Auth & Session Management (6 tables)
+
+| Table | Purpose |
+|---|---|
+| `user_sessions` | Active JWT sessions (SHA-256 token_hash, IP, user_agent, expiry) |
+| `user_roles` | Management system RBAC roles (separate from Keystone roles) |
+| `role_permissions` | RBAC permission matrix (role × resource × action, UNIQUE constraint) |
+| `auth_audit_log` | Login/logout/permission events (IP, user_agent, success, details) |
+| `user_mfa` | TOTP enrollment (secret, enabled, SHA-256 hashed backup codes) |
+| `departments` | Organizational groups for navigation visibility (7 seeded) |
+
+#### Snapshot Management (8 tables)
+
+| Table | Purpose |
+|---|---|
+| `snapshot_policy_sets` | Global + tenant-specific policy definitions (policies JSONB, retention_map) |
+| `snapshot_assignments` | Volume → policy mapping (UNIQUE on volume_id, tracks assignment source) |
+| `snapshot_exclusions` | Excluded volumes with optional expiry for temporary exclusions |
+| `snapshot_runs` | Per-run execution tracking (counts: created, deleted, failed, skipped) |
+| `snapshot_records` | Individual snapshot events per volume per run (full lifecycle) |
+| `snapshot_on_demand_runs` | API-to-scheduler signaling (pending → running → completed/failed) |
+| `compliance_reports` | Generated compliance summaries (SLA days, compliant/noncompliant) |
+| `compliance_details` | Per-volume compliance records (last snapshot date, days since) |
+
+#### Restore (2 tables)
+
+| Table | Purpose |
+|---|---|
+| `restore_jobs` | Full restore state machine (PLANNED→PENDING→RUNNING→SUCCEEDED/FAILED/CANCELED). `plan_json` + `result_json` JSONB. **Concurrent restore prevention**: `UNIQUE(vm_id) WHERE status IN ('PENDING','RUNNING')` |
+| `restore_job_steps` | Per-step tracking within a job (FK CASCADE). Statuses: PENDING→RUNNING→SUCCEEDED/FAILED/SKIPPED |
+
+#### Notifications (4 tables)
+
+| Table | Purpose |
+|---|---|
+| `notification_channels` | SMTP configuration (type, name, enabled, config JSONB) |
+| `notification_preferences` | Per-user per-event-type subscriptions (severity_min, delivery_mode) |
+| `notification_log` | Sent email log with dedup_key and delivery_status |
+| `notification_digests` | Daily digest batching state per user |
+
+#### Metering (7 tables)
+
+| Table | Purpose |
+|---|---|
+| `metering_config` | Worker configuration (collection interval, retention days) |
+| `metering_resources` | Per-VM resource metering (vCPU, RAM, disk — deduplicated to latest per VM) |
+| `metering_snapshots` | Snapshot count, size, compliance per collection cycle |
+| `metering_restores` | Restore operation tracking (status, duration, mode, data transferred) |
+| `metering_api_usage` | Endpoint-level call counts, error rates, latency percentiles |
+| `metering_efficiency` | Per-VM efficiency scores with classification (excellent/good/fair/poor/idle) |
+| `metering_quotas` | Per-tenant quota usage tracking |
+
+#### Navigation, Branding & Provisioning
+
+| Table | Purpose |
+|---|---|
+| `nav_groups` | Top-level navigation groups (7 groups) |
+| `nav_items` | Individual tabs within groups (resource_key for RBAC matching) |
+| `department_nav_groups` | Many-to-many: department ↔ nav group visibility |
+| `department_nav_items` | Fine-grained department ↔ nav item visibility |
+| `user_nav_overrides` | Per-user grant/deny overrides on nav items |
+| `app_settings` | Key-value branding/config (company_name, logo, colors, login hero) |
+| `user_preferences` | Per-user preferences (tab ordering, etc.) |
+| `provisioning_jobs` | Customer provisioning pipeline (domain → project → user → quotas → network) |
+| `provisioning_steps` | Per-step tracking within provisioning (FK CASCADE) |
+| `activity_log` | Central audit trail for provisioning/domain operations |
+| `backup_config` | Single-row backup configuration (schedule, retention) |
+| `backup_history` | Backup job log (target, file path, size, duration) |
+
+#### Drift Detection (2 tables)
+
+| Table | Purpose |
+|---|---|
+| `drift_rules` | 24 built-in rules across 8 resource types (resource_type, field_name, severity, enabled) |
+| `drift_events` | Detected changes (old_value → new_value, field_changed, acknowledgment tracking) |
+
+### Key Database Views
+
+| View | Purpose |
+|---|---|
+| `v_volumes_full` | Volumes enriched with tenant, domain, server attachment info |
+| `v_security_groups_full` | SGs with attached VM count, network count, ingress/egress rule counts |
+| `v_tenant_health` | Per-project health scores (0–100) from server/volume/network/snapshot/drift stats |
+| `v_comprehensive_changes` | 16-way UNION of all history tables for unified audit view |
+| `v_recent_changes` | Active resources + deletions for recent activity |
+| `v_most_changed_resources` | Aggregated change counts for hotspot detection |
+| `v_user_activity_summary` | User activity dashboard (role counts, project access, 7/30-day activity) |
+
+---
+
+## 🔄 Restore Flow & Safety Checks
+
+### Architecture: Planner / Executor Pattern
+
+The restore system uses a **two-phase pattern** that separates planning from execution, enabling dry-run validation, quota pre-checks, and user review before any infrastructure changes are made.
+
+### Restore Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant U as UI Restore Wizard
+    participant API as pf9_api
+    participant DB as pf9_db
+    participant PF9 as Platform9 (Nova/Cinder/Neutron)
+
+    Note over U,PF9: ── PLANNING PHASE ──
+
+    U->>API: POST /restore/plan {vm_id, snapshot_id, mode, ip_strategy}
+    API->>DB: Fetch VM baseline (servers table)
+    API->>DB: Fetch VM ports + networks + subnets
+    API->>DB: Fetch snapshot record
+    API->>DB: Fetch flavor, source volume
+    API->>API: Validate boot mode (only BOOT_FROM_VOLUME supported)
+    API->>API: Build network plan (per-port IP strategy)
+    API->>API: Generate step list + warnings
+
+    alt NEW mode
+        API->>PF9: GET Nova quotas + Cinder quotas
+        Note over API: Block if insufficient instances/cores/RAM/volumes/GB
+    end
+
+    API->>PF9: GET server user_data (Nova microversion 2.3)
+    API->>DB: INSERT restore_jobs (status=PLANNED) + restore_job_steps
+    API-->>U: {plan, steps, warnings, quota_check}
+
+    U->>U: Review plan, confirm warnings
+    Note over U,PF9: ── EXECUTION PHASE (async background task) ──
+
+    U->>API: POST /restore/execute {job_id, confirmation}
+
+    alt REPLACE mode
+        Note over API: Requires superadmin role
+        Note over API: Requires confirmation string: "DELETE AND RESTORE {vm_name}"
+    end
+
+    API->>API: asyncio.create_task(executor.execute)
+    API-->>U: 202 Accepted
+
+    loop For each step (checked before every step)
+        API->>DB: Check job.status != CANCELED
+        alt Canceled
+            API->>API: _cleanup_resources()
+            API->>DB: Mark CANCELED
+        end
+    end
+
+    rect rgb(255, 240, 240)
+        Note over API,PF9: Step 1: VALIDATE_LIVE_STATE
+        API->>PF9: GET snapshot by ID (verify still available)
+    end
+
+    rect rgb(255, 240, 240)
+        Note over API,PF9: Step 2: ENSURE_SERVICE_USER
+        API->>PF9: Verify/assign service user role on target project
+    end
+
+    rect rgb(255, 240, 240)
+        Note over API,PF9: Step 3: QUOTA_CHECK (re-verify at execution time)
+        API->>PF9: GET quotas (Nova + Cinder)
+    end
+
+    opt REPLACE mode only
+        rect rgb(255, 200, 200)
+            Note over API,PF9: Step 4: DELETE_EXISTING_VM
+            API->>PF9: DELETE /servers/{vm_id}
+            Note over API,PF9: Step 5: WAIT_VM_DELETED (poll until 404)
+            Note over API,PF9: Step 6: CLEANUP_OLD_PORTS (3 strategies)
+            API->>PF9: Delete original ports
+            API->>PF9: Find ports by device_id
+            API->>PF9: Find orphan ports holding target IPs
+            Note over API: 3-second pause for Neutron IP release
+        end
+    end
+
+    rect rgb(240, 255, 240)
+        Note over API,PF9: Step 7: CREATE_VOLUME_FROM_SNAPSHOT
+        API->>PF9: POST /volumes {snapshot_id, size, type}
+        Note over API,PF9: Step 8: WAIT_VOLUME_AVAILABLE
+        API->>PF9: Poll volume status (timeout: 600s, poll: 5s)
+    end
+
+    rect rgb(240, 255, 240)
+        Note over API,PF9: Step 9: CREATE_PORTS
+        loop For each network in plan
+            API->>PF9: POST /ports {network_id, fixed_ips}
+            Note over API: IP-preserving: 5 retries × 3s delay
+        end
+    end
+
+    rect rgb(240, 255, 240)
+        Note over API,PF9: Step 10: CREATE_SERVER
+        API->>PF9: POST /servers {BDM, port IDs, flavor, user_data}
+        Note over API,PF9: Step 11: WAIT_SERVER_ACTIVE
+        API->>PF9: Poll server status (timeout: 600s)
+    end
+
+    rect rgb(240, 240, 255)
+        Note over API,PF9: Step 12: FINALIZE
+        API->>DB: Record results (new VM ID, volume ID, IPs)
+    end
+
+    opt cleanup_old_storage=true && REPLACE mode
+        rect rgb(255, 240, 240)
+            Note over API,PF9: Step 13: CLEANUP_OLD_STORAGE
+            API->>API: Safety check: skip if volume still attached/in-use
+            API->>PF9: DELETE old volume + optional DELETE source snapshot
+        end
+    end
+
+    API->>DB: Mark job SUCCEEDED + record result_json
+```
+
+### Safety Mechanisms
+
+| Safety Feature | Implementation |
+|---|---|
+| **Feature flag** | `RESTORE_ENABLED` env var (default: `false`). All endpoints return 503 when disabled. |
+| **Dry-run mode** | `RESTORE_DRY_RUN` env var (default: `false`). All OpenStack mutations return mock IDs — plan is validated without side effects. |
+| **Concurrent restore prevention** | PostgreSQL UNIQUE partial index: `UNIQUE(vm_id) WHERE status IN ('PENDING','RUNNING')`. Only one active restore per VM enforced at DB level. |
+| **Stale job recovery** | On API startup, all `PENDING`/`RUNNING` jobs are marked `INTERRUPTED` with reason "API restarted while job was in progress". |
+| **Per-step heartbeat** | `last_heartbeat` column updated before each step for staleness detection. |
+| **Cancellation** | Executor checks `job.status == 'CANCELED'` before each step. Triggers `_cleanup_resources()` on cancellation. |
+| **REPLACE mode guard** | Requires superadmin role + exact confirmation string: `"DELETE AND RESTORE {vm_name}"`. |
+| **Rollback on failure** | Best-effort cleanup: delete created server → delete created ports → volume preserved by default (configurable via `RESTORE_CLEANUP_VOLUMES`). |
+| **Retry support** | `POST /restore/jobs/{job_id}/retry` creates a new job starting from the failed step, reusing resources created by successful steps. Supports `ip_strategy_override` to downgrade. |
+| **Manual cleanup** | `POST /restore/jobs/{job_id}/cleanup` extracts created resources from step results and deletes them. Volume deletion requires explicit `delete_volume=true`. |
+| **Quota double-check** | Quotas verified both at planning time and again at execution time (Step 3). |
+| **Boot mode validation** | Only `BOOT_FROM_VOLUME` VMs supported — boot-from-image returns 400 immediately. |
+
+### Restore Modes & IP Strategies
+
+| Mode | Behavior | Required Role | Confirmation |
+|---|---|---|---|
+| **NEW** | Creates a new VM alongside the existing one (`{name}-restored-{timestamp}`) | admin | None |
+| **REPLACE** | Deletes existing VM, recreates from snapshot | superadmin | `"DELETE AND RESTORE {vm_name}"` |
+
+| IP Strategy | Behavior |
+|---|---|
+| **NEW_IPS** | Auto-assign fresh IPs via DHCP (default) |
+| **TRY_SAME_IPS** | Best-effort IP preservation; falls back to new IPs if original is taken |
+| **SAME_IPS_OR_FAIL** | Strict IP preservation; entire restore fails if any original IP unavailable |
+| **MANUAL_IP** | Caller specifies `{network_id: "desired_ip"}` map |
+
+---
 
 ## 🔧 Component Architecture
 
@@ -883,5 +1464,24 @@ python host_metrics_collector.py > metrics.log 2>&1
 - Simple implementation without database overhead
 - Fast read access for real-time UI updates
 - Easy debugging and monitoring
+
+### ADR-005: Planner/Executor Restore Pattern
+**Decision**: Two-phase restore with separate planning and execution stages
+**Rationale**:
+- Planning can run without any side effects (safe preview)
+- Quota validation before any resources are created
+- Users can review the full plan, including warnings, before committing
+- Failed jobs can be retried from the failed step without re-creating successful resources
+- Async execution with per-step heartbeat and cancellation support
+- Rollback is scoped and deterministic
+
+### ADR-006: Dual-Table History Pattern
+**Decision**: Separate `*_history` tables per resource type with `change_hash` deduplication
+**Rationale**:
+- Keeps the current-state table fast and small for real-time queries
+- Only meaningful state changes are stored (hash-based deduplication)
+- Allows unlimited retention without impacting read performance
+- Supports compliance auditing and forensic analysis of any resource over time
+- `deletions_history` provides a cross-type view of resource removal events
 
 This architecture provides a solid foundation for enterprise OpenStack management while maintaining flexibility for future enhancements and production hardening.
