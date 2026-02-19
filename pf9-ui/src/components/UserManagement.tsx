@@ -220,6 +220,57 @@ interface MFAUserEntry {
   created_at: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Runbook Governance Types
+// ---------------------------------------------------------------------------
+interface RbExecution {
+  execution_id: string;
+  runbook_name: string;
+  display_name?: string;
+  category?: string;
+  risk_level?: string;
+  status: string;
+  dry_run: boolean;
+  parameters: Record<string, any>;
+  result: Record<string, any>;
+  triggered_by: string;
+  triggered_at: string;
+  approved_by?: string;
+  approved_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  error_message?: string;
+  items_found: number;
+  items_actioned: number;
+}
+
+interface RbRunbook {
+  name: string;
+  display_name: string;
+  category: string;
+  risk_level: string;
+}
+
+interface RbApprovalPolicy {
+  policy_id: string;
+  runbook_name: string;
+  trigger_role: string;
+  approver_role: string;
+  approval_mode: string;
+  escalation_timeout_minutes: number;
+  max_auto_executions_per_day: number;
+  enabled: boolean;
+}
+
+const CATEGORY_ICONS: Record<string, string> = {
+  vm: '🖥️', network: '🔌', security: '🔒', quota: '📊', diagnostics: '🔍', general: '📋',
+};
+
+function rbFormatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
 const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -272,6 +323,107 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     endDate: ''
   });
 
+  // --- Runbook governance state ---
+  const [rbExecutions, setRbExecutions] = useState<RbExecution[]>([]);
+  const [rbExecTotal, setRbExecTotal] = useState(0);
+  const [rbPending, setRbPending] = useState<RbExecution[]>([]);
+  const [rbRunbooks, setRbRunbooks] = useState<RbRunbook[]>([]);
+  const [rbPolicies, setRbPolicies] = useState<Record<string, RbApprovalPolicy[]>>({});
+  const [rbHistRunbook, setRbHistRunbook] = useState('');
+  const [rbHistStatus, setRbHistStatus] = useState('');
+  const [rbHistPage, setRbHistPage] = useState(0);
+  const [rbSelectedExec, setRbSelectedExec] = useState<RbExecution | null>(null);
+  const [rbEditPolicy, setRbEditPolicy] = useState<{
+    runbook_name: string; trigger_role: string; approver_role: string;
+    approval_mode: string; escalation_timeout_minutes: number;
+    max_auto_executions_per_day: number;
+  } | null>(null);
+  const [rbToast, setRbToast] = useState<{ msg: string; type: string } | null>(null);
+
+  // --- Runbook governance helpers ---
+  const rbShowToast = useCallback((msg: string, type: string = 'info') => {
+    setRbToast({ msg, type });
+    setTimeout(() => setRbToast(null), 4000);
+  }, []);
+
+  const rbAuthHeaders = useCallback(() => {
+    const t = localStorage.getItem('auth_token');
+    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+  }, []);
+
+  const loadRbRunbooks = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/runbooks`, { headers: rbAuthHeaders() });
+      if (res.ok) { const d = await res.json(); setRbRunbooks(d); }
+    } catch {}
+  }, [rbAuthHeaders]);
+
+  const loadRbExecutions = useCallback(async () => {
+    try {
+      const p = new URLSearchParams();
+      if (rbHistRunbook) p.set('runbook_name', rbHistRunbook);
+      if (rbHistStatus) p.set('status', rbHistStatus);
+      p.set('limit', '25'); p.set('offset', String(rbHistPage * 25));
+      const res = await fetch(`${API_BASE}/api/runbooks/executions/history?${p}`, { headers: rbAuthHeaders() });
+      if (res.ok) { const d = await res.json(); setRbExecutions(d.executions); setRbExecTotal(d.total); }
+    } catch {}
+  }, [rbHistRunbook, rbHistStatus, rbHistPage, rbAuthHeaders]);
+
+  const loadRbPending = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/runbooks/approvals/pending`, { headers: rbAuthHeaders() });
+      if (res.ok) { const d = await res.json(); setRbPending(d); }
+    } catch {}
+  }, [rbAuthHeaders]);
+
+  const loadRbPolicies = useCallback(async () => {
+    try {
+      const byRb: Record<string, RbApprovalPolicy[]> = {};
+      for (const rb of rbRunbooks) {
+        const res = await fetch(`${API_BASE}/api/runbooks/policies/${rb.name}`, { headers: rbAuthHeaders() });
+        if (res.ok) byRb[rb.name] = await res.json();
+      }
+      setRbPolicies(byRb);
+    } catch {}
+  }, [rbRunbooks, rbAuthHeaders]);
+
+  const rbApproveReject = useCallback(async (execId: string, decision: 'approved' | 'rejected') => {
+    try {
+      const res = await fetch(`${API_BASE}/api/runbooks/executions/${execId}/approve`, {
+        method: 'POST', headers: rbAuthHeaders(),
+        body: JSON.stringify({ decision, comment: '' }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      rbShowToast(decision === 'approved' ? '✅ Approved' : '❌ Rejected', decision === 'approved' ? 'success' : 'info');
+      loadRbPending(); loadRbExecutions();
+    } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
+  }, [rbAuthHeaders, rbShowToast, loadRbPending, loadRbExecutions]);
+
+  const rbCancel = useCallback(async (execId: string) => {
+    try {
+      await fetch(`${API_BASE}/api/runbooks/executions/${execId}/cancel`, { method: 'POST', headers: rbAuthHeaders() });
+      rbShowToast('Cancelled', 'info'); loadRbPending(); loadRbExecutions();
+    } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
+  }, [rbAuthHeaders, rbShowToast, loadRbPending, loadRbExecutions]);
+
+  const rbViewExecution = useCallback(async (execId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/runbooks/executions/${execId}`, { headers: rbAuthHeaders() });
+      if (res.ok) setRbSelectedExec(await res.json());
+    } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
+  }, [rbAuthHeaders, rbShowToast]);
+
+  const rbSavePolicy = useCallback(async () => {
+    if (!rbEditPolicy) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/runbooks/policies/${rbEditPolicy.runbook_name}`, {
+        method: 'PUT', headers: rbAuthHeaders(), body: JSON.stringify(rbEditPolicy),
+      });
+      if (!res.ok) throw new Error('Failed');
+      rbShowToast('Policy saved', 'success'); setRbEditPolicy(null); loadRbPolicies();
+    } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
+  }, [rbEditPolicy, rbAuthHeaders, rbShowToast, loadRbPolicies]);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -289,7 +441,26 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     if (activeTab === 'visibility') {
       loadVisibilityMatrix();
     }
+    if (activeTab === 'rb_executions') {
+      loadRbExecutions(); loadRbRunbooks();
+    }
+    if (activeTab === 'rb_approvals') {
+      loadRbPending();
+    }
+    if (activeTab === 'rb_policies') {
+      loadRbRunbooks();
+    }
   }, [activeTab, auditFilters]);
+
+  // Reload runbook policies when runbooks list is ready
+  useEffect(() => {
+    if (activeTab === 'rb_policies' && rbRunbooks.length > 0) loadRbPolicies();
+  }, [activeTab, rbRunbooks.length]);
+
+  // Reload executions when filters change
+  useEffect(() => {
+    if (activeTab === 'rb_executions') loadRbExecutions();
+  }, [rbHistRunbook, rbHistStatus, rbHistPage]);
 
   const loadMfaUsers = async () => {
     setMfaLoading(true); setMfaMsg('');
@@ -1295,7 +1466,10 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 'visibility', label: 'Visibility', icon: '👁️', adminOnly: true },
           { id: 'mfa', label: 'MFA', icon: '🔐', adminOnly: true },
           { id: 'audit', label: 'System Audit', icon: '📋', adminOnly: false },
-          { id: 'branding', label: 'Branding', icon: '🎨', adminOnly: true }
+          { id: 'branding', label: 'Branding', icon: '🎨', adminOnly: true },
+          { id: 'rb_executions', label: 'Runbook Executions', icon: '📜', adminOnly: true },
+          { id: 'rb_approvals', label: 'Runbook Approvals', icon: '✅', adminOnly: true },
+          { id: 'rb_policies', label: 'Runbook Policies', icon: '📐', adminOnly: true }
         ]
           .filter(tab => !tab.adminOnly || (user && (user.role === 'admin' || user.role === 'superadmin')))
           .map(tab => (
@@ -2089,6 +2263,300 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
       {/* Branding Settings */}
       {activeTab === 'branding' && <BrandingSettings />}
+
+      {/* ────── RUNBOOK EXECUTIONS ────── */}
+      {activeTab === 'rb_executions' && (
+        <div>
+          {/* Filters */}
+          <div className="flex items-center gap-3 mb-4" style={{ flexWrap: 'wrap' }}>
+            <select
+              className="px-3 py-2 border rounded text-sm"
+              value={rbHistRunbook}
+              onChange={e => { setRbHistRunbook(e.target.value); setRbHistPage(0); }}
+            >
+              <option value="">All runbooks</option>
+              {rbRunbooks.map(rb => <option key={rb.name} value={rb.name}>{rb.display_name}</option>)}
+            </select>
+            <select
+              className="px-3 py-2 border rounded text-sm"
+              value={rbHistStatus}
+              onChange={e => { setRbHistStatus(e.target.value); setRbHistPage(0); }}
+            >
+              <option value="">All statuses</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="executing">Executing</option>
+              <option value="pending_approval">Pending Approval</option>
+              <option value="rejected">Rejected</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <button className="px-3 py-2 border rounded text-sm hover:bg-gray-50" onClick={() => loadRbExecutions()}>🔄 Refresh</button>
+            <span className="text-xs text-gray-500">{rbExecTotal} total</span>
+          </div>
+
+          {/* Detail panel */}
+          {rbSelectedExec && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-medium">Execution Detail — {rbSelectedExec.display_name || rbSelectedExec.runbook_name}</h4>
+                <button className="text-sm px-2 py-1 border rounded hover:bg-gray-100" onClick={() => setRbSelectedExec(null)}>✕ Close</button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-sm mb-3">
+                <div><strong>ID:</strong> {rbSelectedExec.execution_id}</div>
+                <div><strong>Status:</strong> <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                  rbSelectedExec.status === 'completed' ? 'bg-green-100 text-green-800' :
+                  rbSelectedExec.status === 'failed' ? 'bg-red-100 text-red-800' :
+                  rbSelectedExec.status === 'pending_approval' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-gray-100 text-gray-800'
+                }`}>{rbSelectedExec.status}</span></div>
+                <div><strong>Dry Run:</strong> {rbSelectedExec.dry_run ? 'Yes 🧪' : 'No (live)'}</div>
+                <div><strong>Triggered By:</strong> {rbSelectedExec.triggered_by}</div>
+                <div><strong>Triggered At:</strong> {rbFormatDate(rbSelectedExec.triggered_at)}</div>
+                {rbSelectedExec.approved_by && <div><strong>Approved By:</strong> {rbSelectedExec.approved_by}</div>}
+                {rbSelectedExec.started_at && <div><strong>Started:</strong> {rbFormatDate(rbSelectedExec.started_at)}</div>}
+                {rbSelectedExec.completed_at && <div><strong>Completed:</strong> {rbFormatDate(rbSelectedExec.completed_at)}</div>}
+                <div><strong>Items Found:</strong> {rbSelectedExec.items_found}</div>
+                <div><strong>Items Actioned:</strong> {rbSelectedExec.items_actioned}</div>
+                {rbSelectedExec.error_message && <div className="col-span-2 text-red-600"><strong>Error:</strong> {rbSelectedExec.error_message}</div>}
+              </div>
+              <details className="text-sm">
+                <summary className="cursor-pointer font-medium">Parameters</summary>
+                <pre className="bg-gray-100 p-2 rounded mt-1 text-xs overflow-auto max-h-40">{JSON.stringify(rbSelectedExec.parameters, null, 2)}</pre>
+              </details>
+              {rbSelectedExec.result && Object.keys(rbSelectedExec.result).length > 0 && (
+                <details className="text-sm mt-2">
+                  <summary className="cursor-pointer font-medium">Result</summary>
+                  <pre className="bg-gray-100 p-2 rounded mt-1 text-xs overflow-auto max-h-60">{JSON.stringify(rbSelectedExec.result, null, 2)}</pre>
+                </details>
+              )}
+            </div>
+          )}
+
+          {/* Table */}
+          <div className="bg-white rounded-lg border">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Runbook</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Status</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Dry Run</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Found</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Actioned</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Triggered By</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Time</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {rbExecutions.map(ex => (
+                    <tr key={ex.execution_id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm">{ex.display_name || ex.runbook_name}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          ex.status === 'completed' ? 'bg-green-100 text-green-800' :
+                          ex.status === 'failed' ? 'bg-red-100 text-red-800' :
+                          ex.status === 'pending_approval' ? 'bg-yellow-100 text-yellow-800' :
+                          ex.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>{ex.status}</span>
+                      </td>
+                      <td className="px-4 py-3 text-sm">{ex.dry_run ? '🧪' : '—'}</td>
+                      <td className="px-4 py-3 text-sm">{ex.items_found}</td>
+                      <td className="px-4 py-3 text-sm">{ex.items_actioned}</td>
+                      <td className="px-4 py-3 text-sm">{ex.triggered_by}</td>
+                      <td className="px-4 py-3 text-sm">{rbFormatDate(ex.triggered_at)}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <button className="text-blue-600 hover:underline text-sm" onClick={() => rbViewExecution(ex.execution_id)}>👁 View</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {rbExecutions.length === 0 && (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">No executions found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Pagination */}
+          {rbExecTotal > 25 && (
+            <div className="flex items-center justify-center gap-4 mt-4">
+              <button className="px-3 py-1 border rounded text-sm disabled:opacity-50" disabled={rbHistPage === 0} onClick={() => setRbHistPage(rbHistPage - 1)}>← Prev</button>
+              <span className="text-xs">Page {rbHistPage + 1} of {Math.ceil(rbExecTotal / 25)}</span>
+              <button className="px-3 py-1 border rounded text-sm disabled:opacity-50" disabled={(rbHistPage + 1) * 25 >= rbExecTotal} onClick={() => setRbHistPage(rbHistPage + 1)}>Next →</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ────── RUNBOOK APPROVALS ────── */}
+      {activeTab === 'rb_approvals' && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-gray-600">Pending runbook executions awaiting admin approval.</p>
+            <button className="px-3 py-2 border rounded text-sm hover:bg-gray-50" onClick={() => loadRbPending()}>🔄 Refresh</button>
+          </div>
+          {rbPending.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <div className="text-4xl mb-2">✅</div>
+              <p>No pending approvals</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-lg border">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Runbook</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Dry Run</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Triggered By</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Time</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Parameters</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {rbPending.map(ex => (
+                      <tr key={ex.execution_id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm">
+                          <strong>{ex.display_name || ex.runbook_name}</strong>
+                          {ex.risk_level && (
+                            <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
+                              ex.risk_level === 'high' ? 'bg-red-100 text-red-800' :
+                              ex.risk_level === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-green-100 text-green-800'
+                            }`}>{ex.risk_level}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm">{ex.dry_run ? '🧪 Yes' : 'No (live)'}</td>
+                        <td className="px-4 py-3 text-sm">{ex.triggered_by}</td>
+                        <td className="px-4 py-3 text-sm">{rbFormatDate(ex.triggered_at)}</td>
+                        <td className="px-4 py-3 text-sm" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {JSON.stringify(ex.parameters)}
+                        </td>
+                        <td className="px-4 py-3 text-sm">
+                          <div className="flex gap-2">
+                            <button className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700" onClick={() => rbApproveReject(ex.execution_id, 'approved')}>✓ Approve</button>
+                            <button className="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700" onClick={() => rbApproveReject(ex.execution_id, 'rejected')}>✗ Reject</button>
+                            <button className="px-2 py-1 border rounded text-xs hover:bg-gray-100" onClick={() => rbCancel(ex.execution_id)}>Cancel</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ────── RUNBOOK POLICIES ────── */}
+      {activeTab === 'rb_policies' && (
+        <div>
+          <p className="text-sm text-gray-600 mb-4">
+            Configure which roles can trigger each runbook and what approval is required.
+            Policies are flexible — you can create any trigger → approver mapping per runbook.
+          </p>
+
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))' }}>
+            {rbRunbooks.map(rb => {
+              const pols = rbPolicies[rb.name] || [];
+              return (
+                <div key={rb.name} className="border rounded-lg p-4 bg-white">
+                  <h5 className="font-medium mb-2">
+                    {CATEGORY_ICONS[rb.category] || '📋'} {rb.display_name}
+                    <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
+                      rb.risk_level === 'high' ? 'bg-red-100 text-red-800' :
+                      rb.risk_level === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-green-100 text-green-800'
+                    }`}>{rb.risk_level}</span>
+                  </h5>
+                  {pols.map(p => (
+                    <div key={p.policy_id} className="flex items-center gap-2 py-1 text-sm">
+                      <strong>{p.trigger_role}</strong>
+                      <span className="text-gray-400">→</span>
+                      <span>{p.approver_role}</span>
+                      <span className={`px-2 py-0.5 rounded text-xs ${
+                        p.approval_mode === 'auto_approve' ? 'bg-green-100 text-green-800' :
+                        p.approval_mode === 'single_approval' ? 'bg-blue-100 text-blue-800' :
+                        'bg-purple-100 text-purple-800'
+                      }`}>{p.approval_mode.replace(/_/g, ' ')}</span>
+                      <button className="ml-auto text-sm text-blue-600 hover:underline" onClick={() => setRbEditPolicy({
+                        runbook_name: rb.name, trigger_role: p.trigger_role, approver_role: p.approver_role,
+                        approval_mode: p.approval_mode, escalation_timeout_minutes: p.escalation_timeout_minutes,
+                        max_auto_executions_per_day: p.max_auto_executions_per_day,
+                      })}>✏️</button>
+                    </div>
+                  ))}
+                  {pols.length === 0 && <p className="text-xs text-gray-400">No policies configured</p>}
+                  <button className="mt-2 text-sm text-blue-600 hover:underline" onClick={() => setRbEditPolicy({
+                    runbook_name: rb.name, trigger_role: '', approver_role: 'admin',
+                    approval_mode: 'single_approval', escalation_timeout_minutes: 60, max_auto_executions_per_day: 50,
+                  })}>+ Add Policy</button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Policy editor modal */}
+          {rbEditPolicy && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                <h3 className="text-lg font-medium mb-4">Edit Approval Policy</h3>
+                <p className="text-sm text-gray-500 mb-4">Runbook: {rbEditPolicy.runbook_name}</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Trigger Role (who can trigger)</label>
+                    <input className="w-full px-3 py-2 border rounded" value={rbEditPolicy.trigger_role}
+                      onChange={e => setRbEditPolicy({ ...rbEditPolicy, trigger_role: e.target.value })}
+                      placeholder="e.g. operator, admin, tier1" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Approver Role (who must approve)</label>
+                    <input className="w-full px-3 py-2 border rounded" value={rbEditPolicy.approver_role}
+                      onChange={e => setRbEditPolicy({ ...rbEditPolicy, approver_role: e.target.value })}
+                      placeholder="e.g. admin, security" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Approval Mode</label>
+                    <select className="w-full px-3 py-2 border rounded" value={rbEditPolicy.approval_mode}
+                      onChange={e => setRbEditPolicy({ ...rbEditPolicy, approval_mode: e.target.value })}>
+                      <option value="auto_approve">Auto Approve</option>
+                      <option value="single_approval">Single Approval</option>
+                      <option value="multi_approval">Multi Approval</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Escalation Timeout (minutes)</label>
+                    <input type="number" className="w-full px-3 py-2 border rounded" value={rbEditPolicy.escalation_timeout_minutes}
+                      onChange={e => setRbEditPolicy({ ...rbEditPolicy, escalation_timeout_minutes: parseInt(e.target.value) || 60 })} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Max Auto-Executions Per Day</label>
+                    <input type="number" className="w-full px-3 py-2 border rounded" value={rbEditPolicy.max_auto_executions_per_day}
+                      onChange={e => setRbEditPolicy({ ...rbEditPolicy, max_auto_executions_per_day: parseInt(e.target.value) || 50 })} />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3 mt-6">
+                  <button className="px-4 py-2 border rounded hover:bg-gray-50" onClick={() => setRbEditPolicy(null)}>Cancel</button>
+                  <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700" onClick={rbSavePolicy}>Save Policy</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Toast */}
+          {rbToast && (
+            <div className={`fixed bottom-4 right-4 px-4 py-3 rounded-lg shadow-lg z-50 text-sm ${
+              rbToast.type === 'success' ? 'bg-green-600 text-white' :
+              rbToast.type === 'error' ? 'bg-red-600 text-white' :
+              'bg-blue-600 text-white'
+            }`}>{rbToast.msg}</div>
+          )}
+        </div>
+      )}
 
       {/* Modal */}
       {showModal && (
