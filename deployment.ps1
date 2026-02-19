@@ -988,6 +988,7 @@ Write-Host "  Wizard:                5-step (Domain → Project → User/Role �
 Write-Host "  Domain Management:     Enable/disable/delete domains with resource inspection" -ForegroundColor White
 Write-Host "  Activity Log:          Central audit trail for all provisioning operations" -ForegroundColor White
 Write-Host "  Network Naming:        {tenant_base}_extnet_vlan_{vlanid} (auto-derived, user-overrideable)" -ForegroundColor White
+Write-Host "  Admin Notifications:   Rich tenant_provisioned email with full inventory (user, network, SG, quotas)" -ForegroundColor White
 Write-Host "  RBAC:                  admin/superadmin with granular tenant_disable/tenant_delete/resource_delete" -ForegroundColor White
 Write-Host ""
 

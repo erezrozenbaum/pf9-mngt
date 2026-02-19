@@ -149,8 +149,8 @@
             <tr>
               <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; text-transform: capitalize;">{{ rule.direction }}</td>
               <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; text-transform: uppercase;">{{ rule.protocol }}</td>
-              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0;">{{ rule.port }}</td>
-              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0;">{{ rule.remote_ip_prefix | default('0.0.0.0/0') }}</td>
+              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0;">{{ rule.ports }}</td>
+              <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0;">{{ rule.cidr | default('0.0.0.0/0') }}</td>
               <td style="padding: 6px 10px; border-bottom: 1px solid #e2e8f0; color: #718096;">{{ rule.description }}</td>
             </tr>
             {% endfor %}
