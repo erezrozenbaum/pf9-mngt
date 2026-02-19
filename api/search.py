@@ -359,17 +359,26 @@ async def detect_intent(
 @router.get("/smart")
 async def smart_query(
     q: str = Query(..., min_length=1, max_length=500, description="Natural-language question"),
+    scope_tenant: Optional[str] = Query(None, description="Filter results to this project/tenant"),
+    scope_domain: Optional[str] = Query(None, description="Filter results to this domain"),
     _user: User = Depends(require_permission("search", "read")),
 ):
     """
     Match a natural-language question against **smart query templates**
     and return a structured answer card with live data from the DB.
 
+    Optional *scope_tenant* / *scope_domain* params restrict results
+    to a specific project or domain.
+
     Returns ``{ matched: false }`` if no template matches — the UI
     should still show regular FTS results in that case.
     """
     with get_connection() as conn:
-        result = execute_smart_query(q, conn)
+        result = execute_smart_query(
+            q, conn,
+            scope_tenant=scope_tenant,
+            scope_domain=scope_domain,
+        )
 
     if result is None:
         return {"matched": False, "query": q}

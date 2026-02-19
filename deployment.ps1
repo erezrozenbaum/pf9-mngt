@@ -996,6 +996,7 @@ Write-Host "  UI Tab:                Ops Search (full-text + similarity + intent
 Write-Host "  Worker:                pf9_search_worker (incremental indexer, default 5-min interval)" -ForegroundColor White
 Write-Host "  API Endpoints:         /api/search (search, similar, intent, stats, reindex, smart, smart/help)" -ForegroundColor White
 Write-Host "  Smart Queries:         26 templates (VM status, quotas, capacity, networks, roles, drift, etc.)" -ForegroundColor White
+Write-Host "  Scope Filters:         Domain/Tenant dropdown filters — 20 of 26 queries are scope-aware" -ForegroundColor White
 Write-Host "  Quota Metering:        Per-project usage (vCPUs, RAM, VMs, volumes, storage, FIPs, SGs)" -ForegroundColor White
 Write-Host "  Doc Types:             29 indexed types (VMs, volumes, users, audit, drift, snapshots, roles...)" -ForegroundColor White
 Write-Host "  RBAC:                  viewer/operator=search:read, admin/superadmin=search:admin" -ForegroundColor White
