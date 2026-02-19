@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.6] - 2026-02-19
+
+### Changed
+- **External network naming convention** — During customer onboarding, the auto-generated external network name now follows `{tenant_base}_extnet_vlan_{vlanid}` instead of `{domain}-ext-net`. The tenant base is derived from the project name by stripping the `_subid_{id}` suffix (e.g. project `erez_tenant_subid_12454512` with VLAN 878 → network `erez_tenant_extnet_vlan_878`). When no VLAN ID is set, the name is `{tenant_base}_extnet`. The user can still override the name manually.
+- **Network name auto-fill in UI** — The Network Name field now auto-fills when Domain Name, Subscription ID, or VLAN ID change, following the new naming convention. The placeholder and Review step also reflect the derived name.
+
 ## [1.20.5] - 2026-02-19
 
 ### Added

@@ -573,7 +573,20 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
         network_id = None
         subnet_id = None
         if req.create_network:
-            net_name = req.network_name or f"{req.domain_name}-ext-net"
+            if req.network_name:
+                net_name = req.network_name
+            else:
+                # Convention: {tenant_base}_extnet_vlan_{vlanid}
+                # tenant_base = project_name without _subid_{id} suffix
+                tenant_base = (
+                    req.project_name.rsplit("_subid_", 1)[0]
+                    if "_subid_" in req.project_name
+                    else req.project_name
+                )
+                if req.vlan_id:
+                    net_name = f"{tenant_base}_extnet_vlan_{req.vlan_id}"
+                else:
+                    net_name = f"{tenant_base}_extnet"
             network = run_step(
                 "create_network",
                 f"Create {req.network_type.upper()} external network: {net_name}",
