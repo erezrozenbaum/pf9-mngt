@@ -473,6 +473,133 @@ def collect_efficiency_scores(conn) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Quota / usage collection  (computed from inventory tables)
+# ---------------------------------------------------------------------------
+def collect_quota_usage(conn) -> int:
+    """
+    Compute per-project resource usage from the live inventory tables
+    (servers, volumes, snapshots, floating_ips, networks, ports, security_groups)
+    and insert into metering_quotas.
+
+    Quota limits are set to NULL because we don't have access to the
+    OpenStack quota API — but the usage columns are real, giving the
+    smart-query layer useful data to answer "quota for <tenant>" questions.
+    """
+    sql = """
+        SELECT
+            p.id          AS project_id,
+            p.name        AS project_name,
+            d.name        AS domain,
+            -- Compute: vCPUs, RAM, instances
+            COALESCE(comp.vcpus_used, 0)         AS vcpus_used,
+            COALESCE(comp.ram_used_mb, 0)         AS ram_used_mb,
+            COALESCE(comp.instances_used, 0)      AS instances_used,
+            -- Storage: volumes
+            COALESCE(vol.volumes_used, 0)         AS volumes_used,
+            COALESCE(vol.storage_used_gb, 0)      AS storage_used_gb,
+            -- Snapshots
+            COALESCE(snap.snapshots_used, 0)      AS snapshots_used,
+            -- Networking
+            COALESCE(fip.floating_ips_used, 0)    AS floating_ips_used,
+            COALESCE(net.networks_used, 0)        AS networks_used,
+            COALESCE(pt.ports_used, 0)            AS ports_used,
+            COALESCE(sg.security_groups_used, 0)  AS security_groups_used
+        FROM projects p
+        LEFT JOIN domains d ON d.id = p.domain_id
+        -- Compute usage (join flavors for vCPUs / RAM)
+        LEFT JOIN LATERAL (
+            SELECT count(*)                                       AS instances_used,
+                   COALESCE(SUM(f.vcpus), 0)                      AS vcpus_used,
+                   COALESCE(SUM(f.ram_mb), 0)                     AS ram_used_mb
+            FROM servers s
+            LEFT JOIN flavors f ON f.id = s.flavor_id
+            WHERE s.project_id = p.id
+        ) comp ON true
+        -- Volume usage
+        LEFT JOIN LATERAL (
+            SELECT count(*)                        AS volumes_used,
+                   COALESCE(SUM(size_gb), 0)       AS storage_used_gb
+            FROM volumes WHERE project_id = p.id
+        ) vol ON true
+        -- Snapshot usage
+        LEFT JOIN LATERAL (
+            SELECT count(*) AS snapshots_used
+            FROM snapshots WHERE project_id = p.id
+        ) snap ON true
+        -- Floating IPs
+        LEFT JOIN LATERAL (
+            SELECT count(*) AS floating_ips_used
+            FROM floating_ips WHERE project_id = p.id
+        ) fip ON true
+        -- Networks
+        LEFT JOIN LATERAL (
+            SELECT count(*) AS networks_used
+            FROM networks WHERE project_id = p.id
+        ) net ON true
+        -- Ports
+        LEFT JOIN LATERAL (
+            SELECT count(*) AS ports_used
+            FROM ports WHERE project_id = p.id
+        ) pt ON true
+        -- Security Groups
+        LEFT JOIN LATERAL (
+            SELECT count(*) AS security_groups_used
+            FROM security_groups WHERE project_id = p.id
+        ) sg ON true
+        ORDER BY d.name, p.name
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
+
+    if not rows:
+        return 0
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    batch = []
+    for r in rows:
+        batch.append((
+            now,
+            r["project_id"], r.get("project_name"), r.get("domain"),
+            None, r["vcpus_used"],          # vcpus_quota (unknown), vcpus_used
+            None, r["ram_used_mb"],          # ram_quota_mb, ram_used_mb
+            None, r["instances_used"],       # instances_quota, instances_used
+            None, r["volumes_used"],         # volumes_quota, volumes_used
+            None, r["storage_used_gb"],      # storage_quota_gb, storage_used_gb
+            None, r["snapshots_used"],       # snapshots_quota, snapshots_used
+            None, r["floating_ips_used"],    # floating_ips_quota, floating_ips_used
+            None, r["networks_used"],        # networks_quota, networks_used
+            None, r["ports_used"],           # ports_quota, ports_used
+            None, r["security_groups_used"], # security_groups_quota, security_groups_used
+        ))
+
+    insert_sql = """
+        INSERT INTO metering_quotas (
+            collected_at, project_id, project_name, domain,
+            vcpus_quota, vcpus_used,
+            ram_quota_mb, ram_used_mb,
+            instances_quota, instances_used,
+            volumes_quota, volumes_used,
+            storage_quota_gb, storage_used_gb,
+            snapshots_quota, snapshots_used,
+            floating_ips_quota, floating_ips_used,
+            networks_quota, networks_used,
+            ports_quota, ports_used,
+            security_groups_quota, security_groups_used
+        ) VALUES (
+            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s
+        )
+    """
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_batch(cur, insert_sql, batch, page_size=200)
+    conn.commit()
+    return len(batch)
+
+
+# ---------------------------------------------------------------------------
 # Retention pruning
 # ---------------------------------------------------------------------------
 METERING_TABLES = [
@@ -533,6 +660,9 @@ def run_collection_cycle():
 
         n = collect_efficiency_scores(conn)
         log.info("Efficiency: %d VM scores computed", n)
+
+        n = collect_quota_usage(conn)
+        log.info("Quotas:    %d project usage records collected", n)
 
         prune_old_records(conn, retention_days)
 

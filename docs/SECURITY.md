@@ -125,6 +125,7 @@ ENABLE_AUTHENTICATION=true
 | Notifications | read, write | read, write | admin | admin | read, write |
 | Departments | read | read | admin | admin | read |
 | Navigation | read | read | admin | admin | read |
+| Search | read | read | admin | admin | read |
 
 ### Public (Unauthenticated) Endpoints
 

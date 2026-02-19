@@ -1037,6 +1037,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       reports: 'Reports — generated reports, exports, analytics',
       resources: 'Resource Management — allocation, capacity, assignments',
       restore: 'Snapshot Restore — restore wizard, execution, monitoring',
+      search: 'Ops Search — full-text search, similarity, intent detection, re-index',
       security_groups: 'Security Groups — firewall rules, VM associations',
       servers: 'VMs / Servers — virtual machines, Nova instances',
       snapshots: 'Volume Snapshots — retention, compliance, policies',

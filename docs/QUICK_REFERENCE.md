@@ -5,7 +5,7 @@
 ### Comprehensive OpenStack Management Platform
 The Platform9 Management System is a enterprise-grade infrastructure management solution providing:
 
-#### Complete Resource Coverage (19+ Resource Types)
+#### Complete Resource Coverage (29 Resource Types)
 - **Compute**: Virtual Machines (Servers), Hypervisors, Flavors, Images
 - **Storage**: Volumes, Snapshots, Volume Types, Bootable Volumes  
 - **Network**: Networks, Subnets, Ports, Routers, Floating IPs, Security Groups & Rules
