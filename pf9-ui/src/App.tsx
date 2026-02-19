@@ -29,6 +29,7 @@ import ReportsTab from "./components/ReportsTab";
 import ResourceManagementTab from "./components/ResourceManagementTab";
 import GroupedNavBar from "./components/GroupedNavBar";
 import OpsSearch from "./components/OpsSearch";
+import RunbooksTab from "./components/RunbooksTab";
 import { useNavigation } from "./hooks/useNavigation";
 
 // ---------------------------------------------------------------------------
@@ -408,7 +409,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -459,6 +460,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "domain_management",   label: "🏢 Domain Mgmt",         adminOnly: true, actionStyle: true },
   { id: "reports",              label: "📊 Reports",             adminOnly: true, actionStyle: true },
   { id: "resource_management",  label: "🔧 Resources",           adminOnly: true, actionStyle: true },
+  { id: "runbooks",              label: "📋 Runbooks",            adminOnly: true, actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2818,6 +2820,7 @@ const App: React.FC = () => {
     "tenant_health",
     "search",
     "resource_management",
+    "runbooks",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------
@@ -3007,6 +3010,8 @@ const App: React.FC = () => {
             ? "Domain management · enable/disable · delete · resource inspection"
             : activeTab === "search"
             ? "Ops Assistant · full-text search · similarity · smart report suggestions"
+            : activeTab === "runbooks"
+            ? "Policy-as-code runbooks · approval workflows · execution audit trail"
             : "Platform9 management"}
       </section>
 
@@ -5180,6 +5185,13 @@ const App: React.FC = () => {
               onNavigateToReport={(slug) => {
                 setActiveTab("reports");
               }}
+            />
+          )}
+
+          {/* Runbooks */}
+          {activeTab === "runbooks" && (
+            <RunbooksTab
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
             />
           )}
 

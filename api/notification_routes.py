@@ -48,6 +48,7 @@ VALID_EVENT_TYPES = [
     "domain_deleted", "domain_toggled",
     "tenant_provisioned",
     "report_exported",
+    "runbook_approval_requested", "runbook_completed", "runbook_failed",
 ]
 
 VALID_SEVERITIES = ["info", "warning", "critical"]

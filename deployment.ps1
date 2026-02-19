@@ -739,7 +739,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_technical_role_permissions.sql"; Desc="Technical role + missing resource permissions"},
     @{File="db\migrate_departments_navigation.sql"; Desc="Departments + Navigation visibility layer"},
     @{File="db\migrate_operator_permissions.sql"; Desc="Operator/viewer missing read permissions (networks, flavors, users)"},
-    @{File="db\migrate_search.sql"; Desc="Ops Search tables (search_documents, search_indexer_state, pg_trgm)"}
+    @{File="db\migrate_search.sql"; Desc="Ops Search tables (search_documents, search_indexer_state, pg_trgm)"},
+    @{File="db\migrate_runbooks.sql"; Desc="Runbooks framework (runbooks, approval_policies, executions, approvals)"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
@@ -1002,6 +1003,17 @@ Write-Host "  Scope Filters:         Domain/Tenant dropdown filters — 20 of 26
 Write-Host "  Quota Metering:        Per-project usage (vCPUs, RAM, VMs, volumes, storage, FIPs, SGs)" -ForegroundColor White
 Write-Host "  Doc Types:             29 indexed types (VMs, volumes, users, audit, drift, snapshots, roles...)" -ForegroundColor White
 Write-Host "  RBAC:                  viewer/operator=search:read, admin/superadmin=search:admin" -ForegroundColor White
+Write-Host ""
+
+Write-Host "Runbooks (Policy-as-Code):" -ForegroundColor Cyan
+Write-Host "  Feature:               ENABLED" -ForegroundColor Green
+Write-Host "  UI Tab:                Runbooks (catalogue, execution history, approvals, policy editor)" -ForegroundColor White
+Write-Host "  API Endpoints:         /api/runbooks (list, trigger, approve, reject, cancel, history, policies, stats)" -ForegroundColor White
+Write-Host "  Built-in Runbooks:     5 (Stuck VM, Orphan Cleanup, SG Audit, Quota Check, Diagnostics Bundle)" -ForegroundColor White
+Write-Host "  Approval Workflows:    Flexible trigger_role → approver_role mapping per runbook" -ForegroundColor White
+Write-Host "  Approval Modes:        auto_approve, single_approval, multi_approval" -ForegroundColor White
+Write-Host "  Dry-Run:               First-class concept — all runbooks support scan-only mode" -ForegroundColor White
+Write-Host "  RBAC:                  viewer=read, operator=read+trigger, admin/superadmin=full+policies" -ForegroundColor White
 Write-Host ""
 
 Write-Success "System is ready for use!"
