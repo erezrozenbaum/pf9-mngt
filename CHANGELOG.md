@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.5] - 2026-02-19
+
+### Added
+- **Scope-aware smart queries** — Domain and Tenant dropdown filters on the Ops Search bar now actually filter smart query results. 20 of 26 query templates inject conditional `WHERE` clauses (`scope_tenant`, `scope_domain`) so answers reflect only the selected project/domain. Infrastructure-level queries (hypervisors, images, drift, activity, domains, platform overview) remain unscoped.
+- **Scope passed end-to-end** — Frontend sends `scope_tenant` / `scope_domain` query params to `GET /api/search/smart`; the API passes them to `execute_smart_query()`; each query's SQL uses `(%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)` pattern so NULL = no filter.
+- **Parameterised "Ask Me Anything" chips** — Template chips (dashed border) like "Quota for …" and "Roles for …" auto-fill the search bar with the scoped tenant name when a scope is selected, or prompt the user to type a target name.
+- **"New Question" button** — Appears on both the smart answer card header and the FTS results bar. Clears all results and focuses the input for a fresh query.
+
+### Fixed
+- **Scope filters had no effect** — Selecting a domain/tenant in the scope dropdowns only affected template chip pre-fill but did not filter smart query SQL results. Now all scopable queries honour the selected scope.
+- **Dark mode unreadable text** — All hardcoded light-mode colors (`#fff`, `#111827`, `#374151`, `#6b7280`, `#15803d`, etc.) in the smart query card, help panel, chips, intent suggestions, error bar, and empty state replaced with CSS variables (`var(--color-success)`, `var(--pf9-text)`, `var(--card-bg)`, `var(--pf9-border)`, etc.) that adapt to the dark theme.
+
 ## [1.20.4] - 2026-02-20
 
 ### Fixed

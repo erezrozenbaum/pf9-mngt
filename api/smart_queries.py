@@ -141,7 +141,11 @@ _register(SmartQuery(
     ),
     sql="""
         SELECT status, vm_state, count(*) as count
-        FROM servers
+        FROM servers s
+        LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         GROUP BY status, vm_state
         ORDER BY count DESC
     """,
@@ -175,8 +179,11 @@ _register(SmartQuery(
                s.hypervisor_hostname AS host, s.created_at
         FROM servers s
         LEFT JOIN projects p ON p.id = s.project_id
-        WHERE s.status IN ('SHUTOFF','SUSPENDED','PAUSED')
-           OR s.vm_state IN ('stopped','suspended','paused')
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (s.status IN ('SHUTOFF','SUSPENDED','PAUSED')
+           OR s.vm_state IN ('stopped','suspended','paused'))
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         ORDER BY s.name
     """,
     formatter=_fmt_table(
@@ -211,7 +218,10 @@ _register(SmartQuery(
                s.hypervisor_hostname AS host, s.created_at
         FROM servers s
         LEFT JOIN projects p ON p.id = s.project_id
-        WHERE s.status = 'ERROR' OR s.vm_state = 'error'
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (s.status = 'ERROR' OR s.vm_state = 'error')
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         ORDER BY s.name
     """,
     formatter=_fmt_table(
@@ -241,7 +251,14 @@ _register(SmartQuery(
         r"|\b(?:count|total|number)\s+(?:of\s+)?(?:vm|vms|server|servers|instance|instances)\b",
         re.I,
     ),
-    sql="SELECT count(*) AS count FROM servers",
+    sql="""
+        SELECT count(*) AS count
+        FROM servers s
+        LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+    """,
     formatter=_fmt_number("Total VMs", "count", "VMs"),
     description="Count of all VMs in the platform",
     category="infrastructure",
@@ -264,6 +281,8 @@ _register(SmartQuery(
         FROM projects p
         LEFT JOIN domains d ON d.id = p.domain_id
         LEFT JOIN servers s ON s.project_id = p.id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         GROUP BY p.name, d.name
         HAVING count(s.id) > 0
         ORDER BY vm_count DESC
@@ -366,8 +385,10 @@ _register(SmartQuery(
             SELECT * FROM live WHERE NOT EXISTS (SELECT 1 FROM latest)
         )
         SELECT * FROM combined
-        WHERE lower(project_name) LIKE lower(%(tenant)s)
-           OR lower(domain) LIKE lower(%(tenant)s)
+        WHERE (lower(project_name) LIKE lower(%(tenant)s)
+           OR lower(domain) LIKE lower(%(tenant)s))
+          AND (%(scope_tenant)s IS NULL OR project_name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR domain = %(scope_domain)s)
         ORDER BY project_name
     """,
     formatter=_fmt_table(
@@ -431,7 +452,9 @@ _register(SmartQuery(
             SELECT * FROM live WHERE NOT EXISTS (SELECT 1 FROM latest)
         )
         SELECT * FROM combined
-        WHERE instances_used > 0 OR volumes_used > 0
+        WHERE (instances_used > 0 OR volumes_used > 0)
+          AND (%(scope_tenant)s IS NULL OR project_name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR domain = %(scope_domain)s)
         ORDER BY instances_used DESC, project_name
     """,
     formatter=_fmt_table(
@@ -474,6 +497,9 @@ _register(SmartQuery(
                p.name AS project, v.created_at
         FROM volumes v
         LEFT JOIN projects p ON p.id = v.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         ORDER BY v.name
     """,
     formatter=_fmt_table(
@@ -510,7 +536,10 @@ _register(SmartQuery(
         SELECT v.name, v.size_gb, v.volume_type, p.name AS project, v.created_at
         FROM volumes v
         LEFT JOIN projects p ON p.id = v.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
         WHERE v.status = 'available'
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         ORDER BY v.size_gb DESC
     """,
     formatter=_fmt_table(
@@ -546,6 +575,8 @@ _register(SmartQuery(
         SELECT user_name, role_name, project_name, domain_name, inherited
         FROM role_assignments
         WHERE lower(user_name) LIKE lower(%(user)s)
+          AND (%(scope_tenant)s IS NULL OR project_name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR domain_name = %(scope_domain)s)
         ORDER BY domain_name, project_name
     """,
     formatter=_fmt_table(
@@ -583,6 +614,8 @@ _register(SmartQuery(
         SELECT user_name, role_name, project_name, domain_name, inherited
         FROM role_assignments
         WHERE user_name IS NOT NULL AND user_name != ''
+          AND (%(scope_tenant)s IS NULL OR project_name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR domain_name = %(scope_domain)s)
         ORDER BY domain_name, project_name, user_name
         LIMIT 100
     """,
@@ -613,7 +646,13 @@ _register(SmartQuery(
         r"|\b(?:count|total|number)\s+(?:of\s+)?(?:project|projects|tenant|tenants)\b",
         re.I,
     ),
-    sql="SELECT count(*) AS count FROM projects",
+    sql="""
+        SELECT count(*) AS count
+        FROM projects p
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
+    """,
     formatter=_fmt_number("Total Projects", "count", "projects"),
     description="Count of all projects/tenants",
     category="infrastructure",
@@ -672,6 +711,9 @@ _register(SmartQuery(
                (SELECT count(*) FROM ports pt WHERE pt.network_id = n.id) AS port_count
         FROM networks n
         LEFT JOIN projects p ON p.id = n.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         ORDER BY n.name
     """,
     formatter=_fmt_table(
@@ -708,6 +750,9 @@ _register(SmartQuery(
                p.name AS project, port_id
         FROM floating_ips f
         LEFT JOIN projects p ON p.id = f.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         ORDER BY floating_ip
     """,
     formatter=_fmt_table(
@@ -780,6 +825,8 @@ _register(SmartQuery(
     sql="""
         SELECT name, status, size_gb, project_name, domain_name, created_at
         FROM snapshots
+        WHERE (%(scope_tenant)s IS NULL OR project_name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR domain_name = %(scope_domain)s)
         ORDER BY created_at DESC
         LIMIT 50
     """,
@@ -887,6 +934,10 @@ _register(SmartQuery(
                count(s.id) AS vm_count
         FROM flavors f
         LEFT JOIN servers s ON s.flavor_id = f.id
+        LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         GROUP BY f.id, f.name, f.vcpus, f.ram_mb, f.disk_gb
         ORDER BY vm_count DESC, f.name
     """,
@@ -924,6 +975,8 @@ _register(SmartQuery(
     sql="""
         SELECT name, description, project_name, domain_name, tenant_name
         FROM security_groups
+        WHERE (%(scope_tenant)s IS NULL OR project_name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR domain_name = %(scope_domain)s)
         ORDER BY domain_name, project_name, name
     """,
     formatter=_fmt_table(
@@ -958,7 +1011,10 @@ _register(SmartQuery(
                n.name AS external_network
         FROM routers r
         LEFT JOIN projects p ON p.id = r.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
         LEFT JOIN networks n ON n.id = r.external_net_id
+        WHERE (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         ORDER BY r.name
     """,
     formatter=_fmt_table(
@@ -991,6 +1047,8 @@ _register(SmartQuery(
                cpu_efficiency, ram_efficiency, storage_efficiency,
                overall_score, classification, recommendation
         FROM metering_efficiency
+        WHERE (%(scope_tenant)s IS NULL OR project_name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR domain = %(scope_domain)s)
         ORDER BY overall_score ASC
         LIMIT 25
     """,
@@ -1028,7 +1086,10 @@ _register(SmartQuery(
         SELECT s.name, s.status, s.vm_state, p.name AS project, s.created_at
         FROM servers s
         LEFT JOIN projects p ON p.id = s.project_id
+        LEFT JOIN domains d ON d.id = p.domain_id
         WHERE lower(s.hypervisor_hostname) LIKE lower(%(host)s)
+          AND (%(scope_tenant)s IS NULL OR p.name = %(scope_tenant)s)
+          AND (%(scope_domain)s IS NULL OR d.name = %(scope_domain)s)
         ORDER BY s.name
     """,
     formatter=_fmt_table(
@@ -1096,11 +1157,21 @@ _register(SmartQuery(
 
 # ── Execution engine ─────────────────────────────────────────
 
-def execute_smart_query(question: str, conn) -> Optional[Dict[str, Any]]:
+def execute_smart_query(
+    question: str,
+    conn,
+    scope_tenant: Optional[str] = None,
+    scope_domain: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """
     Try each registered SmartQuery pattern against the question.
     First match wins — its SQL is executed and the formatter shapes
     the response.
+
+    *scope_tenant* / *scope_domain* — optional project/domain filters.
+    When provided the query SQL is expected to honour them via
+    ``(%(scope_tenant)s IS NULL OR …)`` conditions.  Queries that do
+    not reference these params simply ignore them (dict-style params).
 
     Returns None if no pattern matches.
     """
@@ -1117,14 +1188,18 @@ def execute_smart_query(question: str, conn) -> Optional[Dict[str, Any]]:
                 # Wrap in % for LIKE matching
                 params[key] = f"%{val.strip()}%"
 
+        # Inject scope params (always present — NULL = no filter)
+        params["scope_tenant"] = scope_tenant or None
+        params["scope_domain"] = scope_domain or None
+
         logger.info("Smart query matched: %s (id=%s, params=%s)", sq.title, sq.id, params)
 
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(sq.sql, params or None)
+                cur.execute(sq.sql, params)
                 rows = [dict(r) for r in cur.fetchall()]
 
-            result = sq.formatter(rows, {k: v.strip('%') for k, v in params.items()})
+            result = sq.formatter(rows, {k: v.strip('%') if isinstance(v, str) else v for k, v in params.items()})
             result["query_id"] = sq.id
             result["query_title"] = sq.title
             result["description"] = sq.description
