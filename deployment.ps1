@@ -740,7 +740,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_departments_navigation.sql"; Desc="Departments + Navigation visibility layer"},
     @{File="db\migrate_operator_permissions.sql"; Desc="Operator/viewer missing read permissions (networks, flavors, users)"},
     @{File="db\migrate_search.sql"; Desc="Ops Search tables (search_documents, search_indexer_state, pg_trgm)"},
-    @{File="db\migrate_runbooks.sql"; Desc="Runbooks framework (runbooks, approval_policies, executions, approvals)"}
+    @{File="db\migrate_runbooks.sql"; Desc="Runbooks framework (runbooks, approval_policies, executions, approvals)"},
+    @{File="db\migrate_fix_drift_columns.sql"; Desc="Drift detection: add missing columns, fix field-name mismatches"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

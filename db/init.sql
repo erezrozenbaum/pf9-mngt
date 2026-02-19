@@ -73,22 +73,27 @@ CREATE TABLE IF NOT EXISTS volumes (
     size_gb          INTEGER,
     status           TEXT,
     volume_type      TEXT,
+    server_id        TEXT,
     bootable         BOOLEAN,
     created_at       TIMESTAMPTZ,
     raw_json         JSONB,
     last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_volumes_server_id ON volumes(server_id);
 
 -- Example: networks / subnets / ports / routers / fips
 CREATE TABLE IF NOT EXISTS networks (
-    id           TEXT PRIMARY KEY,
-    name         TEXT,
-    project_id   TEXT REFERENCES projects(id),
-    is_shared    BOOLEAN,
-    is_external  BOOLEAN,
-    raw_json     JSONB,
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id             TEXT PRIMARY KEY,
+    name           TEXT,
+    project_id     TEXT REFERENCES projects(id),
+    status         TEXT,
+    admin_state_up BOOLEAN,
+    is_shared      BOOLEAN,
+    is_external    BOOLEAN,
+    raw_json       JSONB,
+    last_seen_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_networks_status ON networks(status);
 
 CREATE TABLE IF NOT EXISTS subnets (
     id           TEXT PRIMARY KEY,
@@ -96,6 +101,7 @@ CREATE TABLE IF NOT EXISTS subnets (
     network_id   TEXT REFERENCES networks(id),
     cidr         TEXT,
     gateway_ip   TEXT,
+    enable_dhcp  BOOLEAN,
     raw_json     JSONB,
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -117,10 +123,12 @@ CREATE TABLE IF NOT EXISTS ports (
     device_id     TEXT,
     device_owner  TEXT,
     mac_address   TEXT,
+    status        TEXT,
     ip_addresses  JSONB,
     raw_json      JSONB,
     last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_ports_status ON ports(status);
 
 CREATE TABLE IF NOT EXISTS floating_ips (
     id            TEXT PRIMARY KEY,
@@ -1676,14 +1684,14 @@ INSERT INTO drift_rules (resource_type, field_name, severity, description) VALUE
     ('servers', 'status',              'warning',  'VM status changed unexpectedly'),
     ('servers', 'vm_state',            'warning',  'VM state changed'),
     ('servers', 'hypervisor_hostname', 'info',     'VM migrated to a different hypervisor'),
-    ('servers', 'host_id',             'info',     'VM host assignment changed'),
+
     ('volumes', 'status',              'warning',  'Volume status changed'),
     ('volumes', 'server_id',           'critical', 'Volume reattached to a different VM'),
-    ('volumes', 'size',                'warning',  'Volume size changed — possible extend'),
+    ('volumes', 'size_gb',             'warning',  'Volume size changed — possible extend'),
     ('volumes', 'volume_type',         'warning',  'Volume type changed'),
     ('networks', 'status',             'warning',  'Network status changed'),
     ('networks', 'admin_state_up',     'critical', 'Network admin state toggled'),
-    ('networks', 'shared',             'critical', 'Network sharing setting changed'),
+    ('networks', 'is_shared',          'critical', 'Network sharing setting changed'),
     ('ports', 'device_id',             'warning',  'Port device attachment changed'),
     ('ports', 'status',                'info',     'Port status changed'),
     ('ports', 'mac_address',           'critical', 'Port MAC address changed — possible spoofing'),
@@ -1692,7 +1700,7 @@ INSERT INTO drift_rules (resource_type, field_name, severity, description) VALUE
     ('floating_ips', 'status',         'info',     'Floating IP status changed'),
     ('security_groups', 'description', 'info',     'Security group description changed'),
     ('snapshots', 'status',            'warning',  'Snapshot status changed'),
-    ('snapshots', 'size',              'info',     'Snapshot size changed'),
+    ('snapshots', 'size_gb',           'info',     'Snapshot size changed'),
     ('subnets', 'gateway_ip',          'critical', 'Subnet gateway IP changed'),
     ('subnets', 'cidr',                'critical', 'Subnet CIDR changed'),
     ('subnets', 'enable_dhcp',         'warning',  'DHCP setting changed on subnet')

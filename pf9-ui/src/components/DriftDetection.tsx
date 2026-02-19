@@ -390,9 +390,31 @@ export default function DriftDetection({ selectedDomain, selectedTenant }: Drift
     <div className="drift-container">
       <h2>🔍 Drift Detection</h2>
 
+      {/* ── Loading state ── */}
+      {!summary && (
+        <div className="drift-loading">Loading drift summary…</div>
+      )}
+
       {/* ── Summary Cards ── */}
       {summary && (
         <>
+          {/* ── All-clear banner when zero events ── */}
+          {summary.totals.total === 0 && (
+            <div className="drift-all-clear">
+              <div className="drift-all-clear-icon">✅</div>
+              <div className="drift-all-clear-text">
+                <strong>No Configuration Drift Detected</strong>
+                <p>
+                  Your environment is stable. The drift engine compares resource fields (flavor, status, network, volume attachments, etc.)
+                  across inventory syncs and will flag any unexpected changes here automatically.
+                </p>
+                <p style={{ fontSize: ".8rem", color: "var(--text-secondary, #64748b)", marginTop: 4 }}>
+                  {rules.length > 0 ? `${rules.length} drift rules active` : "Loading rules…"} · Inventory syncs run every ~60 seconds
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="drift-summary-row">
             <div className="drift-summary-card">
               <div className="card-value">{summary.totals.total}</div>
