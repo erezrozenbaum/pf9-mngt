@@ -288,6 +288,12 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
   const [page, setPage] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
 
+  /* ── Scope filters (domain / tenant) ────────────────────── */
+  const [scopeDomain, setScopeDomain] = useState("");
+  const [scopeTenant, setScopeTenant] = useState("");
+  const [domainOptions, setDomainOptions] = useState<{ domain_id: string; domain_name: string }[]>([]);
+  const [tenantOptions, setTenantOptions] = useState<{ tenant_id: string; tenant_name: string; domain_name: string }[]>([]);
+
   const inputRef = useRef<HTMLInputElement>(null);
   const LIMIT = 25;
 
@@ -295,6 +301,38 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Load domain & tenant options for scope filters
+  useEffect(() => {
+    (async () => {
+      try {
+        const [dRes, tRes] = await Promise.all([
+          apiFetch<{ items: { domain_id: string; domain_name: string }[] }>("/domains"),
+          apiFetch<{ items: { tenant_id: string; tenant_name: string; domain_name: string }[] }>("/tenants"),
+        ]);
+        setDomainOptions(dRes.items);
+        setTenantOptions(tRes.items);
+      } catch { /* non-critical */ }
+    })();
+  }, []);
+
+  // Filter tenants by selected domain
+  const filteredTenants = scopeDomain
+    ? tenantOptions.filter((t) => t.domain_name === scopeDomain)
+    : tenantOptions;
+
+  // Clear all results and return to start
+  const clearResults = () => {
+    setQuery("");
+    setResults(null);
+    setIntents(null);
+    setSmartResult(null);
+    setError("");
+    setSimilarFor(null);
+    setSimilarDocs([]);
+    setPage(0);
+    inputRef.current?.focus();
+  };
 
   /* ── Search handler ─────────────────────────────────────── */
 
@@ -308,10 +346,14 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
         if (selectedTypes.length > 0) params.set("types", selectedTypes.join(","));
 
         // Fire FTS + intent detection + smart query in parallel
+        const smartParams = new URLSearchParams({ q: q.trim() });
+        if (scopeTenant) smartParams.set("scope_tenant", scopeTenant);
+        if (scopeDomain) smartParams.set("scope_domain", scopeDomain);
+
         const [searchRes, intentRes, smartRes] = await Promise.all([
           apiFetch<SearchResult>(`/api/search?${params}`),
           apiFetch<IntentResult>(`/api/search/intent?q=${encodeURIComponent(q.trim())}`),
-          apiFetch<SmartQueryResult>(`/api/search/smart?q=${encodeURIComponent(q.trim())}`),
+          apiFetch<SmartQueryResult>(`/api/search/smart?${smartParams}`),
         ]);
 
         setResults(searchRes);
@@ -324,7 +366,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
         setLoading(false);
       }
     },
-    [selectedTypes],
+    [selectedTypes, scopeTenant, scopeDomain],
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -390,74 +432,104 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
 
   /* ── Smart Query example chips ──────────────────────────── */
 
-  const SMART_EXAMPLES: { category: string; icon: string; queries: string[] }[] = [
+  /**
+   * Each query can be a plain string (runs immediately) or an object with
+   * `template` + `placeholder` — clicking fills the search bar and lets
+   * the user complete it (e.g., type a tenant name).
+   * If a scope tenant/domain is selected it auto-fills the placeholder.
+   */
+  interface ChipDef {
+    label: string;
+    /** If set, this is a template needing user input (the {placeholder} part) */
+    template?: string;
+  }
+
+  const chip = (label: string): ChipDef => ({ label });
+  const chipT = (label: string, template: string): ChipDef => ({ label, template });
+
+  const SMART_EXAMPLES: { category: string; icon: string; queries: ChipDef[] }[] = [
     {
       category: "Infrastructure",
       icon: "🖥️",
       queries: [
-        "How many VMs?",
-        "Show powered off VMs",
-        "VMs in error state",
-        "Hypervisor capacity",
-        "Show all flavors",
-        "VMs on host hv-compute-01",
-        "Image overview",
+        chip("How many VMs?"),
+        chip("Show powered off VMs"),
+        chip("VMs in error state"),
+        chip("Hypervisor capacity"),
+        chip("Show all flavors"),
+        chipT("VMs on host …", "VMs on host "),
+        chip("Image overview"),
       ],
     },
     {
       category: "Projects & Quotas",
       icon: "📁",
       queries: [
-        "Quota for Org1",
-        "Quota usage overview",
-        "VMs per project",
-        "How many projects?",
-        "Domain overview",
+        chipT("Quota for …", "Quota for "),
+        chip("Quota usage overview"),
+        chip("VMs per project"),
+        chip("How many projects?"),
+        chip("Domain overview"),
       ],
     },
     {
       category: "Storage",
       icon: "💾",
       queries: [
-        "Volume summary",
-        "Orphan volumes",
-        "Snapshot overview",
+        chip("Volume summary"),
+        chip("Orphan volumes"),
+        chip("Snapshot overview"),
       ],
     },
     {
       category: "Networking",
       icon: "🌐",
       queries: [
-        "Network overview",
-        "Floating IP overview",
-        "Router overview",
+        chip("Network overview"),
+        chip("Floating IP overview"),
+        chip("Router overview"),
       ],
     },
     {
       category: "Security & Access",
       icon: "🔐",
       queries: [
-        "Roles for admin",
-        "All role assignments",
-        "Security group overview",
+        chipT("Roles for …", "Roles for "),
+        chip("All role assignments"),
+        chip("Security group overview"),
       ],
     },
     {
       category: "Operations",
       icon: "📊",
       queries: [
-        "Recent activity",
-        "Drift summary",
-        "Efficiency overview",
-        "Platform overview",
+        chip("Recent activity"),
+        chip("Drift summary"),
+        chip("Efficiency overview"),
+        chip("Platform overview"),
       ],
     },
   ];
 
-  const runExampleQuery = (q: string) => {
-    setQuery(q);
-    setShowHelp(false);
-    doSearch(q, 0);
+  /** Handle chip click — for templates, fill the bar (+ scope) and focus; for plain queries, run. */
+  const runExampleQuery = (c: ChipDef) => {
+    if (c.template) {
+      // If scope tenant is selected, auto-fill; otherwise let user type
+      const fill = scopeTenant || scopeDomain || "";
+      const q = c.template + fill;
+      setQuery(q);
+      setShowHelp(false);
+      if (fill) {
+        doSearch(q, 0);
+      } else {
+        // Focus the input so user can complete the query
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }
+    } else {
+      setQuery(c.label);
+      setShowHelp(false);
+      doSearch(c.label, 0);
+    }
   };
 
   /* ── Pagination ─────────────────────────────────────────── */
@@ -514,7 +586,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
             padding: "10px 12px",
             borderRadius: 6,
             border: showHelp ? "1px solid #22c55e" : "1px solid var(--border-color, #cbd5e1)",
-            background: showHelp ? "#dcfce7" : "var(--card-bg, #f8fafc)",
+            background: showHelp ? "var(--pf9-safe-bg, #dcfce7)" : "var(--card-bg, #f8fafc)",
             cursor: "pointer",
             fontSize: "0.85rem",
           }}
@@ -595,24 +667,91 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
         )}
       </div>
 
+      {/* ── Scope filters (domain / tenant) ──────────────── */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.78rem", color: "var(--pf9-text-secondary)", fontWeight: 600 }}>Scope:</span>
+        <select
+          value={scopeDomain}
+          onChange={(e) => {
+            setScopeDomain(e.target.value);
+            setScopeTenant(""); // reset tenant when domain changes
+          }}
+          style={{
+            padding: "4px 10px",
+            fontSize: "0.82rem",
+            borderRadius: 6,
+            border: "1px solid var(--border-color, #cbd5e1)",
+            background: "var(--input-bg, #fff)",
+            color: "var(--text-color, #1e293b)",
+            minWidth: 140,
+          }}
+        >
+          <option value="">All Domains</option>
+          {domainOptions.map((d) => (
+            <option key={d.domain_id} value={d.domain_name}>{d.domain_name}</option>
+          ))}
+        </select>
+        <select
+          value={scopeTenant}
+          onChange={(e) => setScopeTenant(e.target.value)}
+          style={{
+            padding: "4px 10px",
+            fontSize: "0.82rem",
+            borderRadius: 6,
+            border: "1px solid var(--border-color, #cbd5e1)",
+            background: "var(--input-bg, #fff)",
+            color: "var(--text-color, #1e293b)",
+            minWidth: 160,
+          }}
+        >
+          <option value="">All Tenants</option>
+          {filteredTenants.map((t) => (
+            <option key={t.tenant_id} value={t.tenant_name}>
+              {t.tenant_name}{!scopeDomain ? ` (${t.domain_name})` : ""}
+            </option>
+          ))}
+        </select>
+        {(scopeDomain || scopeTenant) && (
+          <button
+            onClick={() => { setScopeDomain(""); setScopeTenant(""); }}
+            style={{
+              padding: "3px 10px",
+              fontSize: "0.78rem",
+              borderRadius: 12,
+              border: "1px solid #94a3b8",
+              background: "transparent",
+              color: "#94a3b8",
+              cursor: "pointer",
+            }}
+          >
+            ✕ Clear scope
+          </button>
+        )}
+        {(scopeDomain || scopeTenant) && (
+          <span style={{ fontSize: "0.72rem", color: "var(--pf9-text-secondary)", fontStyle: "italic" }}>
+            Scope auto-fills tenant-specific questions (e.g. "Quota for …")
+          </span>
+        )}
+      </div>
+
       {/* ── Smart Query Help Panel ───────────────────────── */}
       {showHelp && (
         <div
           style={{
             padding: 16,
             background: "var(--card-bg, #f0fdf4)",
-            border: "1px solid #86efac",
+            border: "1px solid var(--color-success, #86efac)",
             borderRadius: 8,
             marginBottom: 16,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <span style={{ fontSize: "1.1rem" }}>🤖</span>
-            <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "#15803d" }}>
+            <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--color-success, #15803d)" }}>
               Ask Me Anything — Example Questions
             </span>
-            <span style={{ fontSize: "0.78rem", color: "#6b7280", marginLeft: 4 }}>
-              Click any chip to run it instantly
+            <span style={{ fontSize: "0.78rem", color: "var(--pf9-text-secondary)", marginLeft: 4 }}>
+              Click any chip to run it — chips with "…" let you choose the target
             </span>
             <button
               onClick={() => setShowHelp(false)}
@@ -620,11 +759,11 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                 marginLeft: "auto",
                 padding: "2px 8px",
                 borderRadius: 4,
-                border: "1px solid #cbd5e1",
+                border: "1px solid var(--pf9-border)",
                 background: "transparent",
                 fontSize: "0.8rem",
                 cursor: "pointer",
-                color: "#6b7280",
+                color: "var(--pf9-text-secondary)",
               }}
             >
               ✕
@@ -633,49 +772,50 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
             {SMART_EXAMPLES.map((cat) => (
               <div key={cat.category}>
-                <div style={{ fontWeight: 600, fontSize: "0.82rem", color: "#374151", marginBottom: 6 }}>
+                <div style={{ fontWeight: 600, fontSize: "0.82rem", color: "var(--pf9-text)", marginBottom: 6 }}>
                   {cat.icon} {cat.category}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                  {cat.queries.map((q) => (
+                  {cat.queries.map((c) => (
                     <button
-                      key={q}
-                      onClick={() => runExampleQuery(q)}
+                      key={c.label}
+                      onClick={() => runExampleQuery(c)}
                       style={{
                         padding: "4px 10px",
                         fontSize: "0.76rem",
                         borderRadius: 14,
-                        border: "1px solid #86efac",
-                        background: "#fff",
-                        color: "#15803d",
+                        border: c.template ? "1px dashed var(--color-success, #86efac)" : "1px solid var(--color-success, #86efac)",
+                        background: "var(--color-surface, #fff)",
+                        color: "var(--color-success, #15803d)",
                         cursor: "pointer",
                         transition: "all 0.15s",
                         whiteSpace: "nowrap",
                       }}
                       onMouseEnter={(e) => {
-                        (e.target as HTMLButtonElement).style.background = "#dcfce7";
+                        (e.target as HTMLButtonElement).style.background = "var(--pf9-safe-bg)";
                         (e.target as HTMLButtonElement).style.borderColor = "#22c55e";
                       }}
                       onMouseLeave={(e) => {
-                        (e.target as HTMLButtonElement).style.background = "#fff";
-                        (e.target as HTMLButtonElement).style.borderColor = "#86efac";
+                        (e.target as HTMLButtonElement).style.background = "var(--color-surface, #fff)";
+                        (e.target as HTMLButtonElement).style.borderColor = "var(--color-success, #86efac)";
                       }}
+                      title={c.template ? "Click to fill — complete with a name" : "Click to run"}
                     >
-                      {q}
+                      {c.label}
                     </button>
                   ))}
                 </div>
               </div>
             ))}
           </div>
-          <div style={{ fontSize: "0.72rem", color: "#9ca3af", marginTop: 10, fontStyle: "italic" }}>
+          <div style={{ fontSize: "0.72rem", color: "var(--pf9-text-muted)", marginTop: 10, fontStyle: "italic" }}>
             💡 You can also type your own question naturally — the system matches patterns, not exact wording.
           </div>
         </div>
       )}
 
       {error && (
-        <div style={{ padding: 12, background: "#fef2f2", color: "#dc2626", borderRadius: 6, marginBottom: 16 }}>
+        <div style={{ padding: 12, background: "var(--pf9-danger-bg)", color: "var(--pf9-danger-text)", borderRadius: 6, marginBottom: 16 }}>
           {error}
         </div>
       )}
@@ -686,15 +826,15 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
           style={{
             padding: 14,
             background: "var(--card-bg, #eff6ff)",
-            border: "1px solid #93c5fd",
+            border: "1px solid var(--pf9-info-border, #93c5fd)",
             borderRadius: 8,
             marginBottom: 16,
           }}
         >
-          <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: 8, color: "#1d4ed8" }}>
+          <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: 8, color: "var(--pf9-info-text, #1d4ed8)" }}>
             💡 Smart Suggestions
             {intents.tenant_hint && (
-              <span style={{ fontWeight: 400, marginLeft: 8, fontSize: "0.82rem", color: "#6b7280" }}>
+              <span style={{ fontWeight: 400, marginLeft: 8, fontSize: "0.82rem", color: "var(--pf9-text-secondary)" }}>
                 (tenant hint: <strong>{intents.tenant_hint}</strong>)
               </span>
             )}
@@ -707,9 +847,9 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                 style={{
                   padding: "8px 14px",
                   borderRadius: 6,
-                  border: "1px solid #3b82f6",
-                  background: "#dbeafe",
-                  color: "#1e40af",
+                  border: "1px solid var(--pf9-info-border, #3b82f6)",
+                  background: "var(--pf9-info-bg, #dbeafe)",
+                  color: "var(--pf9-info-text, #1e40af)",
                   cursor: "pointer",
                   fontSize: "0.85rem",
                   textAlign: "left",
@@ -721,7 +861,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                   style={{
                     display: "block",
                     fontSize: "0.72rem",
-                    color: "#6b7280",
+                    color: "var(--pf9-text-secondary)",
                     marginTop: 2,
                   }}
                 >
@@ -739,7 +879,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
           style={{
             padding: 16,
             background: "var(--card-bg, #f0fdf4)",
-            border: "1px solid #86efac",
+            border: "1px solid var(--color-success, #86efac)",
             borderRadius: 8,
             marginBottom: 16,
           }}
@@ -747,7 +887,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
           {/* Header */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: "1.15rem" }}>🤖</span>
-            <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "#15803d" }}>
+            <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--color-success, #15803d)" }}>
               {smartResult.title || smartResult.query_title}
             </span>
             {smartResult.category && (
@@ -756,36 +896,52 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                   fontSize: "0.7rem",
                   padding: "2px 8px",
                   borderRadius: 10,
-                  background: "#dcfce7",
-                  color: "#166534",
+                  background: "var(--pf9-safe-bg)",
+                  color: "var(--pf9-safe-text)",
                   fontWeight: 500,
                 }}
               >
                 {smartResult.category}
               </span>
             )}
+            <button
+              onClick={clearResults}
+              title="Clear and ask another question"
+              style={{
+                marginLeft: "auto",
+                padding: "3px 10px",
+                fontSize: "0.76rem",
+                borderRadius: 12,
+                border: "1px solid var(--color-success, #86efac)",
+                background: "var(--color-surface, #fff)",
+                color: "var(--color-success, #15803d)",
+                cursor: "pointer",
+              }}
+            >
+              ✕ New Question
+            </button>
           </div>
 
           {/* Summary */}
           {smartResult.summary && (
-            <div style={{ fontSize: "0.88rem", color: "#374151", marginBottom: 10, fontWeight: 500 }}>
+            <div style={{ fontSize: "0.88rem", color: "var(--pf9-text)", marginBottom: 10, fontWeight: 500 }}>
               {smartResult.summary}
             </div>
           )}
 
           {/* Error card */}
           {smartResult.card_type === "error" && (
-            <div style={{ padding: 10, background: "#fef2f2", color: "#dc2626", borderRadius: 6, fontSize: "0.82rem" }}>
+            <div style={{ padding: 10, background: "var(--pf9-danger-bg)", color: "var(--pf9-danger-text)", borderRadius: 6, fontSize: "0.82rem" }}>
               ⚠️ {smartResult.error || "Query failed"}
             </div>
           )}
 
           {/* Number card */}
           {smartResult.card_type === "number" && (
-            <div style={{ fontSize: "2rem", fontWeight: 700, color: "#15803d", textAlign: "center", padding: "8px 0" }}>
+            <div style={{ fontSize: "2rem", fontWeight: 700, color: "var(--color-success)", textAlign: "center", padding: "8px 0" }}>
               {typeof smartResult.value === "number" ? smartResult.value.toLocaleString() : smartResult.value}
               {smartResult.unit && (
-                <span style={{ fontSize: "1rem", fontWeight: 400, marginLeft: 6, color: "#6b7280" }}>
+                <span style={{ fontSize: "1rem", fontWeight: 400, marginLeft: 6, color: "var(--pf9-text-secondary)" }}>
                   {smartResult.unit}
                 </span>
               )}
@@ -800,17 +956,17 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                   key={k}
                   style={{
                     padding: "8px 14px",
-                    background: "#fff",
-                    border: "1px solid #d1d5db",
+                    background: "var(--color-surface, #fff)",
+                    border: "1px solid var(--pf9-border)",
                     borderRadius: 6,
                     textAlign: "center",
                     minWidth: 90,
                   }}
                 >
-                  <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "#111827" }}>
+                  <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--color-text-primary, #111827)" }}>
                     {typeof v === "number" ? v.toLocaleString() : String(v ?? "—")}
                   </div>
-                  <div style={{ fontSize: "0.72rem", color: "#6b7280", textTransform: "capitalize" }}>
+                  <div style={{ fontSize: "0.72rem", color: "var(--pf9-text-secondary)", textTransform: "capitalize" }}>
                     {k.replace(/_/g, " ")}
                   </div>
                 </div>
@@ -836,8 +992,8 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                         style={{
                           textAlign: "left",
                           padding: "6px 10px",
-                          borderBottom: "2px solid #86efac",
-                          color: "#15803d",
+                          borderBottom: "2px solid var(--color-success, #86efac)",
+                          color: "var(--color-success, #15803d)",
                           fontWeight: 600,
                           whiteSpace: "nowrap",
                           position: "sticky",
@@ -855,7 +1011,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                     <tr>
                       <td
                         colSpan={smartResult.columns.length}
-                        style={{ padding: 16, textAlign: "center", color: "#6b7280" }}
+                        style={{ padding: 16, textAlign: "center", color: "var(--pf9-text-secondary)" }}
                       >
                         No data found
                       </td>
@@ -864,7 +1020,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                     smartResult.rows.map((row, idx) => (
                       <tr
                         key={idx}
-                        style={{ background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,0.6)" }}
+                        style={{ background: idx % 2 === 0 ? "transparent" : "var(--color-table-row-even, rgba(255,255,255,0.6))" }}
                       >
                         {smartResult.columns!.map((col) => {
                           const val = row[col.key];
@@ -881,7 +1037,8 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                               key={col.key}
                               style={{
                                 padding: "5px 10px",
-                                borderBottom: "1px solid #e5e7eb",
+                                borderBottom: "1px solid var(--pf9-border)",
+                                color: "var(--pf9-text)",
                                 whiteSpace: "nowrap",
                               }}
                             >
@@ -895,7 +1052,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                 </tbody>
               </table>
               {(smartResult.total ?? 0) > 0 && (
-                <div style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: 6, textAlign: "right" }}>
+                <div style={{ fontSize: "0.72rem", color: "var(--pf9-text-secondary)", marginTop: 6, textAlign: "right" }}>
                   {smartResult.total} row(s)
                 </div>
               )}
@@ -904,7 +1061,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
 
           {/* Description footer */}
           {smartResult.description && (
-            <div style={{ fontSize: "0.72rem", color: "#9ca3af", marginTop: 8, fontStyle: "italic" }}>
+            <div style={{ fontSize: "0.72rem", color: "var(--pf9-text-muted)", marginTop: 8, fontStyle: "italic" }}>
               {smartResult.description}
             </div>
           )}
@@ -940,7 +1097,7 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                 <strong style={{ color: DOC_TYPE_COLORS[dt.doc_type] || "#64748b" }}>
                   {DOC_TYPE_LABELS[dt.doc_type] || dt.doc_type}
                 </strong>
-                <span style={{ float: "right", color: "#6b7280" }}>{dt.actual_count}</span>
+                <span style={{ float: "right", color: "var(--pf9-text-secondary)" }}>{dt.actual_count}</span>
                 {dt.last_run_at && (
                   <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
                     Last run: {new Date(dt.last_run_at).toLocaleString()} ({dt.last_run_duration_ms}ms)
@@ -955,14 +1112,32 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
       {/* ── Results ──────────────────────────────────────── */}
       {results && (
         <div>
-          <div style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: 12 }}>
-            {results.total.toLocaleString()} result{results.total !== 1 ? "s" : ""} for{" "}
-            <strong>"{results.query}"</strong>
-            {totalPages > 1 && (
-              <span style={{ marginLeft: 8 }}>
-                (page {page + 1} of {totalPages})
-              </span>
-            )}
+          <div style={{ display: "flex", alignItems: "center", fontSize: "0.85rem", color: "var(--pf9-text-secondary)", marginBottom: 12 }}>
+            <span>
+              {results.total.toLocaleString()} result{results.total !== 1 ? "s" : ""} for{" "}
+              <strong>"{results.query}"</strong>
+              {totalPages > 1 && (
+                <span style={{ marginLeft: 8 }}>
+                  (page {page + 1} of {totalPages})
+                </span>
+              )}
+            </span>
+            <button
+              onClick={clearResults}
+              title="Clear and ask another question"
+              style={{
+                marginLeft: "auto",
+                padding: "3px 10px",
+                fontSize: "0.76rem",
+                borderRadius: 12,
+                border: "1px solid var(--pf9-border)",
+                background: "var(--card-bg, #f8fafc)",
+                color: "var(--pf9-text-secondary)",
+                cursor: "pointer",
+              }}
+            >
+              ✕ New Question
+            </button>
           </div>
 
           {results.results.map((doc) => (
@@ -1171,33 +1346,41 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
             Search across all resources, events, and audit logs — or ask operational questions.
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", marginTop: 16 }}>
-            {["How many VMs?", "Quota for Org1", "Volume summary", "Platform overview", "Drift summary", "Roles for admin"].map((q) => (
+            {[
+              chip("How many VMs?"),
+              chipT("Quota for …", "Quota for "),
+              chip("Volume summary"),
+              chip("Platform overview"),
+              chip("Drift summary"),
+              chipT("Roles for …", "Roles for "),
+            ].map((c) => (
               <button
-                key={q}
-                onClick={() => runExampleQuery(q)}
+                key={c.label}
+                onClick={() => runExampleQuery(c)}
                 style={{
                   padding: "5px 12px",
                   fontSize: "0.8rem",
                   borderRadius: 14,
-                  border: "1px solid #86efac",
-                  background: "#f0fdf4",
-                  color: "#15803d",
+                  border: c.template ? "1px dashed var(--color-success, #86efac)" : "1px solid var(--color-success, #86efac)",
+                  background: "var(--pf9-safe-bg, #f0fdf4)",
+                  color: "var(--color-success, #15803d)",
                   cursor: "pointer",
                   transition: "all 0.15s",
                 }}
                 onMouseEnter={(e) => {
-                  (e.target as HTMLButtonElement).style.background = "#dcfce7";
+                  (e.target as HTMLButtonElement).style.background = "var(--pf9-safe-border, #dcfce7)";
                 }}
                 onMouseLeave={(e) => {
-                  (e.target as HTMLButtonElement).style.background = "#f0fdf4";
+                  (e.target as HTMLButtonElement).style.background = "var(--pf9-safe-bg, #f0fdf4)";
                 }}
               >
-                🤖 {q}
+                🤖 {c.label}
               </button>
             ))}
           </div>
-          <div style={{ fontSize: "0.78rem", marginTop: 10, color: "#a1a1aa" }}>
-            Click the <strong style={{ color: "#22c55e" }}>🤖</strong> button above for all available questions
+          <div style={{ fontSize: "0.78rem", marginTop: 10, color: "var(--pf9-text-muted)" }}>
+            Click the <strong style={{ color: "#22c55e" }}>🤖</strong> button above for all available questions.
+            {" "}Use the <strong>Scope</strong> dropdowns to focus on a specific domain or tenant.
           </div>
         </div>
       )}
