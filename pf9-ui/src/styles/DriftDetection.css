@@ -15,6 +15,39 @@
 }
 
 /* ----- Summary Cards Row ------------------------------------------------ */
+
+/* All-clear banner (when zero drift events) */
+.drift-all-clear {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+  border: 1px solid #86efac;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+[data-theme="dark"] .drift-all-clear,
+.dark .drift-all-clear {
+  background: linear-gradient(135deg, #052e16, #064e3b);
+  border-color: #22c55e44;
+}
+.drift-all-clear-icon {
+  font-size: 2rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.drift-all-clear-text strong {
+  font-size: 1.05rem;
+  color: var(--text-primary, #1a1a2e);
+}
+.drift-all-clear-text p {
+  margin: 6px 0 0;
+  font-size: .88rem;
+  line-height: 1.5;
+  color: var(--text-secondary, #475569);
+}
+
 .drift-summary-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
