@@ -49,6 +49,7 @@ VALID_EVENT_TYPES = [
     "tenant_provisioned",
     "report_exported",
     "runbook_approval_requested", "runbook_completed", "runbook_failed",
+    "runbook_approval_granted", "runbook_approval_rejected",
 ]
 
 VALID_SEVERITIES = ["info", "warning", "critical"]
