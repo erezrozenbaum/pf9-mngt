@@ -1,0 +1,672 @@
+/**
+ * OpsSearch — Global search tab for the PF9 Management Portal.
+ *
+ * Features:
+ *   v1  – Full-text search (tsvector + ts_rank_cd)
+ *   v2  – "Show Similar" per result (pg_trgm similarity)
+ *   v2.5 – Intent detection: recognises quota / capacity / drift …
+ *          queries and suggests the matching report endpoint.
+ */
+
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { API_BASE } from "../config";
+
+/* ── API helper ─────────────────────────────────────────────── */
+
+function getToken(): string | null {
+  return localStorage.getItem("auth_token");
+}
+
+async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+/* ── Types ──────────────────────────────────────────────────── */
+
+interface SearchDoc {
+  doc_id: string;
+  doc_type: string;
+  resource_id: string;
+  resource_name: string;
+  tenant_name: string;
+  domain_name: string;
+  title: string;
+  headline: string;
+  ts: string;
+  rank: number;
+  metadata: Record<string, unknown>;
+}
+
+interface SearchResult {
+  query: string;
+  total: number;
+  limit: number;
+  offset: number;
+  results: SearchDoc[];
+}
+
+interface IntentMatch {
+  report: string;
+  label: string;
+  description: string;
+  endpoint: string;
+  matched_keyword: string;
+  confidence: string;
+}
+
+interface IntentResult {
+  query: string;
+  intents: IntentMatch[];
+  tenant_hint: string | null;
+  has_intent: boolean;
+  fallback_search: boolean;
+}
+
+interface SimilarDoc {
+  doc_id: string;
+  doc_type: string;
+  title: string;
+  resource_name: string;
+  combined_similarity: number;
+}
+
+interface IndexerStat {
+  doc_type: string;
+  last_run_at: string | null;
+  last_run_duration_ms: number | null;
+  actual_count: number;
+}
+
+interface StatsResult {
+  total_documents: number;
+  doc_types: IndexerStat[];
+}
+
+/* ── Constants ──────────────────────────────────────────────── */
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  vm: "VM",
+  volume: "Volume",
+  snapshot: "Snapshot",
+  hypervisor: "Hypervisor",
+  network: "Network",
+  subnet: "Subnet",
+  floating_ip: "Floating IP",
+  port: "Port",
+  security_group: "Security Group",
+  activity: "Activity",
+  audit: "Auth Audit",
+  drift_event: "Drift Event",
+  snapshot_run: "Snapshot Run",
+  snapshot_record: "Snapshot Record",
+  restore_job: "Restore Job",
+  backup: "Backup",
+  notification: "Notification",
+  provisioning: "Provisioning",
+  deletion: "Deletion",
+};
+
+const DOC_TYPE_COLORS: Record<string, string> = {
+  vm: "#3b82f6",
+  volume: "#8b5cf6",
+  snapshot: "#06b6d4",
+  hypervisor: "#f59e0b",
+  network: "#10b981",
+  subnet: "#14b8a6",
+  floating_ip: "#ec4899",
+  port: "#6366f1",
+  security_group: "#ef4444",
+  activity: "#64748b",
+  audit: "#78716c",
+  drift_event: "#f97316",
+  snapshot_run: "#0ea5e9",
+  snapshot_record: "#22d3ee",
+  restore_job: "#a855f7",
+  backup: "#84cc16",
+  notification: "#eab308",
+  provisioning: "#2563eb",
+  deletion: "#dc2626",
+};
+
+/* ── Prop types ─────────────────────────────────────────────── */
+
+interface Props {
+  isAdmin?: boolean;
+  /** Called by the parent when the user wants to navigate to a report tab */
+  onNavigateToReport?: (slug: string) => void;
+}
+
+/* ── Component ──────────────────────────────────────────────── */
+
+export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult | null>(null);
+  const [intents, setIntents] = useState<IntentResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [stats, setStats] = useState<StatsResult | null>(null);
+  const [showStats, setShowStats] = useState(false);
+  const [similarFor, setSimilarFor] = useState<string | null>(null);
+  const [similarDocs, setSimilarDocs] = useState<SimilarDoc[]>([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [page, setPage] = useState(0);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const LIMIT = 25;
+
+  // Focus input on mount
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  /* ── Search handler ─────────────────────────────────────── */
+
+  const doSearch = useCallback(
+    async (q: string, offset = 0) => {
+      if (!q.trim()) return;
+      setLoading(true);
+      setError("");
+      try {
+        const params = new URLSearchParams({ q: q.trim(), limit: String(LIMIT), offset: String(offset) });
+        if (selectedTypes.length > 0) params.set("types", selectedTypes.join(","));
+
+        // Fire FTS + intent detection in parallel
+        const [searchRes, intentRes] = await Promise.all([
+          apiFetch<SearchResult>(`/api/search?${params}`),
+          apiFetch<IntentResult>(`/api/search/intent?q=${encodeURIComponent(q.trim())}`),
+        ]);
+
+        setResults(searchRes);
+        setIntents(intentRes);
+        setPage(offset / LIMIT);
+      } catch (e: any) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [selectedTypes],
+  );
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    doSearch(query, 0);
+  };
+
+  /* ── Similarity handler ─────────────────────────────────── */
+
+  const loadSimilar = async (docId: string) => {
+    if (similarFor === docId) {
+      setSimilarFor(null);
+      setSimilarDocs([]);
+      return;
+    }
+    setSimilarFor(docId);
+    setSimilarLoading(true);
+    try {
+      const res = await apiFetch<{ similar: SimilarDoc[] }>(`/api/search/similar/${docId}`);
+      setSimilarDocs(res.similar);
+    } catch {
+      setSimilarDocs([]);
+    } finally {
+      setSimilarLoading(false);
+    }
+  };
+
+  /* ── Stats loader ───────────────────────────────────────── */
+
+  const loadStats = async () => {
+    if (showStats) {
+      setShowStats(false);
+      return;
+    }
+    try {
+      const s = await apiFetch<StatsResult>("/api/search/stats");
+      setStats(s);
+      setShowStats(true);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  /* ── Reindex trigger ────────────────────────────────────── */
+
+  const triggerReindex = async () => {
+    try {
+      await apiFetch("/api/search/reindex", { method: "POST" });
+      setError("");
+      alert("Re-index triggered. Documents will refresh within a few minutes.");
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  /* ── Toggle type filter ─────────────────────────────────── */
+
+  const toggleType = (t: string) => {
+    setSelectedTypes((prev) =>
+      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+    );
+  };
+
+  /* ── Pagination ─────────────────────────────────────────── */
+
+  const totalPages = results ? Math.ceil(results.total / LIMIT) : 0;
+
+  const goPage = (p: number) => {
+    doSearch(query, p * LIMIT);
+  };
+
+  /* ── Render ─────────────────────────────────────────────── */
+
+  return (
+    <div style={{ padding: "24px", maxWidth: 1100, margin: "0 auto" }}>
+      {/* ── Search form ──────────────────────────────────── */}
+      <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search VMs, volumes, IPs, audit events, drift, snapshots…  or ask: quota for projectX"
+          style={{
+            flex: 1,
+            padding: "10px 14px",
+            fontSize: "1rem",
+            borderRadius: 6,
+            border: "1px solid var(--border-color, #cbd5e1)",
+            background: "var(--input-bg, #fff)",
+            color: "var(--text-color, #1e293b)",
+          }}
+        />
+        <button
+          type="submit"
+          disabled={loading || !query.trim()}
+          style={{
+            padding: "10px 20px",
+            fontSize: "1rem",
+            borderRadius: 6,
+            border: "none",
+            background: "#3b82f6",
+            color: "#fff",
+            cursor: "pointer",
+            opacity: loading ? 0.6 : 1,
+          }}
+        >
+          {loading ? "Searching…" : "🔍 Search"}
+        </button>
+        <button
+          type="button"
+          onClick={loadStats}
+          title="Indexer stats"
+          style={{
+            padding: "10px 12px",
+            borderRadius: 6,
+            border: "1px solid var(--border-color, #cbd5e1)",
+            background: "var(--card-bg, #f8fafc)",
+            cursor: "pointer",
+            fontSize: "0.85rem",
+          }}
+        >
+          📊
+        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={triggerReindex}
+            title="Trigger full re-index (admin)"
+            style={{
+              padding: "10px 12px",
+              borderRadius: 6,
+              border: "1px solid #f59e0b",
+              background: "#fef3c7",
+              cursor: "pointer",
+              fontSize: "0.85rem",
+            }}
+          >
+            🔄
+          </button>
+        )}
+      </form>
+
+      {/* ── Type filters ─────────────────────────────────── */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+        {Object.entries(DOC_TYPE_LABELS).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => toggleType(key)}
+            style={{
+              padding: "3px 10px",
+              fontSize: "0.78rem",
+              borderRadius: 12,
+              border: `1px solid ${DOC_TYPE_COLORS[key] || "#94a3b8"}`,
+              background: selectedTypes.includes(key)
+                ? DOC_TYPE_COLORS[key] || "#94a3b8"
+                : "transparent",
+              color: selectedTypes.includes(key) ? "#fff" : DOC_TYPE_COLORS[key] || "#94a3b8",
+              cursor: "pointer",
+              transition: "all 0.15s",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+        {selectedTypes.length > 0 && (
+          <button
+            onClick={() => setSelectedTypes([])}
+            style={{
+              padding: "3px 10px",
+              fontSize: "0.78rem",
+              borderRadius: 12,
+              border: "1px solid #94a3b8",
+              background: "transparent",
+              color: "#94a3b8",
+              cursor: "pointer",
+            }}
+          >
+            ✕ Clear
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ padding: 12, background: "#fef2f2", color: "#dc2626", borderRadius: 6, marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
+      {/* ── Intent suggestions (v2.5) ────────────────────── */}
+      {intents && intents.has_intent && (
+        <div
+          style={{
+            padding: 14,
+            background: "var(--card-bg, #eff6ff)",
+            border: "1px solid #93c5fd",
+            borderRadius: 8,
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: 8, color: "#1d4ed8" }}>
+            💡 Smart Suggestions
+            {intents.tenant_hint && (
+              <span style={{ fontWeight: 400, marginLeft: 8, fontSize: "0.82rem", color: "#6b7280" }}>
+                (tenant hint: <strong>{intents.tenant_hint}</strong>)
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {intents.intents.map((intent) => (
+              <button
+                key={intent.report}
+                onClick={() => onNavigateToReport?.(intent.report)}
+                style={{
+                  padding: "8px 14px",
+                  borderRadius: 6,
+                  border: "1px solid #3b82f6",
+                  background: "#dbeafe",
+                  color: "#1e40af",
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                  textAlign: "left",
+                }}
+                title={intent.description}
+              >
+                📊 {intent.label}
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: "0.72rem",
+                    color: "#6b7280",
+                    marginTop: 2,
+                  }}
+                >
+                  {intent.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Indexer stats panel ───────────────────────────── */}
+      {showStats && stats && (
+        <div
+          style={{
+            padding: 14,
+            background: "var(--card-bg, #f8fafc)",
+            border: "1px solid var(--border-color, #e2e8f0)",
+            borderRadius: 8,
+            marginBottom: 16,
+            fontSize: "0.82rem",
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>
+            Indexer Status — {stats.total_documents.toLocaleString()} total documents
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 6 }}>
+            {stats.doc_types.map((dt) => (
+              <div
+                key={dt.doc_type}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 4,
+                  background: "var(--bg-color, #fff)",
+                  border: "1px solid var(--border-color, #e2e8f0)",
+                }}
+              >
+                <strong style={{ color: DOC_TYPE_COLORS[dt.doc_type] || "#64748b" }}>
+                  {DOC_TYPE_LABELS[dt.doc_type] || dt.doc_type}
+                </strong>
+                <span style={{ float: "right", color: "#6b7280" }}>{dt.actual_count}</span>
+                {dt.last_run_at && (
+                  <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
+                    Last run: {new Date(dt.last_run_at).toLocaleString()} ({dt.last_run_duration_ms}ms)
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Results ──────────────────────────────────────── */}
+      {results && (
+        <div>
+          <div style={{ fontSize: "0.85rem", color: "#64748b", marginBottom: 12 }}>
+            {results.total.toLocaleString()} result{results.total !== 1 ? "s" : ""} for{" "}
+            <strong>"{results.query}"</strong>
+            {totalPages > 1 && (
+              <span style={{ marginLeft: 8 }}>
+                (page {page + 1} of {totalPages})
+              </span>
+            )}
+          </div>
+
+          {results.results.map((doc) => (
+            <div
+              key={doc.doc_id}
+              style={{
+                padding: 14,
+                marginBottom: 10,
+                borderRadius: 8,
+                border: "1px solid var(--border-color, #e2e8f0)",
+                background: "var(--card-bg, #fff)",
+              }}
+            >
+              {/* Header row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span
+                  style={{
+                    padding: "2px 8px",
+                    borderRadius: 10,
+                    fontSize: "0.7rem",
+                    fontWeight: 600,
+                    background: DOC_TYPE_COLORS[doc.doc_type] || "#94a3b8",
+                    color: "#fff",
+                  }}
+                >
+                  {DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type}
+                </span>
+                <span style={{ fontWeight: 600, fontSize: "0.95rem", color: "var(--text-color, #1e293b)" }}>
+                  {doc.title}
+                </span>
+                <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "#94a3b8" }}>
+                  {doc.ts ? new Date(doc.ts).toLocaleString() : ""}
+                </span>
+              </div>
+
+              {/* Headline snippet (HTML from ts_headline) */}
+              {doc.headline && (
+                <div
+                  style={{ fontSize: "0.85rem", color: "#475569", marginBottom: 6 }}
+                  dangerouslySetInnerHTML={{ __html: doc.headline }}
+                />
+              )}
+
+              {/* Meta row */}
+              <div style={{ display: "flex", gap: 12, fontSize: "0.78rem", color: "#94a3b8" }}>
+                {doc.tenant_name && <span>Tenant: {doc.tenant_name}</span>}
+                {doc.domain_name && <span>Domain: {doc.domain_name}</span>}
+                {doc.resource_id && <span>ID: {doc.resource_id.slice(0, 12)}…</span>}
+                <button
+                  onClick={() => loadSimilar(doc.doc_id)}
+                  style={{
+                    marginLeft: "auto",
+                    padding: "2px 8px",
+                    fontSize: "0.74rem",
+                    borderRadius: 4,
+                    border: "1px solid #cbd5e1",
+                    background: similarFor === doc.doc_id ? "#e0e7ff" : "transparent",
+                    color: "#6366f1",
+                    cursor: "pointer",
+                  }}
+                >
+                  {similarFor === doc.doc_id ? "Hide Similar" : "Show Similar"}
+                </button>
+              </div>
+
+              {/* Similar docs (v2) */}
+              {similarFor === doc.doc_id && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: 10,
+                    background: "var(--bg-color, #f1f5f9)",
+                    borderRadius: 6,
+                    fontSize: "0.82rem",
+                  }}
+                >
+                  {similarLoading ? (
+                    <span style={{ color: "#94a3b8" }}>Loading similar…</span>
+                  ) : similarDocs.length === 0 ? (
+                    <span style={{ color: "#94a3b8" }}>No similar documents found</span>
+                  ) : (
+                    similarDocs.map((s) => (
+                      <div
+                        key={s.doc_id}
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "center",
+                          padding: "4px 0",
+                          borderBottom: "1px solid var(--border-color, #e2e8f0)",
+                        }}
+                      >
+                        <span
+                          style={{
+                            padding: "1px 6px",
+                            borderRadius: 8,
+                            fontSize: "0.68rem",
+                            background: DOC_TYPE_COLORS[s.doc_type] || "#94a3b8",
+                            color: "#fff",
+                          }}
+                        >
+                          {DOC_TYPE_LABELS[s.doc_type] || s.doc_type}
+                        </span>
+                        <span>{s.title}</span>
+                        <span
+                          style={{
+                            marginLeft: "auto",
+                            fontSize: "0.72rem",
+                            color: "#22c55e",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {(s.combined_similarity * 100).toFixed(0)}% match
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* ── Pagination ───────────────────────────────── */}
+          {totalPages > 1 && (
+            <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 16 }}>
+              <button
+                disabled={page === 0}
+                onClick={() => goPage(page - 1)}
+                style={{ padding: "6px 12px", borderRadius: 4, border: "1px solid #cbd5e1", cursor: "pointer" }}
+              >
+                ← Prev
+              </button>
+              {Array.from({ length: Math.min(totalPages, 10) }, (_, i) => {
+                const p = page < 5 ? i : page - 4 + i;
+                if (p >= totalPages) return null;
+                return (
+                  <button
+                    key={p}
+                    onClick={() => goPage(p)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 4,
+                      border: "1px solid #cbd5e1",
+                      background: p === page ? "#3b82f6" : "transparent",
+                      color: p === page ? "#fff" : "inherit",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {p + 1}
+                  </button>
+                );
+              })}
+              <button
+                disabled={page >= totalPages - 1}
+                onClick={() => goPage(page + 1)}
+                style={{ padding: "6px 12px", borderRadius: 4, border: "1px solid #cbd5e1", cursor: "pointer" }}
+              >
+                Next →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!results && !loading && !error && (
+        <div style={{ textAlign: "center", padding: 40, color: "#94a3b8" }}>
+          <div style={{ fontSize: "2.5rem", marginBottom: 12 }}>🔍</div>
+          <div style={{ fontSize: "1.1rem", fontWeight: 500 }}>Ops Assistant</div>
+          <div style={{ fontSize: "0.85rem", marginTop: 4 }}>
+            Search across all resources, events, and audit logs.
+            <br />
+            Try: an IP address, VM name, error message, or ask <em>"quota for my-project"</em>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
