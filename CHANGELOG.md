@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.9] - 2026-02-19
+
+### Added
+- **Linux Deployment Guide** — New `docs/LINUX_DEPLOYMENT_GUIDE.md` covering end-to-end Linux setup: Docker/Docker Compose installation (Ubuntu + RHEL), Python venv setup, cron equivalents for Task Scheduler, `startup.sh` script, systemd service unit, firewall/SELinux notes, and a quick-start TL;DR block.
+
+### Improved
+- **Kubernetes Migration Guide v2.0** — Comprehensive rewrite of `docs/KUBERNETES_MIGRATION_GUIDE.md` to cover all 11 services (was written for 6). Added complete Deployment manifests, ConfigMaps, Secrets, and PVCs for the 4 worker services (snapshot, backup, metering, notification). Updated Helm chart structure, values.yaml, network policies, and migration roadmap. Corrected CronJob section — only `host_metrics_collector.py` needs a CronJob; the other 4 are containerized workers (Deployments, not CronJobs).
+- **README** — Added Linux Deployment Guide to documentation table and deployment flexibility section. Updated platform badge to show Windows | Linux | Kubernetes.
+
 ## [1.19.8] - 2026-02-19
 
 ### Improved

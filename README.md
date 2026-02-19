@@ -5,8 +5,8 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.19.8-blue.svg)](CHANGELOG.md)
-[![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
+[![Version](https://img.shields.io/badge/version-1.19.9-blue.svg)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
 pf9-mngt is an open-source operational add-on for Platform9 / OpenStack — it gives engineering and MSP teams automated snapshots, VM restore, full inventory persistence, and day-to-day monitoring in a single self-hosted stack.
@@ -70,7 +70,8 @@ Every service is containerized. That means **you decide**:
 | ☸️ **Kubernetes** | Production-grade HA and horizontal scaling — containers are ready, effort is minimal |
 | 🔧 **Your own orchestration** | Adapt to whatever infrastructure decisions you have already made |
 
-> See [docs/KUBERNETES_MIGRATION_GUIDE.md](docs/KUBERNETES_MIGRATION_GUIDE.md) for migration planning.
+> See [docs/KUBERNETES_MIGRATION_GUIDE.md](docs/KUBERNETES_MIGRATION_GUIDE.md) for migration planning.  
+> See [docs/LINUX_DEPLOYMENT_GUIDE.md](docs/LINUX_DEPLOYMENT_GUIDE.md) for running on Linux.
 
 ---
 
@@ -455,6 +456,7 @@ pf9-mngt/
 | [Snapshot Service User](docs/SNAPSHOT_SERVICE_USER.md) | Service user setup and troubleshooting |
 | [Quick Reference](docs/QUICK_REFERENCE.md) | Common commands and URLs cheat sheet |
 | [Kubernetes Migration](docs/KUBERNETES_MIGRATION_GUIDE.md) | K8s migration planning guide |
+| [Linux Deployment](docs/LINUX_DEPLOYMENT_GUIDE.md) | Running pf9-mngt on Linux instead of Windows |
 | [Contributing](CONTRIBUTING.md) | Contribution guidelines |
 
 ---
@@ -655,4 +657,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.19.8 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.19.9 | **Last Updated**: February 2026
