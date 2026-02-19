@@ -2073,6 +2073,7 @@ CREATE TABLE IF NOT EXISTS nav_items (
 
 -- Inventory group
 INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order) VALUES
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'search',          'Ops Search',      '🔍', '/search',          'search',          0),
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'dashboard',       'Dashboard',       '🏠', '/dashboard',       'dashboard',       1),
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'servers',         'VMs',             '',   '/servers',         'servers',         2),
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'volumes',         'Volumes',         '',   '/volumes',         'volumes',         3),
