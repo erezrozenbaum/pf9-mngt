@@ -167,3 +167,20 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('superadmin', 'runbooks', 'admin'),
     ('viewer',     'runbooks', 'read')
 ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- ── Navigation registration ────────────────────────────────────
+-- Add runbooks to the admin_tools nav group
+INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, description, sort_order, is_active, is_action)
+SELECT ng.id, 'runbooks', 'Runbooks', '📋', '/runbooks', 'runbooks',
+       'Policy-as-code runbooks with approval workflows', 4, true, true
+FROM nav_groups ng WHERE ng.key = 'admin_tools'
+ON CONFLICT DO NOTHING;
+
+-- Make runbooks visible in every department that has the admin_tools group
+INSERT INTO department_nav_items (department_id, nav_item_id)
+SELECT dng.department_id, ni.id
+FROM department_nav_groups dng
+JOIN nav_groups ng ON dng.nav_group_id = ng.id AND ng.key = 'admin_tools'
+CROSS JOIN nav_items ni
+WHERE ni.key = 'runbooks'
+ON CONFLICT DO NOTHING;
