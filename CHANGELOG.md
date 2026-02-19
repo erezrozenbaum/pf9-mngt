@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.7] - 2026-02-19
+
+### Improved
+- **README.md rewrite** — Complete restructure of the project README: added engineering evaluation narrative (3 engineering gaps), badges, architecture table, collapsible detail sections, leaner FAQ, cleaned up duplicate sections, and consolidated troubleshooting. Reduced from ~960 lines to ~650 lines with no loss of information.
+- **ARCHITECTURE.md expansion** — Added 5 major new sections: trust boundaries & service communication matrix, full authentication flow (LDAP → JWT → MFA → RBAC) with Mermaid sequence diagrams, complete data model overview (44+ tables, ER diagram, current-state vs history pattern), restore flow sequence diagram with safety checks table, and 2 new Architecture Decision Records (Planner/Executor pattern, Dual-Table History pattern). Expanded from ~887 to ~1,485 lines.
+
+### Fixed
+- **Screenshot filenames** — Renamed image files to use dashes instead of spaces (`VMs inventory.png` → `VMs-inventory.png`, `History monitoring.png` → `History-monitoring.png`, `API Performance.png` → `API-Performance.png`). Fixed typo `Snapshot-rostore-audit.png` → `Snapshot-restore-audit.png`. Updated all references in README.md.
+
+### Added
+- **GitHub Sponsors & FUNDING.yml** — Created `.github/FUNDING.yml` to enable the Sponsor button on the repository.
+
 ## [1.19.6] - 2026-02-18
 
 ### Fixed
