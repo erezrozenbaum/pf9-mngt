@@ -242,7 +242,7 @@ sequenceDiagram
 
 | Layer | Where | What it does |
 |---|---|---|
-| **1. Global RBAC Middleware** | Runs on every HTTP request | Extracts JWT → maps URL path to resource name (35-entry lookup) → checks `GET` → `read`, all others → `write` → queries `role_permissions` table |
+| **1. Global RBAC Middleware** | Runs on every HTTP request | Extracts JWT → maps URL path to resource name (36-entry lookup) → checks `GET` → `read`, all others → `write` → queries `role_permissions` table |
 | **2. Endpoint-Level Dependency** | Per-route `Depends(require_permission(...))` | Double-checks sensitive endpoints requiring elevated actions (e.g., `restore/execute` requires `admin` action, not just `write`) |
 
 **Bypass paths**: `/auth/*`, `/settings/*`, `/static/*`, `/health`, `/metrics`, `/openapi.json`, `/docs`, `/redoc`, `OPTIONS`
@@ -252,7 +252,7 @@ sequenceDiagram
 | Role | Read | Write | Admin | Delete | Notes |
 |---|---|---|---|---|---|
 | **viewer** | ✅ All resources | ❌ | ❌ | ❌ | Read-only access to all tabs |
-| **operator** | ✅ All resources | ✅ Networks, flavors, snapshots | ❌ | ❌ | Limited write operations |
+| **operator** | ✅ All resources | ✅ Networks, flavors, snapshots, runbooks | ❌ | ❌ | Limited write operations |
 | **admin** | ✅ All resources | ✅ All resources | ✅ Most resources | ✅ Resources | Cannot manage users/RBAC |
 | **superadmin** | ✅ All resources | ✅ All resources | ✅ Everything | ✅ Everything | Full access including RBAC rules, destructive restore |
 | **technical** | ✅ All resources | ✅ Resources, provisioning | ❌ | ❌ | Read + write but no delete permissions |
@@ -349,7 +349,7 @@ Every infrastructure resource follows a **dual-table pattern**:
                   groups (id, name, domain_id)
 ```
 
-### Table Catalog (44+ tables)
+### Table Catalog (48+ tables)
 
 #### Core Infrastructure (14 tables)
 
@@ -472,6 +472,15 @@ Every infrastructure resource follows a **dual-table pattern**:
 |---|---|
 | `search_documents` | Full-text search index — tsvector column with GIN index + pg_trgm indexes on title/body. 9 indexes total. |
 | `search_indexer_state` | Per-doc-type watermarks (last_id, last_updated_at, run_count, duration_ms) for incremental indexing |
+
+#### Runbooks (4 tables)
+
+| Table | Purpose |
+|---|---|
+| `runbooks` | Runbook definitions (name, display_name, category, risk_level, supports_dry_run, parameters_schema JSONB) |
+| `runbook_approval_policies` | Per-runbook trigger→approver role mappings (approval_mode, escalation_timeout, daily rate limit). UNIQUE(runbook_name, trigger_role) |
+| `runbook_executions` | Full execution audit trail (status lifecycle, dry_run flag, parameters/result JSONB, triggered_by, approved_by, items_found/actioned) |
+| `runbook_approvals` | Individual approval records for multi-approval workflows (FK CASCADE to executions) |
 
 ### Key Database Views
 

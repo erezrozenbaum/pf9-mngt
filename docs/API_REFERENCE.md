@@ -2266,3 +2266,205 @@ Response:
   ]
 }
 ```
+
+---
+
+## Runbook Endpoints
+
+All runbook endpoints require authentication via `Authorization: Bearer <token>`.
+
+### List Runbooks
+**GET** `/api/runbooks`
+*Requires: `runbooks:read`*
+
+Returns all registered runbook definitions.
+
+Response:
+```json
+[
+  {
+    "runbook_id": "uuid",
+    "name": "stuck_vm_remediation",
+    "display_name": "Stuck VM Remediation",
+    "description": "Detects VMs stuck in BUILD, ERROR, or transitional states...",
+    "category": "vm",
+    "risk_level": "medium",
+    "supports_dry_run": true,
+    "enabled": true,
+    "parameters_schema": {
+      "type": "object",
+      "properties": {
+        "stuck_threshold_minutes": {"type": "integer", "default": 30},
+        "action": {"type": "string", "enum": ["soft_reboot", "hard_reboot", "report_only"]},
+        "target_project": {"type": "string", "default": ""},
+        "target_domain": {"type": "string", "default": ""}
+      }
+    }
+  }
+]
+```
+
+### Get Single Runbook
+**GET** `/api/runbooks/{runbook_name}`
+*Requires: `runbooks:read`*
+
+Returns a single runbook definition by name.
+
+### Trigger Runbook
+**POST** `/api/runbooks/trigger`
+*Requires: `runbooks:write`*
+
+Triggers a runbook execution. Depending on approval policies, the execution may auto-approve or enter `pending_approval` status.
+
+Request:
+```json
+{
+  "runbook_name": "orphan_resource_cleanup",
+  "dry_run": true,
+  "parameters": {
+    "resource_types": ["ports", "volumes"],
+    "age_threshold_days": 7,
+    "target_project": ""
+  }
+}
+```
+
+Response:
+```json
+{
+  "execution_id": "uuid",
+  "runbook_name": "orphan_resource_cleanup",
+  "status": "completed",
+  "dry_run": true,
+  "parameters": {},
+  "result": {"orphan_ports": [], "orphan_volumes": []},
+  "triggered_by": "admin",
+  "triggered_at": "2026-02-19T10:30:00Z",
+  "items_found": 5,
+  "items_actioned": 0
+}
+```
+
+### Approve or Reject Execution
+**POST** `/api/runbooks/executions/{execution_id}/approve`
+*Requires: `runbooks:admin`*
+
+Approve or reject a pending execution.
+
+Request:
+```json
+{
+  "decision": "approved",
+  "comment": "Looks good, proceed"
+}
+```
+
+### Cancel Execution
+**POST** `/api/runbooks/executions/{execution_id}/cancel`
+*Requires: `runbooks:write`*
+
+Cancels a pending or executing runbook run.
+
+### Get Execution History
+**GET** `/api/runbooks/executions/history`
+*Requires: `runbooks:read`*
+
+Query parameters: `runbook_name`, `status`, `limit` (default 25), `offset` (default 0).
+
+Response:
+```json
+{
+  "executions": [
+    {
+      "execution_id": "uuid",
+      "runbook_name": "security_group_audit",
+      "display_name": "Security Group Audit",
+      "category": "security",
+      "risk_level": "low",
+      "status": "completed",
+      "dry_run": true,
+      "triggered_by": "operator",
+      "triggered_at": "2026-02-19T10:30:00Z",
+      "items_found": 3,
+      "items_actioned": 0
+    }
+  ],
+  "total": 42
+}
+```
+
+### Get Execution Detail
+**GET** `/api/runbooks/executions/{execution_id}`
+*Requires: `runbooks:read`*
+
+Returns full execution detail including parameters, result JSON, and approval history.
+
+### Get Pending Approvals
+**GET** `/api/runbooks/approvals/pending`
+*Requires: `runbooks:admin`*
+
+Returns all executions in `pending_approval` status awaiting admin action.
+
+### List Policies for Runbook
+**GET** `/api/runbooks/policies/{runbook_name}`
+*Requires: `runbooks:read`*
+
+Returns all approval policies for a given runbook.
+
+Response:
+```json
+[
+  {
+    "policy_id": "uuid",
+    "runbook_name": "stuck_vm_remediation",
+    "trigger_role": "operator",
+    "approver_role": "admin",
+    "approval_mode": "single_approval",
+    "escalation_timeout_minutes": 60,
+    "max_auto_executions_per_day": 50,
+    "enabled": true
+  }
+]
+```
+
+### Create or Update Policy
+**PUT** `/api/runbooks/policies/{runbook_name}`
+*Requires: `runbooks:admin`*
+
+Request:
+```json
+{
+  "trigger_role": "operator",
+  "approver_role": "admin",
+  "approval_mode": "single_approval",
+  "escalation_timeout_minutes": 60,
+  "max_auto_executions_per_day": 50
+}
+```
+
+### Delete Policy
+**DELETE** `/api/runbooks/policies/{policy_id}`
+*Requires: `runbooks:admin`*
+
+### Execution Stats Summary
+**GET** `/api/runbooks/stats/summary`
+*Requires: `runbooks:read`*
+
+Returns aggregated execution statistics per runbook.
+
+Response:
+```json
+[
+  {
+    "runbook_name": "orphan_resource_cleanup",
+    "total_executions": 15,
+    "completed": 12,
+    "failed": 1,
+    "pending": 2,
+    "rejected": 0,
+    "total_items_found": 47,
+    "total_items_actioned": 23,
+    "last_run": "2026-02-19T10:30:00Z"
+  }
+]
+```
