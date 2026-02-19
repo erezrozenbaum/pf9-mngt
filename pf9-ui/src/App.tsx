@@ -2816,6 +2816,8 @@ const App: React.FC = () => {
     "security_groups",
     "drift",
     "tenant_health",
+    "search",
+    "resource_management",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------
