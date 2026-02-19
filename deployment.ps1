@@ -987,6 +987,7 @@ Write-Host "  API Endpoints:         /api/provisioning/* (12+ endpoints)" -Foreg
 Write-Host "  Wizard:                5-step (Domain → Project → User/Role → Quotas → Network/SG)" -ForegroundColor White
 Write-Host "  Domain Management:     Enable/disable/delete domains with resource inspection" -ForegroundColor White
 Write-Host "  Activity Log:          Central audit trail for all provisioning operations" -ForegroundColor White
+Write-Host "  Network Naming:        {tenant_base}_extnet_vlan_{vlanid} (auto-derived, user-overrideable)" -ForegroundColor White
 Write-Host "  RBAC:                  admin/superadmin with granular tenant_disable/tenant_delete/resource_delete" -ForegroundColor White
 Write-Host ""
 
