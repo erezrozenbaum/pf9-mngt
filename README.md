@@ -5,9 +5,11 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.17.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.19.8-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
+
+pf9-mngt is an open-source operational add-on for Platform9 / OpenStack — it gives engineering and MSP teams automated snapshots, VM restore, full inventory persistence, and day-to-day monitoring in a single self-hosted stack.
 
 ---
 
@@ -18,6 +20,8 @@ The conversation around VMware alternatives is real and growing. For MSPs and en
 We are currently in the evaluation phase — testing Platform9 as a potential direction for our infrastructure. During that process, like any serious evaluation, you go beyond the demo and start stress-testing real operational workflows. That is where engineering gaps become visible — not because the platform is lacking, but because MSP and enterprise operations have very specific day-to-day requirements that take time for any platform to fully mature into.
 
 Rather than pause the evaluation, we chose to solve the gaps ourselves and reach a better, more informed decision point. The result is pf9-mngt. Building it has given us far deeper insight into the platform than any standard assessment would have. Whatever direction we ultimately choose, this process has been worth it.
+
+This entire project was built using AI as a genuine engineering partner — what some call vibe coding, but applied to a real production problem with real architectural decisions. One person, clear intent, and the right AI workflow can ship something with genuine depth. That is worth demonstrating.
 
 ---
 
@@ -639,7 +643,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 107 commits, 20 releases, 11 containerized services, 140+ API endpoints — built alongside regular responsibilities using AI as a genuine engineering partner. In 2026, a single person with a clear problem and the right AI workflow can ship something with real production depth.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 115 commits, 20 releases, 11 containerized services, 140+ API endpoints — built alongside regular responsibilities.
 
 ---
 
@@ -651,4 +655,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.17.1 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.19.8 | **Last Updated**: February 2026
