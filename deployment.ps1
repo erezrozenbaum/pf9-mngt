@@ -738,7 +738,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_reports_resources.sql"; Desc="Reports & Resource Management RBAC permissions"},
     @{File="db\migrate_technical_role_permissions.sql"; Desc="Technical role + missing resource permissions"},
     @{File="db\migrate_departments_navigation.sql"; Desc="Departments + Navigation visibility layer"},
-    @{File="db\migrate_operator_permissions.sql"; Desc="Operator/viewer missing read permissions (networks, flavors, users)"}
+    @{File="db\migrate_operator_permissions.sql"; Desc="Operator/viewer missing read permissions (networks, flavors, users)"},
+    @{File="db\migrate_search.sql"; Desc="Ops Search tables (search_documents, search_indexer_state, pg_trgm)"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
@@ -987,6 +988,15 @@ Write-Host "  Wizard:                5-step (Domain → Project → User/Role �
 Write-Host "  Domain Management:     Enable/disable/delete domains with resource inspection" -ForegroundColor White
 Write-Host "  Activity Log:          Central audit trail for all provisioning operations" -ForegroundColor White
 Write-Host "  RBAC:                  admin/superadmin with granular tenant_disable/tenant_delete/resource_delete" -ForegroundColor White
+Write-Host ""
+
+Write-Host "Ops Search (Ops Assistant):" -ForegroundColor Cyan
+Write-Host "  Feature:               ENABLED" -ForegroundColor Green
+Write-Host "  UI Tab:                Ops Search (full-text + similarity + intent detection)" -ForegroundColor White
+Write-Host "  Worker:                pf9_search_worker (incremental indexer, default 5-min interval)" -ForegroundColor White
+Write-Host "  API Endpoints:         /api/search (search, similar, intent, stats, reindex)" -ForegroundColor White
+Write-Host "  Doc Types:             19 indexed types (VMs, volumes, audit, drift, snapshots...)" -ForegroundColor White
+Write-Host "  RBAC:                  viewer/operator=search:read, admin/superadmin=search:admin" -ForegroundColor White
 Write-Host ""
 
 Write-Success "System is ready for use!"

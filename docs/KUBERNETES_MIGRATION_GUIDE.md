@@ -32,9 +32,9 @@
 ### Current State (Docker Compose)
 
 The Platform9 Management System currently runs on **Docker Compose** with:
-- **11 containerized services**:
+- **12 containerized services**:
   - **Core**: UI (React), API (FastAPI), Monitoring (FastAPI), PostgreSQL, OpenLDAP
-  - **Workers**: Snapshot Worker, Backup Worker, Metering Worker, Notification Worker
+  - **Workers**: Snapshot Worker, Backup Worker, Metering Worker, Notification Worker, Search Worker
   - **Admin tools**: pgAdmin, phpLDAPadmin
 - **Host-based Python scripts** for metrics collection and infrastructure automation
 - **Single-node deployment** model with volume-based persistence
@@ -2079,6 +2079,85 @@ stringData:
   SMTP_PASSWORD: <your-smtp-password>   # From .env SMTP_PASSWORD
   SMTP_FROM_ADDRESS: <your-from-email>  # From .env SMTP_FROM_ADDRESS
 ```
+
+**Code Changes**: None required.
+
+---
+
+### 11. Search Worker - Migration
+
+**Current**: Docker Compose service `pf9_search_worker` (built from `search_worker/Dockerfile`)  
+**Target**: Kubernetes Deployment with 1 replica
+
+**Deployment Manifest**:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-search-worker
+  namespace: pf9-system
+  labels:
+    app: pf9-search-worker
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pf9-search-worker
+  template:
+    metadata:
+      labels:
+        app: pf9-search-worker
+        component: worker
+    spec:
+      containers:
+        - name: search-worker
+          image: pf9-search-worker:latest
+          envFrom:
+            - secretRef:
+                name: db-credentials
+            - configMapRef:
+                name: search-worker-config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - "import psycopg2; conn = psycopg2.connect(host='$DB_HOST', dbname='$DB_NAME', user='$DB_USER', password='$DB_PASS'); conn.close()"
+            initialDelaySeconds: 30
+            periodSeconds: 60
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: search-worker-config
+  namespace: pf9-system
+data:
+  DB_HOST: pf9-postgresql          # K8s Service name for PostgreSQL
+  DB_PORT: "5432"
+  DB_NAME: pf9_mgmt
+  SEARCH_INDEX_INTERVAL: "300"     # 5 minutes between index cycles
+```
+
+**Environment Variables** (from `db-credentials` Secret):
+| Variable | Source | Description |
+|---|---|---|
+| `DB_USER` | Secret `db-credentials` | PostgreSQL username |
+| `DB_PASS` | Secret `db-credentials` | PostgreSQL password |
+| `DB_HOST` | ConfigMap | K8s Service name (`pf9-postgresql`) |
+| `DB_PORT` | ConfigMap | PostgreSQL port (5432) |
+| `DB_NAME` | ConfigMap | Database name (`pf9_mgmt`) |
+| `SEARCH_INDEX_INTERVAL` | ConfigMap | Seconds between index cycles (default 300) |
+
+**Database Migration**: Run `db/migrate_search.sql` against the PostgreSQL instance before starting the worker. This creates `search_documents`, `search_indexer_state` tables, the `pg_trgm` extension, and the `search_ranked()` / `search_similar()` SQL functions.
 
 **Code Changes**: None required.
 

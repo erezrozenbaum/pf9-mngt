@@ -18,11 +18,11 @@ This guide covers what you need to change — and what you don't — when deploy
 | Component | Notes |
 |-----------|-------|
 | **docker-compose.yml** | 100% platform-agnostic. No changes needed. |
-| **All 11 Docker services** | All use Linux base images already. |
+| **All 12 Docker services** | All use Linux base images already. |
 | **.env configuration** | No Windows-specific paths or values. |
 | **Database schema & migrations** | Identical. |
 | **API, UI, Monitoring** | No OS-specific code. |
-| **Worker services** (snapshot, backup, metering, notification) | Fully containerized, no host dependencies. |
+| **Worker services** (snapshot, backup, metering, notification, search) | Fully containerized, no host dependencies. |
 
 ### What Needs Linux Equivalents
 
