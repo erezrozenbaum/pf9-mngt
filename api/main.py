@@ -71,6 +71,9 @@ from navigation_routes import router as navigation_router
 # Search & Ops-Assistant endpoints
 from search import router as search_router
 
+# Runbook endpoints
+from runbook_routes import router as runbook_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -283,6 +286,7 @@ app.include_router(reports_router)
 app.include_router(resource_management_router)
 app.include_router(navigation_router)
 app.include_router(search_router)
+app.include_router(runbook_router)
 
 # Rate limiting setup
 app.state.limiter = limiter

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.0] - 2026-02-19
+
+### Added
+- **Policy-as-Code Runbooks framework** — New Runbooks feature providing operational automation with configurable approval workflows. Full-stack implementation: database tables, REST API, execution engine, and React UI tab.
+- **5 built-in runbooks** — Stuck VM Remediation (detect + soft/hard reboot), Orphan Resource Cleanup (ports + volumes + floating IPs), Security Group Audit (overly permissive rules), Quota Threshold Check (per-project utilisation alerts), Diagnostics Bundle (hypervisors + services + resources + quotas).
+- **Flexible approval policies** — Configurable per-runbook `trigger_role → approver_role` mapping with three approval modes: `auto_approve` (no human needed), `single_approval` (one approver), `multi_approval` (multiple approvers). Rate-limited auto-approve with configurable daily max and escalation timeout.
+- **Runbooks UI tab** — Four sub-tabs: Catalogue (runbook cards with trigger actions and schema-driven parameter forms), Execution History (filterable table with detail panel showing full JSON results), Approvals (pending queue with approve/reject/cancel actions), Approval Policies (admin-only editor for flexible team-to-team mappings).
+- **Dry-run as first-class concept** — All runbooks support scan-only mode. Trigger modal defaults to dry-run with clear visual distinction (blue vs red button) for live execution.
+- **Execution audit trail** — Full lifecycle tracking: pending_approval → approved → executing → completed/failed. Every execution records trigger user, approver, timestamps, parameters, results, items found/actioned.
+- **Runbook notification events** — Three new event types: `runbook_approval_requested`, `runbook_completed`, `runbook_failed`. Integrates with existing notification subscriber system.
+- **Pluggable engine architecture** — `@register_engine` decorator pattern allows adding new runbook implementations with zero framework changes.
+
 ## [1.20.7] - 2026-02-19
 
 ### Added
