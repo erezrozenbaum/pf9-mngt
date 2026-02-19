@@ -100,6 +100,16 @@ Every service is containerized. That means **you decide**:
 
 ---
 
+## 🎬 Video Walkthrough
+
+A 15-minute explainer video walking through the UI and key features:
+
+[![Watch on YouTube](https://img.shields.io/badge/YouTube-Watch%20Video-red?logo=youtube)](https://www.youtube.com/watch?v=68-LQ9ugU_E)
+
+▶️ [**PF9 Management System — Full UI Walkthrough (15 min)**](https://www.youtube.com/watch?v=68-LQ9ugU_E)
+
+---
+
 ## 🚀 System Architecture
 
 **Enterprise microservices-based platform** with 12 containerized services plus host-based automation:
