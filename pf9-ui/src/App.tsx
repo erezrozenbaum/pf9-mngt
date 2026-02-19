@@ -28,6 +28,7 @@ import ActivityLogTab from "./components/ActivityLogTab";
 import ReportsTab from "./components/ReportsTab";
 import ResourceManagementTab from "./components/ResourceManagementTab";
 import GroupedNavBar from "./components/GroupedNavBar";
+import OpsSearch from "./components/OpsSearch";
 import { useNavigation } from "./hooks/useNavigation";
 
 // ---------------------------------------------------------------------------
@@ -407,7 +408,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -422,6 +423,7 @@ interface TabDef {
 
 const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "dashboard",            label: "🏠 Dashboard" },
+  { id: "search",               label: "🔍 Ops Search" },
   { id: "servers",              label: "VMs" },
   { id: "snapshots",            label: "Snapshots" },
   { id: "networks",             label: "🔧 Networks",             actionStyle: true },
@@ -3001,6 +3003,8 @@ const App: React.FC = () => {
             ? "Customer provisioning · domain setup · quotas · network · security group"
             : activeTab === "domain_management"
             ? "Domain management · enable/disable · delete · resource inspection"
+            : activeTab === "search"
+            ? "Ops Assistant · full-text search · similarity · smart report suggestions"
             : "Platform9 management"}
       </section>
 
@@ -5164,6 +5168,16 @@ const App: React.FC = () => {
           {activeTab === "resource_management" && (
             <ResourceManagementTab
               isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+            />
+          )}
+
+          {/* Ops Search */}
+          {activeTab === "search" && (
+            <OpsSearch
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+              onNavigateToReport={(slug) => {
+                setActiveTab("reports");
+              }}
             />
           )}
 

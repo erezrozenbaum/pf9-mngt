@@ -68,6 +68,9 @@ from resource_management import router as resource_management_router
 # Navigation & department endpoints
 from navigation_routes import router as navigation_router
 
+# Search & Ops-Assistant endpoints
+from search import router as search_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -279,6 +282,7 @@ app.include_router(provisioning_router)
 app.include_router(reports_router)
 app.include_router(resource_management_router)
 app.include_router(navigation_router)
+app.include_router(search_router)
 
 # Rate limiting setup
 app.state.limiter = limiter

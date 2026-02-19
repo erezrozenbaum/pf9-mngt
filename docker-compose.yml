@@ -310,6 +310,22 @@ services:
       - pf9_api
     restart: unless-stopped
 
+  # Search Indexer Worker (Ops Assistant)
+  search_worker:
+    build:
+      context: ./search_worker
+    container_name: pf9_search_worker
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASS: ${POSTGRES_PASSWORD}
+      SEARCH_INDEX_INTERVAL: ${SEARCH_INDEX_INTERVAL:-300}
+    depends_on:
+      - db
+    restart: unless-stopped
+
 volumes:
   pgdata:
   pgadmin_data:

@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.19.9-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.20.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -102,11 +102,11 @@ Every service is containerized. That means **you decide**:
 
 ## 🚀 System Architecture
 
-**Enterprise microservices-based platform** with 11 containerized services plus host-based automation:
+**Enterprise microservices-based platform** with 12 containerized services plus host-based automation:
 
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
-| **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 26+ management tabs + admin panel |
+| **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 27 management tabs + admin panel |
 | **Backend API** | FastAPI / Gunicorn / Python | 8000 | 140+ REST endpoints, RBAC middleware, 4 workers |
 | **LDAP Server** | OpenLDAP | 389 | Enterprise authentication directory |
 | **LDAP Admin** | phpLDAPadmin | 8081 | Web-based LDAP management |
@@ -117,6 +117,7 @@ Every service is containerized. That means **you decide**:
 | **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
 | **Backup Worker** | Python / PostgreSQL | — | Scheduled database backups and restores |
 | **Metering Worker** | Python / PostgreSQL | — | Resource metering every 15 minutes |
+| **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
 
 > Host scripts (`pf9_rvtools.py`, `host_metrics_collector.py`) run via Windows Task Scheduler for infrastructure discovery and metrics collection.
 
@@ -222,10 +223,19 @@ Every service is containerized. That means **you decide**:
 - **Safety Protections**: Last-user guard, in-use flavor check, attached-volume block, default SG protection
 - **Three-Tier RBAC**: Viewer (read), Operator (read+write), Admin (read+write+delete)
 
-### 📈 26-Tab Management Dashboard
+### 🔍 Ops Assistant — Search & Similarity *(v1.20)*
+- **Full-Text Search**: PostgreSQL tsvector + websearch across all 19+ resource types, events, and audit logs
+- **Trigram Similarity**: "Show Similar" per result — finds related resources, errors, or configurations via pg_trgm
+- **Intent Detection**: Natural-language queries like *"quota for projectX"* or *"capacity"* auto-suggest the matching report endpoint
+- **19 Indexed Document Types**: VMs, volumes, snapshots, hypervisors, networks, subnets, floating IPs, ports, security groups, activity log, auth audit, drift events, snapshot runs/records, restore jobs, backups, notifications, provisioning, deletions
+- **Incremental Indexing**: Background worker with per-doc-type watermarks — only re-indexes changed rows
+- **Paginated Results**: Relevance-ranked results with highlighted keyword snippets
+- **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
+
+### 📈 27-Tab Management Dashboard
 A single engineering console covering every operational surface:
 
-> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management
+> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search**
 
 <details>
 <summary><strong>Landing Dashboard Widgets</strong></summary>
@@ -427,6 +437,7 @@ pf9-mngt/
 ├── db/                           # PostgreSQL schema + migrations
 ├── backup_worker/                # Scheduled backup service
 ├── metering_worker/              # Resource metering service
+├── search_worker/                # Full-text search indexer (Ops Assistant)
 ├── notifications/                # Email notification service
 ├── ldap/                         # OpenLDAP configuration
 ├── docs/                         # Full documentation suite
@@ -645,7 +656,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 115 commits, 20 releases, 11 containerized services, 140+ API endpoints — built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 120+ commits, 21 releases, 12 containerized services, 145+ API endpoints — built alongside regular responsibilities.
 
 ---
 
@@ -657,4 +668,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.19.9 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.20.0 | **Last Updated**: February 2026
