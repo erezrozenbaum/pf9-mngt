@@ -2,6 +2,15 @@
 
 ## Recent Major Enhancements
 
+### Ops Assistant — Search & Similarity (v1.20 - NEW ✨)
+- **🔍 Ops Search Tab**: Full-text search across all 19+ resource types using PostgreSQL `tsvector` + `websearch_to_tsquery`. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination.
+- **Trigram Similarity (v2)**: "Show Similar" button on every search result uses `pg_trgm` extension to find related documents by title (60% weight) and body text (40% weight) similarity scoring.
+- **Intent Detection (v2.5)**: Natural-language queries like *"quota for projectX"*, *"capacity"*, *"idle resources"*, or *"drift"* trigger Smart Suggestions that link directly to the matching report endpoint. Extracts tenant hints for pre-filtering.
+- **Search Indexer Worker**: `pf9_search_worker` container incrementally indexes 19 document types on a configurable interval (default 5 min). Uses per-doc-type watermarks for efficient delta processing.
+- **Indexer Stats Dashboard**: In-tab panel showing per-doc-type document counts, last run time, and duration for operational visibility.
+- **5 API Endpoints**: `/api/search` (FTS), `/api/search/similar/{doc_id}`, `/api/search/intent`, `/api/search/stats`, `/api/search/reindex` (admin)
+- **RBAC**: viewer/operator get `search:read`, admin/superadmin get `search:admin` (includes re-index trigger)
+
 ### Operational Metering (v1.15 + v1.15.1 Pricing Overhaul ✨)
 - **📊 Metering Tab**: Comprehensive operational resource metering with 8 sub-tabs (Overview, Resources, Snapshots, Restores, API Usage, Efficiency, **Pricing**, Export)
 - **Metering Worker**: `pf9_metering_worker` container collects resource, snapshot, restore, API usage, and efficiency metrics on a configurable interval (default 15 minutes). vCPU data resolved from flavors table
@@ -295,6 +304,7 @@
 16. [Maintenance & Updates](#maintenance--updates)
 17. [Code Quality Issues](#code-quality-issues)
 18. [Recommended Improvements](#recommended-improvements)
+19. [Ops Search (Ops Assistant)](#ops-search-ops-assistant)
 
 ---
 
@@ -1857,6 +1867,72 @@ docker-compose logs pf9_db
 
 # Query performance
 docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT * FROM pg_stat_activity;"
+```
+
+---
+
+## Ops Search (Ops Assistant)
+
+The Ops Search feature provides a unified full-text search across all indexed resources, events, and audit logs in the system.
+
+### Architecture
+
+| Component | Description |
+|---|---|
+| **Search Worker** (`pf9_search_worker`) | Background Python worker that incrementally indexes 19 doc types into `search_documents` table |
+| **Search API** (`api/search.py`) | 5 FastAPI endpoints for search, similarity, intent detection, stats, and re-index |
+| **UI Tab** (`OpsSearch.tsx`) | React component with search bar, type filters, results, similarity panel, and smart suggestions |
+| **Database** | `search_documents` table (tsvector + pg_trgm), `search_indexer_state` tracking table, 2 SQL functions |
+
+### Configuration
+
+| Environment Variable | Default | Description |
+|---|---|---|
+| `SEARCH_INDEX_INTERVAL` | `300` | Seconds between indexing cycles (default 5 minutes) |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASS` | Standard DB vars | Database connection for the search worker |
+
+### Indexed Document Types (19)
+
+`vm`, `volume`, `snapshot`, `hypervisor`, `network`, `subnet`, `floating_ip`, `port`, `security_group`, `activity`, `audit`, `drift_event`, `snapshot_run`, `snapshot_record`, `restore_job`, `backup`, `notification`, `provisioning`, `deletion`
+
+### Usage
+
+1. Navigate to the **🔍 Ops Search** tab
+2. Type a search query (VM name, IP address, error message, tenant name, etc.)
+3. Optionally filter by document type using the pill buttons
+4. Results show relevance-ranked matches with highlighted keyword snippets
+5. Click **Show Similar** on any result to find related documents
+6. For quota/capacity/drift queries, **Smart Suggestions** appear above results linking to the matching report
+
+### Admin Operations
+
+- **Re-index**: Click the 🔄 button (admin only) to reset all watermarks and trigger a full re-index on the next cycle
+- **Stats**: Click the 📊 button to see per-doc-type document counts, last run time, and indexer health
+
+### API Endpoints
+
+| Method | Endpoint | Permission | Description |
+|---|---|---|---|
+| `GET` | `/api/search?q=...` | `search:read` | Full-text search with filters and pagination |
+| `GET` | `/api/search/similar/{doc_id}` | `search:read` | Find documents similar to the given one |
+| `GET` | `/api/search/intent?q=...` | `search:read` | Detect intent and suggest report endpoints |
+| `GET` | `/api/search/stats` | `search:read` | Indexer status and document counts |
+| `POST` | `/api/search/reindex` | `search:admin` | Reset watermarks for full re-index |
+
+### Troubleshooting
+
+```bash
+# Check search worker logs
+docker logs pf9_search_worker
+
+# Verify search documents count
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT doc_type, COUNT(*) FROM search_documents GROUP BY doc_type ORDER BY doc_type;"
+
+# Check indexer state
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT * FROM search_indexer_state ORDER BY doc_type;"
+
+# Test search function directly
+docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT title, rank FROM search_ranked('my-vm-name') LIMIT 5;"
 ```
 
 ---
