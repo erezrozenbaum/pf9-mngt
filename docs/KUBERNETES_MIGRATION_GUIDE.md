@@ -1,6 +1,6 @@
 # Platform9 Management System - Kubernetes Migration Guide
 
-**Version**: 1.0  
+**Version**: 2.0  
 **Date**: February 2026  
 **Status**: Migration Planning Guide (Not yet implemented)  
 **Scope**: Complete migration from Docker Compose to Kubernetes with Helm charts  
@@ -32,7 +32,10 @@
 ### Current State (Docker Compose)
 
 The Platform9 Management System currently runs on **Docker Compose** with:
-- **6 containerized services** (UI, API, Monitoring, Database, pgAdmin, LDAP)
+- **11 containerized services**:
+  - **Core**: UI (React), API (FastAPI), Monitoring (FastAPI), PostgreSQL, OpenLDAP
+  - **Workers**: Snapshot Worker, Backup Worker, Metering Worker, Notification Worker
+  - **Admin tools**: pgAdmin, phpLDAPadmin
 - **Host-based Python scripts** for metrics collection and infrastructure automation
 - **Single-node deployment** model with volume-based persistence
 - **Environment file-based configuration** (.env)
@@ -68,35 +71,46 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 ### Current Docker Compose Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│         Docker Compose (Single Host)                │
-├─────────────────────────────────────────────────────┤
-│                                                     │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐   │
-│  │   React    │  │  FastAPI   │  │ Monitoring │   │
-│  │     UI     │  │    API     │  │  Service   │   │
-│  │ Port:5173  │  │ Port:8000  │  │ Port:8001  │   │
-│  └────────────┘  └────────────┘  └────────────┘   │
-│         │              │               │            │
-│  ┌──────────────────────────────────────────────┐  │
-│  │          PostgreSQL Database                 │  │
-│  │  pgAdmin    |  pgdata volume                 │  │
-│  │  Port:8080  |  Port:5432                     │  │
-│  └──────────────────────────────────────────────┘  │
-│         │                                          │
-│  ┌──────────────────────────────────────────────┐  │
-│  │        OpenLDAP (LDAP Server)                │  │
-│  │        Port: 389                             │  │
-│  └──────────────────────────────────────────────┘  │
-│                                                    │
-│  ┌──────────────────────────────────────────────┐  │
-│  │   Host Scripts (Windows Task Scheduler)      │  │
-│  │   - Host Metrics Collection                  │  │
-│  │   - Snapshot Management                      │  │
-│  │   - Infrastructure Automation                │  │
-│  └──────────────────────────────────────────────┘  │
-│                                                    │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│           Docker Compose (Single Host)                       │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌── Core Services ───────────────────────────────────────┐ │
+│  │  ┌────────────┐  ┌────────────┐  ┌─────────────────┐  │ │
+│  │  │  React UI  │  │  FastAPI   │  │   Monitoring    │  │ │
+│  │  │ Port:5173  │  │  API       │  │   Service       │  │ │
+│  │  │            │  │ Port:8000  │  │   Port:8001     │  │ │
+│  │  └────────────┘  └────────────┘  └─────────────────┘  │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌── Worker Services (long-lived, no ports) ──────────────┐ │
+│  │  ┌────────────────┐  ┌──────────────┐                  │ │
+│  │  │ Snapshot Worker │  │ Backup Worker│                  │ │
+│  │  │ (scheduler,     │  │ (pg_dump,    │                  │ │
+│  │  │  compliance,    │  │  LDAP backup,│                  │ │
+│  │  │  service user)  │  │  retention)  │                  │ │
+│  │  └────────────────┘  └──────────────┘                  │ │
+│  │  ┌────────────────┐  ┌──────────────────────────┐      │ │
+│  │  │Metering Worker │  │ Notification Worker      │      │ │
+│  │  │ (resource,API, │  │ (SMTP email, drift,      │      │ │
+│  │  │  efficiency)   │  │  digest, compliance)     │      │ │
+│  │  └────────────────┘  └──────────────────────────┘      │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌── Data & Identity ────────────────────────────────────┐  │
+│  │  ┌──────────────────────────┐  ┌───────────────────┐  │  │
+│  │  │    PostgreSQL (5432)     │  │  OpenLDAP (389)   │  │  │
+│  │  │    pgAdmin   (8080)      │  │  phpLDAPadmin     │  │  │
+│  │  │                          │  │  (8081)           │  │  │
+│  │  └──────────────────────────┘  └───────────────────┘  │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+│  ┌── Host Scripts (Windows Task Scheduler) ──────────────┐  │
+│  │  - host_metrics_collector.py (every 30 min)            │  │
+│  │  - pf9_rvtools.py (daily inventory sync)               │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Target Kubernetes Architecture
@@ -120,6 +134,18 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 │  │  │  (× 3-5)     │  │  (× 3-5)     │  │  (× 2-3)        │   │ │
 │  │  └──────────────┘  └──────────────┘  └─────────────────┘   │ │
 │  │                                                              │ │
+│  │  Worker Deployments (1 replica each):                       │ │
+│  │  ┌────────────────┐  ┌────────────────┐                     │ │
+│  │  │ Snapshot Worker │  │ Backup Worker  │                     │ │
+│  │  │ (scheduler,     │  │ (pg_dump, LDAP │                     │ │
+│  │  │  compliance)    │  │  backup)       │                     │ │
+│  │  └────────────────┘  └────────────────┘                     │ │
+│  │  ┌────────────────┐  ┌────────────────────┐                 │ │
+│  │  │Metering Worker │  │Notification Worker │                 │ │
+│  │  │ (resource,API, │  │ (SMTP, drift,      │                 │ │
+│  │  │  efficiency)   │  │  digest, alerts)   │                 │ │
+│  │  └────────────────┘  └────────────────────┘                 │ │
+│  │                                                              │ │
 │  │  StatefulSet:                                               │ │
 │  │  ┌────────────────────────────────────────────────────────┐ │ │
 │  │  │  PostgreSQL StatefulSet (1 primary, 2 replicas HA)    │ │ │
@@ -138,24 +164,29 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 │  │  ├─ pf9-api (ClusterIP)                                    │ │
 │  │  ├─ pf9-monitoring (ClusterIP)                             │ │
 │  │  ├─ postgres (ClusterIP, headless for StatefulSet)        │ │
-│  │  └─ ldap (ClusterIP)                                       │ │
+│  │  ├─ ldap (ClusterIP)                                       │ │
+│  │  └─ redis (ClusterIP, for metrics cache)                   │ │
 │  │                                                              │ │
 │  │  ConfigMaps:                                                │ │
 │  │  ├─ api-config (Environment variables)                     │ │
 │  │  ├─ ldap-config (LDAP schema & config)                     │ │
-│  │  └─ postgres-init (Database initialization scripts)        │ │
+│  │  ├─ postgres-init (Database initialization scripts)        │ │
+│  │  ├─ snapshot-config (Scheduler & policy settings)          │ │
+│  │  ├─ metering-config (Collection intervals, retention)      │ │
+│  │  ├─ notification-config (Poll interval, digest settings)   │ │
+│  │  └─ backup-config (Poll interval, retention)               │ │
 │  │                                                              │ │
 │  │  Secrets:                                                   │ │
 │  │  ├─ db-credentials (POSTGRES_USER, POSTGRES_PASSWORD)     │ │
 │  │  ├─ jwt-secrets (JWT_SECRET_KEY)                           │ │
 │  │  ├─ ldap-secrets (LDAP admin password)                    │ │
-│  │  └─ api-secrets (PF9 credentials, monitoring tokens)       │ │
+│  │  ├─ api-secrets (PF9 credentials, monitoring tokens)       │ │
+│  │  ├─ smtp-secrets (SMTP credentials)                        │ │
+│  │  └─ snapshot-secrets (Fernet key, service user password)   │ │
 │  │                                                              │ │
 │  │  Jobs & CronJobs:                                           │ │
 │  │  ├─ db-migration (One-time, runs on upgrade)              │ │
-│  │  ├─ snapshot-policy-job (CronJob: daily)                   │ │
-│  │  ├─ metrics-collection-job (CronJob: every 5 mins)         │ │
-│  │  └─ cleanup-job (CronJob: weekly)                          │ │
+│  │  └─ metrics-collection-job (CronJob: every 5 mins)         │ │
 │  │                                                              │ │
 │  │  RBAC:                                                      │ │
 │  │  ├─ ServiceAccount: pf9-app                                │ │
@@ -165,9 +196,10 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 │  │  Network Policies:                                          │ │
 │  │  ├─ Deny all ingress (default)                             │ │
 │  │  ├─ Allow UI ← Ingress                                     │ │
-│  │  ├─ Allow API ← Ingress + UI                               │ │
-│  │  ├─ Allow DB ← API + migration jobs                       │ │
-│  │  └─ Allow LDAP ← API                                       │ │
+│  │  ├─ Allow API ← Ingress + UI + metering                    │ │
+│  │  ├─ Allow DB ← API + workers + migration jobs              │ │
+│  │  ├─ Allow LDAP ← API + backup-worker                       │ │
+│  │  └─ Allow Monitoring ← API + metering                      │ │
 │  │                                                              │ │
 │  │  Pod Disruption Budgets:                                    │ │
 │  │  ├─ API pods (min 2 available)                             │ │
@@ -384,6 +416,87 @@ The Platform9 Management System currently runs on **Docker Compose** with:
 
 ---
 
+#### 7. **Snapshot Worker - STRAIGHTFORWARD**
+
+**Current**: Long-running Docker container (`snapshots/Dockerfile`) with internal scheduler  
+**Target**: Kubernetes Deployment (1 replica)
+
+The snapshot worker is already a fully containerized service with its own Dockerfile, internal schedule loop (`snapshot_scheduler.py`), and all configuration via environment variables. It does **not** need CronJob conversion — it runs continuously and manages its own timing via `schedule` library.
+
+**Key Features**:
+- Policy assignment (configurable interval)
+- Auto snapshot creation with retention management
+- Compliance reporting (daily)
+- On-demand snapshot pipeline (triggered via DB)
+- Service user authentication (Fernet-encrypted cross-tenant auth)
+- RVTools inventory sync integration
+
+**Kubernetes Readiness**: 90% - Already containerized. Just needs K8s Deployment manifest + Secrets for Fernet key and service user credentials.
+
+---
+
+#### 8. **Backup Worker - STRAIGHTFORWARD**
+
+**Current**: Long-running Docker container (`backup_worker/Dockerfile`, base: `postgres:16`)  
+**Target**: Kubernetes Deployment (1 replica)
+
+Handles PostgreSQL `pg_dump`/`pg_restore` and LDAP `ldapsearch`/`ldapadd` backups. Polls `backup_config` table for schedule, writes compressed files to NFS mount, enforces retention.
+
+**Key Considerations**:
+- ⚠️ **Storage**: Needs PVC or NFS mount for backup files (currently `./backups:/backups`)
+- ⚠️ **LDAP access**: Requires network policy allowing traffic to LDAP pod
+- ✅ All config via environment variables
+
+**Kubernetes Readiness**: 85% - Needs PVC for backup storage and network policy for LDAP access.
+
+---
+
+#### 9. **Metering Worker - STRAIGHTFORWARD**
+
+**Current**: Long-running Docker container (`metering_worker/Dockerfile`)  
+**Target**: Kubernetes Deployment (1 replica)
+
+Periodically collects operational metrics from monitoring and API services, persists to `metering_*` tables. Managed internally via `schedule` + `metering_config` DB table.
+
+**Key Considerations**:
+- Depends on monitoring and API services being accessible
+- ⚠️ **Network**: Needs network policy allowing egress to `pf9-api` and `pf9-monitoring`
+- ✅ No volumes needed, all config via environment variables
+
+**Kubernetes Readiness**: 95% - Minimal changes needed.
+
+---
+
+#### 10. **Notification Worker - STRAIGHTFORWARD**
+
+**Current**: Long-running Docker container (`notifications/Dockerfile`)  
+**Target**: Kubernetes Deployment (1 replica)
+
+Polls database for new events (drift, snapshot failures, compliance violations, health drops), dispatches email notifications. Supports immediate and daily digest modes. Uses Jinja2 HTML templates.
+
+**Key Considerations**:
+- ⚠️ **SMTP egress**: Needs NetworkPolicy allowing outbound SMTP (port 587)
+- ⚠️ **Secrets**: SMTP credentials (host, username, password)
+- ✅ Templates bundled in container image
+
+**Kubernetes Readiness**: 90% - Needs SMTP Secret and egress network policy.
+
+---
+
+#### 11. **Admin Tools (pgAdmin, phpLDAPadmin) - OPTIONAL**
+
+**Current**: Docker containers for database and LDAP web administration  
+**Target**: Optional Kubernetes Deployments (not required for production)
+
+These are development/admin tools. In production Kubernetes environments, teams typically use:
+- `kubectl port-forward` for ad-hoc database access
+- Managed database admin tools (e.g., pgAdmin as a separate deployment behind auth proxy)
+- `kubectl exec` for LDAP queries
+
+**Kubernetes Readiness**: N/A - Optional, deploy only if needed for your workflow.
+
+---
+
 ### Migration Dependency Chain
 
 ```mermaid
@@ -394,13 +507,22 @@ graph LR
     C --> E["LDAP Deployment"]
     B --> F["API Deployment"]
     B --> G["UI Deployment"]
-    F --> H["Monitoring Deployment"]
     D --> F
     E --> F
-    F --> I["CronJobs Setup"]
-    I --> J["Production Ready"]
-    H --> J
-    G --> J
+    F --> H["Monitoring Deployment"]
+    D --> I["Snapshot Worker"]
+    D --> J["Backup Worker"]
+    E --> J
+    D --> K["Notification Worker"]
+    D --> L["Metering Worker"]
+    F --> L
+    H --> L
+    I --> M["Production Ready"]
+    J --> M
+    K --> M
+    L --> M
+    H --> M
+    G --> M
 ```
 
 **Phase Breakdown**:
@@ -1478,34 +1600,23 @@ spec:
 
 ---
 
-### 6. CronJobs for Host Scripts - Migration
+### 6. Host Metrics Collection - CronJob Migration
 
 #### Challenge: Refactoring Host-Based Work
 
-**Current** (Windows Task Scheduler):
-```powershell
-# Run every 5 minutes
-host_metrics_collector.py
+The `host_metrics_collector.py` script currently runs on the Windows host via Task Scheduler, scraping Prometheus endpoints on PF9 hypervisors (port 9388 for node exporter, port 9177 for libvirt exporter) and writing results to a local `metrics_cache.json` file.
 
-# Run daily at 2 AM
-snapshots/p9_auto_snapshots.py
-
-# Run weekly
-cleanup_snapshots.py
-```
-
-**Kubernetes** (CronJobs):
+In Kubernetes, this becomes a CronJob that writes to Redis instead of a local file:
 
 ```yaml
-# CronJob 1: Metrics Collection (every 5 minutes)
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: metrics-collection-job
   namespace: pf9
 spec:
-  schedule: "*/5 * * * *"  # Every 5 minutes
-  concurrencyPolicy: Forbid  # Don't run if previous is still running
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -1516,24 +1627,16 @@ spec:
           restartPolicy: OnFailure
           containers:
           - name: metrics-collector
-            image: company-registry.azurecr.io/pf9-tools:latest
-            command: ["python", "host_metrics_collector.py"]
-            
+            image: {{ .Values.registry.name }}/pf9-tools:{{ .Values.images.tools }}
+            command: ["python", "host_metrics_collector.py", "--once"]
             envFrom:
             - configMapRef:
-                name: cronjob-config
+                name: monitoring-config
             - secretRef:
                 name: api-secrets
-            
             env:
-            - name: PF9_HOSTS
-              valueFrom:
-                configMapKeyRef:
-                  name: cronjob-config
-                  key: PF9_HOSTS
             - name: REDIS_HOST
               value: redis-cache.pf9.svc.cluster.local
-            
             resources:
               requests:
                 cpu: 100m
@@ -1541,130 +1644,443 @@ spec:
               limits:
                 cpu: 500m
                 memory: 512Mi
-
----
-# CronJob 2: Snapshot Policy (daily at 02:00)
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: snapshot-policy-job
-  namespace: pf9
-spec:
-  schedule: "0 2 * * *"  # 02:00 every day
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          serviceAccountName: pf9-jobs
-          restartPolicy: OnFailure
-          containers:
-          - name: snapshot-policy
-            image: company-registry.azurecr.io/pf9-tools:latest
-            command: ["python", "snapshots/p9_auto_snapshots.py"]
-            
-            envFrom:
-            - secretRef:
-                name: api-secrets
-            
-            resources:
-              requests:
-                cpu: 200m
-                memory: 256Mi
-              limits:
-                cpu: 1000m
-                memory: 1Gi
-
----
-# CronJob 3: Cleanup (weekly, Sunday at 03:00)
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: cleanup-job
-  namespace: pf9
-spec:
-  schedule: "0 3 * * 0"  # Sunday 03:00
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          serviceAccountName: pf9-jobs
-          restartPolicy: OnFailure
-          containers:
-          - name: cleanup
-            image: company-registry.azurecr.io/pf9-tools:latest
-            command: ["python", "cleanup_snapshots.py"]
-            
-            envFrom:
-            - secretRef:
-                name: api-secrets
-            
-            resources:
-              requests:
-                cpu: 200m
-                memory: 512Mi
-              limits:
-                cpu: 1000m
-                memory: 2Gi
 ```
 
-#### Code Refactoring Needed
-
-**host_metrics_collector.py** needs changes:
+**Code Changes Needed** for `host_metrics_collector.py`:
 
 ```python
-# CURRENT (Windows-specific):
-import os
-hosts = ["<HOST_IP_1>", "<HOST_IP_2>", "<HOST_IP_3>", "<HOST_IP_4>"]
-cache_file = "metrics_cache.json"
-
-def run():
-    # Collect metrics
-    # Write to local cache_file
-
-# KUBERNETES:
-import os
+# Replace file-based cache with Redis
+# BEFORE:
+#   with open("metrics_cache.json", "w") as f:
+#       json.dump(metrics, f)
+# AFTER:
 import redis
-import json
-from datetime import datetime, timedelta
-
-class KubernetesMetricsCollector:
-    def __init__(self):
-        # Get hosts from ConfigMap environment variable
-        hosts_str = os.getenv('PF9_HOSTS', 'localhost')
-        self.hosts = hosts_str.split(',')
-        
-        # Initialize Redis connection (shared cache)
-        redis_host = os.getenv('REDIS_HOST', 'redis-cache')
-        self.redis = redis.Redis(
-            host=redis_host,
-            port=6379,
-            decode_responses=True
-        )
-    
-    async def run(self):
-        """Main job entry point"""
-        metrics = await self.collect_all_metrics()
-        
-        # Store in Redis instead of file
-        self.redis.setex(
-            'pf9:metrics:latest',
-            300,  # 5 minute TTL
-            json.dumps(metrics)
-        )
-        
-        print(f"Metrics collected at {datetime.utcnow().isoformat()}")
-
-if __name__ == "__main__":
-    collector = KubernetesMetricsCollector()
-    asyncio.run(collector.run())
+redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'redis-cache'))
+redis_client.setex('pf9:metrics:latest', 300, json.dumps(metrics))
 ```
 
 **Refactoring Summary**:
-- ✅ Remove Windows Task Scheduler references
 - ✅ Replace local file cache with Redis
 - ✅ Get host list from environment (ConfigMap)
 - ✅ Add proper logging for Kubernetes
-- Estimated effort per script: **2-4 hours**
+- Estimated effort: **2-4 hours**
+
+> **Note**: Snapshot management, backup, metering, and notifications are now fully containerized worker services (sections 7-10 below), not CronJobs. Only the host metrics collector needs CronJob conversion.
+
+---
+
+### 7. Snapshot Worker - Migration
+
+#### Current State
+
+The snapshot worker is a **fully containerized long-running service** with its own Dockerfile (`snapshots/Dockerfile`), internal scheduler (`snapshot_scheduler.py`), and database-driven configuration. It is **not** a script to convert to a CronJob — it is already a proper service.
+
+**Capabilities**: Policy assignment, auto snapshot creation, compliance reporting, on-demand snapshots (triggered via DB), service user cross-tenant authentication (Fernet-encrypted), RVTools inventory sync.
+
+#### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snapshot-worker
+  namespace: pf9
+  labels:
+    app: snapshot-worker
+    tier: worker
+spec:
+  replicas: 1  # Single instance — manages its own scheduling
+  strategy:
+    type: Recreate  # Avoid dual-scheduling conflicts
+  selector:
+    matchLabels:
+      app: snapshot-worker
+  template:
+    metadata:
+      labels:
+        app: snapshot-worker
+        tier: worker
+    spec:
+      serviceAccountName: pf9-app
+      containers:
+      - name: snapshot-worker
+        image: {{ .Values.registry.name }}/pf9-snapshot-worker:{{ .Values.images.snapshotWorker }}
+        
+        envFrom:
+        - configMapRef:
+            name: snapshot-config
+        - secretRef:
+            name: db-credentials
+        - secretRef:
+            name: api-secrets
+        - secretRef:
+            name: snapshot-secrets
+        
+        env:
+        - name: PF9_DB_HOST
+          value: postgres.pf9.svc.cluster.local
+        - name: PF9_DB_PORT
+          value: "5432"
+        
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        
+        volumeMounts:
+        - name: reports
+          mountPath: /mnt/reports
+        - name: logs
+          mountPath: /app/logs
+      
+      volumes:
+      - name: reports
+        persistentVolumeClaim:
+          claimName: reports-pvc
+      - name: logs
+        persistentVolumeClaim:
+          claimName: app-logs-pvc
+```
+
+**ConfigMap** (`snapshot-config`):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: snapshot-config
+  namespace: pf9
+data:
+  SNAPSHOT_SCHEDULER_ENABLED: "true"
+  POLICY_ASSIGN_INTERVAL_MINUTES: "60"
+  AUTO_SNAPSHOT_INTERVAL_MINUTES: "60"
+  AUTO_SNAPSHOT_MAX_SIZE_GB: "260"
+  AUTO_SNAPSHOT_MAX_NEW: "200"
+  AUTO_SNAPSHOT_DRY_RUN: "false"
+  RVTOOLS_INTEGRATION_ENABLED: "true"
+  COMPLIANCE_REPORT_ENABLED: "true"
+  COMPLIANCE_REPORT_INTERVAL_MINUTES: "1440"
+  COMPLIANCE_REPORT_SLA_DAYS: "2"
+  POLICY_ASSIGN_MERGE_EXISTING: "true"
+  POLICY_ASSIGN_DRY_RUN: "false"
+  POLICY_ASSIGN_SYNC_POLICY_SETS: "true"
+  POLICY_ASSIGN_CONFIG: "/app/snapshots/snapshot_policy_rules.json"
+  RESTORE_ENABLED: "true"
+  RESTORE_DRY_RUN: "false"
+  RESTORE_CLEANUP_VOLUMES: "true"
+```
+
+**Secret** (`snapshot-secrets`):
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: snapshot-secrets
+  namespace: pf9
+type: Opaque
+stringData:
+  SNAPSHOT_PASSWORD_KEY: <fernet-key>
+  SNAPSHOT_USER_PASSWORD_ENCRYPTED: <encrypted-password>
+  SNAPSHOT_SERVICE_USER_EMAIL: snapshot-svc@company.com
+  SNAPSHOT_SERVICE_USER_PASSWORD: <plaintext-fallback>
+```
+
+**Code Changes**: None required — the snapshot worker is already fully containerized.
+
+---
+
+### 8. Backup Worker - Migration
+
+#### Current State
+
+The backup worker runs as a long-lived container based on `postgres:16` (for `pg_dump`/`pg_restore` CLI tools) with Python installed on top. It polls `backup_config` for schedules, executes DB and LDAP backups, writes compressed files to an NFS mount, and enforces retention.
+
+#### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup-worker
+  namespace: pf9
+  labels:
+    app: backup-worker
+    tier: worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backup-worker
+  template:
+    metadata:
+      labels:
+        app: backup-worker
+        tier: worker
+    spec:
+      serviceAccountName: pf9-app
+      containers:
+      - name: backup-worker
+        image: {{ .Values.registry.name }}/pf9-backup-worker:{{ .Values.images.backupWorker }}
+        
+        envFrom:
+        - configMapRef:
+            name: backup-config
+        - secretRef:
+            name: db-credentials
+        - secretRef:
+            name: ldap-secrets
+        
+        env:
+        - name: DB_HOST
+          value: postgres.pf9.svc.cluster.local
+        - name: LDAP_HOST
+          value: ldap.pf9.svc.cluster.local
+        - name: NFS_BACKUP_PATH
+          value: /backups
+        
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        
+        volumeMounts:
+        - name: backups
+          mountPath: /backups
+      
+      volumes:
+      - name: backups
+        persistentVolumeClaim:
+          claimName: backups-pvc
+```
+
+**ConfigMap** (`backup-config`):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-config
+  namespace: pf9
+data:
+  BACKUP_ENABLED: "true"
+  POLL_INTERVAL: "3600"
+  DB_PORT: "5432"
+  DB_NAME: pf9_mgmt
+  LDAP_PORT: "389"
+  LDAP_BASE_DN: dc=pf9mgmt,dc=local
+```
+
+**PVC** for backup storage:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backups-pvc
+  namespace: pf9
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: {{ .Values.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.backups.size | default "100Gi" }}
+```
+
+**Code Changes**: None required.
+
+---
+
+### 9. Metering Worker - Migration
+
+#### Current State
+
+The metering worker is a lightweight Python container that periodically collects operational metrics from the monitoring and API services, persists aggregated records to `metering_*` tables, and prunes old data based on retention configuration stored in `metering_config`.
+
+#### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metering-worker
+  namespace: pf9
+  labels:
+    app: metering-worker
+    tier: worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: metering-worker
+  template:
+    metadata:
+      labels:
+        app: metering-worker
+        tier: worker
+    spec:
+      serviceAccountName: pf9-app
+      containers:
+      - name: metering-worker
+        image: {{ .Values.registry.name }}/pf9-metering-worker:{{ .Values.images.meteringWorker }}
+        
+        envFrom:
+        - configMapRef:
+            name: metering-config
+        - secretRef:
+            name: db-credentials
+        
+        env:
+        - name: DB_HOST
+          value: postgres.pf9.svc.cluster.local
+        - name: MONITORING_URL
+          value: http://pf9-monitoring.pf9.svc.cluster.local:8001
+        - name: API_URL
+          value: http://pf9-api.pf9.svc.cluster.local:8000
+        
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+```
+
+**ConfigMap** (`metering-config`):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metering-config
+  namespace: pf9
+data:
+  METERING_POLL_INTERVAL: "60"
+  DB_PORT: "5432"
+  DB_NAME: pf9_mgmt
+```
+
+**Code Changes**: None required.
+
+---
+
+### 10. Notification Worker - Migration
+
+#### Current State
+
+The notification worker polls the database for new events (drift detections, snapshot failures, compliance violations, health-score drops) and dispatches email notifications based on per-user preferences. Supports immediate delivery and daily digest mode using Jinja2 HTML templates.
+
+#### Kubernetes Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-worker
+  namespace: pf9
+  labels:
+    app: notification-worker
+    tier: worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: notification-worker
+  template:
+    metadata:
+      labels:
+        app: notification-worker
+        tier: worker
+    spec:
+      serviceAccountName: pf9-app
+      containers:
+      - name: notification-worker
+        image: {{ .Values.registry.name }}/pf9-notification-worker:{{ .Values.images.notificationWorker }}
+        
+        envFrom:
+        - configMapRef:
+            name: notification-config
+        - secretRef:
+            name: db-credentials
+        - secretRef:
+            name: smtp-secrets
+        
+        env:
+        - name: PF9_DB_HOST
+          value: postgres.pf9.svc.cluster.local
+        - name: PF9_DB_PORT
+          value: "5432"
+        
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      
+      volumes:
+      - name: logs
+        persistentVolumeClaim:
+          claimName: app-logs-pvc
+```
+
+**ConfigMap** (`notification-config`):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-config
+  namespace: pf9
+data:
+  PF9_DB_NAME: pf9_mgmt
+  SMTP_ENABLED: "true"
+  SMTP_PORT: "587"
+  SMTP_USE_TLS: "true"
+  SMTP_FROM_NAME: "Platform9 Management"
+  NOTIFICATION_POLL_INTERVAL_SECONDS: "120"
+  NOTIFICATION_DIGEST_ENABLED: "true"
+  NOTIFICATION_DIGEST_HOUR_UTC: "8"
+  NOTIFICATION_LOOKBACK_SECONDS: "300"
+  HEALTH_ALERT_THRESHOLD: "50"
+```
+
+**Secret** (`smtp-secrets`):
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: smtp-secrets
+  namespace: pf9
+type: Opaque
+stringData:
+  SMTP_HOST: smtp.company.com
+  SMTP_USERNAME: <smtp-user>
+  SMTP_PASSWORD: <smtp-password>
+  SMTP_FROM_ADDRESS: pf9-mgmt@company.com
+```
+
+**Code Changes**: None required.
 
 ---
 
@@ -1689,22 +2105,35 @@ pf9-helm/
 │   │   ├── db-config.yaml
 │   │   ├── ldap-config.yaml
 │   │   ├── monitoring-config.yaml
+│   │   ├── snapshot-config.yaml
+│   │   ├── backup-config.yaml
+│   │   ├── metering-config.yaml
+│   │   ├── notification-config.yaml
 │   │   └── cronjob-config.yaml
 │   ├── secrets/
 │   │   ├── db-credentials.yaml
 │   │   ├── jwt-secrets.yaml
 │   │   ├── ldap-secrets.yaml
-│   │   └── api-secrets.yaml
+│   │   ├── api-secrets.yaml
+│   │   ├── snapshot-secrets.yaml
+│   │   └── smtp-secrets.yaml
 │   ├── storage/
 │   │   ├── storageclass.yaml
 │   │   ├── pvc-postgres.yaml
 │   │   ├── pvc-ldap.yaml
-│   │   └── pvc-redis.yaml
+│   │   ├── pvc-redis.yaml
+│   │   ├── pvc-backups.yaml
+│   │   ├── pvc-reports.yaml
+│   │   └── pvc-app-logs.yaml
 │   ├── deployments/
 │   │   ├── ui.yaml
 │   │   ├── api.yaml
 │   │   ├── monitoring.yaml
-│   │   └── redis.yaml
+│   │   ├── redis.yaml
+│   │   ├── snapshot-worker.yaml
+│   │   ├── backup-worker.yaml
+│   │   ├── metering-worker.yaml
+│   │   └── notification-worker.yaml
 │   ├── statefulsets/
 │   │   ├── postgres.yaml
 │   │   └── ldap.yaml
@@ -1727,11 +2156,12 @@ pf9-helm/
 │   │   ├── default-deny.yaml
 │   │   ├── allow-ingress.yaml
 │   │   ├── allow-api.yaml
-│   │   └── allow-database.yaml
+│   │   ├── allow-database.yaml
+│   │   ├── allow-ldap.yaml
+│   │   ├── allow-monitoring.yaml
+│   │   └── allow-smtp-egress.yaml
 │   ├── cronjobs/
-│   │   ├── metrics-collection.yaml
-│   │   ├── snapshot-policy.yaml
-│   │   └── cleanup-job.yaml
+│   │   └── metrics-collection.yaml
 │   ├── jobs/
 │   │   └── db-migration.yaml
 │   ├── hpa/
@@ -1785,6 +2215,10 @@ replicaCount:
   monitoring: 2
   ldap: 1
   postgres: 1
+  snapshotWorker: 1
+  backupWorker: 1
+  meteringWorker: 1
+  notificationWorker: 1
 
 # Image versions
 images:
@@ -1794,6 +2228,11 @@ images:
   redis: redis:7-alpine
   postgres: postgres:16-alpine
   openldap: osixia/openldap:1.5.0
+  snapshotWorker: pf9-snapshot-worker:latest
+  backupWorker: pf9-backup-worker:latest
+  meteringWorker: pf9-metering-worker:latest
+  notificationWorker: pf9-notification-worker:latest
+  tools: pf9-tools:latest  # For CronJobs (metrics collection)
 
 # Resource Requests & Limits
 resources:
@@ -1844,6 +2283,38 @@ resources:
     limits:
       cpu: 500m
       memory: 1Gi
+  
+  snapshotWorker:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  
+  backupWorker:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  
+  meteringWorker:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+  notificationWorker:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 # Persistence
 persistence:
@@ -1862,6 +2333,15 @@ persistence:
   
   redis:
     size: 5Gi
+  
+  backups:
+    size: 100Gi
+  
+  reports:
+    size: 20Gi
+  
+  appLogs:
+    size: 10Gi
 
 # Ingress
 ingress:
@@ -2036,6 +2516,34 @@ stringData:
   PF9_USERNAME: <pf9-user>
   PF9_PASSWORD: <pf9-password>
   PF9_AUTH_URL: https://pf9-controller.company.com:5000/v3
+
+---
+# 5. Snapshot Service User Credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: snapshot-secrets
+  namespace: pf9
+type: Opaque
+stringData:
+  SNAPSHOT_PASSWORD_KEY: <fernet-key>
+  SNAPSHOT_USER_PASSWORD_ENCRYPTED: <encrypted-password>
+  SNAPSHOT_SERVICE_USER_EMAIL: snapshot-svc@company.com
+  SNAPSHOT_SERVICE_USER_PASSWORD: <plaintext-fallback>
+
+---
+# 6. SMTP Credentials (Notification Worker)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: smtp-secrets
+  namespace: pf9
+type: Opaque
+stringData:
+  SMTP_HOST: smtp.company.com
+  SMTP_USERNAME: <smtp-user>
+  SMTP_PASSWORD: <smtp-password>
+  SMTP_FROM_ADDRESS: pf9-mgmt@company.com
 ```
 
 **Best Practices**:
@@ -2113,6 +2621,58 @@ metadata:
   namespace: pf9
 data:
   PF9_HOSTS: "10.0.1.10,10.0.1.11,10.0.1.12"
+
+---
+# Snapshot Worker Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: snapshot-config
+  namespace: pf9
+data:
+  SNAPSHOT_SCHEDULER_ENABLED: "true"
+  POLICY_ASSIGN_INTERVAL_MINUTES: "60"
+  AUTO_SNAPSHOT_INTERVAL_MINUTES: "60"
+  AUTO_SNAPSHOT_MAX_SIZE_GB: "260"
+  COMPLIANCE_REPORT_ENABLED: "true"
+  COMPLIANCE_REPORT_INTERVAL_MINUTES: "1440"
+  COMPLIANCE_REPORT_SLA_DAYS: "2"
+  RESTORE_ENABLED: "true"
+
+---
+# Backup Worker Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-config
+  namespace: pf9
+data:
+  BACKUP_ENABLED: "true"
+  POLL_INTERVAL: "3600"
+
+---
+# Metering Worker Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metering-config
+  namespace: pf9
+data:
+  METERING_POLL_INTERVAL: "60"
+
+---
+# Notification Worker Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-config
+  namespace: pf9
+data:
+  SMTP_ENABLED: "true"
+  NOTIFICATION_POLL_INTERVAL_SECONDS: "120"
+  NOTIFICATION_DIGEST_ENABLED: "true"
+  NOTIFICATION_DIGEST_HOUR_UTC: "8"
+  HEALTH_ALERT_THRESHOLD: "50"
 ```
 
 ### Secrets Management (Production)
@@ -2451,6 +3011,15 @@ spec:
     - protocol: TCP
       port: 5432
   
+  # From worker services
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: worker
+    ports:
+    - protocol: TCP
+      port: 5432
+  
   # From migration jobs
   - from:
     - podSelector:
@@ -2481,6 +3050,69 @@ spec:
     ports:
     - protocol: TCP
       port: 389
+  - from:
+    - podSelector:
+        matchLabels:
+          app: backup-worker
+    ports:
+    - protocol: TCP
+      port: 389
+
+---
+# 6. Allow monitoring access from metering worker
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring
+  namespace: pf9
+spec:
+  podSelector:
+    matchLabels:
+      app: pf9-monitoring
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: pf9-api
+    ports:
+    - protocol: TCP
+      port: 8001
+  - from:
+    - podSelector:
+        matchLabels:
+          app: metering-worker
+    ports:
+    - protocol: TCP
+      port: 8001
+
+---
+# 7. Allow SMTP egress for notification worker
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-smtp-egress
+  namespace: pf9
+spec:
+  podSelector:
+    matchLabels:
+      app: notification-worker
+  policyTypes:
+  - Egress
+  egress:
+  - to: []  # Allow external SMTP
+    ports:
+    - protocol: TCP
+      port: 587
+    - protocol: TCP
+      port: 465
+  - to:     # Allow DNS resolution
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
 ```
 
 ### Pod Security Policy / Pod Security Standards
@@ -3002,27 +3634,35 @@ async def track_metrics(request: Request, call_next):
 
 ---
 
-### Phase 3: Stateless Services (Week 3)
+### Phase 3: Stateless Services & Workers (Week 3)
 
 **Timeline**: 5 business days
 
 **Deliverables**:
 - [ ] Backend API Deployment with HPA
 - [ ] Frontend UI Deployment with replicas
+- [ ] Snapshot Worker Deployment running
+- [ ] Backup Worker Deployment running
+- [ ] Metering Worker Deployment running
+- [ ] Notification Worker Deployment running
 - [ ] Services and ClusterIP configured
 - [ ] Ingress routes configured
 - [ ] Health checks verified
 
 **Tasks**:
-1. Build optimized Docker images
+1. Build optimized Docker images (all 7 services)
 2. Create API Deployment manifest
    - Add health check endpoints
    - Configure connection pooling
 3. Create UI Deployment manifest
-4. Configure autoscaling (HPA)
-5. Deploy Ingress with TLS
-6. Configure DNS and certificates
-7. Load test deployment
+4. Deploy worker services (snapshot, backup, metering, notification)
+   - Create ConfigMaps for each worker
+   - Create Secrets (snapshot-secrets, smtp-secrets)
+   - Configure PVCs (backups, reports, app-logs)
+5. Configure autoscaling (HPA for API/UI/Monitoring)
+6. Deploy Ingress with TLS
+7. Configure DNS and certificates
+8. Verify worker services connecting to DB, monitoring, and LDAP
 
 **Code Changes**:
 - [ ] api/main.py: Add `/health` and `/health/ready` endpoints
@@ -3036,28 +3676,29 @@ async def track_metrics(request: Request, call_next):
 - [ ] UI accessible via Ingress
 - [ ] Horizontal scaling working
 - [ ] Zero-downtime rolling updates
+- [ ] Snapshot worker creating snapshots on schedule
+- [ ] Backup worker executing DB + LDAP backups
+- [ ] Metering worker collecting metrics
+- [ ] Notification worker sending test emails
 
 ---
 
-### Phase 4: Scheduled Jobs & Monitoring (Week 4)
+### Phase 4: Metrics CronJob, Monitoring & Observability (Week 4)
 
 **Timeline**: 5 business days
 
 **Deliverables**:
 - [ ] Metrics collection CronJob working
-- [ ] Snapshot policy CronJob working
-- [ ] Cleanup CronJob working
+- [ ] Redis deployed for shared metrics cache
 - [ ] Prometheus integrated
 - [ ] AlertManager rules deployed
 - [ ] Grafana dashboard created
 
 **Tasks**:
 1. Create Redis deployment
-2. Refactor host scripts for CronJobs
-   - [ ] host_metrics_collector.py → CronJob compatible
-   - [ ] snapshots/p9_auto_snapshots.py → CronJob compatible
-   - [ ] cleanup_snapshots.py → CronJob compatible
-3. Deploy CronJobs
+2. Refactor host_metrics_collector.py for CronJob + Redis
+   - [ ] host_metrics_collector.py → CronJob compatible with Redis output
+3. Deploy metrics collection CronJob
 4. Set up Prometheus scraping
 5. Create custom metrics
 6. Build Grafana dashboards
@@ -3065,13 +3706,11 @@ async def track_metrics(request: Request, call_next):
 
 **Code Changes**:
 - [ ] host_metrics_collector.py: Replace file cache with Redis (2-4 hours)
-- [ ] snapshots/p9_auto_snapshots.py: Add Kubernetes environment support (1-2 hours)
-- [ ] cleanup_snapshots.py: Add Kubernetes environment support (1-2 hours)
 
 **Effort**: 2 engineers × 1 week
 
 **Testing Checklist**:
-- [ ] CronJobs executing on schedule
+- [ ] CronJob executing on schedule
 - [ ] Metrics visible in Prometheus
 - [ ] Grafana displaying data
 - [ ] Alerts triggering correctly
@@ -3452,7 +4091,7 @@ This comprehensive migration guide provides a **production-ready roadmap** for t
 
 **Estimated Total Effort**: 4-5 weeks for experienced Kubernetes team
 
-**Risk Assessment**: LOW - Application code requires minimal changes (~10-15 hours total)
+**Risk Assessment**: LOW - Most services (8 of 11) are already fully containerized and require zero code changes. Only `host_metrics_collector.py` needs refactoring (~2-4 hours) to replace file-based cache with Redis.
 
 **Success Factors**:
 1. Kubernetes cluster provisioned correctly with proper resource allocation
