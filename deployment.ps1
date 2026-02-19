@@ -992,9 +992,11 @@ Write-Host ""
 
 Write-Host "Ops Search (Ops Assistant):" -ForegroundColor Cyan
 Write-Host "  Feature:               ENABLED" -ForegroundColor Green
-Write-Host "  UI Tab:                Ops Search (full-text + similarity + intent detection)" -ForegroundColor White
+Write-Host "  UI Tab:                Ops Search (full-text + similarity + intent + smart queries)" -ForegroundColor White
 Write-Host "  Worker:                pf9_search_worker (incremental indexer, default 5-min interval)" -ForegroundColor White
-Write-Host "  API Endpoints:         /api/search (search, similar, intent, stats, reindex)" -ForegroundColor White
+Write-Host "  API Endpoints:         /api/search (search, similar, intent, stats, reindex, smart, smart/help)" -ForegroundColor White
+Write-Host "  Smart Queries:         26 templates (VM status, quotas, capacity, networks, roles, drift, etc.)" -ForegroundColor White
+Write-Host "  Quota Metering:        Per-project usage (vCPUs, RAM, VMs, volumes, storage, FIPs, SGs)" -ForegroundColor White
 Write-Host "  Doc Types:             29 indexed types (VMs, volumes, users, audit, drift, snapshots, roles...)" -ForegroundColor White
 Write-Host "  RBAC:                  viewer/operator=search:read, admin/superadmin=search:admin" -ForegroundColor White
 Write-Host ""
