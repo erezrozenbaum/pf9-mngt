@@ -341,6 +341,10 @@ def upsert_volumes(conn, volumes: List[Dict[str, Any]], run_id: Optional[int] = 
         if not project_id or project_id not in valid_project_ids:
             project_id = None
         
+        # Extract server_id from first attachment (if attached)
+        attachments = v.get('attachments', [])
+        server_id = attachments[0].get('server_id') if attachments else None
+
         records.append({
             'id': v.get('id'),
             'name': v.get('name'),
@@ -348,6 +352,7 @@ def upsert_volumes(conn, volumes: List[Dict[str, Any]], run_id: Optional[int] = 
             'size_gb': v.get('size'),
             'status': v.get('status'),
             'volume_type': v.get('volume_type'),
+            'server_id': server_id,
             'bootable': v.get('bootable') == 'true' or v.get('bootable') == True,
             'created_at': created_at,
             'raw_json': json.dumps(v) if isinstance(v, dict) else v,
@@ -377,6 +382,8 @@ def upsert_networks(conn, networks: List[Dict[str, Any]], run_id: Optional[int] 
             'id': n.get('id'),
             'name': n.get('name'),
             'project_id': project_id,
+            'status': n.get('status'),
+            'admin_state_up': n.get('admin_state_up'),
             'is_shared': n.get('shared', False),
             'is_external': n.get('router:external', False),
             'raw_json': json.dumps(n) if isinstance(n, dict) else n,
@@ -398,6 +405,7 @@ def upsert_subnets(conn, subnets: List[Dict[str, Any]], run_id: Optional[int] = 
             'network_id': s.get('network_id'),
             'cidr': s.get('cidr'),
             'gateway_ip': s.get('gateway_ip'),
+            'enable_dhcp': s.get('enable_dhcp'),
             'raw_json': json.dumps(s) if isinstance(s, dict) else s,
         })
     
@@ -435,6 +443,7 @@ def upsert_ports(conn, ports: List[Dict[str, Any]], run_id: Optional[int] = None
             'device_id': p.get('device_id'),
             'device_owner': p.get('device_owner'),
             'mac_address': p.get('mac_address'),
+            'status': p.get('status'),
             'ip_addresses': json.dumps(p.get('fixed_ips', [])),
             'raw_json': json.dumps(p) if isinstance(p, dict) else p,
         })
