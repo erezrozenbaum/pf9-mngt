@@ -482,20 +482,34 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
   useEffect(() => { fetchLogs(); fetchPhysicalNetworks(); fetchRoles(); }, [fetchLogs, fetchPhysicalNetworks, fetchRoles]);
   useEffect(() => { if (selectedJob) fetchJobDetail(selectedJob); }, [selectedJob, fetchJobDetail]);
 
+  // ── Helper: derive external network name from project name + vlan ──
+  const deriveNetworkName = (projectName: string, vlanId: string): string => {
+    if (!projectName) return "";
+    const tenantBase = projectName.includes("_subid_")
+      ? projectName.split("_subid_")[0]
+      : projectName;
+    return vlanId ? `${tenantBase}_extnet_vlan_${vlanId}` : `${tenantBase}_extnet`;
+  };
+
   // ── Domain name change with debounced check ──
   const handleDomainNameChange = (value: string) => {
     const base: Partial<ProvisionForm> = { domain_name: value, existing_domain_id: "" };
-    if (value && form.subscription_id) base.project_name = `${value}_tenant_subid_${form.subscription_id}`;
+    if (value && form.subscription_id) {
+      const proj = `${value}_tenant_subid_${form.subscription_id}`;
+      base.project_name = proj;
+      base.network_name = deriveNetworkName(proj, form.vlan_id);
+    }
     setForm((p: ProvisionForm) => ({ ...p, ...base }));
     setDomainCheck(null); setDomainAction(null);
     if (domainCheckTimer.current) clearTimeout(domainCheckTimer.current);
     domainCheckTimer.current = setTimeout(() => checkDomain(value), 600);
   };
 
-  // ── Subscription ID change → auto-update project name ──
+  // ── Subscription ID change → auto-update project name + network name ──
   const handleSubscriptionIdChange = (value: string) => {
     const proj = form.domain_name ? `${form.domain_name}_tenant_subid_${value}` : "";
-    setForm((p: ProvisionForm) => ({ ...p, subscription_id: value, project_name: proj }));
+    const netName = proj ? deriveNetworkName(proj, form.vlan_id) : "";
+    setForm((p: ProvisionForm) => ({ ...p, subscription_id: value, project_name: proj, network_name: netName }));
     if (proj) {
       if (projectCheckTimer.current) clearTimeout(projectCheckTimer.current);
       projectCheckTimer.current = setTimeout(() => checkProject(proj, form.existing_domain_id || undefined), 600);
@@ -861,7 +875,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                     <span style={{ fontSize: 13, fontWeight: 500 }}>Network Name</span>
                     <input value={form.network_name}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("network_name", e.target.value)}
-                      placeholder={`${form.domain_name || "customer"}-ext-net`} style={inputStyle} />
+                      placeholder={deriveNetworkName(form.project_name || "tenant", form.vlan_id) || "tenant_extnet"} style={inputStyle} />
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <span style={{ fontSize: 13, fontWeight: 500 }}>Network Type</span>
@@ -895,7 +909,11 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <span style={{ fontSize: 13, fontWeight: 500 }}>VLAN ID <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
                     <input type="number" value={form.vlan_id}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("vlan_id", e.target.value)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                        const v = e.target.value;
+                        const netName = form.project_name ? deriveNetworkName(form.project_name, v) : "";
+                        setForm((p: ProvisionForm) => ({ ...p, vlan_id: v, network_name: netName }));
+                      }}
                       placeholder="e.g. 100" style={inputStyle} />
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -1120,6 +1138,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
               <div style={summaryCard}>
                 <h4 style={summaryTitle}>🌐 Network</h4>
                 {form.create_network ? (<>
+                  <div style={summaryRow}><span>Name:</span> <strong>{form.network_name || deriveNetworkName(form.project_name, form.vlan_id) || "(auto)"}</strong></div>
                   <div style={summaryRow}><span>Type:</span> <strong>{form.network_type.toUpperCase()}</strong></div>
                   <div style={summaryRow}><span>Physical Net:</span> <strong>{form.physical_network}</strong></div>
                   <div style={summaryRow}><span>CIDR:</span> <strong>{form.subnet_cidr}</strong></div>
