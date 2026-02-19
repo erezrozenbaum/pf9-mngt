@@ -237,3 +237,16 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('admin',      'search', 'admin'),
     ('superadmin', 'search', 'admin')
 ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- ── NAV: register Ops Search in the navigation catalog ──────
+INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order) VALUES
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'search', 'Ops Search', '🔍', '/search', 'search', 0)
+ON CONFLICT (key) DO NOTHING;
+
+-- Make search visible to ALL existing departments
+INSERT INTO department_nav_items (department_id, nav_item_id)
+SELECT d.id, i.id
+FROM departments d
+CROSS JOIN nav_items i
+WHERE i.key = 'search'
+ON CONFLICT (department_id, nav_item_id) DO NOTHING;
