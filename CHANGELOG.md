@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.8] - 2026-02-19
+
+### Improved
+- **README polish** — Added plain-English one-liner description at the top for first-time visitors. Moved vibe-coding / AI-partnership paragraph from About the Creator up into the "Why This Exists" section where it fits the narrative. Updated commit count from 107 to 115.
+
 ## [1.19.7] - 2026-02-19
 
 ### Improved
