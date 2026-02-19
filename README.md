@@ -228,9 +228,12 @@ Every service is containerized. That means **you decide**:
 - **Trigram Similarity**: "Show Similar" per result — finds related resources, errors, or configurations via pg_trgm
 - **Intent Detection**: Natural-language queries like *"quota for projectX"* or *"capacity"* auto-suggest the matching report endpoint
 - **Smart Query Templates (v3)**: 26 question templates turn the search bar into an Ops Assistant — ask *"how many VMs are powered off?"*, *"quota for Org1"*, or *"show platform overview"* and get live answer cards inline
+- **Discoverability UI**: 🤖 button opens a categorised help panel with clickable example chips across 6 categories (Infrastructure, Projects & Quotas, Storage, Networking, Security & Access, Operations) — clicking a chip auto-fills and executes the query. Empty state shows quick-start chips.
+- **Quota & Usage Metering**: Background collector computes per-project resource consumption (VMs, vCPUs, RAM, volumes, storage, snapshots, floating IPs, networks, ports, security groups) from live inventory tables with flavor-based vCPU/RAM resolution
 - **29 Indexed Document Types**: VMs, volumes, snapshots, hypervisors, networks, subnets, floating IPs, ports, security groups, domains, projects, users, flavors, images, routers, roles, role assignments, groups, snapshot policies, activity log, auth audit, drift events, snapshot runs/records, restore jobs, backups, notifications, provisioning, deletions
 - **Incremental Indexing**: Background worker with per-doc-type watermarks — only re-indexes changed rows
-- **Paginated Results**: Relevance-ranked results with highlighted keyword snippets
+- **Stale Cleanup**: Automatically removes search documents for deleted infrastructure resources
+- **Paginated Results**: Relevance-ranked results with highlighted keyword snippets and metadata pill cards
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
 ### 📈 27-Tab Management Dashboard
