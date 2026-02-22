@@ -217,11 +217,16 @@ async def ask(body: AskRequest, request: Request):
         # Pure intent engine mode
         if intent_match:
             try:
-                with get_connection() as conn:
-                    cur = conn.cursor(cursor_factory=RealDictCursor)
-                    cur.execute(intent_match.sql, intent_match.params)
-                    rows = cur.fetchall()
-                answer = intent_match.formatter(rows) if intent_match.formatter else str(rows)
+                if intent_match.api_handler:
+                    # Live API call intent — handler returns the answer directly
+                    answer = intent_match.api_handler(question)
+                else:
+                    # SQL-based intent
+                    with get_connection() as conn:
+                        cur = conn.cursor(cursor_factory=RealDictCursor)
+                        cur.execute(intent_match.sql, intent_match.params)
+                        rows = cur.fetchall()
+                    answer = intent_match.formatter(rows) if intent_match.formatter else str(rows)
                 intent_key = intent_match.intent_key
                 confidence = intent_match.confidence
                 backend_used = "builtin"
@@ -253,14 +258,17 @@ async def ask(body: AskRequest, request: Request):
         # If we have a high-confidence intent, prepend its data for the LLM
         if intent_match and intent_match.confidence >= 0.7:
             try:
-                with get_connection() as conn:
-                    cur = conn.cursor(cursor_factory=RealDictCursor)
-                    cur.execute(intent_match.sql, intent_match.params)
-                    rows = cur.fetchall()
-                    intent_data = intent_match.formatter(rows) if intent_match.formatter else str(rows)
-                    context += f"\n\nRELEVANT QUERY RESULT ({intent_match.display_name}):\n{intent_data}"
-                    intent_key = intent_match.intent_key
-                    confidence = intent_match.confidence
+                if intent_match.api_handler:
+                    intent_data = intent_match.api_handler(question)
+                else:
+                    with get_connection() as conn:
+                        cur = conn.cursor(cursor_factory=RealDictCursor)
+                        cur.execute(intent_match.sql, intent_match.params)
+                        rows = cur.fetchall()
+                        intent_data = intent_match.formatter(rows) if intent_match.formatter else str(rows)
+                context += f"\n\nRELEVANT QUERY RESULT ({intent_match.display_name}):\n{intent_data}"
+                intent_key = intent_match.intent_key
+                confidence = intent_match.confidence
             except Exception:
                 pass
 
@@ -280,11 +288,14 @@ async def ask(body: AskRequest, request: Request):
         # Fallback: if LLM returned empty, try intent engine
         if not answer and intent_match:
             try:
-                with get_connection() as conn:
-                    cur = conn.cursor(cursor_factory=RealDictCursor)
-                    cur.execute(intent_match.sql, intent_match.params)
-                    rows = cur.fetchall()
-                answer = intent_match.formatter(rows) if intent_match.formatter else str(rows)
+                if intent_match.api_handler:
+                    answer = intent_match.api_handler(question)
+                else:
+                    with get_connection() as conn:
+                        cur = conn.cursor(cursor_factory=RealDictCursor)
+                        cur.execute(intent_match.sql, intent_match.params)
+                        rows = cur.fetchall()
+                    answer = intent_match.formatter(rows) if intent_match.formatter else str(rows)
                 intent_key = intent_match.intent_key
                 confidence = intent_match.confidence
                 backend_used = "builtin"
