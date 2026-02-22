@@ -306,8 +306,8 @@ A single engineering console covering every operational surface:
 ### Prerequisites
 - **Docker & Docker Compose** (for complete platform)
 - **Python 3.11+** with packages: `requests`, `openpyxl`, `psycopg2-binary`, `aiohttp`, `aiofiles`
-- **Valid Platform9 credentials** (service account recommended)
-- **Network access** to Platform9 cluster and compute nodes
+- **Valid Platform9 credentials** (service account recommended) — *not required in Demo Mode*
+- **Network access** to Platform9 cluster and compute nodes — *not required in Demo Mode*
 
 ### 1. Complete Automated Setup (Recommended)
 ```powershell
@@ -343,6 +343,28 @@ cp .env.template .env
 # Monitoring:    http://localhost:8001
 # Database:      http://localhost:8080
 ```
+
+### 1b. Demo Mode (No Platform9 Required)
+
+Want to try the portal without a Platform9 environment? Demo mode populates the
+database with realistic sample data (3 tenants, 35 VMs, 50+ volumes, snapshots,
+drift events, compliance reports, etc.) and generates a static metrics cache.
+
+```powershell
+git clone https://github.com/erezrozenbaum/pf9-mngt.git
+cd pf9-mngt
+
+# The deployment wizard will ask "Production or Demo?" — choose 2 for Demo
+.\deployment.ps1
+
+# Or enable demo mode manually on an existing install:
+#   1. Set DEMO_MODE=true in .env
+#   2. python seed_demo_data.py          # populates DB + generates metrics cache
+#   3. docker-compose restart pf9_api    # API picks up DEMO_MODE env var
+```
+
+> In demo mode the UI shows an amber **DEMO** banner, the background metrics
+> collector is skipped, and Platform9 credentials are not required.
 
 ### 2. Environment Configuration
 ```bash
@@ -466,6 +488,7 @@ pf9-mngt/
 ├── docs/                         # Full documentation suite
 ├── pf9_rvtools.py                # RVTools-style inventory export
 ├── host_metrics_collector.py     # Prometheus metrics collection
+├── seed_demo_data.py             # Demo mode: populate DB + metrics cache
 ├── p9_common.py                  # Shared utilities
 ├── docker-compose.yml            # Full stack orchestration
 ├── deployment.ps1                # One-command deployment
@@ -559,6 +582,9 @@ A: Yes. Every service is containerized. See [docs/KUBERNETES_MIGRATION_GUIDE.md]
 
 **Q: What are the minimum hardware requirements?**
 A: A Docker host with at least 4 GB RAM, 2 CPU cores, and network access to your Platform9 region endpoints.
+
+**Q: Can I try this without a Platform9 environment?**
+A: Yes! Set `DEMO_MODE=true` in your `.env` (or choose **Demo** during `deployment.ps1`) and run `python seed_demo_data.py`. The database will be populated with realistic sample data and a static metrics cache so every dashboard, report, and workflow is fully functional without a live cluster.
 
 </details>
 

@@ -100,6 +100,9 @@ services:
       # === Connection Pool Tuning ===
       DB_POOL_MIN_CONN: ${DB_POOL_MIN_CONN:-2}
       DB_POOL_MAX_CONN: ${DB_POOL_MAX_CONN:-10}
+
+      # === Demo Mode ===
+      DEMO_MODE: ${DEMO_MODE:-false}
     ports:
       - "8000:8000"
     volumes:

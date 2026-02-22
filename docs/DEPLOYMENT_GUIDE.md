@@ -67,6 +67,28 @@ docker-compose ps
 
 > ⚠️ This quick start uses default/weak configurations. **Do NOT use in production**. See [Production Hardening](#production-hardening).
 
+### Demo Mode Quick Start (No Platform9 Required)
+
+Want to evaluate the portal without a live Platform9 cluster? Use **Demo Mode**:
+
+```powershell
+git clone https://github.com/erezrozenbaum/pf9-mngt.git
+cd pf9-mngt
+
+# Option A — Let the deployment wizard guide you (choose "2 – Demo Mode"):
+.\deployment.ps1
+
+# Option B — Manual setup:
+cp .env.example .env
+# Set DEMO_MODE=true in .env, fill in database/LDAP/admin passwords
+docker-compose up -d --build
+pip install psycopg2-binary
+python seed_demo_data.py --db-host localhost --db-port 5432 --db-name pf9_mgmt --db-user pf9 --db-pass <your-password>
+docker-compose restart pf9_api
+```
+
+Demo mode pre-populates: 3 domains, 7 projects, 5 hypervisors, 35 VMs, ~50 volumes, ~100 snapshots, networks, subnets, users with RBAC, snapshot policies, compliance reports, drift events, metering pricing, runbooks, and activity log entries. A static metrics cache provides host + VM metrics without real collection.
+
 ---
 
 ## System Requirements

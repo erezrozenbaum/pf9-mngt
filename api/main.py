@@ -200,6 +200,9 @@ class CreateSecurityGroupRuleRequest(BaseModel):
 
 APP_NAME = "pf9-mgmt-api"
 
+# Demo mode (disables live PF9 collection, shows banner in UI)
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+
 # Security configuration
 ADMIN_USERNAME = os.getenv("PF9_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("PF9_ADMIN_PASSWORD")
@@ -288,6 +291,11 @@ app.include_router(navigation_router)
 app.include_router(search_router)
 app.include_router(runbook_router)
 
+# Public endpoint: tells the UI whether this instance runs in demo mode
+@app.get("/demo-mode")
+async def get_demo_mode():
+    return {"demo": DEMO_MODE}
+
 # Rate limiting setup
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -331,7 +339,7 @@ async def rbac_middleware(request: Request, call_next):
         path.startswith("/auth") or
         path.startswith("/settings/") or
         path.startswith("/static/") or
-        path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc"]
+        path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/demo-mode"]
     ):
         return await call_next(request)
 

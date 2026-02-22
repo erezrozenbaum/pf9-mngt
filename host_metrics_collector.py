@@ -630,6 +630,13 @@ class HostMetricsCollector:
             await asyncio.sleep(60)
 
 async def main():
+    # In demo mode, the seed script generates a static metrics cache — skip live collection
+    demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
+    if demo_mode:
+        print("DEMO_MODE=true — live metrics collection is disabled.")
+        print("Run 'python seed_demo_data.py' to generate/refresh the static metrics cache.")
+        return
+
     collector = HostMetricsCollector()
     
     if len(sys.argv) > 1 and sys.argv[1] == "--once":

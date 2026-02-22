@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] - 2026-02-22
+
+### Added
+- **Demo Mode** — Run the full portal with pre-populated sample data, no Platform9 environment required. Ideal for evaluations, demos, and development.
+  - New `DEMO_MODE=true` environment variable activates the mode across all components.
+  - `seed_demo_data.py` populates PostgreSQL with 3 domains, 7 projects, 5 hypervisors, 7 flavors, 6 images, 35 VMs, ~50 volumes, ~100 snapshots, 8 networks, 8 subnets, 3 routers, 7 users with RBAC role assignments, security groups & rules, snapshot policies & assignments, compliance reports, drift rules & events, activity log entries, metering config with flavor pricing, backup config, and 5 runbooks with approval policies. All inserts use `ON CONFLICT DO NOTHING` for idempotency.
+  - Static metrics cache generated automatically with realistic CPU/RAM/disk values for all demo hosts and VMs (no live scraping needed).
+  - Deployment wizard (`deployment.ps1`) adds a "Production vs Demo" mode choice at the start—choosing Demo skips all Platform9 credential prompts, monitoring IPs, and snapshot service user configuration. The seed script runs automatically after Docker services are ready.
+  - API exposes `GET /demo-mode` (public, no auth) returning `{"demo": true|false}` so the UI can detect the mode.
+  - UI shows a sticky amber "DEMO" banner at the top of the page with dark-mode support when demo mode is active.
+  - `host_metrics_collector.py` detects `DEMO_MODE=true` and exits gracefully instead of attempting live collection.
+  - `startup.ps1` skips the background metrics collector and initial metrics fetch in demo mode.
+  - Environment validation in `deployment.ps1` no longer requires `PF9_USERNAME`, `PF9_PASSWORD`, or `PF9_AUTH_URL` when in demo mode.
+
 ## [1.22.1] - 2026-02-22
 
 ### Fixed
