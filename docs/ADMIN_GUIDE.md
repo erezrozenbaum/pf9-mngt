@@ -2,6 +2,23 @@
 
 ## Recent Major Enhancements
 
+### Ops Copilot — AI Infrastructure Assistant (v1.24 - NEW ✨)
+- **🤖 Floating Chat Panel**: Labeled pill-shaped "🤖 Ask Copilot" button (bottom-right) with gradient background and pulse animation on first visit. Opens via click or `Ctrl+K`. Three views: Chat, Settings (⚙️ admin-only), and Help (❓).
+- **Three-Tier Architecture**: Built-in intent engine (zero setup, default) → Ollama (local LLM, no data leaves network) → OpenAI/Anthropic (with automatic sensitive data redaction).
+- **40+ Built-in Intents**: Inventory counts, VM power states (powered on/off/error), capacity metrics (CPU/memory/storage), down hosts, networking (networks, subnets, routers, floating IPs), snapshots, drift, compliance, metering, users, role assignments, activity logs, runbooks, backups, notifications, security groups, and full infrastructure overview — all powered by live SQL queries.
+- **Tenant / Project / Host Scoping**: Append "on tenant X", "for project X", or "on host Y" to any question. The engine dynamically injects SQL WHERE clauses. Example: *"How many powered on VMs on tenant <your-tenant>?"*
+- **Synonym Expansion**: "powered on" → "active", "vm" → "vms", "tenant" → "project" — questions are expanded with canonical forms before matching for higher accuracy.
+- **Welcome Screen**: First-open greeting with example questions and "See all available questions" button.
+- **Help / Guide View**: Dedicated ❓ view with 8 categorized question groups (~40 chips), usage tips (scoping syntax, action words), and backend info. Accessible from the header or footer "How to ask" link.
+- **Categorized Suggestion Chips**: Infrastructure, VM Power State, Tenant/Project, Capacity, Storage & Snapshots, Networking, Security & Access, Operations. Template chips (with "…") fill the input for completion; regular chips execute immediately.
+- **Feedback System**: Per-answer thumbs up/down stored in `copilot_feedback` for quality tracking.
+- **Conversation History**: Persisted per user in `copilot_history` with automatic trimming (default: 200 entries).
+- **Fallback Chain**: If the LLM backend fails, seamlessly falls back to the built-in intent engine.
+- **7 API Endpoints**: `/api/copilot/ask` (POST), `/api/copilot/suggestions` (GET), `/api/copilot/history` (GET), `/api/copilot/config` (GET/PUT), `/api/copilot/test-connection` (POST), `/api/copilot/feedback` (POST)
+- **RBAC**: All endpoints require authentication; config endpoints require admin role. `copilot` resource added to the permission map with 3 actions: `read` (view/use), `write` (configure), `admin` (full control). Panel visibility gated by `copilot:read` — superadmins can toggle Copilot access per role from Admin → User Management → Permissions. All roles have `read` by default; `write`/`admin` restricted to admin and superadmin.
+- **Dark Mode**: Full dark theme support for panel, messages, chips, help view, welcome screen, and settings.
+- **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
+
 ### Policy-as-Code Runbooks (v1.21 - NEW ✨)
 - **📋 Runbooks Tab**: Operator-facing catalogue of 5 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
 - **5 Built-in Runbooks**: Stuck VM Remediation, Orphan Resource Cleanup, Security Group Audit, Quota Threshold Check, Diagnostics Bundle

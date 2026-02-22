@@ -2468,3 +2468,188 @@ Response:
   }
 ]
 ```
+
+---
+
+## Ops Copilot Endpoints
+
+All Copilot endpoints are under `/api/copilot` and require authentication.
+
+### Ask a Question
+**POST** `/api/copilot/ask`
+*Requires: authentication*
+
+Send a natural-language question. The engine first tries the built-in intent matcher (40+ intents with tenant/project/host scoping and synonym expansion), then falls back to the configured LLM backend.
+
+Request:
+```json
+{
+  "question": "How many powered on VMs on tenant production?"
+}
+```
+
+Response:
+```json
+{
+  "answer": "📌 *Filtered by tenant/project: **production***\n\nThere are **5** powered-on (active) VMs.",
+  "intent": "powered_on_vms",
+  "backend_used": "builtin",
+  "confidence": 1.0,
+  "tokens_used": null,
+  "data_sent_external": false,
+  "history_id": 42
+}
+```
+
+**Scoping**: Append `on tenant <name>`, `for project <name>`, or `on host <hostname>` to any question. The engine dynamically injects SQL WHERE clauses to filter results.
+
+**Synonym expansion**: Words like "powered on" → "active", "vm" → "vms", "tenant" → "project" are expanded automatically for higher match accuracy.
+
+### Get Suggestion Chips
+**GET** `/api/copilot/suggestions`
+*Requires: authentication*
+
+Returns categorized quick-start questions organized into 8 groups, plus usage tips.
+
+Response:
+```json
+{
+  "suggestions": {
+    "categories": [
+      {
+        "name": "Infrastructure",
+        "icon": "🖥️",
+        "chips": [
+          { "label": "How many VMs?", "question": "How many VMs?" },
+          { "label": "List all hosts", "question": "List all hosts" }
+        ]
+      },
+      {
+        "name": "VM Power State",
+        "icon": "⚡",
+        "chips": [
+          { "label": "Powered on VMs", "question": "How many powered on VMs?" },
+          { "label": "Powered off VMs", "question": "Show powered off VMs" }
+        ]
+      },
+      {
+        "name": "Tenant / Project",
+        "icon": "📁",
+        "chips": [
+          { "label": "VMs on tenant …", "question": "VMs on tenant ", "template": true },
+          { "label": "Quota for …", "question": "Quota for project ", "template": true }
+        ]
+      }
+    ],
+    "tips": [
+      "Ask naturally: \"How many powered on VMs on tenant <your-tenant>?\"",
+      "Scope by tenant: add \"on tenant <name>\" or \"for project <name>\"",
+      "Scope by host: add \"on host <hostname>\"",
+      "Use action words: show, list, count, how many",
+      "Click any chip to run it instantly — chips with \"…\" need a name"
+    ]
+  }
+}
+```
+
+> **Note**: `template: true` chips should fill the input field for the user to complete the tenant/project name. Regular chips execute immediately.
+
+### Get Conversation History
+**GET** `/api/copilot/history`
+*Requires: authentication*
+
+Returns the current user's conversation history (most recent 200 entries).
+
+Response:
+```json
+[
+  {
+    "id": 42,
+    "question": "How many VMs?",
+    "answer": "There are **35** VMs across all tenants.",
+    "intent": "vm_count",
+    "backend_used": "builtin",
+    "confidence": 1.0,
+    "created_at": "2026-02-22T12:00:00Z"
+  }
+]
+```
+
+### Get Copilot Configuration
+**GET** `/api/copilot/config`
+*Requires: admin role*
+
+Returns the current Copilot backend configuration.
+
+Response:
+```json
+{
+  "backend": "builtin",
+  "ollama_url": "http://host.docker.internal:11434",
+  "ollama_model": "llama3",
+  "openai_model": "gpt-4o-mini",
+  "anthropic_model": "claude-sonnet-4-20250514",
+  "redact_sensitive": true,
+  "system_prompt": "You are Ops Copilot, an AI assistant for Platform9 infrastructure management..."
+}
+```
+
+### Update Copilot Configuration
+**PUT** `/api/copilot/config`
+*Requires: admin role*
+
+Update the active backend and/or settings. Takes effect immediately.
+
+Request:
+```json
+{
+  "backend": "ollama",
+  "ollama_url": "http://host.docker.internal:11434",
+  "ollama_model": "llama3"
+}
+```
+
+### Test LLM Connection
+**POST** `/api/copilot/test-connection`
+*Requires: admin role*
+
+Test connectivity to the configured LLM backend.
+
+Request:
+```json
+{
+  "backend": "ollama",
+  "ollama_url": "http://host.docker.internal:11434",
+  "ollama_model": "llama3"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Ollama connection successful",
+  "latency_ms": 245
+}
+```
+
+### Submit Feedback
+**POST** `/api/copilot/feedback`
+*Requires: authentication*
+
+Submit thumbs up/down feedback on a Copilot answer.
+
+Request:
+```json
+{
+  "history_id": 42,
+  "feedback": "up"
+}
+```
+
+Response:
+```json
+{
+  "status": "ok"
+}
+```

@@ -1187,6 +1187,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       audit: 'Compliance Audit — audit logs, change analysis, accountability',
       backup: 'Database Backup — scheduling, history, restore from backup',
       branding: 'Portal Branding — logo, colors, theme customization',
+      copilot: 'Ops Copilot — AI assistant for infrastructure queries',
       dashboard: 'Landing Dashboard — system overview, KPIs, quick stats',
       departments: 'Departments — organizational units for user grouping',
       domains: 'OpenStack Domains — organizational boundaries (tenants/projects)',
