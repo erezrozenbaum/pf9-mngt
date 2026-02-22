@@ -35,6 +35,7 @@ class IntentMatch:
     sql: str
     params: tuple = ()
     formatter: Optional[Callable] = None   # rows → answer string
+    api_handler: Optional[Callable] = None # question → answer (bypasses SQL)
 
 
 @dataclass
@@ -52,6 +53,8 @@ class IntentDef:
     supports_scope: bool = False
     # Base SQL template — uses {scope_join} and {scope_where} placeholders
     sql_template: str = ""
+    # If set, called instead of executing SQL (for live API calls)
+    api_handler: Optional[Callable] = None
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +150,257 @@ def _fmt_kv(rows, key_col="key", val_col="value"):
         return "No data found."
     lines = [f"- **{r[key_col]}**: {r[val_col]}" for r in rows]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Live Platform9 Quota API helpers
+# ---------------------------------------------------------------------------
+
+import logging as _logging
+_quota_log = _logging.getLogger("copilot.quota")
+
+
+def _get_pf9_client():
+    """Lazily instantiate a Pf9Client for quota lookups."""
+    try:
+        from pf9_control import Pf9Client
+        return Pf9Client()
+    except Exception as exc:
+        _quota_log.warning("Cannot create Pf9Client: %s", exc)
+        return None
+
+
+def _fetch_configured_quota(question: str) -> str:
+    """
+    Fetch the configured quota limits from the live Platform9 API
+    for the scoped project, or for all projects if no scope given.
+    Returns a formatted markdown answer.
+    """
+    scope = _extract_scope(question)
+    if not scope:
+        return (
+            "Please specify a tenant/project name.\n\n"
+            "**Example:** *quota of service* or *configured quota for myproject*"
+        )
+
+    # Resolve project ID from DB
+    try:
+        from db_pool import get_connection
+        from psycopg2.extras import RealDictCursor
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                "SELECT id, name FROM projects WHERE LOWER(name) LIKE %s LIMIT 5",
+                (f"%{scope}%",),
+            )
+            projects = cur.fetchall()
+    except Exception as exc:
+        return f"Failed to look up project: {exc}"
+
+    if not projects:
+        return f"No project matching **{scope}** found in the database."
+
+    client = _get_pf9_client()
+    if not client:
+        return (
+            "Platform9 API credentials are not configured.\n\n"
+            "Set `PF9_AUTH_URL`, `PF9_USERNAME`, and `PF9_PASSWORD` environment variables "
+            "to enable live quota lookups."
+        )
+
+    results = []
+    for proj in projects:
+        pid, pname = proj["id"], proj["name"]
+        try:
+            compute_q = client.get_compute_quotas(pid)
+            storage_q = client.get_storage_quotas(pid)
+            try:
+                network_q = client.get_network_quotas(pid)
+            except Exception:
+                network_q = {}
+
+            lines = [f"### 📋 Configured quota for **{pname}**\n"]
+
+            def _qval(v):
+                """Format a quota value: -1 → unlimited, None → –"""
+                if v is None:
+                    return "–"
+                if isinstance(v, (int, float)) and v < 0:
+                    return "unlimited"
+                return str(v)
+
+            lines.append("**Compute:**")
+            lines.append(f"- Instances (VMs): **{_qval(compute_q.get('instances'))}**")
+            lines.append(f"- Cores (vCPUs): **{_qval(compute_q.get('cores'))}**")
+            ram = compute_q.get('ram')
+            if isinstance(ram, (int, float)) and ram > 0:
+                ram_gib = round(ram / 1024, 1)
+                lines.append(f"- RAM: **{ram} MB** ({ram_gib} GiB)")
+            else:
+                lines.append(f"- RAM: **{_qval(ram)}**")
+            lines.append(f"- Key Pairs: **{_qval(compute_q.get('key_pairs'))}**")
+
+            if storage_q:
+                lines.append("\n**Block Storage:**")
+                lines.append(f"- Volumes: **{_qval(storage_q.get('volumes'))}**")
+                gigs = storage_q.get('gigabytes')
+                lines.append(f"- Storage: **{_qval(gigs)}{' GB' if isinstance(gigs, (int, float)) and gigs >= 0 else ''}**")
+                lines.append(f"- Snapshots: **{_qval(storage_q.get('snapshots'))}**")
+
+            if network_q:
+                lines.append("\n**Network:**")
+                lines.append(f"- Networks: **{_qval(network_q.get('network'))}**")
+                lines.append(f"- Subnets: **{_qval(network_q.get('subnet'))}**")
+                lines.append(f"- Routers: **{_qval(network_q.get('router'))}**")
+                lines.append(f"- Floating IPs: **{_qval(network_q.get('floatingip'))}**")
+                lines.append(f"- Ports: **{_qval(network_q.get('port'))}**")
+                lines.append(f"- Security Groups: **{_qval(network_q.get('security_group'))}**")
+
+            results.append("\n".join(lines))
+        except Exception as exc:
+            results.append(f"### ⚠️ **{pname}**\nFailed to fetch quota: {exc}")
+
+    return "\n\n---\n\n".join(results)
+
+
+def _fetch_quota_and_usage(question: str) -> str:
+    """
+    Fetch both configured quota limits (from Platform9 API) and actual
+    resource usage (from our DB) for the scoped project.
+    """
+    scope = _extract_scope(question)
+    if not scope:
+        return (
+            "Please specify a tenant/project name.\n\n"
+            "**Example:** *quota and usage for service* or *quota vs usage for myproject*"
+        )
+
+    # Resolve project from DB and get usage
+    try:
+        from db_pool import get_connection
+        from psycopg2.extras import RealDictCursor
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                "SELECT id, name FROM projects WHERE LOWER(name) LIKE %s LIMIT 5",
+                (f"%{scope}%",),
+            )
+            projects = cur.fetchall()
+    except Exception as exc:
+        return f"Failed to look up project: {exc}"
+
+    if not projects:
+        return f"No project matching **{scope}** found in the database."
+
+    client = _get_pf9_client()
+
+    results = []
+    for proj in projects:
+        pid, pname = proj["id"], proj["name"]
+
+        # --- Fetch configured quotas from Platform9 API ---
+        compute_q = storage_q = network_q = None
+        api_available = False
+        if client:
+            try:
+                compute_q = client.get_compute_quotas(pid)
+                storage_q = client.get_storage_quotas(pid)
+                try:
+                    network_q = client.get_network_quotas(pid)
+                except Exception:
+                    pass
+                api_available = True
+            except Exception as exc:
+                _quota_log.warning("Quota API call failed for %s: %s", pname, exc)
+
+        # --- Fetch actual usage from DB ---
+        try:
+            from db_pool import get_connection as gc2
+            from psycopg2.extras import RealDictCursor as RDC2
+            with gc2() as conn:
+                cur = conn.cursor(cursor_factory=RDC2)
+                cur.execute("""
+                    SELECT
+                        (SELECT COUNT(*) FROM servers s WHERE s.project_id = %s) AS vms,
+                        (SELECT COALESCE(SUM(f.vcpus), 0) FROM servers s
+                         LEFT JOIN flavors f ON f.id = s.flavor_id
+                         WHERE s.project_id = %s) AS vcpus,
+                        (SELECT COALESCE(SUM(f.ram_mb), 0) FROM servers s
+                         LEFT JOIN flavors f ON f.id = s.flavor_id
+                         WHERE s.project_id = %s) AS ram_mb,
+                        (SELECT COUNT(*) FROM volumes v WHERE v.project_id = %s) AS volumes,
+                        (SELECT COALESCE(SUM(v.size_gb), 0) FROM volumes v
+                         WHERE v.project_id = %s) AS storage_gb
+                """, (pid, pid, pid, pid, pid))
+                usage = cur.fetchone()
+        except Exception:
+            usage = None
+
+        lines = [f"### 📊 Quota & usage for **{pname}**\n"]
+
+        if api_available and compute_q:
+            # Build comparison table
+            lines.append("| Resource | Configured Limit | Current Usage | % Used |")
+            lines.append("| --- | --- | --- | --- |")
+
+            u_vms = usage["vms"] if usage else 0
+            u_vcpus = usage["vcpus"] if usage else 0
+            u_ram = usage["ram_mb"] if usage else 0
+            u_vols = usage["volumes"] if usage else 0
+            u_stor = usage["storage_gb"] if usage else 0
+
+            q_instances = compute_q.get("instances", -1)
+            q_cores = compute_q.get("cores", -1)
+            q_ram = compute_q.get("ram", -1)
+            q_vols = storage_q.get("volumes", -1) if storage_q else -1
+            q_stor = storage_q.get("gigabytes", -1) if storage_q else -1
+
+            def _pct(used, limit):
+                if not limit or limit < 0:
+                    return "–"
+                p = round(used / limit * 100, 1)
+                if p >= 90:
+                    return f"🔴 {p}%"
+                elif p >= 70:
+                    return f"🟡 {p}%"
+                return f"🟢 {p}%"
+
+            def _limit_str(v):
+                return "unlimited" if v == -1 else str(v)
+
+            lines.append(f"| VMs (instances) | {_limit_str(q_instances)} | {u_vms} | {_pct(u_vms, q_instances)} |")
+            lines.append(f"| Cores (vCPUs) | {_limit_str(q_cores)} | {u_vcpus} | {_pct(u_vcpus, q_cores)} |")
+            q_ram_disp = f"{_limit_str(q_ram)} MB" if q_ram != -1 else "unlimited"
+            lines.append(f"| RAM | {q_ram_disp} | {u_ram} MB | {_pct(u_ram, q_ram)} |")
+            lines.append(f"| Volumes | {_limit_str(q_vols)} | {u_vols} | {_pct(u_vols, q_vols)} |")
+            q_stor_disp = f"{_limit_str(q_stor)} GB" if q_stor != -1 else "unlimited"
+            lines.append(f"| Storage | {q_stor_disp} | {u_stor} GB | {_pct(u_stor, q_stor)} |")
+
+            if network_q:
+                lines.append("")
+                lines.append("**Network quota limits:** "
+                             f"Networks={network_q.get('network', '–')}, "
+                             f"Routers={network_q.get('router', '–')}, "
+                             f"Floating IPs={network_q.get('floatingip', '–')}, "
+                             f"Ports={network_q.get('port', '–')}, "
+                             f"Security Groups={network_q.get('security_group', '–')}")
+        else:
+            # API not available — show usage only with note
+            lines.append("⚠️ *Platform9 API not reachable — showing usage only (not configured limits).*\n")
+            if usage:
+                lines.append("| Resource | Current Usage |")
+                lines.append("| --- | --- |")
+                lines.append(f"| VMs | {usage['vms']} |")
+                lines.append(f"| vCPUs | {usage['vcpus']} |")
+                lines.append(f"| RAM | {usage['ram_mb']} MB |")
+                lines.append(f"| Volumes | {usage['volumes']} |")
+                lines.append(f"| Storage | {usage['storage_gb']} GB |")
+            else:
+                lines.append("No usage data available.")
+
+        results.append("\n".join(lines))
+
+    return "\n\n---\n\n".join(results)
 
 
 # ---------------------------------------------------------------------------
@@ -374,41 +628,80 @@ INTENTS: List[IntentDef] = [
         boost=0.2,
     ),
     IntentDef(
-        key="quota_for_project",
-        display_name="Quota for project",
-        keywords=["quota for", "quota usage", "project quota", "tenant quota",
-                  "quota overview", "resource quota", "quota exists",
-                  "quota of", "quota on"],
+        key="configured_quota",
+        display_name="Configured quota limits",
+        keywords=["quota for", "quota of", "quota on", "project quota",
+                  "tenant quota", "quota exists", "configured quota",
+                  "quota limits", "quota config", "show quota",
+                  "what is the quota", "get quota"],
         patterns=[r"quota\s+(?:for|of|on|exists)\s+(?:tenant|project|org)?\s*\S+",
-                  r"quota\s+(?:for|of|on|exists)\b",
                   r"(?:show|what|get)\s+quota",
-                  r"quota\s+usage"],
-        sql="""SELECT p.name AS project_name,
-                      COUNT(s.id) AS vm_count,
-                      COALESCE(SUM(f.vcpus), 0) AS vcpus_used,
-                      COALESCE(SUM(f.ram_mb), 0) AS ram_mb_used
+                  r"configured\s+quota",
+                  r"quota\s+(?:limit|config)",
+                  r"quota\s+(?:for|of|on|exists)\b"],
+        formatter=None,  # api_handler handles formatting
+        api_handler=_fetch_configured_quota,
+        supports_scope=True,
+        boost=0.35,
+    ),
+    IntentDef(
+        key="quota_and_usage",
+        display_name="Quota limits vs actual usage",
+        keywords=["quota and usage", "quota vs usage", "quota versus usage",
+                  "quota with usage", "limits and usage", "configured and usage",
+                  "quota compared", "quota comparison"],
+        patterns=[r"quota\s+(?:and|vs\.?|versus|with|compared\s+to)\s+usage",
+                  r"(?:limits?|quota)\s+(?:and|vs\.?|versus)\s+(?:usage|consumption)",
+                  r"(?:configured|actual)\s+(?:and|vs\.?)\s+(?:usage|actual)"],
+        formatter=None,
+        api_handler=_fetch_quota_and_usage,
+        supports_scope=True,
+        boost=0.4,
+    ),
+    IntentDef(
+        key="resource_usage",
+        display_name="Resource usage by project",
+        keywords=["usage for", "resource usage", "tenant usage", "project usage",
+                  "actual usage", "current usage", "consumption",
+                  "how much is used", "resources used"],
+        patterns=[r"(?:resource|tenant|project|actual|current)\s+usage",
+                  r"usage\s+(?:for|of|on)\s+(?:tenant|project)",
+                  r"(?:show|what|get)\s+usage",
+                  r"how much\s+(?:is|are)\s+used"],
+        sql="""SELECT p.name AS project,
+                      (SELECT COUNT(*) FROM servers s WHERE s.project_id = p.id) AS vms,
+                      (SELECT COALESCE(SUM(f.vcpus), 0) FROM servers s
+                       LEFT JOIN flavors f ON f.id = s.flavor_id
+                       WHERE s.project_id = p.id) AS vcpus,
+                      (SELECT COALESCE(SUM(f.ram_mb), 0) FROM servers s
+                       LEFT JOIN flavors f ON f.id = s.flavor_id
+                       WHERE s.project_id = p.id) AS ram_mb,
+                      (SELECT COUNT(*) FROM volumes v WHERE v.project_id = p.id) AS volumes,
+                      (SELECT COALESCE(SUM(v.size_gb), 0) FROM volumes v
+                       WHERE v.project_id = p.id) AS storage_gb
                FROM projects p
-               LEFT JOIN servers s ON s.project_id = p.id
-               LEFT JOIN flavors f ON f.id = s.flavor_id
-               GROUP BY p.name
                ORDER BY p.name LIMIT 30""",
         formatter=lambda rows: (
-            "**Quota usage by project**:\n\n" +
-            _fmt_table(rows, ["project_name", "vm_count", "vcpus_used", "ram_mb_used"])
-            if rows else "No project quota data available."
+            "**Resource usage by project** (actual consumption from running VMs and volumes — not quota limits):\n\n" +
+            _fmt_table(rows, ["project", "vms", "vcpus", "ram_mb", "volumes", "storage_gb"])
+            if rows else "No project data available."
         ),
         supports_scope=True,
-        sql_template="""SELECT p.name AS project_name,
-                              COUNT(s.id) AS vm_count,
-                              COALESCE(SUM(f.vcpus), 0) AS vcpus_used,
-                              COALESCE(SUM(f.ram_mb), 0) AS ram_mb_used
+        sql_template="""SELECT p.name AS project,
+                              (SELECT COUNT(*) FROM servers s WHERE s.project_id = p.id) AS vms,
+                              (SELECT COALESCE(SUM(f.vcpus), 0) FROM servers s
+                               LEFT JOIN flavors f ON f.id = s.flavor_id
+                               WHERE s.project_id = p.id) AS vcpus,
+                              (SELECT COALESCE(SUM(f.ram_mb), 0) FROM servers s
+                               LEFT JOIN flavors f ON f.id = s.flavor_id
+                               WHERE s.project_id = p.id) AS ram_mb,
+                              (SELECT COUNT(*) FROM volumes v WHERE v.project_id = p.id) AS volumes,
+                              (SELECT COALESCE(SUM(v.size_gb), 0) FROM volumes v
+                               WHERE v.project_id = p.id) AS storage_gb
                        FROM projects p
-                       LEFT JOIN servers s ON s.project_id = p.id
-                       LEFT JOIN flavors f ON f.id = s.flavor_id
                        {scope_where_project}
-                       GROUP BY p.name
                        ORDER BY p.name LIMIT 30""",
-        boost=0.25,
+        boost=0.15,
     ),
 
     # ── List resources ─────────────────────────────────────────────────
@@ -1032,7 +1325,10 @@ def match_intent(question: str) -> Optional[IntentMatch]:
 
     # Build a scope-aware formatter
     original_formatter = intent.formatter
-    if scope and intent.supports_scope:
+    if intent.api_handler:
+        # API handler intents manage their own formatting and scoping
+        final_formatter = original_formatter
+    elif scope and intent.supports_scope:
         def scoped_formatter(rows, _scope=scope, _fmt=original_formatter):
             base = _fmt(rows) if _fmt else str(rows)
             return f"📌 *Filtered by tenant/project: **{_scope}***\n\n{base}"
@@ -1052,6 +1348,7 @@ def match_intent(question: str) -> Optional[IntentMatch]:
         sql=final_sql,
         params=intent.param_extractor(question) if intent.param_extractor else final_params,
         formatter=final_formatter,
+        api_handler=intent.api_handler,
     )
 
 
@@ -1088,9 +1385,10 @@ def get_suggestion_chips() -> List[dict]:
                 "icon": "📁",
                 "chips": [
                     {"label": "VMs on tenant …", "question": "VMs on tenant ", "template": True},
-                    {"label": "Quota for …", "question": "Quota for project ", "template": True},
+                    {"label": "Quota for …", "question": "Quota of tenant ", "template": True},
+                    {"label": "Usage for …", "question": "Usage for tenant ", "template": True},
+                    {"label": "Quota & Usage …", "question": "Quota and usage for tenant ", "template": True},
                     {"label": "How many projects?", "question": "How many projects?"},
-                    {"label": "Domain overview", "question": "How many domains?"},
                 ],
             },
             {

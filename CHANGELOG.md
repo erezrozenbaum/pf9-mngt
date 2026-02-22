@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.1] - 2026-02-22
+
+### Added
+- **Live Quota Lookups in Copilot** — The Copilot now fetches **configured quota limits** directly from the Platform9 API (Nova, Cinder, Neutron) in real time, instead of only showing resource consumption from the local database.
+  - **"quota of service tenant"** → `configured_quota` intent — calls `Pf9Client.get_compute_quotas()`, `get_storage_quotas()`, `get_network_quotas()` live. Displays Compute (Instances, Cores, RAM, Key Pairs), Block Storage (Volumes, Storage GB, Snapshots), and Network (Networks, Subnets, Routers, Floating IPs, Ports, Security Groups) limits. Values of `-1` display as "unlimited".
+  - **"usage for service tenant"** → `resource_usage` intent — shows actual resource consumption from the local database (VMs, vCPUs, RAM, Volumes, Storage). Clearly labeled as consumption, not limits.
+  - **"quota and usage for service"** → `quota_and_usage` intent — side-by-side comparison table showing configured limits vs current usage with percentage utilization and color-coded indicators (🟢 < 70%, 🟡 70-90%, 🔴 > 90%). Falls back to usage-only view when Platform9 API is unreachable.
+  - **API Handler Framework** — New `api_handler` field on `IntentDef`/`IntentMatch` allows intents to call live APIs instead of only executing SQL queries. Fully integrated with the builtin, Ollama, and OpenAI/Anthropic pathways.
+  - **Updated suggestion chips** — Tenant/Project category now includes "Quota for …", "Usage for …", and "Quota & Usage …" template chips.
+
 ## [1.24.0] - 2026-02-22
 
 ### Added
