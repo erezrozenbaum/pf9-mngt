@@ -223,7 +223,24 @@ if (-not (Test-Path ".env")) {
         Set-Content $envPath -Value $content -NoNewline
     }
 
+    # --- Deployment Mode ---
+    Write-Host "── Deployment Mode ──" -ForegroundColor Yellow
+    Write-Info "Choose how you want to deploy the portal:"
+    Write-Host "  [1] Production  - Connect to a live Platform9 environment" -ForegroundColor White
+    Write-Host "  [2] Demo Mode   - Pre-populated sample data, no Platform9 required" -ForegroundColor White
+    $modeChoice = Prompt-Value "Deployment mode" "1"
+    $isDemo = ($modeChoice -eq "2")
+    if ($isDemo) {
+        Set-EnvValue "DEMO_MODE" "true"
+        Write-Success "Demo mode enabled – Platform9 credentials will be skipped"
+        Write-Info "The database will be seeded with sample tenants, VMs, volumes, and snapshots."
+    } else {
+        Set-EnvValue "DEMO_MODE" "false"
+    }
+    Write-Host ""
+
     # --- Platform9 Credentials ---
+    if (-not $isDemo) {
     Write-Host "── Platform9 API Credentials ──" -ForegroundColor Yellow
     $pf9AuthUrl = Prompt-Value "Platform9 Keystone URL (e.g. https://your-cluster.platform9.com/keystone/v3)" ""
     $pf9Username = Prompt-Value "Platform9 Username (email)" ""
@@ -240,6 +257,7 @@ if (-not (Test-Path ".env")) {
     Set-EnvValue "PF9_PROJECT_NAME" $pf9ProjectName
     Set-EnvValue "PF9_REGION_NAME" $pf9RegionName
     Set-EnvValue "PF9_REGION_URL" $pf9RegionUrl
+    } # end if (-not $isDemo) — Platform9 credentials
 
     Write-Host ""
     # --- Database ---
@@ -297,6 +315,7 @@ if (-not (Test-Path ".env")) {
 
     Write-Host ""
     # --- Monitoring ---
+    if (-not $isDemo) {
     Write-Host "── Monitoring Configuration ──" -ForegroundColor Yellow
     $pf9Hosts = Prompt-Value "PF9 Host IPs for metrics (comma-separated, or blank to skip)" ""
     if ($pf9Hosts) {
@@ -342,6 +361,7 @@ if (-not (Test-Path ".env")) {
     } else {
         Write-Info "Skipping snapshot service user (snapshots will stay in service domain)"
     }
+    } # end if (-not $isDemo) — Monitoring + Snapshot Service User
 
     Write-Host ""
     # --- Snapshot Restore ---
@@ -469,9 +489,6 @@ foreach ($line in $envContent) {
 }
 
 $requiredVars = @(
-    'PF9_USERNAME',
-    'PF9_PASSWORD',
-    'PF9_AUTH_URL',
     'POSTGRES_USER',
     'POSTGRES_PASSWORD',
     'POSTGRES_DB',
@@ -480,6 +497,12 @@ $requiredVars = @(
     'PGADMIN_PASSWORD',
     'JWT_SECRET_KEY'
 )
+
+# In production mode, Platform9 credentials are also required
+$demoModeVal = $envMap['DEMO_MODE']
+if ($demoModeVal -ne 'true') {
+    $requiredVars += @('PF9_USERNAME', 'PF9_PASSWORD', 'PF9_AUTH_URL')
+}
 
 $missing = @()
 foreach ($var in $requiredVars) {
@@ -614,8 +637,8 @@ if ($pythonExe) {
         }
     }
     
-    # Collect initial metrics if not skipped
-    if (-not $SkipMetrics) {
+    # Collect initial metrics if not skipped (skip in demo mode — seed script generates static cache)
+    if (-not $SkipMetrics -and $envMap['DEMO_MODE'] -ne 'true') {
         Write-Info "Collecting initial metrics snapshot..."
         try {
             & $pythonExe "host_metrics_collector.py" "--once" 2>&1 | Out-Null
@@ -623,6 +646,8 @@ if ($pythonExe) {
         } catch {
             Write-Warning "Metrics collection failed (will retry later)"
         }
+    } elseif ($envMap['DEMO_MODE'] -eq 'true') {
+        Write-Info "Demo mode — skipping live metrics collection (seed script will generate static cache)"
     }
 } else {
     Write-Warning "Python not found - metrics collection will be unavailable"
@@ -792,6 +817,31 @@ try {
 } catch {
     Write-Warning "Could not verify LDAP initialization"
     Write-Info "LDAP may still be starting up - check with: docker-compose logs ldap"
+}
+
+# Step 9b: Demo Mode — Seed database & static metrics cache
+if ($envMap['DEMO_MODE'] -eq 'true' -and $pythonExe) {
+    Write-Section "Step 9b: Seeding Demo Data"
+    Write-Info "Populating database with sample tenants, VMs, volumes, snapshots..."
+    try {
+        $seedArgs = @(
+            "seed_demo_data.py",
+            "--db-host", "localhost",
+            "--db-port", "5432",
+            "--db-name", $envMap['POSTGRES_DB'],
+            "--db-user", $envMap['POSTGRES_USER'],
+            "--db-pass", $envMap['POSTGRES_PASSWORD']
+        )
+        & $pythonExe @seedArgs 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Demo data seeded successfully"
+        } else {
+            Write-Warning "Demo seeding exited with code $LASTEXITCODE — check output above"
+        }
+    } catch {
+        Write-Warning "Demo data seeding failed: $_"
+        Write-Info "Run manually: python seed_demo_data.py"
+    }
 }
 
 # Step 10: Health Checks

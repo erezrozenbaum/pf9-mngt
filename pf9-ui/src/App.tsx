@@ -991,6 +991,9 @@ const App: React.FC = () => {
   // MFA settings modal
   const [showMfaSettings, setShowMfaSettings] = useState(false);
 
+  // Demo mode state
+  const [isDemo, setIsDemo] = useState(false);
+
   // Navigation (3-layer visibility model)
   const {
     navData,
@@ -1004,6 +1007,14 @@ const App: React.FC = () => {
     reorderItems,
     resetOrder,
   } = useNavigation(isAuthenticated);
+
+  // Check whether the backend is running in demo mode
+  useEffect(() => {
+    fetch(`${API_BASE}/demo-mode`)
+      .then(r => r.json())
+      .then(d => setIsDemo(!!d.demo))
+      .catch(() => setIsDemo(false));
+  }, []);
 
   // Check for existing token on mount
   useEffect(() => {
@@ -2853,6 +2864,12 @@ const App: React.FC = () => {
   return (
     <ThemeProvider>
       <div className="pf9-app">
+        {isDemo && (
+          <div className="demo-banner">
+            <span className="demo-badge">DEMO</span>
+            You are viewing the portal with sample data — no live Platform9 environment is connected.
+          </div>
+        )}
         <header className="pf9-header">
           <h1>PF9 Management Portal</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
