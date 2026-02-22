@@ -29,7 +29,7 @@ interface Props {
 export const HostUtilizationCard: React.FC<Props> = ({ data }) => {
   const getUtilizationColor = (percent: number | null): string => {
     if (percent === null) return '#94a3b8';
-    if (percent > 85) return '#ef4444'; // red
+    if (percent > 85) return '#f87171'; // red (softened)
     if (percent > 70) return '#f59e0b'; // amber
     return '#10b981'; // green
   };
@@ -143,7 +143,7 @@ export const HostUtilizationCard: React.FC<Props> = ({ data }) => {
           Warning (70-85%)
         </span>
         <span className="legend-item">
-          <span className="status-indicator" style={{ backgroundColor: '#ef4444' }} />
+          <span className="status-indicator" style={{ backgroundColor: '#f87171' }} />
           Critical (&gt;85%)
         </span>
       </div>

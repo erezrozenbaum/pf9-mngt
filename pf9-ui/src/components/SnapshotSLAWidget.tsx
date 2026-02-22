@@ -29,9 +29,10 @@ interface SLAData {
 
 interface Props {
   data: SLAData;
+  onNavigate?: (tab: string) => void;
 }
 
-export const SnapshotSLAWidget: React.FC<Props> = ({ data }) => {
+export const SnapshotSLAWidget: React.FC<Props> = ({ data, onNavigate }) => {
   const [expandedTenant, setExpandedTenant] = useState<string | null>(null);
 
   const getComplianceColor = (percentage: number): string => {
@@ -157,6 +158,14 @@ export const SnapshotSLAWidget: React.FC<Props> = ({ data }) => {
 
       <div className="sla-tips">
         <p>💡 Click a tenant row to view compliance details</p>
+        {onNavigate && (
+          <button
+            className="sla-configure-link"
+            onClick={() => onNavigate('snapshot-policies')}
+          >
+            ⚙ Configure Snapshot Policies &amp; Retention
+          </button>
+        )}
       </div>
     </div>
   );

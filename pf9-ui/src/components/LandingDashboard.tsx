@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import '../styles/LandingDashboard.css';
 import { useTheme } from '../hooks/useTheme';
 import { HealthSummaryCard } from './HealthSummaryCard';
@@ -34,7 +34,68 @@ interface DashboardData {
   complianceDrift: any;
 }
 
-export const LandingDashboard: React.FC = () => {
+// ---------- Widget registry for the chooser ----------
+type WidgetId =
+  | 'health'
+  | 'sla'
+  | 'coverage'
+  | 'hosts'
+  | 'activity'
+  | 'vmHotspots'
+  | 'tenantRisk'
+  | 'tenantRiskHeatmap'
+  | 'capacity'
+  | 'changeCompliance'
+  | 'complianceDrift'
+  | 'trendlines'
+  | 'capacityTrends';
+
+interface WidgetMeta {
+  id: WidgetId;
+  label: string;
+  icon: string;
+  description: string;
+  defaultVisible: boolean;
+}
+
+const WIDGET_REGISTRY: WidgetMeta[] = [
+  { id: 'health', label: 'System Health', icon: '📊', description: 'Tenants, VMs, volumes & resource utilization', defaultVisible: true },
+  { id: 'sla', label: 'Snapshot SLA', icon: '📸', description: 'Snapshot compliance by tenant', defaultVisible: true },
+  { id: 'coverage', label: 'Coverage Risks', icon: '🛡️', description: 'Snapshot coverage gaps & density', defaultVisible: true },
+  { id: 'hosts', label: 'Top Hosts', icon: '🖥️', description: 'Host utilization ranked by usage', defaultVisible: true },
+  { id: 'activity', label: 'Recent Activity', icon: '🕐', description: 'Latest infrastructure changes', defaultVisible: true },
+  { id: 'vmHotspots', label: 'VM Hotspots', icon: '🔥', description: 'Top resource-consuming VMs', defaultVisible: true },
+  { id: 'tenantRisk', label: 'Tenant Risk Scores', icon: '⚡', description: 'Risk scores per tenant', defaultVisible: true },
+  { id: 'tenantRiskHeatmap', label: 'Risk Heatmap', icon: '🧭', description: 'Visual risk map across tenants', defaultVisible: true },
+  { id: 'capacity', label: 'Capacity Pressure', icon: '📈', description: 'Cluster capacity & pressure points', defaultVisible: true },
+  { id: 'changeCompliance', label: 'Change & Compliance', icon: '✅', description: 'Recent changes & compliance status', defaultVisible: true },
+  { id: 'complianceDrift', label: 'Compliance Drift', icon: '📉', description: 'Drift signals over time', defaultVisible: false },
+  { id: 'trendlines', label: 'Trendlines', icon: '📊', description: 'Historical metric trends', defaultVisible: false },
+  { id: 'capacityTrends', label: 'Capacity Trends', icon: '📐', description: 'Capacity usage over time', defaultVisible: false },
+];
+
+const STORAGE_KEY_WIDGETS = 'pf9_dashboard_widgets';
+
+function loadVisibleWidgets(): Set<WidgetId> {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_WIDGETS);
+    if (saved) {
+      const arr: WidgetId[] = JSON.parse(saved);
+      return new Set(arr);
+    }
+  } catch { /* ignore */ }
+  return new Set(WIDGET_REGISTRY.filter(w => w.defaultVisible).map(w => w.id));
+}
+
+function saveVisibleWidgets(set: Set<WidgetId>) {
+  localStorage.setItem(STORAGE_KEY_WIDGETS, JSON.stringify([...set]));
+}
+
+interface Props {
+  onNavigate?: (tab: string) => void;
+}
+
+export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
   const { theme } = useTheme();
   const [data, setData] = useState<DashboardData>({
     health: null,
@@ -57,6 +118,38 @@ export const LandingDashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [lastRVToolsRun, setLastRVToolsRun] = useState<{last_run: string; source?: string; duration_seconds?: number} | null>(null);
+
+  // Widget chooser state
+  const [visibleWidgets, setVisibleWidgets] = useState<Set<WidgetId>>(loadVisibleWidgets);
+  const [showWidgetChooser, setShowWidgetChooser] = useState(false);
+  const chooserRef = useRef<HTMLDivElement>(null);
+
+  const toggleWidget = useCallback((id: WidgetId) => {
+    setVisibleWidgets(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveVisibleWidgets(next);
+      return next;
+    });
+  }, []);
+
+  const resetWidgets = useCallback(() => {
+    const defaults = new Set(WIDGET_REGISTRY.filter(w => w.defaultVisible).map(w => w.id));
+    setVisibleWidgets(defaults);
+    saveVisibleWidgets(defaults);
+  }, []);
+
+  // Close chooser on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (chooserRef.current && !chooserRef.current.contains(e.target as Node)) {
+        setShowWidgetChooser(false);
+      }
+    };
+    if (showWidgetChooser) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showWidgetChooser]);
 
   const fetchDashboardData = async () => {
     try {
@@ -236,53 +329,80 @@ export const LandingDashboard: React.FC = () => {
     <div className={`landing-dashboard ${theme === 'dark' ? 'dark' : ''}`}>
       <div className="dashboard-header">
         <div className="header-content">
-          <h1>🏠 Operations Dashboard</h1>
-          <p className="subtitle">Your morning coffee view of infrastructure health</p>
+          <h1>Operations Dashboard</h1>
+          <p className="subtitle">Infrastructure health at a glance</p>
         </div>
         <div className="header-actions">
+          <div className="widget-chooser-wrapper" ref={chooserRef}>
+            <button
+              className="widget-chooser-toggle"
+              onClick={() => setShowWidgetChooser(v => !v)}
+              title="Customize widgets"
+            >
+              ⚙ Customize
+            </button>
+            {showWidgetChooser && (
+              <div className="widget-chooser-panel">
+                <div className="widget-chooser-header">
+                  <span className="widget-chooser-title">Dashboard Widgets</span>
+                  <button className="widget-chooser-reset" onClick={resetWidgets}>Reset defaults</button>
+                </div>
+                <div className="widget-chooser-list">
+                  {WIDGET_REGISTRY.map(w => (
+                    <label key={w.id} className={`widget-chooser-item ${visibleWidgets.has(w.id) ? 'active' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={visibleWidgets.has(w.id)}
+                        onChange={() => toggleWidget(w.id)}
+                      />
+                      <span className="widget-chooser-icon">{w.icon}</span>
+                      <span className="widget-chooser-info">
+                        <span className="widget-chooser-label">{w.label}</span>
+                        <span className="widget-chooser-desc">{w.description}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div className="widget-chooser-footer">
+                  {visibleWidgets.size} of {WIDGET_REGISTRY.length} widgets visible
+                </div>
+              </div>
+            )}
+          </div>
           <button
             className="refresh-button"
             onClick={handleRefresh}
             disabled={loading}
             title="Refresh dashboard"
           >
-            {loading ? '⟳ Refreshing...' : '🔄 Refresh'}
+            {loading ? '⟳ Refreshing...' : '↻ Refresh'}
           </button>
           {lastRefresh && (
             <span className="last-refresh">
               Last updated: {lastRefresh.toLocaleTimeString()}
             </span>
           )}
-          {lastRVToolsRun && (
-            <span className="last-rvtools-run">
-              Data from: {new Date(lastRVToolsRun.last_run).toLocaleString()}
-            </span>
-          )}
         </div>
       </div>
 
       {/* Data freshness banner */}
-      <div className="data-freshness-banner">
-        <span className="freshness-icon">📡</span>
-        {lastRVToolsRun ? (
-          <>
-            <span className="freshness-label">Data collected:</span>
-            <span className="freshness-time">{new Date(lastRVToolsRun.last_run).toLocaleString()}</span>
-            {lastRVToolsRun.duration_seconds != null && (
-              <span className="freshness-detail">({lastRVToolsRun.duration_seconds}s run)</span>
-            )}
-            {(() => {
-              const ageMs = Date.now() - new Date(lastRVToolsRun.last_run).getTime();
-              const ageMins = Math.round(ageMs / 60000);
-              const cls = ageMins > 120 ? 'freshness-age stale' : ageMins > 60 ? 'freshness-age warning' : 'freshness-age fresh';
-              const label = ageMins < 1 ? 'just now' : ageMins < 60 ? `${ageMins}m ago` : `${Math.round(ageMins / 60)}h ago`;
-              return <span className={cls}>{label}</span>;
-            })()}
-          </>
-        ) : (
-          <span className="freshness-label" style={{color: '#f5d1b9'}}>No inventory data collected yet</span>
-        )}
-      </div>
+      {lastRVToolsRun && (
+        <div className="data-freshness-banner">
+          <span className="freshness-icon">📡</span>
+          <span className="freshness-label">Data collected:</span>
+          <span className="freshness-time">{new Date(lastRVToolsRun.last_run).toLocaleString()}</span>
+          {lastRVToolsRun.duration_seconds != null && (
+            <span className="freshness-detail">({lastRVToolsRun.duration_seconds}s run)</span>
+          )}
+          {(() => {
+            const ageMs = Date.now() - new Date(lastRVToolsRun.last_run).getTime();
+            const ageMins = Math.round(ageMs / 60000);
+            const cls = ageMins > 120 ? 'freshness-age stale' : ageMins > 60 ? 'freshness-age warning' : 'freshness-age fresh';
+            const label = ageMins < 1 ? 'just now' : ageMins < 60 ? `${ageMins}m ago` : `${Math.round(ageMins / 60)}h ago`;
+            return <span className={cls}>{label}</span>;
+          })()}
+        </div>
+      )}
 
       {error && (
         <div className="error-banner">
@@ -294,31 +414,29 @@ export const LandingDashboard: React.FC = () => {
       )}
 
       <div className="dashboard-grid">
-        {/* Health Summary - Top Left */}
-        {data.health && <HealthSummaryCard data={data.health} />}
+        {/* Row 1: Health Summary */}
+        {visibleWidgets.has('health') && data.health && <HealthSummaryCard data={data.health} />}
 
-        {/* SLA Compliance - Full Width Below Health */}
-        {data.sla && (
-          <div className="dashboard-section-full">
-            <SnapshotSLAWidget data={data.sla} />
-          </div>
+        {/* Row 1: SLA Compliance */}
+        {visibleWidgets.has('sla') && data.sla && (
+          <SnapshotSLAWidget data={data.sla} onNavigate={onNavigate} />
         )}
 
         {/* Coverage Risks - Full Width */}
-        {data.coverage && (
+        {visibleWidgets.has('coverage') && data.coverage && (
           <div className="dashboard-section-full">
             <CoverageRiskCard data={data.coverage} />
           </div>
         )}
 
-        {/* Top Hosts - Bottom Left */}
-        {data.hosts && <HostUtilizationCard data={data.hosts} />}
+        {/* Top Hosts */}
+        {visibleWidgets.has('hosts') && data.hosts && <HostUtilizationCard data={data.hosts} />}
 
-        {/* Recent Activity - Bottom Right */}
-        {data.activity && <RecentActivityWidget data={data.activity} />}
+        {/* Recent Activity */}
+        {visibleWidgets.has('activity') && data.activity && <RecentActivityWidget data={data.activity} />}
 
         {/* VM Hotspots - Full Width */}
-        {data.vmHotspotsCpu && data.vmHotspotsMemory && data.vmHotspotsStorage && (
+        {visibleWidgets.has('vmHotspots') && data.vmHotspotsCpu && data.vmHotspotsMemory && data.vmHotspotsStorage && (
           <div className="dashboard-section-full">
             <VMHotspotsCard
               cpuData={data.vmHotspotsCpu}
@@ -329,37 +447,37 @@ export const LandingDashboard: React.FC = () => {
         )}
 
         {/* Tenant Risk Scores - Full Width */}
-        {data.tenantRisk && (
+        {visibleWidgets.has('tenantRisk') && data.tenantRisk && (
           <div className="dashboard-section-full">
             <TenantRiskScoreCard data={data.tenantRisk} />
           </div>
         )}
 
         {/* Tenant Risk Heatmap - Full Width */}
-        {data.tenantRiskHeatmap && (
+        {visibleWidgets.has('tenantRiskHeatmap') && data.tenantRiskHeatmap && (
           <div className="dashboard-section-full">
             <TenantRiskHeatmapCard data={data.tenantRiskHeatmap} />
           </div>
         )}
 
         {/* Capacity Pressure */}
-        {data.capacity && <CapacityPressureCard data={data.capacity} />}
+        {visibleWidgets.has('capacity') && data.capacity && <CapacityPressureCard data={data.capacity} />}
 
         {/* Change & Compliance */}
-        {data.changeCompliance && <ChangeComplianceCard data={data.changeCompliance} />}
+        {visibleWidgets.has('changeCompliance') && data.changeCompliance && <ChangeComplianceCard data={data.changeCompliance} />}
 
         {/* Compliance Drift Signals */}
-        {data.complianceDrift && <ComplianceDriftCard data={data.complianceDrift} />}
+        {visibleWidgets.has('complianceDrift') && data.complianceDrift && <ComplianceDriftCard data={data.complianceDrift} />}
 
         {/* Trendlines - Full Width */}
-        {data.trendlines && (
+        {visibleWidgets.has('trendlines') && data.trendlines && (
           <div className="dashboard-section-full">
             <TrendlinesCard data={data.trendlines} />
           </div>
         )}
 
         {/* Capacity Trends - Full Width */}
-        {data.capacityTrends && (
+        {visibleWidgets.has('capacityTrends') && data.capacityTrends && (
           <div className="dashboard-section-full">
             <CapacityTrendsCard data={data.capacityTrends} />
           </div>
@@ -368,7 +486,7 @@ export const LandingDashboard: React.FC = () => {
 
       <div className="dashboard-footer">
         <p>
-          💡 Tip: Click on any metric to drill down into details. This dashboard auto-refreshes every 60 seconds.
+          Click on any metric to drill down · Auto-refreshes every 60 seconds · Use ⚙ Customize to show/hide widgets
         </p>
       </div>
     </div>
