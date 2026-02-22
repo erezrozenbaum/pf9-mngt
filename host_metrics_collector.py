@@ -40,6 +40,8 @@ class HostMetricsCollector:
         self.ip_to_hostname = self._build_hostname_map()
         # Store previous node_cpu_seconds_total counters per host for delta calculation
         self._prev_cpu_totals: Dict[str, Dict[str, float]] = {}  # host -> {"idle": seconds, "total": seconds}
+        # Store previous VM vcpu_time for delta-based VM CPU calculation
+        self._prev_vm_cpu_totals: Dict[str, Dict] = {}  # domain_id -> {"vcpu_time": seconds, "wall_time": datetime}
         
     def _build_hostname_map(self):
         """Build IP-to-hostname map from Platform9 API or .env PF9_HOST_MAP"""
@@ -377,7 +379,12 @@ class HostMetricsCollector:
                                     'storage_write_bytes': 0,
                                     'storage_total_gb': 0,
                                     'storage_used_gb': 0,
-                                    'storage_usage_percent': 0
+                                    'storage_usage_percent': 0,
+                                    '_vcpu_time_total': 0.0,  # sum of per-vcpu time for delta calc
+                                    '_vcpu_count': 0,
+                                    '_block_capacity': {},    # target_device -> bytes
+                                    '_block_allocation': {},  # target_device -> bytes
+                                    '_block_physical': {},    # target_device -> bytes
                                 }
                         except:
                             continue
@@ -405,10 +412,18 @@ class HostMetricsCollector:
                     except:
                         continue
                 
-                    # Collect CPU usage
-                    if 'libvirt_domain_info_cpu_time_seconds_total{' in line:
-                        # Simplified CPU usage calculation (CPU time / uptime)
-                        vms[domain_id]['cpu_usage_percent'] = min(value / 10000, 100)  # Rough estimate
+                    # Collect per-vCPU time for delta-based CPU calculation
+                    if 'libvirt_domain_vcpu_time_seconds_total{' in line:
+                        vms[domain_id]['_vcpu_time_total'] += value
+                    
+                    # Collect vCPU count
+                    elif 'libvirt_domain_info_virtual_cpus{' in line:
+                        vms[domain_id]['_vcpu_count'] = int(value)
+                    
+                    # Fallback: total CPU time (used only if vcpu_time not available)
+                    elif 'libvirt_domain_info_cpu_time_seconds_total{' in line:
+                        if vms[domain_id]['_vcpu_time_total'] == 0:
+                            vms[domain_id]['_vcpu_time_total'] = value
                     
                     # Collect memory usage
                     elif 'libvirt_domain_info_memory_usage_bytes{' in line:
@@ -436,30 +451,94 @@ class HostMetricsCollector:
                     elif 'libvirt_domain_block_stats_write_bytes_total{' in line:
                         vms[domain_id]['storage_write_bytes'] += value
                     
-                    # Storage capacity
+                    # Per-device storage capacity
                     elif 'libvirt_domain_block_stats_capacity_bytes{' in line:
-                        capacity_gb = value / (1024 * 1024 * 1024)
-                        vms[domain_id]['storage_total_gb'] += capacity_gb
+                        dev_start = line.find('target_device="') + 15
+                        dev_end = line.find('"', dev_start)
+                        dev = line[dev_start:dev_end] if dev_start > 14 else 'unknown'
+                        vms[domain_id]['_block_capacity'][dev] = value
                     
-                    # Storage allocation (used)
-                    elif 'libvirt_domain_block_stats_allocation{' in line or 'libvirt_domain_block_stats_allocation_bytes{' in line:
-                        used_gb = value / (1024 * 1024 * 1024)
-                        vms[domain_id]['storage_used_gb'] += used_gb
+                    # Per-device storage allocation (used)
+                    elif 'libvirt_domain_block_stats_allocation{' in line:
+                        dev_start = line.find('target_device="') + 15
+                        dev_end = line.find('"', dev_start)
+                        dev = line[dev_start:dev_end] if dev_start > 14 else 'unknown'
+                        vms[domain_id]['_block_allocation'][dev] = value
+                    
+                    # Per-device storage physical size
+                    elif 'libvirt_domain_block_stats_physicalsize_bytes{' in line:
+                        dev_start = line.find('target_device="') + 15
+                        dev_end = line.find('"', dev_start)
+                        dev = line[dev_start:dev_end] if dev_start > 14 else 'unknown'
+                        vms[domain_id]['_block_physical'][dev] = value
             
-            # Round values and calculate percentages
+            # Calculate CPU and storage from collected raw data
             vm_list = []
             for vm_data in vms.values():
-                vm_data['cpu_usage_percent'] = round(vm_data['cpu_usage_percent'], 1)
+                domain_id = vm_data['vm_id']
+                
+                # --- VM CPU: delta-based calculation using vcpu_time ---
+                cur_vcpu_time = vm_data.pop('_vcpu_time_total', 0.0)
+                vcpu_count = vm_data.pop('_vcpu_count', 1) or 1
+                prev_vm = self._prev_vm_cpu_totals.get(domain_id)
+                if prev_vm is not None and cur_vcpu_time > 0:
+                    delta_time = cur_vcpu_time - prev_vm['vcpu_time']
+                    delta_wall = (datetime.utcnow() - prev_vm['wall_time']).total_seconds()
+                    if delta_wall > 0 and delta_time >= 0:
+                        # CPU% = (delta_cpu_seconds / (wall_seconds * vcpu_count)) * 100
+                        vm_data['cpu_usage_percent'] = round(
+                            min((delta_time / (delta_wall * vcpu_count)) * 100, 100), 1
+                        )
+                    else:
+                        vm_data['cpu_usage_percent'] = 0
+                else:
+                    # First cycle: no delta available, report 0
+                    vm_data['cpu_usage_percent'] = 0
+                # Store for next cycle
+                if cur_vcpu_time > 0:
+                    self._prev_vm_cpu_totals[domain_id] = {
+                        'vcpu_time': cur_vcpu_time,
+                        'wall_time': datetime.utcnow()
+                    }
+                
+                # --- Storage: smart capacity vs allocation ---
+                block_cap = vm_data.pop('_block_capacity', {})
+                block_alloc = vm_data.pop('_block_allocation', {})
+                block_phys = vm_data.pop('_block_physical', {})
+                total_bytes = 0
+                used_bytes = 0
+                for dev in block_cap:
+                    cap = block_cap.get(dev, 0)
+                    alloc = block_alloc.get(dev, 0)
+                    phys = block_phys.get(dev, 0)
+                    total_bytes += cap
+                    if cap > 0 and alloc > 0:
+                        # For raw/thick disks allocation == capacity == physical;
+                        # in that case actual in-guest usage is not available from libvirt.
+                        # For qcow2/thin disks allocation < capacity.
+                        if alloc >= cap * 0.99:
+                            # Likely raw-format or fully-allocated — check physicalsize
+                            if 0 < phys < cap * 0.99:
+                                used_bytes += phys
+                            else:
+                                # Truly raw — allocation == physical == capacity
+                                # Report as unknown/full since we can't see inside the VM
+                                used_bytes += alloc
+                        else:
+                            used_bytes += alloc
+                    elif alloc > 0:
+                        used_bytes += alloc
+                
+                vm_data['storage_total_gb'] = round(total_bytes / (1024**3), 1)
+                vm_data['storage_used_gb'] = round(used_bytes / (1024**3), 1)
+                if total_bytes > 0:
+                    vm_data['storage_usage_percent'] = round((used_bytes / total_bytes) * 100, 1)
+                else:
+                    vm_data['storage_usage_percent'] = 0
+                
+                # Memory
                 vm_data['memory_usage_mb'] = round(vm_data['memory_usage_mb'], 1)
                 vm_data['memory_total_mb'] = round(vm_data['memory_total_mb'], 1)
-                vm_data['storage_total_gb'] = round(vm_data['storage_total_gb'], 1)
-                vm_data['storage_used_gb'] = round(vm_data['storage_used_gb'], 1)
-                
-                # Calculate storage usage percentage
-                if vm_data['storage_total_gb'] > 0:
-                    vm_data['storage_usage_percent'] = round(
-                        (vm_data['storage_used_gb'] / vm_data['storage_total_gb']) * 100, 1
-                    )
                 
                 # Use the libvirt calculated percentage if available, otherwise calculate it
                 if 'memory_usage_percent' not in vm_data or vm_data['memory_usage_percent'] == 0:
@@ -551,6 +630,13 @@ class HostMetricsCollector:
             await asyncio.sleep(60)
 
 async def main():
+    # In demo mode, the seed script generates a static metrics cache — skip live collection
+    demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
+    if demo_mode:
+        print("DEMO_MODE=true — live metrics collection is disabled.")
+        print("Run 'python seed_demo_data.py' to generate/refresh the static metrics cache.")
+        return
+
     collector = HostMetricsCollector()
     
     if len(sys.argv) > 1 and sys.argv[1] == "--once":

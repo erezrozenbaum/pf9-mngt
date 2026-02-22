@@ -24,3 +24,7 @@ qrcode[pil]==7.4.2
 
 # Email templating
 Jinja2>=3.1.0
+
+# Ops Copilot — LLM backends (optional: only needed if using external LLMs)
+openai>=1.0.0
+anthropic>=0.20.0

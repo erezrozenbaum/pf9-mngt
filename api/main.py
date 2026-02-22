@@ -74,6 +74,9 @@ from search import router as search_router
 # Runbook endpoints
 from runbook_routes import router as runbook_router
 
+# Copilot (Ops AI assistant) endpoints
+from copilot import router as copilot_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -200,6 +203,9 @@ class CreateSecurityGroupRuleRequest(BaseModel):
 
 APP_NAME = "pf9-mgmt-api"
 
+# Demo mode (disables live PF9 collection, shows banner in UI)
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+
 # Security configuration
 ADMIN_USERNAME = os.getenv("PF9_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("PF9_ADMIN_PASSWORD")
@@ -287,6 +293,12 @@ app.include_router(resource_management_router)
 app.include_router(navigation_router)
 app.include_router(search_router)
 app.include_router(runbook_router)
+app.include_router(copilot_router)
+
+# Public endpoint: tells the UI whether this instance runs in demo mode
+@app.get("/demo-mode")
+async def get_demo_mode():
+    return {"demo": DEMO_MODE}
 
 # Rate limiting setup
 app.state.limiter = limiter
@@ -331,7 +343,7 @@ async def rbac_middleware(request: Request, call_next):
         path.startswith("/auth") or
         path.startswith("/settings/") or
         path.startswith("/static/") or
-        path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc"]
+        path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/demo-mode"]
     ):
         return await call_next(request)
 
@@ -361,9 +373,14 @@ async def rbac_middleware(request: Request, call_next):
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
 
-    # Extract segment (first path component) without query parameters
+    # Extract segment (first meaningful path component) without query parameters
     clean_path = path.split("?")[0]  # Remove query string
-    segment = clean_path.lstrip("/").split("/")[0]
+    parts = [p for p in clean_path.split("/") if p]
+    # Routes mounted under /api/<resource>/… use the second segment
+    if len(parts) >= 2 and parts[0] == "api":
+        segment = parts[1]
+    else:
+        segment = parts[0] if parts else ""
     
     resource_map = {
         "domains": "domains",
@@ -405,6 +422,7 @@ async def rbac_middleware(request: Request, call_next):
         "snapshot-management": "snapshot_policy_sets",
         "api-metrics": "api_metrics",
         "system-logs": "system_logs",
+        "copilot": "copilot",
     }
 
     resource = resource_map.get(segment)
@@ -756,7 +774,7 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
         'api_metrics', 'system_logs', 'restore', 'security_groups',
         'dashboard', 'drift', 'tenant_health', 'notifications', 'backup',
         'mfa', 'metering', 'provisioning', 'reports', 'resources', 'branding',
-        'departments', 'navigation', 'search',
+        'departments', 'navigation', 'search', 'copilot',
     ]
     
     try:

@@ -148,6 +148,16 @@ docker-compose down 2>$null | Out-Null
 
 # Step 2: Collect initial metrics
 Write-Host "2. Collecting initial metrics..." -ForegroundColor Yellow
+
+# Detect demo mode from .env
+$isDemoMode = $false
+if ($envCheckMap['DEMO_MODE'] -eq 'true') {
+    $isDemoMode = $true
+}
+
+if ($isDemoMode) {
+    Write-Host "✓ Demo mode — skipping live metrics collection (using static cache)" -ForegroundColor Green
+} else {
 try {
     $result = python host_metrics_collector.py --once 2>&1
     if ($LASTEXITCODE -eq 0) {
@@ -158,6 +168,7 @@ try {
     }
 } catch {
     Write-Host "⚠ Python not available or metrics collection failed" -ForegroundColor Yellow
+}
 }
 
 # Step 3: Setup automatic metrics collection
@@ -221,6 +232,9 @@ if ($allGood) {
     Write-Host ""
     
     # Start background metrics collector
+    if ($isDemoMode) {
+        Write-Host "✓ Demo mode — background metrics collector skipped (static cache in use)" -ForegroundColor Green
+    } else {
     Write-Host "Starting background metrics collector..." -ForegroundColor Cyan
     $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
     if (-not $pythonExe) {
@@ -248,6 +262,7 @@ if ($allGood) {
     } else {
         Write-Host "⚠ Python not found. Please run manually: python host_metrics_collector.py" -ForegroundColor Yellow
     }
+    } # end if (-not $isDemoMode) — background metrics collector
     
     if ($scheduleSuccess) {
         Write-Host "✓ Automatic metrics collection scheduled" -ForegroundColor Green

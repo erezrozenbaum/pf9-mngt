@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.21.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.24.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -255,10 +255,20 @@ A 15-minute explainer video walking through the UI and key features:
 - **Full Audit Trail**: Every execution records trigger user, approver, timestamps, parameters, results, items found/actioned
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern — add new runbooks with zero framework changes
 
+### 🤖 Ops Copilot — AI Infrastructure Assistant *(v1.24)*
+- **Three-Tier Architecture**: Built-in intent engine (zero setup) → Ollama (local LLM) → OpenAI/Anthropic (external LLM)
+- **40+ Built-in Intents**: Inventory counts, VM power states, capacity metrics, error VMs, down hosts, networking (networks, subnets, routers, floating IPs), snapshot/drift/compliance summaries, user lists, role assignments, activity logs, runbook status, and full infrastructure overview — all powered by live SQL queries
+- **Tenant / Project / Host Scoping**: Add "on tenant X", "for project X", or "on host Y" to any question for filtered results. Synonym expansion ensures natural phrasing always matches.
+- **LLM Integration**: Free-form questions answered via Ollama (local, no data leaves your network) or OpenAI/Anthropic (with automatic sensitive data redaction)
+- **Labeled FAB + Welcome Screen**: Prominent pill-shaped "🤖 Ask Copilot" button with pulse animation on first visit, welcome screen with examples, and a dedicated help view with 8 categorized question groups and usage tips
+- **Admin Settings Panel**: Switch backends, configure URLs/keys/models, edit system prompts, test connectivity — all from the UI, no `.env` edits needed
+- **Feedback & History**: Per-answer thumbs up/down, conversation history persisted per user with automatic trimming
+- **Automatic Fallback**: If the LLM backend fails, seamlessly falls back to the built-in intent engine
+
 ### 📈 28-Tab Management Dashboard
 A single engineering console covering every operational surface:
 
-> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks**
+> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot**
 
 <details>
 <summary><strong>Landing Dashboard Widgets</strong></summary>
@@ -306,8 +316,8 @@ A single engineering console covering every operational surface:
 ### Prerequisites
 - **Docker & Docker Compose** (for complete platform)
 - **Python 3.11+** with packages: `requests`, `openpyxl`, `psycopg2-binary`, `aiohttp`, `aiofiles`
-- **Valid Platform9 credentials** (service account recommended)
-- **Network access** to Platform9 cluster and compute nodes
+- **Valid Platform9 credentials** (service account recommended) — *not required in Demo Mode*
+- **Network access** to Platform9 cluster and compute nodes — *not required in Demo Mode*
 
 ### 1. Complete Automated Setup (Recommended)
 ```powershell
@@ -343,6 +353,28 @@ cp .env.template .env
 # Monitoring:    http://localhost:8001
 # Database:      http://localhost:8080
 ```
+
+### 1b. Demo Mode (No Platform9 Required)
+
+Want to try the portal without a Platform9 environment? Demo mode populates the
+database with realistic sample data (3 tenants, 35 VMs, 50+ volumes, snapshots,
+drift events, compliance reports, etc.) and generates a static metrics cache.
+
+```powershell
+git clone https://github.com/erezrozenbaum/pf9-mngt.git
+cd pf9-mngt
+
+# The deployment wizard will ask "Production or Demo?" — choose 2 for Demo
+.\deployment.ps1
+
+# Or enable demo mode manually on an existing install:
+#   1. Set DEMO_MODE=true in .env
+#   2. python seed_demo_data.py          # populates DB + generates metrics cache
+#   3. docker-compose restart pf9_api    # API picks up DEMO_MODE env var
+```
+
+> In demo mode the UI shows an amber **DEMO** banner, the background metrics
+> collector is skipped, and Platform9 credentials are not required.
 
 ### 2. Environment Configuration
 ```bash
@@ -466,6 +498,7 @@ pf9-mngt/
 ├── docs/                         # Full documentation suite
 ├── pf9_rvtools.py                # RVTools-style inventory export
 ├── host_metrics_collector.py     # Prometheus metrics collection
+├── seed_demo_data.py             # Demo mode: populate DB + metrics cache
 ├── p9_common.py                  # Shared utilities
 ├── docker-compose.yml            # Full stack orchestration
 ├── deployment.ps1                # One-command deployment
@@ -559,6 +592,9 @@ A: Yes. Every service is containerized. See [docs/KUBERNETES_MIGRATION_GUIDE.md]
 
 **Q: What are the minimum hardware requirements?**
 A: A Docker host with at least 4 GB RAM, 2 CPU cores, and network access to your Platform9 region endpoints.
+
+**Q: Can I try this without a Platform9 environment?**
+A: Yes! Set `DEMO_MODE=true` in your `.env` (or choose **Demo** during `deployment.ps1`) and run `python seed_demo_data.py`. The database will be populated with realistic sample data and a static metrics cache so every dashboard, report, and workflow is fully functional without a live cluster.
 
 </details>
 
