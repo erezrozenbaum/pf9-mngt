@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] - 2026-02-22
+
+### Fixed
+- **Host CPU utilization completely wrong** — The "Top Hosts by Usage" widget displayed wildly inaccurate CPU values (e.g. 100% when PF9 shows 4%). Root cause: the monitoring collector was using `node_load1 × 25` (1-minute load average) instead of actual CPU utilization. Replaced with proper delta-based `node_cpu_seconds_total` calculation — the same method used by PF9, Prometheus, and Grafana. CPU values now match the Platform9 Infrastructure → Cluster Hosts page. Requires two collection cycles (~2 minutes) after restart to produce accurate deltas.
+
+### Changed
+- **Dashboard dark mode overhaul** — Comprehensive rework of all dark mode colors across the Operations Dashboard:
+  - Raised card backgrounds from `#1e1e2d` to `#1a1d2e` with stronger borders (`#2a2d42`) for better layer separation against the darkened page background (`#0d0f18`).
+  - Inner surfaces (health items, SLA summary, activity items, host items, etc.) raised from `#16162a` to `#141729` for a clear 3-tier depth hierarchy.
+  - Softened harsh reds throughout: VM Hotspots metric color `#ef4444` → `#e87461` (light) / `#f0a898` (dark); host critical bar fill `#ef4444` → `#f87171`; activity deleted action `#ef4444` → `#f87171`.
+  - Added zebra striping (`rgba(255,255,255, 0.02)` on even rows) and hover highlights (`rgba(255,255,255, 0.04)`) to all 7 dark mode tables (SLA, coverage, capacity, tenant-risk, trendlines, capacity-trends, drift).
+  - Heatmap tiles get a subtle blue-purple glow on hover instead of plain black shadow.
+  - Widget chooser panel, toggle, header, footer, and reset button all updated to the new palette.
+- **Host utilization card visual improvements** — Metric bars thickened from 10px to 12px with rounder corners (6px) and a translucent track (`rgba(255,255,255, 0.1)`) replacing the near-invisible `#4b5563`. Percentage values bumped to 0.8rem/700 weight with explicit bright color in dark mode. Metric labels now uppercase with letter-spacing. Critical badge gets a semi-transparent red background + border in dark mode. Host rank weight increased to 800 with brighter blue (`#93bbfc`) in dark mode.
+- **Activity feed dark mode improvements** — CREATED/DELETED action badges now have a visible `rgba(255,255,255, 0.08)` background + subtle border in dark mode (pills instead of naked text). Footer text brightened from `#64748b` to `#8994a8`. Summary labels and timestamps brightened for readability.
+
+### Added
+- **Widget Chooser** — New "Customize" button on the dashboard toolbar opens a dropdown panel listing all 13 widgets with toggle switches. Visibility persists to `localStorage` (`pf9_dashboard_widgets`). "Reset to Defaults" button restores the original layout. Three widgets hidden by default: Compliance Drift, Trendlines, Capacity Trends.
+- **SLA configuration link** — "Configure Snapshot Policies & Retention" button added to the Snapshot SLA widget tips section, navigating directly to the Snapshot Policies tab.
+
 ## [1.21.1] - 2026-02-19
 
 ### Changed
