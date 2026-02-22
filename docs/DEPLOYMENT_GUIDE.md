@@ -1340,6 +1340,85 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 
 ---
 
+## Ops Copilot Setup
+
+The Ops Copilot is a three-tier AI assistant built into the portal. It works out of the box with no additional setup — the **built-in** tier uses pattern-matching intent detection powered by live SQL queries. For free-form questions, you can optionally connect a local or external LLM.
+
+### Tier 1: Built-in (Default — Zero Setup)
+
+Copilot works immediately after deployment. The built-in engine matches 40+ intent patterns (inventory counts, VM power states, capacity metrics, error VMs, drift events, networking, role assignments, etc.) and runs live SQL queries to answer. No API keys, no external services.
+
+**Scoping**: Add "on tenant X", "for project X", or "on host Y" to any question to filter results. Examples:
+- *"How many powered on VMs on tenant <your-tenant>?"*
+- *"List VMs on host compute-01"*
+- *"Quota for project engineering"*
+
+**Help & Discovery**: Click ❓ in the Copilot header or "How to ask" in the footer to see all 40+ available questions organized into 8 categories with usage tips.
+
+### Tier 2: Ollama (Local LLM)
+
+For free-form questions using a local LLM that keeps all data on your network:
+
+1. **Install Ollama** on the Docker host (or any reachable server):
+   ```bash
+   curl -fsSL https://ollama.ai/install.sh | sh
+   ollama pull llama3
+   ```
+
+2. **Configure** in `.env`:
+   ```dotenv
+   COPILOT_BACKEND=ollama
+   COPILOT_OLLAMA_URL=http://localhost:11434
+   COPILOT_OLLAMA_MODEL=llama3
+   ```
+   > **Note**: Inside Docker, use `http://host.docker.internal:11434` to reach the host machine's Ollama. The `docker-compose.yml` already defaults to this.
+
+3. **Or switch at runtime** via the UI: Click the ⚙️ gear icon in the Copilot panel → select "Ollama" → enter the URL → Save.
+
+### Tier 3: External LLM (OpenAI / Anthropic)
+
+For the most capable free-form answers using cloud LLMs:
+
+1. **Configure** in `.env`:
+   ```dotenv
+   # For OpenAI:
+   COPILOT_BACKEND=openai
+   COPILOT_OPENAI_API_KEY=sk-...
+   COPILOT_OPENAI_MODEL=gpt-4o-mini
+
+   # For Anthropic:
+   COPILOT_BACKEND=anthropic
+   COPILOT_ANTHROPIC_API_KEY=sk-ant-...
+   COPILOT_ANTHROPIC_MODEL=claude-sonnet-4-20250514
+   ```
+
+2. **Redaction** (recommended): `COPILOT_REDACT_SENSITIVE=true` (default) masks IPs, emails, and hostnames before sending infrastructure context to the external LLM.
+
+3. **Or switch at runtime** via the UI Settings panel (admin only).
+
+### Switching Backends at Runtime
+
+Admins can switch backends without restarting:
+
+1. Open the Copilot panel — click the labeled "🤖 Ask Copilot" pill button (bottom-right) or press `Ctrl+K`
+2. Click the ⚙️ gear icon in the panel header
+3. Select the desired backend
+4. Enter any required configuration (URL, API key, model)
+5. Click "Test Connection" to verify
+6. Click "Save"
+
+The setting is stored in the database (`copilot_config` table) and takes effect immediately.
+
+### Security Notes
+
+- **Built-in**: No data leaves your network. Read-only SQL queries.
+- **Ollama**: No data leaves your network (assuming Ollama runs locally).
+- **External LLM**: Infrastructure context is sent to the LLM provider. Enable `COPILOT_REDACT_SENSITIVE=true` to mask IPs/emails/hostnames. API keys are stored in the `copilot_config` database table.
+- All Copilot endpoints require authentication via the standard RBAC middleware.
+- Settings changes (backend, keys) are admin-only.
+
+---
+
 ## Production Hardening
 
 ### Pre-Production Checklist

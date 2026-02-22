@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.21.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.24.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -255,10 +255,20 @@ A 15-minute explainer video walking through the UI and key features:
 - **Full Audit Trail**: Every execution records trigger user, approver, timestamps, parameters, results, items found/actioned
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern — add new runbooks with zero framework changes
 
+### 🤖 Ops Copilot — AI Infrastructure Assistant *(v1.24)*
+- **Three-Tier Architecture**: Built-in intent engine (zero setup) → Ollama (local LLM) → OpenAI/Anthropic (external LLM)
+- **40+ Built-in Intents**: Inventory counts, VM power states, capacity metrics, error VMs, down hosts, networking (networks, subnets, routers, floating IPs), snapshot/drift/compliance summaries, user lists, role assignments, activity logs, runbook status, and full infrastructure overview — all powered by live SQL queries
+- **Tenant / Project / Host Scoping**: Add "on tenant X", "for project X", or "on host Y" to any question for filtered results. Synonym expansion ensures natural phrasing always matches.
+- **LLM Integration**: Free-form questions answered via Ollama (local, no data leaves your network) or OpenAI/Anthropic (with automatic sensitive data redaction)
+- **Labeled FAB + Welcome Screen**: Prominent pill-shaped "🤖 Ask Copilot" button with pulse animation on first visit, welcome screen with examples, and a dedicated help view with 8 categorized question groups and usage tips
+- **Admin Settings Panel**: Switch backends, configure URLs/keys/models, edit system prompts, test connectivity — all from the UI, no `.env` edits needed
+- **Feedback & History**: Per-answer thumbs up/down, conversation history persisted per user with automatic trimming
+- **Automatic Fallback**: If the LLM backend fails, seamlessly falls back to the built-in intent engine
+
 ### 📈 28-Tab Management Dashboard
 A single engineering console covering every operational surface:
 
-> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks**
+> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot**
 
 <details>
 <summary><strong>Landing Dashboard Widgets</strong></summary>
