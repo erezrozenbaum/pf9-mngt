@@ -3017,7 +3017,7 @@ const App: React.FC = () => {
 
       {/* Landing Dashboard - Special handling, no filters/pagination */}
       {activeTab === "dashboard" && (
-        <LandingDashboard />
+        <LandingDashboard onNavigate={(tab) => setActiveTab(tab as ActiveTab)} />
       )}
 
       {["servers", "volumes", "networks", "subnets", "domains", "projects", "flavors", "images", "hypervisors", "users", "ports", "floatingips", "snapshots", "drift", "history", "audit"].includes(activeTab) && (

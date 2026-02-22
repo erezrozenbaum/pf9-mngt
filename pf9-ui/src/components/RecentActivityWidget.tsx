@@ -36,7 +36,7 @@ const getActivityIcon = (resourceType: string, action: string): string => {
 };
 
 const getActivityColor = (action: string): string => {
-  return action === 'created' ? '#10b981' : '#ef4444';
+  return action === 'created' ? '#10b981' : '#f87171';
 };
 
 export const RecentActivityWidget: React.FC<Props> = ({ data }) => {

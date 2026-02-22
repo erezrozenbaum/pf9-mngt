@@ -8,6 +8,7 @@ import aiohttp
 import json
 import time
 from datetime import datetime, timedelta
+from typing import Dict
 import os
 import sys
 
@@ -37,6 +38,8 @@ class HostMetricsCollector:
         self.cache_file = os.path.join("monitoring", "cache", "metrics_cache.json")
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
         self.ip_to_hostname = self._build_hostname_map()
+        # Store previous node_cpu_seconds_total counters per host for delta calculation
+        self._prev_cpu_totals: Dict[str, Dict[str, float]] = {}  # host -> {"idle": seconds, "total": seconds}
         
     def _build_hostname_map(self):
         """Build IP-to-hostname map from Platform9 API or .env PF9_HOST_MAP"""
@@ -163,6 +166,9 @@ class HostMetricsCollector:
             lines = prometheus_text.strip().split('\n')
             metrics = {}
             
+            # Collect per-mode CPU seconds for proper utilization calculation
+            cpu_mode_seconds: Dict[str, float] = {}  # mode -> total seconds across all CPUs
+            
             for line in lines:
                 if line.startswith('#') or not line.strip():
                     continue
@@ -175,6 +181,16 @@ class HostMetricsCollector:
                         metrics[metric_name] = value
                     except:
                         continue
+                
+                    # Accumulate node_cpu_seconds_total by mode (idle, user, system, etc.)
+                    if 'node_cpu_seconds_total{' in line:
+                        try:
+                            mode_start = line.find('mode="') + 6
+                            mode_end = line.find('"', mode_start)
+                            mode = line[mode_start:mode_end]
+                            cpu_mode_seconds[mode] = cpu_mode_seconds.get(mode, 0.0) + value
+                        except:
+                            pass
             
             host_data = {
                 'hostname': self.ip_to_hostname.get(hostname, hostname),
@@ -182,11 +198,38 @@ class HostMetricsCollector:
                 'timestamp': datetime.utcnow().isoformat()
             }
             
-            # CPU usage (simplified)
-            if 'node_load1' in metrics:
-                host_data['cpu_usage_percent'] = min(metrics['node_load1'] * 25, 100)
-            else:
-                host_data['cpu_usage_percent'] = 0
+            # CPU utilization: use node_cpu_seconds_total delta between collection cycles
+            # This mirrors how PF9 and standard monitoring tools compute CPU %.
+            cpu_calculated = False
+            if cpu_mode_seconds:
+                cur_total = sum(cpu_mode_seconds.values())
+                cur_idle = cpu_mode_seconds.get('idle', 0.0)
+                prev = self._prev_cpu_totals.get(hostname)
+                if prev is not None:
+                    delta_total = cur_total - prev['total']
+                    delta_idle = cur_idle - prev['idle']
+                    if delta_total > 0:
+                        host_data['cpu_usage_percent'] = round(
+                            (1.0 - delta_idle / delta_total) * 100, 1
+                        )
+                        cpu_calculated = True
+                # Store current counters for next cycle
+                self._prev_cpu_totals[hostname] = {'idle': cur_idle, 'total': cur_total}
+            
+            if not cpu_calculated:
+                # First collection cycle (no previous sample) – use instantaneous
+                # idle ratio as a rough approximation, or 0 if unavailable.
+                if cpu_mode_seconds:
+                    total = sum(cpu_mode_seconds.values())
+                    idle = cpu_mode_seconds.get('idle', 0.0)
+                    if total > 0:
+                        host_data['cpu_usage_percent'] = round(
+                            (1.0 - idle / total) * 100, 1
+                        )
+                    else:
+                        host_data['cpu_usage_percent'] = 0
+                else:
+                    host_data['cpu_usage_percent'] = 0
             
             # Memory metrics
             if 'node_memory_MemTotal_bytes' in metrics and 'node_memory_MemAvailable_bytes' in metrics:
