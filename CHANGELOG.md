@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0] - 2026-02-22
+
+### Added
+- **Ops Copilot** — Three-tier AI assistant for natural-language infrastructure queries, embedded directly in the UI.
+  - **Tier 1 — Built-in Intent Engine** (zero setup, default): Pattern-matching engine with 40+ intents covering inventory counts, VM power states (powered on/off), capacity metrics, error VMs, down hosts, snapshot/drift/compliance summaries, metering, users, activity logs, runbooks, backups, notifications, security groups, networking (networks, subnets, routers, floating IPs), provisioning, role assignments, and full infrastructure overview. Answers powered by live SQL queries — no external services required.
+  - **Tenant / Project / Host scoping**: Add "on tenant X", "for project X", or "on host Y" to any question — the engine dynamically injects SQL WHERE clauses to filter results. Example: *"how many powered on VMs on tenant <your-tenant>?"*
+  - **Synonym expansion**: "powered on" → "active", "vm" → "vms", "tenant" → "project", etc. — questions are expanded with canonical forms before matching for higher accuracy.
+  - **Tier 2 — Ollama (local LLM)**: Connect to a self-hosted Ollama instance for free-form questions. Infrastructure context is injected into the system prompt alongside intent query results for grounded answers. No data leaves your network.
+  - **Tier 3 — External LLM (OpenAI / Anthropic)**: Use GPT-4o-mini, Claude, or other models. Sensitive data (IPs, emails, hostnames) automatically redacted before sending when `COPILOT_REDACT_SENSITIVE=true` (default).
+  - **Labeled floating action button**: Prominent pill-shaped "🤖 Ask Copilot" button with gradient background and pulse animation on first visit. Collapses to a close icon when the panel is open. Much more visible than a plain icon button.
+  - **Welcome screen**: First-open experience with greeting, example questions, and a "See all available questions" button that opens the help view.
+  - **Help / Guide view**: Dedicated ❓ view with 8 categorized question groups (~40 chips), usage tips (scoping syntax, action words), and backend info. Accessible from the header or footer "How to ask" link.
+  - **Categorized suggestion chips**: Organized into Infrastructure, VM Power State, Tenant/Project, Capacity, Storage & Snapshots, Networking, Security & Access, and Operations. Template chips (with "…") fill the input for completion; regular chips run immediately.
+  - **Backend indicator**: Footer badge shows active backend (⚡ Built-in / 🧠 Ollama / ☁️ OpenAI/Anthropic).
+  - **Settings panel**: Admin-only gear icon opens inline settings to switch backends, configure URLs/keys/models, edit the system prompt, toggle redaction, and test LLM connectivity — all without editing `.env`.
+  - **Feedback system**: Thumbs up/down per answer, stored in `copilot_feedback` for quality tracking.
+  - **Conversation history**: Persisted per user in `copilot_history` with automatic trimming (default: 200 entries).
+  - **Fallback chain**: If the active LLM backend fails, Copilot automatically falls back to the built-in intent engine.
+  - **Improved no-match response**: When no intent matches, users see a helpful message with example queries, scoping syntax, and a suggestion to enable an LLM backend.
+  - **RBAC integration**: Copilot fully integrated with the permission system — `copilot` resource with `read`, `write`, and `admin` actions. Panel visibility gated by `copilot:read` permission. Superadmins can toggle Copilot access per role from Admin → Permissions. All roles granted `read` by default; `write`/`admin` restricted to admin and superadmin.
+  - **Admin Permissions panel**: `copilot` appears as a toggleable resource in the User Management → Permissions matrix with description "Ops Copilot — AI assistant for infrastructure queries".
+  - **Dark mode**: Full dark theme support for the floating panel, messages, chips, help view, welcome screen, and settings.
+  - **Keyboard shortcut**: `Ctrl+K` toggles the Copilot panel from anywhere.
+  - **New DB tables**: `copilot_history`, `copilot_feedback`, `copilot_config` (migration: `db/migrate_copilot.sql`).
+  - **New backend files**: `api/copilot.py` (router), `api/copilot_intents.py` (intent engine), `api/copilot_llm.py` (LLM abstraction), `api/copilot_context.py` (context builder with redaction).
+  - **New UI files**: `CopilotPanel.tsx`, `CopilotPanel.css`.
+  - **Updated**: `.env.example`, `docker-compose.yml`, `deployment.ps1`, `seed_demo_data.py`, `api/requirements.txt`.
+
+### Fixed
+- **Copilot intent SQL column errors** — All intent queries referenced non-existent columns `s.host` and `s.flavor_name` on the `servers` table.  Fixed: `s.host` → `s.hypervisor_hostname AS host`, `s.flavor_name` → `f.name AS flavor_name` via `LEFT JOIN flavors f ON f.id = s.flavor_id` across ~10 intent queries (list VMs, powered on/off, VMs on tenant, VMs on host, error VMs).
+- **Quota SQL error** — "quota of org1" failed with "column s.vcpus does not exist". Fixed: quota query now joins the `flavors` table (`LEFT JOIN flavors f ON f.id = s.flavor_id`) and uses `f.vcpus` / `f.ram_mb` instead of non-existent `s.vcpus` / `s.ram_mb`.
+- **VMs-on-host WHERE clause** — `WHERE LOWER(s.host) LIKE %s` failed. Fixed: `WHERE LOWER(s.hypervisor_hostname) LIKE %s`.
+- **Flavor list SQL** — `ram` and `disk` columns don't exist. Fixed: `ram_mb` and `disk_gb`.
+- **Scope extraction failure for "org1"** — The regex treated "org" as a keyword prefix, so "quota of org1" extracted no scope and returned all 60 projects (LIMIT 30 cut off before ORG1). Added fallback pattern `(?:of|for)\s+<name>$` to catch bare name at end of question.
+- **Reversed scope order** — "quota exists for service tenant" was not parsed because the word order (name before "tenant") wasn't handled. Added pattern for reversed order (`for <name> tenant/project`).
+- **Wrong intent for quota queries** — "quota exists for service tenant" matched `vms_on_tenant` (boost 0.2) instead of `quota_for_project`. Fixed: boosted quota intent to 0.25, added more keywords ("quota exists", "quota of", "quota on"), and added regex pattern for `quota\s+exists`.
+- **Help view empty** — Suggestion chips API returns `{suggestions: {categories, tips}}` but UI stored the outer envelope. Fixed: `setSuggestionsData(d?.suggestions || d)`.
+- **RBAC middleware segment extraction** — For `/api/copilot/ask`, the middleware extracted segment `"api"` (not `"copilot"`) because it used `path.split("/")[0]`. Fixed: when `parts[0] == "api"`, use `parts[1]` as the resource segment.
+- **Copilot permissions missing from API** — `MAIN_UI_RESOURCES` whitelist in `/auth/permissions` endpoint didn't include `copilot`, so the Admin Permissions panel never showed it. Fixed: added `copilot` to the whitelist.
+
 ## [1.23.0] - 2026-02-22
 
 ### Added

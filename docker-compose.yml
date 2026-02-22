@@ -103,6 +103,16 @@ services:
 
       # === Demo Mode ===
       DEMO_MODE: ${DEMO_MODE:-false}
+
+      # === Ops Copilot ===
+      COPILOT_BACKEND: ${COPILOT_BACKEND:-builtin}
+      COPILOT_OLLAMA_URL: ${COPILOT_OLLAMA_URL:-http://host.docker.internal:11434}
+      COPILOT_OLLAMA_MODEL: ${COPILOT_OLLAMA_MODEL:-llama3}
+      COPILOT_OPENAI_API_KEY: ${COPILOT_OPENAI_API_KEY:-}
+      COPILOT_OPENAI_MODEL: ${COPILOT_OPENAI_MODEL:-gpt-4o-mini}
+      COPILOT_ANTHROPIC_API_KEY: ${COPILOT_ANTHROPIC_API_KEY:-}
+      COPILOT_ANTHROPIC_MODEL: ${COPILOT_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
+      COPILOT_REDACT_SENSITIVE: ${COPILOT_REDACT_SENSITIVE:-true}
     ports:
       - "8000:8000"
     volumes:

@@ -30,6 +30,7 @@ import ResourceManagementTab from "./components/ResourceManagementTab";
 import GroupedNavBar from "./components/GroupedNavBar";
 import OpsSearch from "./components/OpsSearch";
 import RunbooksTab from "./components/RunbooksTab";
+import CopilotPanel from "./components/CopilotPanel";
 import { useNavigation } from "./hooks/useNavigation";
 
 // ---------------------------------------------------------------------------
@@ -5571,6 +5572,14 @@ const App: React.FC = () => {
         onClose={() => setShowMfaSettings(false)}
         isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
       />
+
+      {/* Ops Copilot floating panel — visible when user has copilot:read permission */}
+      {authUser && navHasPermission('copilot', 'read') && (
+        <CopilotPanel
+          token={authToken}
+          isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+        />
+      )}
     </div>
     </ThemeProvider>
   );

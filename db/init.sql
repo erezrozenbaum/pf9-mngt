@@ -1181,7 +1181,18 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('operator',   'navigation',  'read'),
 ('admin',      'navigation',  'admin'),
 ('superadmin', 'navigation',  'admin'),
-('technical',  'navigation',  'read')
+('technical',  'navigation',  'read'),
+
+-- Copilot permissions (all roles can read/use; admin can configure)
+('viewer',     'copilot', 'read'),
+('operator',   'copilot', 'read'),
+('technical',  'copilot', 'read'),
+('admin',      'copilot', 'read'),
+('admin',      'copilot', 'write'),
+('admin',      'copilot', 'admin'),
+('superadmin', 'copilot', 'read'),
+('superadmin', 'copilot', 'write'),
+('superadmin', 'copilot', 'admin')
 
 ON CONFLICT (role, resource, action) DO NOTHING;
 

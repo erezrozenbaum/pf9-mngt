@@ -769,6 +769,19 @@ def generate_demo_metrics_cache():
 
 
 # ---------------------------------------------------------------------------
+# Copilot config seed
+# ---------------------------------------------------------------------------
+def seed_copilot_config(cur):
+    """Ensure the copilot_config singleton row exists with sensible defaults."""
+    cur.execute("""
+        INSERT INTO copilot_config (id, backend, redact_sensitive)
+        VALUES (1, 'builtin', true)
+        ON CONFLICT (id) DO NOTHING
+    """)
+    print("  + copilot_config (builtin default)")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -857,6 +870,9 @@ def main():
 
         print("\n--- Runbooks ---")
         seed_runbooks(cur)
+
+        print("\n--- Copilot Config ---")
+        seed_copilot_config(cur)
 
         conn.commit()
         print("\n=== Demo Data Seeded Successfully ===")
