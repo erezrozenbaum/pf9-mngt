@@ -2481,6 +2481,8 @@ All Copilot endpoints are under `/api/copilot` and require authentication.
 
 Send a natural-language question. The engine first tries the built-in intent matcher (40+ intents with tenant/project/host scoping and synonym expansion), then falls back to the configured LLM backend.
 
+Some intents call live Platform9 APIs instead of SQL queries (e.g., `configured_quota` fetches quota limits from Nova/Cinder/Neutron in real time).
+
 Request:
 ```json
 {
@@ -2537,7 +2539,9 @@ Response:
         "icon": "📁",
         "chips": [
           { "label": "VMs on tenant …", "question": "VMs on tenant ", "template": true },
-          { "label": "Quota for …", "question": "Quota for project ", "template": true }
+          { "label": "Quota for …", "question": "Quota of tenant ", "template": true },
+          { "label": "Usage for …", "question": "Usage for tenant ", "template": true },
+          { "label": "Quota & Usage …", "question": "Quota and usage for tenant ", "template": true }
         ]
       }
     ],
