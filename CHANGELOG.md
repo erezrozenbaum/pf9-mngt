@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.1] - 2026-02-22
+
+### Fixed
+- **VM CPU utilization completely wrong** — The VM Hotspots widget displayed wildly inaccurate CPU values (e.g. Forti_WAF 91.6%, 2019 at 100%) because the collector divided the cumulative `libvirt_domain_info_cpu_time_seconds_total` counter by a magic constant (`/ 10000`). Replaced with proper delta-based calculation using `libvirt_domain_vcpu_time_seconds_total` summed across all vCPUs, divided by wall-clock time × vCPU count. Values now reflect real instantaneous CPU usage (Forti_WAF → 18.7%, 2019 → 18.8%). Like the host CPU fix, requires two collection cycles after restart.
+- **VM storage always showing 100% for raw-format disks** — Raw/thick-provisioned disks report `allocation == capacity == physicalsize` in libvirt, so the old code always computed 100% usage. Storage calculation now tracks per-device `capacity_bytes`, `allocation`, and `physicalsize_bytes` separately and detects raw disks (where all three are equal). For thin-provisioned (qcow2) disks, `allocation` correctly reflects actual usage.
+
 ## [1.22.0] - 2026-02-22
 
 ### Fixed
