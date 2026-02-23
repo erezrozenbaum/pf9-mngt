@@ -121,6 +121,131 @@ def _resolve_project_names(client, headers) -> Dict[str, str]:
         return {}
 
 
+def _load_metering_pricing() -> dict:
+    """Load pricing and currency from metering_pricing table (flavor-level),
+    falling back to metering_config, then hardcoded defaults.
+    Returns dict with convenience monthly rates and currency.
+    """
+    defaults = {
+        "cost_per_vcpu_hour": 0.0208,       # ~15/mo
+        "cost_per_gb_ram_hour": 0.0069,      # ~5/mo
+        "cost_per_gb_storage_month": 2.0,
+        "cost_per_snapshot_gb_month": 1.5,
+        "cost_per_floating_ip_month": 5.0,
+        "cost_currency": "USD",
+    }
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # 1) Try metering_pricing table first (has real per-flavor pricing)
+                cur.execute("""
+                    SELECT currency,
+                           AVG(CASE WHEN vcpus > 0 THEN cost_per_month / vcpus END) AS avg_per_vcpu_month,
+                           AVG(CASE WHEN ram_gb > 0 THEN cost_per_month / (vcpus + ram_gb) END) AS avg_blended,
+                           AVG(CASE WHEN ram_gb > 0 THEN (cost_per_month - COALESCE(disk_cost_per_gb,0) * disk_gb)
+                                / NULLIF(vcpus + ram_gb, 0) END) AS avg_unit
+                    FROM metering_pricing
+                    WHERE category = 'flavor' AND cost_per_month > 0
+                    GROUP BY currency
+                    ORDER BY COUNT(*) DESC
+                    LIMIT 1
+                """)
+                flavor_row = cur.fetchone()
+
+                # Storage pricing
+                cur.execute("SELECT cost_per_month, currency FROM metering_pricing WHERE category = 'storage_gb' LIMIT 1")
+                storage_row = cur.fetchone()
+
+                # Floating IP pricing
+                cur.execute("SELECT cost_per_month, currency FROM metering_pricing WHERE category = 'public_ip' LIMIT 1")
+                fip_row = cur.fetchone()
+
+                # Snapshot pricing
+                cur.execute("SELECT cost_per_month, currency FROM metering_pricing WHERE category = 'snapshot_gb' LIMIT 1")
+                snap_row = cur.fetchone()
+
+                # Determine currency from the dominant source
+                currency = (
+                    (flavor_row or {}).get("currency")
+                    or (storage_row or {}).get("currency")
+                    or None
+                )
+
+                if currency and flavor_row:
+                    # Derive per-vCPU and per-GB-RAM from smallest flavors
+                    cur.execute("""
+                        SELECT vcpus, ram_gb, cost_per_month
+                        FROM metering_pricing
+                        WHERE category = 'flavor' AND vcpus > 0 AND cost_per_month > 0
+                          AND currency = %s
+                        ORDER BY vcpus, ram_gb
+                        LIMIT 5
+                    """, (currency,))
+                    small_flavors = cur.fetchall()
+                    if len(small_flavors) >= 2:
+                        # Use smallest 1-vCPU flavor to estimate per-vCPU cost
+                        f1 = small_flavors[0]
+                        f2 = small_flavors[1]
+                        # Solve: cost = a*vcpus + b*ram_gb
+                        v1, r1, c1 = f1["vcpus"], float(f1["ram_gb"]), float(f1["cost_per_month"])
+                        v2, r2, c2 = f2["vcpus"], float(f2["ram_gb"]), float(f2["cost_per_month"])
+                        det = v1 * r2 - v2 * r1
+                        if det != 0:
+                            price_vcpu_mo = round((c1 * r2 - c2 * r1) / det, 2)
+                            price_ram_mo = round((v1 * c2 - v2 * c1) / det, 2)
+                            if price_vcpu_mo <= 0:
+                                price_vcpu_mo = round(c1 / max(v1, 1), 2)
+                            if price_ram_mo <= 0:
+                                price_ram_mo = round((c1 - price_vcpu_mo * v1) / max(r1, 1), 2)
+                        else:
+                            price_vcpu_mo = round(c1 / max(v1, 1), 2)
+                            price_ram_mo = round(price_vcpu_mo * 0.3, 2)
+                    elif small_flavors:
+                        f1 = small_flavors[0]
+                        price_vcpu_mo = round(float(f1["cost_per_month"]) / max(f1["vcpus"], 1), 2)
+                        price_ram_mo = round(price_vcpu_mo * 0.3, 2)
+                    else:
+                        price_vcpu_mo = defaults["cost_per_vcpu_hour"] * 730
+                        price_ram_mo = defaults["cost_per_gb_ram_hour"] * 730
+
+                    return {
+                        "cost_currency": currency,
+                        "price_per_vcpu_month": price_vcpu_mo,
+                        "price_per_gb_ram_month": price_ram_mo,
+                        "price_per_gb_volume_month": float((storage_row or {}).get("cost_per_month", 0) or 0) or defaults["cost_per_gb_storage_month"],
+                        "cost_per_floating_ip_month": float((fip_row or {}).get("cost_per_month", 0) or 0) or defaults["cost_per_floating_ip_month"],
+                        "cost_per_snapshot_gb_month": float((snap_row or {}).get("cost_per_month", 0) or 0) or defaults["cost_per_snapshot_gb_month"],
+                    }
+
+                # 2) Fallback: metering_config
+                cur.execute("SELECT * FROM metering_config WHERE id = 1")
+                cfg = cur.fetchone()
+                if cfg:
+                    hourly_vcpu = float(cfg.get("cost_per_vcpu_hour", 0) or 0)
+                    hourly_ram = float(cfg.get("cost_per_gb_ram_hour", 0) or 0)
+                    storage_m = float(cfg.get("cost_per_gb_storage_month", 0) or 0)
+                    cfg_currency = cfg.get("cost_currency", "USD") or "USD"
+                    return {
+                        "cost_currency": cfg_currency,
+                        "price_per_vcpu_month": round(hourly_vcpu * 730, 2) if hourly_vcpu else defaults["cost_per_vcpu_hour"] * 730,
+                        "price_per_gb_ram_month": round(hourly_ram * 730, 2) if hourly_ram else defaults["cost_per_gb_ram_hour"] * 730,
+                        "price_per_gb_volume_month": storage_m if storage_m else defaults["cost_per_gb_storage_month"],
+                        "cost_per_floating_ip_month": defaults["cost_per_floating_ip_month"],
+                        "cost_per_snapshot_gb_month": defaults["cost_per_snapshot_gb_month"],
+                    }
+    except Exception as e:
+        logger.warning(f"Could not load metering pricing: {e}")
+    # 3) Hardcoded fallback
+    return {
+        "cost_currency": defaults["cost_currency"],
+        "price_per_vcpu_month": round(defaults["cost_per_vcpu_hour"] * 730, 2),
+        "price_per_gb_ram_month": round(defaults["cost_per_gb_ram_hour"] * 730, 2),
+        "price_per_gb_volume_month": defaults["cost_per_gb_storage_month"],
+        "cost_per_floating_ip_month": defaults["cost_per_floating_ip_month"],
+        "cost_per_snapshot_gb_month": defaults["cost_per_snapshot_gb_month"],
+    }
+
+
 # ===== Engine: stuck_vm_remediation =======================================
 
 @register_engine("stuck_vm_remediation")
@@ -897,10 +1022,14 @@ def _engine_upgrade_detector(params: dict, dry_run: bool, actor: str) -> dict:
     from pf9_control import get_client
 
     quota_threshold = params.get("quota_threshold_pct", 80)
-    price_vcpu = params.get("price_per_vcpu", 15.0)
-    price_gb_ram = params.get("price_per_gb_ram", 5.0)
     include_flavor = params.get("include_flavor_analysis", True)
     include_image = params.get("include_image_analysis", True)
+
+    # Load pricing from metering_config
+    pricing = _load_metering_pricing()
+    price_vcpu = pricing["price_per_vcpu_month"]
+    price_gb_ram = pricing["price_per_gb_ram_month"]
+    currency = pricing["cost_currency"]
 
     client = get_client()
     client.authenticate()
@@ -1052,6 +1181,8 @@ def _engine_upgrade_detector(params: dict, dry_run: bool, actor: str) -> dict:
             "total_tenants_scanned": len(tenant_servers),
             "tenants_with_opportunities": len(opportunities),
             "estimated_revenue_delta_monthly": round(total_revenue_delta, 2),
+            "currency": currency,
+            "pricing_source": "metering_config",
         },
         "items_found": sum(len(o["opportunities"]) for o in opportunities),
         "items_actioned": 0,
@@ -1065,10 +1196,14 @@ def _engine_executive_snapshot(params: dict, dry_run: bool, actor: str) -> dict:
     """Generate a monthly executive summary from DB and OpenStack."""
     from pf9_control import get_client
 
-    price_vcpu = params.get("price_per_vcpu", 15.0)
-    price_gb_storage = params.get("price_per_gb_storage", 2.0)
     top_n = params.get("risk_top_n", 5)
     include_deltas = params.get("include_deltas", True)
+
+    # Load pricing from metering_config
+    pricing = _load_metering_pricing()
+    price_vcpu = pricing["price_per_vcpu_month"]
+    price_gb_storage = pricing["price_per_gb_volume_month"]
+    currency = pricing["cost_currency"]
 
     client = get_client()
     client.authenticate()
@@ -1143,6 +1278,8 @@ def _engine_executive_snapshot(params: dict, dry_run: bool, actor: str) -> dict:
         "monthly": round(total_vcpus * price_vcpu + report.get("total_storage_gb", 0) * price_gb_storage, 2),
         "price_per_vcpu": price_vcpu,
         "price_per_gb_storage": price_gb_storage,
+        "currency": currency,
+        "pricing_source": "metering_config",
     }
 
     # Top-N risk tenants
@@ -1194,9 +1331,13 @@ def _engine_cost_leakage(params: dict, dry_run: bool, actor: str) -> dict:
     idle_cpu_pct = params.get("idle_cpu_threshold_pct", 5)
     shutoff_days = params.get("shutoff_days_threshold", 30)
     detached_days = params.get("detached_volume_days", 7)
-    price_vcpu = params.get("price_per_vcpu_month", 15.0)
-    price_vol = params.get("price_per_gb_volume_month", 2.0)
-    price_fip = params.get("price_per_floating_ip_month", 5.0)
+
+    # Load pricing from metering_config
+    pricing = _load_metering_pricing()
+    price_vcpu = pricing["price_per_vcpu_month"]
+    price_vol = pricing["price_per_gb_volume_month"]
+    price_fip = pricing["cost_per_floating_ip_month"]
+    currency = pricing["cost_currency"]
 
     client = get_client()
     client.authenticate()
@@ -1352,6 +1493,8 @@ def _engine_cost_leakage(params: dict, dry_run: bool, actor: str) -> dict:
             "costs_monthly": {k: round(v, 2) for k, v in costs.items()},
             "total_monthly_waste": total_waste,
             "total_items": sum(len(v) for v in leaks.values()),
+            "currency": currency,
+            "pricing_source": "metering_config",
         },
         "items_found": sum(len(v) for v in leaks.values()),
         "items_actioned": 0,
@@ -1637,6 +1780,123 @@ def _engine_security_compliance(params: dict, dry_run: bool, actor: str) -> dict
             "total_findings": sum(len(v) for v in findings.values() if isinstance(v, list)),
         },
         "items_found": sum(len(v) for v in findings.values() if isinstance(v, list)),
+        "items_actioned": 0,
+    }
+
+
+@register_engine("user_last_login")
+def _engine_user_last_login(params: dict, dry_run: bool, actor: str) -> dict:
+    """Report last login time for every user, flagging inactive ones."""
+    days_threshold = params.get("days_inactive_threshold", 30)
+    include_failed = params.get("include_failed_logins", False)
+
+    users: list[dict] = []
+    failed_logins: list[dict] = []
+    now = datetime.now(timezone.utc)
+    threshold_date = now - timedelta(days=days_threshold)
+    inactive_count = 0
+    never_logged_in = 0
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Get all active users with roles
+                cur.execute("""
+                    SELECT ur.username, ur.role, ur.is_active,
+                           (SELECT MAX(a.timestamp) FROM auth_audit_log a
+                            WHERE a.username = ur.username AND a.action = 'login' AND a.success = true
+                           ) AS last_login,
+                           (SELECT a.ip_address FROM auth_audit_log a
+                            WHERE a.username = ur.username AND a.action = 'login' AND a.success = true
+                            ORDER BY a.timestamp DESC LIMIT 1
+                           ) AS last_login_ip,
+                           (SELECT COUNT(*) FROM auth_audit_log a
+                            WHERE a.username = ur.username AND a.action = 'login' AND a.success = true
+                           ) AS total_logins,
+                           (SELECT MAX(s.last_activity) FROM user_sessions s
+                            WHERE s.username = ur.username
+                           ) AS last_session_activity,
+                           (SELECT COUNT(*) FROM user_sessions s
+                            WHERE s.username = ur.username AND s.is_active = true
+                           ) AS active_sessions
+                    FROM user_roles ur
+                    WHERE ur.is_active = true
+                    ORDER BY ur.username
+                """)
+                rows = cur.fetchall()
+
+                for row in rows:
+                    last_login = row["last_login"]
+                    last_activity = row["last_session_activity"]
+                    most_recent = max(filter(None, [last_login, last_activity]), default=None)
+
+                    if most_recent is None:
+                        status = "never_logged_in"
+                        days_since = None
+                        never_logged_in += 1
+                        inactive_count += 1
+                    else:
+                        days_since = (now - most_recent).days
+                        if days_since > days_threshold:
+                            status = "inactive"
+                            inactive_count += 1
+                        else:
+                            status = "active"
+
+                    users.append({
+                        "username": row["username"],
+                        "role": row["role"],
+                        "last_login": last_login.isoformat() if last_login else None,
+                        "last_activity": last_activity.isoformat() if last_activity else None,
+                        "last_login_ip": row["last_login_ip"],
+                        "total_logins": row["total_logins"],
+                        "active_sessions": row["active_sessions"],
+                        "days_since_activity": days_since,
+                        "status": status,
+                    })
+
+                # Optionally include recent failed logins
+                if include_failed:
+                    cur.execute("""
+                        SELECT username, timestamp, ip_address, user_agent,
+                               details
+                        FROM auth_audit_log
+                        WHERE action = 'failed_login'
+                        ORDER BY timestamp DESC
+                        LIMIT 50
+                    """)
+                    for row in cur.fetchall():
+                        failed_logins.append({
+                            "username": row["username"],
+                            "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                            "ip_address": row["ip_address"],
+                            "user_agent": row["user_agent"],
+                            "details": row["details"],
+                        })
+
+    except Exception as e:
+        return {
+            "result": {"error": str(e)},
+            "items_found": 0,
+            "items_actioned": 0,
+        }
+
+    result = {
+        "users": users,
+        "summary": {
+            "total_users": len(users),
+            "active_users": len(users) - inactive_count,
+            "inactive_users": inactive_count - never_logged_in,
+            "never_logged_in": never_logged_in,
+            "days_inactive_threshold": days_threshold,
+        },
+    }
+    if include_failed and failed_logins:
+        result["failed_logins"] = failed_logins
+
+    return {
+        "result": result,
+        "items_found": len(users),
         "items_actioned": 0,
     }
 
