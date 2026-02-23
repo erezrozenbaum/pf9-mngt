@@ -148,6 +148,19 @@ def build_infra_context(redact: bool = False) -> str:
                 f"SNAPSHOTS: {sn['total']} total, {sn['available']} available."
             )
 
+            # --- OS distribution -------------------------------------------
+            cur.execute("""
+                SELECT COALESCE(LOWER(os_distro), 'unknown') AS os, COUNT(*) AS cnt
+                FROM servers
+                GROUP BY COALESCE(LOWER(os_distro), 'unknown')
+                ORDER BY cnt DESC
+                LIMIT 15
+            """)
+            os_rows = cur.fetchall()
+            if os_rows:
+                parts = [f"{r['os']}={r['cnt']}" for r in os_rows]
+                sections.append(f"OS DISTRIBUTION: {', '.join(parts)}.")
+
             # --- Recent activity (last 5) ----------------------------------
             cur.execute("""
                 SELECT username, action, resource_type, resource_name

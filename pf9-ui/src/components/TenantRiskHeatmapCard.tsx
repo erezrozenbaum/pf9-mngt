@@ -17,15 +17,24 @@ interface HeatmapData {
 
 interface Props {
   data: HeatmapData;
+  isDark?: boolean;
 }
 
-const riskColor = (level: HeatmapTenant['risk_level']) => {
-  if (level === 'high') return 'rgba(239, 68, 68, 0.18)';
-  if (level === 'medium') return 'rgba(245, 158, 11, 0.18)';
-  return 'rgba(16, 185, 129, 0.18)';
+const riskColor = (level: HeatmapTenant['risk_level'], isDark: boolean) => {
+  const opacity = isDark ? 0.35 : 0.18;
+  if (level === 'high') return `rgba(239, 68, 68, ${opacity})`;
+  if (level === 'medium') return `rgba(245, 158, 11, ${opacity})`;
+  return `rgba(16, 185, 129, ${opacity})`;
 };
 
-export const TenantRiskHeatmapCard: React.FC<Props> = ({ data }) => {
+const riskBorder = (level: HeatmapTenant['risk_level'], isDark: boolean) => {
+  const opacity = isDark ? 0.5 : 0.3;
+  if (level === 'high') return `1px solid rgba(239, 68, 68, ${opacity})`;
+  if (level === 'medium') return `1px solid rgba(245, 158, 11, ${opacity})`;
+  return `1px solid rgba(16, 185, 129, ${opacity})`;
+};
+
+export const TenantRiskHeatmapCard: React.FC<Props> = ({ data, isDark = false }) => {
   return (
     <div className="tenant-heatmap-card card">
       <h2>🧭 Tenant Risk Heatmap</h2>
@@ -38,7 +47,7 @@ export const TenantRiskHeatmapCard: React.FC<Props> = ({ data }) => {
             <div
               key={tenant.tenant_id}
               className="tenant-heatmap-tile"
-              style={{ background: riskColor(tenant.risk_level) }}
+              style={{ background: riskColor(tenant.risk_level, isDark), border: riskBorder(tenant.risk_level, isDark) }}
             >
               <div className="tenant-title">{tenant.tenant_name}</div>
               <div className="tenant-risk">Risk {tenant.risk_score}</div>

@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS hypervisors (
     local_gb         INTEGER,
     state            TEXT,
     status           TEXT,
+    running_vms      INTEGER DEFAULT 0,
+    created_at       TIMESTAMPTZ,
     raw_json         JSONB,
     last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -60,10 +62,15 @@ CREATE TABLE IF NOT EXISTS servers (
     vm_state         TEXT,
     flavor_id        TEXT,
     hypervisor_hostname TEXT,
+    image_id         TEXT,
+    os_distro        TEXT,
+    os_version       TEXT,
     created_at       TIMESTAMPTZ,
     raw_json         JSONB,
     last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_servers_os_distro ON servers(os_distro);
+CREATE INDEX IF NOT EXISTS idx_servers_image_id ON servers(image_id);
 
 -- Example: volumes
 CREATE TABLE IF NOT EXISTS volumes (
@@ -166,11 +173,17 @@ CREATE TABLE IF NOT EXISTS images (
     disk_format   TEXT,
     container_format TEXT,
     checksum      TEXT,
+    os_distro     TEXT,
+    os_version    TEXT,
+    os_type       TEXT,
+    min_disk      INTEGER,
+    min_ram       INTEGER,
     created_at    TIMESTAMPTZ,
     updated_at    TIMESTAMPTZ,
     raw_json      JSONB,
     last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_images_os_distro ON images(os_distro);
 
 CREATE TABLE IF NOT EXISTS snapshots (
     id            TEXT PRIMARY KEY,
@@ -265,6 +278,9 @@ CREATE TABLE IF NOT EXISTS images_history (
     disk_format     TEXT,
     container_format TEXT,
     checksum        TEXT,
+    os_distro       TEXT,
+    os_version      TEXT,
+    os_type         TEXT,
     created_at      TIMESTAMPTZ,
     updated_at      TIMESTAMPTZ,
     recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -304,6 +320,9 @@ CREATE TABLE IF NOT EXISTS servers_history (
     vm_state              TEXT,
     flavor_id             TEXT,
     hypervisor_hostname   TEXT,
+    image_id              TEXT,
+    os_distro             TEXT,
+    os_version            TEXT,
     created_at            TIMESTAMPTZ,
     last_seen_at          TIMESTAMPTZ,
     recorded_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1477,6 +1496,71 @@ CREATE INDEX IF NOT EXISTS idx_sg_rules_history_rule_id ON security_group_rules_
 CREATE INDEX IF NOT EXISTS idx_sg_rules_history_recorded_at ON security_group_rules_history(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_sg_rules_history_change_hash ON security_group_rules_history(security_group_rule_id, change_hash);
 
+-- =====================================================================
+-- Additional metadata tables: keypairs, server groups, aggregates,
+-- volume types, project quotas
+-- =====================================================================
+
+-- Keypairs (Nova SSH keys)
+CREATE TABLE IF NOT EXISTS keypairs (
+    name             TEXT NOT NULL,
+    user_id          TEXT NOT NULL,
+    fingerprint      TEXT,
+    type             TEXT,           -- 'ssh' or 'x509'
+    created_at       TIMESTAMPTZ,
+    raw_json         JSONB,
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (name, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_keypairs_user_id ON keypairs(user_id);
+
+-- Server Groups (anti-affinity / affinity)
+CREATE TABLE IF NOT EXISTS server_groups (
+    id               TEXT PRIMARY KEY,
+    name             TEXT,
+    project_id       TEXT,
+    policies         TEXT[],         -- e.g. {'anti-affinity'}
+    member_count     INTEGER DEFAULT 0,
+    raw_json         JSONB,
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Host Aggregates
+CREATE TABLE IF NOT EXISTS host_aggregates (
+    id               INTEGER PRIMARY KEY,
+    name             TEXT,
+    availability_zone TEXT,
+    host_count       INTEGER DEFAULT 0,
+    metadata         JSONB,
+    raw_json         JSONB,
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Volume Types (Cinder storage backends)
+CREATE TABLE IF NOT EXISTS volume_types (
+    id               TEXT PRIMARY KEY,
+    name             TEXT,
+    description      TEXT,
+    is_public        BOOLEAN,
+    extra_specs      JSONB,
+    raw_json         JSONB,
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Project Quotas (unified: nova + cinder + neutron)
+CREATE TABLE IF NOT EXISTS project_quotas (
+    project_id       TEXT NOT NULL,
+    service          TEXT NOT NULL,   -- 'nova', 'cinder', 'neutron'
+    resource         TEXT NOT NULL,   -- e.g. 'instances', 'cores', 'ram', 'gigabytes'
+    quota_limit      INTEGER,
+    in_use           INTEGER,
+    reserved         INTEGER,
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (project_id, service, resource)
+);
+CREATE INDEX IF NOT EXISTS idx_project_quotas_project ON project_quotas(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_quotas_service ON project_quotas(service);
+
 -- View: Security groups with VM and network associations
 CREATE OR REPLACE VIEW v_security_groups_full AS
 SELECT
@@ -2249,7 +2333,13 @@ INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'security_groups', 'Security Groups', '🔒', '/security_groups', 'security_groups', 8),
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'hypervisors',     'Hypervisors',     '',   '/hypervisors',     'hypervisors',     9),
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'images',          'Images',          '',   '/images',          'images',          10),
-    ((SELECT id FROM nav_groups WHERE key='inventory'), 'flavors',         'Flavors',         '🔧', '/flavors',         'flavors',         11)
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'flavors',         'Flavors',         '🔧', '/flavors',         'flavors',         11),
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'keypairs',        'Keypairs',        '🔑', '/keypairs',        'keypairs',        12),
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'aggregates',      'Aggregates',      '🏗️', '/aggregates',      'host_aggregates', 13),
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'volume_types',    'Volume Types',    '💾', '/volume_types',    'volume_types',    14),
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'server_groups',   'Server Groups',   '📦', '/server_groups',   'server_groups',   15),
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'quotas',          'Quotas',          '📊', '/quotas',          'project_quotas',  16),
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'system_metadata', 'System Metadata', '🗂️', '/system_metadata', 'system_metadata', 17)
 ON CONFLICT (key) DO NOTHING;
 
 -- Snapshot Management group
@@ -2540,4 +2630,32 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('superadmin', 'runbooks', 'read'),
     ('superadmin', 'runbooks', 'write'),
     ('superadmin', 'runbooks', 'admin')
+ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- Metadata inventory RBAC permissions (keypairs, host_aggregates, volume_types, server_groups, project_quotas)
+INSERT INTO role_permissions (role, resource, action) VALUES
+    ('viewer',     'keypairs', 'read'),
+    ('operator',   'keypairs', 'read'),
+    ('admin',      'keypairs', 'read'),
+    ('superadmin', 'keypairs', 'admin'),
+    ('viewer',     'host_aggregates', 'read'),
+    ('operator',   'host_aggregates', 'read'),
+    ('admin',      'host_aggregates', 'read'),
+    ('superadmin', 'host_aggregates', 'admin'),
+    ('viewer',     'volume_types', 'read'),
+    ('operator',   'volume_types', 'read'),
+    ('admin',      'volume_types', 'read'),
+    ('superadmin', 'volume_types', 'admin'),
+    ('viewer',     'server_groups', 'read'),
+    ('operator',   'server_groups', 'read'),
+    ('admin',      'server_groups', 'read'),
+    ('superadmin', 'server_groups', 'admin'),
+    ('viewer',     'project_quotas', 'read'),
+    ('operator',   'project_quotas', 'read'),
+    ('admin',      'project_quotas', 'read'),
+    ('superadmin', 'project_quotas', 'admin'),
+    ('viewer',     'system_metadata', 'read'),
+    ('operator',   'system_metadata', 'read'),
+    ('admin',      'system_metadata', 'read'),
+    ('superadmin', 'system_metadata', 'admin')
 ON CONFLICT (role, resource, action) DO NOTHING;

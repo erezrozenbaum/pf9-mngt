@@ -410,7 +410,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -462,6 +462,12 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "reports",              label: "📊 Reports",             adminOnly: true, actionStyle: true },
   { id: "resource_management",  label: "🔧 Resources",           adminOnly: true, actionStyle: true },
   { id: "runbooks",              label: "📋 Runbooks",            adminOnly: false, actionStyle: true },
+  { id: "keypairs",              label: "🔑 Keypairs" },
+  { id: "aggregates",            label: "🏗️ Aggregates" },
+  { id: "volume_types",          label: "💾 Volume Types" },
+  { id: "server_groups",         label: "📦 Server Groups" },
+  { id: "quotas",                label: "📊 Quotas" },
+  { id: "system_metadata",       label: "🗂️ System Metadata",    actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1493,6 +1499,22 @@ const App: React.FC = () => {
   const [isRefreshingInventory, setIsRefreshingInventory] = useState(false);
   const [inventoryRefreshKey, setInventoryRefreshKey] = useState(0);
 
+  // New metadata resource tabs
+  const [keypairsData, setKeypairsData] = useState<any[]>([]);
+  const [keypairsTotal, setKeypairsTotal] = useState(0);
+  const [aggregatesData, setAggregatesData] = useState<any[]>([]);
+  const [aggregatesTotal, setAggregatesTotal] = useState(0);
+  const [volumeTypesData, setVolumeTypesData] = useState<any[]>([]);
+  const [volumeTypesTotal, setVolumeTypesTotal] = useState(0);
+  const [serverGroupsData, setServerGroupsData] = useState<any[]>([]);
+  const [serverGroupsTotal, setServerGroupsTotal] = useState(0);
+  const [quotasData, setQuotasData] = useState<any[]>([]);
+  const [quotasTotal, setQuotasTotal] = useState(0);
+  const [osDistribution, setOsDistribution] = useState<any[]>([]);
+
+  // System Metadata unified view
+  const [systemMetadata, setSystemMetadata] = useState<any>(null);
+  const [systemMetadataLoading, setSystemMetadataLoading] = useState(false);
 
 
   // misc
@@ -2038,6 +2060,94 @@ const App: React.FC = () => {
     }
     loadHypervisors();
   }, [activeTab, hypervisorPage, hypervisorPageSize, hypervisorSortBy, hypervisorSortDir, inventoryRefreshKey]);
+
+  // Load keypairs
+  useEffect(() => {
+    if (activeTab !== "keypairs") return;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetchJson<PagedResponse<any>>(`${API_BASE}/keypairs?page=1&page_size=200`);
+        if (res) { setKeypairsData(res.items || []); setKeypairsTotal(res.total || 0); }
+      } catch (e: any) { setError(e.message); } finally { setLoading(false); }
+    })();
+  }, [activeTab, inventoryRefreshKey]);
+
+  // Load aggregates
+  useEffect(() => {
+    if (activeTab !== "aggregates") return;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetchJson<PagedResponse<any>>(`${API_BASE}/host-aggregates?page=1&page_size=200`);
+        if (res) { setAggregatesData(res.items || []); setAggregatesTotal(res.total || 0); }
+      } catch (e: any) { setError(e.message); } finally { setLoading(false); }
+    })();
+  }, [activeTab, inventoryRefreshKey]);
+
+  // Load volume types
+  useEffect(() => {
+    if (activeTab !== "volume_types") return;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetchJson<PagedResponse<any>>(`${API_BASE}/volume-types?page=1&page_size=200`);
+        if (res) { setVolumeTypesData(res.items || []); setVolumeTypesTotal(res.total || 0); }
+      } catch (e: any) { setError(e.message); } finally { setLoading(false); }
+    })();
+  }, [activeTab, inventoryRefreshKey]);
+
+  // Load server groups
+  useEffect(() => {
+    if (activeTab !== "server_groups") return;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetchJson<PagedResponse<any>>(`${API_BASE}/server-groups?page=1&page_size=200`);
+        if (res) { setServerGroupsData(res.items || []); setServerGroupsTotal(res.total || 0); }
+      } catch (e: any) { setError(e.message); } finally { setLoading(false); }
+    })();
+  }, [activeTab, inventoryRefreshKey]);
+
+  // Load project quotas
+  useEffect(() => {
+    if (activeTab !== "quotas") return;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetchJson<PagedResponse<any>>(`${API_BASE}/project-quotas?page=1&page_size=500`);
+        if (res) { setQuotasData(res.items || []); setQuotasTotal(res.total || 0); }
+      } catch (e: any) { setError(e.message); } finally { setLoading(false); }
+    })();
+  }, [activeTab, inventoryRefreshKey]);
+
+  // Load OS distribution (for dashboard)
+  useEffect(() => {
+    if (activeTab !== "dashboard") return;
+    (async () => {
+      try {
+        const res = await fetchJson<{items: any[]}>(`${API_BASE}/os-distribution`);
+        if (res) { setOsDistribution(res.items || []); }
+      } catch { /* non-critical */ }
+    })();
+  }, [activeTab, inventoryRefreshKey]);
+
+  // Load system metadata summary
+  useEffect(() => {
+    if (activeTab !== "system_metadata") return;
+    (async () => {
+      setSystemMetadataLoading(true);
+      try {
+        const token = localStorage.getItem('auth_token');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const resp = await fetch(`${API_BASE}/system-metadata-summary`, { headers });
+        if (!resp.ok) throw new Error(`Failed: ${resp.status}`);
+        const data = await resp.json();
+        setSystemMetadata(data);
+      } catch (e: any) { setError(e.message); } finally { setSystemMetadataLoading(false); }
+    })();
+  }, [activeTab, inventoryRefreshKey]);
 
   // Load users
   useEffect(() => {
@@ -2833,6 +2943,7 @@ const App: React.FC = () => {
     "search",
     "resource_management",
     "runbooks",
+    "system_metadata",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------
@@ -2876,7 +2987,7 @@ const App: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {authUser && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '8px' }}>
-                <span style={{ fontSize: '0.9rem', color: '#666' }}>
+                <span style={{ fontSize: '0.9rem', color: 'var(--color-text-secondary)' }}>
                   👤 {authUser.username} ({authUser.role})
                 </span>
                 <button
@@ -3030,6 +3141,8 @@ const App: React.FC = () => {
             ? "Ops Assistant · full-text search · similarity · smart report suggestions"
             : activeTab === "runbooks"
             ? "Policy-as-code operational runbooks · select and trigger with dry-run"
+            : activeTab === "system_metadata"
+            ? "Unified system inventory · resource counts · compute & storage · quota hotspots · full Excel export"
             : "Platform9 management"}
       </section>
 
@@ -3094,6 +3207,31 @@ const App: React.FC = () => {
             disabled={exportCount === 0}
           >
             Export CSV ({exportCount})
+          </button>
+
+          <button
+            className="pf9-button"
+            style={{ marginLeft: 8, background: '#2563eb' }}
+            onClick={async () => {
+              try {
+                const token = localStorage.getItem('auth_token');
+                const headers: Record<string, string> = {};
+                if (token) headers['Authorization'] = `Bearer ${token}`;
+                const res = await fetch(`${API_BASE}/export/full-inventory`, { headers });
+                if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                const cd = res.headers.get('content-disposition');
+                a.download = cd?.match(/filename="?([^"]+)"?/)?.[1] || 'pf9_full_inventory.xlsx';
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (e: any) { setError(e.message); }
+            }}
+            title="Download complete system inventory as Excel (all resources, all metadata)"
+          >
+            📥 Export All (Excel)
           </button>
 
           {authUser?.role === 'superadmin' && (
@@ -3511,12 +3649,13 @@ const App: React.FC = () => {
                   <th>Host Disk</th>
                   <th>IPs</th>
                   <th>Image</th>
+                  <th>OS</th>
                 </tr>
               </thead>
               <tbody>
                 {servers.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="pf9-empty">
+                    <td colSpan={15} className="pf9-empty">
                       No results.
                     </td>
                   </tr>
@@ -3525,7 +3664,7 @@ const App: React.FC = () => {
                     const cpuPct = s.host_vcpus_total ? Math.round((s.host_vcpus_used || 0) / s.host_vcpus_total * 100) : null;
                     const ramPct = s.host_ram_total_mb ? Math.round((s.host_ram_used_mb || 0) / s.host_ram_total_mb * 100) : null;
                     const diskPct = s.host_disk_total_gb ? Math.round((s.host_disk_used_gb || 0) / s.host_disk_total_gb * 100) : null;
-                    const pctColor = (pct: number | null) => !pct ? '#888' : pct > 85 ? '#ef4444' : pct > 65 ? '#f59e0b' : '#22c55e';
+                    const pctColor = (pct: number | null) => !pct ? 'var(--color-text-secondary)' : pct > 85 ? '#ef4444' : pct > 65 ? '#f59e0b' : '#22c55e';
                     return (
                     <tr
                       key={s.vm_id}
@@ -3553,7 +3692,7 @@ const App: React.FC = () => {
                       <td className="pf9-cell-number" title={s.host_vcpus_total ? `${s.host_vcpus_used}/${s.host_vcpus_total} vCPUs allocated on ${s.hypervisor_hostname}` : ''}>
                         {cpuPct !== null ? (
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
-                            <div style={{width:36,height:6,background:'#333',borderRadius:3,overflow:'hidden'}}>
+                            <div style={{width:36,height:6,background:'var(--color-border)',borderRadius:3,overflow:'hidden'}}>
                               <div style={{width:`${cpuPct}%`,height:'100%',background:pctColor(cpuPct),borderRadius:3}}/>
                             </div>
                             <span style={{fontSize:'0.8em',color:pctColor(cpuPct)}}>{cpuPct}%</span>
@@ -3563,7 +3702,7 @@ const App: React.FC = () => {
                       <td className="pf9-cell-number" title={s.host_ram_total_mb ? `${((s.host_ram_used_mb||0)/1024).toFixed(0)}/${(s.host_ram_total_mb/1024).toFixed(0)} GB used on ${s.hypervisor_hostname}` : ''}>
                         {ramPct !== null ? (
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
-                            <div style={{width:36,height:6,background:'#333',borderRadius:3,overflow:'hidden'}}>
+                            <div style={{width:36,height:6,background:'var(--color-border)',borderRadius:3,overflow:'hidden'}}>
                               <div style={{width:`${ramPct}%`,height:'100%',background:pctColor(ramPct),borderRadius:3}}/>
                             </div>
                             <span style={{fontSize:'0.8em',color:pctColor(ramPct)}}>{ramPct}%</span>
@@ -3573,7 +3712,7 @@ const App: React.FC = () => {
                       <td className="pf9-cell-number" title={s.host_disk_total_gb ? `${s.host_disk_used_gb}/${s.host_disk_total_gb} GB used on ${s.hypervisor_hostname}` : ''}>
                         {diskPct !== null ? (
                           <div style={{display:'flex',alignItems:'center',gap:4}}>
-                            <div style={{width:36,height:6,background:'#333',borderRadius:3,overflow:'hidden'}}>
+                            <div style={{width:36,height:6,background:'var(--color-border)',borderRadius:3,overflow:'hidden'}}>
                               <div style={{width:`${diskPct}%`,height:'100%',background:pctColor(diskPct),borderRadius:3}}/>
                             </div>
                             <span style={{fontSize:'0.8em',color:pctColor(diskPct)}}>{diskPct}%</span>
@@ -3582,6 +3721,7 @@ const App: React.FC = () => {
                       </td>
                       <td>{s.ips}</td>
                       <td>{s.image_name || "N/A"}</td>
+                      <td><span className="pf9-cell-subtle">{s.os_type || '—'}{s.os_version ? ` ${s.os_version}` : ''}</span></td>
                     </tr>
                     );
                   })
@@ -3937,6 +4077,550 @@ const App: React.FC = () => {
             </table>
           )}
 
+          {/* Keypairs Table */}
+          {activeTab === "keypairs" && (
+            <table className="pf9-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>User ID</th>
+                  <th>Type</th>
+                  <th>Fingerprint</th>
+                  <th>Project</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {keypairsData.length === 0 ? (
+                  <tr><td colSpan={6} className="pf9-empty">No keypairs found.</td></tr>
+                ) : (
+                  keypairsData.map((k: any, i: number) => (
+                    <tr key={i}>
+                      <td>{k.name}</td>
+                      <td style={{fontSize:"0.85em"}}>{k.user_id || "-"}</td>
+                      <td>{k.type || "ssh"}</td>
+                      <td style={{fontSize:"0.8em", fontFamily:"monospace"}}>{k.fingerprint ? k.fingerprint.substring(0,30)+"…" : "-"}</td>
+                      <td>{k.project_name || k.project_id || "-"}</td>
+                      <td>{formatDate(k.created_at)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {/* Host Aggregates Table */}
+          {activeTab === "aggregates" && (
+            <table className="pf9-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Availability Zone</th>
+                  <th>Hosts</th>
+                  <th>Metadata</th>
+                  <th>Last Seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {aggregatesData.length === 0 ? (
+                  <tr><td colSpan={5} className="pf9-empty">No host aggregates found.</td></tr>
+                ) : (
+                  aggregatesData.map((a: any) => (
+                    <tr key={a.aggregate_id}>
+                      <td>{a.name}</td>
+                      <td>{a.availability_zone || "-"}</td>
+                      <td><strong>{a.host_count ?? 0}</strong></td>
+                      <td style={{fontSize:"0.85em"}}>{a.metadata ? JSON.stringify(a.metadata).substring(0,80) : "-"}</td>
+                      <td>{formatDate(a.last_seen_at)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {/* Volume Types Table */}
+          {activeTab === "volume_types" && (
+            <table className="pf9-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Description</th>
+                  <th>Public</th>
+                  <th>Volumes Using</th>
+                  <th>Extra Specs</th>
+                  <th>Last Seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {volumeTypesData.length === 0 ? (
+                  <tr><td colSpan={6} className="pf9-empty">No volume types found.</td></tr>
+                ) : (
+                  volumeTypesData.map((vt: any) => (
+                    <tr key={vt.volume_type_id}>
+                      <td>{vt.name}</td>
+                      <td>{vt.description || "-"}</td>
+                      <td>{vt.is_public ? "Yes" : "No"}</td>
+                      <td><strong>{vt.volume_count ?? 0}</strong></td>
+                      <td style={{fontSize:"0.85em"}}>{vt.extra_specs ? JSON.stringify(vt.extra_specs).substring(0,60) : "-"}</td>
+                      <td>{formatDate(vt.last_seen_at)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {/* Server Groups Table */}
+          {activeTab === "server_groups" && (
+            <table className="pf9-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Project</th>
+                  <th>Policies</th>
+                  <th>Members</th>
+                  <th>Last Seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {serverGroupsData.length === 0 ? (
+                  <tr><td colSpan={5} className="pf9-empty">No server groups found.</td></tr>
+                ) : (
+                  serverGroupsData.map((sg: any) => (
+                    <tr key={sg.server_group_id}>
+                      <td>{sg.name}</td>
+                      <td>{sg.project_name || sg.project_id || "-"}</td>
+                      <td>{Array.isArray(sg.policies) ? sg.policies.join(", ") : (sg.policies || "-")}</td>
+                      <td><strong>{sg.member_count ?? 0}</strong></td>
+                      <td>{formatDate(sg.last_seen_at)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {/* Project Quotas – Grouped by Project with Service Sub-tabs */}
+          {activeTab === "quotas" && (() => {
+            const RESOURCE_LABELS: Record<string, string> = {
+              cores: "Cores", ram: "RAM (MB)", instances: "VMs",
+              server_groups: "Server Groups", server_group_members: "Server Group Members",
+              key_pairs: "Key Pairs", metadata_items: "Metadata Items",
+              injected_files: "Injected Files", injected_file_content_bytes: "Injected File Content (B)",
+              injected_file_path_bytes: "Injected File Path (B)", fixed_ips: "Fixed IPs",
+              floating_ips: "Floating IPs",
+              network: "Networks", subnet: "Subnets", router: "Routers",
+              port: "Ports", floatingip: "Public IPs",
+              security_group: "Security Groups", security_group_rule: "Security Group Rules",
+              rbac_policy: "RBAC Policies", subnetpool: "Subnet Pools", trunk: "Trunks",
+              gigabytes: "Total Storage (GB)", volumes: "Volumes",
+              snapshots: "Volume Snapshots", per_volume_gigabytes: "Max Volume Size (GB)",
+              backups: "Backups", backup_gigabytes: "Backup Storage (GB)",
+              groups: "Groups",
+            };
+            const SERVICE_LABELS: Record<string, string> = {
+              nova: "⚡ Compute (Nova)", cinder: "💾 Block Storage (Cinder)", neutron: "🌐 Network (Neutron)",
+            };
+            const SERVICE_ORDER = ["nova", "cinder", "neutron"];
+
+            // Group quotas by project, then by service
+            const byProject: Record<string, { name: string; services: Record<string, any[]> }> = {};
+            for (const q of quotasData) {
+              const pid = q.project_id || q.project_name || "unknown";
+              if (!byProject[pid]) byProject[pid] = { name: q.project_name || pid, services: {} };
+              const svc = q.service || "other";
+              if (!byProject[pid].services[svc]) byProject[pid].services[svc] = [];
+              byProject[pid].services[svc].push(q);
+            }
+            const projectList = Object.entries(byProject).sort((a, b) => a[1].name.localeCompare(b[1].name));
+
+            return (
+              <div style={{ padding: "0 4px" }}>
+                {quotasData.length === 0 ? (
+                  <div className="pf9-empty" style={{ padding: 40, textAlign: "center" }}>No quota data found.</div>
+                ) : (
+                  projectList.map(([pid, proj]) => {
+                    const services = Object.keys(proj.services).sort((a, b) => {
+                      const ia = SERVICE_ORDER.indexOf(a), ib = SERVICE_ORDER.indexOf(b);
+                      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+                    });
+                    return (
+                      <div key={pid} style={{
+                        marginBottom: 20, border: "1px solid var(--color-border)",
+                        borderRadius: 8, overflow: "hidden",
+                        background: "var(--color-surface)",
+                      }}>
+                        {/* Project header */}
+                        <div style={{
+                          padding: "10px 16px", fontWeight: 700, fontSize: "1em",
+                          background: "var(--color-surface-elevated)",
+                          borderBottom: "1px solid var(--color-border)",
+                          color: "var(--color-text-primary)",
+                        }}>
+                          📁 {proj.name}
+                        </div>
+                        {/* Services */}
+                        {services.map(svc => {
+                          const items = proj.services[svc];
+                          return (
+                            <div key={svc} style={{ borderBottom: "1px solid var(--color-border)" }}>
+                              <div style={{
+                                padding: "8px 16px", fontWeight: 600, fontSize: "0.9em",
+                                background: "var(--color-surface-elevated)",
+                                color: "var(--color-text-secondary)",
+                              }}>
+                                {SERVICE_LABELS[svc] || svc}
+                              </div>
+                              <div style={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+                                gap: 12, padding: "12px 16px",
+                              }}>
+                                {items.map((q: any, i: number) => {
+                                  const isUnlimited = q.quota_limit === -1;
+                                  const pct = !isUnlimited && q.quota_limit > 0
+                                    ? Math.round((q.in_use / q.quota_limit) * 100) : null;
+                                  const barColor = pct !== null
+                                    ? pct > 90 ? "var(--color-error)" : pct > 70 ? "var(--color-warning)" : "var(--color-success)"
+                                    : "var(--color-primary)";
+                                  return (
+                                    <div key={i} style={{
+                                      padding: "10px 14px", borderRadius: 6,
+                                      border: "1px solid var(--color-border)",
+                                      background: "var(--color-surface-elevated)",
+                                    }}>
+                                      <div style={{
+                                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                                        marginBottom: 6,
+                                      }}>
+                                        <span style={{ fontWeight: 600, fontSize: "0.85em", color: "var(--color-text-primary)" }}>
+                                          {RESOURCE_LABELS[q.resource] || q.resource}
+                                        </span>
+                                        <span style={{ fontSize: "0.8em", color: "var(--color-text-secondary)" }}>
+                                          {isUnlimited ? "Unlimited" : (
+                                            pct !== null ? <span style={{ color: barColor, fontWeight: 700 }}>{pct}%</span> : "-"
+                                          )}
+                                        </span>
+                                      </div>
+                                      {/* Usage bar */}
+                                      {!isUnlimited && q.quota_limit > 0 && (
+                                        <div style={{
+                                          height: 6, borderRadius: 3, marginBottom: 6,
+                                          background: "var(--color-border)", overflow: "hidden",
+                                        }}>
+                                          <div style={{
+                                            height: "100%", borderRadius: 3,
+                                            width: `${Math.min(pct || 0, 100)}%`,
+                                            background: barColor,
+                                            transition: "width 0.3s ease",
+                                          }} />
+                                        </div>
+                                      )}
+                                      <div style={{
+                                        display: "flex", justifyContent: "space-between",
+                                        fontSize: "0.8em", color: "var(--color-text-secondary)",
+                                      }}>
+                                        <span>In Use: <strong style={{ color: "var(--color-text-primary)" }}>{q.in_use ?? 0}</strong></span>
+                                        <span>Limit: <strong style={{ color: "var(--color-text-primary)" }}>{isUnlimited ? "∞" : q.quota_limit}</strong></span>
+                                      </div>
+                                      {(q.reserved ?? 0) > 0 && (
+                                        <div style={{ fontSize: "0.75em", color: "var(--color-text-secondary)", marginTop: 2 }}>
+                                          Reserved: {q.reserved}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            );
+          })()}
+
+          {/* ============================================================= */}
+          {/* System Metadata – Unified View                                */}
+          {/* ============================================================= */}
+          {activeTab === "system_metadata" && (
+            <div style={{ padding: "0 8px 24px" }}>
+              {systemMetadataLoading && <div className="pf9-loading">Loading system metadata…</div>}
+              {!systemMetadataLoading && !systemMetadata && (
+                <div className="pf9-empty" style={{ textAlign: "center", padding: 40 }}>
+                  No metadata loaded yet. Check API connectivity.
+                </div>
+              )}
+              {!systemMetadataLoading && systemMetadata && (() => {
+                const c = systemMetadata.counts || {};
+                const comp = systemMetadata.compute || {};
+                const stor = systemMetadata.storage || {};
+                const cardStyle: React.CSSProperties = {
+                  background: "var(--color-surface-elevated)",
+                  borderRadius: 8, padding: "16px 20px", textAlign: "center" as const,
+                  minWidth: 130, flex: "1 1 130px",
+                  border: "1px solid var(--color-border)",
+                };
+                const numStyle: React.CSSProperties = {
+                  fontSize: "2em", fontWeight: 700, color: "var(--color-primary)",
+                  lineHeight: 1.2,
+                };
+                const labelStyle: React.CSSProperties = {
+                  fontSize: "0.85em", color: "var(--color-text-secondary)", marginTop: 4,
+                };
+                const sectionTitle: React.CSSProperties = {
+                  fontSize: "1.1em", fontWeight: 600, margin: "28px 0 12px",
+                  borderBottom: "1px solid var(--color-border)", paddingBottom: 6,
+                  color: "var(--color-text-primary)",
+                };
+
+                return (
+                  <>
+                    {/* Export + Timestamp Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
+                      <div style={{ fontSize: "0.85em", opacity: 0.7 }}>
+                        <span>Generated: <strong>{systemMetadata.generated_utc}</strong> UTC</span>
+                        {systemMetadata.last_inventory_at && (
+                          <span style={{ marginLeft: 16 }}>
+                            Last Inventory: <strong>{systemMetadata.last_inventory_at}</strong>
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        className="pf9-button"
+                        style={{ background: '#2563eb', fontSize: "1em", padding: "8px 20px" }}
+                        onClick={async () => {
+                          try {
+                            const token = localStorage.getItem('auth_token');
+                            const headers: Record<string, string> = {};
+                            if (token) headers['Authorization'] = `Bearer ${token}`;
+                            const res = await fetch(`${API_BASE}/export/full-inventory`, { headers });
+                            if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            const cd = res.headers.get('content-disposition');
+                            a.download = cd?.match(/filename="?([^"]+)"?/)?.[1] || 'pf9_full_inventory.xlsx';
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          } catch (e: any) { setError(e.message); }
+                        }}
+                      >
+                        📥 Download Full Inventory (Excel)
+                      </button>
+                    </div>
+
+                    {/* ── Resource Count Cards ── */}
+                    <div style={sectionTitle}>📊 Resource Counts</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 8 }}>
+                      {[
+                        { label: "Domains", val: c.domains, icon: "🏢" },
+                        { label: "Projects", val: c.projects, icon: "📁" },
+                        { label: "Servers", val: c.servers, icon: "🖥️" },
+                        { label: "Volumes", val: c.volumes, icon: "💾" },
+                        { label: "Snapshots", val: c.snapshots, icon: "📸" },
+                        { label: "Images", val: c.images, icon: "🖼️" },
+                        { label: "Hypervisors", val: c.hypervisors, icon: "⚡" },
+                        { label: "Flavors", val: c.flavors, icon: "🍕" },
+                        { label: "Networks", val: c.networks, icon: "🌐" },
+                        { label: "Subnets", val: c.subnets, icon: "📡" },
+                        { label: "Routers", val: c.routers, icon: "🔀" },
+                        { label: "Floating IPs", val: c.floating_ips, icon: "🌍" },
+                        { label: "Security Groups", val: c.security_groups, icon: "🔒" },
+                        { label: "Keypairs", val: c.keypairs, icon: "🔑" },
+                        { label: "Aggregates", val: c.host_aggregates, icon: "🏗️" },
+                        { label: "Volume Types", val: c.volume_types, icon: "📦" },
+                        { label: "Server Groups", val: c.server_groups, icon: "📦" },
+                        { label: "Quotas", val: c.project_quotas, icon: "📊" },
+                      ].map((item) => (
+                        <div key={item.label} style={cardStyle}>
+                          <div style={numStyle}>{item.val ?? 0}</div>
+                          <div style={labelStyle}>{item.icon} {item.label}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* ── Compute & Storage Summary ── */}
+                    <div style={sectionTitle}>⚡ Compute & Storage</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 8 }}>
+                      {[
+                        { label: "Total vCPUs", val: comp.total_vcpus },
+                        { label: "Total RAM (GB)", val: Math.round((comp.total_memory_mb || 0) / 1024) },
+                        { label: "Total Disk (GB)", val: comp.total_disk_gb },
+                        { label: "Running VMs", val: comp.total_running_vms },
+                        { label: "Volume Storage (GB)", val: stor.total_volume_gb },
+                      ].map((item) => (
+                        <div key={item.label} style={{ ...cardStyle, border: "1px solid var(--color-border)" }}>
+                          <div style={{ ...numStyle, color: "var(--color-success)" }}>{item.val ?? 0}</div>
+                          <div style={labelStyle}>{item.label}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* ── Two-column layout: VM Status + OS Distribution ── */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 8 }}>
+                      {/* VM Status Breakdown */}
+                      <div>
+                        <div style={sectionTitle}>🖥️ VM Status Breakdown</div>
+                        <table className="pf9-table" style={{ fontSize: "0.9em" }}>
+                          <thead><tr><th>Status</th><th>Count</th></tr></thead>
+                          <tbody>
+                            {(systemMetadata.vm_status_breakdown || []).map((s: any, i: number) => (
+                              <tr key={i}>
+                                <td>
+                                  <span style={{
+                                    display: "inline-block", width: 8, height: 8, borderRadius: "50%", marginRight: 6,
+                                    background: s.status === "ACTIVE" ? "var(--color-success)" : s.status === "SHUTOFF" ? "var(--color-text-secondary)" : s.status === "ERROR" ? "var(--color-error)" : "var(--color-warning)",
+                                  }} />
+                                  {s.status}
+                                </td>
+                                <td style={{ fontWeight: 600 }}>{s.count}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* OS Distribution */}
+                      <div>
+                        <div style={sectionTitle}>🐧 OS Distribution</div>
+                        <table className="pf9-table" style={{ fontSize: "0.9em" }}>
+                          <thead><tr><th>OS</th><th>Count</th><th>Share</th></tr></thead>
+                          <tbody>
+                            {(() => {
+                              const osList = systemMetadata.os_distribution || [];
+                              const total = osList.reduce((a: number, b: any) => a + b.count, 0);
+                              return osList.map((o: any, i: number) => (
+                                <tr key={i}>
+                                  <td>{o.os_distro}</td>
+                                  <td style={{ fontWeight: 600 }}>{o.count}</td>
+                                  <td>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                      <div style={{ width: 60, height: 8, background: "var(--color-border)", borderRadius: 4, overflow: "hidden" }}>
+                                        <div style={{ width: `${total > 0 ? (o.count / total * 100) : 0}%`, height: "100%", background: "var(--color-primary)", borderRadius: 4 }} />
+                                      </div>
+                                      <span style={{ fontSize: "0.85em" }}>{total > 0 ? Math.round(o.count / total * 100) : 0}%</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ));
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* ── Domain Resource Breakdown ── */}
+                    <div style={sectionTitle}>🏢 Resources by Domain</div>
+                    <table className="pf9-table" style={{ fontSize: "0.9em" }}>
+                      <thead><tr><th>Domain</th><th>Projects</th><th>Servers</th><th>Volumes</th></tr></thead>
+                      <tbody>
+                        {(systemMetadata.domain_breakdown || []).map((d: any, i: number) => (
+                          <tr key={i}>
+                            <td style={{ fontWeight: 600 }}>{d.domain_name}</td>
+                            <td>{d.projects}</td>
+                            <td>{d.servers}</td>
+                            <td>{d.volumes}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    {/* ── Quota Hotspots ── */}
+                    <div style={sectionTitle}>🔥 Quota Hotspots (Top Usage)</div>
+                    <table className="pf9-table" style={{ fontSize: "0.9em" }}>
+                      <thead><tr><th>Project</th><th>Service</th><th>Resource</th><th>Limit</th><th>In Use</th><th>Usage</th></tr></thead>
+                      <tbody>
+                        {(systemMetadata.quota_hotspots || []).length === 0 ? (
+                          <tr><td colSpan={6} className="pf9-empty">No quota usage data.</td></tr>
+                        ) : (
+                          (systemMetadata.quota_hotspots || []).map((q: any, i: number) => (
+                            <tr key={i}>
+                              <td>{q.project_name || q.project_id}</td>
+                              <td>{q.service}</td>
+                              <td>{q.resource}</td>
+                              <td>{q.quota_limit}</td>
+                              <td>{q.in_use}</td>
+                              <td>
+                                <span style={{
+                                  fontWeight: 700,
+                                  color: q.usage_pct > 90 ? "var(--color-error)" : q.usage_pct > 70 ? "var(--color-warning)" : "var(--color-success)",
+                                }}>
+                                  {q.usage_pct}%
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+
+                    {/* ── Recent Servers ── */}
+                    <div style={sectionTitle}>🆕 Recently Created Servers</div>
+                    <table className="pf9-table" style={{ fontSize: "0.9em" }}>
+                      <thead><tr><th>Name</th><th>Status</th><th>OS</th><th>Project</th><th>Created</th></tr></thead>
+                      <tbody>
+                        {(systemMetadata.recent_servers || []).length === 0 ? (
+                          <tr><td colSpan={5} className="pf9-empty">No servers found.</td></tr>
+                        ) : (
+                          (systemMetadata.recent_servers || []).map((s: any, i: number) => (
+                            <tr key={i}>
+                              <td>{s.name}</td>
+                              <td>
+                                <span style={{
+                                  display: "inline-block", width: 8, height: 8, borderRadius: "50%", marginRight: 6,
+                                  background: s.status === "ACTIVE" ? "var(--color-success)" : s.status === "SHUTOFF" ? "var(--color-text-secondary)" : "var(--color-warning)",
+                                }} />
+                                {s.status}
+                              </td>
+                              <td>{s.os_distro ? `${s.os_distro}${s.os_version ? " " + s.os_version : ""}` : "-"}</td>
+                              <td>{s.project_name || "-"}</td>
+                              <td>{formatDate(s.created_at)}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+
+                    {/* ── Quick Navigation to Resource Tabs ── */}
+                    <div style={sectionTitle}>🔗 Explore Resources</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {[
+                        { tab: "servers", label: "🖥️ Servers" },
+                        { tab: "volumes", label: "💾 Volumes" },
+                        { tab: "snapshots", label: "📸 Snapshots" },
+                        { tab: "networks", label: "🌐 Networks" },
+                        { tab: "images", label: "🖼️ Images" },
+                        { tab: "hypervisors", label: "⚡ Hypervisors" },
+                        { tab: "flavors", label: "🍕 Flavors" },
+                        { tab: "keypairs", label: "🔑 Keypairs" },
+                        { tab: "aggregates", label: "🏗️ Aggregates" },
+                        { tab: "volume_types", label: "📦 Volume Types" },
+                        { tab: "server_groups", label: "📦 Server Groups" },
+                        { tab: "quotas", label: "📊 Quotas" },
+                        { tab: "security_groups", label: "🔒 Security Groups" },
+                      ].map((link) => (
+                        <button
+                          key={link.tab}
+                          className="pf9-button"
+                          style={{ background: "var(--color-surface-elevated)", border: "1px solid var(--color-border)", fontSize: "0.85em", padding: "6px 14px" }}
+                          onClick={() => setActiveTab(link.tab as ActiveTab)}
+                        >
+                          {link.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
           {/* Images Table */}
           {activeTab === "images" && (
             <table className="pf9-table">
@@ -4272,7 +4956,7 @@ const App: React.FC = () => {
                               <td>{domainName}</td>
                               <td className="pf9-cell-subtle">
                                 <div>{change.change_description || 'Infrastructure change'}</div>
-                                <small style={{color: '#666'}}>{typeof change.change_hash === 'string' && change.change_hash ? change.change_hash.substring(0, 8) + "..." : ""}</small>
+                                <small style={{color: 'var(--color-text-secondary)'}}>{typeof change.change_hash === 'string' && change.change_hash ? change.change_hash.substring(0, 8) + "..." : ""}</small>
                               </td>
                               <td>
                                 <button 
@@ -5405,7 +6089,7 @@ const App: React.FC = () => {
                   <strong>Device:</strong> {selectedVolume.device}
                 </p>
               )}
-              <div style={{marginTop: "20px", borderTop: "1px solid #ccc", paddingTop: "15px"}}>
+              <div style={{marginTop: "20px", borderTop: "1px solid var(--color-border)", paddingTop: "15px"}}>
                 <h3>Snapshot Policy</h3>
                 <p>
                   <strong>Auto Snapshot:</strong>{" "}
@@ -5419,7 +6103,7 @@ const App: React.FC = () => {
                 {selectedVolume.metadata && (
                   <div style={{marginTop: "15px"}}>
                     <h4>Raw Metadata</h4>
-                    <pre style={{fontSize: "12px", background: "#f5f5f5", padding: "10px", borderRadius: "4px", maxHeight: "200px", overflow: "auto"}}>
+                    <pre style={{fontSize: "12px", background: "var(--color-surface-elevated)", padding: "10px", borderRadius: "4px", maxHeight: "200px", overflow: "auto"}}>
                       {JSON.stringify(selectedVolume.metadata, null, 2)}
                     </pre>
                   </div>

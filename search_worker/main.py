@@ -112,8 +112,11 @@ def _build_indexers():
         SELECT s.id, s.name, s.project_id, p.name AS project_name,
                d.name AS domain_name, d.id AS domain_id,
                s.status, s.vm_state, s.hypervisor_hostname, s.flavor_id,
+               s.os_distro, s.os_version,
                s.created_at, s.last_seen_at, s.raw_json,
                f.name AS flavor_name, f.vcpus, f.ram_mb, f.disk_gb,
+               COALESCE(s.os_distro, i.raw_json->>'os_distro') AS resolved_os_distro,
+               COALESCE(s.os_version, i.raw_json->>'os_version') AS resolved_os_version,
                (SELECT COUNT(*) FROM volumes v
                 JOIN LATERAL (SELECT jsonb_array_elements(
                     CASE WHEN v.raw_json IS NOT NULL
@@ -125,6 +128,7 @@ def _build_indexers():
         LEFT JOIN projects p ON s.project_id = p.id
         LEFT JOIN domains d ON p.domain_id = d.id
         LEFT JOIN flavors f ON s.flavor_id = f.id
+        LEFT JOIN images i ON s.image_id = i.image_id
         WHERE s.last_seen_at > %s
         ORDER BY s.last_seen_at
     """, lambda r: {
@@ -139,6 +143,7 @@ def _build_indexers():
             f"VM {r['name']} is {_safe(r.get('status'))} (state: {_safe(r.get('vm_state'))})",
             f"Running on hypervisor {_safe(r.get('hypervisor_hostname'))}" if r.get("hypervisor_hostname") else None,
             f"Flavor: {_safe(r.get('flavor_name'))} ({r.get('vcpus', '?')} vCPU, {r.get('ram_mb', '?')}MB RAM, {r.get('disk_gb', '?')}GB disk)" if r.get("flavor_name") else None,
+            f"OS: {_safe(r.get('resolved_os_distro'))} {_safe(r.get('resolved_os_version'))}" if r.get("resolved_os_distro") else None,
             f"Project: {_safe(r.get('project_name'))}, Domain: {_safe(r.get('domain_name'))}",
             f"Created: {r.get('created_at')}" if r.get("created_at") else None,
             _json_extract(r.get("raw_json"), "accessIPv4", "accessIPv6", "key_name"),
@@ -152,6 +157,8 @@ def _build_indexers():
             "vcpus": r.get("vcpus"),
             "ram_mb": r.get("ram_mb"),
             "disk_gb": r.get("disk_gb"),
+            "os_distro": _safe(r.get("resolved_os_distro")),
+            "os_version": _safe(r.get("resolved_os_version")),
             "project": _safe(r.get("project_name")),
             "domain": _safe(r.get("domain_name")),
         },

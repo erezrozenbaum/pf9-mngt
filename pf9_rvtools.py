@@ -44,9 +44,10 @@ from p9_common import (
     list_domains_all, list_projects_all,
     list_users_all_domains, get_all_users_multi_domain, list_roles_all, list_role_assignments_all, list_groups_all,
     nova_servers_all, nova_hypervisors_all, nova_flavors,
-    cinder_volumes_all, cinder_snapshots_all,
+    nova_keypairs, nova_server_groups, nova_aggregates, nova_availability_zones, nova_quotas,
+    cinder_volumes_all, cinder_snapshots_all, cinder_volume_types, cinder_quotas,
     glance_images,
-    neutron_list,
+    neutron_list, neutron_quotas,
     infer_user_roles_from_data,
 )
 
@@ -73,6 +74,11 @@ from db_writer import (
     write_groups,         # ✅ Groups (NEW)
     upsert_security_groups,      # ✅ Security Groups
     upsert_security_group_rules, # ✅ Security Group Rules
+    upsert_keypairs,             # ✅ Keypairs
+    upsert_server_groups,        # ✅ Server Groups
+    upsert_host_aggregates,      # ✅ Host Aggregates
+    upsert_volume_types,         # ✅ Volume Types
+    upsert_project_quotas,       # ✅ Project Quotas
 )
 
 STATE_FILE = "p9_rvtools_state.json"
@@ -211,11 +217,11 @@ def cleanup_old_records(conn):
     Order respects foreign-key constraints (children before parents).
     Every deletion is logged to deletions_history for the audit trail.
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     # Very aggressive cleanup - remove records older than 15 minutes
     # This ensures database always reflects current Platform9 state exactly
-    cutoff = datetime.utcnow() - timedelta(minutes=15)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
     
     with conn.cursor() as cur:
         # Order matters: child tables first, then parent tables
@@ -253,8 +259,34 @@ def cleanup_old_records(conn):
         for table in tables:
             try:
                 resource_type = resource_type_map.get(table, table)
+
+                # Clear ALL foreign key references before deleting parent rows
+                if table == 'projects':
+                    stale_proj = "SELECT id FROM projects WHERE last_seen_at < %s"
+                    # Null out user FK references
+                    cur.execute(f"UPDATE users SET default_project_id = NULL WHERE default_project_id IN ({stale_proj})", (cutoff,))
+                    # Delete child resources that reference stale projects
+                    for child in ['security_group_rules', 'security_groups',
+                                  'snapshots', 'servers', 'volumes',
+                                  'floating_ips', 'ports', 'routers', 'subnets', 'networks']:
+                        try:
+                            if child == 'security_group_rules':
+                                cur.execute(f"DELETE FROM security_group_rules WHERE security_group_id IN (SELECT id FROM security_groups WHERE project_id IN ({stale_proj}))", (cutoff,))
+                            elif child == 'subnets':
+                                cur.execute(f"DELETE FROM subnets WHERE network_id IN (SELECT id FROM networks WHERE project_id IN ({stale_proj}))", (cutoff,))
+                            else:
+                                cur.execute(f"DELETE FROM {child} WHERE project_id IN ({stale_proj})", (cutoff,))
+                        except Exception:
+                            conn.rollback()
+                elif table == 'domains':
+                    stale_dom = "SELECT id FROM domains WHERE last_seen_at < %s"
+                    # Null out user FK references
+                    cur.execute(f"UPDATE users SET domain_id = NULL WHERE domain_id IN ({stale_dom})", (cutoff,))
+                    # Orphan projects referencing stale domains
+                    cur.execute(f"UPDATE projects SET domain_id = NULL WHERE domain_id IN ({stale_dom})", (cutoff,))
+
                 # Determine which columns exist in the table
-                cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = %s", (table,))
+                cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = %s AND table_schema = 'public'", (table,))
                 cols = set(r[0] for r in cur.fetchall())
                 # Use NULL for missing columns
                 name_col = 'name as resource_name' if 'name' in cols else 'NULL as resource_name'
@@ -591,9 +623,42 @@ def main():
     hypervisors  = nova_hypervisors_all(session)
     flavors      = nova_flavors(session)
 
+    # Nova additional metadata
+    print("    [NOVA] Collecting keypairs, server groups, aggregates, AZs...")
+    keypairs = []
+    server_groups = []
+    aggregates = []
+    availability_zones = []
+    try:
+        keypairs = nova_keypairs(session)
+    except Exception as e:
+        print(f"    [WARN] Keypairs collection failed (non-critical): {e}")
+    try:
+        server_groups = nova_server_groups(session)
+    except Exception as e:
+        print(f"    [WARN] Server groups collection failed (non-critical): {e}")
+    try:
+        aggregates = nova_aggregates(session)
+    except Exception as e:
+        print(f"    [WARN] Aggregates collection failed (non-critical): {e}")
+    try:
+        availability_zones = nova_availability_zones(session)
+    except Exception as e:
+        print(f"    [WARN] Availability zones collection failed (non-critical): {e}")
+    print(f"    [OK] Found {len(keypairs)} keypairs, {len(server_groups)} server groups, {len(aggregates)} aggregates, {len(availability_zones)} AZs")
+
     # Cinder
     volumes   = cinder_volumes_all(session, project_id)
     snapshots = cinder_snapshots_all(session, project_id)
+
+    # Cinder additional metadata
+    print("    [CINDER] Collecting volume types...")
+    volume_types = []
+    try:
+        volume_types = cinder_volume_types(session)
+    except Exception as e:
+        print(f"    [WARN] Volume types collection failed (non-critical): {e}")
+    print(f"    [OK] Found {len(volume_types)} volume types")
 
     # Glance
     images = glance_images(session)
@@ -623,6 +688,70 @@ def main():
         security_groups=security_groups,
         security_group_rules=security_group_rules,
     )
+
+    # Enrich servers with OS info (from image metadata)
+    image_os_lookup = {}
+    for img in images:
+        iid = img.get('id')
+        if iid:
+            image_os_lookup[iid] = {
+                'os_distro': img.get('os_distro') or img.get('properties', {}).get('os_distro') or '',
+                'os_version': img.get('os_version') or img.get('properties', {}).get('os_version') or '',
+                'name': img.get('name', ''),
+            }
+    for s in servers:
+        # Try server metadata first
+        md = s.get('metadata') or {}
+        os_distro = md.get('os_distro', '')
+        os_version = md.get('os_version', '')
+        # Fallback to image
+        image_ref = s.get('image')
+        image_id = None
+        if isinstance(image_ref, dict):
+            image_id = image_ref.get('id')
+        elif isinstance(image_ref, str) and image_ref:
+            image_id = image_ref
+        if image_id and image_id in image_os_lookup:
+            il = image_os_lookup[image_id]
+            if not os_distro:
+                os_distro = il['os_distro']
+            if not os_version:
+                os_version = il['os_version']
+        s['os_distro'] = os_distro
+        s['os_version'] = os_version
+
+    # Collect quotas as flat rows for Excel export
+    quota_export_rows = []
+    project_name_map = {p.get('id'): p.get('name', p.get('id', '')) for p in projects}
+    try:
+        for p in projects:
+            pid = p.get('id')
+            pname = p.get('name', pid)
+            if not pid:
+                continue
+            for svc_name, svc_fn in [('nova', nova_quotas), ('cinder', cinder_quotas), ('neutron', neutron_quotas)]:
+                try:
+                    qdata = svc_fn(session, pid)
+                    if isinstance(qdata, dict):
+                        for resource, val in qdata.items():
+                            if resource in ('id',):
+                                continue
+                            if isinstance(val, dict):
+                                quota_export_rows.append({
+                                    'project_name': pname, 'project_id': pid, 'service': svc_name,
+                                    'resource': resource, 'limit': val.get('limit', ''),
+                                    'in_use': val.get('in_use', ''), 'reserved': val.get('reserved', ''),
+                                })
+                            else:
+                                quota_export_rows.append({
+                                    'project_name': pname, 'project_id': pid, 'service': svc_name,
+                                    'resource': resource, 'limit': val, 'in_use': '', 'reserved': '',
+                                })
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"    [WARN] Quota export rows collection failed: {e}")
+    print(f"    [OK] Collected {len(quota_export_rows)} quota rows for export")
 
     # --------------------------------------------------------------
     # Masking (customer-safe view)
@@ -693,6 +822,53 @@ def main():
             n_sgs          = upsert_security_groups(conn, security_groups, run_id=run_id)
             n_sg_rules     = upsert_security_group_rules(conn, security_group_rules, run_id=run_id)
 
+            # Additional metadata (non-critical, won't fail the run)
+            n_keypairs = n_sgroups = n_aggs = n_vtypes = n_quotas = 0
+            try:
+                n_keypairs = upsert_keypairs(conn, keypairs)
+            except Exception as e:
+                print(f"    [WARN] Keypairs DB write failed: {e}")
+            try:
+                n_sgroups = upsert_server_groups(conn, server_groups)
+            except Exception as e:
+                print(f"    [WARN] Server groups DB write failed: {e}")
+            try:
+                n_aggs = upsert_host_aggregates(conn, aggregates)
+            except Exception as e:
+                print(f"    [WARN] Aggregates DB write failed: {e}")
+            try:
+                n_vtypes = upsert_volume_types(conn, volume_types)
+            except Exception as e:
+                print(f"    [WARN] Volume types DB write failed: {e}")
+
+            # Project quotas (iterate projects)
+            try:
+                for p in projects:
+                    pid = p.get('id')
+                    if not pid:
+                        continue
+                    try:
+                        nq = nova_quotas(session, pid)
+                        upsert_project_quotas(conn, pid, 'nova', nq)
+                        n_quotas += len(nq)
+                    except Exception:
+                        pass
+                    try:
+                        cq = cinder_quotas(session, pid)
+                        upsert_project_quotas(conn, pid, 'cinder', cq)
+                        n_quotas += len(cq)
+                    except Exception:
+                        pass
+                    try:
+                        neq = neutron_quotas(session, pid)
+                        upsert_project_quotas(conn, pid, 'neutron', neq)
+                        n_quotas += len(neq)
+                    except Exception:
+                        pass
+                print(f"    [OK] Stored quotas for {len(projects)} projects ({n_quotas} quota entries)")
+            except Exception as e:
+                print(f"    [WARN] Quotas collection failed: {e}")
+
             notes = (
                 f"domains={n_domains}, projects={n_projects}, "
                 f"users={n_users}, roles={n_roles}, role_assignments={n_assignments}, groups={n_groups}, "
@@ -701,7 +877,9 @@ def main():
                 f"volumes={n_vols}, snapshots={n_snaps}, "
                 f"networks={n_nets}, subnets={n_subnets}, ports={n_ports}, "
                 f"routers={n_routers}, floating_ips={n_fips}, "
-                f"security_groups={n_sgs}, security_group_rules={n_sg_rules}"
+                f"security_groups={n_sgs}, security_group_rules={n_sg_rules}, "
+                f"keypairs={n_keypairs}, server_groups={n_sgroups}, "
+                f"aggregates={n_aggs}, volume_types={n_vtypes}, quota_entries={n_quotas}"
             )
             finish_inventory_run(conn, run_id, status="success", notes=notes)
             
@@ -751,6 +929,11 @@ def main():
         "Roles": len(roles),
         "Role_Assignments": len(role_assignments),
         "Groups": len(groups),
+        "Keypairs": len(keypairs),
+        "ServerGroups": len(server_groups),
+        "HostAggregates": len(aggregates),
+        "VolumeTypes": len(volume_types),
+        "QuotaEntries": len(quota_export_rows),
         "Errors": current["errors"],
         "Δ_Errors": delta["errors"],
         "Scope_Mode": scope_mode,
@@ -779,6 +962,11 @@ def main():
         ("FloatingIPs", floatingips),
         ("SecurityGroups", security_groups),
         ("SecurityGroupRules", security_group_rules),
+        ("Keypairs", keypairs),
+        ("ServerGroups", server_groups),
+        ("HostAggregates", aggregates),
+        ("VolumeTypes", volume_types),
+        ("ProjectQuotas", quota_export_rows),
     ]
 
     for name, data in sheets:
