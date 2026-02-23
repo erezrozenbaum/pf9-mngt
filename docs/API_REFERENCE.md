@@ -2345,6 +2345,106 @@ Response:
 }
 ```
 
+#### New Runbook Trigger Examples (v1.25)
+
+**VM Health Quick Fix** — diagnose a single VM:
+```json
+{
+  "runbook_name": "vm_health_quickfix",
+  "dry_run": false,
+  "parameters": {
+    "server_id": "abc123-...",
+    "auto_restart": false,
+    "restart_type": "soft"
+  }
+}
+```
+
+**Snapshot Before Escalation** — create a tagged snapshot before T2 handoff:
+```json
+{
+  "runbook_name": "snapshot_before_escalation",
+  "dry_run": false,
+  "parameters": {
+    "server_id": "abc123-...",
+    "tag_prefix": "Pre-T2-escalation",
+    "reference_id": "INC-2026-0042"
+  }
+}
+```
+
+**Upgrade Opportunity Detector** — scan for upsell signals:
+```json
+{
+  "runbook_name": "upgrade_opportunity_detector",
+  "dry_run": false,
+  "parameters": {
+    "quota_threshold_pct": 80,
+    "include_flavor_analysis": true,
+    "include_image_analysis": true,
+    "price_per_vcpu": 15.0,
+    "price_per_gb_ram": 5.0
+  }
+}
+```
+
+**Monthly Executive Snapshot** — generate executive report:
+```json
+{
+  "runbook_name": "monthly_executive_snapshot",
+  "dry_run": false,
+  "parameters": {
+    "risk_top_n": 5,
+    "include_deltas": true,
+    "price_per_vcpu": 15.0,
+    "price_per_gb_storage": 2.0
+  }
+}
+```
+
+**Cost Leakage Report** — identify wasted infrastructure spend:
+```json
+{
+  "runbook_name": "cost_leakage_report",
+  "dry_run": false,
+  "parameters": {
+    "idle_cpu_threshold_pct": 5,
+    "shutoff_days_threshold": 30,
+    "detached_volume_days": 7,
+    "price_per_vcpu_month": 15.0,
+    "price_per_gb_volume_month": 2.0,
+    "price_per_floating_ip_month": 5.0
+  }
+}
+```
+
+**Password Reset + Console Access** — reset password and get console URL (requires approval for non-superadmin):
+```json
+{
+  "runbook_name": "password_reset_console",
+  "dry_run": true,
+  "parameters": {
+    "server_id": "abc123-...",
+    "new_password": "",
+    "enable_console": true,
+    "console_expiry_minutes": 30
+  }
+}
+```
+
+**Security & Compliance Audit** — extended security scan:
+```json
+{
+  "runbook_name": "security_compliance_audit",
+  "dry_run": false,
+  "parameters": {
+    "stale_user_days": 90,
+    "flag_wide_port_ranges": true,
+    "check_volume_encryption": true
+  }
+}
+```
+
 ### Approve or Reject Execution
 **POST** `/api/runbooks/executions/{execution_id}/approve`
 *Requires: `runbooks:admin`*
