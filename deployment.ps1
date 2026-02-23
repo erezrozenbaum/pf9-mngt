@@ -766,6 +766,7 @@ $provisioningMigrations = @(
     @{File="db\migrate_operator_permissions.sql"; Desc="Operator/viewer missing read permissions (networks, flavors, users)"},
     @{File="db\migrate_search.sql"; Desc="Ops Search tables (search_documents, search_indexer_state, pg_trgm)"},
     @{File="db\migrate_runbooks.sql"; Desc="Runbooks framework (runbooks, approval_policies, executions, approvals)"},
+    @{File="db\migrate_new_runbooks.sql"; Desc="New runbooks v1.25 (7 additional engines + approval policies)"},
     @{File="db\migrate_fix_drift_columns.sql"; Desc="Drift detection: add missing columns, fix field-name mismatches"},
     @{File="db\migrate_copilot.sql"; Desc="Ops Copilot (copilot_history, copilot_feedback, copilot_config)"},
     @{File="db\migrate_os_tracking.sql"; Desc="OS tracking: image_id, os_distro, os_version on servers/images"},
