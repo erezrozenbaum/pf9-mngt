@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.24.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.25.1-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -248,11 +248,13 @@ A 15-minute explainer video walking through the UI and key features:
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
 ### 📋 Policy-as-Code Runbooks *(v1.21 → v1.25)*
-- **Runbook Catalogue**: Browse 12 built-in operational runbooks with schema-driven parameter forms:
+- **Runbook Catalogue**: Browse 13 built-in operational runbooks with schema-driven parameter forms:
   - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
-  - **Security**: Security Group Audit, Security & Compliance Audit
+  - **Security**: Security Group Audit, Security & Compliance Audit, User Last Login Report
   - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector
   - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
+- **Result Export**: Every runbook result can be exported as CSV, JSON, or printed to PDF directly from the detail panel
+- **ILS Pricing from Metering**: Cost-related runbooks (Upgrade Detector, Executive Snapshot, Cost Leakage) pull real pricing from the `metering_pricing` table — per-flavor, per-resource, with automatic currency detection (ILS/USD)
 - **Operator-Facing Trigger**: Tier 1 operators can browse and trigger runbooks with dry-run support — no admin access needed
 - **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: auto-approve, single approval, multi-approval
 - **Admin Governance**: Execution History, Approvals queue, and Approval Policies managed via 3 dedicated sub-tabs in the Admin panel
@@ -663,6 +665,17 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.25.1 — ILS Currency, User Last Login Runbook, Export Buttons
+- ✅ **13 Runbooks** — Added User Last Login Report: lists every user with last login time, session activity, IP, login count, inactive flags
+- ✅ **Result Export** — CSV, JSON, and Print-to-PDF export buttons on every runbook execution result
+- ✅ **ILS Currency** — Cost runbooks now pull real pricing from `metering_pricing` table (ILS) instead of hardcoded USD defaults
+- ✅ **Approval Fixes** — Security Compliance Audit and Upgrade Opportunity Detector now require approval for operator/admin triggers
+
+### v1.25.0 — 7 New Operational Runbooks
+- ✅ **12 Runbooks** — VM Health Quick Fix, Snapshot Before Escalation, Upgrade Opportunity Detector, Monthly Executive Snapshot, Cost Leakage Report, Password Reset + Console, Security & Compliance Audit
+- ✅ **Approval Policies** — Role-based approval for all 12 runbooks with security-sensitive engines requiring admin sign-off
+- ✅ **Friendly Result Renderers** — Dedicated UI panels for each runbook with tables, KPI grids, and severity badges
+
 ### v1.17.1 — Reports & Resource Management Enhancements
 - ✅ **16 Report Types** — Added VM Report with full VM details (flavor, host, IPs, volumes, power state)
 - ✅ **Enhanced Domain Overview** — Full quota aggregation with utilization percentages
@@ -731,4 +744,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.21.0 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.25.1 | **Last Updated**: February 2026
