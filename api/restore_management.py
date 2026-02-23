@@ -99,6 +99,7 @@ class RestorePlanRequest(BaseModel):
     security_group_ids: Optional[list] = None  # List of security group UUIDs to attach to restored VM ports
     cleanup_old_storage: bool = Field(default=False, description="Delete original VM's orphaned volume after REPLACE restore")
     delete_source_snapshot: bool = Field(default=False, description="Delete the source snapshot after a successful restore")
+    safety_snapshot_before_replace: bool = Field(default=False, description="Take a safety snapshot of the current boot volume before REPLACE mode deletes the VM")
 
 
 class RestoreExecuteRequest(BaseModel):
@@ -513,6 +514,46 @@ class RestoreOpenStackClient:
         r.raise_for_status()
         return r.json().get("quota_set", {})
 
+    def create_safety_snapshot(
+        self, session: http_requests.Session, project_id: str,
+        volume_id: str, vm_name: str,
+    ) -> dict:
+        """Create a safety snapshot of a volume before destructive REPLACE restore."""
+        url = self._cinder_url(project_id, "/snapshots")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+        payload = {
+            "snapshot": {
+                "volume_id": volume_id,
+                "name": f"safety-{vm_name}-pre-replace-{ts}",
+                "description": f"Safety snapshot taken before REPLACE restore of VM '{vm_name}'",
+                "force": True,  # Allows snapshot of in-use volumes
+                "metadata": {
+                    "created_by": "pf9_restore_safety",
+                    "purpose": "pre_replace_safety",
+                    "original_vm_name": vm_name,
+                },
+            }
+        }
+        r = session.post(url, json=payload, timeout=120)
+        r.raise_for_status()
+        return r.json().get("snapshot", {})
+
+    def wait_snapshot_available(
+        self, session: http_requests.Session, project_id: str,
+        snapshot_id: str, timeout_secs: int = 600, poll_interval: int = 5,
+    ) -> dict:
+        """Wait for a snapshot to reach 'available' status."""
+        deadline = time.time() + timeout_secs
+        while time.time() < deadline:
+            snap = self.get_snapshot_detail(session, project_id, snapshot_id)
+            st = snap.get("status", "")
+            if st == "available":
+                return snap
+            if st == "error":
+                raise RuntimeError(f"Snapshot {snapshot_id} entered error state")
+            time.sleep(poll_interval)
+        raise RuntimeError(f"Snapshot {snapshot_id} not available after {timeout_secs}s")
+
     def get_snapshot_detail(self, session: http_requests.Session, project_id: str, snapshot_id: str) -> dict:
         """Get details of a specific Cinder snapshot."""
         url = self._cinder_url(project_id, f"/snapshots/{snapshot_id}")
@@ -605,11 +646,13 @@ class RestorePlanner:
                 delete_source_snapshot=req.delete_source_snapshot,
                 source_volume_id=source_volume.get("id") if source_volume else None,
                 snapshot_id=req.restore_point_id,
+                safety_snapshot_before_replace=req.safety_snapshot_before_replace,
             )
 
             # 10. Build warnings
             warnings = self._build_warnings(
-                req.mode, req.ip_strategy, network_plan, boot_mode, vm_data
+                req.mode, req.ip_strategy, network_plan, boot_mode, vm_data,
+                safety_snapshot=req.safety_snapshot_before_replace,
             )
 
             # 11. Try to fetch quota from OpenStack (best effort)
@@ -675,6 +718,7 @@ class RestorePlanner:
                 "security_group_ids": req.security_group_ids or [],
                 "cleanup_old_storage": req.cleanup_old_storage,
                 "delete_source_snapshot": req.delete_source_snapshot,
+                "safety_snapshot_before_replace": req.safety_snapshot_before_replace,
             }
 
             # Store the plan as a PLANNED job in DB
@@ -864,6 +908,7 @@ class RestorePlanner:
         self, boot_mode: str, mode: str, network_plan: list, new_name: str,
         cleanup_old_storage: bool = False, delete_source_snapshot: bool = False,
         source_volume_id: str = None, snapshot_id: str = None,
+        safety_snapshot_before_replace: bool = False,
     ) -> list:
         actions = [
             {"step": "VALIDATE_LIVE_STATE", "details": {"description": "Verify VM and snapshot still exist in OpenStack"}},
@@ -872,6 +917,19 @@ class RestorePlanner:
         ]
 
         if mode == "REPLACE":
+            # Safety snapshot before destructive delete
+            if safety_snapshot_before_replace and source_volume_id:
+                actions.append({
+                    "step": "SAFETY_SNAPSHOT",
+                    "details": {
+                        "description": "Take a safety snapshot of current boot volume before deletion",
+                        "volume_id": source_volume_id,
+                    },
+                })
+                actions.append({
+                    "step": "WAIT_SAFETY_SNAPSHOT",
+                    "details": {"description": "Wait for safety snapshot to become available"},
+                })
             actions.append({
                 "step": "DELETE_EXISTING_VM",
                 "details": {"description": "Delete the existing VM (destructive, irreversible)"},
@@ -946,15 +1004,21 @@ class RestorePlanner:
 
     def _build_warnings(
         self, mode: str, ip_strategy: str, network_plan: list,
-        boot_mode: str, vm_data: dict,
+        boot_mode: str, vm_data: dict, safety_snapshot: bool = False,
     ) -> list:
         warnings = []
 
         if mode == "REPLACE":
-            warnings.append(
-                f"⚠️ DESTRUCTIVE: This will DELETE VM '{vm_data.get('name')}' before restoring. "
-                f"This action cannot be undone."
-            )
+            if safety_snapshot:
+                warnings.append(
+                    f"🛡️ A safety snapshot will be taken before deleting VM '{vm_data.get('name')}'. "
+                    f"If the restore fails, you can use the safety snapshot to recover."
+                )
+            else:
+                warnings.append(
+                    f"⚠️ DESTRUCTIVE: This will DELETE VM '{vm_data.get('name')}' before restoring. "
+                    f"This action cannot be undone. Consider enabling 'Safety Snapshot' for a recovery point."
+                )
 
         if ip_strategy == "TRY_SAME_IPS":
             warnings.append(
@@ -1187,6 +1251,18 @@ class RestoreExecutor:
                 self._step_delete_vm, session, plan["vm"]["id"]
             )
 
+        elif step_name == "SAFETY_SNAPSHOT":
+            result = await asyncio.to_thread(
+                self._step_safety_snapshot, session, project_id, plan
+            )
+            resources["safety_snapshot_id"] = result.get("snapshot_id")
+            return result
+
+        elif step_name == "WAIT_SAFETY_SNAPSHOT":
+            return await asyncio.to_thread(
+                self._step_wait_safety_snapshot, session, project_id, resources.get("safety_snapshot_id")
+            )
+
         elif step_name == "WAIT_VM_DELETED":
             return await asyncio.to_thread(
                 self._step_wait_vm_deleted, session, plan["vm"]["id"]
@@ -1264,6 +1340,28 @@ class RestoreExecutor:
     def _step_delete_vm(self, session, vm_id) -> dict:
         self.os_client.delete_server(session, vm_id)
         return {"deleted_vm_id": vm_id}
+
+    def _step_safety_snapshot(self, session, project_id, plan) -> dict:
+        """Take a safety snapshot of the current boot volume before REPLACE delete."""
+        source_vol_id = plan.get("source_volume", {}).get("id")
+        vm_name = plan.get("vm", {}).get("name", "vm")
+        if not source_vol_id:
+            raise RuntimeError("Cannot create safety snapshot: no source volume ID in plan")
+
+        if RESTORE_DRY_RUN:
+            return {"snapshot_id": "dry-run-safety-snap", "dry_run": True}
+
+        snap = self.os_client.create_safety_snapshot(session, project_id, source_vol_id, vm_name)
+        snap_id = snap.get("id")
+        logger.info(f"Created safety snapshot {snap_id} for volume {source_vol_id} before REPLACE")
+        return {"snapshot_id": snap_id, "volume_id": source_vol_id, "snapshot_name": snap.get("name")}
+
+    def _step_wait_safety_snapshot(self, session, project_id, snapshot_id) -> dict:
+        """Wait for the safety snapshot to become available."""
+        if RESTORE_DRY_RUN or not snapshot_id:
+            return {"snapshot_status": "available", "dry_run": True}
+        snap = self.os_client.wait_snapshot_available(session, project_id, snapshot_id)
+        return {"snapshot_status": snap.get("status"), "snapshot_id": snapshot_id}
 
     def _step_wait_vm_deleted(self, session, vm_id) -> dict:
         self.os_client.wait_server_deleted(session, vm_id)

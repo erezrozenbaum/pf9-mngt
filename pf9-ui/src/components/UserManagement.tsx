@@ -336,7 +336,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [rbEditPolicy, setRbEditPolicy] = useState<{
     runbook_name: string; trigger_role: string; approver_role: string;
     approval_mode: string; escalation_timeout_minutes: number;
-    max_auto_executions_per_day: number;
+    max_auto_executions_per_day: number; _isNew?: boolean;
   } | null>(null);
   const [rbToast, setRbToast] = useState<{ msg: string; type: string } | null>(null);
 
@@ -423,6 +423,18 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       rbShowToast('Policy saved', 'success'); setRbEditPolicy(null); loadRbPolicies();
     } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
   }, [rbEditPolicy, rbAuthHeaders, rbShowToast, loadRbPolicies]);
+
+  const rbDeletePolicy = useCallback(async (runbookName: string, triggerRole: string) => {
+    if (!confirm(`Delete approval policy for "${runbookName}" / role "${triggerRole}"?`)) return;
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/runbooks/policies/${encodeURIComponent(runbookName)}/${encodeURIComponent(triggerRole)}`,
+        { method: 'DELETE', headers: rbAuthHeaders() },
+      );
+      if (!res.ok) throw new Error('Failed to delete policy');
+      rbShowToast('Policy deleted', 'success'); loadRbPolicies();
+    } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
+  }, [rbAuthHeaders, rbShowToast, loadRbPolicies]);
 
   useEffect(() => {
     loadData();
@@ -2489,12 +2501,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                         approval_mode: p.approval_mode, escalation_timeout_minutes: p.escalation_timeout_minutes,
                         max_auto_executions_per_day: p.max_auto_executions_per_day,
                       })}>✏️</button>
+                      <button className="text-sm text-red-500 hover:underline" onClick={() => rbDeletePolicy(rb.name, p.trigger_role)}>🗑️</button>
                     </div>
                   ))}
                   {pols.length === 0 && <p className="text-xs text-gray-400">No policies configured</p>}
                   <button className="mt-2 text-sm text-blue-600 hover:underline" onClick={() => setRbEditPolicy({
                     runbook_name: rb.name, trigger_role: '', approver_role: 'admin',
-                    approval_mode: 'single_approval', escalation_timeout_minutes: 60, max_auto_executions_per_day: 50,
+                    approval_mode: 'single_approval', escalation_timeout_minutes: 60, max_auto_executions_per_day: 50, _isNew: true,
                   })}>+ Add Policy</button>
                 </div>
               );
@@ -2505,14 +2518,17 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           {rbEditPolicy && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
               <div className="bg-white rounded-lg p-6 w-full max-w-md">
-                <h3 className="text-lg font-medium mb-4">Edit Approval Policy</h3>
+                <h3 className="text-lg font-medium mb-4">{rbEditPolicy._isNew ? 'Add' : 'Edit'} Approval Policy</h3>
                 <p className="text-sm text-gray-500 mb-4">Runbook: {rbEditPolicy.runbook_name}</p>
                 <div className="space-y-3">
                   <div>
                     <label className="block text-sm font-medium mb-1">Trigger Role (who can trigger)</label>
-                    <input className="w-full px-3 py-2 border rounded" value={rbEditPolicy.trigger_role}
+                    <input className={`w-full px-3 py-2 border rounded ${!rbEditPolicy._isNew ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                      value={rbEditPolicy.trigger_role}
                       onChange={e => setRbEditPolicy({ ...rbEditPolicy, trigger_role: e.target.value })}
+                      disabled={!rbEditPolicy._isNew}
                       placeholder="e.g. operator, admin, tier1" />
+                    {!rbEditPolicy._isNew && <p className="text-xs text-gray-400 mt-1">Trigger role cannot be changed. Delete and recreate to use a different role.</p>}
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Approver Role (who must approve)</label>

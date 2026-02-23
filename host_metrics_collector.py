@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict
 import os
 import sys
@@ -38,11 +38,51 @@ class HostMetricsCollector:
         self.cache_file = os.path.join("monitoring", "cache", "metrics_cache.json")
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
         self.ip_to_hostname = self._build_hostname_map()
+        self._cpu_state_file = os.path.join("monitoring", "cache", "cpu_state.json")
         # Store previous node_cpu_seconds_total counters per host for delta calculation
         self._prev_cpu_totals: Dict[str, Dict[str, float]] = {}  # host -> {"idle": seconds, "total": seconds}
         # Store previous VM vcpu_time for delta-based VM CPU calculation
         self._prev_vm_cpu_totals: Dict[str, Dict] = {}  # domain_id -> {"vcpu_time": seconds, "wall_time": datetime}
+        # Load persisted CPU state from disk (so single-run / restart can compute deltas)
+        self._load_cpu_state()
         
+    def _load_cpu_state(self):
+        """Load previous CPU counters from disk for delta calculations across restarts."""
+        try:
+            if os.path.exists(self._cpu_state_file):
+                with open(self._cpu_state_file, 'r') as f:
+                    state = json.load(f)
+                # Restore host CPU totals
+                self._prev_cpu_totals = state.get('host_cpu', {})
+                # Restore VM CPU totals (convert wall_time strings back to datetime)
+                for vm_id, data in state.get('vm_cpu', {}).items():
+                    self._prev_vm_cpu_totals[vm_id] = {
+                        'vcpu_time': data['vcpu_time'],
+                        'wall_time': datetime.fromisoformat(data['wall_time'])
+                    }
+                print(f"Loaded CPU state: {len(self._prev_cpu_totals)} hosts, {len(self._prev_vm_cpu_totals)} VMs")
+        except Exception as e:
+            print(f"Could not load CPU state (will start fresh): {e}")
+
+    def _save_cpu_state(self):
+        """Persist CPU counters to disk so next run can compute deltas."""
+        try:
+            state = {
+                'host_cpu': self._prev_cpu_totals,
+                'vm_cpu': {
+                    vm_id: {
+                        'vcpu_time': data['vcpu_time'],
+                        'wall_time': data['wall_time'].isoformat()
+                    }
+                    for vm_id, data in self._prev_vm_cpu_totals.items()
+                },
+                'saved_at': datetime.now(timezone.utc).isoformat()
+            }
+            with open(self._cpu_state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save CPU state: {e}")
+
     def _build_hostname_map(self):
         """Build IP-to-hostname map from Platform9 API or .env PF9_HOST_MAP"""
         ip_map = {}
@@ -197,7 +237,7 @@ class HostMetricsCollector:
             host_data = {
                 'hostname': self.ip_to_hostname.get(hostname, hostname),
                 'ip_address': hostname,
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
             
             # CPU utilization: use node_cpu_seconds_total delta between collection cycles
@@ -368,7 +408,7 @@ class HostMetricsCollector:
                                     'user_name': user_name,
                                     'flavor': flavor,
                                     'host': self.ip_to_hostname.get(host, host),
-                                    'timestamp': datetime.utcnow().isoformat(),
+                                    'timestamp': datetime.now(timezone.utc).isoformat(),
                                     'cpu_usage_percent': 0,
                                     'memory_usage_mb': 0,
                                     'memory_total_mb': 0,
@@ -483,7 +523,10 @@ class HostMetricsCollector:
                 prev_vm = self._prev_vm_cpu_totals.get(domain_id)
                 if prev_vm is not None and cur_vcpu_time > 0:
                     delta_time = cur_vcpu_time - prev_vm['vcpu_time']
-                    delta_wall = (datetime.utcnow() - prev_vm['wall_time']).total_seconds()
+                    wall_time = prev_vm['wall_time']
+                    if wall_time.tzinfo is None:
+                        wall_time = wall_time.replace(tzinfo=timezone.utc)
+                    delta_wall = (datetime.now(timezone.utc) - wall_time).total_seconds()
                     if delta_wall > 0 and delta_time >= 0:
                         # CPU% = (delta_cpu_seconds / (wall_seconds * vcpu_count)) * 100
                         vm_data['cpu_usage_percent'] = round(
@@ -498,7 +541,7 @@ class HostMetricsCollector:
                 if cur_vcpu_time > 0:
                     self._prev_vm_cpu_totals[domain_id] = {
                         'vcpu_time': cur_vcpu_time,
-                        'wall_time': datetime.utcnow()
+                        'wall_time': datetime.now(timezone.utc)
                     }
                 
                 # --- Storage: smart capacity vs allocation ---
@@ -597,7 +640,7 @@ class HostMetricsCollector:
             "summary": {
                 "total_vms": total_vms,
                 "total_hosts": len(hosts_data),
-                "last_update": datetime.utcnow().isoformat(),
+                "last_update": datetime.now(timezone.utc).isoformat(),
                 "vm_stats": vm_stats,
                 "host_stats": {
                     "avg_cpu": round(sum(h.get('cpu_usage_percent', 0) for h in hosts_data) / max(len(hosts_data), 1), 1),
@@ -608,11 +651,14 @@ class HostMetricsCollector:
                     "used_storage_gb": round(sum(h.get('storage_used_gb', 0) for h in hosts_data), 1)
                 }
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         with open(self.cache_file, 'w') as f:
             json.dump(cache_data, f, indent=2)
+        
+        # Persist CPU state for delta calculations across restarts
+        self._save_cpu_state()
         
         print(f"+ Cache updated: {len(hosts_data)} hosts, {total_vms} VMs")
 

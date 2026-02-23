@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, Query, HTTPException, status, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -1457,6 +1457,8 @@ def servers(
         s.flavor_id,
         -- derive image_id from raw_json instead of non-existent column
         (s.raw_json->'image'->>'id')         AS image_id,
+        s.os_distro                          AS server_os_distro,
+        s.os_version                         AS server_os_version,
         fl.name                              AS flavor_name,
         -- Add vCPU and RAM from flavor
         fl.vcpus                             AS vcpus,
@@ -1536,9 +1538,9 @@ def servers(
     filtered AS (
       SELECT
         e.*,
-        img.name                    AS image_name,
-        img.raw_json->>'os_distro'  AS os_type,
-        img.raw_json->>'os_version' AS os_version
+        img.name                                              AS image_name,
+        COALESCE(e.server_os_distro, img.raw_json->>'os_distro')  AS os_type,
+        COALESCE(e.server_os_version, img.raw_json->>'os_version') AS os_version
       FROM enriched e
       LEFT JOIN images img
         ON img.id = e.image_id
@@ -5766,3 +5768,597 @@ def tenant_health_quota(
     except Exception as e:
         logger.warning(f"Quota fetch failed for {project_id}: {e}")
         return {"available": False, "reason": str(e)}
+
+
+# ---------------------------------------------------------------------------
+#  Keypairs
+# ---------------------------------------------------------------------------
+
+VALID_KEYPAIR_SORT_COLUMNS = {
+    "name": "name",
+    "user_id": "user_id",
+    "type": "type",
+    "created_at": "created_at",
+}
+
+@app.get("/keypairs")
+def keypairs(
+    q: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+):
+    where: List[Any] = []
+    params: List[Any] = []
+    if q:
+        where.append("k.name ILIKE %s")
+        params.append(f"%{q}%")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    offset = (page - 1) * page_size
+    sort_col = VALID_KEYPAIR_SORT_COLUMNS.get(sort_by, "name")
+    sort_direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+    sql = f"""
+    WITH filtered AS (
+      SELECT k.name, k.user_id, k.fingerprint, k.type, k.created_at, k.last_seen_at
+      FROM keypairs k {where_sql}
+    )
+    SELECT *, COUNT(*) OVER() AS total_count
+    FROM filtered
+    ORDER BY {sort_col} {sort_direction}, name ASC
+    LIMIT %s OFFSET %s
+    """
+    params.extend([page_size, offset])
+    rows = run_query(sql, tuple(params))
+    total = rows[0].get("total_count", 0) if rows else 0
+    for r in rows:
+        r.pop("total_count", None)
+    return {"page": page, "page_size": page_size, "total": total, "items": rows}
+
+
+# ---------------------------------------------------------------------------
+#  Host Aggregates
+# ---------------------------------------------------------------------------
+
+VALID_AGGREGATE_SORT_COLUMNS = {
+    "name": "name",
+    "availability_zone": "availability_zone",
+    "host_count": "host_count",
+}
+
+@app.get("/host-aggregates")
+def host_aggregates_list(
+    q: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+):
+    where: List[Any] = []
+    params: List[Any] = []
+    if q:
+        where.append("a.name ILIKE %s")
+        params.append(f"%{q}%")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    offset = (page - 1) * page_size
+    sort_col = VALID_AGGREGATE_SORT_COLUMNS.get(sort_by, "name")
+    sort_direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+    sql = f"""
+    WITH filtered AS (
+      SELECT a.id, a.name, a.availability_zone, a.host_count, a.metadata, a.last_seen_at
+      FROM host_aggregates a {where_sql}
+    )
+    SELECT *, COUNT(*) OVER() AS total_count
+    FROM filtered
+    ORDER BY {sort_col} {sort_direction}, name ASC
+    LIMIT %s OFFSET %s
+    """
+    params.extend([page_size, offset])
+    rows = run_query(sql, tuple(params))
+    total = rows[0].get("total_count", 0) if rows else 0
+    for r in rows:
+        r.pop("total_count", None)
+    return {"page": page, "page_size": page_size, "total": total, "items": rows}
+
+
+# ---------------------------------------------------------------------------
+#  Volume Types
+# ---------------------------------------------------------------------------
+
+VALID_VOLUME_TYPE_SORT_COLUMNS = {
+    "name": "name",
+    "is_public": "is_public",
+}
+
+@app.get("/volume-types")
+def volume_types_list(
+    q: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+):
+    where: List[Any] = []
+    params: List[Any] = []
+    if q:
+        where.append("vt.name ILIKE %s")
+        params.append(f"%{q}%")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    offset = (page - 1) * page_size
+    sort_col = VALID_VOLUME_TYPE_SORT_COLUMNS.get(sort_by, "name")
+    sort_direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+    sql = f"""
+    WITH filtered AS (
+      SELECT vt.id, vt.name, vt.description, vt.is_public, vt.extra_specs, vt.last_seen_at,
+             (SELECT COUNT(*) FROM volumes v WHERE v.volume_type = vt.name) AS volume_count
+      FROM volume_types vt {where_sql}
+    )
+    SELECT *, COUNT(*) OVER() AS total_count
+    FROM filtered
+    ORDER BY {sort_col} {sort_direction}, name ASC
+    LIMIT %s OFFSET %s
+    """
+    params.extend([page_size, offset])
+    rows = run_query(sql, tuple(params))
+    total = rows[0].get("total_count", 0) if rows else 0
+    for r in rows:
+        r.pop("total_count", None)
+    return {"page": page, "page_size": page_size, "total": total, "items": rows}
+
+
+# ---------------------------------------------------------------------------
+#  Server Groups
+# ---------------------------------------------------------------------------
+
+VALID_SERVER_GROUP_SORT_COLUMNS = {
+    "name": "name",
+    "member_count": "member_count",
+}
+
+@app.get("/server-groups")
+def server_groups_list(
+    q: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=500),
+    sort_by: str = Query(default="name"),
+    sort_dir: str = Query(default="asc"),
+):
+    where: List[Any] = []
+    params: List[Any] = []
+    if q:
+        where.append("sg.name ILIKE %s")
+        params.append(f"%{q}%")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    offset = (page - 1) * page_size
+    sort_col = VALID_SERVER_GROUP_SORT_COLUMNS.get(sort_by, "name")
+    sort_direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
+    sql = f"""
+    WITH filtered AS (
+      SELECT sg.id, sg.name, sg.project_id, p.name AS project_name,
+             sg.policies, sg.member_count, sg.last_seen_at
+      FROM server_groups sg
+      LEFT JOIN projects p ON p.id = sg.project_id
+      {where_sql}
+    )
+    SELECT *, COUNT(*) OVER() AS total_count
+    FROM filtered
+    ORDER BY {sort_col} {sort_direction}, name ASC
+    LIMIT %s OFFSET %s
+    """
+    params.extend([page_size, offset])
+    rows = run_query(sql, tuple(params))
+    total = rows[0].get("total_count", 0) if rows else 0
+    for r in rows:
+        r.pop("total_count", None)
+    return {"page": page, "page_size": page_size, "total": total, "items": rows}
+
+
+# ---------------------------------------------------------------------------
+#  Project Quotas (from synced DB data)
+# ---------------------------------------------------------------------------
+
+@app.get("/project-quotas")
+def project_quotas_list(
+    project_id: Optional[str] = None,
+    service: Optional[str] = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=500),
+):
+    where: List[str] = []
+    params: List[Any] = []
+    if project_id:
+        where.append("pq.project_id = %s")
+        params.append(project_id)
+    if service:
+        where.append("pq.service = %s")
+        params.append(service)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    offset = (page - 1) * page_size
+    sql = f"""
+    WITH filtered AS (
+      SELECT pq.project_id, p.name AS project_name, pq.service, pq.resource,
+             pq.quota_limit, pq.in_use, pq.reserved, pq.last_seen_at
+      FROM project_quotas pq
+      LEFT JOIN projects p ON p.id = pq.project_id
+      {where_sql}
+    )
+    SELECT *, COUNT(*) OVER() AS total_count
+    FROM filtered
+    ORDER BY project_name, service, resource
+    LIMIT %s OFFSET %s
+    """
+    params.extend([page_size, offset])
+    rows = run_query(sql, tuple(params))
+    total = rows[0].get("total_count", 0) if rows else 0
+    for r in rows:
+        r.pop("total_count", None)
+    return {"page": page, "page_size": page_size, "total": total, "items": rows}
+
+
+# ---------------------------------------------------------------------------
+#  OS Distribution summary (dashboard widget)
+# ---------------------------------------------------------------------------
+
+@app.get("/os-distribution")
+def os_distribution():
+    """Return VM count by OS distro for dashboard widget."""
+    sql = """
+    SELECT
+      COALESCE(s.os_distro, 'unknown') AS os_distro,
+      COUNT(*) AS vm_count,
+      COUNT(*) FILTER (WHERE UPPER(s.status) = 'ACTIVE') AS active_count
+    FROM servers s
+    GROUP BY COALESCE(s.os_distro, 'unknown')
+    ORDER BY vm_count DESC
+    """
+    try:
+        rows = run_query(sql)
+    except Exception:
+        # Fallback if os_distro column doesn't exist yet
+        return {"items": []}
+    return {"items": rows or []}
+
+
+# ---------------------------------------------------------------------------
+#  System Metadata Summary (JSON) – unified view of all resource counts + samples
+# ---------------------------------------------------------------------------
+
+@app.get("/system-metadata-summary")
+def system_metadata_summary(
+    user: User = Depends(require_permission("inventory", "read")),
+):
+    """
+    Return a consolidated JSON summary of all system resources: counts, top
+    samples for each type, last inventory timestamp, OS distribution breakdown,
+    and quota utilisation highlights.
+    """
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # 1. Resource counts
+            cur.execute("""
+                SELECT
+                  (SELECT COUNT(*) FROM domains)          AS domains,
+                  (SELECT COUNT(*) FROM projects)         AS projects,
+                  (SELECT COUNT(*) FROM servers)          AS servers,
+                  (SELECT COUNT(*) FROM volumes)          AS volumes,
+                  (SELECT COUNT(*) FROM snapshots)        AS snapshots,
+                  (SELECT COUNT(*) FROM images)           AS images,
+                  (SELECT COUNT(*) FROM hypervisors)      AS hypervisors,
+                  (SELECT COUNT(*) FROM flavors)          AS flavors,
+                  (SELECT COUNT(*) FROM networks)         AS networks,
+                  (SELECT COUNT(*) FROM subnets)          AS subnets,
+                  (SELECT COUNT(*) FROM routers)          AS routers,
+                  (SELECT COUNT(*) FROM floating_ips)     AS floating_ips,
+                  (SELECT COUNT(*) FROM security_groups)  AS security_groups,
+                  (SELECT COUNT(*) FROM keypairs)         AS keypairs,
+                  (SELECT COUNT(*) FROM host_aggregates)  AS host_aggregates,
+                  (SELECT COUNT(*) FROM volume_types)     AS volume_types,
+                  (SELECT COUNT(*) FROM server_groups)    AS server_groups,
+                  (SELECT COUNT(*) FROM project_quotas)   AS project_quotas
+            """)
+            counts = dict(cur.fetchone())
+
+            # 2. Last inventory timestamp (most recent last_seen_at across key tables)
+            cur.execute("""
+                SELECT GREATEST(
+                    (SELECT MAX(last_seen_at) FROM servers),
+                    (SELECT MAX(last_seen_at) FROM volumes),
+                    (SELECT MAX(last_seen_at) FROM hypervisors),
+                    (SELECT MAX(last_seen_at) FROM networks)
+                ) AS last_inventory_at
+            """)
+            last_inv = cur.fetchone()
+            last_inventory_at = str(last_inv["last_inventory_at"]) if last_inv and last_inv["last_inventory_at"] else None
+
+            # 3. Compute summary: total vCPUs, RAM, Disk from hypervisors
+            cur.execute("""
+                SELECT COALESCE(SUM(vcpus),0) AS total_vcpus,
+                       COALESCE(SUM(memory_mb),0) AS total_memory_mb,
+                       COALESCE(SUM(local_gb),0) AS total_disk_gb,
+                       COALESCE(SUM(running_vms),0) AS total_running_vms
+                FROM hypervisors
+            """)
+            compute = dict(cur.fetchone())
+
+            # Fallback: if running_vms is 0 in hypervisors, count ACTIVE servers
+            if compute.get("total_running_vms", 0) == 0:
+                cur.execute("SELECT COUNT(*) AS active_vms FROM servers WHERE status = 'ACTIVE'")
+                active = cur.fetchone()
+                if active and active["active_vms"] > 0:
+                    compute["total_running_vms"] = active["active_vms"]
+
+            # 4. Storage summary: total volume size, snapshot count
+            cur.execute("""
+                SELECT COALESCE(SUM(size_gb),0) AS total_volume_gb
+                FROM volumes
+            """)
+            storage = dict(cur.fetchone())
+
+            # 5. OS distribution breakdown (top 10)
+            cur.execute("""
+                SELECT COALESCE(os_distro, 'Unknown') AS os_distro,
+                       COUNT(*) AS count
+                FROM servers
+                GROUP BY os_distro
+                ORDER BY count DESC
+                LIMIT 10
+            """)
+            os_distribution = [dict(r) for r in cur.fetchall()]
+
+            # 6. VM status breakdown
+            cur.execute("""
+                SELECT COALESCE(status, 'UNKNOWN') AS status, COUNT(*) AS count
+                FROM servers GROUP BY status ORDER BY count DESC
+            """)
+            vm_status_breakdown = [dict(r) for r in cur.fetchall()]
+
+            # 7. Quota utilisation highlights (top 10 closest to limit)
+            cur.execute("""
+                SELECT p.name AS project_name, pq.service, pq.resource,
+                       pq.quota_limit, pq.in_use,
+                       CASE WHEN pq.quota_limit > 0
+                            THEN ROUND((pq.in_use::decimal / pq.quota_limit) * 100, 1)
+                            ELSE 0 END AS usage_pct
+                FROM project_quotas pq
+                LEFT JOIN projects p ON pq.project_id = p.id
+                WHERE pq.quota_limit > 0 AND pq.in_use > 0
+                ORDER BY usage_pct DESC
+                LIMIT 10
+            """)
+            quota_hotspots = [dict(r) for r in cur.fetchall()]
+
+            # 8. Recent servers (last 10 created)
+            cur.execute("""
+                SELECT s.name, s.status, s.os_distro, s.os_version,
+                       p.name AS project_name, s.created_at
+                FROM servers s LEFT JOIN projects p ON s.project_id = p.id
+                ORDER BY s.created_at DESC LIMIT 10
+            """)
+            recent_servers = [dict(r) for r in cur.fetchall()]
+
+            # 9. Resource breakdown per domain
+            cur.execute("""
+                SELECT d.name AS domain_name,
+                       COUNT(DISTINCT p.id) AS projects,
+                       COUNT(DISTINCT s.id) AS servers,
+                       COUNT(DISTINCT v.id) AS volumes
+                FROM domains d
+                LEFT JOIN projects p ON p.domain_id = d.id
+                LEFT JOIN servers s ON s.project_id = p.id
+                LEFT JOIN volumes v ON v.project_id = p.id
+                GROUP BY d.name ORDER BY servers DESC LIMIT 20
+            """)
+            domain_breakdown = [dict(r) for r in cur.fetchall()]
+
+    return {
+        "generated_utc": _dt.now(_tz.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        "last_inventory_at": last_inventory_at,
+        "counts": counts,
+        "compute": compute,
+        "storage": storage,
+        "os_distribution": os_distribution,
+        "vm_status_breakdown": vm_status_breakdown,
+        "quota_hotspots": quota_hotspots,
+        "recent_servers": recent_servers,
+        "domain_breakdown": domain_breakdown,
+    }
+
+
+# ---------------------------------------------------------------------------
+#  Full Inventory Excel Export (all metadata in one file)
+# ---------------------------------------------------------------------------
+
+@app.get("/export/full-inventory")
+def export_full_inventory(
+    user: User = Depends(require_permission("inventory", "read")),
+):
+    """
+    Generate and download a full inventory Excel file with all system metadata.
+    Contains sheets: Summary, Domains, Projects, Servers, Volumes, Snapshots,
+    Images, Hypervisors, Flavors, Networks, Subnets, Routers, FloatingIPs,
+    SecurityGroups, Keypairs, HostAggregates, VolumeTypes, ServerGroups, ProjectQuotas.
+    """
+    import io, json as _json
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    def _write_sheet(wb, name, rows):
+        ws = wb.create_sheet(name)
+        if not rows:
+            ws.append(["(no data)"])
+            return
+        headers = list(rows[0].keys())
+        ws.append(headers)
+        for c in range(1, len(headers) + 1):
+            ws.cell(1, c).font = Font(bold=True)
+        for r in rows:
+            safe_row = []
+            for h in headers:
+                v = r.get(h)
+                if isinstance(v, (dict, list)):
+                    v = _json.dumps(v, ensure_ascii=False, default=str)
+                if isinstance(v, str) and len(v) > 32767:
+                    v = v[:32760] + "…[trunc]"
+                # openpyxl does not support timezone-aware datetimes
+                if hasattr(v, 'tzinfo') and v.tzinfo is not None:
+                    v = v.replace(tzinfo=None)
+                safe_row.append(v)
+            ws.append(safe_row)
+        ws.freeze_panes = "A2"
+        for col_idx in range(1, len(headers) + 1):
+            max_len = len(str(headers[col_idx - 1]))
+            for row_idx in range(2, min(ws.max_row + 1, 52)):
+                cell_val = ws.cell(row_idx, col_idx).value
+                if cell_val:
+                    max_len = max(max_len, min(len(str(cell_val)), 50))
+            ws.column_dimensions[get_column_letter(col_idx)].width = max_len + 2
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            sheets_data = []
+
+            # Summary counts
+            cur.execute("""
+                SELECT
+                  (SELECT COUNT(*) FROM domains) AS domains,
+                  (SELECT COUNT(*) FROM projects) AS projects,
+                  (SELECT COUNT(*) FROM servers) AS servers,
+                  (SELECT COUNT(*) FROM volumes) AS volumes,
+                  (SELECT COUNT(*) FROM snapshots) AS snapshots,
+                  (SELECT COUNT(*) FROM images) AS images,
+                  (SELECT COUNT(*) FROM hypervisors) AS hypervisors,
+                  (SELECT COUNT(*) FROM flavors) AS flavors,
+                  (SELECT COUNT(*) FROM networks) AS networks,
+                  (SELECT COUNT(*) FROM subnets) AS subnets,
+                  (SELECT COUNT(*) FROM routers) AS routers,
+                  (SELECT COUNT(*) FROM floating_ips) AS floating_ips,
+                  (SELECT COUNT(*) FROM security_groups) AS security_groups,
+                  (SELECT COUNT(*) FROM keypairs) AS keypairs,
+                  (SELECT COUNT(*) FROM host_aggregates) AS host_aggregates,
+                  (SELECT COUNT(*) FROM volume_types) AS volume_types,
+                  (SELECT COUNT(*) FROM server_groups) AS server_groups,
+                  (SELECT COUNT(*) FROM project_quotas) AS project_quotas
+            """)
+            counts = cur.fetchone()
+            from datetime import datetime as _dt, timezone as _tz
+            sheets_data.append(("Summary", [{
+                "Generated_UTC": _dt.now(_tz.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                **{k: v for k, v in counts.items()},
+            }]))
+
+            # All resource sheets
+            table_queries = [
+                ("Domains", "SELECT id, name, last_seen_at FROM domains ORDER BY name"),
+                ("Projects", "SELECT id, name, domain_id, last_seen_at FROM projects ORDER BY name"),
+                ("Servers", """
+                    SELECT s.id, s.name, s.status, s.vm_state, s.hypervisor_hostname,
+                           s.flavor_id, f.name AS flavor_name, f.vcpus, f.ram_mb, f.disk_gb,
+                           s.os_distro, s.os_version, s.image_id,
+                           p.name AS project_name, d.name AS domain_name,
+                           s.created_at, s.last_seen_at
+                    FROM servers s
+                    LEFT JOIN projects p ON s.project_id = p.id
+                    LEFT JOIN domains d ON p.domain_id = d.id
+                    LEFT JOIN flavors f ON s.flavor_id = f.id
+                    ORDER BY s.name
+                """),
+                ("Volumes", """
+                    SELECT v.id, v.name, v.status, v.size_gb, v.volume_type, v.bootable,
+                           p.name AS project_name, d.name AS domain_name,
+                           v.created_at, v.last_seen_at
+                    FROM volumes v
+                    LEFT JOIN projects p ON v.project_id = p.id
+                    LEFT JOIN domains d ON p.domain_id = d.id
+                    ORDER BY v.name
+                """),
+                ("Snapshots", """
+                    SELECT s.id, s.name, s.status, s.size_gb, s.volume_id,
+                           v.name AS volume_name,
+                           p.name AS project_name, d.name AS domain_name,
+                           s.created_at, s.last_seen_at
+                    FROM snapshots s
+                    LEFT JOIN volumes v ON s.volume_id = v.id
+                    LEFT JOIN projects p ON s.project_id = p.id
+                    LEFT JOIN domains d ON p.domain_id = d.id
+                    ORDER BY s.created_at DESC
+                """),
+                ("Images", "SELECT id, name, status, os_distro, os_version, disk_format, min_disk, min_ram, size_bytes, created_at, last_seen_at FROM images ORDER BY name"),
+                ("Hypervisors", "SELECT id, hostname, state, status, vcpus, memory_mb, local_gb, running_vms, created_at, last_seen_at FROM hypervisors ORDER BY hostname"),
+                ("Flavors", "SELECT id, name, vcpus, ram_mb, disk_gb, ephemeral_gb, swap_mb, is_public, last_seen_at FROM flavors ORDER BY name"),
+                ("Networks", """
+                    SELECT n.id, n.name, n.status, n.admin_state_up, n.is_shared, n.is_external,
+                           p.name AS project_name, n.last_seen_at
+                    FROM networks n LEFT JOIN projects p ON n.project_id = p.id ORDER BY n.name
+                """),
+                ("Subnets", """
+                    SELECT s.id, s.name, s.cidr, s.gateway_ip, s.enable_dhcp,
+                           s.network_id, n.name AS network_name, p.name AS project_name,
+                           s.last_seen_at
+                    FROM subnets s
+                    LEFT JOIN networks n ON s.network_id = n.id
+                    LEFT JOIN projects p ON n.project_id = p.id ORDER BY s.name
+                """),
+                ("Routers", """
+                    SELECT r.id, r.name, r.external_net_id,
+                           p.name AS project_name, r.last_seen_at
+                    FROM routers r LEFT JOIN projects p ON r.project_id = p.id ORDER BY r.name
+                """),
+                ("FloatingIPs", """
+                    SELECT f.id, f.floating_ip, f.fixed_ip, f.status, f.port_id,
+                           p.name AS project_name, f.last_seen_at
+                    FROM floating_ips f LEFT JOIN projects p ON f.project_id = p.id
+                    ORDER BY f.floating_ip
+                """),
+                ("SecurityGroups", """
+                    SELECT sg.id, sg.name, sg.description, p.name AS project_name,
+                           sg.created_at, sg.last_seen_at
+                    FROM security_groups sg LEFT JOIN projects p ON sg.project_id = p.id ORDER BY sg.name
+                """),
+                ("Keypairs", "SELECT name, user_id, fingerprint, type, created_at, last_seen_at FROM keypairs ORDER BY name"),
+                ("HostAggregates", "SELECT id, name, availability_zone, host_count, metadata, last_seen_at FROM host_aggregates ORDER BY name"),
+                ("VolumeTypes", "SELECT id, name, description, is_public, extra_specs, last_seen_at FROM volume_types ORDER BY name"),
+                ("ServerGroups", """
+                    SELECT sg.id, sg.name, sg.policies, sg.member_count,
+                           p.name AS project_name, sg.last_seen_at
+                    FROM server_groups sg LEFT JOIN projects p ON sg.project_id = p.id ORDER BY sg.name
+                """),
+                ("ProjectQuotas", """
+                    SELECT pq.project_id, p.name AS project_name, pq.service, pq.resource,
+                           pq.quota_limit, pq.in_use, pq.reserved, pq.last_seen_at
+                    FROM project_quotas pq LEFT JOIN projects p ON pq.project_id = p.id
+                    ORDER BY p.name, pq.service, pq.resource
+                """),
+            ]
+
+            for sheet_name, sql in table_queries:
+                try:
+                    cur.execute(sql)
+                    rows = [dict(r) for r in cur.fetchall()]
+                    sheets_data.append((sheet_name, rows))
+                except Exception as e:
+                    logger.warning(f"Export sheet {sheet_name} failed: {e}")
+                    conn.rollback()
+                    sheets_data.append((sheet_name, [{"error": str(e)}]))
+
+    # Build Excel workbook
+    wb = Workbook()
+    wb.remove(wb.active)
+    for name, data in sheets_data:
+        _write_sheet(wb, name, data)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    ts = _dt.now(_tz.utc).strftime("%Y%m%d_%H%M")
+    filename = f"pf9_full_inventory_{ts}.xlsx"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

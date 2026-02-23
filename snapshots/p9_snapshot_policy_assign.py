@@ -158,9 +158,14 @@ def rule_matches(rule: Dict[str, Any], ctx: Dict[str, Any]) -> bool:
     """
     ctx fields:
       domain_name, tenant_name, volume_name, bootable (bool),
-      size_gb (int), metadata (dict)
+      size_gb (int), metadata (dict), volume_type (str)
     """
     m = rule.get("match", {})
+
+    # volume_type (e.g. "SSD", "HDD", backend-specific)
+    if "volume_type" in m:
+        if not match_value_list(ctx.get("volume_type", ""), m["volume_type"]):
+            return False
 
     # domain_name
     if "domain_name" in m:
@@ -373,6 +378,8 @@ def main():
         bootable = bool_from_str(v.get("bootable"))
         metadata = v.get("metadata") or {}
 
+        volume_type = v.get("volume_type") or ""
+
         ctx = {
             "domain_name": domain_name or "",
             "tenant_name": tenant_name or "",
@@ -380,6 +387,7 @@ def main():
             "size_gb": int(size_gb) if size_gb is not None else None,
             "bootable": bootable,
             "metadata": metadata,
+            "volume_type": volume_type,
         }
 
         auto_current = bool_from_str(metadata.get("auto_snapshot", "false"))
@@ -452,12 +460,16 @@ def main():
 
         print(f"\n[Volume] {vol_id} ({vol_name})")
         print(f"  Tenant: {tenant_name} / Domain: {domain_name}")
-        print(f"  Size: {size_gb} GB, Bootable: {bootable}")
+        print(f"  Size: {size_gb} GB, Bootable: {bootable}, Type: {volume_type or 'N/A'}")
         print(f"  Rules matched: {', '.join(matched_rules) if matched_rules else 'NONE'}")
         print(f"  auto_snapshot: {current_auto_str or '-'} -> {auto_final_str}")
         print(f"  policies:      {current_policies_str or '-'} -> {policies_final_str or '-'}")
         if retention_map:
             print(f"  retention:     {before_ret or '-'} -> {after_ret or '-'}")
+
+        # Record volume_type in metadata for compliance/reporting
+        if volume_type:
+            new_meta["snapshot_volume_type"] = volume_type
 
         # IMPORTANT: use admin_project_id for the Cinder v3 URL, so admin token can
         # update metadata across all tenants.

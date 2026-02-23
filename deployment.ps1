@@ -767,7 +767,9 @@ $provisioningMigrations = @(
     @{File="db\migrate_search.sql"; Desc="Ops Search tables (search_documents, search_indexer_state, pg_trgm)"},
     @{File="db\migrate_runbooks.sql"; Desc="Runbooks framework (runbooks, approval_policies, executions, approvals)"},
     @{File="db\migrate_fix_drift_columns.sql"; Desc="Drift detection: add missing columns, fix field-name mismatches"},
-    @{File="db\migrate_copilot.sql"; Desc="Ops Copilot (copilot_history, copilot_feedback, copilot_config)"}
+    @{File="db\migrate_copilot.sql"; Desc="Ops Copilot (copilot_history, copilot_feedback, copilot_config)"},
+    @{File="db\migrate_os_tracking.sql"; Desc="OS tracking: image_id, os_distro, os_version on servers/images"},
+    @{File="db\migrate_metadata_tables.sql"; Desc="Additional metadata: keypairs, server_groups, aggregates, volume_types, quotas"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

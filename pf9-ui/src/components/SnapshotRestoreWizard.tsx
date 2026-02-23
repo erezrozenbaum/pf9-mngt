@@ -215,6 +215,8 @@ function stepLabel(name: string): string {
     VALIDATE_LIVE_STATE: "Validate live state",
     ENSURE_SERVICE_USER: "Authenticate service user",
     QUOTA_CHECK: "Verify quota",
+    SAFETY_SNAPSHOT: "Take safety snapshot",
+    WAIT_SAFETY_SNAPSHOT: "Wait for safety snapshot",
     DELETE_EXISTING_VM: "Delete existing VM",
     WAIT_VM_DELETED: "Wait for VM deletion",
     CLEANUP_OLD_PORTS: "Release old ports / free IPs",
@@ -297,6 +299,7 @@ const SnapshotRestoreWizard: React.FC = () => {
   // Storage cleanup options
   const [cleanupOldStorage, setCleanupOldStorage] = useState(false);
   const [deleteSourceSnapshot, setDeleteSourceSnapshot] = useState(false);
+  const [safetySnapshot, setSafetySnapshot] = useState(true); // Default ON for safety
 
   // Screen 3: Execute
   const [job, setJob] = useState<RestoreJob | null>(null);
@@ -524,6 +527,9 @@ const SnapshotRestoreWizard: React.FC = () => {
       }
       if (mode === "REPLACE" && cleanupOldStorage) {
         body.cleanup_old_storage = true;
+      }
+      if (mode === "REPLACE" && safetySnapshot) {
+        body.safety_snapshot_before_replace = true;
       }
       if (deleteSourceSnapshot) {
         body.delete_source_snapshot = true;
@@ -1403,7 +1409,49 @@ const SnapshotRestoreWizard: React.FC = () => {
                   </div>
                 </div>
               </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={safetySnapshot}
+                  onChange={(e) => setSafetySnapshot(e.target.checked)}
+                  disabled={mode !== "REPLACE"}
+                />
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: "0.85rem" }}>🛡️ Safety snapshot before replace</div>
+                  <div style={{ fontSize: "0.75rem", color: "#888" }}>
+                    {mode === "REPLACE"
+                      ? "Takes a snapshot of the current boot volume before deleting, so you can recover if the restore fails"
+                      : "Only applicable in REPLACE mode"}
+                  </div>
+                </div>
+              </label>
             </div>
+
+            {/* Quota Alert for Side-by-Side (NEW) mode */}
+            {plan && mode === "NEW" && plan.quota_check?.details && (
+              <div style={{ marginBottom: 18, padding: 12, background: "#e8f5e9", borderRadius: 8, border: "1px solid #c8e6c9" }}>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 8 }}>Current Project Quota</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontSize: "0.8rem" }}>
+                  {Object.entries(plan.quota_check.details as Record<string, {limit: number, in_use: number, remaining: number}>).map(([key, q]) => {
+                    const labels: Record<string, string> = { instances: "Instances", cores: "vCPUs", ram: "RAM (MB)", volumes: "Volumes", gigabytes: "Storage (GB)" };
+                    const pct = q.limit > 0 ? Math.round(q.in_use / q.limit * 100) : 0;
+                    const color = q.remaining <= 0 ? "#c62828" : q.remaining <= 2 ? "#e65100" : "#2e7d32";
+                    return (
+                      <div key={key} style={{ padding: "6px 8px", background: "#fff", borderRadius: 4, border: `1px solid ${color}33` }}>
+                        <div style={{ fontWeight: 500, fontSize: "0.78rem" }}>{labels[key] || key}</div>
+                        <div style={{ color, fontWeight: 600 }}>{q.remaining >= 0 ? q.remaining : "∞"} free</div>
+                        <div style={{ fontSize: "0.72rem", color: "#888" }}>{q.in_use}/{q.limit > 0 ? q.limit : "∞"} used ({pct}%)</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {!plan.quota_check.can_create_new_vm && (
+                  <div style={{ marginTop: 8, padding: 8, background: "#fce4ec", borderRadius: 4, color: "#c62828", fontSize: "0.82rem", fontWeight: 600 }}>
+                    ⚠️ Insufficient quota for side-by-side restore! Free up resources or use REPLACE mode.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* New VM Name */}
             <div style={{ marginBottom: 18 }}>
