@@ -78,6 +78,10 @@ class MFAUserListItem(BaseModel):
 class MFADisableRequest(BaseModel):
     code: str  # require current TOTP code to disable
 
+class MFAAdminResetRequest(BaseModel):
+    username: str
+    reason: Optional[str] = None
+
 class MFABackupCodesResponse(BaseModel):
     backup_codes: List[str]
 
@@ -345,3 +349,52 @@ async def mfa_user_list(
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# DELETE /auth/mfa/admin-reset – Admin force-reset MFA for a user
+# ---------------------------------------------------------------------------
+@router.delete("/admin-reset/{username}")
+async def mfa_admin_reset(
+    username: str,
+    reason: Optional[str] = None,
+    _perm=Depends(require_permission("mfa", "admin")),
+    current_user: User = Depends(require_authentication),
+):
+    """Force-disable/reset MFA for a user. Admin only.
+    Used when a user loses their authenticator device and backup codes."""
+    if username == current_user.username:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot admin-reset your own MFA. Use the normal disable flow.",
+        )
+
+    record = _get_mfa_record(username)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"No MFA record found for user '{username}'")
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_mfa WHERE username = %s", (username,))
+        conn.commit()
+
+    logger.warning(
+        "MFA force-reset for user '%s' by admin '%s'. Reason: %s",
+        username, current_user.username, reason or "not provided",
+    )
+
+    # Log to auth audit if available
+    try:
+        from auth import log_auth_event
+        log_auth_event(
+            current_user.username, "mfa_admin_reset", True,
+            details=f"Reset MFA for {username}. Reason: {reason or 'not provided'}",
+        )
+    except Exception:
+        pass
+
+    return {
+        "detail": f"MFA has been reset for user '{username}'. They can now re-enroll.",
+        "username": username,
+        "reset_by": current_user.username,
+    }

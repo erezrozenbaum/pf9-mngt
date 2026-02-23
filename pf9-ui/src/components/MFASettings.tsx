@@ -19,9 +19,9 @@ interface MFAStatus {
 }
 
 interface MFASetupResponse {
-  totp_secret: string;
+  secret: string;
   qr_code_base64: string;
-  provisioning_uri: string;
+  otpauth_url: string;
 }
 
 interface MFAVerifySetupResponse {
@@ -52,6 +52,9 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
   const [verifyCode, setVerifyCode] = useState("");
   const [disableCode, setDisableCode] = useState("");
   const [step, setStep] = useState<"status" | "setup" | "verify" | "backup_codes" | "disable" | "users">("status");
+
+  const [resetTarget, setResetTarget] = useState<string | null>(null);
+  const [resetReason, setResetReason] = useState("");
 
   const token = localStorage.getItem("auth_token") || "";
   const headers: Record<string, string> = {
@@ -160,6 +163,29 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
       setStep("status");
       setDisableCode("");
       await fetchStatus();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Admin Reset MFA for another user ──
+  const handleAdminReset = async (username: string) => {
+    if (!confirm(`Are you sure you want to reset MFA for ${username}? They will need to re-enroll.`)) return;
+    setLoading(true); clearMessages();
+    try {
+      const res = await fetch(`${API_BASE}/auth/mfa/admin-reset/${encodeURIComponent(username)}?reason=${encodeURIComponent(resetReason || "Admin reset via UI")}`, {
+        method: "DELETE", headers,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || "Failed to reset MFA");
+      }
+      setSuccess(`MFA has been reset for ${username}. They can now re-enroll.`);
+      setResetTarget(null);
+      setResetReason("");
+      await fetchUsers();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -283,7 +309,7 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
                 Scan this QR code with <strong>Google Authenticator</strong> or any TOTP-compatible app:
               </p>
               <img
-                src={`data:image/png;base64,${setupData.qr_code_base64}`}
+                src={setupData.qr_code_base64}
                 alt="MFA QR Code"
                 style={{ width: "200px", height: "200px", borderRadius: "12px", border: "2px solid var(--border-color, #eee)", padding: "8px", background: "#fff" }}
               />
@@ -298,7 +324,7 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
                 borderRadius: "8px", fontFamily: "monospace", fontSize: "0.9rem",
                 wordBreak: "break-all", textAlign: "center", letterSpacing: "0.15em",
               }}>
-                {setupData.totp_secret}
+                {setupData.secret}
               </div>
             </details>
 
@@ -425,6 +451,7 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
                     <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "2px solid var(--border-color, #eee)", fontWeight: 600 }}>Username</th>
                     <th style={{ textAlign: "center", padding: "8px 10px", borderBottom: "2px solid var(--border-color, #eee)", fontWeight: 600 }}>MFA</th>
                     <th style={{ textAlign: "left", padding: "8px 10px", borderBottom: "2px solid var(--border-color, #eee)", fontWeight: 600 }}>Enrolled</th>
+                    <th style={{ textAlign: "center", padding: "8px 10px", borderBottom: "2px solid var(--border-color, #eee)", fontWeight: 600 }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -438,6 +465,41 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
                       </td>
                       <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border-color, #f0f0f0)", color: "var(--text-secondary, #888)" }}>
                         {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                      </td>
+                      <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border-color, #f0f0f0)", textAlign: "center" }}>
+                        {u.mfa_enabled && (
+                          resetTarget === u.username ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "4px", alignItems: "center" }}>
+                              <input
+                                type="text" placeholder="Reason (optional)" value={resetReason}
+                                onChange={(e) => setResetReason(e.target.value)}
+                                style={{ ...inputStyle, fontSize: "0.75rem", padding: "4px 6px", letterSpacing: "normal", textAlign: "left", width: "140px" }}
+                              />
+                              <div style={{ display: "flex", gap: "4px" }}>
+                                <button
+                                  style={{ ...btnDanger, fontSize: "0.7rem", padding: "3px 8px" }}
+                                  onClick={() => handleAdminReset(u.username)}
+                                  disabled={loading}
+                                >
+                                  Confirm Reset
+                                </button>
+                                <button
+                                  style={{ ...btnSecondary, fontSize: "0.7rem", padding: "3px 8px" }}
+                                  onClick={() => { setResetTarget(null); setResetReason(""); }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              style={{ ...btnSecondary, fontSize: "0.75rem", padding: "4px 10px", color: "#ef4444", borderColor: "#ef4444" }}
+                              onClick={() => { setResetTarget(u.username); setResetReason(""); clearMessages(); }}
+                            >
+                              🔄 Reset
+                            </button>
+                          )
+                        )}
                       </td>
                     </tr>
                   ))}

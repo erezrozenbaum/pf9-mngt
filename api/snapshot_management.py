@@ -214,6 +214,7 @@ def _build_compliance_from_volumes(
             v.id              AS volume_id,
             v.name            AS volume_name,
             v.project_id,
+            v.volume_type,
             proj.name         AS project_name,
             proj.domain_id    AS tenant_id,
             dom.name          AS tenant_name,
@@ -282,6 +283,7 @@ def _build_compliance_from_volumes(
             compliance_rows.append({
                 "volume_id":        vol_id,
                 "volume_name":      vol_name if vol_name else vol_id,
+                "volume_type":      row.get("volume_type") or "",
                 "tenant_id":        row_tenant_id or "",
                 "tenant_name":      row.get("tenant_name") or row_tenant_id or "",
                 "project_id":       row_project_id or "",

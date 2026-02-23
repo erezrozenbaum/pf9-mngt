@@ -124,6 +124,32 @@ def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
             )
 
 
+def _infer_os_from_image_name(name: str) -> Optional[str]:
+    """Best-effort OS distro inference from image name."""
+    if not name:
+        return None
+    low = name.lower()
+    os_patterns = [
+        ('windows', 'windows'), ('win', 'windows'),
+        ('ubuntu', 'ubuntu'), ('ubun', 'ubuntu'),
+        ('centos', 'centos'), ('rhel', 'rhel'), ('red hat', 'rhel'),
+        ('debian', 'debian'), ('fedora', 'fedora'),
+        ('suse', 'suse'), ('sles', 'suse'),
+        ('coreos', 'coreos'), ('flatcar', 'flatcar'),
+        ('cirros', 'cirros'), ('alpine', 'alpine'),
+        ('rocky', 'rocky'), ('alma', 'almalinux'),
+        ('oracle', 'oracle linux'), ('freebsd', 'freebsd'),
+        ('forti', 'fortios'), ('vjailbreak', 'linux'),
+        ('2008', 'windows'), ('2012', 'windows'),
+        ('2016', 'windows'), ('2019', 'windows'),
+        ('2022', 'windows'), ('2025', 'windows'),
+    ]
+    for pattern, distro in os_patterns:
+        if pattern in low:
+            return distro
+    return None
+
+
 def _upsert_with_history(
     conn,
     table_name: str,
@@ -216,8 +242,9 @@ def _upsert_with_history(
                     if old_row and drift_rules:
                         _detect_drift(cur, table_name, rid, old_row, record, drift_rules)
 
-        except psycopg2.errors.UndefinedTable:
-            # History table doesn't exist, skip
+        except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn) as e:
+            # History table doesn't exist or is missing columns, skip
+            conn.rollback()
             pass
     
     return len(records)
@@ -272,6 +299,7 @@ def upsert_hypervisors(conn, hypervisors: List[Dict[str, Any]], run_id: Optional
             'local_gb': h.get('local_gb'),
             'state': h.get('state'),
             'status': h.get('status'),
+            'running_vms': h.get('running_vms', 0),
             'raw_json': json.dumps(h) if isinstance(h, dict) else h,
         })
     
@@ -279,7 +307,7 @@ def upsert_hypervisors(conn, hypervisors: List[Dict[str, Any]], run_id: Optional
 
 
 def upsert_servers(conn, servers: List[Dict[str, Any]], run_id: Optional[int] = None) -> int:
-    """Upsert servers (instances) into the database"""
+    """Upsert servers (instances) into the database, including OS information from images."""
     if not servers:
         return 0
     
@@ -287,6 +315,17 @@ def upsert_servers(conn, servers: List[Dict[str, Any]], run_id: Optional[int] = 
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM projects")
         valid_project_ids = set(row[0] for row in cur.fetchall())
+
+    # Build image_id → OS info lookup from images table
+    image_os_map: Dict[str, Dict[str, Optional[str]]] = {}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT id, os_distro, os_version, name FROM images")
+        for row in cur.fetchall():
+            image_os_map[row['id']] = {
+                'os_distro': row.get('os_distro'),
+                'os_version': row.get('os_version'),
+                'name': row.get('name'),
+            }
     
     records = []
     for s in servers:
@@ -302,6 +341,32 @@ def upsert_servers(conn, servers: List[Dict[str, Any]], run_id: Optional[int] = 
         if not project_id or project_id not in valid_project_ids:
             project_id = None
         
+        # Extract image_id (can be dict or empty string for volume-backed VMs)
+        image_ref = s.get('image')
+        image_id = None
+        if isinstance(image_ref, dict) and image_ref.get('id'):
+            image_id = image_ref['id']
+        elif isinstance(image_ref, str) and image_ref:
+            image_id = image_ref
+
+        # Determine OS info: first from server metadata, then from image lookup
+        os_distro = (s.get('metadata') or {}).get('os_distro')
+        os_version = (s.get('metadata') or {}).get('os_version')
+
+        if image_id and image_id in image_os_map:
+            img = image_os_map[image_id]
+            if not os_distro:
+                os_distro = img.get('os_distro')
+            if not os_version:
+                os_version = img.get('os_version')
+            # Fallback: try to infer from image name if no Glance metadata
+            if not os_distro and img.get('name'):
+                os_distro = _infer_os_from_image_name(img['name'])
+
+        # Last resort: try to infer from VM name itself
+        if not os_distro:
+            os_distro = _infer_os_from_image_name(s.get('name', ''))
+
         records.append({
             'id': s.get('id'),
             'name': s.get('name'),
@@ -310,6 +375,9 @@ def upsert_servers(conn, servers: List[Dict[str, Any]], run_id: Optional[int] = 
             'vm_state': s.get('OS-EXT-STS:vm_state'),
             'flavor_id': s.get('flavor', {}).get('id') if isinstance(s.get('flavor'), dict) else s.get('flavor'),
             'hypervisor_hostname': s.get('OS-EXT-SRV-ATTR:hypervisor_hostname'),
+            'image_id': image_id,
+            'os_distro': os_distro,
+            'os_version': os_version,
             'created_at': created_at,
             'raw_json': json.dumps(s) if isinstance(s, dict) else s,
         })
@@ -557,7 +625,7 @@ def upsert_flavors(conn, flavors: List[Dict[str, Any]], run_id: Optional[int] = 
 
 
 def upsert_images(conn, images: List[Dict[str, Any]], run_id: Optional[int] = None) -> int:
-    """Upsert images into the database"""
+    """Upsert images into the database, including OS metadata from Glance properties."""
     if not images:
         return 0
     
@@ -578,6 +646,16 @@ def upsert_images(conn, images: List[Dict[str, Any]], run_id: Optional[int] = No
             except:
                 updated_at = None
         
+        # Extract OS metadata from Glance image properties
+        # Glance stores these as top-level properties or inside 'properties' dict
+        os_distro = i.get('os_distro') or (i.get('properties') or {}).get('os_distro')
+        os_version = i.get('os_version') or (i.get('properties') or {}).get('os_version')
+        os_type = i.get('os_type') or (i.get('properties') or {}).get('os_type')
+
+        # Fallback: try to infer from image name
+        if not os_distro:
+            os_distro = _infer_os_from_image_name(i.get('name'))
+
         records.append({
             'id': i.get('id'),
             'name': i.get('name'),
@@ -588,6 +666,9 @@ def upsert_images(conn, images: List[Dict[str, Any]], run_id: Optional[int] = No
             'disk_format': i.get('disk_format'),
             'container_format': i.get('container_format'),
             'checksum': i.get('checksum'),
+            'os_distro': os_distro,
+            'os_version': os_version,
+            'os_type': os_type,
             'created_at': created_at,
             'updated_at': updated_at,
             'raw_json': json.dumps(i) if isinstance(i, dict) else i,
@@ -935,3 +1016,189 @@ def upsert_security_group_rules(conn, rules: List[Dict[str, Any]], run_id: Optio
         return 0
 
     return _upsert_with_history(conn, 'security_group_rules', records, 'id', run_id)
+
+
+# =====================================================================
+# Additional metadata upsert functions
+# =====================================================================
+
+
+def upsert_keypairs(conn, keypairs: List[Dict[str, Any]]) -> int:
+    """Upsert Nova keypairs into the database."""
+    if not keypairs:
+        return 0
+
+    records = []
+    for kp in keypairs:
+        created_at = kp.get('created_at')
+        if created_at and isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            except:
+                created_at = None
+
+        records.append({
+            'name': kp.get('name'),
+            'user_id': kp.get('user_id', ''),
+            'fingerprint': kp.get('fingerprint'),
+            'type': kp.get('type', 'ssh'),
+            'created_at': created_at,
+            'raw_json': json.dumps(kp) if isinstance(kp, dict) else kp,
+        })
+
+    if not records:
+        return 0
+
+    # Manual upsert (composite PK, no history tracking needed)
+    with conn.cursor() as cur:
+        for r in records:
+            cur.execute("""
+                INSERT INTO keypairs (name, user_id, fingerprint, type, created_at, raw_json, last_seen_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (name, user_id) DO UPDATE SET
+                    fingerprint = EXCLUDED.fingerprint,
+                    type = EXCLUDED.type,
+                    raw_json = EXCLUDED.raw_json,
+                    last_seen_at = NOW()
+            """, (r['name'], r['user_id'], r['fingerprint'], r['type'], r['created_at'], r['raw_json']))
+
+    return len(records)
+
+
+def upsert_server_groups(conn, server_groups: List[Dict[str, Any]]) -> int:
+    """Upsert Nova server groups into the database."""
+    if not server_groups:
+        return 0
+
+    records = []
+    for sg in server_groups:
+        policies = sg.get('policies', [])
+        members = sg.get('members', [])
+        records.append({
+            'id': sg.get('id'),
+            'name': sg.get('name'),
+            'project_id': sg.get('project_id'),
+            'policies': policies,
+            'member_count': len(members),
+            'raw_json': json.dumps(sg) if isinstance(sg, dict) else sg,
+        })
+
+    if not records:
+        return 0
+
+    with conn.cursor() as cur:
+        for r in records:
+            cur.execute("""
+                INSERT INTO server_groups (id, name, project_id, policies, member_count, raw_json, last_seen_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    project_id = EXCLUDED.project_id,
+                    policies = EXCLUDED.policies,
+                    member_count = EXCLUDED.member_count,
+                    raw_json = EXCLUDED.raw_json,
+                    last_seen_at = NOW()
+            """, (r['id'], r['name'], r['project_id'], r['policies'], r['member_count'], r['raw_json']))
+
+    return len(records)
+
+
+def upsert_host_aggregates(conn, aggregates: List[Dict[str, Any]]) -> int:
+    """Upsert Nova host aggregates into the database."""
+    if not aggregates:
+        return 0
+
+    with conn.cursor() as cur:
+        count = 0
+        for agg in aggregates:
+            hosts = agg.get('hosts', [])
+            metadata = agg.get('metadata', {})
+            cur.execute("""
+                INSERT INTO host_aggregates (id, name, availability_zone, host_count, metadata, raw_json, last_seen_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    availability_zone = EXCLUDED.availability_zone,
+                    host_count = EXCLUDED.host_count,
+                    metadata = EXCLUDED.metadata,
+                    raw_json = EXCLUDED.raw_json,
+                    last_seen_at = NOW()
+            """, (
+                agg.get('id'), agg.get('name'), agg.get('availability_zone'),
+                len(hosts), json.dumps(metadata), json.dumps(agg) if isinstance(agg, dict) else agg,
+            ))
+            count += 1
+
+    return count
+
+
+def upsert_volume_types(conn, volume_types: List[Dict[str, Any]]) -> int:
+    """Upsert Cinder volume types into the database."""
+    if not volume_types:
+        return 0
+
+    with conn.cursor() as cur:
+        count = 0
+        for vt in volume_types:
+            extra_specs = vt.get('extra_specs', {})
+            cur.execute("""
+                INSERT INTO volume_types (id, name, description, is_public, extra_specs, raw_json, last_seen_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = EXCLUDED.description,
+                    is_public = EXCLUDED.is_public,
+                    extra_specs = EXCLUDED.extra_specs,
+                    raw_json = EXCLUDED.raw_json,
+                    last_seen_at = NOW()
+            """, (
+                vt.get('id'), vt.get('name'), vt.get('description'),
+                vt.get('is_public', True), json.dumps(extra_specs),
+                json.dumps(vt) if isinstance(vt, dict) else vt,
+            ))
+            count += 1
+
+    return count
+
+
+def upsert_project_quotas(conn, project_id: str, service: str, quota_data: Dict[str, Any]) -> int:
+    """
+    Upsert project quotas for a specific service (nova/cinder/neutron).
+    quota_data is the raw quota_set dict from the API.
+    """
+    if not quota_data:
+        return 0
+
+    # Skip non-resource keys
+    skip_keys = {'id', 'project_id'}
+
+    with conn.cursor() as cur:
+        count = 0
+        for resource, value in quota_data.items():
+            if resource in skip_keys:
+                continue
+
+            # Value can be an int (simple) or a dict with limit/in_use/reserved (detail)
+            if isinstance(value, dict):
+                quota_limit = value.get('limit')
+                in_use = value.get('in_use', 0)
+                reserved = value.get('reserved', 0)
+            elif isinstance(value, int):
+                quota_limit = value
+                in_use = None
+                reserved = None
+            else:
+                continue
+
+            cur.execute("""
+                INSERT INTO project_quotas (project_id, service, resource, quota_limit, in_use, reserved, last_seen_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (project_id, service, resource) DO UPDATE SET
+                    quota_limit = EXCLUDED.quota_limit,
+                    in_use = EXCLUDED.in_use,
+                    reserved = EXCLUDED.reserved,
+                    last_seen_at = NOW()
+            """, (project_id, service, resource, quota_limit, in_use, reserved))
+            count += 1
+
+    return count
