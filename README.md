@@ -247,8 +247,12 @@ A 15-minute explainer video walking through the UI and key features:
 - **Paginated Results**: Relevance-ranked results with highlighted keyword snippets and metadata pill cards
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
-### � Policy-as-Code Runbooks *(v1.21)*
-- **Runbook Catalogue**: Browse 5 built-in operational runbooks (Stuck VM Remediation, Orphan Resource Cleanup, Security Group Audit, Quota Threshold Check, Diagnostics Bundle) with schema-driven parameter forms
+### 📋 Policy-as-Code Runbooks *(v1.21 → v1.25)*
+- **Runbook Catalogue**: Browse 12 built-in operational runbooks with schema-driven parameter forms:
+  - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
+  - **Security**: Security Group Audit, Security & Compliance Audit
+  - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector
+  - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
 - **Operator-Facing Trigger**: Tier 1 operators can browse and trigger runbooks with dry-run support — no admin access needed
 - **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: auto-approve, single approval, multi-approval
 - **Admin Governance**: Execution History, Approvals queue, and Approval Policies managed via 3 dedicated sub-tabs in the Admin panel

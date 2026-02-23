@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] - 2026-02-23
+
+### Added
+- **7 New Operational Runbooks** — Expanding the runbook catalogue from 5 to 12 built-in engines, all integrated with the existing approval workflow:
+  - **VM Health Quick Fix** (`vm_health_quickfix`, category: vm, risk: medium) — Single-VM diagnostic that checks power state, hypervisor state, port bindings, volume attachments, network, security groups, and floating IPs. Optional auto-restart (soft/hard/guest_os) with ERROR-state reset. Supports dry-run.
+  - **Snapshot Before Escalation** (`snapshot_before_escalation`, category: vm, risk: low) — Creates a tagged snapshot with metadata (reference ID, actor, timestamp) before escalating a ticket to Tier 2. Captures VM state summary and console log tail. Supports dry-run.
+  - **Upgrade Opportunity Detector** (`upgrade_opportunity_detector`, category: quota, risk: low) — Scans all tenants for upsell signals: quota pressure (>80%), undersized flavors (<2 vCPU or <2 GB RAM), old images (>2 years), deprecated images. Calculates potential revenue delta with configurable pricing.
+  - **Monthly Executive Snapshot** (`monthly_executive_snapshot`, category: general, risk: low) — Database-driven executive report: tenant count, VM/volume/storage totals, compliance %, hypervisor capacity risk, revenue estimate, top-N risk tenants (scored by error VMs + missing snapshots), month-over-month deltas from history tables.
+  - **Cost Leakage Report** (`cost_leakage_report`, category: general, risk: low) — Identifies wasted spend: idle VMs (<5% CPU from metrics cache), long-SHUTOFF VMs (>30 days), detached volumes (>7 days), unused floating IPs, oversized VMs (<20% RAM). Dollar amounts per item with configurable pricing.
+  - **Password Reset + Console Access** (`password_reset_console`, category: vm, risk: high) — Cloud-init validation, Nova password reset with auto-generation, VNC/SPICE console URL with configurable expiry. Full audit log to `activity_log` table. High-risk: requires admin approval for operator/admin triggers.
+  - **Security & Compliance Audit** (`security_compliance_audit`, category: security, risk: low) — Extended security audit: 0.0.0.0/0 ingress rules, wide port ranges (0-65535), stale users (no activity in N days), unencrypted volumes. Severity-weighted scoring.
+- **Approval Policies for New Runbooks** — All 7 new runbooks have approval policies for operator, admin, and superadmin roles. `password_reset_console` uses `single_approval` for operator and admin triggers; all others use `auto_approve`.
+- **UI Result Renderers** — Dedicated friendly result panels for each new runbook: diagnostic checklists, snapshot metadata tables, opportunity breakdowns, KPI grids with month-over-month deltas, cost leakage category tables, step-by-step password/console status, and severity-coded compliance tables.
+- **New Migration File** — `db/migrate_new_runbooks.sql` for upgrading existing databases (idempotent `ON CONFLICT` inserts).
+
 ## [1.24.3] - 2026-02-23
 
 ### Fixed
