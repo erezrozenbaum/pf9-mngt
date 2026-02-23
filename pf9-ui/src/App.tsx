@@ -1472,6 +1472,7 @@ const App: React.FC = () => {
 
   // History tab filters & sort
   const [historyFilterType, setHistoryFilterType] = useState<string>("all");
+  const [historyFilterResource, setHistoryFilterResource] = useState<string>("all");
   const [historyFilterProject, setHistoryFilterProject] = useState<string>("all");
   const [historyFilterDomain, setHistoryFilterDomain] = useState<string>("all");
   const [historyFilterSearch, setHistoryFilterSearch] = useState<string>("");
@@ -1638,9 +1639,12 @@ const App: React.FC = () => {
     setIsRefreshingInventory(true);
     setError(null);
     try {
+      const token = localStorage.getItem('auth_token');
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${API_BASE}/admin/inventory/refresh`, {
         method: 'POST',
-        credentials: 'include',
+        headers,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -2443,11 +2447,21 @@ const App: React.FC = () => {
     return Array.from(doms).sort();
   }, [recentChanges]);
 
+  const historyResourceNames = useMemo(() => {
+    const names = new Set<string>();
+    (recentChanges || []).forEach(c => { if (c.resource_name) names.add(c.resource_name); });
+    return Array.from(names).sort();
+  }, [recentChanges]);
+
   const filteredSortedChanges = useMemo(() => {
     let list = recentChanges || [];
     // Filter by resource type
     if (historyFilterType !== "all") {
       list = list.filter(c => c.resource_type === historyFilterType);
+    }
+    // Filter by resource name
+    if (historyFilterResource !== "all") {
+      list = list.filter(c => (c.resource_name || "N/A") === historyFilterResource);
     }
     // Filter by project
     if (historyFilterProject !== "all") {
@@ -2505,7 +2519,7 @@ const App: React.FC = () => {
       return 0;
     });
     return sorted;
-  }, [recentChanges, historyFilterType, historyFilterProject, historyFilterDomain, historyFilterSearch, historySortField, historySortDir]);
+  }, [recentChanges, historyFilterType, historyFilterResource, historyFilterProject, historyFilterDomain, historyFilterSearch, historySortField, historySortDir]);
 
   function toggleHistorySort(field: string) {
     if (historySortField === field) {
@@ -4876,6 +4890,13 @@ const App: React.FC = () => {
                   </select>
                 </label>
                 <label>
+                  Resource:
+                  <select value={historyFilterResource} onChange={e => setHistoryFilterResource(e.target.value)}>
+                    <option value="all">All resources</option>
+                    {historyResourceNames.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+                <label>
                   Project:
                   <select value={historyFilterProject} onChange={e => setHistoryFilterProject(e.target.value)}>
                     <option value="all">All projects</option>
@@ -4899,11 +4920,11 @@ const App: React.FC = () => {
                     style={{width:'200px',padding:'4px 8px',borderRadius:'4px',border:'1px solid #555',background:'var(--bg-secondary, #1e1e2e)',color:'inherit'}}
                   />
                 </label>
-                {(historyFilterType !== "all" || historyFilterProject !== "all" || historyFilterDomain !== "all" || historyFilterSearch) && (
+                {(historyFilterType !== "all" || historyFilterResource !== "all" || historyFilterProject !== "all" || historyFilterDomain !== "all" || historyFilterSearch) && (
                   <button
                     className="pf9-button-small"
                     style={{marginLeft:'4px'}}
-                    onClick={() => { setHistoryFilterType("all"); setHistoryFilterProject("all"); setHistoryFilterDomain("all"); setHistoryFilterSearch(""); }}
+                    onClick={() => { setHistoryFilterType("all"); setHistoryFilterResource("all"); setHistoryFilterProject("all"); setHistoryFilterDomain("all"); setHistoryFilterSearch(""); }}
                   >
                     Clear Filters
                   </button>
@@ -4936,18 +4957,17 @@ const App: React.FC = () => {
                           if (change.change_hash == null) return null;
                           const projectName = change.project_name || "N/A";
                           const domainName = change.domain_name || "N/A";
-                          const changeTypeClass = change.resource_type === 'deletion' ?
+                          const isDeletion = change.change_description === 'Resource deleted' || change.change_hash?.startsWith('deleted-');
+                          const changeTypeClass = isDeletion ?
                             'pf9-badge pf9-badge-warning' : 
-                            change.change_description?.includes('deletion') ? 
-                            'pf9-badge pf9-badge-warning' : 'pf9-badge pf9-badge-info';
-                          const isDeletion = change.resource_type === 'deletion';
+                            'pf9-badge pf9-badge-info';
                           
                           return (
                             <tr key={idx}>
                               <td>{formatDate(change.actual_time || change.recorded_at)}</td>
                               <td>
                                 <span className={changeTypeClass}>
-                                  {isDeletion ? '🗑 deletion' : change.resource_type}
+                                  {isDeletion ? `🗑 ${change.resource_type}` : change.resource_type}
                                 </span>
                               </td>
                               <td>{change.resource_name || "N/A"}</td>
