@@ -632,6 +632,1015 @@ def _engine_diagnostics(params: dict, dry_run: bool, actor: str) -> dict:
     }
 
 
+# ===== Engine: vm_health_quickfix =========================================
+
+@register_engine("vm_health_quickfix")
+def _engine_vm_health(params: dict, dry_run: bool, actor: str) -> dict:
+    """Diagnose a VM and optionally restart it."""
+    from pf9_control import get_client
+    import secrets as _secrets
+
+    server_id = params.get("server_id", "")
+    if not server_id:
+        return {"result": {"error": "server_id is required"}, "items_found": 0, "items_actioned": 0}
+
+    auto_restart = params.get("auto_restart", False)
+    restart_type = params.get("restart_type", "soft")
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    checks: Dict[str, Any] = {}
+    issues: list = []
+
+    # 1. Get server detail
+    srv_url = f"{client.nova_endpoint}/servers/{server_id}"
+    resp = client.session.get(srv_url, headers=headers)
+    if resp.status_code != 200:
+        return {"result": {"error": f"Server not found: HTTP {resp.status_code}"},
+                "items_found": 0, "items_actioned": 0}
+    server = resp.json().get("server", {})
+
+    # 2. Power state
+    power_state = server.get("OS-EXT-STS:power_state", -1)
+    power_map = {0: "NO_STATE", 1: "RUNNING", 3: "PAUSED", 4: "SHUTDOWN", 6: "CRASHED", 7: "SUSPENDED"}
+    power_label = power_map.get(power_state, f"UNKNOWN({power_state})")
+    vm_status = (server.get("status") or "").upper()
+    checks["power_state"] = {"status": power_label, "vm_status": vm_status, "ok": vm_status == "ACTIVE" and power_state == 1}
+    if not checks["power_state"]["ok"]:
+        issues.append(f"VM status {vm_status}, power state {power_label}")
+
+    # 3. Hypervisor state
+    host = server.get("OS-EXT-SRV-ATTR:host", "")
+    checks["hypervisor"] = {"host": host, "ok": False, "detail": ""}
+    if host:
+        try:
+            hv_url = f"{client.nova_endpoint}/os-hypervisors/detail"
+            hr = client.session.get(hv_url, headers=headers)
+            if hr.status_code == 200:
+                for hv in hr.json().get("hypervisors", []):
+                    if hv.get("hypervisor_hostname") == host or hv.get("service", {}).get("host") == host:
+                        hv_state = hv.get("state", "")
+                        hv_status = hv.get("status", "")
+                        checks["hypervisor"]["state"] = hv_state
+                        checks["hypervisor"]["status"] = hv_status
+                        checks["hypervisor"]["ok"] = hv_state == "up" and hv_status == "enabled"
+                        if not checks["hypervisor"]["ok"]:
+                            issues.append(f"Hypervisor {host} is {hv_state}/{hv_status}")
+                        break
+        except Exception as e:
+            checks["hypervisor"]["detail"] = str(e)
+    else:
+        issues.append("No hypervisor host assigned")
+
+    # 4. Port bindings
+    try:
+        port_url = f"{client.neutron_endpoint}/v2.0/ports?device_id={server_id}"
+        pr = client.session.get(port_url, headers=headers)
+        ports = pr.json().get("ports", []) if pr.status_code == 200 else []
+        port_details = []
+        port_ok = True
+        for p in ports:
+            binding = p.get("binding:vif_type", "")
+            bound = binding not in ("unbound", "binding_failed", "")
+            if not bound:
+                port_ok = False
+            port_details.append({
+                "port_id": p["id"][:8],
+                "mac": p.get("mac_address", ""),
+                "status": p.get("status", ""),
+                "binding": binding,
+                "ok": bound,
+            })
+        checks["ports"] = {"count": len(ports), "ok": port_ok and len(ports) > 0, "details": port_details}
+        if not checks["ports"]["ok"]:
+            issues.append(f"Port binding issues ({len(ports)} ports, binding_ok={port_ok})")
+    except Exception as e:
+        checks["ports"] = {"ok": False, "error": str(e)}
+        issues.append(f"Port check failed: {e}")
+
+    # 5. Attached volumes
+    try:
+        vol_url = f"{client.nova_endpoint}/servers/{server_id}/os-volume_attachments"
+        vr = client.session.get(vol_url, headers=headers)
+        attachments = vr.json().get("volumeAttachments", []) if vr.status_code == 200 else []
+        checks["volumes"] = {"count": len(attachments), "ok": True, "details": [
+            {"volume_id": a.get("volumeId", "")[:8], "device": a.get("device", "")}
+            for a in attachments
+        ]}
+    except Exception as e:
+        checks["volumes"] = {"ok": False, "error": str(e)}
+
+    # 6. Network / Security groups / Floating IP
+    try:
+        sg_names = [sg.get("name", "") for sg in server.get("security_groups", [])]
+        addresses = server.get("addresses", {})
+        floating_ips = []
+        for net_name, addrs in addresses.items():
+            for a in addrs:
+                if a.get("OS-EXT-IPS:type") == "floating":
+                    floating_ips.append(a.get("addr", ""))
+        checks["network"] = {
+            "security_groups": sg_names,
+            "floating_ips": floating_ips,
+            "networks": list(addresses.keys()),
+            "ok": len(addresses) > 0,
+        }
+        if not checks["network"]["ok"]:
+            issues.append("No network interfaces found")
+    except Exception as e:
+        checks["network"] = {"ok": False, "error": str(e)}
+
+    # Remediation
+    remediation = {"attempted": False, "result": None}
+    items_actioned = 0
+    if auto_restart and not dry_run and issues:
+        remediation["attempted"] = True
+        try:
+            if vm_status == "ERROR":
+                # Reset state first, then reboot
+                reset_url = f"{client.nova_endpoint}/servers/{server_id}/action"
+                client.session.post(reset_url, headers=headers,
+                                    json={"os-resetState": {"state": "active"}})
+            reboot_body = {"reboot": {"type": "SOFT" if restart_type == "soft" else "HARD"}}
+            if restart_type == "guest_os":
+                reboot_body = {"reboot": {"type": "SOFT"}}
+            action_url = f"{client.nova_endpoint}/servers/{server_id}/action"
+            ar = client.session.post(action_url, headers=headers, json=reboot_body)
+            remediation["result"] = "success" if ar.status_code < 300 else f"HTTP {ar.status_code}: {ar.text[:200]}"
+            if ar.status_code < 300:
+                items_actioned = 1
+        except Exception as e:
+            remediation["result"] = f"error: {e}"
+
+    overall_ok = all(c.get("ok", False) for c in checks.values())
+    return {
+        "result": {
+            "server_id": server_id,
+            "server_name": server.get("name", ""),
+            "overall_healthy": overall_ok,
+            "issues": issues,
+            "checks": checks,
+            "remediation": remediation,
+        },
+        "items_found": len(issues),
+        "items_actioned": items_actioned,
+    }
+
+
+# ===== Engine: snapshot_before_escalation =================================
+
+@register_engine("snapshot_before_escalation")
+def _engine_snapshot_escalation(params: dict, dry_run: bool, actor: str) -> dict:
+    """Create a snapshot tagged for Tier 2 escalation."""
+    from pf9_control import get_client
+
+    server_id = params.get("server_id", "")
+    if not server_id:
+        return {"result": {"error": "server_id is required"}, "items_found": 0, "items_actioned": 0}
+
+    reference_id = params.get("reference_id", "")
+    tag_prefix = params.get("tag_prefix", "Pre-T2-escalation")
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # Get server detail for summary
+    srv_url = f"{client.nova_endpoint}/servers/{server_id}"
+    resp = client.session.get(srv_url, headers=headers)
+    if resp.status_code != 200:
+        return {"result": {"error": f"Server not found: HTTP {resp.status_code}"},
+                "items_found": 0, "items_actioned": 0}
+    server = resp.json().get("server", {})
+    vm_name = server.get("name", server_id[:8])
+
+    # Capture VM state summary
+    vm_summary = {
+        "name": vm_name,
+        "status": server.get("status", ""),
+        "power_state": server.get("OS-EXT-STS:power_state", ""),
+        "host": server.get("OS-EXT-SRV-ATTR:host", ""),
+        "addresses": server.get("addresses", {}),
+        "security_groups": [sg.get("name", "") for sg in server.get("security_groups", [])],
+        "flavor": server.get("flavor", {}).get("id", ""),
+        "tenant_id": server.get("tenant_id", ""),
+    }
+
+    # Attached volumes
+    try:
+        vol_url = f"{client.nova_endpoint}/servers/{server_id}/os-volume_attachments"
+        vr = client.session.get(vol_url, headers=headers)
+        vm_summary["attached_volumes"] = [
+            a.get("volumeId", "") for a in vr.json().get("volumeAttachments", [])
+        ] if vr.status_code == 200 else []
+    except Exception:
+        vm_summary["attached_volumes"] = []
+
+    # Console log tail
+    try:
+        log_url = f"{client.nova_endpoint}/servers/{server_id}/action"
+        lr = client.session.post(log_url, headers=headers,
+                                 json={"os-getConsoleOutput": {"length": 30}})
+        vm_summary["console_log_tail"] = lr.json().get("output", "") if lr.status_code == 200 else ""
+    except Exception:
+        vm_summary["console_log_tail"] = ""
+
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    snapshot_name = f"{tag_prefix}_{vm_name}_{ts}"
+
+    metadata = {
+        "escalation_tag": tag_prefix,
+        "reference_id": reference_id,
+        "actor": actor,
+        "timestamp": ts,
+        "vm_status": vm_summary["status"],
+    }
+
+    result: Dict[str, Any] = {
+        "server_id": server_id,
+        "server_name": vm_name,
+        "snapshot_name": snapshot_name,
+        "metadata": metadata,
+        "vm_summary": vm_summary,
+    }
+
+    if dry_run:
+        result["action"] = "dry_run — snapshot not created"
+        return {"result": result, "items_found": 1, "items_actioned": 0}
+
+    # Create snapshot
+    try:
+        snap_url = f"{client.nova_endpoint}/servers/{server_id}/action"
+        body = {"createImage": {"name": snapshot_name, "metadata": metadata}}
+        sr = client.session.post(snap_url, headers=headers, json=body)
+        if sr.status_code < 300:
+            image_id = sr.headers.get("Location", "").rsplit("/", 1)[-1] or "pending"
+            result["snapshot_id"] = image_id
+            result["action"] = "snapshot_created"
+            return {"result": result, "items_found": 1, "items_actioned": 1}
+        else:
+            result["action"] = f"failed: HTTP {sr.status_code}"
+            result["error"] = sr.text[:300]
+            return {"result": result, "items_found": 1, "items_actioned": 0}
+    except Exception as e:
+        result["action"] = f"error: {e}"
+        return {"result": result, "items_found": 1, "items_actioned": 0}
+
+
+# ===== Engine: upgrade_opportunity_detector ===============================
+
+@register_engine("upgrade_opportunity_detector")
+def _engine_upgrade_detector(params: dict, dry_run: bool, actor: str) -> dict:
+    """Detect tenants with upgrade or upsell opportunities."""
+    from pf9_control import get_client
+
+    quota_threshold = params.get("quota_threshold_pct", 80)
+    price_vcpu = params.get("price_per_vcpu", 15.0)
+    price_gb_ram = params.get("price_per_gb_ram", 5.0)
+    include_flavor = params.get("include_flavor_analysis", True)
+    include_image = params.get("include_image_analysis", True)
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # Gather projects
+    resp = client.session.get(f"{client.keystone_endpoint}/projects", headers=headers)
+    resp.raise_for_status()
+    projects = resp.json().get("projects", [])
+    project_map = {p["id"]: p.get("name", p["id"]) for p in projects}
+
+    # Gather all servers
+    srv_resp = client.session.get(
+        f"{client.nova_endpoint}/servers/detail?all_tenants=true&limit=1000", headers=headers)
+    all_servers = srv_resp.json().get("servers", []) if srv_resp.status_code == 200 else []
+
+    # Gather all flavors for analysis
+    flv_resp = client.session.get(f"{client.nova_endpoint}/flavors/detail", headers=headers)
+    all_flavors = flv_resp.json().get("flavors", []) if flv_resp.status_code == 200 else []
+    flavor_map = {f["id"]: f for f in all_flavors}
+    max_vcpus = max((f.get("vcpus", 0) for f in all_flavors), default=0)
+    max_ram = max((f.get("ram", 0) for f in all_flavors), default=0)
+
+    # Gather images for age analysis
+    images = []
+    if include_image:
+        try:
+            img_resp = client.session.get(f"{client.glance_endpoint}/v2/images?limit=500", headers=headers)
+            images = img_resp.json().get("images", []) if img_resp.status_code == 200 else []
+        except Exception:
+            pass
+    image_map = {i["id"]: i for i in images}
+    two_years_ago = datetime.now(timezone.utc) - timedelta(days=730)
+
+    opportunities: list = []
+    total_revenue_delta = 0.0
+
+    # Per-tenant analysis
+    tenant_servers: Dict[str, list] = {}
+    for s in all_servers:
+        tid = s.get("tenant_id", "")
+        tenant_servers.setdefault(tid, []).append(s)
+
+    for tid, servers in tenant_servers.items():
+        tname = project_map.get(tid, tid)
+        tenant_opps: list = []
+
+        # Quota pressure
+        try:
+            q_url = f"{client.nova_endpoint}/os-quota-sets/{tid}/detail"
+            qr = client.session.get(q_url, headers=headers)
+            if qr.status_code == 200:
+                qs = qr.json().get("quota_set", {})
+                for metric in ["cores", "ram", "instances"]:
+                    d = qs.get(metric, {})
+                    lim = d.get("limit", -1)
+                    use = d.get("in_use", 0)
+                    if lim > 0:
+                        pct = round(use / lim * 100, 1)
+                        if pct >= quota_threshold:
+                            tenant_opps.append({
+                                "type": "quota_pressure",
+                                "resource": metric,
+                                "usage_pct": pct,
+                                "in_use": use,
+                                "limit": lim,
+                                "suggestion": f"Increase {metric} quota (currently {pct}% used)",
+                            })
+        except Exception:
+            pass
+
+        # Old/small flavors
+        if include_flavor:
+            for s in servers:
+                flv_id = s.get("flavor", {}).get("id", "")
+                flv = flavor_map.get(flv_id, {})
+                vcpus = flv.get("vcpus", 0)
+                ram_mb = flv.get("ram", 0)
+                if vcpus > 0 and vcpus < 2 and max_vcpus > vcpus:
+                    delta = (2 - vcpus) * price_vcpu
+                    total_revenue_delta += delta
+                    tenant_opps.append({
+                        "type": "small_flavor",
+                        "vm_name": s.get("name", ""),
+                        "vm_id": s.get("id", ""),
+                        "current_flavor": flv.get("name", flv_id),
+                        "vcpus": vcpus,
+                        "ram_mb": ram_mb,
+                        "suggestion": f"Upgrade from {vcpus}vCPU to 2+ vCPU",
+                        "revenue_delta": delta,
+                    })
+                if ram_mb > 0 and ram_mb < 2048 and max_ram > ram_mb:
+                    delta = ((2048 - ram_mb) / 1024) * price_gb_ram
+                    total_revenue_delta += delta
+                    tenant_opps.append({
+                        "type": "small_ram",
+                        "vm_name": s.get("name", ""),
+                        "vm_id": s.get("id", ""),
+                        "current_flavor": flv.get("name", flv_id),
+                        "ram_mb": ram_mb,
+                        "suggestion": f"Upgrade from {ram_mb}MB to 2048+ MB RAM",
+                        "revenue_delta": delta,
+                    })
+
+        # Old images
+        if include_image:
+            for s in servers:
+                img_id = s.get("image", {}).get("id", "")
+                img = image_map.get(img_id, {})
+                if not img:
+                    continue
+                img_created = img.get("created_at", "")
+                img_status = img.get("status", "active")
+                if img_created:
+                    try:
+                        ts = datetime.fromisoformat(img_created.replace("Z", "+00:00"))
+                        if ts < two_years_ago:
+                            tenant_opps.append({
+                                "type": "old_image",
+                                "vm_name": s.get("name", ""),
+                                "vm_id": s.get("id", ""),
+                                "image_name": img.get("name", img_id[:8]),
+                                "image_created": img_created,
+                                "suggestion": "Image older than 2 years — consider OS upgrade",
+                            })
+                    except Exception:
+                        pass
+                if img_status != "active":
+                    tenant_opps.append({
+                        "type": "deprecated_image",
+                        "vm_name": s.get("name", ""),
+                        "vm_id": s.get("id", ""),
+                        "image_name": img.get("name", img_id[:8]),
+                        "image_status": img_status,
+                        "suggestion": f"Image status '{img_status}' — upgrade recommended",
+                    })
+
+        if tenant_opps:
+            opportunities.append({
+                "tenant_id": tid,
+                "tenant_name": tname,
+                "vm_count": len(servers),
+                "opportunities": tenant_opps,
+            })
+
+    return {
+        "result": {
+            "opportunities": opportunities,
+            "total_tenants_scanned": len(tenant_servers),
+            "tenants_with_opportunities": len(opportunities),
+            "estimated_revenue_delta_monthly": round(total_revenue_delta, 2),
+        },
+        "items_found": sum(len(o["opportunities"]) for o in opportunities),
+        "items_actioned": 0,
+    }
+
+
+# ===== Engine: monthly_executive_snapshot =================================
+
+@register_engine("monthly_executive_snapshot")
+def _engine_executive_snapshot(params: dict, dry_run: bool, actor: str) -> dict:
+    """Generate a monthly executive summary from DB and OpenStack."""
+    from pf9_control import get_client
+
+    price_vcpu = params.get("price_per_vcpu", 15.0)
+    price_gb_storage = params.get("price_per_gb_storage", 2.0)
+    top_n = params.get("risk_top_n", 5)
+    include_deltas = params.get("include_deltas", True)
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    report: Dict[str, Any] = {"generated_at": datetime.now(timezone.utc).isoformat()}
+
+    # Totals from DB
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM projects")
+            report["total_tenants"] = cur.fetchone()["cnt"]
+            cur.execute("SELECT COUNT(*) AS cnt FROM servers")
+            report["total_vms"] = cur.fetchone()["cnt"]
+            cur.execute("SELECT COUNT(*) AS cnt FROM volumes")
+            report["total_volumes"] = cur.fetchone()["cnt"]
+            cur.execute("SELECT COALESCE(SUM(size_gb),0) AS total FROM volumes")
+            report["total_storage_gb"] = cur.fetchone()["total"]
+            cur.execute("SELECT COUNT(*) AS cnt FROM hypervisors")
+            report["total_hypervisors"] = cur.fetchone()["cnt"]
+
+            # Compliance: % of tenants that have at least one snapshot
+            cur.execute("""
+                SELECT COUNT(DISTINCT s.project_id) AS with_snap
+                FROM snapshots s
+                JOIN projects p ON s.project_id = p.id
+            """)
+            with_snap = cur.fetchone()["with_snap"]
+            report["compliance_pct"] = round(with_snap / max(report["total_tenants"], 1) * 100, 1)
+
+            # VMs by status
+            cur.execute("SELECT status, COUNT(*) AS cnt FROM servers GROUP BY status ORDER BY cnt DESC")
+            report["vms_by_status"] = {r["status"]: r["cnt"] for r in cur.fetchall()}
+
+            # Month-over-month deltas
+            if include_deltas:
+                one_month_ago = datetime.now(timezone.utc) - timedelta(days=30)
+                cur.execute("SELECT COUNT(DISTINCT server_id) FROM servers_history WHERE recorded_at < %s", (one_month_ago,))
+                prev_vms = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(DISTINCT project_id) FROM projects_history WHERE recorded_at < %s", (one_month_ago,))
+                prev_tenants = cur.fetchone()[0]
+                report["deltas"] = {
+                    "vms": report["total_vms"] - prev_vms,
+                    "tenants": report["total_tenants"] - prev_tenants,
+                }
+
+    # Capacity risk from hypervisors
+    try:
+        hv_resp = client.session.get(f"{client.nova_endpoint}/os-hypervisors/detail", headers=headers)
+        hvs = hv_resp.json().get("hypervisors", []) if hv_resp.status_code == 200 else []
+        at_risk = 0
+        total_vcpus = 0
+        total_ram = 0
+        for hv in hvs:
+            total_vcpus += hv.get("vcpus", 0)
+            total_ram += hv.get("memory_mb", 0)
+            mem_total = hv.get("memory_mb", 1)
+            mem_used = hv.get("memory_mb_used", 0)
+            if mem_total > 0 and (mem_used / mem_total) > 0.8:
+                at_risk += 1
+        report["capacity_risk"] = {
+            "hypervisors_at_risk": at_risk,
+            "total_hypervisors": len(hvs),
+            "total_vcpus": total_vcpus,
+            "total_ram_gb": round(total_ram / 1024, 1),
+        }
+    except Exception as e:
+        report["capacity_risk"] = {"error": str(e)}
+
+    # Revenue estimate
+    report["revenue_estimate"] = {
+        "monthly": round(total_vcpus * price_vcpu + report.get("total_storage_gb", 0) * price_gb_storage, 2),
+        "price_per_vcpu": price_vcpu,
+        "price_per_gb_storage": price_gb_storage,
+    }
+
+    # Top-N risk tenants
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT p.id, p.name,
+                        COUNT(DISTINCT s.id) AS vm_count,
+                        COUNT(DISTINCT CASE WHEN s.status = 'ERROR' THEN s.id END) AS error_vms,
+                        COUNT(DISTINCT sn.id) AS snapshot_count
+                    FROM projects p
+                    LEFT JOIN servers s ON s.project_id = p.id
+                    LEFT JOIN snapshots sn ON sn.project_id = p.id
+                    GROUP BY p.id, p.name
+                    ORDER BY COUNT(DISTINCT CASE WHEN s.status = 'ERROR' THEN s.id END) DESC,
+                             COUNT(DISTINCT sn.id) ASC
+                    LIMIT %s
+                """, (top_n,))
+                risk_tenants = []
+                for r in cur.fetchall():
+                    risk_score = r["error_vms"] * 10 + max(0, 5 - r["snapshot_count"])
+                    risk_tenants.append({
+                        "tenant_id": r["id"],
+                        "tenant_name": r["name"],
+                        "vm_count": r["vm_count"],
+                        "error_vms": r["error_vms"],
+                        "snapshot_count": r["snapshot_count"],
+                        "risk_score": risk_score,
+                    })
+                report["top_risk_tenants"] = risk_tenants
+    except Exception as e:
+        report["top_risk_tenants_error"] = str(e)
+
+    return {
+        "result": report,
+        "items_found": report.get("total_vms", 0),
+        "items_actioned": 0,
+    }
+
+
+# ===== Engine: cost_leakage_report ========================================
+
+@register_engine("cost_leakage_report")
+def _engine_cost_leakage(params: dict, dry_run: bool, actor: str) -> dict:
+    """Detect idle/wasted resources and estimate cost leakage."""
+    from pf9_control import get_client
+
+    idle_cpu_pct = params.get("idle_cpu_threshold_pct", 5)
+    shutoff_days = params.get("shutoff_days_threshold", 30)
+    detached_days = params.get("detached_volume_days", 7)
+    price_vcpu = params.get("price_per_vcpu_month", 15.0)
+    price_vol = params.get("price_per_gb_volume_month", 2.0)
+    price_fip = params.get("price_per_floating_ip_month", 5.0)
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+    project_names = _resolve_project_names(client, headers)
+
+    now_utc = datetime.now(timezone.utc)
+    shutoff_cutoff = now_utc - timedelta(days=shutoff_days)
+    vol_cutoff = now_utc - timedelta(days=detached_days)
+
+    leaks: Dict[str, list] = {"idle_vms": [], "shutoff_vms": [], "detached_volumes": [], "unused_fips": [], "oversized_vms": []}
+    costs: Dict[str, float] = {"idle_vms": 0, "shutoff_vms": 0, "detached_volumes": 0, "unused_fips": 0, "oversized_vms": 0}
+
+    # Servers
+    srv_resp = client.session.get(
+        f"{client.nova_endpoint}/servers/detail?all_tenants=true&limit=1000", headers=headers)
+    all_servers = srv_resp.json().get("servers", []) if srv_resp.status_code == 200 else []
+
+    # Flavor map
+    flv_resp = client.session.get(f"{client.nova_endpoint}/flavors/detail", headers=headers)
+    all_flavors = flv_resp.json().get("flavors", []) if flv_resp.status_code == 200 else []
+    flavor_map = {f["id"]: f for f in all_flavors}
+
+    # Load metrics cache for CPU utilisation
+    cpu_metrics: Dict[str, float] = {}
+    try:
+        import json as _json
+        cache_path = os.path.join(os.path.dirname(__file__), "..", "metrics_cache.json")
+        if os.path.exists(cache_path):
+            with open(cache_path) as f:
+                cache = _json.load(f)
+                for entry in cache.get("servers", []):
+                    sid = entry.get("id", "")
+                    cpu = entry.get("cpu_utilization_pct", -1)
+                    if sid and cpu >= 0:
+                        cpu_metrics[sid] = cpu
+    except Exception:
+        pass
+
+    for s in all_servers:
+        sid = s.get("id", "")
+        vm_status = (s.get("status") or "").upper()
+        tid = s.get("tenant_id", "")
+        tname = project_names.get(tid, tid)
+        flv_id = s.get("flavor", {}).get("id", "")
+        flv = flavor_map.get(flv_id, {})
+        vcpus = flv.get("vcpus", 0)
+        ram_mb = flv.get("ram", 0)
+        vm_cost = vcpus * price_vcpu
+
+        # Shutoff VMs
+        if vm_status == "SHUTOFF":
+            updated = s.get("updated", s.get("created", ""))
+            try:
+                ts = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                if ts < shutoff_cutoff:
+                    leaks["shutoff_vms"].append({
+                        "vm_id": sid, "vm_name": s.get("name", ""),
+                        "tenant_name": tname, "shutoff_since": updated,
+                        "vcpus": vcpus, "monthly_cost": vm_cost,
+                    })
+                    costs["shutoff_vms"] += vm_cost
+            except Exception:
+                pass
+            continue
+
+        # Idle VMs (ACTIVE but low CPU)
+        if vm_status == "ACTIVE" and sid in cpu_metrics:
+            cpu = cpu_metrics[sid]
+            if cpu < idle_cpu_pct:
+                leaks["idle_vms"].append({
+                    "vm_id": sid, "vm_name": s.get("name", ""),
+                    "tenant_name": tname, "cpu_pct": round(cpu, 1),
+                    "vcpus": vcpus, "monthly_cost": vm_cost,
+                })
+                costs["idle_vms"] += vm_cost
+
+        # Oversized VMs (using <20% RAM)
+        if vm_status == "ACTIVE" and ram_mb >= 4096:
+            # Check if metrics show low memory usage (if available in cache)
+            mem_entry = None
+            try:
+                cache_path2 = os.path.join(os.path.dirname(__file__), "..", "metrics_cache.json")
+                if os.path.exists(cache_path2):
+                    import json as _json2
+                    with open(cache_path2) as f2:
+                        cache2 = _json2.load(f2)
+                        for entry in cache2.get("servers", []):
+                            if entry.get("id") == sid:
+                                mem_entry = entry.get("memory_utilization_pct", -1)
+                                break
+            except Exception:
+                pass
+            if mem_entry is not None and 0 <= mem_entry < 20:
+                leaks["oversized_vms"].append({
+                    "vm_id": sid, "vm_name": s.get("name", ""),
+                    "tenant_name": tname, "ram_mb": ram_mb,
+                    "mem_used_pct": round(mem_entry, 1),
+                    "monthly_cost": vm_cost,
+                })
+                costs["oversized_vms"] += vm_cost * 0.5  # 50% could be saved
+
+    # Detached volumes
+    try:
+        vol_resp = client.session.get(
+            f"{client.cinder_endpoint}/volumes/detail?all_tenants=true", headers=headers)
+        volumes = vol_resp.json().get("volumes", []) if vol_resp.status_code == 200 else []
+        for v in volumes:
+            if v.get("status") != "available" or v.get("attachments"):
+                continue
+            created = v.get("created_at", "")
+            try:
+                ts = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                if ts > vol_cutoff:
+                    continue
+            except Exception:
+                continue
+            tid = v.get("os-vol-tenant-attr:tenant_id", "")
+            size = v.get("size", 0)
+            vol_cost = size * price_vol
+            leaks["detached_volumes"].append({
+                "volume_id": v["id"], "name": v.get("name", "") or v["id"][:8],
+                "size_gb": size, "tenant_name": project_names.get(tid, tid),
+                "created_at": created, "monthly_cost": vol_cost,
+            })
+            costs["detached_volumes"] += vol_cost
+    except Exception:
+        pass
+
+    # Unused floating IPs
+    try:
+        fip_resp = client.session.get(
+            f"{client.neutron_endpoint}/v2.0/floatingips", headers=headers)
+        fips = fip_resp.json().get("floatingips", []) if fip_resp.status_code == 200 else []
+        for f in fips:
+            if f.get("port_id"):
+                continue
+            tid = f.get("project_id", "")
+            leaks["unused_fips"].append({
+                "fip_id": f["id"],
+                "floating_ip": f.get("floating_ip_address", ""),
+                "tenant_name": project_names.get(tid, tid),
+                "monthly_cost": price_fip,
+            })
+            costs["unused_fips"] += price_fip
+    except Exception:
+        pass
+
+    total_waste = round(sum(costs.values()), 2)
+    return {
+        "result": {
+            "leaks": leaks,
+            "costs_monthly": {k: round(v, 2) for k, v in costs.items()},
+            "total_monthly_waste": total_waste,
+            "total_items": sum(len(v) for v in leaks.values()),
+        },
+        "items_found": sum(len(v) for v in leaks.values()),
+        "items_actioned": 0,
+    }
+
+
+# ===== Engine: password_reset_console =====================================
+
+@register_engine("password_reset_console")
+def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
+    """Reset VM password and enable console access."""
+    from pf9_control import get_client
+    import secrets as _secrets
+
+    server_id = params.get("server_id", "")
+    if not server_id:
+        return {"result": {"error": "server_id is required"}, "items_found": 0, "items_actioned": 0}
+
+    new_password = params.get("new_password", "")
+    enable_console = params.get("enable_console", True)
+    console_expiry = params.get("console_expiry_minutes", 30)
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # Get server detail
+    srv_resp = client.session.get(f"{client.nova_endpoint}/servers/{server_id}", headers=headers)
+    if srv_resp.status_code != 200:
+        return {"result": {"error": f"Server not found: HTTP {srv_resp.status_code}"},
+                "items_found": 0, "items_actioned": 0}
+    server = srv_resp.json().get("server", {})
+    vm_name = server.get("name", server_id[:8])
+
+    # Check cloud-init support via image metadata
+    cloud_init_supported = True
+    cloud_init_note = ""
+    img_id = server.get("image", {}).get("id", "")
+    if img_id:
+        try:
+            img_resp = client.session.get(f"{client.glance_endpoint}/v2/images/{img_id}", headers=headers)
+            if img_resp.status_code == 200:
+                img_data = img_resp.json()
+                os_type = (img_data.get("os_type", "") or img_data.get("os", "") or "").lower()
+                if "windows" in os_type:
+                    cloud_init_note = "Windows detected — cloudbase-init required"
+                elif not os_type:
+                    cloud_init_note = "OS type unknown — cloud-init support uncertain"
+        except Exception:
+            cloud_init_note = "Could not verify image metadata"
+    else:
+        cloud_init_note = "No image reference — booted from volume?"
+        cloud_init_supported = True  # Assume supported
+
+    result: Dict[str, Any] = {
+        "server_id": server_id,
+        "server_name": vm_name,
+        "cloud_init_check": {"supported": cloud_init_supported, "note": cloud_init_note},
+        "password_reset": {"attempted": False},
+        "console_access": {"attempted": False},
+        "audit": {
+            "actor": actor,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "console_expiry_minutes": console_expiry,
+        },
+    }
+
+    if dry_run:
+        result["action"] = "dry_run — no changes made"
+        return {"result": result, "items_found": 1, "items_actioned": 0}
+
+    items_actioned = 0
+
+    # Password reset via os-changePassword
+    if not new_password:
+        new_password = _secrets.token_urlsafe(16)
+    try:
+        pw_url = f"{client.nova_endpoint}/servers/{server_id}/action"
+        pw_resp = client.session.post(pw_url, headers=headers,
+                                      json={"changePassword": {"adminPass": new_password}})
+        if pw_resp.status_code < 300:
+            result["password_reset"] = {
+                "attempted": True, "success": True,
+                "password": new_password,
+                "note": "Password injected via Nova changePassword API",
+            }
+            items_actioned += 1
+        else:
+            result["password_reset"] = {
+                "attempted": True, "success": False,
+                "error": f"HTTP {pw_resp.status_code}: {pw_resp.text[:200]}",
+                "note": "changePassword may not be supported by this hypervisor/image",
+            }
+    except Exception as e:
+        result["password_reset"] = {"attempted": True, "success": False, "error": str(e)}
+
+    # Console access
+    if enable_console:
+        try:
+            console_url = f"{client.nova_endpoint}/servers/{server_id}/action"
+            # Try noVNC first
+            cr = client.session.post(console_url, headers=headers,
+                                     json={"os-getVNCConsole": {"type": "novnc"}})
+            if cr.status_code == 200:
+                console_data = cr.json().get("console", {})
+                result["console_access"] = {
+                    "attempted": True, "success": True,
+                    "type": "noVNC",
+                    "url": console_data.get("url", ""),
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=console_expiry)).isoformat(),
+                }
+                items_actioned += 1
+            else:
+                # Fallback to SPICE
+                cr2 = client.session.post(console_url, headers=headers,
+                                          json={"os-getSPICEConsole": {"type": "spice-html5"}})
+                if cr2.status_code == 200:
+                    console_data = cr2.json().get("console", {})
+                    result["console_access"] = {
+                        "attempted": True, "success": True,
+                        "type": "SPICE",
+                        "url": console_data.get("url", ""),
+                        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=console_expiry)).isoformat(),
+                    }
+                    items_actioned += 1
+                else:
+                    result["console_access"] = {
+                        "attempted": True, "success": False,
+                        "error": f"VNC: HTTP {cr.status_code}, SPICE: HTTP {cr2.status_code}",
+                    }
+        except Exception as e:
+            result["console_access"] = {"attempted": True, "success": False, "error": str(e)}
+
+    # Audit log to DB
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO activity_log (actor, action, resource_type, resource_id, details, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, now())
+                """, (actor, "password_reset_console", "server", server_id,
+                      json.dumps({"vm_name": vm_name, "console_expiry": console_expiry,
+                                  "password_reset": result["password_reset"].get("success", False),
+                                  "console_access": result["console_access"].get("success", False)})))
+    except Exception as e:
+        logger.warning(f"Audit log insert failed: {e}")
+
+    return {"result": result, "items_found": 1, "items_actioned": items_actioned}
+
+
+# ===== Engine: security_compliance_audit ==================================
+
+@register_engine("security_compliance_audit")
+def _engine_security_compliance(params: dict, dry_run: bool, actor: str) -> dict:
+    """Comprehensive security & compliance audit."""
+    from pf9_control import get_client
+
+    stale_days = params.get("stale_user_days", 90)
+    flag_wide_ports = params.get("flag_wide_port_ranges", True)
+    check_encryption = params.get("check_volume_encryption", True)
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+    project_names = _resolve_project_names(client, headers)
+
+    findings: Dict[str, list] = {"sg_violations": [], "stale_users": [], "unencrypted_volumes": []}
+    severity_counts = {"critical": 0, "warning": 0, "info": 0}
+
+    # 1. Security group violations (extended)
+    try:
+        sg_resp = client.session.get(f"{client.neutron_endpoint}/v2.0/security-groups", headers=headers)
+        sgs = sg_resp.json().get("security_groups", []) if sg_resp.status_code == 200 else []
+        flag_ports = [22, 3389, 3306, 5432, 1433, 27017]
+        for sg in sgs:
+            for rule in sg.get("security_group_rules", []):
+                if rule.get("direction") != "ingress":
+                    continue
+                remote = rule.get("remote_ip_prefix") or ""
+                port_min = rule.get("port_range_min")
+                port_max = rule.get("port_range_max")
+
+                violation = None
+                if remote in ("0.0.0.0/0", "::/0"):
+                    # Wide open to internet
+                    flagged = []
+                    for fp in flag_ports:
+                        if port_min is None and port_max is None:
+                            flagged.append(fp)
+                        elif port_min is not None and port_max is not None and port_min <= fp <= port_max:
+                            flagged.append(fp)
+                    if flagged:
+                        violation = {
+                            "type": "open_to_internet",
+                            "severity": "critical",
+                            "flagged_ports": flagged,
+                        }
+                        severity_counts["critical"] += 1
+
+                # Wide port range check
+                if flag_wide_ports and port_min is not None and port_max is not None:
+                    if (port_max - port_min) >= 65535:
+                        violation = violation or {}
+                        violation.update({
+                            "type": violation.get("type", "wide_port_range"),
+                            "severity": "warning" if not violation.get("severity") else violation["severity"],
+                            "wide_range": True,
+                        })
+                        if not violation.get("flagged_ports"):
+                            severity_counts["warning"] += 1
+
+                if violation:
+                    pid = sg.get("project_id", "")
+                    violation.update({
+                        "sg_id": sg["id"],
+                        "sg_name": sg.get("name", ""),
+                        "project_name": project_names.get(pid, pid),
+                        "rule_id": rule.get("id", ""),
+                        "protocol": rule.get("protocol", "any"),
+                        "port_range": f"{port_min or '*'}-{port_max or '*'}",
+                        "remote_ip_prefix": remote or "any",
+                    })
+                    findings["sg_violations"].append(violation)
+    except Exception as e:
+        findings["sg_violations_error"] = str(e)
+
+    # 2. Stale users
+    try:
+        stale_cutoff = datetime.now(timezone.utc) - timedelta(days=stale_days)
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT u.id, u.name, u.domain_id, d.name AS domain_name,
+                           u.enabled,
+                           MAX(al.timestamp) AS last_activity
+                    FROM users u
+                    LEFT JOIN domains d ON u.domain_id = d.id
+                    LEFT JOIN activity_log al ON al.actor = u.name
+                    GROUP BY u.id, u.name, u.domain_id, d.name, u.enabled
+                    HAVING MAX(al.timestamp) IS NULL OR MAX(al.timestamp) < %s
+                    ORDER BY last_activity ASC NULLS FIRST
+                """, (stale_cutoff,))
+                for row in cur.fetchall():
+                    sev = "warning" if row["enabled"] else "info"
+                    severity_counts[sev] += 1
+                    findings["stale_users"].append({
+                        "user_id": row["id"],
+                        "username": row["name"],
+                        "domain": row["domain_name"] or row["domain_id"],
+                        "enabled": row["enabled"],
+                        "last_activity": row["last_activity"].isoformat() if row["last_activity"] else "never",
+                        "severity": sev,
+                    })
+    except Exception as e:
+        findings["stale_users_error"] = str(e)
+
+    # 3. Unencrypted volumes
+    if check_encryption:
+        try:
+            vol_resp = client.session.get(
+                f"{client.cinder_endpoint}/volumes/detail?all_tenants=true", headers=headers)
+            volumes = vol_resp.json().get("volumes", []) if vol_resp.status_code == 200 else []
+            for v in volumes:
+                encrypted = v.get("encrypted", False)
+                if not encrypted:
+                    tid = v.get("os-vol-tenant-attr:tenant_id", "")
+                    severity_counts["info"] += 1
+                    findings["unencrypted_volumes"].append({
+                        "volume_id": v["id"],
+                        "name": v.get("name", "") or v["id"][:8],
+                        "size_gb": v.get("size", 0),
+                        "status": v.get("status", ""),
+                        "tenant_name": project_names.get(tid, tid),
+                        "severity": "info",
+                    })
+        except Exception as e:
+            findings["unencrypted_volumes_error"] = str(e)
+
+    return {
+        "result": {
+            "findings": findings,
+            "severity_counts": severity_counts,
+            "total_findings": sum(len(v) for v in findings.values() if isinstance(v, list)),
+        },
+        "items_found": sum(len(v) for v in findings.values() if isinstance(v, list)),
+        "items_actioned": 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 #  Core execution logic
 # ---------------------------------------------------------------------------

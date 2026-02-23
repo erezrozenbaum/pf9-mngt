@@ -81,11 +81,15 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Chargeback export with per-category cost breakdown (compute, storage, snapshot, restore, volume, network, TOTAL)
   - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
-- **Runbooks Tab** (v1.21 - NEW ✨):
+- **Runbooks Tab** (v1.21 → v1.25 - NEW ✨):
   - "📋 Runbooks" tab with policy-as-code catalogue and one-click execution
-  - 5 built-in engines: Delete Errored VMs, Cleanup Orphan Volumes, Enforce Naming Convention, Reclaim Idle Floating IPs, Audit Security Groups
+  - 12 built-in engines across 4 categories:
+    - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
+    - **Security**: Security Group Audit, Security & Compliance Audit
+    - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector
+    - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
   - Schema-driven parameter forms with dry-run toggle and risk-level badges
-  - Approval workflow: per-runbook policies with role-based trigger→approver mappings
+  - Approval workflow: per-runbook policies with role-based trigger→approver mappings (high-risk runbooks require admin approval)
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
 

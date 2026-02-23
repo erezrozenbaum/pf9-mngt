@@ -392,6 +392,315 @@ export default function RunbooksTab() {
       );
     }
 
+    // ── VM Health Quick Fix ──
+    if (name === "vm_health_quickfix") {
+      const checks = r.checks || {};
+      const issues = r.issues || [];
+      const rem = r.remediation || {};
+      return (
+        <div className="rb-result-friendly">
+          <p className="rb-result-summary">
+            VM: <strong>{r.server_name || r.server_id}</strong> · Overall: <span className={`rb-status-badge ${r.overall_healthy ? "completed" : "failed"}`}>{r.overall_healthy ? "Healthy" : `${issues.length} issue(s)`}</span>
+          </p>
+          <table className="rb-result-table">
+            <thead><tr><th>Check</th><th>Status</th><th>Details</th></tr></thead>
+            <tbody>
+              {Object.entries(checks).map(([key, val]: [string, any]) => (
+                <tr key={key}>
+                  <td style={{textTransform:"capitalize"}}>{key.replace(/_/g, " ")}</td>
+                  <td><span className={`rb-status-badge ${val.ok ? "completed" : "failed"}`}>{val.ok ? "✓ OK" : "✗ Issue"}</span></td>
+                  <td style={{fontSize:"0.85em"}}>
+                    {key === "power_state" && `${val.vm_status} / ${val.status}`}
+                    {key === "hypervisor" && `${val.host || "—"} ${val.state ? `(${val.state}/${val.status})` : ""}`}
+                    {key === "ports" && `${val.count || 0} port(s)`}
+                    {key === "volumes" && `${val.count || 0} attached`}
+                    {key === "network" && `${(val.networks || []).length} net(s), ${(val.floating_ips || []).length} FIP(s)`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {issues.length > 0 && (
+            <div className="rb-result-sub rb-result-errors"><h6>Issues</h6><ul>{issues.map((i: string, idx: number) => <li key={idx}>{i}</li>)}</ul></div>
+          )}
+          {rem.attempted && (
+            <div className="rb-result-sub"><h6>Remediation</h6><p>{rem.result}</p></div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Snapshot Before Escalation ──
+    if (name === "snapshot_before_escalation") {
+      return (
+        <div className="rb-result-friendly">
+          <p className="rb-result-summary">
+            VM: <strong>{r.server_name || r.server_id}</strong> · Action: <strong>{r.action || "—"}</strong>
+          </p>
+          {r.snapshot_id && <p>Snapshot ID: <code>{r.snapshot_id}</code></p>}
+          <p>Snapshot Name: <strong>{r.snapshot_name}</strong></p>
+          {r.metadata && (
+            <table className="rb-result-table">
+              <thead><tr><th>Tag</th><th>Value</th></tr></thead>
+              <tbody>
+                {Object.entries(r.metadata).map(([k, v]: [string, any]) => (
+                  <tr key={k}><td>{k}</td><td>{String(v)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {r.vm_summary && (
+            <div className="rb-result-sub">
+              <h6>VM State at Snapshot</h6>
+              <p>Status: {r.vm_summary.status} · Host: {r.vm_summary.host || "—"} · Volumes: {(r.vm_summary.attached_volumes || []).length}</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Upgrade Opportunity Detector ──
+    if (name === "upgrade_opportunity_detector") {
+      const opps = r.opportunities || [];
+      return (
+        <div className="rb-result-friendly">
+          <p className="rb-result-summary">
+            Scanned <strong>{r.total_tenants_scanned || 0}</strong> tenants · <strong>{r.tenants_with_opportunities || 0}</strong> with opportunities · Est. revenue delta: <strong>${r.estimated_revenue_delta_monthly || 0}/mo</strong>
+          </p>
+          {opps.length === 0 ? <p className="rb-result-empty">No upgrade opportunities found</p> : opps.map((t: any) => (
+            <div className="rb-result-sub" key={t.tenant_id}>
+              <h6>{t.tenant_name} ({t.vm_count} VMs)</h6>
+              <table className="rb-result-table">
+                <thead><tr><th>Type</th><th>Resource</th><th>Suggestion</th><th>Revenue Δ</th></tr></thead>
+                <tbody>
+                  {(t.opportunities || []).map((o: any, i: number) => (
+                    <tr key={i}>
+                      <td><span className={`rb-status-badge ${o.type === "quota_pressure" ? "pending_approval" : "executing"}`}>{o.type.replace(/_/g, " ")}</span></td>
+                      <td>{o.vm_name || o.resource || "—"}</td>
+                      <td>{o.suggestion}</td>
+                      <td>{o.revenue_delta ? `+$${o.revenue_delta.toFixed(2)}` : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ── Monthly Executive Snapshot ──
+    if (name === "monthly_executive_snapshot") {
+      const deltas = r.deltas || {};
+      const cap = r.capacity_risk || {};
+      const rev = r.revenue_estimate || {};
+      const risks = r.top_risk_tenants || [];
+      return (
+        <div className="rb-result-friendly">
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:"10px",marginBottom:"12px"}}>
+            {[
+              {label:"Tenants",value:r.total_tenants,delta:deltas.tenants},
+              {label:"VMs",value:r.total_vms,delta:deltas.vms},
+              {label:"Volumes",value:r.total_volumes},
+              {label:"Storage",value:`${r.total_storage_gb || 0} GB`},
+              {label:"Compliance",value:`${r.compliance_pct || 0}%`},
+              {label:"Revenue Est.",value:`$${(rev.monthly || 0).toLocaleString()}/mo`},
+            ].map((kpi,i) => (
+              <div key={i} style={{background:"var(--color-surface-elevated,#f5f5f5)",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
+                <div style={{fontSize:"0.75em",opacity:0.7}}>{kpi.label}</div>
+                <div style={{fontSize:"1.3em",fontWeight:700}}>{kpi.value ?? "—"}</div>
+                {kpi.delta !== undefined && <div style={{fontSize:"0.75em",color:kpi.delta >= 0 ? "#22c55e" : "#ef4444"}}>{kpi.delta >= 0 ? "+" : ""}{kpi.delta}</div>}
+              </div>
+            ))}
+          </div>
+          {cap.hypervisors_at_risk !== undefined && (
+            <p className="rb-result-summary">Capacity Risk: <strong>{cap.hypervisors_at_risk}</strong> of {cap.total_hypervisors} hypervisors at &gt;80% RAM</p>
+          )}
+          {risks.length > 0 && (
+            <div className="rb-result-sub">
+              <h6>Top {risks.length} Risk Tenants</h6>
+              <table className="rb-result-table">
+                <thead><tr><th>Tenant</th><th>VMs</th><th>Error VMs</th><th>Snapshots</th><th>Risk Score</th></tr></thead>
+                <tbody>
+                  {risks.map((t: any) => (
+                    <tr key={t.tenant_id}>
+                      <td>{t.tenant_name}</td>
+                      <td>{t.vm_count}</td>
+                      <td>{t.error_vms > 0 ? <span className="rb-status-badge failed">{t.error_vms}</span> : "0"}</td>
+                      <td>{t.snapshot_count}</td>
+                      <td><strong>{t.risk_score}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Cost Leakage Report ──
+    if (name === "cost_leakage_report") {
+      const leaks = r.leaks || {};
+      const costs = r.costs_monthly || {};
+      const categories = [
+        {key:"idle_vms",label:"Idle VMs",cols:["VM Name","Tenant","CPU %","vCPUs","$/mo"],fields:["vm_name","tenant_name","cpu_pct","vcpus","monthly_cost"]},
+        {key:"shutoff_vms",label:"SHUTOFF VMs",cols:["VM Name","Tenant","Since","vCPUs","$/mo"],fields:["vm_name","tenant_name","shutoff_since","vcpus","monthly_cost"]},
+        {key:"detached_volumes",label:"Detached Volumes",cols:["Name","Tenant","Size","Created","$/mo"],fields:["name","tenant_name","size_gb","created_at","monthly_cost"]},
+        {key:"unused_fips",label:"Unused Floating IPs",cols:["IP","Tenant","$/mo"],fields:["floating_ip","tenant_name","monthly_cost"]},
+        {key:"oversized_vms",label:"Oversized VMs",cols:["VM Name","Tenant","RAM MB","Mem Used %","$/mo"],fields:["vm_name","tenant_name","ram_mb","mem_used_pct","monthly_cost"]},
+      ];
+      return (
+        <div className="rb-result-friendly">
+          <div style={{background:"var(--color-surface-elevated,#fff3cd)",borderRadius:"8px",padding:"12px",marginBottom:"12px",textAlign:"center",border:"1px solid #ffc107"}}>
+            <div style={{fontSize:"0.85em",opacity:0.8}}>Total Estimated Monthly Waste</div>
+            <div style={{fontSize:"1.8em",fontWeight:700,color:"#dc3545"}}>${(r.total_monthly_waste || 0).toLocaleString()}/mo</div>
+            <div style={{fontSize:"0.8em",opacity:0.7}}>{r.total_items || 0} resources flagged</div>
+          </div>
+          {categories.map(cat => {
+            const items = leaks[cat.key] || [];
+            if (items.length === 0) return null;
+            return (
+              <div className="rb-result-sub" key={cat.key}>
+                <h6>{cat.label} ({items.length}) · ${(costs[cat.key] || 0).toFixed(2)}/mo</h6>
+                <table className="rb-result-table">
+                  <thead><tr>{cat.cols.map(c => <th key={c}>{c}</th>)}</tr></thead>
+                  <tbody>
+                    {items.map((item: any, i: number) => (
+                      <tr key={i}>{cat.fields.map(f => <td key={f}>{typeof item[f] === "number" ? (f === "monthly_cost" ? `$${item[f].toFixed(2)}` : item[f]) : (f.includes("since") || f.includes("created") ? formatDate(item[f]) : (item[f] || "—"))}</td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ── Password Reset + Console Access ──
+    if (name === "password_reset_console") {
+      const pw = r.password_reset || {};
+      const con = r.console_access || {};
+      const ci = r.cloud_init_check || {};
+      return (
+        <div className="rb-result-friendly">
+          <p className="rb-result-summary">
+            VM: <strong>{r.server_name || r.server_id}</strong>
+            {r.action && <> · <em>{r.action}</em></>}
+          </p>
+          <table className="rb-result-table">
+            <thead><tr><th>Step</th><th>Status</th><th>Details</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Cloud-Init Check</td>
+                <td><span className={`rb-status-badge ${ci.supported !== false ? "completed" : "pending_approval"}`}>{ci.supported !== false ? "Supported" : "Uncertain"}</span></td>
+                <td>{ci.note || "OK"}</td>
+              </tr>
+              {pw.attempted && (
+                <tr>
+                  <td>Password Reset</td>
+                  <td><span className={`rb-status-badge ${pw.success ? "completed" : "failed"}`}>{pw.success ? "Success" : "Failed"}</span></td>
+                  <td>{pw.success ? <><code style={{background:"var(--color-surface-elevated,#e9ecef)",padding:"2px 6px",borderRadius:"4px"}}>{pw.password}</code> <em style={{fontSize:"0.8em"}}>(save securely)</em></> : (pw.error || pw.note || "—")}</td>
+                </tr>
+              )}
+              {con.attempted && (
+                <tr>
+                  <td>Console Access</td>
+                  <td><span className={`rb-status-badge ${con.success ? "completed" : "failed"}`}>{con.success ? `${con.type} Active` : "Failed"}</span></td>
+                  <td>
+                    {con.success ? (
+                      <><a href={con.url} target="_blank" rel="noreferrer" style={{wordBreak:"break-all"}}>Open Console ↗</a> · Expires: {formatDate(con.expires_at)}</>
+                    ) : (con.error || "—")}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {r.audit && (
+            <div className="rb-result-sub">
+              <h6>Audit Log</h6>
+              <p>Actor: {r.audit.actor} · Time: {formatDate(r.audit.timestamp)} · Console expiry: {r.audit.console_expiry_minutes} min</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Security & Compliance Audit ──
+    if (name === "security_compliance_audit") {
+      const f = r.findings || {};
+      const sev = r.severity_counts || {};
+      return (
+        <div className="rb-result-friendly">
+          <p className="rb-result-summary">
+            Total findings: <strong>{r.total_findings || 0}</strong> · 
+            <span className="rb-status-badge failed">{sev.critical || 0} critical</span>{" "}
+            <span className="rb-status-badge pending_approval">{sev.warning || 0} warning</span>{" "}
+            <span className="rb-status-badge completed">{sev.info || 0} info</span>
+          </p>
+          {(f.sg_violations || []).length > 0 && (
+            <div className="rb-result-sub">
+              <h6>Security Group Violations ({f.sg_violations.length})</h6>
+              <table className="rb-result-table">
+                <thead><tr><th>SG Name</th><th>Tenant</th><th>Protocol</th><th>Ports</th><th>Source</th><th>Severity</th></tr></thead>
+                <tbody>
+                  {f.sg_violations.map((v: any, i: number) => (
+                    <tr key={i}>
+                      <td>{v.sg_name || v.sg_id}</td>
+                      <td>{v.project_name}</td>
+                      <td>{v.protocol}</td>
+                      <td>{v.port_range}</td>
+                      <td>{v.remote_ip_prefix}</td>
+                      <td><span className={`rb-status-badge ${v.severity === "critical" ? "failed" : "pending_approval"}`}>{v.severity}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {(f.stale_users || []).length > 0 && (
+            <div className="rb-result-sub">
+              <h6>Stale Users ({f.stale_users.length})</h6>
+              <table className="rb-result-table">
+                <thead><tr><th>Username</th><th>Domain</th><th>Enabled</th><th>Last Activity</th><th>Severity</th></tr></thead>
+                <tbody>
+                  {f.stale_users.map((u: any, i: number) => (
+                    <tr key={i}>
+                      <td>{u.username}</td>
+                      <td>{u.domain}</td>
+                      <td>{u.enabled ? "Yes" : "No"}</td>
+                      <td>{u.last_activity === "never" ? "Never" : formatDate(u.last_activity)}</td>
+                      <td><span className={`rb-status-badge ${u.severity === "warning" ? "pending_approval" : "completed"}`}>{u.severity}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {(f.unencrypted_volumes || []).length > 0 && (
+            <div className="rb-result-sub">
+              <h6>Unencrypted Volumes ({f.unencrypted_volumes.length})</h6>
+              <table className="rb-result-table">
+                <thead><tr><th>Name</th><th>Size</th><th>Status</th><th>Tenant</th></tr></thead>
+                <tbody>
+                  {f.unencrypted_volumes.map((v: any, i: number) => (
+                    <tr key={i}>
+                      <td>{v.name}</td>
+                      <td>{v.size_gb} GB</td>
+                      <td>{v.status}</td>
+                      <td>{v.tenant_name}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {(r.total_findings || 0) === 0 && <p className="rb-result-empty">No security or compliance issues found</p>}
+        </div>
+      );
+    }
+
     // ── Fallback: raw JSON ──
     return (
       <details className="rb-result-raw">

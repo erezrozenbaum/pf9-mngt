@@ -1332,7 +1332,10 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_de
 # 8. Apply runbooks migration (v1.21+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_runbooks.sql
 
-# 9. Verify schema
+# 9. Apply new runbooks migration (v1.25+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_new_runbooks.sql
+
+# 10. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 
