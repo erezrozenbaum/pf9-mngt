@@ -218,6 +218,99 @@ export default function RunbooksTab() {
   // ------- Helpers -------------------------------------------------------
   const getStatsFor = (name: string) => stats.find((s) => s.runbook_name === name);
 
+  /** Flatten execution result to CSV rows */
+  const exportExecCsv = (exec: Execution) => {
+    const r = exec.result || {};
+    const rows: string[][] = [];
+    const addSection = (title: string, items: any[]) => {
+      if (!items || items.length === 0) return;
+      rows.push([`--- ${title} ---`]);
+      const keys = Object.keys(items[0]);
+      rows.push(keys);
+      items.forEach(item => rows.push(keys.map(k => String(item[k] ?? ""))));
+      rows.push([]);
+    };
+    // Header
+    rows.push(["Runbook", exec.display_name || exec.runbook_name]);
+    rows.push(["Status", exec.status]);
+    rows.push(["Triggered", exec.triggered_at]);
+    rows.push(["Dry Run", exec.dry_run ? "Yes" : "No"]);
+    rows.push(["Items Found", String(exec.items_found)]);
+    rows.push(["Items Actioned", String(exec.items_actioned)]);
+    rows.push([]);
+    // Detect tabular data in result
+    const flatten = (obj: any, prefix = "") => {
+      for (const [k, v] of Object.entries(obj)) {
+        if (Array.isArray(v) && v.length > 0 && typeof v[0] === "object") {
+          addSection(prefix + k, v);
+        } else if (v && typeof v === "object" && !Array.isArray(v)) {
+          // Sub-object with scalar values
+          const entries = Object.entries(v as Record<string,any>);
+          if (entries.every(([, val]) => typeof val !== "object" || val === null)) {
+            rows.push([`--- ${prefix}${k} ---`]);
+            entries.forEach(([sk, sv]) => rows.push([sk, String(sv ?? "")]));
+            rows.push([]);
+          } else {
+            flatten(v, `${prefix}${k} > `);
+          }
+        }
+      }
+    };
+    flatten(r);
+    // If nothing tabular was found, dump as key-value
+    if (rows.length <= 7) {
+      for (const [k, v] of Object.entries(r)) {
+        rows.push([k, JSON.stringify(v)]);
+      }
+    }
+    const csv = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${exec.runbook_name}_${exec.execution_id.slice(0, 8)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /** Export execution result as JSON */
+  const exportExecJson = (exec: Execution) => {
+    const data = { runbook: exec.display_name || exec.runbook_name, status: exec.status, dry_run: exec.dry_run, triggered_at: exec.triggered_at, items_found: exec.items_found, items_actioned: exec.items_actioned, result: exec.result };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${exec.runbook_name}_${exec.execution_id.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  /** Print the detail panel (browser print-to-PDF) */
+  const printExecResult = () => {
+    const panel = document.querySelector(".rb-detail-panel");
+    if (!panel) return;
+    const printWin = window.open("", "_blank", "width=900,height=700");
+    if (!printWin) return;
+    printWin.document.write(`<!DOCTYPE html><html><head><title>Runbook Result</title><style>
+      body{font-family:system-ui,-apple-system,sans-serif;padding:24px;color:#333}
+      table{border-collapse:collapse;width:100%;margin:8px 0}
+      th,td{border:1px solid #ddd;padding:6px 10px;text-align:left;font-size:13px}
+      th{background:#f5f5f5;font-weight:600}
+      h4,h5,h6{margin:12px 0 6px}
+      .rb-status-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600}
+      .rb-status-badge.completed{background:#d4edda;color:#155724}
+      .rb-status-badge.failed{background:#f8d7da;color:#721c24}
+      .rb-status-badge.pending_approval{background:#fff3cd;color:#856404}
+      .rb-status-badge.executing{background:#d1ecf1;color:#0c5460}
+      .rb-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+      @media print{body{padding:0}}
+    </style></head><body>`);
+    printWin.document.write(panel.innerHTML);
+    printWin.document.write("</body></html>");
+    printWin.document.close();
+    setTimeout(() => { printWin.print(); }, 400);
+  };
+
   /** Render execution result in a human-friendly way instead of raw JSON */
   const renderFriendlyResult = (exec: Execution) => {
     const r = exec.result || {};
@@ -701,6 +794,69 @@ export default function RunbooksTab() {
       );
     }
 
+    // ── User Last Login Report ──
+    if (name === "user_last_login") {
+      const users = r.users || [];
+      const summary = r.summary || {};
+      const failed = r.failed_logins || [];
+      return (
+        <div className="rb-result-friendly">
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:"10px",marginBottom:"12px"}}>
+            {[
+              {label:"Total Users",value:summary.total_users},
+              {label:"Active",value:summary.active_users},
+              {label:"Inactive",value:summary.inactive_users},
+              {label:"Never Logged In",value:summary.never_logged_in},
+            ].map((kpi,i) => (
+              <div key={i} style={{background:"var(--color-surface-elevated,#f5f5f5)",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
+                <div style={{fontSize:"0.75em",opacity:0.7}}>{kpi.label}</div>
+                <div style={{fontSize:"1.3em",fontWeight:700}}>{kpi.value ?? "—"}</div>
+              </div>
+            ))}
+          </div>
+          <p className="rb-result-summary">Inactive threshold: <strong>{summary.days_inactive_threshold || 30}</strong> days</p>
+          {users.length === 0 ? <p className="rb-result-empty">No users found</p> : (
+            <table className="rb-result-table">
+              <thead><tr><th>Username</th><th>Role</th><th>Last Login</th><th>Last Activity</th><th>IP</th><th>Total Logins</th><th>Sessions</th><th>Days Since</th><th>Status</th></tr></thead>
+              <tbody>
+                {users.map((u: any) => (
+                  <tr key={u.username}>
+                    <td>{u.username}</td>
+                    <td>{u.role}</td>
+                    <td>{u.last_login ? formatDate(u.last_login) : "Never"}</td>
+                    <td>{u.last_activity ? formatDate(u.last_activity) : "—"}</td>
+                    <td>{u.last_login_ip || "—"}</td>
+                    <td>{u.total_logins}</td>
+                    <td>{u.active_sessions}</td>
+                    <td>{u.days_since_activity !== null && u.days_since_activity !== undefined ? u.days_since_activity : "—"}</td>
+                    <td><span className={`rb-status-badge ${u.status === "active" ? "completed" : u.status === "inactive" ? "pending_approval" : "failed"}`}>{u.status === "never_logged_in" ? "Never" : u.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {failed.length > 0 && (
+            <div className="rb-result-sub rb-result-errors">
+              <h6>Recent Failed Logins ({failed.length})</h6>
+              <table className="rb-result-table">
+                <thead><tr><th>Username</th><th>Time</th><th>IP</th><th>User Agent</th></tr></thead>
+                <tbody>
+                  {failed.map((f: any, i: number) => (
+                    <tr key={i}>
+                      <td>{f.username}</td>
+                      <td>{formatDate(f.timestamp)}</td>
+                      <td>{f.ip_address || "—"}</td>
+                      <td style={{maxWidth:"200px",overflow:"hidden",textOverflow:"ellipsis"}}>{f.user_agent || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // ── Fallback: raw JSON ──
     return (
       <details className="rb-result-raw">
@@ -808,7 +964,12 @@ export default function RunbooksTab() {
               <div className="rb-detail-panel">
                 <div className="rb-detail-header">
                   <h4>{selectedExec.display_name || selectedExec.runbook_name} — Execution Detail</h4>
-                  <button className="rb-btn small" onClick={() => setSelectedExec(null)}>✕ Close</button>
+                  <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
+                    <button className="rb-btn small" title="Export as CSV" onClick={() => exportExecCsv(selectedExec)}>📥 CSV</button>
+                    <button className="rb-btn small" title="Export as JSON" onClick={() => exportExecJson(selectedExec)}>📥 JSON</button>
+                    <button className="rb-btn small" title="Print / Save as PDF" onClick={() => printExecResult()}>🖨️ PDF</button>
+                    <button className="rb-btn small" onClick={() => setSelectedExec(null)}>✕ Close</button>
+                  </div>
                 </div>
                 <div className="rb-detail-grid">
                   <div><strong>Status:</strong> <span className={`rb-status-badge ${selectedExec.status}`}>{selectedExec.status}</span></div>
