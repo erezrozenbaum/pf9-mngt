@@ -20,16 +20,20 @@
 - **Dark Mode**: Full dark theme support for panel, messages, chips, help view, welcome screen, and settings.
 - **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
 
-### Policy-as-Code Runbooks (v1.21 - NEW ✨)
-- **📋 Runbooks Tab**: Operator-facing catalogue of 5 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
-- **5 Built-in Runbooks**: Stuck VM Remediation, Orphan Resource Cleanup, Security Group Audit, Quota Threshold Check, Diagnostics Bundle
-- **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout.
+### Policy-as-Code Runbooks (v1.21 → v1.25 - NEW ✨)
+- **📋 Runbooks Tab**: Operator-facing catalogue of 12 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
+- **12 Built-in Runbooks**:
+  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
+  - **Security** — Security Group Audit, Security & Compliance Audit
+  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector
+  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
+- **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout. High-risk runbooks (e.g. `password_reset_console`) default to `single_approval` for operator/admin triggers.
 - **Admin Governance Sub-Tabs**: Three new sub-tabs in Admin → Auth Management: Runbook Executions (filterable history with detail panel), Runbook Approvals (pending queue with approve/reject/cancel), Runbook Policies (per-runbook approval policy editor)
 - **Notification Events**: `runbook_approval_requested`, `runbook_completed`, `runbook_failed`
 - **16 API Endpoints**: `/api/runbooks` (list/get/trigger), `/api/runbooks/executions/*` (history/detail/approve/cancel), `/api/runbooks/approvals/pending`, `/api/runbooks/policies/*` (CRUD), `/api/runbooks/stats/summary`
 - **RBAC**: viewer=`runbooks:read`, operator=`runbooks:read+write`, admin/superadmin=`runbooks:read+write+admin`
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
-- **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`)
+- **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`). `db/migrate_new_runbooks.sql` for adding the 7 new runbooks (v1.25+).
 
 ### Ops Assistant — Search & Similarity (v1.20 - NEW ✨)
 - **🔍 Ops Search Tab**: Full-text search across all 29 resource types using PostgreSQL `tsvector` + `websearch_to_tsquery`. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination.
