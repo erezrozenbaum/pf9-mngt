@@ -24,11 +24,12 @@ interface HostsData {
 
 interface Props {
   data: HostsData;
+  isDark?: boolean;
 }
 
-export const HostUtilizationCard: React.FC<Props> = ({ data }) => {
+export const HostUtilizationCard: React.FC<Props> = ({ data, isDark = false }) => {
   const getUtilizationColor = (percent: number | null): string => {
-    if (percent === null) return '#94a3b8';
+    if (percent === null) return isDark ? '#4b5563' : '#94a3b8';
     if (percent > 85) return '#f87171'; // red (softened)
     if (percent > 70) return '#f59e0b'; // amber
     return '#10b981'; // green

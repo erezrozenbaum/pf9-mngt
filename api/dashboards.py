@@ -509,20 +509,25 @@ async def get_health_summary():
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-            # Get resource counts
-            cursor.execute("""
-                SELECT 
-                    COUNT(DISTINCT p.id) as total_tenants,
-                    COUNT(DISTINCT s.id) as total_vms,
-                    COUNT(DISTINCT v.id) as total_volumes,
-                    COUNT(DISTINCT n.id) as total_networks
-                FROM projects p
-                LEFT JOIN servers s ON s.project_id = p.id
-                LEFT JOIN volumes v ON v.project_id = p.id
-                LEFT JOIN networks n ON n.project_id = p.id
-            """)
-        
-            counts = dict(cursor.fetchone() or {})
+            # Get resource counts (separate queries to avoid cartesian products)
+            cursor.execute("SELECT COUNT(*) as total_tenants FROM projects")
+            total_tenants = (cursor.fetchone() or {}).get("total_tenants", 0)
+
+            cursor.execute("SELECT COUNT(*) as total_vms FROM servers")
+            total_vms_count = (cursor.fetchone() or {}).get("total_vms", 0)
+
+            cursor.execute("SELECT COUNT(*) as total_volumes FROM volumes")
+            total_volumes_count = (cursor.fetchone() or {}).get("total_volumes", 0)
+
+            cursor.execute("SELECT COUNT(*) as total_networks FROM networks")
+            total_networks_count = (cursor.fetchone() or {}).get("total_networks", 0)
+
+            counts = {
+                "total_tenants": total_tenants,
+                "total_vms": total_vms_count,
+                "total_volumes": total_volumes_count,
+                "total_networks": total_networks_count,
+            }
         
             # Get running VM count
             cursor.execute("SELECT COUNT(*) as running_vms FROM servers WHERE status = 'ACTIVE'")
@@ -1075,15 +1080,21 @@ async def get_coverage_risks():
             cursor.execute(
                 """
                 SELECT p.name as tenant_name,
-                       COUNT(DISTINCT v.id) as total_volumes,
-                       COUNT(DISTINCT s.volume_id) as covered_volumes,
-                       COUNT(DISTINCT s.id) as snapshot_count
+                       COALESCE(vc.total_volumes, 0) as total_volumes,
+                       COALESCE(sc.covered_volumes, 0) as covered_volumes,
+                       COALESCE(sc.snapshot_count, 0) as snapshot_count
                 FROM projects p
-                LEFT JOIN volumes v ON v.project_id = p.id
-                LEFT JOIN snapshots s ON s.volume_id = v.id
-                GROUP BY p.name
-                HAVING COUNT(DISTINCT v.id) > 0
-                ORDER BY (COUNT(DISTINCT s.volume_id)::float / COUNT(DISTINCT v.id)) ASC
+                LEFT JOIN (
+                    SELECT project_id, COUNT(*) as total_volumes FROM volumes GROUP BY project_id
+                ) vc ON vc.project_id = p.id
+                LEFT JOIN (
+                    SELECT v.project_id, COUNT(DISTINCT v.id) as covered_volumes, COUNT(s.id) as snapshot_count
+                    FROM volumes v
+                    INNER JOIN snapshots s ON s.volume_id = v.id
+                    GROUP BY v.project_id
+                ) sc ON sc.project_id = p.id
+                WHERE COALESCE(vc.total_volumes, 0) > 0
+                ORDER BY (COALESCE(sc.covered_volumes, 0)::float / vc.total_volumes) ASC
                 LIMIT 5
                 """
             )
@@ -1146,13 +1157,16 @@ async def get_capacity_pressure():
                 """
                 SELECT p.id as tenant_id,
                        p.name as tenant_name,
-                       COUNT(DISTINCT s.id) as vm_count,
-                       COUNT(DISTINCT v.id) as volume_count,
-                       COALESCE(SUM(v.size_gb), 0) as volume_gb
+                       COALESCE(sc.vm_count, 0) as vm_count,
+                       COALESCE(vc.volume_count, 0) as volume_count,
+                       COALESCE(vc.volume_gb, 0) as volume_gb
                 FROM projects p
-                LEFT JOIN servers s ON s.project_id = p.id
-                LEFT JOIN volumes v ON v.project_id = p.id
-                GROUP BY p.id, p.name
+                LEFT JOIN (
+                    SELECT project_id, COUNT(*) as vm_count FROM servers GROUP BY project_id
+                ) sc ON sc.project_id = p.id
+                LEFT JOIN (
+                    SELECT project_id, COUNT(*) as volume_count, COALESCE(SUM(size_gb), 0) as volume_gb FROM volumes GROUP BY project_id
+                ) vc ON vc.project_id = p.id
                 ORDER BY vm_count DESC
                 LIMIT 5
                 """

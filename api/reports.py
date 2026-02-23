@@ -1670,7 +1670,7 @@ async def report_vm_report(
     format: str = Query("json", description="json or csv"),
     user: User = Depends(require_permission("reports", "read")),
 ):
-    """Detailed report of all VMs with flavor, host, IPs, volumes, quota context, and status."""
+    """Detailed report of all VMs with flavor, host, IPs, volumes, quota context, OS, and status."""
     try:
         client = get_client()
         projects = client.list_projects(domain_id=domain_id)
@@ -1687,6 +1687,28 @@ async def report_vm_report(
         servers = client.list_servers(all_tenants=True)
         all_flavors = client.list_flavors()
         volumes = client.list_volumes(all_tenants=True)
+
+        # Fetch OS info from our DB (os_distro / os_version stored on servers table)
+        os_info_map: Dict[str, dict] = {}
+        try:
+            from api.db_pool import get_connection as get_db_conn
+            from psycopg2.extras import RealDictCursor
+            with get_db_conn() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        SELECT s.server_id, s.os_distro, s.os_version,
+                               i.raw_json->>'os_distro' AS img_os_distro,
+                               i.raw_json->>'os_version' AS img_os_version
+                        FROM servers s
+                        LEFT JOIN images i ON s.image_id = i.image_id
+                    """)
+                    for row in cur.fetchall():
+                        os_info_map[row["server_id"]] = {
+                            "os_distro": row["os_distro"] or row.get("img_os_distro") or "",
+                            "os_version": row["os_version"] or row.get("img_os_version") or "",
+                        }
+        except Exception:
+            pass  # Graceful: OS columns will be empty if DB lookup fails
 
         # Build lookup maps
         flavor_details = {}
@@ -1833,6 +1855,8 @@ async def report_vm_report(
                 "Availability Zone": s.get("OS-EXT-AZ:availability_zone", ""),
                 "Key Pair": s.get("key_name", ""),
                 "Image ID": s.get("image", {}).get("id", "") if isinstance(s.get("image"), dict) else s.get("image", ""),
+                "OS Distro": os_info_map.get(sid, {}).get("os_distro", ""),
+                "OS Version": os_info_map.get(sid, {}).get("os_version", ""),
             })
 
         return _maybe_csv(rows, format, "vm_report")

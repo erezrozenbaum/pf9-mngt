@@ -922,3 +922,90 @@ def ensure_admin_role_for_service_user():
         print("[ERROR] Keystone session or URL not available.")
         return
     automate_admin_role_assignment(keystone_url, token, SERVICE_USER_EMAIL)
+
+
+# --------------------------------------------------------------------
+# Additional Nova helpers (keypairs, server groups, aggregates, AZs, quotas)
+# --------------------------------------------------------------------
+
+
+def nova_keypairs(session: requests.Session) -> List[Dict[str, Any]]:
+    """Fetch all Nova keypairs (all users requires admin)."""
+    _require_nova()
+    url = f"{NOVA_ENDPOINT}/os-keypairs"
+    raw = paginate(session, url, "keypairs")
+    # Nova returns each keypair wrapped: {"keypair": {actual data}}
+    return [kp["keypair"] if isinstance(kp, dict) and "keypair" in kp else kp for kp in raw]
+
+
+def nova_server_groups(session: requests.Session) -> List[Dict[str, Any]]:
+    """Fetch all Nova server groups (all tenants)."""
+    _require_nova()
+    url = f"{NOVA_ENDPOINT}/os-server-groups"
+    return paginate(session, url, "server_groups", extra_params={"all_projects": "true"})
+
+
+def nova_aggregates(session: requests.Session) -> List[Dict[str, Any]]:
+    """Fetch all Nova host aggregates."""
+    _require_nova()
+    url = f"{NOVA_ENDPOINT}/os-aggregates"
+    # Aggregates are not paginated, single response
+    resp = http_json(session, "GET", url)
+    return resp.get("aggregates", [])
+
+
+def nova_availability_zones(session: requests.Session) -> List[Dict[str, Any]]:
+    """Fetch all Nova availability zones (detailed)."""
+    _require_nova()
+    url = f"{NOVA_ENDPOINT}/os-availability-zone/detail"
+    resp = http_json(session, "GET", url)
+    return resp.get("availabilityZoneInfo", [])
+
+
+def nova_quotas(session: requests.Session, project_id: str) -> Dict[str, Any]:
+    """Fetch Nova quota set for a specific project."""
+    _require_nova()
+    url = f"{NOVA_ENDPOINT}/os-quota-sets/{project_id}/detail"
+    resp = http_json(session, "GET", url)
+    return resp.get("quota_set", {})
+
+
+# --------------------------------------------------------------------
+# Additional Cinder helpers (volume types, volume backups, quotas)
+# --------------------------------------------------------------------
+
+
+def cinder_volume_types(session: requests.Session) -> List[Dict[str, Any]]:
+    """Fetch all Cinder volume types."""
+    _require_cinder()
+    url = f"{CINDER_ENDPOINT}/types"
+    return paginate(session, url, "volume_types")
+
+
+def cinder_volume_backups(session: requests.Session) -> List[Dict[str, Any]]:
+    """Fetch all Cinder volume backups (all tenants, detailed)."""
+    _require_cinder()
+    url = f"{CINDER_ENDPOINT}/backups/detail"
+    return paginate(session, url, "backups", extra_params={"all_tenants": "1"})
+
+
+def cinder_quotas(session: requests.Session, project_id: str) -> Dict[str, Any]:
+    """Fetch Cinder quota set for a specific project."""
+    _require_cinder()
+    base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])
+    url = f"{base_url}/{project_id}/os-quota-sets/{project_id}"
+    resp = http_json(session, "GET", url)
+    return resp.get("quota_set", {})
+
+
+# --------------------------------------------------------------------
+# Additional Neutron helpers (quotas)
+# --------------------------------------------------------------------
+
+
+def neutron_quotas(session: requests.Session, project_id: str) -> Dict[str, Any]:
+    """Fetch Neutron quota for a specific project."""
+    _require_neutron()
+    url = f"{NEUTRON_ENDPOINT}/v2.0/quotas/{project_id}"
+    resp = http_json(session, "GET", url)
+    return resp.get("quota", {})

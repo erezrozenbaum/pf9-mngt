@@ -720,7 +720,7 @@ async def export_chargeback(
     """
     Export chargeback report as CSV.
     Uses the unified metering_pricing table (flavor, storage_gb, snapshot_gb,
-    snapshot_op, restore, volume, network, public_ip) to compute per-tenant costs.
+    snapshot_op, restore, volume, network, public_ip, os_license) to compute per-tenant costs.
     Counts ACTUAL volumes, networks, subnets, routers, floating IPs, and ports
     from inventory tables — not just VM-based approximations.
     Falls back to metering_config rates when no pricing entry matches.
@@ -794,6 +794,15 @@ async def export_chargeback(
         volume_per_month = cat_monthly("volume")            # per volume per month
         network_per_month = cat_monthly("network")          # per network per month
         public_ip_per_month = cat_monthly("public_ip")      # per floating IP per month
+
+        # OS license pricing (category = 'os_license', item_name = os_distro e.g. 'windows')
+        os_license_pricing = {}  # item_name (lowercase os_distro) -> {cost_per_hour, cost_per_month}
+        for p in pricing_rows:
+            if p["category"] == "os_license":
+                os_license_pricing[p["item_name"].lower()] = {
+                    "cost_per_hour": float(p.get("cost_per_hour") or 0),
+                    "cost_per_month": float(p.get("cost_per_month") or 0),
+                }
 
         # Time-based filters for metering tables
         where_r = ["collected_at > now() - interval '%s hours'"]
@@ -931,6 +940,31 @@ async def export_chargeback(
                 conn.rollback()
                 fip_rows = {}
 
+            # ── OS license counts per tenant (from servers inventory) ──
+            os_license_rows: dict = {}
+            if os_license_pricing:
+                try:
+                    cur.execute(f"""
+                        SELECT
+                            COALESCE(p.name, 'unknown') AS tenant,
+                            COALESCE(d.name, '')         AS domain,
+                            LOWER(COALESCE(s.os_distro, 'unknown')) AS os_distro,
+                            COUNT(*) AS vm_count
+                        FROM servers s
+                        LEFT JOIN projects p ON s.project_id = p.id
+                        LEFT JOIN domains d  ON p.domain_id = d.id
+                        WHERE s.os_distro IS NOT NULL AND s.os_distro != ''
+                        {inv_where.replace('1=1 ', '') if inv_where else ''}
+                        GROUP BY p.name, d.name, LOWER(s.os_distro)
+                    """, inv_params)
+                    for row in cur.fetchall():
+                        key = (row["tenant"], row["domain"])
+                        if key not in os_license_rows:
+                            os_license_rows[key] = {}
+                        os_license_rows[key][row["os_distro"]] = row["vm_count"]
+                except Exception:
+                    conn.rollback()
+
         # ── Build a unified set of all tenants across all data sources ──
         all_tenants = set()
         for r in resource_rows:
@@ -1015,8 +1049,19 @@ async def export_chargeback(
             floating_ip_count = int(fip_info.get("floating_ip_count", 0))
             public_ip_cost = floating_ip_count * public_ip_per_month * period_months
 
+            # ── OS License cost (per VM with matching os_distro) ──
+            os_license_cost = 0.0
+            os_licensed_vms = 0
+            os_distro_counts = os_license_rows.get((tenant, dom), {})
+            for os_name, os_count in os_distro_counts.items():
+                lp = os_license_pricing.get(os_name)
+                if lp:
+                    hr = lp["cost_per_hour"] if lp["cost_per_hour"] > 0 else (lp["cost_per_month"] / 730.0 if lp["cost_per_month"] > 0 else 0)
+                    os_license_cost += hr * os_count * interval_hours
+                    os_licensed_vms += os_count
+
             total_cost = (compute_cost + storage_cost + snap_cost +
-                          restore_cost + vol_cost + net_cost + public_ip_cost)
+                          restore_cost + vol_cost + net_cost + public_ip_cost + os_license_cost)
 
             chargeback.append({
                 "Tenant / Project": tenant,
@@ -1043,6 +1088,8 @@ async def export_chargeback(
                 f"Network Cost ({currency})": round(net_cost, 2),
                 "Floating IPs": floating_ip_count,
                 f"Public IP Cost ({currency})": round(public_ip_cost, 2),
+                "OS Licensed VMs": os_licensed_vms,
+                f"OS License Cost ({currency})": round(os_license_cost, 2),
                 f"TOTAL Cost ({currency})": round(total_cost, 2),
                 "Period (hours)": interval_hours,
                 "Currency": currency,
@@ -1055,7 +1102,7 @@ async def export_chargeback(
 # ---------------------------------------------------------------------------
 # Pricing CRUD (metering_pricing – unified pricing table)
 # ---------------------------------------------------------------------------
-# Categories: flavor, storage_gb, snapshot_gb, restore, volume, network, custom
+# Categories: flavor, storage_gb, snapshot_gb, snapshot_op, restore, volume, network, public_ip, os_license, custom
 # Each row: category, item_name, unit, cost_per_hour, cost_per_month, currency
 
 class PricingItemCreate(BaseModel):

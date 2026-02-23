@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.2] - 2026-02-23
+
+### Fixed
+- **Dashboard cartesian product joins** — Fixed three dashboard widget queries (`health-summary`, `capacity-pressure`, `coverage-risks`) that produced incorrect inflated numbers due to cartesian joins between `servers` and `volumes` tables. Each now queries independently and merges results.
+- **VM Hotspots CPU always showing 0%** — CPU delta calculations were in-memory only and lost on restart. Added persistent CPU state storage (`monitoring/cache/cpu_state.json`) so delta-based CPU utilization works across restarts and `--once` runs.
+- **OS Distribution widget showing "Unknown" for all VMs** — Enhanced `_infer_os_from_image_name` with 20+ OS patterns and added VM name fallback. VMs now correctly show Windows, Ubuntu, CentOS, etc.
+- **System Metadata showing 0 Running VMs** — Fixed `upsert_hypervisors` to include `running_vms` from Nova API; added ACTIVE server count fallback when hypervisor data is unavailable.
+- **Download Full Inventory Excel crash** — Fixed `TypeError: Excel does not support timezones in datetimes` by stripping `tzinfo` before writing cells via openpyxl. Also fixed export query column mismatches for domains, projects, and snapshots.
+- **Rvtools cleanup FK constraint errors** — Comprehensive FK clearing before project and domain deletion. Deletes child resources in correct order (security_group_rules → security_groups → snapshots → servers → volumes → floating_ips → ports → routers → subnets → networks) and clears `users.default_project_id`, `users.domain_id`, `projects.domain_id` before deleting stale projects/domains.
+- **`datetime.utcnow()` deprecation warnings** — Replaced all `datetime.utcnow()` calls with `datetime.now(timezone.utc)` in `pf9_rvtools.py` and `host_metrics_collector.py`.
+- **Stuck DB queries** — Killed 22 stuck database queries caused by the previous cartesian joins and reduced API workers from 4 to 2 with timeout increased from 120s to 300s to prevent future hangs.
+- **History table missing columns** — Fixed `UndefinedColumn` errors for `volumes_history`, `networks_history`, `ports_history`, `subnets_history` by adding missing columns and making `_upsert_with_history` catch column errors gracefully.
+- **Rvtools domain cleanup query** — Fixed cleanup query to filter by `table_schema = 'public'` to avoid pg_catalog false positives.
+
+### Changed
+- **Quota tab redesigned** — Replaced flat table with a grouped card layout showing Compute, Block Storage, and Network quotas per project with usage bars and color-coded percentage indicators.
+- **System Metadata inline styles** — Replaced hardcoded colors with CSS variable references (`var(--color-text-secondary)`, `var(--color-border)`, `var(--color-surface-elevated)`) for proper dark mode support.
+- **Dark mode improvements** — TenantRiskHeatmapCard increased opacity (0.18 → 0.35) with colored borders; HostUtilizationCard null-state color fix for dark mode; App.tsx bar tracks, text colors, and borders all converted from hardcoded hex to CSS variables.
+- **API container tuning** — Reduced Gunicorn workers from 4 to 2, increased timeout from 120s to 300s, removed `--preload` flag to prevent shared-state issues.
+- **Dashboard fetch batching** — Reduced landing dashboard API calls from 17 sequential to 3 parallel batches.
+
+### Added
+- **CPU state persistence** — New `_load_cpu_state()` / `_save_cpu_state()` methods in `host_metrics_collector.py` for delta calculations across restarts.
+- **Database schema additions** — Added `running_vms`, `created_at` columns to `hypervisors` table; `min_disk`, `min_ram` to `images` table; `image_id`, `os_distro`, `os_version` to `servers` and `servers_history` tables; OS columns (`os_distro`, `os_version`, `os_type`) to `images` and `images_history` tables.
+- **New migration files** — `fix_missing_columns.sql`, `migrate_metadata_tables.sql`, `migrate_os_columns.sql`, `migrate_os_tracking.sql` for upgrading existing databases.
+
 ## [1.24.1] - 2026-02-22
 
 ### Added

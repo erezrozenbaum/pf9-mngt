@@ -32,6 +32,7 @@ interface DashboardData {
   tenantRiskHeatmap: any;
   capacityTrends: any;
   complianceDrift: any;
+  osDistribution: any;
 }
 
 // ---------- Widget registry for the chooser ----------
@@ -48,7 +49,8 @@ type WidgetId =
   | 'changeCompliance'
   | 'complianceDrift'
   | 'trendlines'
-  | 'capacityTrends';
+  | 'capacityTrends'
+  | 'osDistribution';
 
 interface WidgetMeta {
   id: WidgetId;
@@ -72,6 +74,7 @@ const WIDGET_REGISTRY: WidgetMeta[] = [
   { id: 'complianceDrift', label: 'Compliance Drift', icon: '📉', description: 'Drift signals over time', defaultVisible: false },
   { id: 'trendlines', label: 'Trendlines', icon: '📊', description: 'Historical metric trends', defaultVisible: false },
   { id: 'capacityTrends', label: 'Capacity Trends', icon: '📐', description: 'Capacity usage over time', defaultVisible: false },
+  { id: 'osDistribution', label: 'OS Distribution', icon: '💻', description: 'VM count by operating system', defaultVisible: true },
 ];
 
 const STORAGE_KEY_WIDGETS = 'pf9_dashboard_widgets';
@@ -113,6 +116,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
     tenantRiskHeatmap: null,
     capacityTrends: null,
     complianceDrift: null,
+    osDistribution: null,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -165,110 +169,53 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      // Fetch all dashboard data in parallel
-      const [
-        healthRes,
-        slaRes,
-        hostsRes,
-        activityRes,
-        coverageRes,
-        capacityRes,
-        vmCpuRes,
-        vmMemRes,
-        vmStorageRes,
-        changeComplianceRes,
-        tenantRiskRes,
-        trendlinesRes,
-        tenantRiskHeatmapRes,
-        capacityTrendsRes,
-        complianceDriftRes,
-        rvtoolsRes
-      ] = await Promise.all([
-        fetch(`${API_BASE}/dashboard/health-summary`, { headers }),
-        fetch(`${API_BASE}/dashboard/snapshot-sla-compliance`, { headers }),
-        fetch(`${API_BASE}/dashboard/top-hosts-utilization`, { headers }),
-        fetch(`${API_BASE}/dashboard/recent-changes`, { headers }),
-        fetch(`${API_BASE}/dashboard/coverage-risks`, { headers }),
-        fetch(`${API_BASE}/dashboard/capacity-pressure`, { headers }),
-        fetch(`${API_BASE}/dashboard/vm-hotspots?sort=cpu`, { headers }),
-        fetch(`${API_BASE}/dashboard/vm-hotspots?sort=memory`, { headers }),
-        fetch(`${API_BASE}/dashboard/vm-hotspots?sort=storage`, { headers }),
-        fetch(`${API_BASE}/dashboard/change-compliance`, { headers }),
-        fetch(`${API_BASE}/dashboard/tenant-risk-scores`, { headers }),
-        fetch(`${API_BASE}/dashboard/trendlines`, { headers }),
-        fetch(`${API_BASE}/dashboard/tenant-risk-heatmap`, { headers }),
-        fetch(`${API_BASE}/dashboard/capacity-trends`, { headers }),
-        fetch(`${API_BASE}/dashboard/compliance-drift`, { headers }),
-        fetch(`${API_BASE}/dashboard/rvtools-last-run`, { headers }),
-      ]);
-
-      // Helper: parse response or return null on failure (graceful degradation)
-      const safeJson = async (res: Response) => {
-        try { return res.ok ? await res.json() : null; } catch { return null; }
+      // Helper: fetch + parse individually; returns null on any failure
+      const safeFetch = async (url: string) => {
+        try {
+          const res = await fetch(url, { headers });
+          if (res.status === 401) {
+            if (token) {
+              localStorage.removeItem('auth_token');
+              localStorage.removeItem('auth_user');
+              localStorage.removeItem('token_expires_at');
+            }
+            throw new Error('AUTH_REQUIRED');
+          }
+          return res.ok ? await res.json() : null;
+        } catch (err: unknown) {
+          if (err instanceof Error && err.message === 'AUTH_REQUIRED') throw err;
+          console.warn(`Dashboard fetch failed: ${url}`, err);
+          return null;
+        }
       };
 
-      // If we get a 401, clear the invalid token but don't reload - let the app show login page
-      if (
-        healthRes.status === 401 ||
-        slaRes.status === 401 ||
-        hostsRes.status === 401 ||
-        activityRes.status === 401 ||
-        coverageRes.status === 401 ||
-        capacityRes.status === 401 ||
-        vmCpuRes.status === 401 ||
-        vmMemRes.status === 401 ||
-        vmStorageRes.status === 401 ||
-        changeComplianceRes.status === 401 ||
-        tenantRiskRes.status === 401 ||
-        trendlinesRes.status === 401 ||
-        tenantRiskHeatmapRes.status === 401 ||
-        capacityTrendsRes.status === 401 ||
-        complianceDriftRes.status === 401
-      ) {
-        if (token) {
-          localStorage.removeItem('auth_token');
-          localStorage.removeItem('auth_user');
-          localStorage.removeItem('token_expires_at');
-        }
-        setError('Authentication required. Please login.');
-        return;
-      }
+      // Batch 1: critical widgets (health + core)
+      const [health, sla, hosts, activity, coverage, capacity] = await Promise.all([
+        safeFetch(`${API_BASE}/dashboard/health-summary`),
+        safeFetch(`${API_BASE}/dashboard/snapshot-sla-compliance`),
+        safeFetch(`${API_BASE}/dashboard/top-hosts-utilization`),
+        safeFetch(`${API_BASE}/dashboard/recent-changes`),
+        safeFetch(`${API_BASE}/dashboard/coverage-risks`),
+        safeFetch(`${API_BASE}/dashboard/capacity-pressure`),
+      ]);
 
-      // Gracefully degrade: parse each response individually; null on failure
-      const [
-        health,
-        sla,
-        hosts,
-        activity,
-        coverage,
-        capacity,
-        vmHotspotsCpu,
-        vmHotspotsMemory,
-        vmHotspotsStorage,
-        changeCompliance,
-        tenantRisk,
-        trendlines,
-        tenantRiskHeatmap,
-        capacityTrends,
-        complianceDrift,
-        rvtoolsLastRun
-      ] = await Promise.all([
-        safeJson(healthRes),
-        safeJson(slaRes),
-        safeJson(hostsRes),
-        safeJson(activityRes),
-        safeJson(coverageRes),
-        safeJson(capacityRes),
-        safeJson(vmCpuRes),
-        safeJson(vmMemRes),
-        safeJson(vmStorageRes),
-        safeJson(changeComplianceRes),
-        safeJson(tenantRiskRes),
-        safeJson(trendlinesRes),
-        safeJson(tenantRiskHeatmapRes),
-        safeJson(capacityTrendsRes),
-        safeJson(complianceDriftRes),
-        safeJson(rvtoolsRes),
+      // Batch 2: VM hotspots + compliance
+      const [vmHotspotsCpu, vmHotspotsMemory, vmHotspotsStorage, changeCompliance, tenantRisk] = await Promise.all([
+        safeFetch(`${API_BASE}/dashboard/vm-hotspots?sort=cpu`),
+        safeFetch(`${API_BASE}/dashboard/vm-hotspots?sort=memory`),
+        safeFetch(`${API_BASE}/dashboard/vm-hotspots?sort=storage`),
+        safeFetch(`${API_BASE}/dashboard/change-compliance`),
+        safeFetch(`${API_BASE}/dashboard/tenant-risk-scores`),
+      ]);
+
+      // Batch 3: trends + analytics
+      const [trendlines, tenantRiskHeatmap, capacityTrends, complianceDrift, rvtoolsLastRun, osDistribution] = await Promise.all([
+        safeFetch(`${API_BASE}/dashboard/trendlines`),
+        safeFetch(`${API_BASE}/dashboard/tenant-risk-heatmap`),
+        safeFetch(`${API_BASE}/dashboard/capacity-trends`),
+        safeFetch(`${API_BASE}/dashboard/compliance-drift`),
+        safeFetch(`${API_BASE}/dashboard/rvtools-last-run`),
+        safeFetch(`${API_BASE}/os-distribution`),
       ]);
 
       setData({
@@ -287,13 +234,18 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         tenantRiskHeatmap,
         capacityTrends,
         complianceDrift,
+        osDistribution,
       });
       setLastRefresh(new Date());
       setLastRVToolsRun(rvtoolsLastRun?.last_run ? rvtoolsLastRun : null);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to load dashboard data'
-      );
+      if (err instanceof Error && err.message === 'AUTH_REQUIRED') {
+        setError('Authentication required. Please login.');
+      } else {
+        setError(
+          err instanceof Error ? err.message : 'Failed to load dashboard data'
+        );
+      }
       console.error('Dashboard error:', err);
     } finally {
       setLoading(false);
@@ -430,7 +382,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         )}
 
         {/* Top Hosts */}
-        {visibleWidgets.has('hosts') && data.hosts && <HostUtilizationCard data={data.hosts} />}
+        {visibleWidgets.has('hosts') && data.hosts && <HostUtilizationCard data={data.hosts} isDark={theme === 'dark'} />}
 
         {/* Recent Activity */}
         {visibleWidgets.has('activity') && data.activity && <RecentActivityWidget data={data.activity} />}
@@ -456,7 +408,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         {/* Tenant Risk Heatmap - Full Width */}
         {visibleWidgets.has('tenantRiskHeatmap') && data.tenantRiskHeatmap && (
           <div className="dashboard-section-full">
-            <TenantRiskHeatmapCard data={data.tenantRiskHeatmap} />
+            <TenantRiskHeatmapCard data={data.tenantRiskHeatmap} isDark={theme === 'dark'} />
           </div>
         )}
 
@@ -480,6 +432,40 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         {visibleWidgets.has('capacityTrends') && data.capacityTrends && (
           <div className="dashboard-section-full">
             <CapacityTrendsCard data={data.capacityTrends} />
+          </div>
+        )}
+
+        {/* OS Distribution Widget */}
+        {visibleWidgets.has('osDistribution') && data.osDistribution && (
+          <div className="dashboard-card">
+            <div className="card-header">
+              <h3>💻 OS Distribution</h3>
+            </div>
+            <div className="card-body" style={{padding: '16px'}}>
+              {(() => {
+                const items = data.osDistribution?.items || [];
+                if (items.length === 0) return <p style={{color:'#888'}}>No OS data available yet.</p>;
+                const total = items.reduce((s: number, d: any) => s + (d.vm_count || 0), 0);
+                const colors = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
+                return (
+                  <div>
+                    {items.map((d: any, i: number) => {
+                      const pct = total > 0 ? Math.round((d.vm_count / total) * 100) : 0;
+                      return (
+                        <div key={d.os_distro} style={{display:'flex', alignItems:'center', gap:8, marginBottom:8}}>
+                          <span style={{minWidth:80, fontWeight:500, fontSize:'0.9em', textTransform:'capitalize'}}>{d.os_distro || 'unknown'}</span>
+                          <div style={{flex:1, height:18, background:'rgba(128,128,128,0.1)', borderRadius:4, overflow:'hidden'}}>
+                            <div style={{width:`${pct}%`, height:'100%', background:colors[i % colors.length], borderRadius:4, transition:'width 0.3s'}} />
+                          </div>
+                          <span style={{minWidth:60, textAlign:'right', fontSize:'0.85em', fontWeight:600}}>{d.vm_count} ({pct}%)</span>
+                        </div>
+                      );
+                    })}
+                    <div style={{textAlign:'right', marginTop:8, fontSize:'0.8em', color:'#888'}}>Total: {total} VMs</div>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
       </div>
