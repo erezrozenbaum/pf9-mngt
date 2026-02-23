@@ -572,42 +572,6 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Input */}
-              <div className="copilot-input-area">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  placeholder="Ask about your infrastructure..."
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      sendQuestion(input);
-                    }
-                  }}
-                  disabled={loading}
-                />
-                <button
-                  className="copilot-send"
-                  onClick={() => sendQuestion(input)}
-                  disabled={loading || !input.trim()}
-                  title="Send"
-                >
-                  ➤
-                </button>
-              </div>
-
-              {/* Footer with help link + shortcut + backend badge */}
-              <div className="copilot-footer">
-                <span className="copilot-footer-help" onClick={() => setView("help")}>
-                  ❓ How to ask
-                </span>
-                <span>Ctrl+K</span>
-                <span className={`copilot-backend-badge ${activeBackend}`}>
-                  {badge.icon} {badge.label}
-                </span>
-              </div>
             </>
           ) : (
             /* ── Settings view ─────────────────────────────────── */
@@ -729,6 +693,56 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
                 </div>
               )}
             </div>
+          )}
+
+          {/* ── Input area (visible in chat + help views) ─────── */}
+          {view !== "settings" && (
+            <>
+              <div className="copilot-input-area">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  placeholder="Ask about your infrastructure..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (view !== "chat") setView("chat");
+                      sendQuestion(input);
+                    }
+                  }}
+                  disabled={loading}
+                />
+                <button
+                  className="copilot-send"
+                  onClick={() => {
+                    if (view !== "chat") setView("chat");
+                    sendQuestion(input);
+                  }}
+                  disabled={loading || !input.trim()}
+                  title="Send"
+                >
+                  ➤
+                </button>
+              </div>
+
+              <div className="copilot-footer">
+                {view === "help" ? (
+                  <span className="copilot-footer-help" onClick={() => setView("chat")}>
+                    ← Back to chat
+                  </span>
+                ) : (
+                  <span className="copilot-footer-help" onClick={() => setView("help")}>
+                    ❓ How to ask
+                  </span>
+                )}
+                <span>Ctrl+K</span>
+                <span className={`copilot-backend-badge ${activeBackend}`}>
+                  {badge.icon} {badge.label}
+                </span>
+              </div>
+            </>
           )}
         </div>
       )}

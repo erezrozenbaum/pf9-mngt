@@ -742,9 +742,9 @@ INTENTS: List[IntentDef] = [
         display_name="List volumes",
         keywords=["list volumes", "show volumes", "all volumes"],
         patterns=[r"(?:list|show|display)\s+(?:all\s+)?volumes"],
-        sql="""SELECT name, status, size, volume_type, bootable
+        sql="""SELECT name, status, size_gb, volume_type, bootable
                FROM volumes ORDER BY name LIMIT 50""",
-        formatter=lambda rows: _fmt_table(rows, ["name", "status", "size", "volume_type", "bootable"]),
+        formatter=lambda rows: _fmt_table(rows, ["name", "status", "size_gb", "volume_type", "bootable"]),
     ),
     IntentDef(
         key="list_networks",
@@ -752,9 +752,9 @@ INTENTS: List[IntentDef] = [
         keywords=["list networks", "show networks", "all networks",
                   "network list", "network overview"],
         patterns=[r"(?:list|show|display|network)\s+(?:all\s+)?networks?(?:\s+overview)?"],
-        sql="""SELECT name, status, provider_network_type, shared, admin_state_up
+        sql="""SELECT name, status, is_shared, is_external, admin_state_up
                FROM networks ORDER BY name LIMIT 50""",
-        formatter=lambda rows: _fmt_table(rows, ["name", "status", "provider_network_type", "shared"]),
+        formatter=lambda rows: _fmt_table(rows, ["name", "status", "is_shared", "is_external", "admin_state_up"]),
     ),
     IntentDef(
         key="list_floating_ips",
@@ -763,12 +763,11 @@ INTENTS: List[IntentDef] = [
                   "list floating ips", "floating ip list"],
         patterns=[r"floating\s*ips?",
                   r"(?:list|show|display)\s+floating"],
-        sql="""SELECT floating_ip_address, status, fixed_ip_address,
-                      floating_network_id
-               FROM floating_ips ORDER BY floating_ip_address LIMIT 50""",
+        sql="""SELECT floating_ip, status, fixed_ip, port_id
+               FROM floating_ips ORDER BY floating_ip LIMIT 50""",
         formatter=lambda rows: (
             f"**{len(rows)}** floating IP(s):\n\n" +
-            _fmt_table(rows, ["floating_ip_address", "status", "fixed_ip_address"])
+            _fmt_table(rows, ["floating_ip", "status", "fixed_ip", "port_id"])
             if rows else "No floating IPs found."
         ),
     ),
@@ -777,18 +776,21 @@ INTENTS: List[IntentDef] = [
         display_name="Subnet overview",
         keywords=["subnets", "subnet overview", "list subnets", "show subnets"],
         patterns=[r"(?:list|show|display)?\s*subnets?(?:\s+overview)?"],
-        sql="""SELECT name, cidr, gateway_ip, ip_version, enable_dhcp
+        sql="""SELECT name, cidr, gateway_ip, enable_dhcp
                FROM subnets ORDER BY name LIMIT 50""",
-        formatter=lambda rows: _fmt_table(rows, ["name", "cidr", "gateway_ip", "ip_version", "enable_dhcp"]),
+        formatter=lambda rows: _fmt_table(rows, ["name", "cidr", "gateway_ip", "enable_dhcp"]),
     ),
     IntentDef(
         key="list_routers",
         display_name="Router overview",
         keywords=["routers", "router overview", "list routers", "show routers"],
         patterns=[r"(?:list|show|display)?\s*routers?(?:\s+overview)?"],
-        sql="""SELECT name, status, admin_state_up, external_gateway_info
-               FROM routers ORDER BY name LIMIT 50""",
-        formatter=lambda rows: _fmt_table(rows, ["name", "status", "admin_state_up"]),
+        sql="""SELECT r.name, r.external_net_id,
+                      p.name AS project
+               FROM routers r
+               LEFT JOIN projects p ON r.project_id = p.id
+               ORDER BY r.name LIMIT 50""",
+        formatter=lambda rows: _fmt_table(rows, ["name", "project", "external_net_id"]),
     ),
     IntentDef(
         key="list_flavors",
@@ -927,9 +929,9 @@ INTENTS: List[IntentDef] = [
         display_name="Recent snapshots",
         keywords=["recent snapshots", "latest snapshots", "last snapshots"],
         patterns=[r"(?:recent|latest|last)\s+snapshots"],
-        sql="""SELECT name, status, size, created_at
+        sql="""SELECT name, status, size_gb, created_at
                FROM snapshots ORDER BY created_at DESC LIMIT 10""",
-        formatter=lambda rows: _fmt_table(rows, ["name", "status", "size", "created_at"]),
+        formatter=lambda rows: _fmt_table(rows, ["name", "status", "size_gb", "created_at"]),
     ),
 
     # ── Drift / Compliance ─────────────────────────────────────────────
@@ -1029,13 +1031,13 @@ INTENTS: List[IntentDef] = [
                   "latest activity", "what happened", "recent changes",
                   "recent events"],
         patterns=[r"(?:recent|latest|last)\s+(?:activity|changes|events|audit)"],
-        sql="""SELECT username, action, resource_type, resource_name,
-                      created_at
+        sql="""SELECT actor, action, resource_type, resource_name,
+                      timestamp
                FROM activity_log
-               ORDER BY created_at DESC LIMIT 15""",
+               ORDER BY timestamp DESC LIMIT 15""",
         formatter=lambda rows: (
             "**Recent activity**:\n\n" +
-            _fmt_table(rows, ["username", "action", "resource_type", "resource_name", "created_at"])
+            _fmt_table(rows, ["actor", "action", "resource_type", "resource_name", "timestamp"])
             if rows else "No recent activity found."
         ),
     ),
@@ -1045,12 +1047,12 @@ INTENTS: List[IntentDef] = [
         keywords=["recent logins", "login history", "who logged in",
                   "authentication log", "login attempts"],
         patterns=[r"(?:recent|latest|last)\s+logins|who\s+logged\s+in"],
-        sql="""SELECT username, action, success, ip_address, created_at
+        sql="""SELECT username, action, success, ip_address, timestamp
                FROM auth_audit_log
-               ORDER BY created_at DESC LIMIT 15""",
+               ORDER BY timestamp DESC LIMIT 15""",
         formatter=lambda rows: (
             "**Recent login events**:\n\n" +
-            _fmt_table(rows, ["username", "action", "success", "ip_address", "created_at"])
+            _fmt_table(rows, ["username", "action", "success", "ip_address", "timestamp"])
             if rows else "No login events found."
         ),
     ),
@@ -1064,7 +1066,7 @@ INTENTS: List[IntentDef] = [
         patterns=[r"(?:runbook|automation)\s+(?:summary|status|overview|list)"],
         sql="""SELECT
                  (SELECT COUNT(*) FROM runbooks) AS total_runbooks,
-                 (SELECT COUNT(*) FROM runbooks WHERE is_active = true) AS active,
+                 (SELECT COUNT(*) FROM runbooks WHERE enabled = true) AS active,
                  (SELECT COUNT(*) FROM runbook_executions) AS total_runs,
                  (SELECT COUNT(*) FROM runbook_executions WHERE status = 'failed') AS failed_runs""",
         formatter=lambda rows: (
@@ -1083,13 +1085,13 @@ INTENTS: List[IntentDef] = [
         keywords=["tenant health", "project health", "health overview",
                   "health status", "environment health"],
         patterns=[r"(?:tenant|project|environment)\s+health"],
-        sql="""SELECT project_name, health_score, vm_count,
-                      error_vm_count, snapshot_coverage_pct
+        sql="""SELECT project_name, health_score, total_servers,
+                      error_servers, active_servers, total_snapshots
                FROM v_tenant_health
                ORDER BY health_score ASC LIMIT 20""",
         formatter=lambda rows: (
             "**Tenant health** (lowest scores first):\n\n" +
-            _fmt_table(rows, ["project_name", "health_score", "vm_count", "error_vm_count", "snapshot_coverage_pct"])
+            _fmt_table(rows, ["project_name", "health_score", "total_servers", "error_servers", "active_servers", "total_snapshots"])
             if rows else "No tenant health data available."
         ),
     ),
