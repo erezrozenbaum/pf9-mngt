@@ -1972,12 +1972,11 @@ def _engine_snapshot_quota_forecast(params: dict, dry_run: bool, actor: str) -> 
         total_vol_gb = sum(v.get("size", 0) for v in vols)
         vol_count = len(vols)
 
-        # Fetch Cinder quota
+        # Fetch Cinder quota (usage=true to get in_use values)
         try:
-            base_project = client.project_id or project_id
             quota_url = (
                 f"{client.cinder_endpoint.rstrip('/')}"
-                f"/os-quota-sets/{project_id}"
+                f"/os-quota-sets/{project_id}?usage=true"
             )
             qr = client.session.get(quota_url, headers=headers)
             if qr.status_code != 200:
