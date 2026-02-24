@@ -18,6 +18,7 @@ class Pf9Client:
         # Derived endpoints
         self.session = requests.Session()
         self.token: Optional[str] = None
+        self.project_id: Optional[str] = None
         self.nova_endpoint: Optional[str] = None
         self.neutron_endpoint: Optional[str] = None
         self.cinder_endpoint: Optional[str] = None
@@ -61,8 +62,12 @@ class Pf9Client:
         self.token = r.headers["X-Subject-Token"]
         body = r.json()
 
+        # Extract project_id from token scope
+        token_data = body.get("token", {})
+        self.project_id = token_data.get("project", {}).get("id")
+
         # Extract endpoints from catalog
-        catalog = body.get("token", {}).get("catalog", [])
+        catalog = token_data.get("catalog", [])
         self.nova_endpoint = self._find_endpoint(catalog, "compute")
         self.neutron_endpoint = self._find_endpoint(catalog, "network")
         try:
