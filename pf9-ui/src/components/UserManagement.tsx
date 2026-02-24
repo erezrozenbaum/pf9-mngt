@@ -2337,10 +2337,82 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                 <pre className="bg-gray-100 p-2 rounded mt-1 text-xs overflow-auto max-h-40">{JSON.stringify(rbSelectedExec.parameters, null, 2)}</pre>
               </details>
               {rbSelectedExec.result && Object.keys(rbSelectedExec.result).length > 0 && (
-                <details className="text-sm mt-2">
-                  <summary className="cursor-pointer font-medium">Result</summary>
-                  <pre className="bg-gray-100 p-2 rounded mt-1 text-xs overflow-auto max-h-60">{JSON.stringify(rbSelectedExec.result, null, 2)}</pre>
-                </details>
+                <div className="text-sm mt-2">
+                  <h5 className="font-medium mb-2">Results</h5>
+                  {/* Structured summary if available */}
+                  {rbSelectedExec.result.summary && (
+                    <div className="bg-green-50 border border-green-200 rounded p-2 mb-2 text-xs">
+                      {Object.entries(rbSelectedExec.result.summary as Record<string, unknown>).map(([k, v]) => (
+                        <span key={k} className="inline-block mr-3"><strong>{k.replace(/_/g, ' ')}:</strong> {String(v)}</span>
+                      ))}
+                    </div>
+                  )}
+                  {/* Render alerts table */}
+                  {Array.isArray(rbSelectedExec.result.alerts) && rbSelectedExec.result.alerts.length > 0 && (
+                    <div className="mb-2">
+                      <h6 className="text-xs font-medium mb-1">Alerts ({rbSelectedExec.result.alerts.length})</h6>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs border">
+                          <thead className="bg-red-50">
+                            <tr>
+                              {Object.keys(rbSelectedExec.result.alerts[0]).filter((k: string) => k !== 'issues' && k !== 'project_id').map((k: string) => (
+                                <th key={k} className="px-2 py-1 text-left border-b">{k.replace(/_/g, ' ')}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rbSelectedExec.result.alerts.map((a: any, i: number) => (
+                              <tr key={i} className={a.severity === 'critical' ? 'bg-red-50' : a.severity === 'warning' ? 'bg-yellow-50' : ''}>
+                                {Object.entries(a).filter(([k]) => k !== 'issues' && k !== 'project_id').map(([k, v]) => (
+                                  <td key={k} className="px-2 py-1 border-b">{typeof v === 'object' ? JSON.stringify(v) : String(v ?? '-')}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  {/* Render items/ok_projects table */}
+                  {(() => {
+                    const items = rbSelectedExec.result.ok_projects || rbSelectedExec.result.items || rbSelectedExec.result.users || rbSelectedExec.result.stuck_vms || rbSelectedExec.result.orphans;
+                    const label = rbSelectedExec.result.ok_projects ? 'OK Projects' : rbSelectedExec.result.items ? 'Items' : rbSelectedExec.result.users ? 'Users' : rbSelectedExec.result.stuck_vms ? 'Stuck VMs' : rbSelectedExec.result.orphans ? 'Orphans' : '';
+                    if (Array.isArray(items) && items.length > 0) {
+                      return (
+                        <details className="mb-2">
+                          <summary className="cursor-pointer text-xs font-medium">{label} ({items.length})</summary>
+                          <div className="overflow-x-auto mt-1">
+                            <table className="w-full text-xs border">
+                              <thead className="bg-gray-50">
+                                <tr>
+                                  {Object.keys(items[0]).filter((k: string) => !k.endsWith('_id') || k === 'project_id').map((k: string) => (
+                                    <th key={k} className="px-2 py-1 text-left border-b">{k.replace(/_/g, ' ')}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {items.slice(0, 50).map((item: any, i: number) => (
+                                  <tr key={i}>
+                                    {Object.entries(item).filter(([k]) => !k.endsWith('_id') || k === 'project_id').map(([k, v]) => (
+                                      <td key={k} className="px-2 py-1 border-b">{typeof v === 'object' ? JSON.stringify(v) : String(v ?? '-')}</td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {items.length > 50 && <p className="text-xs text-gray-500 mt-1">Showing 50 of {items.length} — export as JSON for full data</p>}
+                          </div>
+                        </details>
+                      );
+                    }
+                    return null;
+                  })()}
+                  {/* Raw JSON fallback */}
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-xs text-gray-500">Raw JSON</summary>
+                    <pre className="bg-gray-100 p-2 rounded mt-1 text-xs overflow-auto max-h-60">{JSON.stringify(rbSelectedExec.result, null, 2)}</pre>
+                  </details>
+                </div>
               )}
             </div>
           )}

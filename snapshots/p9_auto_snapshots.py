@@ -183,6 +183,10 @@ def finish_snapshot_run(conn, run_id: int, status: str, total_volumes: int,
         conn.commit()
     except Exception as e:
         print(f"[DB] Error finishing snapshot run: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def create_snapshot_record(conn, run_id: int, action: str, snapshot_id: str, 
@@ -788,6 +792,10 @@ def record_quota_block(db_conn, run_id, volume, project_id, project_name,
         db_conn.commit()
     except Exception as e:
         print(f"    [DB] Error recording quota block: {e}")
+        try:
+            db_conn.rollback()
+        except Exception:
+            pass
 
 
 def update_batch_progress(db_conn, run_id, batch_number, **kwargs):
@@ -810,6 +818,10 @@ def update_batch_progress(db_conn, run_id, batch_number, **kwargs):
         db_conn.commit()
     except Exception as e:
         print(f"    [DB] Error updating batch progress: {e}")
+        try:
+            db_conn.rollback()
+        except Exception:
+            pass
 
 
 def update_run_progress(db_conn, run_id, current_batch, completed_batches,
@@ -838,6 +850,10 @@ def update_run_progress(db_conn, run_id, current_batch, completed_batches,
         db_conn.commit()
     except Exception as e:
         print(f"    [DB] Error updating run progress: {e}")
+        try:
+            db_conn.rollback()
+        except Exception:
+            pass
 
 
 def send_quota_blocked_notification(db_conn, run_id, policy_name,
@@ -846,7 +862,7 @@ def send_quota_blocked_notification(db_conn, run_id, policy_name,
     if not blocked_summary:
         return
     try:
-        # Build notification via the API's notification log table
+        # Build notification via the activity_log table
         total_blocked = sum(b["count"] for b in blocked_summary)
         tenant_list = ", ".join(
             f"{b['tenant_name']} ({b['count']} vols, need +{b['needed_gb']}GB)"
@@ -861,28 +877,34 @@ def send_quota_blocked_notification(db_conn, run_id, policy_name,
             return
         with db_conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO notification_log 
-                (event_type, summary, severity, resource_id, resource_name,
-                 actor, details, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+                INSERT INTO activity_log
+                (actor, action, resource_type, resource_id, resource_name,
+                 details, result)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
+                "system",
                 "snapshot_quota_blocked",
-                summary,
-                "warning",
+                "snapshot_run",
                 str(run_id),
                 f"snapshot_run_{policy_name}",
-                "system",
                 json.dumps({
+                    "summary": summary,
+                    "severity": "warning",
                     "run_id": run_id,
                     "policy": policy_name,
                     "total_blocked": total_blocked,
                     "tenants": blocked_summary,
                 }),
+                "warning",
             ))
         db_conn.commit()
         print(f"[NOTIFY] Quota-blocked notification sent: {total_blocked} volumes across {len(blocked_summary)} tenants")
     except Exception as e:
         print(f"[NOTIFY] Failed to send quota-blocked notification: {e}")
+        try:
+            db_conn.rollback()
+        except Exception:
+            pass
 
 
 def send_run_completion_notification(db_conn, run_id, policy_name, dry_run,
@@ -909,23 +931,26 @@ def send_run_completion_notification(db_conn, run_id, policy_name, dry_run,
         if error_count > 0 or quota_blocked_count > 0:
             severity = "warning"
         
+        result_status = "success" if error_count == 0 else "warning"
+        
         if not db_conn:
             print(f"[NOTIFY] {summary}")
             return
         with db_conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO notification_log
-                (event_type, summary, severity, resource_id, resource_name,
-                 actor, details, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+                INSERT INTO activity_log
+                (actor, action, resource_type, resource_id, resource_name,
+                 details, result)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
+                "system",
                 "snapshot_run_completed",
-                summary,
-                severity,
+                "snapshot_run",
                 str(run_id),
                 f"snapshot_run_{policy_name}",
-                "system",
                 json.dumps({
+                    "summary": summary,
+                    "severity": severity,
                     "run_id": run_id,
                     "policy": policy_name,
                     "created": created_count,
@@ -937,11 +962,16 @@ def send_run_completion_notification(db_conn, run_id, policy_name, dry_run,
                     "batches": batch_count,
                     "duration_minutes": duration_min,
                 }),
+                result_status,
             ))
         db_conn.commit()
         print(f"[NOTIFY] Run completion notification sent")
     except Exception as e:
         print(f"[NOTIFY] Failed to send completion notification: {e}")
+        try:
+            db_conn.rollback()
+        except Exception:
+            pass
 
 
 def _build_metadata_maps(session):
@@ -1665,11 +1695,10 @@ def main():
         update_batch_progress(
             db_conn, run_id, batch_idx,
             status=batch_status,
-            snapshots_created=batch_created,
-            snapshots_deleted=batch_deleted,
-            volumes_skipped=batch_skipped,
-            errors=batch_errors,
-            completed_at=datetime.now(timezone.utc),
+            completed=batch_created,
+            skipped=batch_skipped,
+            failed=batch_errors,
+            finished_at=datetime.now(timezone.utc),
         )
         update_run_progress(
             db_conn, run_id,

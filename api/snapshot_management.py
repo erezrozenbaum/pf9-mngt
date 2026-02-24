@@ -1117,9 +1117,9 @@ def setup_snapshot_routes(app, get_db_connection):
                 # Get batch details
                 cur.execute("""
                     SELECT batch_number, tenant_ids, tenant_names,
-                           total_volumes, snapshots_created, snapshots_deleted,
-                           volumes_skipped, errors, status,
-                           started_at, completed_at
+                           total_volumes, completed, failed,
+                           skipped, quota_blocked, status,
+                           started_at, finished_at
                     FROM snapshot_run_batches
                     WHERE snapshot_run_id = %s
                     ORDER BY batch_number
@@ -1183,8 +1183,8 @@ def setup_snapshot_routes(app, get_db_connection):
 
                 cur.execute("""
                     SELECT batch_number, tenant_names,
-                           total_volumes, snapshots_created, status,
-                           started_at, completed_at
+                           total_volumes, completed, status,
+                           started_at, finished_at
                     FROM snapshot_run_batches
                     WHERE snapshot_run_id = %s
                     ORDER BY batch_number

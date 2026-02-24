@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.1] - 2026-02-24
+
+### Fixed
+- **Snapshot batch progress not recording** — Fixed column name mismatches between the Python snapshot worker and the `snapshot_run_batches` DB schema (`snapshots_created` → `completed`, `snapshots_deleted` → removed, `volumes_skipped` → `skipped`, `errors` → `failed`, `completed_at` → `finished_at`). This caused the first batch-progress UPDATE to fail, which poisoned the PostgreSQL transaction and prevented all subsequent DB writes (run progress, run completion, notifications). Runs appeared stuck as "RUNNING" with 0% progress indefinitely.
+- **Snapshot API batch queries** — Fixed `GET /snapshot/runs/{id}/progress` and `GET /snapshot/runs/active/progress` to SELECT the correct batch column names from `snapshot_run_batches`, preventing 500 errors when querying batch details.
+- **DB error isolation** — Added `conn.rollback()` to all snapshot worker DB error handlers (`update_batch_progress`, `update_run_progress`, `finish_snapshot_run`, `record_quota_block`) so a single failed query no longer cascades and breaks subsequent database operations within the same connection.
+- **Snapshot Quota Forecast runbook — `project_id` attribute error** — `Pf9Client` did not store `project_id` from the Keystone auth token response. The runbook engine referenced `client.project_id` which raised `AttributeError: 'Pf9Client' object has no attribute 'project_id'`. Fixed by extracting and storing `project_id` from the token scope during authentication, and removing a redundant fallback variable in the runbook engine.
+- **Snapshot Quota Forecast — GB Used always 0** — The Cinder quota API call was missing the `?usage=true` query parameter, so only quota limits were returned (`in_use` defaulted to 0). Added the parameter to `/os-quota-sets/{project_id}?usage=true` so GB Used and Snapshots Used now report actual usage.
+- **Snapshot run notifications not saving** — `send_run_completion_notification` and `send_quota_blocked_notification` were INSERTing into `notification_log` with wrong column names (the table uses an email-subscriber schema). Rewrote both functions to INSERT into `activity_log` instead, which has the correct schema for system-wide notifications (`actor, action, resource_type, resource_id, resource_name, details, result`). Added `conn.rollback()` to error handlers.
+- **Admin panel — runbook execution results not visible** — The admin Runbooks tab showed execution results as collapsed raw JSON in a `<details>` block. Replaced with a structured results view: summary banner, sortable alerts table with severity-based row coloring, collapsible items/ok_projects/users/stuck_vms/orphans tables (auto-detected from result keys), and a "Raw JSON" fallback. Matches the friendly rendering already available in the user-facing Runbooks tab.
+
 ## [1.26.0] - 2026-02-24
 
 ### Added
