@@ -21,11 +21,11 @@
 - **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
 
 ### Policy-as-Code Runbooks (v1.21 → v1.25 - NEW ✨)
-- **📋 Runbooks Tab**: Operator-facing catalogue of 12 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
-- **12 Built-in Runbooks**:
+- **📋 Runbooks Tab**: Operator-facing catalogue of 13 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
+- **13 Built-in Runbooks**:
   - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
   - **Security** — Security Group Audit, Security & Compliance Audit
-  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector
+  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast
   - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
 - **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout. High-risk runbooks (e.g. `password_reset_console`) default to `single_approval` for operator/admin triggers.
 - **Admin Governance Sub-Tabs**: Three new sub-tabs in Admin → Auth Management: Runbook Executions (filterable history with detail panel), Runbook Approvals (pending queue with approve/reject/cancel), Runbook Policies (per-runbook approval policy editor)

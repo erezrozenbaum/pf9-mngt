@@ -265,9 +265,25 @@
   background: rgba(90, 106, 122, 0.06);
 }
 
+.compliance-table tbody tr.row-quota-blocked {
+  background: rgba(204, 102, 0, 0.08);
+}
+
 .badge.badge-pending {
   background: rgba(90, 106, 122, 0.2);
   color: #b0bec5;
+}
+
+.badge.badge-quota-blocked {
+  background: rgba(204, 102, 0, 0.2);
+  color: #cc6600;
+  font-weight: 600;
+}
+
+.summary-card.quota-blocked {
+  background: rgba(204, 102, 0, 0.12);
+  border-color: #cc6600;
+  color: #cc6600;
 }
 
 .empty-state {
@@ -368,6 +384,21 @@
 :root[data-theme='light'] .badge.badge-pending {
   background: rgba(160, 174, 192, 0.2);
   color: #718096;
+}
+
+:root[data-theme='light'] .compliance-table tbody tr.row-quota-blocked {
+  background: rgba(237, 137, 54, 0.06);
+}
+
+:root[data-theme='light'] .badge.badge-quota-blocked {
+  background: rgba(237, 137, 54, 0.15);
+  color: #c05621;
+}
+
+:root[data-theme='light'] .summary-card.quota-blocked {
+  background: rgba(237, 137, 54, 0.08);
+  border-color: #ed8936;
+  color: #c05621;
 }
 
 :root[data-theme='light'] .btn-export {

@@ -857,6 +857,101 @@ export default function RunbooksTab() {
       );
     }
 
+    // ── Snapshot Quota Forecast ──
+    if (name === "snapshot_quota_forecast") {
+      const alerts = r.alerts || [];
+      const okProjects = r.ok_projects || [];
+      const sum = r.summary || {};
+      return (
+        <div className="rb-result-friendly">
+          <p className="rb-result-summary">
+            Projects scanned: <strong>{sum.total_projects_scanned || 0}</strong> ·
+            At risk: <strong className="rb-val-bad">{sum.projects_at_risk || 0}</strong> ·
+            OK: <strong className="rb-val-ok">{sum.projects_ok || 0}</strong> ·
+            Critical: <strong className="rb-val-bad">{sum.critical_count || 0}</strong> ·
+            Warning: <strong className="rb-val-warn">{sum.warning_count || 0}</strong>
+          </p>
+          {alerts.length > 0 && (
+            <div className="rb-result-sub">
+              <h6>At-Risk Projects</h6>
+              <table className="rb-result-table">
+                <thead>
+                  <tr>
+                    <th>Severity</th>
+                    <th>Project</th>
+                    <th>Volumes</th>
+                    <th>Total Vol GB</th>
+                    <th>GB Quota</th>
+                    <th>GB Used</th>
+                    <th>Snap Quota</th>
+                    <th>Snap Used</th>
+                    <th>Issues</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {alerts.map((a: any, i: number) => (
+                    <tr key={i} className={a.severity === 'critical' ? 'row-critical' : 'row-warning'}>
+                      <td>
+                        <span className={`badge ${a.severity === 'critical' ? 'badge-critical' : 'badge-warning'}`}>
+                          {a.severity}
+                        </span>
+                      </td>
+                      <td>{a.project_name}</td>
+                      <td>{a.volumes}</td>
+                      <td>{a.total_volume_gb}</td>
+                      <td>{a.gb_quota_limit ?? '∞'}</td>
+                      <td>{a.gb_quota_used ?? '-'}</td>
+                      <td>{a.snap_quota_limit ?? '∞'}</td>
+                      <td>{a.snap_quota_used ?? '-'}</td>
+                      <td>
+                        {(a.issues || []).map((iss: any, j: number) => (
+                          <div key={j} className="quota-issue-line">
+                            <strong>{iss.resource}:</strong>{' '}
+                            {iss.shortfall_gb ? `${iss.shortfall_gb}GB shortfall` : ''}
+                            {iss.shortfall ? `${iss.shortfall} snapshots short` : ''}
+                            {' '}({iss.pct_used ?? iss.used}/{iss.limit})
+                          </div>
+                        ))}
+                        {a.issue && <span>{a.issue}: {a.detail}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {okProjects.length > 0 && (
+            <details className="rb-result-sub">
+              <summary>OK Projects ({okProjects.length})</summary>
+              <table className="rb-result-table">
+                <thead>
+                  <tr>
+                    <th>Project</th>
+                    <th>Volumes</th>
+                    <th>Total Vol GB</th>
+                    <th>GB Quota</th>
+                    <th>GB Used</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {okProjects.map((p: any, i: number) => (
+                    <tr key={i}>
+                      <td>{p.project_name}</td>
+                      <td>{p.volumes}</td>
+                      <td>{p.total_volume_gb}</td>
+                      <td>{p.gb_quota_limit ?? '∞'}</td>
+                      <td>{p.gb_quota_used ?? '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
+          {alerts.length === 0 && <p className="rb-result-empty">All projects have sufficient quota for upcoming snapshot runs</p>}
+        </div>
+      );
+    }
+
     // ── Fallback: raw JSON ──
     return (
       <details className="rb-result-raw">

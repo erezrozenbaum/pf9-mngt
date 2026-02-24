@@ -401,16 +401,18 @@ Every infrastructure resource follows a **dual-table pattern**:
 | `user_mfa` | TOTP enrollment (secret, enabled, SHA-256 hashed backup codes) |
 | `departments` | Organizational groups for navigation visibility (7 seeded) |
 
-#### Snapshot Management (8 tables)
+#### Snapshot Management (10 tables)
 
 | Table | Purpose |
 |---|---|
 | `snapshot_policy_sets` | Global + tenant-specific policy definitions (policies JSONB, retention_map) |
 | `snapshot_assignments` | Volume → policy mapping (UNIQUE on volume_id, tracks assignment source) |
 | `snapshot_exclusions` | Excluded volumes with optional expiry for temporary exclusions |
-| `snapshot_runs` | Per-run execution tracking (counts: created, deleted, failed, skipped) |
+| `snapshot_runs` | Per-run execution tracking (counts: created, deleted, failed, skipped; batch progress columns) |
 | `snapshot_records` | Individual snapshot events per volume per run (full lifecycle) |
 | `snapshot_on_demand_runs` | API-to-scheduler signaling (pending → running → completed/failed) |
+| `snapshot_run_batches` | Per-batch progress tracking within a run (tenant grouping, completion status) |
+| `snapshot_quota_blocks` | Volumes skipped due to Cinder quota limits (quota details, block reason) |
 | `compliance_reports` | Generated compliance summaries (SLA days, compliant/noncompliant) |
 | `compliance_details` | Per-volume compliance records (last snapshot date, days since) |
 

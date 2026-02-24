@@ -65,7 +65,7 @@ import re
 import sys
 import json
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
 import requests
@@ -86,6 +86,7 @@ from p9_common import (
     cinder_list_snapshots_for_volume,
     cinder_create_snapshot,
     cinder_delete_snapshot,
+    cinder_quotas,
     list_domains_all,
     list_projects_all,
     nova_servers_all,
@@ -590,6 +591,359 @@ def process_volume(
         return None, volume_project_id, [], msg, snap_name
 
 
+import math
+import time as _time
+
+
+# ============================================================================
+# Quota Pre-Check Helpers
+# ============================================================================
+
+def check_project_quota(session, admin_project_id: str, project_id: str,
+                        volumes: list, policy_name: str) -> dict:
+    """
+    Check if a project has enough Cinder quota to snapshot the given volumes.
+    
+    Returns dict with:
+      ok:              True if all volumes can be snapshotted
+      quota_limit_gb:  gigabytes quota limit
+      quota_used_gb:   gigabytes currently used
+      quota_avail_gb:  available gigabytes
+      needed_gb:       total GB needed for snapshots of these volumes
+      snapshot_limit:  snapshot count quota limit
+      snapshot_used:   snapshot count currently used
+      blocked_volumes: list of volume dicts that can't be snapshotted
+    """
+    result = {
+        "ok": True,
+        "quota_limit_gb": -1,
+        "quota_used_gb": 0,
+        "quota_avail_gb": -1,
+        "needed_gb": 0,
+        "snapshot_limit": -1,
+        "snapshot_used": 0,
+        "blocked_volumes": [],
+        "block_reason": None,
+    }
+    
+    try:
+        quotas = cinder_quotas(session, project_id)
+    except Exception as e:
+        print(f"    [QUOTA] Could not fetch Cinder quotas for {project_id}: {e}")
+        # If we can't check quotas, allow the run to continue (fail-open)
+        return result
+
+    # Parse gigabytes quota
+    gb_quota = quotas.get("gigabytes", {})
+    if isinstance(gb_quota, dict):
+        gb_limit = gb_quota.get("limit", -1)
+        gb_used = gb_quota.get("in_use", 0)
+    else:
+        gb_limit = int(gb_quota) if gb_quota else -1
+        gb_used = 0
+
+    # Parse snapshots count quota
+    snap_quota = quotas.get("snapshots", {})
+    if isinstance(snap_quota, dict):
+        snap_limit = snap_quota.get("limit", -1)
+        snap_used = snap_quota.get("in_use", 0)
+    else:
+        snap_limit = int(snap_quota) if snap_quota else -1
+        snap_used = 0
+
+    result["quota_limit_gb"] = gb_limit
+    result["quota_used_gb"] = gb_used
+    result["quota_avail_gb"] = (gb_limit - gb_used) if gb_limit >= 0 else -1
+    result["snapshot_limit"] = snap_limit
+    result["snapshot_used"] = snap_used
+
+    # Calculate space needed for snapshots
+    total_needed = sum(v.get("size", 0) for v in volumes)
+    result["needed_gb"] = total_needed
+
+    # Check if snapshots will fit (-1 means unlimited)
+    blocked = []
+    
+    if snap_limit >= 0 and (snap_used + len(volumes)) > snap_limit:
+        # Snapshot count quota exceeded — figure out how many can fit
+        remaining_snap_slots = max(0, snap_limit - snap_used)
+        # Allow up to remaining_snap_slots, block the rest
+        sorted_vols = sorted(volumes, key=lambda v: v.get("size", 0))
+        for i, v in enumerate(sorted_vols):
+            if i >= remaining_snap_slots:
+                blocked.append({
+                    "volume": v,
+                    "reason": "snapshots_exceeded",
+                    "detail": f"Snapshot count quota {snap_used}/{snap_limit} "
+                              f"(need {len(volumes)} slots, only {remaining_snap_slots} available)",
+                })
+
+    if gb_limit >= 0:
+        # Check gigabytes — accumulate and block volumes that won't fit
+        running_used = gb_used
+        blocked_ids = {b["volume"]["id"] for b in blocked}
+        for v in sorted(volumes, key=lambda v: v.get("size", 0)):
+            if v["id"] in blocked_ids:
+                continue
+            vol_size = v.get("size", 0)
+            if (running_used + vol_size) > gb_limit:
+                blocked.append({
+                    "volume": v,
+                    "reason": "gigabytes_exceeded",
+                    "detail": f"Gigabytes quota {running_used}/{gb_limit} GB, "
+                              f"volume needs {vol_size} GB",
+                })
+            else:
+                running_used += vol_size
+
+    if blocked:
+        result["ok"] = False
+        result["blocked_volumes"] = blocked
+        result["block_reason"] = blocked[0]["reason"]
+
+    return result
+
+
+def build_tenant_batches(volumes_by_project: dict, batch_size: int) -> list:
+    """
+    Group tenant volumes into batches, keeping all volumes from the
+    same tenant together. Sorts tenants by volume count (smallest first)
+    for better bin-packing.
+    
+    Returns list of batch dicts:
+      [{"tenant_ids": [...], "tenant_names": {...}, "volumes": [...], "total": N}, ...]
+    """
+    # Sort tenants by volume count ascending for bin-packing
+    sorted_tenants = sorted(
+        volumes_by_project.items(),
+        key=lambda x: len(x[1]),
+    )
+    
+    batches = []
+    current_batch = {"tenant_ids": [], "volumes": [], "total": 0}
+    
+    for project_id, vols in sorted_tenants:
+        tenant_vol_count = len(vols)
+        
+        # If this single tenant exceeds batch_size, give it its own batch
+        if tenant_vol_count >= batch_size:
+            # Flush current batch if it has content
+            if current_batch["total"] > 0:
+                batches.append(current_batch)
+                current_batch = {"tenant_ids": [], "volumes": [], "total": 0}
+            # Create dedicated batch for this large tenant
+            batches.append({
+                "tenant_ids": [project_id],
+                "volumes": vols,
+                "total": tenant_vol_count,
+            })
+            continue
+        
+        # Would adding this tenant overflow the batch?
+        if current_batch["total"] + tenant_vol_count > batch_size:
+            # Flush current batch
+            if current_batch["total"] > 0:
+                batches.append(current_batch)
+            current_batch = {"tenant_ids": [], "volumes": [], "total": 0}
+        
+        current_batch["tenant_ids"].append(project_id)
+        current_batch["volumes"].extend(vols)
+        current_batch["total"] += tenant_vol_count
+    
+    # Don't forget the last batch
+    if current_batch["total"] > 0:
+        batches.append(current_batch)
+    
+    return batches
+
+
+def record_quota_block(db_conn, run_id, volume, project_id, project_name,
+                       policy_name, quota_info, block_reason, block_detail):
+    """Insert a row into snapshot_quota_blocks for tracking."""
+    if not db_conn or not run_id:
+        return
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO snapshot_quota_blocks
+                (snapshot_run_id, volume_id, volume_name, volume_size_gb,
+                 tenant_id, tenant_name, project_id, project_name,
+                 policy_name, quota_limit_gb, quota_used_gb, quota_needed_gb,
+                 snapshot_quota_limit, snapshot_quota_used, block_reason)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                run_id,
+                volume.get("id"),
+                volume.get("name") or volume.get("id"),
+                volume.get("size", 0),
+                project_id, project_name, project_id, project_name,
+                policy_name,
+                quota_info.get("quota_limit_gb"),
+                quota_info.get("quota_used_gb"),
+                volume.get("size", 0),
+                quota_info.get("snapshot_limit"),
+                quota_info.get("snapshot_used"),
+                block_reason,
+            ))
+        db_conn.commit()
+    except Exception as e:
+        print(f"    [DB] Error recording quota block: {e}")
+
+
+def update_batch_progress(db_conn, run_id, batch_number, **kwargs):
+    """Update a snapshot_run_batches row."""
+    if not db_conn or not run_id:
+        return
+    try:
+        sets = []
+        vals = []
+        for k, v in kwargs.items():
+            sets.append(f"{k} = %s")
+            vals.append(v)
+        vals.extend([run_id, batch_number])
+        with db_conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE snapshot_run_batches
+                SET {', '.join(sets)}
+                WHERE snapshot_run_id = %s AND batch_number = %s
+            """, vals)
+        db_conn.commit()
+    except Exception as e:
+        print(f"    [DB] Error updating batch progress: {e}")
+
+
+def update_run_progress(db_conn, run_id, current_batch, completed_batches,
+                        total_batches, progress_pct, quota_blocked=None,
+                        estimated_finish_at=None):
+    """Update the snapshot_runs row with batch progress."""
+    if not db_conn or not run_id:
+        return
+    try:
+        with db_conn.cursor() as cur:
+            sql = """
+                UPDATE snapshot_runs
+                SET current_batch = %s, completed_batches = %s,
+                    total_batches = %s, progress_pct = %s
+            """
+            params = [current_batch, completed_batches, total_batches, progress_pct]
+            if quota_blocked is not None:
+                sql += ", quota_blocked = %s"
+                params.append(quota_blocked)
+            if estimated_finish_at is not None:
+                sql += ", estimated_finish_at = %s"
+                params.append(estimated_finish_at)
+            sql += " WHERE id = %s"
+            params.append(run_id)
+            cur.execute(sql, params)
+        db_conn.commit()
+    except Exception as e:
+        print(f"    [DB] Error updating run progress: {e}")
+
+
+def send_quota_blocked_notification(db_conn, run_id, policy_name,
+                                    blocked_summary: list):
+    """Send a consolidated notification about quota-blocked volumes."""
+    if not blocked_summary:
+        return
+    try:
+        # Build notification via the API's notification log table
+        total_blocked = sum(b["count"] for b in blocked_summary)
+        tenant_list = ", ".join(
+            f"{b['tenant_name']} ({b['count']} vols, need +{b['needed_gb']}GB)"
+            for b in blocked_summary[:10]
+        )
+        summary = (
+            f"Snapshot run (policy: {policy_name}): {total_blocked} volume(s) "
+            f"skipped due to quota limits. Tenants: {tenant_list}"
+        )
+        if not db_conn:
+            print(f"[NOTIFY] {summary}")
+            return
+        with db_conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO notification_log 
+                (event_type, summary, severity, resource_id, resource_name,
+                 actor, details, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+            """, (
+                "snapshot_quota_blocked",
+                summary,
+                "warning",
+                str(run_id),
+                f"snapshot_run_{policy_name}",
+                "system",
+                json.dumps({
+                    "run_id": run_id,
+                    "policy": policy_name,
+                    "total_blocked": total_blocked,
+                    "tenants": blocked_summary,
+                }),
+            ))
+        db_conn.commit()
+        print(f"[NOTIFY] Quota-blocked notification sent: {total_blocked} volumes across {len(blocked_summary)} tenants")
+    except Exception as e:
+        print(f"[NOTIFY] Failed to send quota-blocked notification: {e}")
+
+
+def send_run_completion_notification(db_conn, run_id, policy_name, dry_run,
+                                     created_count, deleted_total, skipped_count,
+                                     quota_blocked_count, error_count,
+                                     total_volumes, batch_count, duration_sec):
+    """Send a notification when a snapshot run completes."""
+    if dry_run:
+        return
+    try:
+        duration_min = round(duration_sec / 60, 1) if duration_sec else 0
+        summary = (
+            f"Snapshot run completed (policy: {policy_name}) — "
+            f"{created_count}/{total_volumes} snapshotted, "
+            f"{deleted_total} pruned, {skipped_count} skipped"
+        )
+        if quota_blocked_count:
+            summary += f", {quota_blocked_count} quota-blocked"
+        if error_count:
+            summary += f", {error_count} errors"
+        summary += f" | {batch_count} batches, {duration_min}min"
+        
+        severity = "info"
+        if error_count > 0 or quota_blocked_count > 0:
+            severity = "warning"
+        
+        if not db_conn:
+            print(f"[NOTIFY] {summary}")
+            return
+        with db_conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO notification_log
+                (event_type, summary, severity, resource_id, resource_name,
+                 actor, details, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+            """, (
+                "snapshot_run_completed",
+                summary,
+                severity,
+                str(run_id),
+                f"snapshot_run_{policy_name}",
+                "system",
+                json.dumps({
+                    "run_id": run_id,
+                    "policy": policy_name,
+                    "created": created_count,
+                    "deleted": deleted_total,
+                    "skipped": skipped_count,
+                    "quota_blocked": quota_blocked_count,
+                    "errors": error_count,
+                    "total_volumes": total_volumes,
+                    "batches": batch_count,
+                    "duration_minutes": duration_min,
+                }),
+            ))
+        db_conn.commit()
+        print(f"[NOTIFY] Run completion notification sent")
+    except Exception as e:
+        print(f"[NOTIFY] Failed to send completion notification: {e}")
+
+
 def _build_metadata_maps(session):
     """
     Fetch domains, projects and servers and build helper maps so the
@@ -696,6 +1050,24 @@ def main():
             "Defaults to CFG['OUTPUT_DIR'] or C:\\Reports\\Platform9."
         ),
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=20,
+        help=(
+            "Maximum number of volumes per batch. All volumes from the same "
+            "tenant are kept together. Default: 20."
+        ),
+    )
+    parser.add_argument(
+        "--batch-delay",
+        type=float,
+        default=5.0,
+        help=(
+            "Seconds to sleep between batches to avoid Cinder API rate "
+            "limiting. Default: 5.0."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -705,6 +1077,8 @@ def main():
     max_size_gb = args.max_size_gb
     report_xlsx = args.report_xlsx
     report_dir = args.report_dir or CFG.get("OUTPUT_DIR", os.path.join(os.path.expanduser("~"), "Reports", "Platform9"))
+    batch_size = args.batch_size
+    batch_delay = args.batch_delay
 
     ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
     report_path = os.path.join(
@@ -866,11 +1240,13 @@ def main():
     created_count = 0
     deleted_total = 0
     skipped_count = 0
+    quota_blocked_count = 0
     run_rows = []
+    run_start_time = _time.time()
 
     print(
         f"[4/4] Processing volumes (max new snapshots this run: {max_new}, "
-        f"dry_run={dry_run})"
+        f"dry_run={dry_run}, batch_size={batch_size}, batch_delay={batch_delay}s)"
     )
 
     # Group volumes by project to use project-scoped service user sessions
@@ -884,114 +1260,58 @@ def main():
         volumes_by_project[volume_project_id].append(v)
     
     print(f"      Volumes distributed across {len(volumes_by_project)} projects")
-    
-    # Process each project
-    for project_idx, (vol_project_id, project_volumes) in enumerate(volumes_by_project.items(), start=1):
-        project_name = project_name_by_id.get(vol_project_id, vol_project_id)
-        print(f"\n=== Project {project_idx}/{len(volumes_by_project)}: {project_name} ({vol_project_id}) ===")
-        print(f"    Volumes in this project: {len(project_volumes)}")
-        
-        # -----------------------------------------------------------------
-        # Determine which session to use for CREATING snapshots
-        #   create_session + create_project_id  →  snapshot lands here
-        # Admin session is always used for listing / cleanup (all_tenants)
-        # -----------------------------------------------------------------
-        create_session = None
-        create_project_id = None
 
-        if vol_project_id != "UNKNOWN" and vol_project_id != admin_project_id and ensure_service_user:
-            try:
-                print(f"    Ensuring service user has admin role on project...")
-                ensure_service_user(session, CFG["KEYSTONE_URL"], vol_project_id)
-                
-                # Get project-scoped session for service user
-                print(f"    Authenticating as service user for this project...")
-                service_password = get_service_user_password()
-                svc_sess, svc_tok = get_service_user_session(
-                    vol_project_id, 
-                    SERVICE_USER_EMAIL, 
-                    service_password,
-                    user_domain="default"
+    # ----------------------------------------------------------------
+    # Quota pre-check: filter out volumes that would exceed tenant quota
+    # ----------------------------------------------------------------
+    passable_by_project = {}
+    all_blocked_summary = []
+
+    for proj_id, proj_vols in volumes_by_project.items():
+        proj_name = project_name_by_id.get(proj_id, proj_id)
+        quota_result = check_project_quota(
+            session, admin_project_id, proj_id, proj_vols, policy_name,
+        )
+        blocked = quota_result.get("blocked_volumes", [])
+        if blocked:
+            blocked_count_proj = len(blocked)
+            blocked_ids = {b["volume"]["id"] for b in blocked}
+            quota_blocked_count += blocked_count_proj
+            print(
+                f"  [QUOTA] Project {proj_name}: {blocked_count_proj} volume(s) "
+                f"quota-blocked (limit={quota_result['quota_limit_gb']}GB, "
+                f"used={quota_result['quota_used_gb']}GB)"
+            )
+            # Record each blocked volume in DB
+            for b in blocked:
+                bv = b["volume"]
+                record_quota_block(
+                    db_conn, run_id, bv, proj_id, proj_name,
+                    policy_name, quota_result, b["reason"], b["detail"],
                 )
-                
-                if svc_sess:
-                    create_session = svc_sess
-                    create_project_id = vol_project_id
-                    print(f"    ✓ Using service user session for project {project_name}")
-                else:
-                    print(f"    ⚠ Service user authentication failed")
-                    print(f"    Falling back to admin session (snapshots will be in service domain)")
-            except Exception as e:
-                print(f"    ⚠ Could not use service user for project {project_name}: {e}")
-                print(f"    Falling back to admin session (snapshots will be in service domain)")
-
-        elif vol_project_id == admin_project_id:
-            # Volume is already in the admin/service project – use admin session directly
-            create_session = session
-            create_project_id = admin_project_id
-            print(f"    Using admin session (service domain project)")
-
-        # Final fallback: admin session + admin_project_id
-        if create_session is None:
-            create_session = session
-            create_project_id = admin_project_id
-            if vol_project_id != admin_project_id:
-                print(f"    ⚠ Falling back to admin session – snapshots will land in service domain")
-    
-        # Process volumes in this project
-        for vol_idx, v in enumerate(project_volumes, start=1):
-            if not dry_run and created_count >= max_new:
-                print(
-                    f"Reached max-new limit ({max_new}); skipping remaining volumes."
-                )
-                break
-
-            print(f"\n  Volume [{vol_idx}/{len(project_volumes)}]")
-
-            vol_id = v["id"]
-            vol_name = v.get("name") or vol_id
-            vol_size_gb = v.get("size", 0)
-            volume_project_id = vol_project_id
-            meta = v.get("metadata") or {}
-            
-            # Get tenant/domain info needed for all paths
-            tenant_name = project_name_by_id.get(volume_project_id, "")
-            domain_id = project_domain_by_id.get(volume_project_id, "")
-            domain_name = domain_name_by_id.get(domain_id, "")
-            
-            # Check volume size limit (Platform9 API 413 workaround)
-            if max_size_gb and vol_size_gb > max_size_gb:
-                print(f"  Volume {vol_name} ({vol_id}), size={vol_size_gb}GB")
-                print(f"  [SKIP] Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB)")
-                print(f"         Skipping due to Platform9 API limitation (413 Request Entity Too Large)")
-                skipped_count += 1
-                
-                # Log to database as skipped
-                if db_conn and run_id:
-                    create_snapshot_record(
-                        db_conn, run_id, "skipped", None, "", vol_id, vol_name,
-                        volume_project_id, tenant_name, volume_project_id, tenant_name,
-                        None, None, policy_name, vol_size_gb, 0,
-                        "SKIPPED", f"Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB) - Platform9 API limitation", 
-                        raw_snapshot_json=v
-                    )
-                
                 # Add to run_rows for reporting
+                meta = bv.get("metadata") or {}
                 run_rows.append({
                     "timestamp_utc": now_utc_str(),
                     "policy": policy_name,
                     "dry_run": dry_run,
-                    "project_id": volume_project_id,
-                    "tenant_name": tenant_name,
-                    "domain_id": domain_id,
-                    "domain_name": domain_name,
-                    "volume_id": vol_id,
-                    "volume_name": vol_name,
-                    "volume_size_gb": vol_size_gb,
-                    "volume_status": v.get("status"),
-                    "auto_snapshot": "N/A",
-                    "configured_policies": "N/A",
-                    "retention_for_policy": 0,
+                    "project_id": proj_id,
+                    "tenant_name": proj_name,
+                    "domain_id": project_domain_by_id.get(proj_id, ""),
+                    "domain_name": domain_name_by_id.get(
+                        project_domain_by_id.get(proj_id, ""), ""
+                    ),
+                    "volume_id": bv["id"],
+                    "volume_name": bv.get("name") or bv["id"],
+                    "volume_size_gb": bv.get("size", 0),
+                    "volume_status": bv.get("status"),
+                    "auto_snapshot": str(
+                        meta.get("auto_snapshot", "")
+                    ).lower() in ("true", "yes", "1"),
+                    "configured_policies": ",".join(_volume_policies_for(bv)),
+                    "retention_for_policy": _retention_for_volume_and_policy(
+                        bv, policy_name, default=7
+                    ),
                     "attached_servers": "",
                     "attached_server_ids": "",
                     "attached_ips": "",
@@ -1000,74 +1320,316 @@ def main():
                     "created_snapshot_project_id": "",
                     "deleted_snapshot_ids": "",
                     "deleted_snapshots_count": 0,
-                    "status": "SKIPPED",
-                    "note": f"Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB)",
+                    "status": "QUOTA_BLOCKED",
+                    "note": b["detail"],
                 })
-                
-                continue
+                # DB record
+                if db_conn and run_id:
+                    create_snapshot_record(
+                        db_conn, run_id, "quota_blocked", None, "",
+                        bv["id"], bv.get("name") or bv["id"],
+                        proj_id, proj_name, proj_id, proj_name,
+                        None, None, policy_name, bv.get("size", 0), 0,
+                        "QUOTA_BLOCKED", b["detail"],
+                        raw_snapshot_json=bv,
+                    )
+            # Build summary for notification
+            needed_gb = sum(b["volume"].get("size", 0) for b in blocked)
+            all_blocked_summary.append({
+                "tenant_id": proj_id,
+                "tenant_name": proj_name,
+                "count": blocked_count_proj,
+                "needed_gb": needed_gb,
+                "quota_limit_gb": quota_result["quota_limit_gb"],
+                "quota_used_gb": quota_result["quota_used_gb"],
+            })
+            # Keep only passable volumes
+            passable = [v for v in proj_vols if v["id"] not in blocked_ids]
+        else:
+            passable = proj_vols
+        
+        if passable:
+            passable_by_project[proj_id] = passable
+
+    if quota_blocked_count:
+        print(
+            f"\n  [QUOTA SUMMARY] {quota_blocked_count} volume(s) quota-blocked "
+            f"across {len(all_blocked_summary)} project(s)"
+        )
+        # Send quota-blocked notification
+        send_quota_blocked_notification(
+            db_conn, run_id, policy_name, all_blocked_summary,
+        )
+
+    # ----------------------------------------------------------------
+    # Build tenant-grouped batches from passable volumes
+    # ----------------------------------------------------------------
+    batches = build_tenant_batches(passable_by_project, batch_size)
+    total_batches = len(batches)
+    total_passable = sum(b["total"] for b in batches)
+    
+    print(
+        f"\n  Batching: {total_passable} passable volumes → "
+        f"{total_batches} batch(es) of ≤{batch_size} volumes"
+    )
+    
+    # Update run record with batch config
+    if db_conn and run_id:
+        try:
+            with db_conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE snapshot_runs
+                    SET total_batches = %s, completed_batches = 0,
+                        current_batch = 0, quota_blocked = %s,
+                        batch_size_config = %s, batch_delay_sec = %s,
+                        progress_pct = 0
+                    WHERE id = %s
+                """, (total_batches, quota_blocked_count, batch_size, batch_delay, run_id))
+            db_conn.commit()
+        except Exception as e:
+            print(f"[DB] Could not update batch config: {e}")
+
+    # Create batch rows in DB
+    for bi, batch in enumerate(batches, start=1):
+        if db_conn and run_id:
+            try:
+                tenant_names = [
+                    project_name_by_id.get(tid, tid) for tid in batch["tenant_ids"]
+                ]
+                with db_conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO snapshot_run_batches
+                        (snapshot_run_id, batch_number, tenant_ids, tenant_names,
+                         total_volumes, status)
+                        VALUES (%s, %s, %s, %s, %s, 'pending')
+                    """, (
+                        run_id, bi, batch["tenant_ids"], tenant_names,
+                        batch["total"],
+                    ))
+                db_conn.commit()
+            except Exception as e:
+                print(f"[DB] Could not create batch record {bi}: {e}")
+
+    # ----------------------------------------------------------------
+    # Process batches
+    # ----------------------------------------------------------------
+    for batch_idx, batch in enumerate(batches, start=1):
+        batch_start = _time.time()
+        batch_created = 0
+        batch_deleted = 0
+        batch_errors = 0
+        batch_skipped = 0
+
+        # Update run & batch progress
+        update_run_progress(
+            db_conn, run_id, current_batch=batch_idx,
+            completed_batches=batch_idx - 1, total_batches=total_batches,
+            progress_pct=round(((batch_idx - 1) / total_batches) * 100) if total_batches else 0,
+        )
+        update_batch_progress(
+            db_conn, run_id, batch_idx, status="running",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        tenant_labels = ", ".join(
+            project_name_by_id.get(t, t[:8]) for t in batch["tenant_ids"][:5]
+        )
+        if len(batch["tenant_ids"]) > 5:
+            tenant_labels += f" (+{len(batch['tenant_ids']) - 5} more)"
+        print(
+            f"\n{'='*60}\n"
+            f"  Batch {batch_idx}/{total_batches} — "
+            f"{batch['total']} volumes, {len(batch['tenant_ids'])} tenant(s): "
+            f"{tenant_labels}\n"
+            f"{'='*60}"
+        )
+
+        # Re-group batch volumes by project for service-user session scoping
+        batch_vols_by_project = defaultdict(list)
+        for v in batch["volumes"]:
+            pid = (
+                v.get("os-vol-tenant-attr:tenant_id")
+                or v.get("project_id")
+                or "UNKNOWN"
+            )
+            batch_vols_by_project[pid].append(v)
+
+        # Process each project within this batch
+        for project_idx, (vol_project_id, project_volumes) in enumerate(batch_vols_by_project.items(), start=1):
+            project_name = project_name_by_id.get(vol_project_id, vol_project_id)
+            print(f"\n  --- Project {project_idx}/{len(batch_vols_by_project)}: {project_name} ({vol_project_id}) ---")
+            print(f"      Volumes in this project: {len(project_volumes)}")
             
-            auto_flag = str(meta.get("auto_snapshot", "")).lower() in ("true", "yes", "1")
-            configured_policies = ",".join(_volume_policies_for(v))
-            retention = _retention_for_volume_and_policy(v, policy_name, default=7)
+            # -----------------------------------------------------------------
+            # Determine which session to use for CREATING snapshots
+            # -----------------------------------------------------------------
+            create_session = None
+            create_project_id = None
 
-            attached_server_names_list = vol_to_srv_names.get(vol_id, [])
-            attached_server_names = ", ".join(attached_server_names_list)
-            attached_server_ids = ", ".join(vol_to_srv_ids.get(vol_id, []))
-            attached_ips = ", ".join(vol_to_srv_ips.get(vol_id, []))
+            if vol_project_id != "UNKNOWN" and vol_project_id != admin_project_id and ensure_service_user:
+                try:
+                    print(f"      Ensuring service user has admin role on project...")
+                    ensure_service_user(session, CFG["KEYSTONE_URL"], vol_project_id)
+                    
+                    print(f"      Authenticating as service user for this project...")
+                    service_password = get_service_user_password()
+                    svc_sess, svc_tok = get_service_user_session(
+                        vol_project_id, 
+                        SERVICE_USER_EMAIL, 
+                        service_password,
+                        user_domain="default"
+                    )
+                    
+                    if svc_sess:
+                        create_session = svc_sess
+                        create_project_id = vol_project_id
+                        print(f"      ✓ Using service user session for project {project_name}")
+                    else:
+                        print(f"      ⚠ Service user authentication failed")
+                        print(f"      Falling back to admin session")
+                except Exception as e:
+                    print(f"      ⚠ Could not use service user for project {project_name}: {e}")
+                    print(f"      Falling back to admin session")
 
-            primary_server_name = attached_server_names_list[0] if attached_server_names_list else None
+            elif vol_project_id == admin_project_id:
+                create_session = session
+                create_project_id = admin_project_id
+                print(f"      Using admin session (service domain project)")
 
-            sid, sid_project, deleted_ids, err_msg, snap_name = process_volume(
-                admin_session=session,                # Admin for listing / cleanup
-                admin_project_id=admin_project_id,    # MUST match admin token scope
-                volume=v,
-                policy_name=policy_name,
-                dry_run=dry_run,
-                primary_server_name=primary_server_name,
-                tenant_name=tenant_name,
-                create_session=create_session,         # Service-user (or admin fallback)
-                create_project_id=create_project_id,   # Matches create_session scope
-            )
-            if sid:
-                created_count += 1
-            deleted_total += len(deleted_ids)
+            if create_session is None:
+                create_session = session
+                create_project_id = admin_project_id
+                if vol_project_id != admin_project_id:
+                    print(f"      ⚠ Falling back to admin session – snapshots will land in service domain")
+        
+            # Process volumes in this project
+            for vol_idx, v in enumerate(project_volumes, start=1):
+                if not dry_run and created_count >= max_new:
+                    print(
+                        f"Reached max-new limit ({max_new}); skipping remaining volumes."
+                    )
+                    break
 
-            # Detect 413 skipped volumes (Platform9 API size limitation)
-            is_413_skipped = err_msg and err_msg.startswith("413_SKIPPED:")
+                print(f"\n    Volume [{vol_idx}/{len(project_volumes)}]")
 
-            if dry_run:
-                status = "DRY_RUN"
-                note = "Dry run; no changes applied"
-            elif is_413_skipped:
-                status = "SKIPPED"
-                note = err_msg
-                skipped_count += 1
-            elif err_msg:
-                status = "ERROR"
-                note = err_msg
-            elif sid:
-                status = "OK"
-                note = "Snapshot created"
-            elif snap_name is None:
-                status = "SKIPPED"
-                note = "Already has a snapshot today for this policy"
-            else:
-                status = "OK"
-                note = "No snapshot created"
+                vol_id = v["id"]
+                vol_name = v.get("name") or vol_id
+                vol_size_gb = v.get("size", 0)
+                volume_project_id = vol_project_id
+                meta = v.get("metadata") or {}
+                
+                tenant_name = project_name_by_id.get(volume_project_id, "")
+                domain_id = project_domain_by_id.get(volume_project_id, "")
+                domain_name = domain_name_by_id.get(domain_id, "")
+                
+                # Check volume size limit (Platform9 API 413 workaround)
+                if max_size_gb and vol_size_gb > max_size_gb:
+                    print(f"    Volume {vol_name} ({vol_id}), size={vol_size_gb}GB")
+                    print(f"    [SKIP] Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB)")
+                    skipped_count += 1
+                    batch_skipped += 1
+                    
+                    if db_conn and run_id:
+                        create_snapshot_record(
+                            db_conn, run_id, "skipped", None, "", vol_id, vol_name,
+                            volume_project_id, tenant_name, volume_project_id, tenant_name,
+                            None, None, policy_name, vol_size_gb, 0,
+                            "SKIPPED", f"Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB) - Platform9 API limitation", 
+                            raw_snapshot_json=v
+                        )
+                    
+                    run_rows.append({
+                        "timestamp_utc": now_utc_str(),
+                        "policy": policy_name,
+                        "dry_run": dry_run,
+                        "project_id": volume_project_id,
+                        "tenant_name": tenant_name,
+                        "domain_id": domain_id,
+                        "domain_name": domain_name,
+                        "volume_id": vol_id,
+                        "volume_name": vol_name,
+                        "volume_size_gb": vol_size_gb,
+                        "volume_status": v.get("status"),
+                        "auto_snapshot": "N/A",
+                        "configured_policies": "N/A",
+                        "retention_for_policy": 0,
+                        "attached_servers": "",
+                        "attached_server_ids": "",
+                        "attached_ips": "",
+                        "primary_server_name": "",
+                        "created_snapshot_id": "",
+                        "created_snapshot_project_id": "",
+                        "deleted_snapshot_ids": "",
+                        "deleted_snapshots_count": 0,
+                        "status": "SKIPPED",
+                        "note": f"Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB)",
+                    })
+                    continue
+                
+                auto_flag = str(meta.get("auto_snapshot", "")).lower() in ("true", "yes", "1")
+                configured_policies = ",".join(_volume_policies_for(v))
+                retention = _retention_for_volume_and_policy(v, policy_name, default=7)
 
-            # Log to database if enabled
-            if db_conn and run_id:
-                action = "created" if sid else ("skipped" if (not err_msg or is_413_skipped) else "failed")
-                create_snapshot_record(
-                    db_conn, run_id, action, sid, snap_name or "", vol_id, vol_name,
-                    volume_project_id, tenant_name, volume_project_id, tenant_name,
-                attached_server_ids.split(", ")[0] if attached_server_ids else None,
-                primary_server_name, policy_name, v.get("size"), retention,
-                status, err_msg, raw_snapshot_json=v
-            )
+                attached_server_names_list = vol_to_srv_names.get(vol_id, [])
+                attached_server_names = ", ".join(attached_server_names_list)
+                attached_server_ids = ", ".join(vol_to_srv_ids.get(vol_id, []))
+                attached_ips = ", ".join(vol_to_srv_ips.get(vol_id, []))
 
-            run_rows.append(
-                {
+                primary_server_name = attached_server_names_list[0] if attached_server_names_list else None
+
+                sid, sid_project, deleted_ids, err_msg, snap_name = process_volume(
+                    admin_session=session,
+                    admin_project_id=admin_project_id,
+                    volume=v,
+                    policy_name=policy_name,
+                    dry_run=dry_run,
+                    primary_server_name=primary_server_name,
+                    tenant_name=tenant_name,
+                    create_session=create_session,
+                    create_project_id=create_project_id,
+                )
+                if sid:
+                    created_count += 1
+                    batch_created += 1
+                deleted_total += len(deleted_ids)
+                batch_deleted += len(deleted_ids)
+
+                # Detect 413 skipped volumes
+                is_413_skipped = err_msg and err_msg.startswith("413_SKIPPED:")
+
+                if dry_run:
+                    status = "DRY_RUN"
+                    note = "Dry run; no changes applied"
+                elif is_413_skipped:
+                    status = "SKIPPED"
+                    note = err_msg
+                    skipped_count += 1
+                    batch_skipped += 1
+                elif err_msg:
+                    status = "ERROR"
+                    note = err_msg
+                    batch_errors += 1
+                elif sid:
+                    status = "OK"
+                    note = "Snapshot created"
+                elif snap_name is None:
+                    status = "SKIPPED"
+                    note = "Already has a snapshot today for this policy"
+                else:
+                    status = "OK"
+                    note = "No snapshot created"
+
+                if db_conn and run_id:
+                    action = "created" if sid else ("skipped" if (not err_msg or is_413_skipped) else "failed")
+                    create_snapshot_record(
+                        db_conn, run_id, action, sid, snap_name or "", vol_id, vol_name,
+                        volume_project_id, tenant_name, volume_project_id, tenant_name,
+                        attached_server_ids.split(", ")[0] if attached_server_ids else None,
+                        primary_server_name, policy_name, v.get("size"), retention,
+                        status, err_msg, raw_snapshot_json=v
+                    )
+
+                run_rows.append({
                     "timestamp_utc": now_utc_str(),
                     "policy": policy_name,
                     "dry_run": dry_run,
@@ -1092,16 +1654,83 @@ def main():
                     "deleted_snapshots_count": len(deleted_ids),
                     "status": status,
                     "note": note,
-                }
+                })
+
+        # Finalize this batch
+        batch_elapsed = _time.time() - batch_start
+        batch_status = "completed"
+        if batch_errors:
+            batch_status = "partial"
+        
+        update_batch_progress(
+            db_conn, run_id, batch_idx,
+            status=batch_status,
+            snapshots_created=batch_created,
+            snapshots_deleted=batch_deleted,
+            volumes_skipped=batch_skipped,
+            errors=batch_errors,
+            completed_at=datetime.now(timezone.utc),
+        )
+        update_run_progress(
+            db_conn, run_id,
+            current_batch=batch_idx,
+            completed_batches=batch_idx,
+            total_batches=total_batches,
+            progress_pct=round((batch_idx / total_batches) * 100) if total_batches else 100,
+        )
+
+        print(
+            f"\n  Batch {batch_idx} done: {batch_created} created, "
+            f"{batch_deleted} deleted, {batch_skipped} skipped, "
+            f"{batch_errors} errors ({batch_elapsed:.1f}s)"
+        )
+
+        # Estimate remaining time
+        if batch_idx < total_batches:
+            avg_batch_sec = (_time.time() - run_start_time) / batch_idx
+            remaining_batches = total_batches - batch_idx
+            est_remaining = avg_batch_sec * remaining_batches
+            est_finish = datetime.now(timezone.utc) + timedelta(seconds=est_remaining)
+            update_run_progress(
+                db_conn, run_id, current_batch=batch_idx,
+                completed_batches=batch_idx, total_batches=total_batches,
+                progress_pct=round((batch_idx / total_batches) * 100),
+                estimated_finish_at=est_finish,
             )
+            print(
+                f"  Est. remaining: {est_remaining:.0f}s "
+                f"(~{est_finish.strftime('%H:%M:%S')} UTC)"
+            )
+            # Inter-batch delay to avoid API rate limiting
+            if batch_delay > 0:
+                print(f"  Sleeping {batch_delay}s before next batch...")
+                _time.sleep(batch_delay)
+
+    # ----------------------------------------------------------------
+    # Run complete
+    # ----------------------------------------------------------------
+    run_elapsed = _time.time() - run_start_time
+    error_count = len([r for r in run_rows if r["status"] == "ERROR"])
 
     print("\nSummary:")
     print(f"  Policy:            {policy_name}")
     print(f"  Dry run:           {dry_run}")
+    print(f"  Batches:           {total_batches}")
     print(f"  New snapshots:     {created_count}")
     print(f"  Snapshots deleted: {deleted_total}")
+    print(f"  Quota blocked:     {quota_blocked_count}")
+    print(f"  Skipped:           {skipped_count}")
     print(f"  Errors logged:     {len(ERRORS)}")
+    print(f"  Duration:          {run_elapsed:.1f}s")
     print(f"  Finished at (UTC): {now_utc_str()}")
+
+    # Send run completion notification
+    send_run_completion_notification(
+        db_conn, run_id, policy_name, dry_run,
+        created_count, deleted_total, skipped_count,
+        quota_blocked_count, error_count,
+        len(selected), total_batches, run_elapsed,
+    )
 
     # Finalize database run tracking
     if db_conn and run_id:
@@ -1111,9 +1740,15 @@ def main():
         error_summary = "; ".join([f"{e.get('area', 'unknown')}: {e.get('msg', 'no message')}" for e in ERRORS]) if ERRORS else None
         finish_snapshot_run(
             db_conn, run_id, final_status, len(run_rows), created_count,
-            deleted_total, len([r for r in run_rows if r["status"] == "ERROR"]),
-            skipped_count,  # Use the actual skipped_count variable
+            deleted_total, error_count,
+            skipped_count,
             error_summary
+        )
+        # Final progress update
+        update_run_progress(
+            db_conn, run_id, current_batch=total_batches,
+            completed_batches=total_batches, total_batches=total_batches,
+            progress_pct=100, quota_blocked=quota_blocked_count,
         )
         db_conn.close()
         print(f"[DB] Snapshot run {run_id} finalized with status: {final_status}")
@@ -1127,7 +1762,10 @@ def main():
             "total_volumes_processed": len(run_rows),
             "new_snapshots": created_count,
             "snapshots_deleted": deleted_total,
-            "errors": len([r for r in run_rows if r["status"] == "ERROR"]),
+            "quota_blocked": quota_blocked_count,
+            "errors": error_count,
+            "batches": total_batches,
+            "duration_seconds": round(run_elapsed, 1),
         }
         with pd.ExcelWriter(report_path, engine="openpyxl") as writer:
             pd.DataFrame([summary]).to_excel(

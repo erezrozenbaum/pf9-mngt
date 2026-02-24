@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0] - 2026-02-24
+
+### Added
+- **Snapshot Quota-Aware Batching** — Snapshot automation now pre-checks Cinder quotas before snapshotting. Volumes that would exceed a tenant's gigabytes or snapshot count quota are flagged as `quota_blocked` and skipped instead of failing with HTTP 413 errors.
+  - **Runtime quota pre-check**: Before processing each tenant's volumes, the system calls `cinder_quotas()` and compares available GB/snapshot-slots against the volumes queued for snapshot. Blocked volumes are recorded in a new `snapshot_quota_blocks` table with detail on the specific quota limit, usage, and shortfall.
+  - **Tenant-grouped batching**: All volumes from the same tenant are kept in the same batch. Batches are capped at a configurable `--batch-size` (default 20 volumes) and separated by a configurable `--batch-delay` (default 5 seconds) to avoid Cinder API rate limiting with 500+ tenants.
+  - **Batch progress tracking**: New `snapshot_run_batches` table records per-batch status, timing, and volume counts. The `snapshot_runs` table gains progress columns (`total_batches`, `completed_batches`, `current_batch`, `progress_pct`, `estimated_finish_at`, `quota_blocked`).
+  - **Live progress API**: `GET /snapshot/runs/{id}/progress` returns batch-level detail and quota-blocked volumes. `GET /snapshot/runs/active/progress` returns the currently-running snapshot run's progress for UI polling.
+  - **UI progress bar**: SnapshotMonitor now displays a real-time progress bar with batch indicators during active runs, including estimated completion time.
+  - **Quota-blocked in compliance**: `GET /snapshot/compliance` now returns a `quota_blocked` status for volumes blocked by quota in the most recent run (last 48h). The compliance UI shows quota-blocked volumes with distinct orange styling and a separate summary count.
+  - **Run completion notifications**: Snapshot runs now send a notification on completion summarizing created/deleted/skipped/quota-blocked/error counts, batch count, and duration. Quota-blocked volumes also trigger a separate `snapshot_quota_blocked` notification with per-tenant detail.
+- **Snapshot Quota Forecast Runbook** (`snapshot_quota_forecast`, category: security, risk: low) — Proactive daily runbook that scans all projects with snapshot-enabled volumes and forecasts Cinder quota shortfalls before your next snapshot run. Flags projects where gigabytes or snapshot count quota is insufficient (with configurable safety margin). Auto-approve for all roles (read-only).
+  - Parameters: `include_pending_policies` (default true), `safety_margin_pct` (default 10)
+  - Result shows critical/warning alerts per project with exact shortfall amounts, plus a collapsible "OK Projects" list
+
+### Changed
+- **Snapshot Monitor table** — Added "Quota Blocked" and "Batches" columns to the run history table for v1.26.0 batch-aware runs.
+- **Snapshot Excel reports** — Now include `quota_blocked`, `batches`, and `duration_seconds` fields in the Summary sheet.
+- **deployment.ps1** — Added `db/migrate_snapshot_quota_batching.sql` to the migration pipeline.
+- **docker-compose.yml** — Added `AUTO_SNAPSHOT_BATCH_SIZE` and `AUTO_SNAPSHOT_BATCH_DELAY` env vars to `snapshot_worker` service (defaults: 20, 5.0).
+- **Runbook count** — 12 → 13 built-in runbooks (added `snapshot_quota_forecast`).
+
+### Fixed
+- **check_drift.py — Database credentials from env vars** — Replaced hardcoded database credentials with env-var lookup (`PF9_DB_PASSWORD` / `POSTGRES_PASSWORD`). Script now auto-loads `.env` file when run standalone on the host.
+
+### Docs
+- **ARCHITECTURE.md** — Snapshot Management table count 8 → 10; added `snapshot_run_batches` and `snapshot_quota_blocks` table descriptions.
+- **SNAPSHOT_AUTOMATION.md** — Added 2 new tables to Database section; added 4 batching/quota feature checkmarks to Current Status; added `AUTO_SNAPSHOT_BATCH_SIZE`/`AUTO_SNAPSHOT_BATCH_DELAY` to Docker service example.
+- **API_REFERENCE.md** — Documented `GET /snapshot/runs/{id}/progress` and `GET /snapshot/runs/active/progress` endpoints with response schemas; added `snapshot_quota_forecast` runbook trigger example.
+- **DEPLOYMENT_GUIDE.md** — Added step 10 to migration pipeline: `db/migrate_snapshot_quota_batching.sql` (v1.26+).
+- **ADMIN_GUIDE.md** — Updated runbook count 12 → 13; added Snapshot Quota Forecast to Quota category.
+- **KUBERNETES_MIGRATION_GUIDE.md** — Added batching/quota features to snapshot worker description; added `AUTO_SNAPSHOT_BATCH_SIZE`/`AUTO_SNAPSHOT_BATCH_DELAY` to all three `snapshot-config` ConfigMap instances.
+
 ## [1.25.1] - 2026-02-23
 
 ### Added
@@ -998,7 +1031,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - **Removed default password fallback `"admin"`** in deployment.ps1 — now fails loudly if `DEFAULT_ADMIN_PASSWORD` is unset
-- **Removed hardcoded demo user passwords** (`viewer123`/`operator123`) in setup_ldap.ps1 — now reads from `VIEWER_PASSWORD`/`OPERATOR_PASSWORD` env vars, or generates random passwords if unset
+- **Removed hardcoded demo user passwords** in setup_ldap.ps1 — now reads from `VIEWER_PASSWORD`/`OPERATOR_PASSWORD` env vars, or generates random passwords if unset
 - **Removed credential exposure in README.md** — pgAdmin credentials now reference `.env` configuration
 - **pgAdmin default password removed** — docker-compose now requires `PGADMIN_PASSWORD` to be set (fails at startup if missing)
 - **Masked LDAP admin password** in setup_ldap.ps1 console output
