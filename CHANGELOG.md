@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0] - 2026-02-24
+
+### Added
+- **Environment Data Reset** — New "Data Reset" tab on the Admin panel (superadmin only) that lets platform administrators purge operational data for a fresh start without dropping tables or affecting Platform9 itself. Ideal for POC/demo environment refreshes.
+  - **7 selectable categories**: Platform Inventory, Change History, Snapshot Operations, Logs & Audit, Metering Data, Search & Copilot, Provisioning & Runbook Ops
+  - **Always preserved**: Local users & roles, departments, navigation, visibility, branding, MFA, permissions, snapshot policies, drift rules, runbook definitions, notification channels/preferences, copilot & metering config
+  - Row counts per table displayed before confirmation; typed `RESET` confirmation required
+  - Backend: `GET /admin/reset-data/categories` (preview with counts) and `POST /admin/reset-data` (execute purge)
+
 ## [1.26.1] - 2026-02-24
 
 ### Fixed
