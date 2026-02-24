@@ -76,8 +76,10 @@ Snapshot system tables:
 - `snapshot_policy_sets` - Policy set definitions
 - `snapshot_assignments` - Tenant/project policy assignments
 - `snapshot_exclusions` - Volumes/projects excluded from snapshots
-- `snapshot_runs` - Audit records for each scheduler run
+- `snapshot_runs` - Audit records for each scheduler run (includes batch progress columns)
 - `snapshot_records` - Individual snapshot operations (create/delete/skip)
+- `snapshot_run_batches` - Per-batch progress tracking within a run (v1.26.0)
+- `snapshot_quota_blocks` - Volumes skipped due to Cinder quota limits (v1.26.0)
 
 ## Policy Configuration
 
@@ -143,6 +145,10 @@ retention_monthly_15th: "1"
 ✅ Service user role management per-project  
 ✅ Fernet-encrypted password support  
 ✅ Graceful fallback to admin session  
+✅ **Quota-aware tenant batching** with configurable batch sizes and delays (v1.26.0)  
+✅ **Cinder quota pre-check** — volumes blocked by quota are recorded, not failed (v1.26.0)  
+✅ **Live progress tracking** — per-batch completion, progress percentage, ETA (v1.26.0)  
+✅ **Snapshot Quota Forecast runbook** — proactive daily quota vs. policy analysis (v1.26.0)  
 
 ## Deployment
 
@@ -180,6 +186,9 @@ snapshot_worker:
     POLICY_ASSIGN_INTERVAL_MINUTES: ${POLICY_ASSIGN_INTERVAL_MINUTES:-60}
     AUTO_SNAPSHOT_INTERVAL_MINUTES: ${AUTO_SNAPSHOT_INTERVAL_MINUTES:-60}
     AUTO_SNAPSHOT_DRY_RUN: ${AUTO_SNAPSHOT_DRY_RUN:-false}
+      # Batching (v1.26.0)
+      AUTO_SNAPSHOT_BATCH_SIZE: ${AUTO_SNAPSHOT_BATCH_SIZE:-20}
+      AUTO_SNAPSHOT_BATCH_DELAY: ${AUTO_SNAPSHOT_BATCH_DELAY:-5.0}
   restart: always
 ```
 

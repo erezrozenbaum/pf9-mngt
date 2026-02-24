@@ -21,7 +21,7 @@ interface ComplianceRow {
   snapshot_count: number;
   last_snapshot_at?: string;
   compliant: boolean;
-  status: 'compliant' | 'missing' | 'pending';
+  status: 'compliant' | 'missing' | 'pending' | 'quota_blocked';
 }
 
 interface ManualSnapshot {
@@ -45,6 +45,7 @@ interface ComplianceResponse {
     compliant: number;
     noncompliant: number;
     pending: number;
+    quota_blocked?: number;
     days: number;
   };
   manual_snapshots: ManualSnapshot[];
@@ -201,7 +202,7 @@ const SnapshotComplianceReport: React.FC = () => {
     if (rows.length === 0) return;
     const headers = ['Status', 'Volume', 'Volume ID', 'VM', 'VM ID', 'Tenant', 'Project', 'Policy', 'Retention (days)', 'Snapshots', 'Last Snapshot'];
     const csvRows = rows.map(r => [
-      r.status === 'compliant' ? 'Compliant' : r.status === 'pending' ? 'Pending' : 'Missing',
+      r.status === 'compliant' ? 'Compliant' : r.status === 'pending' ? 'Pending' : r.status === 'quota_blocked' ? 'Quota Blocked' : 'Missing',
       r.volume_name,
       r.volume_id,
       r.vm_name || '',
@@ -289,9 +290,14 @@ const SnapshotComplianceReport: React.FC = () => {
       {summary && (
         <div className="compliance-summary">
           <div className="summary-card ok">Compliant: {summary.compliant}</div>
-          <div className="summary-card warn">Non‑Compliant: {summary.noncompliant}</div>          {summary.pending > 0 && (
+          <div className="summary-card warn">Non‑Compliant: {summary.noncompliant}</div>
+          {(summary.quota_blocked ?? 0) > 0 && (
+            <div className="summary-card quota-blocked">Quota Blocked: {summary.quota_blocked}</div>
+          )}
+          {summary.pending > 0 && (
             <div className="summary-card pending">Pending: {summary.pending}</div>
-          )}          <div className="summary-card">Window: {summary.days} days</div>
+          )}
+          <div className="summary-card">Window: {summary.days} days</div>
           <div className="summary-card">Policies: {policies.length}</div>
         </div>
       )}
@@ -344,10 +350,10 @@ const SnapshotComplianceReport: React.FC = () => {
                         </thead>
                         <tbody>
                           {sorted.map((r, idx) => (
-                            <tr key={`${r.volume_id}-${idx}`} className={r.status === 'missing' ? 'row-missing' : r.status === 'pending' ? 'row-pending' : ''}>
+                            <tr key={`${r.volume_id}-${idx}`} className={r.status === 'missing' ? 'row-missing' : r.status === 'pending' ? 'row-pending' : r.status === 'quota_blocked' ? 'row-quota-blocked' : ''}>
                               <td>
-                                <span className={`badge ${r.status === 'compliant' ? 'enabled' : r.status === 'pending' ? 'badge-pending' : 'inactive'}`}>
-                                  {r.status === 'compliant' ? 'Compliant' : r.status === 'pending' ? 'Pending' : 'Missing'}
+                                <span className={`badge ${r.status === 'compliant' ? 'enabled' : r.status === 'pending' ? 'badge-pending' : r.status === 'quota_blocked' ? 'badge-quota-blocked' : 'inactive'}`}>
+                                  {r.status === 'compliant' ? 'Compliant' : r.status === 'pending' ? 'Pending' : r.status === 'quota_blocked' ? 'Quota Blocked' : 'Missing'}
                                 </span>
                               </td>
                               <td title={r.volume_id}>{r.volume_name}</td>
