@@ -1,6 +1,25 @@
 import psycopg2
+import os
+from pathlib import Path
+
+# Load .env file if present (so this script works standalone on the host)
+env_path = Path(__file__).resolve().parent / ".env"
+if env_path.exists():
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip().strip('"').strip("'")
+            os.environ.setdefault(key, val)
+
 try:
-    c = psycopg2.connect(host='localhost', port=5432, dbname='pf9_mgmt', user='pf9', password='pf9_password_change_me')
+    c = psycopg2.connect(
+        host=os.getenv('PF9_DB_HOST', 'localhost'),
+        port=int(os.getenv('PF9_DB_PORT', '5432')),
+        dbname=os.getenv('PF9_DB_NAME', 'pf9_mgmt'),
+        user=os.getenv('PF9_DB_USER', 'pf9'),
+        password=os.getenv('PF9_DB_PASSWORD', os.getenv('POSTGRES_PASSWORD', ''))
+    )
     cur = c.cursor()
     cur.execute("SELECT COUNT(*) FROM networks WHERE status IS NOT NULL")
     print(f"NET_STATUS_COUNT={cur.fetchone()[0]}")

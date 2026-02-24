@@ -241,6 +241,19 @@ def _build_compliance_from_volumes(
     for (_, pname) in policy_stats:
         policies_that_have_run.add(pname)
 
+    # ---- quota-blocked volumes: from most recent snapshot run --------------
+    # Check if any volumes were blocked by Cinder quota in the last 48 hours.
+    quota_blocked_volumes: set = set()
+    try:
+        cur.execute("""
+            SELECT DISTINCT volume_id FROM snapshot_quota_blocks
+            WHERE created_at >= NOW() - INTERVAL '48 hours'
+        """)
+        for qr in cur.fetchall():
+            quota_blocked_volumes.add(qr["volume_id"])
+    except Exception:
+        pass  # Table may not exist yet (pre-migration)
+
     for row in rows:
         row_project_id = row.get("project_id")
         row_tenant_id = row.get("tenant_id")
@@ -269,9 +282,13 @@ def _build_compliance_from_volumes(
             #  - "compliant": has a snapshot within the time window
             #  - "missing":  policy has run before but this volume is overdue
             #  - "pending":  policy has NEVER run for ANY volume yet
+            #  - "quota_blocked": volume was blocked by Cinder quota in last run
             if last_snapshot_at and last_snapshot_at >= (now - timedelta(days=days)):
                 comp_status = "compliant"
                 compliant = True
+            elif vol_id in quota_blocked_volumes:
+                comp_status = "quota_blocked"
+                compliant = False
             elif policy_name not in policies_that_have_run:
                 comp_status = "pending"
                 compliant = False
@@ -298,8 +315,8 @@ def _build_compliance_from_volumes(
                 "status":           comp_status,
             })
 
-    # Sort: pending last, then non-compliant, then compliant
-    status_order = {"missing": 0, "compliant": 1, "pending": 2}
+    # Sort: quota_blocked first, then missing, then compliant, then pending
+    status_order = {"quota_blocked": -1, "missing": 0, "compliant": 1, "pending": 2}
     min_time = datetime.min.replace(tzinfo=timezone.utc)
     compliance_rows.sort(
         key=lambda r: (status_order.get(r.get("status"), 0),
@@ -1065,6 +1082,126 @@ def setup_snapshot_routes(app, get_db_connection):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to retrieve snapshot run: {str(e)}"
             )
+
+    # ── Snapshot Run Progress ────────────────────────────────────────
+    @app.get("/snapshot/runs/{run_id}/progress")
+    async def get_run_progress(
+        run_id: int,
+        current_user: User = Depends(get_current_user),
+        _has_permission: bool = Depends(require_permission("snapshot_runs", "read"))
+    ):
+        """Get live progress for a snapshot run including batch details."""
+        try:
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                # Get run-level progress
+                cur.execute("""
+                    SELECT id, status, total_volumes, snapshots_created,
+                           snapshots_deleted, snapshots_failed, volumes_skipped,
+                           total_batches, completed_batches, current_batch,
+                           quota_blocked, batch_size_config, batch_delay_sec,
+                           progress_pct, estimated_finish_at,
+                           started_at, finished_at
+                    FROM snapshot_runs
+                    WHERE id = %s
+                """, (run_id,))
+                run = cur.fetchone()
+
+                if not run:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Snapshot run {run_id} not found"
+                    )
+
+                # Get batch details
+                cur.execute("""
+                    SELECT batch_number, tenant_ids, tenant_names,
+                           total_volumes, snapshots_created, snapshots_deleted,
+                           volumes_skipped, errors, status,
+                           started_at, completed_at
+                    FROM snapshot_run_batches
+                    WHERE snapshot_run_id = %s
+                    ORDER BY batch_number
+                """, (run_id,))
+                batches = cur.fetchall()
+
+                # Get quota-blocked volumes summary
+                cur.execute("""
+                    SELECT volume_id, volume_name, volume_size_gb,
+                           tenant_name, project_name, policy_name,
+                           quota_limit_gb, quota_used_gb, quota_needed_gb,
+                           block_reason
+                    FROM snapshot_quota_blocks
+                    WHERE snapshot_run_id = %s
+                    ORDER BY created_at
+                """, (run_id,))
+                quota_blocks = cur.fetchall()
+
+                return {
+                    "run": dict(run),
+                    "batches": [dict(b) for b in batches],
+                    "quota_blocks": [dict(q) for q in quota_blocks],
+                    "is_active": run["status"] in ("running", "in_progress"),
+                }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve run progress: {str(e)}"
+            )
+
+    # ── Active Run Progress (for live polling) ───────────────────────
+    @app.get("/snapshot/runs/active/progress")
+    async def get_active_run_progress(
+        current_user: User = Depends(get_current_user),
+        _has_permission: bool = Depends(require_permission("snapshot_runs", "read"))
+    ):
+        """Get progress for the currently-running snapshot run, if any."""
+        try:
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    SELECT id, run_type, status, total_volumes,
+                           snapshots_created, snapshots_deleted,
+                           snapshots_failed, volumes_skipped,
+                           total_batches, completed_batches, current_batch,
+                           quota_blocked, progress_pct, estimated_finish_at,
+                           started_at
+                    FROM snapshot_runs
+                    WHERE status IN ('running', 'in_progress')
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                """)
+                run = cur.fetchone()
+
+                if not run:
+                    return {"active": False, "run": None, "batches": []}
+
+                cur.execute("""
+                    SELECT batch_number, tenant_names,
+                           total_volumes, snapshots_created, status,
+                           started_at, completed_at
+                    FROM snapshot_run_batches
+                    WHERE snapshot_run_id = %s
+                    ORDER BY batch_number
+                """, (run["id"],))
+                batches = cur.fetchall()
+
+                return {
+                    "active": True,
+                    "run": dict(run),
+                    "batches": [dict(b) for b in batches],
+                }
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve active run progress: {str(e)}"
+            )
     
     @app.patch("/snapshot/runs/{run_id}")
     async def update_run(
@@ -1313,6 +1450,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 compliant_count = sum(1 for r in rows if r.get("status") == "compliant")
                 noncompliant_count = sum(1 for r in rows if r.get("status") == "missing")
                 pending_count = sum(1 for r in rows if r.get("status") == "pending")
+                quota_blocked_count = sum(1 for r in rows if r.get("status") == "quota_blocked")
 
                 return {
                     "rows": rows,
@@ -1321,6 +1459,7 @@ def setup_snapshot_routes(app, get_db_connection):
                         "compliant": compliant_count,
                         "noncompliant": noncompliant_count,
                         "pending": pending_count,
+                        "quota_blocked": quota_blocked_count,
                         "days": days,
                     },
                     "manual_snapshots": manual_snapshots,

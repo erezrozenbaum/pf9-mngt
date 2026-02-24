@@ -661,6 +661,65 @@ Query Parameters:
 - `limit` (optional, default: 50) - Results limit
 - `status` (optional) - Filter by status
 
+### Snapshot Run Progress (v1.26.0)
+**GET** `/snapshot/runs/{run_id}/progress` (Authenticated, `snapshot_runs:read`)  
+Returns live progress for a specific snapshot run including batch details and quota-blocked volumes.
+
+**Response**:
+```json
+{
+  "run": {
+    "id": 42,
+    "status": "running",
+    "total_volumes": 85,
+    "snapshots_created": 40,
+    "total_batches": 5,
+    "completed_batches": 2,
+    "current_batch": 3,
+    "quota_blocked": 3,
+    "progress_pct": 47.1,
+    "estimated_finish_at": "2026-02-24T14:30:00+00:00"
+  },
+  "batches": [
+    {
+      "batch_number": 1,
+      "tenant_names": ["prod-east", "prod-west"],
+      "total_volumes": 20,
+      "status": "completed"
+    }
+  ],
+  "quota_blocks": [
+    {
+      "volume_name": "db-data-01",
+      "tenant_name": "staging",
+      "quota_limit_gb": 500,
+      "quota_used_gb": 480,
+      "quota_needed_gb": 50,
+      "block_reason": "Insufficient storage quota"
+    }
+  ],
+  "is_active": true
+}
+```
+
+### Active Run Progress (v1.26.0)
+**GET** `/snapshot/runs/active/progress` (Authenticated, `snapshot_runs:read`)  
+Returns progress for the currently-running snapshot run, if any. Designed for live polling by the UI.
+
+**Response** (active run):
+```json
+{
+  "active": true,
+  "run": { "id": 42, "status": "running", "progress_pct": 65.0, "..." : "..." },
+  "batches": [ { "batch_number": 1, "status": "completed", "..." : "..." } ]
+}
+```
+
+**Response** (no active run):
+```json
+{ "active": false, "run": null, "batches": [] }
+```
+
 ---
 
 ## Monitoring Endpoints
@@ -2441,6 +2500,18 @@ Response:
     "stale_user_days": 90,
     "flag_wide_port_ranges": true,
     "check_volume_encryption": true
+  }
+}
+```
+
+**Snapshot Quota Forecast** (v1.26.0) — proactive quota vs. policy analysis per tenant:
+```json
+{
+  "runbook_name": "snapshot_quota_forecast",
+  "dry_run": false,
+  "parameters": {
+    "include_pending_policies": true,
+    "safety_margin_pct": 10
   }
 }
 ```
