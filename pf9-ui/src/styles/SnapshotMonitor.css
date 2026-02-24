@@ -464,3 +464,146 @@
     border-color: #444;
   }
 }
+
+/* ============================================================
+   Active Run Progress Bar (v1.26.0)
+   ============================================================ */
+
+.active-run-progress {
+  background: var(--surface-2, #f0f4ff);
+  border: 1px solid var(--primary-color, #0066cc);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: var(--primary-color, #0066cc); }
+  50% { border-color: var(--primary-light, #3399ff); }
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.progress-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--primary-color, #0066cc);
+}
+
+.progress-stats {
+  font-size: 13px;
+  color: var(--text-secondary, #555);
+}
+
+.est-finish {
+  color: var(--text-tertiary, #888);
+}
+
+.progress-bar-container {
+  position: relative;
+  height: 24px;
+  background: var(--surface-3, #e0e0e0);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #0066cc, #00cc66);
+  border-radius: 12px;
+  transition: width 0.5s ease-in-out;
+  min-width: 2%;
+}
+
+.progress-pct {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  font-weight: 700;
+  color: #333;
+  text-shadow: 0 0 3px rgba(255,255,255,0.8);
+}
+
+.batch-indicators {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.batch-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: white;
+  cursor: help;
+}
+
+.batch-pending {
+  background: #ccc;
+  color: #666;
+}
+
+.batch-running {
+  background: #0066cc;
+  animation: batch-pulse 1s ease-in-out infinite;
+}
+
+@keyframes batch-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.batch-completed {
+  background: #00aa55;
+}
+
+.batch-partial {
+  background: #ff9900;
+}
+
+.batch-failed {
+  background: #cc3333;
+}
+
+/* Dark mode overrides for progress bar */
+@media (prefers-color-scheme: dark) {
+  .active-run-progress {
+    background: #1a2233;
+    border-color: #3399ff;
+  }
+
+  .progress-stats {
+    color: #b0b0b0;
+  }
+
+  .progress-bar-container {
+    background: #333;
+  }
+
+  .progress-pct {
+    color: #eee;
+    text-shadow: 0 0 3px rgba(0,0,0,0.8);
+  }
+
+  .batch-pending {
+    background: #555;
+    color: #aaa;
+  }
+}

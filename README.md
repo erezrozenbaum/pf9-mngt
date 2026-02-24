@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.25.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.26.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -54,7 +54,7 @@ Every restore operation is fully audited — who triggered it, what was restored
 
 There is no native automated snapshot scheduler in Platform9 or OpenStack. No configurable per-volume policies. No retention management. No SLA compliance tracking. For an MSP, snapshot automation is table stakes — you cannot deliver a managed service without it.
 
-**The engineering answer:** pf9-mngt includes a complete snapshot automation engine built from scratch. Configurable policies per volume — daily, monthly, custom retention — with automatic cleanup and full SLA compliance reporting aggregated by tenant and domain.
+**The engineering answer:** pf9-mngt includes a complete snapshot automation engine built from scratch. Configurable policies per volume — daily, monthly, custom retention — with automatic cleanup and full SLA compliance reporting aggregated by tenant and domain. v1.26.0 adds **quota-aware batching** with Cinder quota pre-checks, tenant-grouped batching with configurable rate limits, live progress tracking, and the `snapshot_quota_forecast` proactive runbook.
 
 ---
 
@@ -248,9 +248,9 @@ A 15-minute explainer video walking through the UI and key features:
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
 ### 📋 Policy-as-Code Runbooks *(v1.21 → v1.25)*
-- **Runbook Catalogue**: Browse 13 built-in operational runbooks with schema-driven parameter forms:
+- **Runbook Catalogue**: Browse 14 built-in operational runbooks with schema-driven parameter forms:
   - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
-  - **Security**: Security Group Audit, Security & Compliance Audit, User Last Login Report
+  - **Security**: Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast
   - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector
   - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
 - **Result Export**: Every runbook result can be exported as CSV, JSON, or printed to PDF directly from the detail panel
@@ -665,6 +665,14 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.26.0 — Snapshot Quota-Aware Batching & Forecast Runbook
+- ✅ **Quota Pre-Check** — Cinder quota checked before snapshotting; volumes that would exceed GB/snapshot limits are flagged `quota_blocked` instead of failing with 413 errors
+- ✅ **Tenant-Grouped Batching** — Volumes batched by tenant with configurable `--batch-size` (default 20) and `--batch-delay` (default 5s) to avoid API rate limiting at scale (500+ tenants)
+- ✅ **Live Progress Tracking** — Real-time progress bar in Snapshot Monitor with batch indicators, estimated completion, and active polling (`GET /snapshot/runs/active/progress`)
+- ✅ **Quota Blocked in Compliance** — Compliance report distinguishes `quota_blocked` volumes from `missing`, with distinct orange styling and summary count
+- ✅ **14 Runbooks** — Added Snapshot Quota Forecast: proactive daily scan of all projects forecasting Cinder quota shortfalls before the next snapshot run
+- ✅ **Run Completion Notifications** — Snapshot runs send notifications with full summary (created/deleted/skipped/quota-blocked/errors, batches, duration)
+
 ### v1.25.1 — ILS Currency, User Last Login Runbook, Export Buttons
 - ✅ **13 Runbooks** — Added User Last Login Report: lists every user with last login time, session activity, IP, login count, inactive flags
 - ✅ **Result Export** — CSV, JSON, and Print-to-PDF export buttons on every runbook execution result
@@ -744,4 +752,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.25.1 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.26.0 | **Last Updated**: February 2026

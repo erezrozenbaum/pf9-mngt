@@ -4,7 +4,7 @@
  * Displays snapshot run history, statistics, and logs
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import '../styles/SnapshotMonitor.css';
 
 interface SnapshotRun {
@@ -23,6 +23,29 @@ interface SnapshotRun {
   trigger_source: string;
   execution_host?: string;
   error_summary?: string;
+  // Batch progress fields (v1.26.0)
+  total_batches?: number;
+  completed_batches?: number;
+  current_batch?: number;
+  quota_blocked?: number;
+  progress_pct?: number;
+  estimated_finish_at?: string;
+}
+
+interface BatchInfo {
+  batch_number: number;
+  tenant_names?: string[];
+  total_volumes: number;
+  snapshots_created?: number;
+  status: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+interface ActiveRunProgress {
+  active: boolean;
+  run?: SnapshotRun;
+  batches?: BatchInfo[];
 }
 
 interface SnapshotRunsResponse {
@@ -48,8 +71,25 @@ const SnapshotMonitor: React.FC = () => {
   
   // Expanded row state
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  
+  // Active run progress (v1.26.0)
+  const [activeProgress, setActiveProgress] = useState<ActiveRunProgress | null>(null);
 
   const token = localStorage.getItem('auth_token');
+
+  const pollActiveProgress = useCallback(async () => {
+    try {
+      const res = await fetch('/api/snapshot/runs/active/progress', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data: ActiveRunProgress = await res.json();
+        setActiveProgress(data);
+      }
+    } catch {
+      // Silently fail — progress polling is best-effort
+    }
+  }, [token]);
 
   const loadRuns = async () => {
     setLoading(true);
@@ -81,6 +121,13 @@ const SnapshotMonitor: React.FC = () => {
   useEffect(() => {
     loadRuns();
   }, [page, runType, status, startDate, endDate]);
+
+  // Poll active run progress every 5 seconds
+  useEffect(() => {
+    pollActiveProgress();
+    const interval = setInterval(pollActiveProgress, 5000);
+    return () => clearInterval(interval);
+  }, [pollActiveProgress]);
 
   const toggleRow = (id: number) => {
     const newExpanded = new Set(expandedRows);
@@ -201,6 +248,51 @@ const SnapshotMonitor: React.FC = () => {
         </div>
       </div>
 
+      {/* Active Run Progress Bar (v1.26.0) */}
+      {activeProgress?.active && activeProgress.run && (
+        <div className="active-run-progress">
+          <div className="progress-header">
+            <span className="progress-label">
+              🔄 Active Run #{activeProgress.run.id} — {activeProgress.run.run_type || 'snapshot'}
+            </span>
+            <span className="progress-stats">
+              Batch {activeProgress.run.current_batch || 0}/{activeProgress.run.total_batches || 0}
+              {' • '}
+              {activeProgress.run.snapshots_created || 0} created
+              {activeProgress.run.quota_blocked ? ` • ${activeProgress.run.quota_blocked} quota-blocked` : ''}
+              {activeProgress.run.estimated_finish_at && (
+                <span className="est-finish">
+                  {' • Est. finish: '}
+                  {new Date(activeProgress.run.estimated_finish_at).toLocaleTimeString()}
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="progress-bar-container">
+            <div
+              className="progress-bar-fill"
+              style={{ width: `${activeProgress.run.progress_pct || 0}%` }}
+            />
+            <span className="progress-pct">{activeProgress.run.progress_pct || 0}%</span>
+          </div>
+          {activeProgress.batches && activeProgress.batches.length > 0 && (
+            <div className="batch-indicators">
+              {activeProgress.batches.map(b => (
+                <div
+                  key={b.batch_number}
+                  className={`batch-dot batch-${b.status}`}
+                  title={`Batch ${b.batch_number}: ${b.total_volumes} vols — ${b.status}${
+                    b.tenant_names ? ' (' + b.tenant_names.slice(0, 3).join(', ') + ')' : ''
+                  }`}
+                >
+                  {b.batch_number}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {error && <div className="alert alert-error">{error}</div>}
 
       {loading ? (
@@ -222,6 +314,8 @@ const SnapshotMonitor: React.FC = () => {
                   <th>Deleted</th>
                   <th>Failed</th>
                   <th>Skipped</th>
+                  <th>Quota Blocked</th>
+                  <th>Batches</th>
                 </tr>
               </thead>
               <tbody>
@@ -248,10 +342,12 @@ const SnapshotMonitor: React.FC = () => {
                       <td className="warning-text">{run.snapshots_deleted}</td>
                       <td className="error-text">{run.snapshots_failed}</td>
                       <td className="skipped-text">{run.volumes_skipped}</td>
+                      <td className={run.quota_blocked ? 'warning-text' : ''}>{run.quota_blocked || 0}</td>
+                      <td>{run.total_batches || '-'}</td>
                     </tr>
                     {expandedRows.has(run.id) && (
                       <tr className="expanded-row">
-                        <td colSpan={11}>
+                        <td colSpan={13}>
                           <div className="run-details">
                             <div className="detail-section">
                               <h4>Run Details</h4>

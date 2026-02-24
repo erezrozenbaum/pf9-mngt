@@ -1335,7 +1335,10 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_ru
 # 9. Apply new runbooks migration (v1.25+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_new_runbooks.sql
 
-# 10. Verify schema
+# 10. Apply snapshot quota batching migration (v1.26+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_snapshot_quota_batching.sql
+
+# 11. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 

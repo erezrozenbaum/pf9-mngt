@@ -1901,6 +1901,227 @@ def _engine_user_last_login(params: dict, dry_run: bool, actor: str) -> dict:
     }
 
 
+# ===== Engine: snapshot_quota_forecast ====================================
+
+@register_engine("snapshot_quota_forecast")
+def _engine_snapshot_quota_forecast(params: dict, dry_run: bool, actor: str) -> dict:
+    """
+    Proactive daily runbook: forecast Cinder quota issues that would block
+    upcoming snapshot runs.  For each project with snapshot-enabled volumes,
+    compare the storage needed for one full snapshot cycle against the
+    remaining Cinder gigabytes/snapshots quota and flag at-risk tenants.
+    """
+    from pf9_control import get_client
+
+    include_pending = params.get("include_pending_policies", True)
+    safety_margin_pct = params.get("safety_margin_pct", 10)
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # --- Gather snapshot-enabled volumes from Cinder ---
+    try:
+        cinder_url = f"{client.cinder_endpoint}/volumes/detail?all_tenants=true"
+        resp = client.session.get(cinder_url, headers=headers)
+        resp.raise_for_status()
+        all_volumes = resp.json().get("volumes", [])
+    except Exception as e:
+        return {
+            "result": {"error": f"Failed to list volumes: {e}"},
+            "items_found": 0,
+            "items_actioned": 0,
+        }
+
+    # Filter to snapshot-enabled volumes
+    snap_volumes = []
+    for v in all_volumes:
+        meta = v.get("metadata") or {}
+        auto = str(meta.get("auto_snapshot", "")).lower()
+        if auto in ("true", "yes", "1"):
+            snap_volumes.append(v)
+
+    # Group by project
+    from collections import defaultdict
+    by_project: dict[str, list] = defaultdict(list)
+    for v in snap_volumes:
+        pid = (
+            v.get("os-vol-tenant-attr:tenant_id")
+            or v.get("project_id")
+            or "UNKNOWN"
+        )
+        by_project[pid].append(v)
+
+    # --- Get project names ---
+    project_names = {}
+    try:
+        ks_url = f"{client.keystone_endpoint}/projects"
+        resp = client.session.get(ks_url, headers=headers)
+        if resp.ok:
+            for p in resp.json().get("projects", []):
+                project_names[p["id"]] = p.get("name", p["id"])
+    except Exception:
+        pass
+
+    # --- Check quota per project ---
+    alerts: list[dict] = []
+    ok_projects: list[dict] = []
+
+    for project_id, vols in by_project.items():
+        pname = project_names.get(project_id, project_id)
+        total_vol_gb = sum(v.get("size", 0) for v in vols)
+        vol_count = len(vols)
+
+        # Fetch Cinder quota
+        try:
+            base_project = client.project_id or project_id
+            quota_url = (
+                f"{client.cinder_endpoint.rstrip('/')}"
+                f"/os-quota-sets/{project_id}"
+            )
+            qr = client.session.get(quota_url, headers=headers)
+            if qr.status_code != 200:
+                alerts.append({
+                    "project_id": project_id,
+                    "project_name": pname,
+                    "severity": "warning",
+                    "issue": "quota_fetch_failed",
+                    "detail": f"HTTP {qr.status_code} fetching Cinder quotas",
+                    "volumes": vol_count,
+                    "total_volume_gb": total_vol_gb,
+                })
+                continue
+            qs = qr.json().get("quota_set", {})
+        except Exception as e:
+            alerts.append({
+                "project_id": project_id,
+                "project_name": pname,
+                "severity": "warning",
+                "issue": "quota_fetch_error",
+                "detail": str(e),
+                "volumes": vol_count,
+                "total_volume_gb": total_vol_gb,
+            })
+            continue
+
+        # Parse gigabytes
+        gb_data = qs.get("gigabytes", {})
+        if isinstance(gb_data, dict):
+            gb_limit = gb_data.get("limit", -1)
+            gb_used = gb_data.get("in_use", 0)
+        else:
+            gb_limit = int(gb_data) if gb_data else -1
+            gb_used = 0
+
+        # Parse snapshots count
+        snap_data = qs.get("snapshots", {})
+        if isinstance(snap_data, dict):
+            snap_limit = snap_data.get("limit", -1)
+            snap_used = snap_data.get("in_use", 0)
+        else:
+            snap_limit = int(snap_data) if snap_data else -1
+            snap_used = 0
+
+        # Calculate needed for one snapshot cycle
+        gb_needed = total_vol_gb  # Each volume snapshot ≈ volume size
+        snap_needed = vol_count
+
+        # Apply safety margin
+        margin_factor = 1 + (safety_margin_pct / 100)
+        gb_needed_with_margin = gb_needed * margin_factor
+        snap_needed_with_margin = snap_needed * margin_factor
+
+        issues = []
+
+        # Check gigabytes
+        if gb_limit >= 0:
+            gb_avail = gb_limit - gb_used
+            gb_pct_used = round((gb_used / gb_limit) * 100, 1) if gb_limit > 0 else 0
+            gb_pct_after = round(((gb_used + gb_needed) / gb_limit) * 100, 1) if gb_limit > 0 else 0
+
+            if gb_used + gb_needed_with_margin > gb_limit:
+                severity = "critical" if gb_used + gb_needed > gb_limit else "warning"
+                issues.append({
+                    "resource": "gigabytes",
+                    "severity": severity,
+                    "limit": gb_limit,
+                    "used": gb_used,
+                    "available": gb_avail,
+                    "needed": gb_needed,
+                    "needed_with_margin": round(gb_needed_with_margin, 1),
+                    "pct_used": gb_pct_used,
+                    "pct_after_snapshots": gb_pct_after,
+                    "shortfall_gb": max(0, round((gb_used + gb_needed) - gb_limit, 1)),
+                })
+
+        # Check snapshot count
+        if snap_limit >= 0:
+            snap_avail = snap_limit - snap_used
+            if snap_used + snap_needed_with_margin > snap_limit:
+                severity = "critical" if snap_used + snap_needed > snap_limit else "warning"
+                issues.append({
+                    "resource": "snapshots",
+                    "severity": severity,
+                    "limit": snap_limit,
+                    "used": snap_used,
+                    "available": snap_avail,
+                    "needed": snap_needed,
+                    "needed_with_margin": round(snap_needed_with_margin),
+                    "shortfall": max(0, (snap_used + snap_needed) - snap_limit),
+                })
+
+        if issues:
+            worst_severity = "critical" if any(
+                i["severity"] == "critical" for i in issues
+            ) else "warning"
+            alerts.append({
+                "project_id": project_id,
+                "project_name": pname,
+                "severity": worst_severity,
+                "issues": issues,
+                "volumes": vol_count,
+                "total_volume_gb": total_vol_gb,
+                "gb_quota_limit": gb_limit,
+                "gb_quota_used": gb_used,
+                "snap_quota_limit": snap_limit,
+                "snap_quota_used": snap_used,
+            })
+        else:
+            ok_projects.append({
+                "project_id": project_id,
+                "project_name": pname,
+                "volumes": vol_count,
+                "total_volume_gb": total_vol_gb,
+                "gb_quota_limit": gb_limit,
+                "gb_quota_used": gb_used,
+                "snap_quota_limit": snap_limit,
+                "snap_quota_used": snap_used,
+            })
+
+    # Sort alerts by severity (critical first)
+    alerts.sort(key=lambda a: (0 if a.get("severity") == "critical" else 1, a.get("project_name", "")))
+
+    result = {
+        "alerts": alerts,
+        "ok_projects": ok_projects,
+        "summary": {
+            "total_projects_scanned": len(by_project),
+            "projects_at_risk": len(alerts),
+            "projects_ok": len(ok_projects),
+            "critical_count": sum(1 for a in alerts if a.get("severity") == "critical"),
+            "warning_count": sum(1 for a in alerts if a.get("severity") == "warning"),
+            "total_snapshot_volumes": len(snap_volumes),
+            "safety_margin_pct": safety_margin_pct,
+        },
+    }
+
+    return {
+        "result": result,
+        "items_found": len(alerts),
+        "items_actioned": 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 #  Core execution logic
 # ---------------------------------------------------------------------------

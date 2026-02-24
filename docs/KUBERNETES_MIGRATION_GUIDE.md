@@ -426,6 +426,9 @@ The snapshot worker is already a fully containerized service with its own Docker
 **Key Features**:
 - Policy assignment (configurable interval)
 - Auto snapshot creation with retention management
+- **Quota-aware tenant batching** with configurable batch sizes and delays (v1.26.0)
+- **Cinder quota pre-check** — volumes blocked by quota are recorded, not failed (v1.26.0)
+- **Live progress tracking** — per-batch completion, progress percentage, ETA (v1.26.0)
 - Compliance reporting (daily)
 - On-demand snapshot pipeline (triggered via DB)
 - Service user authentication (Fernet-encrypted cross-tenant auth)
@@ -1760,6 +1763,8 @@ data:
   AUTO_SNAPSHOT_MAX_SIZE_GB: "260"
   AUTO_SNAPSHOT_MAX_NEW: "200"
   AUTO_SNAPSHOT_DRY_RUN: "false"
+  AUTO_SNAPSHOT_BATCH_SIZE: "20"
+  AUTO_SNAPSHOT_BATCH_DELAY: "5.0"
   RVTOOLS_INTEGRATION_ENABLED: "true"
   COMPLIANCE_REPORT_ENABLED: "true"
   COMPLIANCE_REPORT_INTERVAL_MINUTES: "1440"
@@ -2718,6 +2723,8 @@ data:
   COMPLIANCE_REPORT_ENABLED: "true"
   COMPLIANCE_REPORT_INTERVAL_MINUTES: "1440"
   COMPLIANCE_REPORT_SLA_DAYS: "2"
+  AUTO_SNAPSHOT_BATCH_SIZE: "20"
+  AUTO_SNAPSHOT_BATCH_DELAY: "5.0"
   RESTORE_ENABLED: "true"
 
 ---

@@ -15,6 +15,8 @@ Environment:
   POLICY_ASSIGN_DRY_RUN=true|false
   AUTO_SNAPSHOT_MAX_NEW=200
   AUTO_SNAPSHOT_MAX_SIZE_GB=260 (volumes larger than this are skipped)
+  AUTO_SNAPSHOT_BATCH_SIZE=20 (volumes per batch, keeps all tenant volumes together)
+  AUTO_SNAPSHOT_BATCH_DELAY=5.0 (seconds between batches for API rate limiting)
   AUTO_SNAPSHOT_DRY_RUN=true|false
   RVTOOLS_INTEGRATION_ENABLED=true|false (default: true)
   COMPLIANCE_REPORT_ENABLED=true|false (default: true)
@@ -80,6 +82,8 @@ POLICY_ASSIGN_SYNC_POLICY_SETS = os.getenv("POLICY_ASSIGN_SYNC_POLICY_SETS", "tr
 AUTO_SNAPSHOT_MAX_NEW = os.getenv("AUTO_SNAPSHOT_MAX_NEW")
 AUTO_SNAPSHOT_MAX_SIZE_GB = os.getenv("AUTO_SNAPSHOT_MAX_SIZE_GB", "260")
 AUTO_SNAPSHOT_DRY_RUN = os.getenv("AUTO_SNAPSHOT_DRY_RUN", "false").lower() in ("true", "1", "yes")
+AUTO_SNAPSHOT_BATCH_SIZE = os.getenv("AUTO_SNAPSHOT_BATCH_SIZE", "20")
+AUTO_SNAPSHOT_BATCH_DELAY = os.getenv("AUTO_SNAPSHOT_BATCH_DELAY", "5.0")
 RVTOOLS_INTEGRATION_ENABLED = os.getenv("RVTOOLS_INTEGRATION_ENABLED", "true").lower() in ("true", "1", "yes")
 COMPLIANCE_REPORT_ENABLED = os.getenv("COMPLIANCE_REPORT_ENABLED", "true").lower() in ("true", "1", "yes")
 COMPLIANCE_REPORT_INTERVAL_MINUTES = int(os.getenv("COMPLIANCE_REPORT_INTERVAL_MINUTES", "1440"))
@@ -253,6 +257,10 @@ def run_auto_snapshots():
             args += ["--max-new", str(AUTO_SNAPSHOT_MAX_NEW)]
         if AUTO_SNAPSHOT_MAX_SIZE_GB:
             args += ["--max-size-gb", str(AUTO_SNAPSHOT_MAX_SIZE_GB)]
+        if AUTO_SNAPSHOT_BATCH_SIZE:
+            args += ["--batch-size", str(AUTO_SNAPSHOT_BATCH_SIZE)]
+        if AUTO_SNAPSHOT_BATCH_DELAY:
+            args += ["--batch-delay", str(AUTO_SNAPSHOT_BATCH_DELAY)]
         if AUTO_SNAPSHOT_DRY_RUN:
             args.append("--dry-run")
 
