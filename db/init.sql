@@ -1264,7 +1264,22 @@ INSERT INTO role_permissions (role, resource, action) VALUES
 ('admin',      'copilot', 'admin'),
 ('superadmin', 'copilot', 'read'),
 ('superadmin', 'copilot', 'write'),
-('superadmin', 'copilot', 'admin')
+('superadmin', 'copilot', 'admin'),
+
+-- Migration Planner permissions
+-- viewer: read-only access to migration projects & assessments
+('viewer',     'migration', 'read'),
+('operator',   'migration', 'read'),
+('technical',  'migration', 'read'),
+('technical',  'migration', 'write'),
+-- admin: full read/write (create projects, upload, run assessment, plan waves)
+('admin',      'migration', 'read'),
+('admin',      'migration', 'write'),
+('admin',      'migration', 'admin'),
+-- superadmin: everything including approve & execute target prep
+('superadmin', 'migration', 'read'),
+('superadmin', 'migration', 'write'),
+('superadmin', 'migration', 'admin')
 
 ON CONFLICT (role, resource, action) DO NOTHING;
 

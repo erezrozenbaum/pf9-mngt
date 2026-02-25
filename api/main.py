@@ -77,6 +77,9 @@ from runbook_routes import router as runbook_router
 # Copilot (Ops AI assistant) endpoints
 from copilot import router as copilot_router
 
+# Migration Planner endpoints
+from migration_routes import router as migration_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -294,6 +297,7 @@ app.include_router(navigation_router)
 app.include_router(search_router)
 app.include_router(runbook_router)
 app.include_router(copilot_router)
+app.include_router(migration_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")
@@ -423,6 +427,7 @@ async def rbac_middleware(request: Request, call_next):
         "api-metrics": "api_metrics",
         "system-logs": "system_logs",
         "copilot": "copilot",
+        "migration": "migration",
     }
 
     resource = resource_map.get(segment)
@@ -6362,3 +6367,204 @@ def export_full_inventory(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# =====================================================================
+# ENVIRONMENT DATA RESET  —  "Fresh Start" for POC / Demo environments
+# =====================================================================
+
+# Categories of data that can be purged.  Tables within each category are
+# listed in FK-safe delete order (children before parents).
+RESET_CATEGORIES: Dict[str, Dict[str, Any]] = {
+    "inventory": {
+        "label": "Platform Inventory",
+        "description": "All OpenStack resources imported by RVTools (servers, volumes, networks, images, flavors, hypervisors, domains, projects, Keystone users/roles, etc.)",
+        "tables": [
+            "floating_ips", "subnets", "ports",
+            "security_group_rules", "security_groups",
+            "snapshots", "servers", "volumes",
+            "routers", "networks",
+            "role_assignments", "groups", "users", "roles",
+            "keypairs", "server_groups", "host_aggregates",
+            "volume_types", "project_quotas",
+            "flavors", "images", "hypervisors",
+            "projects", "domains",
+        ],
+    },
+    "history": {
+        "label": "Change History",
+        "description": "All historical change-tracking tables and inventory run records",
+        "tables": [
+            "domains_history", "projects_history",
+            "flavors_history", "images_history",
+            "hypervisors_history", "servers_history",
+            "volumes_history", "snapshots_history",
+            "networks_history", "subnets_history",
+            "routers_history", "ports_history",
+            "floating_ips_history",
+            "security_groups_history", "security_group_rules_history",
+            "users_history", "roles_history", "deletions_history",
+            "inventory_runs",
+        ],
+    },
+    "snapshot_ops": {
+        "label": "Snapshot Operations",
+        "description": "Snapshot run records, compliance reports, and restore job history",
+        "tables": [
+            "snapshot_records", "snapshot_run_batches",
+            "snapshot_quota_blocks", "snapshot_on_demand_runs",
+            "snapshot_runs",
+            "compliance_details", "compliance_reports",
+            "restore_job_steps", "restore_jobs",
+        ],
+    },
+    "logs": {
+        "label": "Logs & Audit",
+        "description": "Activity logs, access logs, auth audit trail, notification delivery logs, drift events, backup history, sessions",
+        "tables": [
+            "user_access_logs", "auth_audit_log",
+            "notification_log", "notification_digests",
+            "activity_log", "drift_events",
+            "backup_history", "user_sessions",
+        ],
+    },
+    "metering": {
+        "label": "Metering Data",
+        "description": "Resource metering, API usage tracking, quota snapshots, efficiency metrics",
+        "tables": [
+            "metering_resources", "metering_snapshots",
+            "metering_restores", "metering_api_usage",
+            "metering_quotas", "metering_efficiency",
+        ],
+    },
+    "search_copilot": {
+        "label": "Search & Copilot",
+        "description": "Search index documents and AI Copilot conversation history",
+        "tables": [
+            "search_documents", "search_indexer_state",
+            "copilot_history", "copilot_feedback",
+        ],
+    },
+    "provisioning": {
+        "label": "Provisioning & Runbook Ops",
+        "description": "Provisioning job history and runbook execution records",
+        "tables": [
+            "provisioning_steps", "provisioning_jobs",
+            "runbook_approvals", "runbook_executions",
+        ],
+    },
+}
+
+
+@app.get("/admin/reset-data/categories")
+async def get_reset_categories(
+    current_user: User = Depends(require_authentication),
+):
+    """Return available data-reset categories with row counts."""
+    if current_user.role != "superadmin":
+        raise HTTPException(403, "Only superadmin can access data-reset")
+
+    result = []
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            for key, cat in RESET_CATEGORIES.items():
+                total_rows = 0
+                table_counts = {}
+                for table in cat["tables"]:
+                    try:
+                        cur.execute(f"SELECT COUNT(*) AS cnt FROM {table}")
+                        cnt = cur.fetchone()["cnt"]
+                    except Exception:
+                        conn.rollback()
+                        cnt = 0
+                    table_counts[table] = cnt
+                    total_rows += cnt
+                result.append({
+                    "id": key,
+                    "label": cat["label"],
+                    "description": cat["description"],
+                    "tables": cat["tables"],
+                    "table_counts": table_counts,
+                    "total_rows": total_rows,
+                })
+    return result
+
+
+@app.post("/admin/reset-data")
+async def reset_environment_data(
+    request: Request,
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Purge selected categories of operational data for a fresh start.
+    Preserves system configuration: local users/roles, departments, navigation,
+    branding, MFA, permissions, snapshot policies, drift rules, runbook
+    definitions, notification channels/preferences, and copilot/metering config.
+    Superadmin only.  Requires confirmation text "RESET".
+    """
+    if current_user.role != "superadmin":
+        raise HTTPException(403, "Only superadmin can reset environment data")
+
+    body = await request.json()
+    categories = body.get("categories", [])
+    confirmation = body.get("confirmation", "")
+
+    if confirmation != "RESET":
+        raise HTTPException(400, "You must type RESET to confirm this action")
+    if not categories:
+        raise HTTPException(400, "Select at least one category to reset")
+
+    invalid = [c for c in categories if c not in RESET_CATEGORIES]
+    if invalid:
+        raise HTTPException(400, f"Unknown categories: {', '.join(invalid)}")
+
+    # Collect all tables to truncate, preserving FK-safe ordering
+    all_tables: list[str] = []
+    selected_labels: list[str] = []
+    for cat_id in categories:
+        cat = RESET_CATEGORIES[cat_id]
+        selected_labels.append(cat["label"])
+        for t in cat["tables"]:
+            if t not in all_tables:
+                all_tables.append(t)
+
+    purged: Dict[str, int] = {}
+    errors: Dict[str, str] = {}
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Count rows before truncation for the report
+            for table in all_tables:
+                try:
+                    cur.execute(f"SELECT COUNT(*) AS cnt FROM {table}")
+                    purged[table] = cur.fetchone()["cnt"]
+                except Exception:
+                    conn.rollback()
+                    purged[table] = 0
+
+            # TRUNCATE all selected tables in one statement with CASCADE
+            # to handle any FK dependencies automatically.
+            # RESTART IDENTITY resets auto-increment sequences.
+            try:
+                tables_sql = ", ".join(all_tables)
+                cur.execute(f"TRUNCATE {tables_sql} RESTART IDENTITY CASCADE")
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Data reset failed: {e}")
+                raise HTTPException(500, f"Data reset failed: {str(e)}")
+
+    total_rows = sum(purged.values())
+    logger.info(
+        f"Environment data reset by {current_user.username}: "
+        f"categories={selected_labels}, tables={len(all_tables)}, rows={total_rows}"
+    )
+
+    return {
+        "status": "success",
+        "message": f"Successfully purged {total_rows:,} rows across {len(all_tables)} tables",
+        "categories": selected_labels,
+        "tables_purged": purged,
+        "errors": errors if errors else None,
+        "note": "State files (p9_rvtools_state.json, metrics_cache.json) may need manual reset if running outside Docker.",
+    }
