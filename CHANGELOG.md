@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.2] - 2026-02-26
+
+### Added
+- **Expandable VM detail rows** — Click any VM row in the inventory table to expand and see per-disk and per-NIC detail tables. Disks show label, capacity (GB), thin-provisioned flag, and datastore. NICs show adapter type, network name, connection type, IP address, MAC address, and link-up status. Disk count column added to the main VM table.
+- **Additional VM filters** — Three new filter dropdowns on the VM inventory: OS Family (windows/linux/other), Power State (poweredOn/poweredOff/suspended), and Cluster.
+- **Migration Plan tab** — New "Migration Plan" sub-tab in Source Analysis with full migration plan generation:
+  - **Project summary cards**: Total VMs, warm-eligible count, cold-required count, estimated total migration hours, project duration.
+  - **Per-tenant assessment table**: Expandable rows showing each tenant's VM count, warm/cold split, aggregated phase-1 hours, cutover hours, total hours, and risk distribution (GREEN/YELLOW/RED counts).
+  - **Per-VM time estimates**: Each VM row inside a tenant shows warm phase-1 time (no downtime, full in-use data copy), warm cutover time (downtime: final delta + 15 min switchover), and cold total time (full offline copy). Estimates driven by the project's bottleneck bandwidth.
+  - **Daily migration schedule**: Calendar-style table showing which VMs are scheduled per day based on concurrent agent slots, with VM name pills.
+  - **JSON & CSV export**: Download the full migration plan as JSON (complete structure) or CSV (flat VM-level rows with tenant, mode, phase-1 hours, cutover hours, downtime, scheduled day).
+- **Per-VM time estimation engine** — New `estimate_vm_time()` function in `migration_engine.py` computes warm and cold migration durations per VM based on disk capacity, in-use data, and effective bottleneck bandwidth. Formula: `gb_per_hour = (bottleneck_mbps / 8) × 3.6`. Warm: phase-1 (full in-use copy, zero downtime) + incremental (daily delta) + cutover (half-day delta + 15 min switchover). Cold: full provisioned disk copy (all downtime).
+- **Migration plan generator** — New `generate_migration_plan()` function builds per-tenant breakdowns with aggregated timing, risk distribution, and VM lists. Produces a daily schedule by filling concurrent agent slots day-by-day.
+- **API: VM detail endpoint** — `GET /api/migration/projects/{id}/vms/{vm_name}/details` returns individual disk and NIC records for a specific VM.
+- **API: Export plan endpoint** — `GET /api/migration/projects/{id}/export-plan` generates the full migration plan (project summary, per-tenant plans, daily schedule) using the project's bandwidth model.
+
+### Changed
+- **VM list API** — `GET /api/migration/projects/{id}/vms` now accepts `os_family` and `power_state` query parameters for server-side filtering.
+- **SQL default detection config** — `migration_tenant_rules` default `detection_config` now includes `vcd_folder` as the first detection method and `cluster` as a fallback, ensuring new projects get the complete detection chain by default (previously required runtime injection).
+
+## [1.28.1] - 2026-02-25
+
+### Added
+- **Live bandwidth constraint model** — Bandwidth cards now update instantly as you change any topology or agent field (NIC speed, usable %, storage MB/s, agent count). No save required — client-side `useMemo` mirrors the server-side engine. Shows "(live preview — save to persist)" when unsaved.
+- **Migration Schedule section** — New "Migration Schedule" panel with 4 fields: Project Duration (days), Working Hours per Day, Working Days per Week, Target VMs per Day. Drives schedule-aware agent sizing recommendations.
+- **Schedule-aware agent sizing** — The agent recommendation engine now factors in project timeline: computes effective working days from duration × (working days/week), derives VMs/day throughput need, and recommends appropriate agent count. Includes estimated completion time in reasoning output.
+- **Cluster-based tenant detection** — New `cluster` detection method as fallback for non-vCD environments. Detection chain: vcd_folder → vapp_name → folder_path → resource_pool → cluster → Unassigned.
+- **Inline tenant editing** — Each tenant row now has an edit (✏️) button. Click to edit tenant name and OrgVDC inline with keyboard support (Enter to save, Escape to cancel). Changes cascade to all associated VMs via the PATCH endpoint.
+
+### Fixed
+- **Tenant rename cascade bug** — The PATCH `/projects/{id}/tenants/{tid}` endpoint was reading the tenant name after the UPDATE (getting the new name), so the VM cascade WHERE clause never matched the old name. Now reads the old name first before updating.
+- **DB migration file**: `db/migrate_migration_schedule.sql` adds 4 new columns to `migration_projects` (idempotent `ADD COLUMN IF NOT EXISTS`).
+
+## [1.28.0] - 2026-02-25
+
+### Added
+- **Migration Intelligence & Execution Cockpit (Phase 1)** — New "Migration Planner" tab for planning and executing VMware → Platform9 PCD workload migrations via vJailbreak.
+  - **15 database tables**: `migration_projects`, `migration_vms`, `migration_vm_disks`, `migration_vm_nics`, `migration_vm_snapshots`, `migration_tenants`, `migration_tenant_rules`, `migration_hosts`, `migration_clusters`, `migration_waves`, `migration_wave_vms`, `migration_risk_config`, `migration_target_gaps`, `migration_prep_tasks`, `migration_project_archives`
+  - **Project lifecycle**: draft → assessment → planned → approved → preparing → ready → executing → completed/cancelled → archived. Approval gate prevents PCD writes until admin explicitly approves.
+  - **RVTools XLSX import**: Upload RVTools exports and automatically parse 6 sheets (vInfo, vDisk, vNIC, vHost, vCluster, vSnapshot) with fuzzy column matching across RVTools version differences.
+  - **Multi-tenant detection**: 5 detection methods (folder path, resource pool, vApp name, VM name prefix, annotation field) to auto-assign VMs to tenants.
+  - **Risk scoring engine**: Configurable 0–100 risk score per VM (GREEN/YELLOW/RED) based on weighted factors (disk size, snapshot count, OS family, NIC count, etc.).
+  - **Migration mode classification**: warm_eligible / warm_risky / cold_required based on OS, power state, disk count, and snapshot count.
+  - **Bandwidth constraint model**: 4-constraint model (source host NIC → transport link → agent ingest → PCD storage write) with latency penalties. Identifies bottleneck automatically.
+  - **3-tier topology selector**: Local (same DC), Cross-site dedicated (MPLS/dark fiber), Cross-site internet — each with configurable NIC speeds and usable % sliders.
+  - **vJailbreak agent sizing**: Recommendations for agent count, vCPU, RAM, and disk based on workload profile. Agents deploy on PCD side pulling data from VMware.
+  - **Three reset levels**: Re-import (replace source data), Reset assessment (clear computed scores), Reset plan (clear waves/tasks).
+  - **Full RBAC**: `migration` resource with read/write/admin actions. viewer=read, operator=read, technical=read+write, admin=all, superadmin=all.
+  - **Navigation integration**: "Migration Planning" nav group with department visibility for Engineering, Tier3 Support, Management, and Marketing.
+  - **Frontend**: MigrationPlannerTab with 3 sub-views (Projects list, ProjectSetup, SourceAnalysis). ProjectSetup includes topology config, bandwidth sliders, agent profile, RVTools upload. SourceAnalysis includes VM inventory table with filters/sort/pagination, risk dashboard, tenant management, risk config editor.
+  - **Backend**: `api/migration_engine.py` (pure logic, no HTTP/DB), `api/migration_routes.py` (25+ API endpoints)
+  - **DB migration**: `db/migrate_migration_planner.sql` (idempotent, includes RBAC permissions, nav groups, department visibility)
+
 ## [1.27.0] - 2026-02-24
 
 ### Added

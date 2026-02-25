@@ -2828,3 +2828,324 @@ Response:
   "status": "ok"
 }
 ```
+
+---
+
+## Migration Planner
+
+VMware → Platform9 PCD migration intelligence and execution endpoints. All endpoints are under `/api/migration/`.
+
+**RBAC**: `migration` resource — `read` (browse), `write` (create/edit/upload/assess), `admin` (approve/delete).
+
+### Create Migration Project
+**POST** `/api/migration/projects`
+*Requires: migration:write*
+
+Create a new migration project in `draft` status.
+
+Request:
+```json
+{
+  "name": "Acme Corp VMware Migration",
+  "description": "Q2 2026 migration from vSphere 7 to PCD"
+}
+```
+
+Response:
+```json
+{
+  "project": {
+    "project_id": "a1b2c3d4-...",
+    "name": "Acme Corp VMware Migration",
+    "status": "draft",
+    "topology_type": "local",
+    "source_nic_speed_gbps": 10.0,
+    "source_usable_pct": 40.0,
+    "agent_count": 2,
+    "agent_concurrent_vms": 5,
+    "created_at": "2026-02-25T12:00:00Z"
+  }
+}
+```
+
+### List Migration Projects
+**GET** `/api/migration/projects`
+*Requires: migration:read*
+
+Returns all non-archived migration projects ordered by creation date (newest first).
+
+### Get Project Details
+**GET** `/api/migration/projects/{project_id}`
+*Requires: migration:read*
+
+### Update Project Settings
+**PATCH** `/api/migration/projects/{project_id}`
+*Requires: migration:write*
+
+Update topology, bandwidth settings, and agent profile. Accepts any subset of project fields.
+
+Request:
+```json
+{
+  "topology_type": "cross_site_dedicated",
+  "link_speed_gbps": 1.0,
+  "link_usable_pct": 60,
+  "agent_count": 4,
+  "agent_concurrent_vms": 3
+}
+```
+
+### Delete Migration Project
+**DELETE** `/api/migration/projects/{project_id}`
+*Requires: migration:admin*
+
+Permanently deletes the project and all child data (CASCADE).
+
+### Upload RVTools XLSX
+**POST** `/api/migration/projects/{project_id}/upload`
+*Requires: migration:write*
+
+Upload an RVTools XLSX export. Parses 6 sheets: vInfo, vDisk, vNIC, vHost, vCluster, vSnapshot. Fuzzy column matching handles RVTools version differences. Re-uploading replaces all source data.
+
+Request: `multipart/form-data` with `file` field.
+
+Response:
+```json
+{
+  "stats": {
+    "vInfo": 245,
+    "vDisk": 512,
+    "vNIC": 310,
+    "vHost": 12,
+    "vCluster": 3,
+    "vSnapshot": 87
+  }
+}
+```
+
+### List VMs
+**GET** `/api/migration/projects/{project_id}/vms`
+*Requires: migration:read*
+
+Paginated, sortable, filterable VM inventory.
+
+Query Parameters:
+- `page` (default: 1), `limit` (default: 50)
+- `sort` (default: vm_name), `order` (asc/desc)
+- `search` — fuzzy match on vm_name
+- `risk_level` — GREEN, YELLOW, RED
+- `migration_mode` — warm_eligible, warm_risky, cold_required
+- `tenant` — filter by assigned tenant name
+- `os_family` — filter by OS family: windows, linux, other
+- `power_state` — filter by power state: poweredOn, poweredOff, suspended
+- `cluster` — filter by cluster name
+
+### VM Detail (Disks & NICs)
+**GET** `/api/migration/projects/{project_id}/vms/{vm_name}/details`
+*Requires: migration:read*
+
+Returns per-disk and per-NIC records for a specific VM.
+
+Response:
+```json
+{
+  "vm_name": "web-prod-01",
+  "disks": [
+    {
+      "disk_label": "Hard disk 1",
+      "disk_path": "[DS01] web-prod-01/web-prod-01.vmdk",
+      "capacity_gb": 100.0,
+      "thin_provisioned": true,
+      "eagerly_scrub": false,
+      "datastore": "DS01"
+    }
+  ],
+  "nics": [
+    {
+      "nic_label": "Network adapter 1",
+      "adapter_type": "VMXNET3",
+      "network_name": "VLAN-100-Prod",
+      "connected": true,
+      "mac_address": "00:50:56:ab:cd:ef",
+      "ip_address": "10.0.1.50"
+    }
+  ]
+}
+```
+
+### Export Migration Plan
+**GET** `/api/migration/projects/{project_id}/export-plan`
+*Requires: migration:read*
+
+Generates a full migration plan with per-VM time estimates based on the project's bandwidth model. Includes per-tenant breakdowns and a daily migration schedule.
+
+Response:
+```json
+{
+  "project_summary": {
+    "project_name": "Acme Corp Migration",
+    "total_vms": 245,
+    "warm_count": 198,
+    "cold_count": 47,
+    "total_disk_tb": 48.2,
+    "bottleneck_mbps": 500,
+    "estimated_total_hours": 1240.5,
+    "estimated_days": 21
+  },
+  "tenant_plans": [
+    {
+      "tenant_name": "Org-Finance",
+      "vm_count": 32,
+      "warm_count": 28,
+      "cold_count": 4,
+      "total_disk_gb": 4800.0,
+      "phase1_hours": 62.4,
+      "cutover_hours": 8.2,
+      "total_hours": 70.6,
+      "risk_distribution": {"GREEN": 20, "YELLOW": 10, "RED": 2},
+      "vms": [
+        {
+          "vm_name": "fin-db-01",
+          "total_disk_gb": 500.0,
+          "in_use_gb": 320.0,
+          "mode": "warm_eligible",
+          "risk_level": "GREEN",
+          "warm_phase1_hours": 2.84,
+          "warm_cutover_hours": 0.38,
+          "warm_downtime_hours": 0.38,
+          "cold_total_hours": 4.44,
+          "cold_downtime_hours": 4.44
+        }
+      ]
+    }
+  ],
+  "daily_schedule": [
+    {
+      "day": 1,
+      "vms": ["fin-db-01", "fin-app-01", "fin-web-01", "hr-db-01", "hr-app-01"]
+    }
+  ]
+}
+```
+
+### List Tenants
+**GET** `/api/migration/projects/{project_id}/tenants`
+*Requires: migration:read*
+
+Returns detected tenants with aggregated VM counts and resource totals.
+
+### Add Tenant Rule
+**POST** `/api/migration/projects/{project_id}/tenants`
+*Requires: migration:write*
+
+Request:
+```json
+{
+  "tenant_name": "acme",
+  "detection_method": "folder_path",
+  "pattern_value": "/Acme Corp/"
+}
+```
+
+### Re-run Tenant Detection
+**POST** `/api/migration/projects/{project_id}/tenants/detect`
+*Requires: migration:write*
+
+Re-applies all tenant rules to all VMs in the project.
+
+### List Hosts
+**GET** `/api/migration/projects/{project_id}/hosts`
+*Requires: migration:read*
+
+### List Clusters
+**GET** `/api/migration/projects/{project_id}/clusters`
+*Requires: migration:read*
+
+### Get Stats
+**GET** `/api/migration/projects/{project_id}/stats`
+*Requires: migration:read*
+
+Returns aggregated statistics including risk distribution, mode distribution, OS distribution, and total resource counts.
+
+### Get / Update Risk Config
+**GET** `/api/migration/projects/{project_id}/risk-config`
+**PUT** `/api/migration/projects/{project_id}/risk-config`
+*Requires: migration:write (PUT), migration:read (GET)*
+
+View or update the risk scoring weights used by the assessment engine.
+
+### Run Assessment
+**POST** `/api/migration/projects/{project_id}/assess`
+*Requires: migration:write*
+
+Runs full assessment: tenant detection, risk scoring, migration mode classification, and time estimation for all VMs. Updates project status to `assessment`.
+
+### Reset Assessment
+**POST** `/api/migration/projects/{project_id}/reset-assessment`
+*Requires: migration:write*
+
+Clears all computed risk scores, migration modes, and time estimates. Retains source data.
+
+### Reset Plan
+**POST** `/api/migration/projects/{project_id}/reset-plan`
+*Requires: migration:write*
+
+Clears migration waves, wave-VM assignments, target gaps, and prep tasks. Retains assessment data.
+
+### Approve Project
+**POST** `/api/migration/projects/{project_id}/approve`
+*Requires: migration:admin*
+
+Transitions project to `approved` status. This is the gate that must be passed before any PCD target preparation or execution endpoints will accept requests.
+
+### Bandwidth Model
+**GET** `/api/migration/projects/{project_id}/bandwidth`
+*Requires: migration:read*
+
+Returns the 4-constraint bandwidth model with bottleneck identification.
+
+Response:
+```json
+{
+  "bandwidth": {
+    "source_effective_mbps": 4000,
+    "link_effective_mbps": 600,
+    "agent_effective_mbps": 7000,
+    "storage_effective_mbps": 500,
+    "bottleneck": "pcd_storage",
+    "bottleneck_mbps": 500,
+    "latency_penalty": 1.0
+  }
+}
+```
+
+### Agent Sizing Recommendation
+**GET** `/api/migration/projects/{project_id}/agent-recommendation`
+*Requires: migration:read*
+
+Returns recommended agent count, vCPU, RAM, and disk per agent based on current workload profile **and migration schedule**. The engine factors in `migration_duration_days`, `working_hours_per_day`, `working_days_per_week`, and `target_vms_per_day` when set on the project.
+
+**Schedule-aware logic:**
+- If `target_vms_per_day` > 0: derives agents needed to hit that daily throughput
+- If `migration_duration_days` > 0: derives agents from `(total_vms / effective_working_days)` throughput needs
+- Fallback: heuristic based on VM count and concurrent-per-agent
+
+Response:
+```json
+{
+  "recommendation": {
+    "recommended_agent_count": 5,
+    "vcpu_per_agent": 10,
+    "ram_gb_per_agent": 7,
+    "disk_gb_per_agent": 120,
+    "max_concurrent_vms": 25,
+    "reasoning": [
+      "245 VMs in 30 days (5d/wk × 8h/d = 21 effective days)",
+      "Need 11.7 VMs/day → 5 agents",
+      "Recommended 5 agents = 25 concurrent slots",
+      "Per agent: 10 vCPU, 7 GB RAM, 120 GB disk",
+      "Estimated completion: ~10 working days (25 VMs/day capacity)"
+    ]
+  }
+}
+```

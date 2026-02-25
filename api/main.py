@@ -77,6 +77,9 @@ from runbook_routes import router as runbook_router
 # Copilot (Ops AI assistant) endpoints
 from copilot import router as copilot_router
 
+# Migration Planner endpoints
+from migration_routes import router as migration_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -294,6 +297,7 @@ app.include_router(navigation_router)
 app.include_router(search_router)
 app.include_router(runbook_router)
 app.include_router(copilot_router)
+app.include_router(migration_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")
@@ -423,6 +427,7 @@ async def rbac_middleware(request: Request, call_next):
         "api-metrics": "api_metrics",
         "system-logs": "system_logs",
         "copilot": "copilot",
+        "migration": "migration",
     }
 
     resource = resource_map.get(segment)

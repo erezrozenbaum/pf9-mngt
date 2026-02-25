@@ -2,6 +2,23 @@
 
 ## Recent Major Enhancements
 
+### Migration Intelligence & Execution Cockpit (v1.28 - NEW ✨)
+- **🚀 Migration Planner Tab**: Full-featured VMware → Platform9 PCD migration planning via vJailbreak. Located in the **Migration Planning** nav group — accessible to Engineering, Tier3 Support, Management, and Marketing departments.
+- **Project-Based Workflow**: Create named migration projects with lifecycle management (draft → assessment → planned → approved → preparing → ready). Admin approval gate required before any PCD resources are created.
+- **RVTools XLSX Import**: Upload RVTools exports — automatically parses 6 sheets (vInfo, vDisk, vNIC, vHost, vCluster, vSnapshot) with fuzzy column matching to handle all RVTools versions.
+- **Multi-Tenant Detection**: 6 detection methods — vCD folder (Org-VDC pattern), vApp name, folder path, resource pool, cluster name, and VM name prefix / annotation field. Rules are configurable and re-runnable. Inline editing of tenant names with cascading VM updates.
+- **Risk & Complexity Scoring**: Configurable weighted risk model (0–100 score) per VM. GREEN/YELLOW/RED classification based on disk size, snapshot count, OS family, NIC count, etc. Weights editable in the Risk Config sub-tab.
+- **Migration Mode Classification**: Each VM classified as warm_eligible / warm_risky / cold_required based on OS support, power state, disk count, and snapshot count.
+- **Topology & Bandwidth Modeling**: 3-tier topology selector (Local DC, Cross-site Dedicated, Cross-site Internet) with NIC speed and usable % sliders. 4-constraint bandwidth model (source → link → agent → storage) identifies the bottleneck. **Live preview**: bandwidth cards update instantly as you change any field — no save required.
+- **vJailbreak Agent Sizing**: Schedule-aware recommendations for agent count, vCPU/RAM/disk per agent. Configure project duration, working hours/day, working days/week, and target VMs/day. The engine computes effective working days and derives optimal agent count with estimated completion time.
+- **Dashboard & Analysis**: VM inventory table with search/filter/sort/pagination and **expandable detail rows** (click any VM to see individual disks and NICs). Additional filter dropdowns for OS family, power state, and cluster. Risk distribution bar chart, migration mode breakdown, OS distribution, tenant summary, host/cluster inventory.
+- **Migration Plan Tab**: New "Migration Plan" sub-tab generates a full migration plan with per-tenant assessment tables, per-VM time estimates (warm phase-1 / cutover / downtime, cold total / downtime), and a daily migration schedule based on concurrent agent slots. Export as JSON or CSV.
+- **Per-VM Time Estimation**: Each VM gets warm and cold migration duration estimates based on disk capacity, in-use data, and the project's bottleneck bandwidth. Warm: phase-1 (full copy, no downtime) + cutover (final delta + 15 min switchover, brief downtime). Cold: full offline copy (all downtime).
+- **Three Reset Levels**: Re-import (replace source data + cascade), Reset assessment (clear computed, keep source), Reset plan (clear waves/tasks, keep assessment).
+- **28+ API Endpoints**: Full CRUD for projects, upload, VMs (with detail view for disks/NICs), tenants, hosts, clusters, stats, risk config, assessment, resets, approval, bandwidth model, agent recommendations, migration plan export.
+- **RBAC**: `migration` resource with 3 actions: `read` (browse projects/VMs), `write` (create/edit/upload/assess), `admin` (approve, delete, full control). viewer/operator=read, technical=read+write, admin/superadmin=all.
+- **DB Migration**: `db/migrate_migration_planner.sql` (15 tables + RBAC permissions + navigation + department visibility), `db/migrate_migration_schedule.sql` (schedule-aware planning columns)
+
 ### Ops Copilot — AI Infrastructure Assistant (v1.24 - NEW ✨)
 - **🤖 Floating Chat Panel**: Labeled pill-shaped "🤖 Ask Copilot" button (bottom-right) with gradient background and pulse animation on first visit. Opens via click or `Ctrl+K`. Three views: Chat, Settings (⚙️ admin-only), and Help (❓).
 - **Three-Tier Architecture**: Built-in intent engine (zero setup, default) → Ollama (local LLM, no data leaves network) → OpenAI/Anthropic (with automatic sensitive data redaction).

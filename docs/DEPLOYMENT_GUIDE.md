@@ -1338,7 +1338,13 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_ne
 # 10. Apply snapshot quota batching migration (v1.26+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_snapshot_quota_batching.sql
 
-# 11. Verify schema
+# 11. Apply migration planner (v1.28+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_migration_planner.sql
+
+# 12. Apply migration schedule columns (v1.28.1+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_migration_schedule.sql
+
+# 13. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 

@@ -81,3 +81,4 @@ pf9-ui/node_modules/
 !snapshot_policy_rules.json
 !eslint.config.js
 RESUME_*.md
+MIGRATION_PLANNER_PHASES.md
