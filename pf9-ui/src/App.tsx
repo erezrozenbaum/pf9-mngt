@@ -30,6 +30,7 @@ import ResourceManagementTab from "./components/ResourceManagementTab";
 import GroupedNavBar from "./components/GroupedNavBar";
 import OpsSearch from "./components/OpsSearch";
 import RunbooksTab from "./components/RunbooksTab";
+import MigrationPlannerTab from "./components/MigrationPlannerTab";
 import CopilotPanel from "./components/CopilotPanel";
 import { useNavigation } from "./hooks/useNavigation";
 
@@ -410,7 +411,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -468,6 +469,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "server_groups",         label: "📦 Server Groups" },
   { id: "quotas",                label: "📊 Quotas" },
   { id: "system_metadata",       label: "🗂️ System Metadata",    actionStyle: true },
+  { id: "migration_planner",     label: "🚀 Migration Planner",  adminOnly: true, actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -5913,6 +5915,13 @@ const App: React.FC = () => {
           {/* Runbooks */}
           {activeTab === "runbooks" && (
             <RunbooksTab />
+          )}
+
+          {/* Migration Planner */}
+          {activeTab === "migration_planner" && (
+            <MigrationPlannerTab
+              isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+            />
           )}
 
 
