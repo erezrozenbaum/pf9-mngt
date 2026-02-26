@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.7] - 2026-02-26
+
+### Fixed
+- **Node sizing incorrectly driven by Cinder disk** — The `compute_node_sizing` engine was computing `nodes_for_disk` and taking `max(nodes_for_cpu, nodes_for_ram, nodes_for_disk)`. Cinder block storage is independent infrastructure (Ceph, SAN, NFS) and has nothing to do with the number of compute (hypervisor) nodes. Node count is now driven by **vCPU and RAM only**. Disk is reported as a separate `disk_tb_required` figure with a note to provision via the storage backend. This is why the previous calculation was showing 21 nodes for a workload that only needs ~3–4 compute nodes for CPU/RAM. The UI now shows post-migration utilisation for CPU and RAM only, with Cinder storage requirement as a separate informational line.
+
+## [1.29.6] - 2026-02-26
+
+### Fixed
+- **Node sizing ignores actual PCD cluster capacity** — New `GET /projects/{id}/pcd-live-inventory` backend route queries the `hypervisors` table (populated by pf9_rvtools.py) to return live node count, total vCPU/RAM, and currently committed resources from `servers` + `flavors` + `volumes` tables. The Capacity tab now shows a **Live PCD Cluster** panel auto-loaded from this real data, with a **📥 Sync to Inventory** button that pre-fills all four inventory fields (nodes, vCPU used, RAM used, disk used). The PCD Readiness capacity card shows whether the node count came from the inventory DB or a manual entry, and warns if they differ.
+- **Save Inventory / Compute Sizing not updating results** — "Save Inventory" only sent `current_nodes` and did not re-trigger sizing, so the displayed result never changed after editing. `saveInventory` now sends all four fields (`current_nodes`, `current_vcpu_used`, `current_ram_gb_used`, `current_disk_tb_used`) and auto-calls `computeSizing` after a successful save. The two buttons are now **"💾 Save & Recompute"** and **"📐 Compute Only (no save)"** to make the flow obvious. The inventory load on mount now restores all four fields from the DB.
+- **PCD Readiness gaps show no explanation** — The gaps table had only Type / Resource / Tenant / Severity / Resolution / Status. Added a **Why / Details** column that surfaces the key fields from each gap's `details` dict (e.g. `required vcpu: 32`, `vm count: 5`, `ram: 64 GB`, `network name: prod-vlan-42`) with an expandable list of affected VM names.
+- **Inventory form missing used-resource fields** — The Node Sizing inventory form previously only had "Existing PCD nodes". It now exposes **vCPU already used**, **RAM already used (GB)**, and **Disk already used (TB)** so the engine can correctly deduct already-committed capacity before computing how many additional nodes are needed.
+
+## [1.29.5] - 2026-02-26
+
+### Fixed
+- **Cold migration downtime calculation wrong** — `cold_downtime_hours` was equal to `cold_total_hours` (copy phase only). Cold migration keeps the VM fully offline for the entire disk copy **plus** the same boot/connect overhead as warm cutover (`warm_cutover`). Fixed: `cold_downtime_hours = cold_total + warm_cutover`.
+- **Cold "Cutover/Cold" column showed `—`** — Cold migrations have the same boot/connect phase as warm (driver install, reboot, re-IP, smoke-test). The column now shows `warm_cutover_hours` for cold VMs instead of a dash.
+- **PCD Readiness missing capacity section** — The PCD Readiness tab now shows a full **Capacity Assessment** panel: migration quota requirements (vCPU, RAM GB, Disk TB), PCD node profile used, nodes recommended (including HA policy N+1/N+2 and spares), existing deployed nodes, additional nodes needed (highlighted red/green), post-migration CPU/RAM/Disk utilisation %, binding dimension, and capacity warnings. Handles missing node profile gracefully with a prompt to configure one in the Capacity tab.
+
+## [1.29.4] - 2026-02-26
+
+### Fixed
+- **Migration Plan shows excluded tenants** — `export-plan`, `export-report.xlsx`, and `export-report.pdf` routes were fetching all tenants and all VMs regardless of `include_in_plan`. All three routes now JOIN `migration_tenants` with `include_in_plan = true`, so excluded tenants and their VMs are completely omitted from the plan, the daily schedule, and all exports.
+- **Project Summary excluded count** — Added `excluded_tenants` field to `project_summary`. The Migration Plan tab now shows a warning banner ("⚠️ N tenants excluded from this plan") and the Tenants stat card is relabelled "Tenants (incl.)".
+- **Capacity tab requires manual sizing click** — The Capacity tab's `load()` now automatically calls `GET /node-sizing` on mount, so the node sizing result is populated from the DB without requiring the user to click "Compute Sizing".
+- **PCD Readiness crash — `readinessScore.toFixed is not a function`** — PostgreSQL returns `NUMERIC` columns as strings via psycopg2; `readiness_score` was stored as a string and set directly into state. All three `setReadinessScore` calls now wrap with `Number()` to coerce to float.
+
+## [1.29.3] - 2026-02-26
+
+### Fixed
+- **Bulk-scope 422 — route conflict** — `PATCH /tenants/{tenant_id}` was defined before `PATCH /tenants/bulk-scope`, so FastAPI/Starlette captured `"bulk-scope"` as a `tenant_id` path parameter and attempted to parse it as an integer → 422 `path.tenant_id: Input should be a valid integer`. Fixed by adding the `:int` Starlette path converter (`{tenant_id:int}`) so the parameterised route only matches integer segments, letting `bulk-scope` route correctly.
+- **Capacity tab crash — overcommit profile object rendered as React child** — `compute_quota_requirements` returns `"profile": <full dict>`. The UI used `{quotaResult.profile}` in JSX and `setActiveProfile(quota.profile)` (setting state to an object), causing React to throw "Objects are not valid as a React child". Both usages now extract `profile.profile_name` when the value is an object.
+- **Cold-required VMs show `—` for copy time** — The "Copy / Phase 1" column always showed a dash for cold-required VMs. For cold migrations the copy phase IS the full offline disk copy (`cold_total_hours`). Column now renders `cold_total_hours` for cold-required rows. The "Cutover / Cold" column correctly shows `—` for cold (no separate cutover step) and `warm_cutover_hours` for warm.
+
+## [1.29.2] - 2026-02-26
+
+### Fixed
+- **Bulk-scope 422 error** — `selected` Set could contain `undefined` (for tenants loaded before the v1.29.1 `t.id` fix was applied). `JSON.stringify([undefined])` produces `[null]`, which Pydantic rejects for `List[int]`. Fixed: filter nulls from `tenant_ids` before the PATCH request. Also improved `apiFetch` error formatting to display Pydantic validation detail arrays as readable text instead of `[object Object]`.
+- **Capacity tab crash — `toFixed` on undefined** — The engine returns `vcpu_alloc`, `ram_gb_alloc`, `disk_gb_alloc`, `disk_gb_recommended` but the UI read `vcpu_allocated`, `ram_gb_allocated`, `disk_tb_allocated`, `disk_tb_recommended` (field name mismatch). All four field names corrected; disk values from the engine are in GB and now converted to TB for display.
+- **PCD Readiness — unnecessary connection settings form removed** — The gap analysis already falls back to global `.env` credentials (`PF9_AUTH_URL`, `PF9_USERNAME`, `PF9_PASSWORD`) when no project-level PCD URL is set. The settings form was confusing for single-cluster setups. Replaced with a simple status banner: “Using global PF9 credentials from server config (.env)”.
+
+## [1.29.1] - 2026-02-26
+
+### Fixed
+- **Tenant checkbox selected all instead of one** — `Tenant` interface was mapped to `tenant_id` but the API returns `id` (the actual DB primary key). `tenant_id` was always `undefined`, causing `selected.has(undefined)` to behave incorrectly. All checkbox logic now uses `t.id`; the interface declares `id: number` with `tenant_id` as an optional alias.
+- **Capacity tab showed blank page / `profiles.map is not a function`** — `CapacityPlanningView` was assigning full API response objects (`{status, profiles:[...]}`) directly to state. All Phase 2 API responses are now correctly unwrapped: `.profiles`, `.quota`, `.inventory.current_nodes`, `.sizing`.
+- **`setProfile()` body field mismatch** — PATCH body was sending `{profile_name}` but the Pydantic model `UpdateOvercommitRequest` expects `{overcommit_profile_name}`. Corrected field name.
+- **`setDefaultProfile()` called non-existent endpoint** — Was issuing `PATCH /node-profiles/{id}` which does not exist. Now correctly uses `POST /node-profiles` (upsert) with `is_default: true` on the full profile object.
+- **PCD Readiness tab — blank on load** — `loadProject` was reading `p.pcd_auth_url` from the raw response but the endpoint returns `{status, project: {...}}`. Fixed to `resp.project`. `loadGaps` was similarly unwrapping `g` instead of `g.gaps` / `g.readiness_score`.
+- **Duplicate React key warning (`Autosoft2`)** — All tenant `key` props were `undefined` because `t.tenant_id` was undefined; React deduplicated all rows to a single key. Fixed by using `t.id` as the unique key.
+- **React Fragment key error on edit row** — The inline-edit reason `<tr>` had no `key`. Now uses an explicit `rowKey`-derived key.
+- **`borderBottom` / `borderBottomColor` style conflict on sub-nav tabs** — `subTabStyle` declared `borderBottom: "2px solid transparent"` while `subTabActive` tried to override with `borderBottomColor`. CSS shorthand resets the color, so the active border never appeared. Fixed `subTabActive` to use `borderBottom: "2px solid #3b82f6"`.
+- **Warm migration downtime was too high** — Downtime column was summing `warm_phase1_hours + warm_cutover_hours`. Phase 1 is a live copy with no downtime; only `warm_cutover_hours` (the incremental delta + switchover window) counts as actual downtime. Fixed.
+- **Column header mislabelled** — "Warm Phase1" renamed to "Copy / Phase 1" to accurately describe the live-copy phase with no downtime.
+
+## [1.29.0] - 2026-02-27
+
+### Added
+- **Migration Planner Phase 2: Tenant Scoping, Target Mapping & Capacity Planning**
+  - **Phase 2A — Tenant Exclusion & Scoping**: per-tenant `include_in_plan` toggle; bulk-scope toolbar (select many, include/exclude); `exclude_reason` field shown inline when excluded; auto-exclude filter patterns (`GET/POST/DELETE /projects/{id}/tenant-filters`).
+  - **Phase 2B — Target Mapping**: inline editing of `target_domain_name`, `target_project_name`, `target_display_name` per tenant in the Tenants view.
+  - **Phase 2C — Quota & Overcommit Modeling**: three built-in overcommit presets (aggressive 8:1, balanced 4:1, conservative 2:1); quota requirements engine (`compute_quota_requirements()`) computes per-tenant and aggregate vCPU/RAM/disk needs; `GET /overcommit-profiles`, `PATCH /projects/{id}/overcommit-profile`, `GET /projects/{id}/quota-requirements`.
+  - **Phase 2D — PCD Hardware Node Sizing**: node profile CRUD (`GET/POST/DELETE/PATCH /projects/{id}/node-profiles`); current-inventory tracking (`GET/PUT /projects/{id}/node-inventory`); HA-aware sizing engine (`compute_node_sizing()`) — N+1 ≤10 nodes, N+2 >10 nodes; `GET /projects/{id}/node-sizing` returns recommended node count, HA spares, binding dimension, and post-migration utilisation.
+  - **Phase 2E — PCD Readiness & Gap Analysis**: PCD settings per project (`PATCH /projects/{id}/pcd-settings`); `analyze_pcd_gaps()` engine connects to PCD and checks missing flavors, networks, images, and unmapped tenants; gap table with severity (critical/warning/info) and "Mark Resolved" action (`PATCH /projects/{id}/pcd-gaps/{gid}/resolve`); readiness score (0-100).
+  - **UI: ⚖️ Capacity tab** — overcommit profile cards, per-tenant quota table, node profile editor, node sizing result with utilisation gauges and HA warnings.
+  - **UI: 🎯 PCD Readiness tab** — PCD connection form, one-click gap analysis, gap table with severity pills, "Mark Resolved" per row, readiness score badge.
+  - **DB migration**: `db/migrate_phase2_scoping.sql` (6 new tables + columns on migration_tenants/migration_projects; idempotent).
+
 ## [1.28.3] - 2026-02-26
 
 ### Added
@@ -1059,7 +1128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.4.1] - 2026-02-15
 
-### Fixed
+cd ..\### Fixed
 - **Snapshot Restore — cloud-init user_data preservation** — restored VMs now receive the original VM's cloud-init `user_data` (base64-encoded), preventing cloud-init from resetting credentials or configuration on first boot
   - During plan building, the original VM's `user_data` is fetched via Nova API (microversion 2.3+, `OS-EXT-SRV-ATTR:user_data`)
   - Stored in the plan's VM section and passed to `create_server` on restore execution

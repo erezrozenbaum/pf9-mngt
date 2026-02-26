@@ -63,6 +63,17 @@ CREATE TABLE IF NOT EXISTS migration_projects (
     rvtools_uploaded_at         TIMESTAMPTZ,
     rvtools_sheet_stats         JSONB DEFAULT '{}',  -- {"vInfo": 200, "vDisk": 450, ...}
 
+    -- Phase 2C: Overcommit profile
+    overcommit_profile_name     TEXT DEFAULT 'balanced',
+
+    -- Phase 2E: PCD connection settings
+    pcd_auth_url                TEXT,
+    pcd_username                TEXT,
+    pcd_password_hint           TEXT,
+    pcd_region                  TEXT DEFAULT 'region-one',
+    pcd_last_checked_at         TIMESTAMPTZ,
+    pcd_readiness_score         NUMERIC(5,1),
+
     -- Audit
     created_by      TEXT      NOT NULL DEFAULT 'system',
     approved_by     TEXT,
@@ -162,7 +173,14 @@ CREATE TABLE IF NOT EXISTS migration_tenants (
     total_in_use_gb NUMERIC(12,2) DEFAULT 0,
     total_ram_mb    INTEGER   DEFAULT 0,
     total_vcpu      INTEGER   DEFAULT 0,
-    -- Target mapping
+    -- Phase 2A: Tenant Scoping
+    include_in_plan     BOOLEAN DEFAULT true,
+    exclude_reason      TEXT,
+    -- Phase 2B: Target Mapping
+    target_domain_name  TEXT,
+    target_project_name TEXT,
+    target_display_name TEXT,
+    -- Legacy columns (kept for compatibility)
     target_domain   TEXT,
     target_project  TEXT,
     notes           TEXT,

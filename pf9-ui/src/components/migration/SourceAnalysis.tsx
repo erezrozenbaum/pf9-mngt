@@ -28,7 +28,11 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `API error ${res.status}`);
+    const detail = err.detail;
+    const msg = Array.isArray(detail)
+      ? detail.map((d: any) => `${(d.loc || []).join('.')}: ${d.msg}`).join('; ')
+      : (detail || `API error ${res.status}`);
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -76,7 +80,8 @@ interface MigrationVM {
 }
 
 interface Tenant {
-  tenant_id: number;
+  id: number;  // actual DB primary key returned by API
+  tenant_id?: number;  // deprecated alias
   tenant_name: string;
   org_vdc: string | null;
   detection_method: string;
@@ -85,6 +90,13 @@ interface Tenant {
   total_ram_mb: number;
   total_disk_gb: number;
   total_in_use_gb: number;
+  // Phase 2A
+  include_in_plan: boolean;
+  exclude_reason: string | null;
+  // Phase 2B
+  target_domain_name: string | null;
+  target_project_name: string | null;
+  target_display_name: string | null;
 }
 
 interface NetworkSummary {
@@ -106,7 +118,7 @@ interface Props {
   onProjectUpdated: (p: MigrationProject) => void;
 }
 
-type SubView = "dashboard" | "vms" | "tenants" | "networks" | "risk" | "plan";
+type SubView = "dashboard" | "vms" | "tenants" | "networks" | "risk" | "plan" | "capacity" | "readiness";
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -351,6 +363,8 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
           { id: "vms" as SubView, label: "🖥️ VMs" },
           { id: "tenants" as SubView, label: "🏢 Tenants" },
           { id: "networks" as SubView, label: "🌐 Networks" },
+          { id: "capacity" as SubView, label: "⚖️ Capacity" },
+          { id: "readiness" as SubView, label: "🎯 PCD Readiness" },
           { id: "plan" as SubView, label: "📋 Migration Plan" },
           { id: "risk" as SubView, label: "⚠️ Risk Config" },
         ]).map(t => (
@@ -644,6 +658,16 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
         <NetworksView networks={networks} projectId={pid} onRefresh={loadNetworks} />
       )}
 
+      {/* ---- Capacity Planning ---- */}
+      {subView === "capacity" && (
+        <CapacityPlanningView projectId={pid} />
+      )}
+
+      {/* ---- PCD Readiness ---- */}
+      {subView === "readiness" && (
+        <PcdReadinessView projectId={pid} />
+      )}
+
       {/* ---- Risk Config ---- */}
       {subView === "risk" && (
         <RiskConfigView riskConfig={riskConfig} projectId={pid}
@@ -760,7 +784,7 @@ function DashboardView({ stats, hosts, clusters, tenants }: {
           <h3 style={{ marginTop: 0 }}>Detected Tenants</h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
             {tenants.map((t, idx) => (
-              <div key={t.tenant_id || t.tenant_name || idx} style={{
+              <div key={t.id ?? t.tenant_id ?? `${t.tenant_name}-${idx}`} style={{
                 padding: 10, borderRadius: 6, border: "1px solid var(--border, #e5e7eb)",
               }}>
                 <div style={{ fontWeight: 600 }}>{t.tenant_name}</div>
@@ -839,7 +863,7 @@ function DashboardView({ stats, hosts, clusters, tenants }: {
 }
 
 /* ================================================================== */
-/*  Tenants View                                                      */
+/*  Tenants View  (Phase 2A — Scoping · Phase 2B — Target Mapping)   */
 /* ================================================================== */
 
 function TenantsView({ tenants, projectId, onRefresh }: {
@@ -851,23 +875,54 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   const [newPattern, setNewPattern] = useState("");
   const [error, setError] = useState("");
 
-  /* ---- Inline editing state ---- */
+  /* ---- Inline editing state (basic + Phase 2A/2B) ---- */
   const [editId, setEditId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editOrgVdc, setEditOrgVdc] = useState("");
+  const [editInclude, setEditInclude] = useState(true);
+  const [editExcludeReason, setEditExcludeReason] = useState("");
+  const [editDomain, setEditDomain] = useState("");
+  const [editProject, setEditProject] = useState("");
+  const [editDisplayName, setEditDisplayName] = useState("");
   const [editSaving, setEditSaving] = useState(false);
 
-  const startEdit = (t: Tenant) => {
-    setEditId(t.tenant_id);
-    setEditName(t.tenant_name);
-    setEditOrgVdc(t.org_vdc || "");
+  /* ---- Bulk-scope state ---- */
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const allSelected = tenants.length > 0 && selected.size === tenants.length;
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(tenants.map(t => t.id)));  
+  const toggleOne = (id: number) => setSelected(prev => {
+    const n = new Set(prev);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
+
+  const bulkScope = async (include: boolean) => {
+    if (selected.size === 0) return;
+    setError("");
+    try {
+      const ids = Array.from(selected).filter(id => id != null && Number.isFinite(id));
+      if (ids.length === 0) { setSelected(new Set()); return; }
+      await apiFetch(`/api/migration/projects/${projectId}/tenants/bulk-scope`, {
+        method: "PATCH",
+        body: JSON.stringify({ tenant_ids: ids, include_in_plan: include }),
+      });
+      setSelected(new Set());
+      onRefresh();
+    } catch (e: any) { setError(e.message); }
   };
 
-  const cancelEdit = () => {
-    setEditId(null);
-    setEditName("");
-    setEditOrgVdc("");
+  const startEdit = (t: Tenant) => {
+    setEditId(t.id);
+    setEditName(t.tenant_name);
+    setEditOrgVdc(t.org_vdc || "");
+    setEditInclude(t.include_in_plan !== false);
+    setEditExcludeReason(t.exclude_reason || "");
+    setEditDomain(t.target_domain_name || "");
+    setEditProject(t.target_project_name || "");
+    setEditDisplayName(t.target_display_name || "");
   };
+
+  const cancelEdit = () => { setEditId(null); };
 
   const saveEdit = async () => {
     if (!editId || !editName.trim()) return;
@@ -879,6 +934,11 @@ function TenantsView({ tenants, projectId, onRefresh }: {
         body: JSON.stringify({
           tenant_name: editName.trim(),
           org_vdc: editOrgVdc.trim() || null,
+          include_in_plan: editInclude,
+          exclude_reason: !editInclude && editExcludeReason.trim() ? editExcludeReason.trim() : null,
+          target_domain_name: editDomain.trim() || null,
+          target_project_name: editProject.trim() || null,
+          target_display_name: editDisplayName.trim() || null,
         }),
       });
       cancelEdit();
@@ -920,14 +980,36 @@ function TenantsView({ tenants, projectId, onRefresh }: {
     }
   };
 
+  const scopedCount = tenants.filter(t => t.include_in_plan !== false).length;
+
   return (
     <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      {/* Toolbar */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <button onClick={() => setShowAdd(!showAdd)} style={btnSecondary}>+ Add Tenant Rule</button>
         <button onClick={rerun} style={btnSecondary}>🔄 Re-run Detection</button>
+        {selected.size > 0 && (
+          <>
+            <span style={{ fontSize: "0.85rem", color: "#6b7280", margin: "0 4px" }}>
+              {selected.size} selected:
+            </span>
+            <button onClick={() => bulkScope(true)}
+              style={{ ...btnSmall, background: "#16a34a", color: "#fff" }}>
+              ✓ Include in Plan
+            </button>
+            <button onClick={() => bulkScope(false)}
+              style={{ ...btnSmall, background: "#dc2626", color: "#fff" }}>
+              ✗ Exclude from Plan
+            </button>
+          </>
+        )}
+        <span style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#6b7280" }}>
+          {scopedCount} / {tenants.length} tenants in scope
+        </span>
       </div>
       {error && <div style={alertError}>{error}</div>}
 
+      {/* Add Tenant Rule form */}
       {showAdd && (
         <div style={{ ...sectionStyle, marginBottom: 12 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
@@ -956,78 +1038,143 @@ function TenantsView({ tenants, projectId, onRefresh }: {
         </div>
       )}
 
-      <table style={tableStyle}>
-        <thead>
-          <tr>
-            <th style={thStyle}>Tenant</th>
-            <th style={thStyle}>OrgVDC</th>
-            <th style={thStyle}>Method</th>
-            <th style={thStyle}>VMs</th>
-            <th style={thStyle}>vCPUs</th>
-            <th style={thStyle}>RAM (GB)</th>
-            <th style={thStyle}>Alloc (GB)</th>
-            <th style={thStyle}>Used (GB)</th>
-            <th style={thStyle}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tenants.map(t => (
-            <tr key={t.tenant_id} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
-              {editId === t.tenant_id ? (
-                <>
-                  <td style={tdStyle}>
-                    <input value={editName} onChange={e => setEditName(e.target.value)}
-                      style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
-                      onKeyDown={e => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }} />
-                  </td>
-                  <td style={tdStyle}>
-                    <input value={editOrgVdc} onChange={e => setEditOrgVdc(e.target.value)}
-                      style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
-                      placeholder="(optional)"
-                      onKeyDown={e => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }} />
-                  </td>
-                  <td style={tdStyle}>{t.detection_method.replace(/_/g, " ")}</td>
-                  <td style={tdStyle}>{t.vm_count}</td>
-                  <td style={tdStyle}>{t.total_vcpu || 0}</td>
-                  <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
-                  <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(1) : "0.0"}</td>
-                  <td style={tdStyle}>{t.total_in_use_gb ? Number(t.total_in_use_gb).toFixed(1) : "0.0"}</td>
-                  <td style={tdStyle}>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <button onClick={saveEdit} disabled={editSaving}
-                        style={{ ...btnSmall, background: "#16a34a", color: "#fff" }}
-                        title="Save">
-                        {editSaving ? "..." : "✓"}
-                      </button>
-                      <button onClick={cancelEdit} style={{ ...btnSmall, background: "#e5e7eb" }}
-                        title="Cancel">✕</button>
-                    </div>
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td style={tdStyle}><strong>{t.tenant_name}</strong></td>
-                  <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>{t.org_vdc || "—"}</td>
-                  <td style={tdStyle}>{t.detection_method.replace(/_/g, " ")}</td>
-                  <td style={tdStyle}>{t.vm_count}</td>
-                  <td style={tdStyle}>{t.total_vcpu || 0}</td>
-                  <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
-                  <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(1) : "0.0"}</td>
-                  <td style={tdStyle}>{t.total_in_use_gb ? Number(t.total_in_use_gb).toFixed(1) : "0.0"}</td>
-                  <td style={tdStyle}>
-                    <button onClick={() => startEdit(t)} style={btnSmall} title="Edit tenant name">✏️</button>
-                  </td>
-                </>
-              )}
+      {/* Tenants table */}
+      <div style={{ overflowX: "auto" }}>
+        <table style={tableStyle}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, width: 32, textAlign: "center" }}>
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} title="Select all" />
+              </th>
+              <th style={{ ...thStyle, width: 24, textAlign: "center" }} title="In scope">📋</th>
+              <th style={thStyle}>Tenant</th>
+              <th style={thStyle}>OrgVDC</th>
+              <th style={thStyle}>VMs</th>
+              <th style={thStyle}>vCPU</th>
+              <th style={thStyle}>RAM GB</th>
+              <th style={thStyle}>Disk GB</th>
+              <th style={thStyle}>Target Domain</th>
+              <th style={thStyle}>Target Project</th>
+              <th style={thStyle}>Display Name</th>
+              <th style={thStyle}>Actions</th>
             </tr>
-          ))}
-          {tenants.length === 0 && (
-            <tr><td colSpan={9} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
-              No tenants detected. Add rules above or run assessment.
-            </td></tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {tenants.map((t, tIdx) => {
+              const included = t.include_in_plan !== false;
+              const rowStyle: React.CSSProperties = {
+                borderBottom: "1px solid var(--border, #e5e7eb)",
+                opacity: included ? 1 : 0.55,
+                background: included ? undefined : "var(--card-bg, #f9fafb)",
+              };
+              const rowKey = t.id ?? tIdx;
+              if (editId === t.id) {
+                return (
+                  <React.Fragment key={rowKey}>
+                    <tr style={rowStyle}>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>
+                        <input type="checkbox" checked={selected.has(t.id)}
+                          onChange={() => toggleOne(t.id)} />
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>
+                        <input type="checkbox" checked={editInclude}
+                          onChange={e => setEditInclude(e.target.checked)} title="Include in plan" />
+                      </td>
+                      <td style={tdStyle}>
+                        <input value={editName} onChange={e => setEditName(e.target.value)}
+                          style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
+                          onKeyDown={e => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }} />
+                      </td>
+                      <td style={tdStyle}>
+                        <input value={editOrgVdc} onChange={e => setEditOrgVdc(e.target.value)}
+                          style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
+                          placeholder="(optional)"
+                          onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
+                      </td>
+                      <td style={tdStyle}>{t.vm_count}</td>
+                      <td style={tdStyle}>{t.total_vcpu || 0}</td>
+                      <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
+                      <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(0) : "0"}</td>
+                      <td style={tdStyle}>
+                        <input value={editDomain} onChange={e => setEditDomain(e.target.value)}
+                          style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
+                          placeholder="e.g. Default"
+                          onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
+                      </td>
+                      <td style={tdStyle}>
+                        <input value={editProject} onChange={e => setEditProject(e.target.value)}
+                          style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
+                          placeholder="e.g. acme-prod"
+                          onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
+                      </td>
+                      <td style={tdStyle}>
+                        <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)}
+                          style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
+                          placeholder="e.g. ACME Production"
+                          onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
+                      </td>
+                      <td style={tdStyle}>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button onClick={saveEdit} disabled={editSaving}
+                            style={{ ...btnSmall, background: "#16a34a", color: "#fff" }} title="Save">
+                            {editSaving ? "..." : "✓"}
+                          </button>
+                          <button onClick={cancelEdit} style={{ ...btnSmall, background: "#e5e7eb" }} title="Cancel">✕</button>
+                        </div>
+                      </td>
+                    </tr>
+                    {!editInclude && (
+                      <tr key={`${rowKey}-reason`} style={{ background: "#fff7ed" }}>
+                        <td colSpan={2} />
+                        <td colSpan={10} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
+                          <label style={{ ...labelStyle, display: "inline", marginRight: 8 }}>Exclude reason:</label>
+                          <input value={editExcludeReason}
+                            onChange={e => setEditExcludeReason(e.target.value)}
+                            style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem", width: 320 }}
+                            placeholder="e.g. dev/test environment, not migrating" />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              }
+              return (
+                <tr key={rowKey} style={rowStyle}>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    <input type="checkbox" checked={selected.has(t.id)}
+                      onChange={() => toggleOne(t.id)} />
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center" }} title={included ? "In plan" : t.exclude_reason || "Excluded"}>
+                    {included ? "✅" : "🚫"}
+                  </td>
+                  <td style={tdStyle}>
+                    <strong>{t.tenant_name}</strong>
+                    {!included && t.exclude_reason && (
+                      <div style={{ fontSize: "0.75rem", color: "#9ca3af", fontStyle: "italic" }}>{t.exclude_reason}</div>
+                    )}
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>{t.org_vdc || "—"}</td>
+                  <td style={tdStyle}>{t.vm_count}</td>
+                  <td style={tdStyle}>{t.total_vcpu || 0}</td>
+                  <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
+                  <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(0) : "0"}</td>
+                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_domain_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_project_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_display_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                  <td style={tdStyle}>
+                    <button onClick={() => startEdit(t)} style={btnSmall} title="Edit">✏️</button>
+                  </td>
+                </tr>
+              );
+            })}
+            {tenants.length === 0 && (
+              <tr><td colSpan={12} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+                No tenants detected. Add rules above or run assessment.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1297,12 +1444,18 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
       {/* Project summary */}
       <div style={sectionStyle}>
         <h3 style={{ marginTop: 0 }}>Project Summary</h3>
+        {ps.excluded_tenants > 0 && (
+          <div style={{ marginBottom: 10, padding: "6px 12px", background: "#fef3c7", borderRadius: 6,
+            border: "1px solid #fbbf24", fontSize: "0.85rem", color: "#92400e" }}>
+            ⚠️ <strong>{ps.excluded_tenants} tenant{ps.excluded_tenants > 1 ? "s" : ""} excluded</strong> from this plan. Totals reflect included tenants only.
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
           <StatCard label="Total VMs" value={ps.total_vms} />
           <StatCard label="Total Disk (TB)" value={ps.total_disk_tb} />
           <StatCard label="Warm Eligible" value={ps.warm_eligible} />
           <StatCard label="Cold Required" value={ps.cold_required} />
-          <StatCard label="Tenants" value={ps.total_tenants} />
+          <StatCard label="Tenants (incl.)" value={ps.total_tenants} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 12 }}>
           <StatCard label="Agents" value={ps.agent_count} />
@@ -1333,7 +1486,7 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
               <th style={thStyle}>Warm</th>
               <th style={thStyle}>Warm Risky</th>
               <th style={thStyle}>Cold</th>
-              <th style={thStyle}>Phase1 (h)</th>
+              <th style={thStyle}>Copy/Phase1 (h)</th>
               <th style={thStyle}>Cutover (h)</th>
               <th style={thStyle}>Downtime</th>
               <th style={thStyle}>Risk</th>
@@ -1394,7 +1547,7 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
                             <th style={thStyleSm}>OS Ver</th>
                             <th style={thStyleSm}>Mode</th>
                             <th style={thStyleSm}>Risk</th>
-                            <th style={thStyleSm}>Warm Phase1</th>
+                            <th style={thStyleSm}>Copy / Phase 1</th>
                             <th style={thStyleSm}>Cutover / Cold</th>
                             <th style={thStyleSm}>Downtime</th>
                           </tr>
@@ -1420,25 +1573,28 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
                                 </span>
                               </td>
                               <td style={tdStyleSm}>
-                                {v.migration_mode !== "cold_required" ? (() => {
-                                  const h = Number(v.warm_phase1_hours);
+                                {(() => {
+                                  // Warm: Phase 1 copy (live). Cold: full offline copy = the copy phase too.
+                                  const h = v.migration_mode !== "cold_required"
+                                    ? Number(v.warm_phase1_hours)
+                                    : Number(v.cold_total_hours);
                                   return h < 0.017 ? "<1min" : h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
-                                })() : "—"}
+                                })()} 
                               </td>
                               <td style={tdStyleSm}>
-                                {v.migration_mode !== "cold_required" ? (() => {
+                                {(() => {
+                                  // Warm: cutover only. Cold: boot/connect phase (same estimate as warm cutover)
                                   const h = Number(v.warm_cutover_hours);
-                                  return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
-                                })() : (() => {
-                                  const h = Number(v.cold_total_hours);
                                   return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
                                 })()}
                               </td>
                               <td style={tdStyleSm}>
                                 <strong>
                                   {(() => {
+                                    // Warm: downtime = cutover only (copy phase is live)
+                                    // Cold: downtime = full copy (VM is off throughout)
                                     const h = v.migration_mode !== "cold_required"
-                                      ? Number(v.warm_phase1_hours) + Number(v.warm_cutover_hours)
+                                      ? Number(v.warm_cutover_hours)
                                       : Number(v.cold_downtime_hours);
                                     return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
                                   })()}
@@ -1582,6 +1738,893 @@ function RiskConfigView({ riskConfig, projectId, onRefresh }: {
 }
 
 /* ================================================================== */
+/*  Capacity Planning View  (Phase 2C — Quota · Phase 2D — Sizing)   */
+/* ================================================================== */
+
+interface OvercommitProfile {
+  id: number;
+  profile_name: string;
+  display_name: string;
+  description: string;
+  cpu_ratio: number;
+  ram_ratio: number;
+  disk_snapshot_factor: number;
+}
+
+interface QuotaResult {
+  profile: string;
+  totals_allocated: { vcpu: number; ram_gb: number; disk_tb: number };
+  totals_recommended: { vcpu: number; ram_gb: number; disk_tb: number };
+  per_tenant: Array<{
+    tenant_name: string;
+    vcpu_allocated: number; ram_gb_allocated: number; disk_tb_allocated: number;
+    vcpu_recommended: number; ram_gb_recommended: number; disk_tb_recommended: number;
+  }>;
+}
+
+interface NodeProfile {
+  id: number;
+  profile_name: string;
+  cpu_cores: number;
+  cpu_threads: number;
+  ram_gb: number;
+  storage_tb: number;
+  max_cpu_util_pct: number;
+  max_ram_util_pct: number;
+  max_disk_util_pct: number;
+  is_default: boolean;
+}
+
+interface SizingResult {
+  existing_nodes: number;
+  nodes_additional_required: number;
+  nodes_min_total: number;
+  ha_spares: number;
+  ha_policy: string;
+  nodes_recommended: number;
+  binding_dimension: string;
+  nodes_by_dimension: { cpu: number; ram: number };
+  post_migration_utilisation: { cpu_pct: number; ram_pct: number };
+  disk_tb_required?: number;
+  warnings: string[];
+}
+
+function CapacityPlanningView({ projectId }: { projectId: number }) {
+  const [profiles, setProfiles] = useState<OvercommitProfile[]>([]);
+  const [activeProfile, setActiveProfile] = useState<string>("balanced");
+  const [quotaResult, setQuotaResult] = useState<QuotaResult | null>(null);
+  const [nodeProfiles, setNodeProfiles] = useState<NodeProfile[]>([]);
+  const [sizingResult, setSizingResult] = useState<SizingResult | null>(null);
+  const [existingNodes, setExistingNodes] = useState(0);
+  const [invVcpuUsed, setInvVcpuUsed] = useState(0);
+  const [invRamUsed, setInvRamUsed] = useState(0);
+  const [invDiskUsed, setInvDiskUsed] = useState(0);
+  const [liveCluster, setLiveCluster] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+
+  /* New node-profile form */
+  const [showNewProfile, setShowNewProfile] = useState(false);
+  const [npForm, setNpForm] = useState({
+    profile_name: "Custom Nodes", cpu_cores: 32, cpu_threads: 64,
+    ram_gb: 512, storage_tb: 20, max_cpu_util_pct: 75,
+    max_ram_util_pct: 75, max_disk_util_pct: 85, is_default: false,
+  });
+
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [profResp, nodeProf] = await Promise.all([
+        apiFetch("/api/migration/overcommit-profiles"),
+        apiFetch(`/api/migration/projects/${projectId}/node-profiles`),
+      ]);
+      setProfiles(profResp.profiles || []);
+      setNodeProfiles(nodeProf.profiles || []);
+
+      const invResp = await apiFetch(`/api/migration/projects/${projectId}/node-inventory`).catch(() => null);
+      if (invResp?.inventory) {
+        const inv = invResp.inventory;
+        if (inv.current_nodes        != null) setExistingNodes(inv.current_nodes);
+        if (inv.current_vcpu_used    != null) setInvVcpuUsed(inv.current_vcpu_used);
+        if (inv.current_ram_gb_used  != null) setInvRamUsed(inv.current_ram_gb_used);
+        if (inv.current_disk_tb_used != null) setInvDiskUsed(inv.current_disk_tb_used);
+      }
+
+      // Load live PCD cluster data from hypervisors table
+      const liveResp = await apiFetch(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
+      if (liveResp?.live) setLiveCluster(liveResp.live);
+
+      const quotaResp = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const quota = quotaResp?.quota;
+      if (quota) setQuotaResult(quota);
+      if (quota?.profile) setActiveProfile(typeof quota.profile === 'object' ? quota.profile.profile_name : quota.profile);
+
+      // Auto-compute sizing if node profiles exist
+      const sizingResp = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`).catch(() => null);
+      if (sizingResp?.sizing) setSizingResult(sizingResp.sizing);
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  };
+
+  const computeSizing = async () => {
+    setError("");
+    try {
+      const result = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`);
+      setSizingResult(result.sizing || null);
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const setProfile = async (name: string) => {
+    setError("");
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/overcommit-profile`, {
+        method: "PATCH",
+        body: JSON.stringify({ overcommit_profile_name: name }),
+      });
+      setActiveProfile(name);
+      const quotaResp = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const quota = quotaResp?.quota;
+      if (quota) setQuotaResult(quota);
+      setMsg("Overcommit profile updated.");
+      setTimeout(() => setMsg(""), 3000);
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const saveInventory = async () => {
+    setError("");
+    try {
+      const defaultProfile = nodeProfiles.find(p => p.is_default) || nodeProfiles[0];
+      await apiFetch(`/api/migration/projects/${projectId}/node-inventory`, {
+        method: "PUT",
+        body: JSON.stringify({
+          current_nodes:        existingNodes,
+          profile_id:           defaultProfile?.id,
+          current_vcpu_used:    invVcpuUsed,
+          current_ram_gb_used:  invRamUsed,
+          current_disk_tb_used: invDiskUsed,
+        }),
+      });
+      setMsg("Inventory saved — recomputing sizing…");
+      // Auto-recompute so the displayed result reflects the new baseline
+      await computeSizing();
+      setMsg("Inventory saved and sizing updated.");
+      setTimeout(() => setMsg(""), 4000);
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const addNodeProfile = async () => {
+    setError("");
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/node-profiles`, {
+        method: "POST",
+        body: JSON.stringify(npForm),
+      });
+      setShowNewProfile(false);
+      load();
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const deleteNodeProfile = async (id: number) => {
+    setError("");
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/node-profiles/${id}`, { method: "DELETE" });
+      setNodeProfiles(prev => prev.filter(p => p.id !== id));
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const setDefaultProfile = async (np: NodeProfile) => {
+    setError("");
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/node-profiles`, {
+        method: "POST",
+        body: JSON.stringify({ ...np, is_default: true }),
+      });
+      load();
+    } catch { load(); }
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  React.useEffect(() => { load(); }, [projectId]);
+
+  const util = sizingResult?.post_migration_utilisation;
+  const utilColor = (pct: number) =>
+    pct <= 70 ? "#16a34a" : pct <= 85 ? "#d97706" : "#dc2626";
+
+  return (
+    <div>
+      {error && <div style={alertError}>{error}</div>}
+      {msg && <div style={alertSuccess}>{msg}</div>}
+      {loading && <div style={{ textAlign: "center", padding: 32, color: "#6b7280" }}>Loading…</div>}
+
+      {/* ---- Phase 2C: Overcommit Profile ---- */}
+      <div style={sectionStyle}>
+        <h3 style={{ marginTop: 0 }}>⚖️ Overcommit Profile</h3>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {profiles.map(p => (
+            <div key={p.profile_name}
+              onClick={() => setProfile(p.profile_name)}
+              style={{
+                padding: "12px 16px", borderRadius: 8, cursor: "pointer", minWidth: 180,
+                border: `2px solid ${activeProfile === p.profile_name ? "#3b82f6" : "var(--border, #e5e7eb)"}`,
+                background: activeProfile === p.profile_name ? "#eff6ff" : "var(--card-bg, #fff)",
+              }}>
+              <div style={{ fontWeight: 700 }}>{p.display_name}</div>
+              <div style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: 4 }}>{p.description}</div>
+              <div style={{ fontSize: "0.78rem", marginTop: 6 }}>
+                CPU {p.cpu_ratio}:1 · RAM {p.ram_ratio}:1 · Disk ×{p.disk_snapshot_factor}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ---- Phase 2C: Quota Table ---- */}
+      {quotaResult && (
+        <div style={sectionStyle}>
+          <h3 style={{ marginTop: 0 }}>📊 Quota Requirements ({typeof quotaResult.profile === 'object' ? quotaResult.profile.profile_name : quotaResult.profile})</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
+            <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
+              <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>vCPU needed</div>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{quotaResult.totals_recommended.vcpu.toLocaleString()}</div>
+              <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>of {quotaResult.totals_allocated.vcpu.toLocaleString()} allocated</div>
+            </div>
+            <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
+              <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>RAM needed (GB)</div>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{quotaResult.totals_recommended.ram_gb.toFixed(0)}</div>
+              <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>of {quotaResult.totals_allocated.ram_gb.toFixed(0)} GB allocated</div>
+            </div>
+            <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
+              <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Disk needed (TB)</div>
+              <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{quotaResult.totals_recommended.disk_tb.toFixed(2)}</div>
+              <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>of {quotaResult.totals_allocated.disk_tb.toFixed(2)} TB allocated</div>
+            </div>
+          </div>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Tenant</th>
+                <th style={thStyle}>vCPU alloc</th>
+                <th style={thStyle}>vCPU needed</th>
+                <th style={thStyle}>RAM alloc GB</th>
+                <th style={thStyle}>RAM needed GB</th>
+                <th style={thStyle}>Disk alloc TB</th>
+                <th style={thStyle}>Disk needed TB</th>
+              </tr>
+            </thead>
+            <tbody>
+              {quotaResult.per_tenant.map(pt => (
+                <tr key={pt.tenant_name} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
+                  <td style={tdStyle}><strong>{pt.tenant_name}</strong></td>
+                  <td style={tdStyle}>{pt.vcpu_alloc ?? pt.vcpu_allocated ?? 0}</td>
+                  <td style={tdStyle}>{pt.vcpu_recommended ?? 0}</td>
+                  <td style={tdStyle}>{((pt.ram_gb_alloc ?? pt.ram_gb_allocated) ?? 0).toFixed(0)}</td>
+                  <td style={tdStyle}>{(pt.ram_gb_recommended ?? 0).toFixed(0)}</td>
+                  <td style={tdStyle}>{((pt.disk_gb_alloc ?? pt.disk_tb_allocated) != null ? ((pt.disk_gb_alloc ?? pt.disk_tb_allocated) / 1024) : 0).toFixed(3)}</td>
+                  <td style={tdStyle}>{((pt.disk_gb_recommended ?? pt.disk_tb_recommended) != null ? ((pt.disk_gb_recommended ?? pt.disk_tb_recommended) / 1024) : 0).toFixed(3)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ---- Phase 2D: Node Profiles ---- */}
+      <div style={sectionStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>🖥️ PCD Node Profiles</h3>
+          <button onClick={() => setShowNewProfile(!showNewProfile)} style={btnSecondary}>+ New Profile</button>
+        </div>
+        {showNewProfile && (
+          <div style={{ ...sectionStyle, marginBottom: 12, background: "#f8fafc" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 8 }}>
+              <div>
+                <label style={labelStyle}>Profile Name</label>
+                <input style={inputStyle} value={npForm.profile_name}
+                  onChange={e => setNpForm(p => ({ ...p, profile_name: e.target.value }))} />
+              </div>
+              <div>
+                <label style={labelStyle}>CPU Cores</label>
+                <input type="number" style={inputStyle} value={npForm.cpu_cores}
+                  onChange={e => setNpForm(p => ({ ...p, cpu_cores: +e.target.value }))} />
+              </div>
+              <div>
+                <label style={labelStyle}>CPU Threads</label>
+                <input type="number" style={inputStyle} value={npForm.cpu_threads}
+                  onChange={e => setNpForm(p => ({ ...p, cpu_threads: +e.target.value }))} />
+              </div>
+              <div>
+                <label style={labelStyle}>RAM (GB)</label>
+                <input type="number" style={inputStyle} value={npForm.ram_gb}
+                  onChange={e => setNpForm(p => ({ ...p, ram_gb: +e.target.value }))} />
+              </div>
+              <div>
+                <label style={labelStyle}>Storage (TB)</label>
+                <input type="number" style={inputStyle} value={npForm.storage_tb}
+                  onChange={e => setNpForm(p => ({ ...p, storage_tb: +e.target.value }))} />
+              </div>
+              <div>
+                <label style={labelStyle}>Max CPU util %</label>
+                <input type="number" style={inputStyle} value={npForm.max_cpu_util_pct}
+                  onChange={e => setNpForm(p => ({ ...p, max_cpu_util_pct: +e.target.value }))} />
+              </div>
+              <div>
+                <label style={labelStyle}>Max RAM util %</label>
+                <input type="number" style={inputStyle} value={npForm.max_ram_util_pct}
+                  onChange={e => setNpForm(p => ({ ...p, max_ram_util_pct: +e.target.value }))} />
+              </div>
+              <div>
+                <label style={labelStyle}>Max Disk util %</label>
+                <input type="number" style={inputStyle} value={npForm.max_disk_util_pct}
+                  onChange={e => setNpForm(p => ({ ...p, max_disk_util_pct: +e.target.value }))} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <label style={{ fontSize: "0.85rem" }}>
+                <input type="checkbox" checked={npForm.is_default}
+                  onChange={e => setNpForm(p => ({ ...p, is_default: e.target.checked }))}
+                  style={{ marginRight: 6 }} />
+                Set as default
+              </label>
+              <button onClick={addNodeProfile} style={btnPrimary}>Save Profile</button>
+              <button onClick={() => setShowNewProfile(false)} style={btnSecondary}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {nodeProfiles.length === 0 ? (
+          <p style={{ color: "#6b7280", textAlign: "center" }}>No node profiles yet. Add one above to enable sizing calculations.</p>
+        ) : (
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Profile</th>
+                <th style={thStyle}>Cores</th>
+                <th style={thStyle}>Threads</th>
+                <th style={thStyle}>RAM GB</th>
+                <th style={thStyle}>Storage TB</th>
+                <th style={thStyle}>CPU%</th>
+                <th style={thStyle}>RAM%</th>
+                <th style={thStyle}>Disk%</th>
+                <th style={thStyle}>Default</th>
+                <th style={thStyle}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nodeProfiles.map(p => (
+                <tr key={p.id} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
+                  <td style={tdStyle}><strong>{p.profile_name}</strong></td>
+                  <td style={tdStyle}>{p.cpu_cores}</td>
+                  <td style={tdStyle}>{p.cpu_threads}</td>
+                  <td style={tdStyle}>{p.ram_gb}</td>
+                  <td style={tdStyle}>{p.storage_tb}</td>
+                  <td style={tdStyle}>{p.max_cpu_util_pct}%</td>
+                  <td style={tdStyle}>{p.max_ram_util_pct}%</td>
+                  <td style={tdStyle}>{p.max_disk_util_pct}%</td>
+                  <td style={tdStyle}>{p.is_default ? "⭐" : <button onClick={() => setDefaultProfile(p)} style={btnSmall}>Set</button>}</td>
+                  <td style={tdStyle}>
+                    <button onClick={() => deleteNodeProfile(p.id)}
+                      style={{ ...btnSmall, color: "#dc2626" }} title="Delete">🗑</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* ---- Phase 2D: Existing Inventory + Sizing ---- */}
+      <div style={sectionStyle}>
+        <h3 style={{ marginTop: 0 }}>📐 Node Sizing</h3>
+
+        {/* Live PCD cluster from inventory DB */}
+        {liveCluster && liveCluster.node_count > 0 && (
+          <div style={{ ...sectionStyle, margin: "0 0 16px", background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <strong style={{ color: "#15803d", fontSize: "0.9rem" }}>🖥️ Live PCD Cluster (from inventory DB)</strong>
+              <button
+                onClick={() => {
+                  setExistingNodes(liveCluster.node_count);
+                  setInvVcpuUsed(liveCluster.vcpus_used);
+                  setInvRamUsed(liveCluster.ram_gb_used);
+                  setInvDiskUsed(liveCluster.disk_tb_used);
+                  setMsg("Synced from live inventory — click 'Save & Recompute' to apply.");
+                  setTimeout(() => setMsg(""), 4000);
+                }}
+                style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 12px" }}
+              >
+                📥 Sync to Inventory
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
+              {[{label: "Nodes",       val: liveCluster.node_count,          suf: ""},
+                {label: "Total vCPU",  val: liveCluster.total_vcpus,         suf: ""},
+                {label: "Total RAM",   val: `${liveCluster.total_ram_gb} GB`, suf: ""},
+                {label: "vCPU in use", val: liveCluster.vcpus_used,          suf: ""},
+                {label: "RAM in use",  val: `${liveCluster.ram_gb_used} GB`,  suf: ""},
+                {label: "Disk alloc",  val: `${liveCluster.disk_tb_used} TB`, suf: ""},
+              ].map(d => (
+                <div key={d.label} style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>{d.label}</div>
+                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "#15803d" }}>{d.val}{d.suf}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Manual inventory form */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
+          <div>
+            <label style={labelStyle}>Existing PCD nodes</label>
+            <input type="number" style={inputStyle} value={existingNodes}
+              onChange={e => setExistingNodes(+e.target.value)} min={0} />
+          </div>
+          <div>
+            <label style={labelStyle}>vCPU already used</label>
+            <input type="number" style={inputStyle} value={invVcpuUsed}
+              onChange={e => setInvVcpuUsed(+e.target.value)} min={0} />
+          </div>
+          <div>
+            <label style={labelStyle}>RAM already used (GB)</label>
+            <input type="number" style={inputStyle} value={invRamUsed}
+              onChange={e => setInvRamUsed(+e.target.value)} min={0} />
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-end" }}>
+            <div style={{ fontSize: "0.78rem", color: "#6b7280", padding: "0 0 8px", lineHeight: 1.4 }}>
+              💡 Disk (Cinder) is not a node-sizing driver — it scales independently via your storage backend.
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <button onClick={saveInventory} style={btnPrimary}>💾 Save &amp; Recompute</button>
+          <button onClick={computeSizing} style={btnSecondary}>📐 Compute Only (no save)</button>
+        </div>
+
+        {sizingResult && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
+                <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Nodes Recommended</div>
+                <div style={{ fontSize: "2rem", fontWeight: 800, color: "#3b82f6" }}>{sizingResult.nodes_recommended}</div>
+                <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>({sizingResult.ha_policy})</div>
+              </div>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
+                <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Additional Needed</div>
+                <div style={{ fontSize: "2rem", fontWeight: 800, color: sizingResult.nodes_additional_required > 0 ? "#d97706" : "#16a34a" }}>
+                  {sizingResult.nodes_additional_required >= 0 ? `+${sizingResult.nodes_additional_required}` : sizingResult.nodes_additional_required}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>from {sizingResult.existing_nodes} existing</div>
+              </div>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
+                <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>HA Spares</div>
+                <div style={{ fontSize: "2rem", fontWeight: 800 }}>{sizingResult.ha_spares}</div>
+                <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>binding: {sizingResult.binding_dimension}</div>
+              </div>
+              <div style={{ ...sectionStyle, margin: 0 }}>
+                <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: 8 }}>Post-migration util (compute)</div>
+                {util && (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: "0.8rem" }}>CPU</span>
+                      <span style={{ fontWeight: 600, color: utilColor(util.cpu_pct) }}>{util.cpu_pct.toFixed(1)}%</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: "0.8rem" }}>RAM</span>
+                      <span style={{ fontWeight: 600, color: utilColor(util.ram_pct) }}>{util.ram_pct.toFixed(1)}%</span>
+                    </div>
+                    {sizingResult.disk_tb_required != null && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border, #e5e7eb)" }}>
+                        <div style={{ fontSize: "0.72rem", color: "#6b7280" }}>Cinder storage needed</div>
+                        <div style={{ fontWeight: 600, color: "#3b82f6" }}>{sizingResult.disk_tb_required.toFixed(2)} TB</div>
+                        <div style={{ fontSize: "0.68rem", color: "#9ca3af" }}>provision separately</div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+            {sizingResult.warnings.length > 0 && (
+              <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 12 }}>
+                <strong style={{ color: "#92400e" }}>⚠️ Warnings</strong>
+                <ul style={{ margin: "6px 0 0 0", paddingLeft: 20 }}>
+                  {sizingResult.warnings.map((w, i) => (
+                    <li key={i} style={{ fontSize: "0.85rem", color: "#92400e" }}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/*  PCD Readiness View  (Phase 2E — Gap Analysis)                    */
+/* ================================================================== */
+
+interface PcdGap {
+  id: number;
+  gap_type: string;
+  resource_name: string;
+  tenant_name: string | null;
+  severity: string;
+  resolution: string;
+  resolved: boolean;
+  details: Record<string, any>;
+}
+
+function PcdReadinessView({ projectId }: { projectId: number }) {
+  const [pcdUrl, setPcdUrl] = useState("");
+  const [pcdRegion, setPcdRegion] = useState("region-one");
+  const [readinessScore, setReadinessScore] = useState<number | null>(null);
+  const [gaps, setGaps] = useState<PcdGap[]>([]);
+  const [running, setRunning] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+  const [sizingData, setSizingData] = useState<any>(null);
+  const [quotaSummary, setQuotaSummary] = useState<any>(null);
+  const [capacityError, setCapacityError] = useState("");
+
+  const loadGaps = async () => {
+    try {
+      const g = await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps`);
+      setGaps(g.gaps || []);
+      if (g.readiness_score != null) setReadinessScore(Number(g.readiness_score));
+    } catch { /* silent */ }
+  };
+
+  const loadCapacity = async () => {
+    setCapacityError("");
+    try {
+      const qr = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      if (qr?.quota) setQuotaSummary(qr.quota.totals_recommended);
+      const sr = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`).catch(() => null);
+      if (sr?.sizing) {
+        // Enrich sizing with live cluster data so node count reflects actual inventory
+        const lr = await apiFetch(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
+        setSizingData(lr?.live?.node_count ? { ...sr.sizing, _live: lr.live } : sr.sizing);
+      }
+    } catch (e: any) { setCapacityError(e.message); }
+  };
+
+  const loadProject = async () => {
+    try {
+      const resp = await apiFetch(`/api/migration/projects/${projectId}`);
+      const p = resp.project || resp;
+      if (p.pcd_auth_url) setPcdUrl(p.pcd_auth_url);
+      if (p.pcd_region) setPcdRegion(p.pcd_region || "region-one");
+      if (p.pcd_readiness_score != null) setReadinessScore(Number(p.pcd_readiness_score));
+    } catch { /* silent */ }
+  };
+
+  React.useEffect(() => {
+    loadProject();
+    loadGaps();
+    loadCapacity();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  const saveSettings = async () => {
+    setSavingSettings(true);
+    setError("");
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/pcd-settings`, {
+        method: "PATCH",
+        body: JSON.stringify({ pcd_auth_url: pcdUrl.trim() || null, pcd_region: pcdRegion.trim() || "region-one" }),
+      });
+      setMsg("PCD settings saved.");
+      setTimeout(() => setMsg(""), 3000);
+    } catch (e: any) { setError(e.message); }
+    setSavingSettings(false);
+  };
+
+  const runAnalysis = async () => {
+    setRunning(true);
+    setError("");
+    try {
+      const result = await apiFetch(`/api/migration/projects/${projectId}/pcd-gap-analysis`, { method: "POST" });
+      setGaps(result.gaps || []);
+      if (result.readiness_score != null) setReadinessScore(Number(result.readiness_score));
+      setMsg(`Gap analysis complete. Found ${(result.gaps || []).length} gaps.`);
+      setTimeout(() => setMsg(""), 5000);
+    } catch (e: any) { setError(e.message); }
+    setRunning(false);
+  };
+
+  const resolveGap = async (gapId: number) => {
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps/${gapId}/resolve`, { method: "PATCH" });
+      setGaps(prev => prev.map(g => g.id === gapId ? { ...g, resolved: true } : g));
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const unresolvedGaps = gaps.filter(g => !g.resolved);
+  const resolvedGaps = gaps.filter(g => g.resolved);
+
+  const scoreColor = (score: number) =>
+    score >= 80 ? "#16a34a" : score >= 50 ? "#d97706" : "#dc2626";
+  const utilColor = (pct: number) => pct > 85 ? "#dc2626" : pct > 70 ? "#d97706" : "#16a34a";
+
+  const severityStyle = (sev: string): React.CSSProperties =>
+    sev === "critical" ? { background: "#fee2e2", color: "#dc2626" } :
+    sev === "warning" ? { background: "#fffbeb", color: "#d97706" } :
+                        { background: "#f3f4f6", color: "#374151" };
+
+  return (
+    <div>
+      {error && <div style={alertError}>{error}</div>}
+      {msg && <div style={alertSuccess}>{msg}</div>}
+
+      {/* PCD Connection info */}
+      <div style={{ ...sectionStyle, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <strong style={{ color: "#15803d" }}>🔌 PCD Connection</strong>
+            <span style={{ marginLeft: 12, fontSize: "0.85rem", color: "#6b7280" }}>
+              Using global PF9 credentials from server config (.env). Gap analysis connects to your PCD environment automatically.
+            </span>
+          </div>
+          {pcdUrl && (
+            <span style={{ fontSize: "0.78rem", color: "#6b7280", fontFamily: "monospace" }}>{pcdUrl}</span>
+          )}
+        </div>
+      </div>
+
+      {/* ── Capacity Assessment ── */}
+      <div style={sectionStyle}>
+        <h3 style={{ marginTop: 0 }}>📀 Capacity Assessment</h3>
+        {capacityError && (
+          <div style={{ color: "#6b7280", fontSize: "0.85rem", marginBottom: 8 }}>
+            {capacityError.includes("No node profile") ?
+              <span>⚠️ No PCD node profile configured. Add one in the <strong>⚖️ Capacity</strong> tab to enable capacity assessment.</span> :
+              <span>Could not load capacity data: {capacityError}</span>}
+          </div>
+        )}
+        {!sizingData && !capacityError && (
+          <p style={{ color: "#6b7280", fontSize: "0.85rem" }}>No capacity data yet. Add a node profile in the ⚖️ Capacity tab and run the assessment.</p>
+        )}
+        {quotaSummary && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#374151", marginBottom: 8 }}>Migration Requires (recommended PCD quotas)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "10px 8px" }}>
+                <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>vCPU</div>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{quotaSummary.vcpu?.toLocaleString() ?? "—"}</div>
+              </div>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "10px 8px" }}>
+                <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>RAM (GB)</div>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{Number(quotaSummary.ram_gb ?? 0).toFixed(0)}</div>
+              </div>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "10px 8px" }}>
+                <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>Disk (TB)</div>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{Number(quotaSummary.disk_tb ?? 0).toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
+        )}
+        {sizingData && (() => {
+          const s = sizingData;
+          const p = s.post_migration_utilisation || s.post_migration_utilization || {};
+          const np = s.node_profile || {};
+          const needMore = s.nodes_additional_required > 0;
+          return (
+            <div>
+              <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#374151", marginBottom: 8 }}>
+                PCD Node Profile: <code style={{ fontWeight: 400 }}>{np.profile_name || "—"}</code>
+                <span style={{ marginLeft: 12, color: "#6b7280", fontWeight: 400 }}>
+                  {np.cpu_threads || (np.cpu_cores * 2)} threads · {np.ram_gb} GB RAM · {np.storage_tb} TB storage per node
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
+                <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "12px 8px",
+                  borderLeft: `4px solid ${needMore ? "#d97706" : "#16a34a"}` }}>
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>Nodes Rec. (incl. HA)</div>
+                  <div style={{ fontSize: "1.8rem", fontWeight: 800, color: "#3b82f6" }}>{s.nodes_recommended}</div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>{s.ha_policy} — {s.ha_spares} spare{s.ha_spares !== 1 ? "s" : ""}</div>
+                </div>
+                <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "12px 8px" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>Currently Deployed</div>
+                  <div style={{ fontSize: "1.8rem", fontWeight: 800 }}>
+                    {s._live?.node_count ?? s.existing_nodes}
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>
+                    {s._live ? "from inventory DB" : "from manual entry"}
+                  </div>
+                  {s._live && s._live.node_count !== s.existing_nodes && (
+                    <div style={{ fontSize: "0.68rem", color: "#d97706" }}>
+                      ⚠️ inventory set to {s.existing_nodes}
+                    </div>
+                  )}
+                </div>
+                <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "12px 8px",
+                  background: needMore ? "#fffbeb" : "#f0fdf4", border: `1px solid ${needMore ? "#fde68a" : "#bbf7d0"}` }}>
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>Additional Needed</div>
+                  <div style={{ fontSize: "1.8rem", fontWeight: 800,
+                    color: needMore ? "#d97706" : "#16a34a" }}>
+                    {needMore ? `+${s.nodes_additional_required}` : "✔ 0"}
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>
+                    {needMore ? "new HW nodes required" : "sufficient capacity"}
+                  </div>
+                </div>
+                <div style={{ ...sectionStyle, margin: 0, padding: "12px 8px" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280", marginBottom: 6 }}>Post-migration utilisation (compute)</div>
+                  {[{label:"CPU", pct: p.cpu_pct},{label:"RAM", pct: p.ram_pct}].map(d => (
+                    <div key={d.label} style={{ display:"flex", justifyContent:"space-between", marginBottom: 2 }}>
+                      <span style={{ fontSize: "0.78rem" }}>{d.label}</span>
+                      <span style={{ fontSize: "0.78rem", fontWeight: 600, color: utilColor(d.pct ?? 0) }}>
+                        {d.pct != null ? `${Number(d.pct).toFixed(1)}%` : "—"}
+                      </span>
+                    </div>
+                  ))}
+                  {s.disk_tb_required != null && (
+                    <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid var(--border, #e5e7eb)" }}>
+                      <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>Cinder storage needed</div>
+                      <div style={{ fontWeight: 700, color: "#3b82f6" }}>{Number(s.disk_tb_required).toFixed(2)} TB</div>
+                      <div style={{ fontSize: "0.66rem", color: "#9ca3af" }}>provision via storage backend</div>
+                    </div>
+                  )}
+                  <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginTop: 4 }}>
+                    binding: <strong>{s.binding_dimension}</strong>
+                  </div>
+                </div>
+              </div>
+              {s.nodes_by_dimension && (
+                <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: 8 }}>
+                  Nodes by dimension — CPU: {s.nodes_by_dimension.cpu} · RAM: {s.nodes_by_dimension.ram}
+                </div>
+              )}
+              {s.warnings?.length > 0 && (
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "10px 14px" }}>
+                  <strong style={{ color: "#92400e", fontSize: "0.85rem" }}>⚠️ Capacity Warnings</strong>
+                  <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                    {s.warnings.map((w: string, i: number) => (
+                      <li key={i} style={{ fontSize: "0.82rem", color: "#92400e" }}>{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Readiness Score + Run Button */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 16, alignItems: "stretch", flexWrap: "wrap" }}>
+        {readinessScore != null && (
+          <div style={{
+            ...sectionStyle, margin: 0, textAlign: "center", minWidth: 160,
+            borderLeft: `4px solid ${scoreColor(readinessScore)}`,
+          }}>
+            <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Readiness Score</div>
+            <div style={{
+              fontSize: "2.5rem", fontWeight: 800,
+              color: scoreColor(readinessScore),
+            }}>{readinessScore.toFixed(1)}<span style={{ fontSize: "1rem" }}>/100</span></div>
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, justifyContent: "center" }}>
+          <button onClick={runAnalysis} disabled={running} style={{ ...btnPrimary, fontSize: "1rem", padding: "12px 24px" }}>
+            {running ? "⏳ Analysing…" : "🔍 Run Gap Analysis"}
+          </button>
+          <span style={{ fontSize: "0.8rem", color: "#6b7280", textAlign: "center" }}>
+            Connects to PCD and checks flavors, networks, images, tenant mapping
+          </span>
+        </div>
+        {!running && gaps.length > 0 && (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ ...pillStyle, background: "#fee2e2", color: "#dc2626", fontSize: "0.9rem", padding: "6px 14px" }}>
+              {gaps.filter(g => g.severity === "critical" && !g.resolved).length} critical
+            </span>
+            <span style={{ ...pillStyle, background: "#fffbeb", color: "#d97706", fontSize: "0.9rem", padding: "6px 14px" }}>
+              {gaps.filter(g => g.severity === "warning" && !g.resolved).length} warnings
+            </span>
+            <span style={{ ...pillStyle, background: "#dcfce7", color: "#16a34a", fontSize: "0.9rem", padding: "6px 14px" }}>
+              {resolvedGaps.length} resolved
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Gaps Table */}
+      {gaps.length > 0 && (
+        <div style={sectionStyle}>
+          <h3 style={{ marginTop: 0 }}>📋 Gaps ({unresolvedGaps.length} open)</h3>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Type</th>
+                <th style={thStyle}>Resource</th>
+                <th style={thStyle}>Tenant</th>
+                <th style={thStyle}>Severity</th>
+                <th style={thStyle}>Why / Details</th>
+                <th style={thStyle}>Resolution</th>
+                <th style={thStyle}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {gaps.map(g => {
+                const detailKeys = Object.keys(g.details || {}).filter(k => k !== "vms");
+                return (
+                  <tr key={g.id} style={{
+                    borderBottom: "1px solid var(--border, #e5e7eb)",
+                    opacity: g.resolved ? 0.5 : 1,
+                  }}>
+                    <td style={tdStyle}>
+                      <span style={{ ...pillStyle, background: "#f3f4f6", color: "#374151" }}>
+                        {g.gap_type.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td style={tdStyle}><code style={{ fontSize: "0.8rem" }}>{g.resource_name}</code></td>
+                    <td style={tdStyle}>{g.tenant_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                    <td style={tdStyle}>
+                      <span style={{ ...pillStyle, ...severityStyle(g.severity) }}>
+                        {g.severity}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle, maxWidth: 260 }}>
+                      {detailKeys.length > 0 ? (
+                        <div style={{ fontSize: "0.78rem" }}>
+                          {detailKeys.map(k => (
+                            <div key={k} style={{ display: "flex", gap: 4, marginBottom: 2 }}>
+                              <span style={{ color: "#9ca3af", minWidth: 80, flexShrink: 0 }}>{k.replace(/_/g, " ")}:</span>
+                              <span style={{ fontWeight: 600, color: "#374151", wordBreak: "break-all" }}>
+                                {k === "ram_mb"
+                                  ? `${Math.round(Number(g.details[k]) / 1024)} GB`
+                                  : String(g.details[k])}
+                              </span>
+                            </div>
+                          ))}
+                          {g.details?.vms?.length > 0 && (
+                            <details style={{ marginTop: 4 }}>
+                              <summary style={{ cursor: "pointer", color: "#6b7280", fontSize: "0.75rem" }}>
+                                {g.details.vms.length} affected VM{g.details.vms.length !== 1 ? "s" : ""}
+                              </summary>
+                              <div style={{ marginTop: 4, maxHeight: 100, overflowY: "auto" }}>
+                                {g.details.vms.map((v: string, i: number) => (
+                                  <div key={i} style={{ fontSize: "0.72rem", color: "#374151" }}>{v}</div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: "#9ca3af", fontSize: "0.78rem" }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ ...tdStyle, maxWidth: 280, fontSize: "0.82rem" }}>{g.resolution}</td>
+                    <td style={tdStyle}>
+                      {g.resolved ? (
+                        <span style={{ ...pillStyle, background: "#dcfce7", color: "#16a34a" }}>✓ Resolved</span>
+                      ) : (
+                        <button onClick={() => resolveGap(g.id)}
+                          style={{ ...btnSmall, background: "#16a34a", color: "#fff", fontSize: "0.78rem" }}>
+                          Mark Resolved
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!running && gaps.length === 0 && (
+        <div style={{ ...sectionStyle, textAlign: "center", color: "#6b7280", padding: 40 }}>
+          No gaps found yet. Click "Run Gap Analysis" to check PCD readiness.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ================================================================== */
 /*  Tiny Components                                                    */
 /* ================================================================== */
 
@@ -1669,7 +2712,7 @@ const subTabStyle: React.CSSProperties = {
 };
 
 const subTabActive: React.CSSProperties = {
-  borderBottomColor: "#3b82f6", color: "#3b82f6",
+  borderBottom: "2px solid #3b82f6", color: "#3b82f6",
 };
 
 const btnPrimary: React.CSSProperties = {
