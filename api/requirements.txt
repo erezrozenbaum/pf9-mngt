@@ -27,6 +27,7 @@ Jinja2>=3.1.0
 
 # Excel export
 openpyxl>=3.1.0
+reportlab>=4.0.0
 
 # Ops Copilot — LLM backends (optional: only needed if using external LLMs)
 openai>=1.0.0

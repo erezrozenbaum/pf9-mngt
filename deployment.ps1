@@ -773,7 +773,10 @@ $provisioningMigrations = @(
     @{File="db\migrate_metadata_tables.sql"; Desc="Additional metadata: keypairs, server_groups, aggregates, volume_types, quotas"},
     @{File="db\migrate_snapshot_quota_batching.sql"; Desc="Snapshot quota-aware batching: batch progress, quota blocks, forecast runbook"},
     @{File="db\migrate_migration_planner.sql"; Desc="Migration Planner: 15 tables, RBAC permissions, nav groups, department visibility"},
-    @{File="db\migrate_migration_schedule.sql"; Desc="Migration Planner: schedule-aware planning columns (duration, working hours, target VMs/day)"}
+    @{File="db\migrate_migration_schedule.sql"; Desc="Migration Planner: schedule-aware planning columns (duration, working hours, target VMs/day)"},
+    @{File="db\migrate_migration_usage.sql"; Desc="Migration Planner: usage metrics, OS version, network name, vPartition columns"},
+    @{File="db\migrate_migration_networks.sql"; Desc="Migration Planner: network infrastructure summary, tenant in_use_gb"},
+    @{File="db\migrate_vm_usage_metrics.sql"; Desc="Migration Planner: vCPU/memory usage percentages from RVTools vCPU/vMemory sheets"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
