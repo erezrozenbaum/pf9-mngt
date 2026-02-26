@@ -1273,3 +1273,340 @@ def summarize_rvtools_stats(
     if template_count:
         result["templates"] = template_count
     return result
+
+
+# =====================================================================
+# Phase 2C — Quota & Overcommit Modeling
+# =====================================================================
+
+OVERCOMMIT_PRESETS: Dict[str, Dict[str, float]] = {
+    "aggressive":   {"cpu_ratio": 8.0, "ram_ratio": 2.0, "disk_snapshot_factor": 1.3},
+    "balanced":     {"cpu_ratio": 4.0, "ram_ratio": 1.5, "disk_snapshot_factor": 1.5},
+    "conservative": {"cpu_ratio": 2.0, "ram_ratio": 1.0, "disk_snapshot_factor": 2.0},
+}
+
+
+def compute_quota_requirements(
+    tenants: List[Dict[str, Any]],
+    overcommit_profile: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Per-tenant and aggregate quota requirements using an overcommit profile.
+
+    Args:
+        tenants:            List of migration_tenants rows (from DB). Only rows where
+                            include_in_plan == True are processed.
+        overcommit_profile: Dict with cpu_ratio, ram_ratio, disk_snapshot_factor.
+
+    Returns:
+        {
+          "profile": {...},
+          "totals_allocated": {vcpu, ram_gb, disk_tb},
+          "totals_recommended": {vcpu, ram_gb, disk_tb},
+          "per_tenant": [{tenant_name, vcpu_alloc, ram_gb_alloc, disk_gb_alloc,
+                          vcpu_recommended, ram_gb_recommended, disk_gb_recommended,
+                          overcommit_warnings: [...]}, ...]
+        }
+    """
+    cpu_ratio  = float(overcommit_profile.get("cpu_ratio", 4.0))
+    ram_ratio  = float(overcommit_profile.get("ram_ratio", 1.5))
+    disk_factor = float(overcommit_profile.get("disk_snapshot_factor", 1.5))
+
+    per_tenant = []
+    total_vcpu_alloc = total_ram_gb_alloc = total_disk_gb_alloc = 0.0
+    total_vcpu_rec   = total_ram_gb_rec   = total_disk_gb_rec   = 0.0
+
+    for t in tenants:
+        if not t.get("include_in_plan", True):
+            continue
+
+        vcpu      = int(t.get("total_vcpu", 0) or 0)
+        ram_mb    = int(t.get("total_ram_mb", 0) or 0)
+        disk_gb   = float(t.get("total_disk_gb", 0) or 0)
+        in_use_gb = float(t.get("total_in_use_gb", 0) or 0)
+
+        ram_gb = ram_mb / 1024.0
+
+        # Recommended = allocated ÷ overcommit ratio (what PCD quota to set)
+        vcpu_rec   = max(1, round(vcpu / cpu_ratio))
+        ram_gb_rec = round(ram_gb / ram_ratio, 1)
+        disk_gb_rec = round(disk_gb * disk_factor, 1)
+
+        warnings: List[str] = []
+        if cpu_ratio >= 6.0 and vcpu > 200:
+            warnings.append(f"High CPU density ({cpu_ratio}:1) with {vcpu} vCPUs — monitor for contention")
+        if ram_ratio >= 1.8:
+            warnings.append(f"RAM overcommit {ram_ratio}:1 — ensure workloads are not memory-intensive")
+        if disk_gb_rec > 50_000:
+            warnings.append(f"Recommended disk quota {disk_gb_rec/1024:.1f} TB — verify PCD storage capacity")
+
+        per_tenant.append({
+            "tenant_name":           t.get("tenant_name", ""),
+            "target_domain_name":    t.get("target_domain_name") or t.get("target_domain") or "",
+            "target_project_name":   t.get("target_project_name") or t.get("target_project") or "",
+            "vcpu_alloc":            vcpu,
+            "ram_gb_alloc":          round(ram_gb, 1),
+            "disk_gb_alloc":         round(disk_gb, 1),
+            "in_use_gb":             round(in_use_gb, 1),
+            "vcpu_recommended":      vcpu_rec,
+            "ram_gb_recommended":    ram_gb_rec,
+            "disk_gb_recommended":   disk_gb_rec,
+            "overcommit_warnings":   warnings,
+        })
+
+        total_vcpu_alloc  += vcpu;      total_vcpu_rec  += vcpu_rec
+        total_ram_gb_alloc += ram_gb;   total_ram_gb_rec += ram_gb_rec
+        total_disk_gb_alloc += disk_gb; total_disk_gb_rec += disk_gb_rec
+
+    return {
+        "profile":            overcommit_profile,
+        "totals_allocated":   {"vcpu": int(total_vcpu_alloc), "ram_gb": round(total_ram_gb_alloc, 1), "disk_tb": round(total_disk_gb_alloc / 1024, 2)},
+        "totals_recommended": {"vcpu": int(total_vcpu_rec),   "ram_gb": round(total_ram_gb_rec, 1),   "disk_tb": round(total_disk_gb_rec / 1024, 2)},
+        "per_tenant":         per_tenant,
+    }
+
+
+# =====================================================================
+# Phase 2D — PCD Hardware Node Sizing
+# =====================================================================
+
+def compute_node_sizing(
+    totals: Dict[str, Any],             # totals_recommended from compute_quota_requirements
+    node_profile: Dict[str, Any],       # migration_pcd_node_profiles row
+    existing_inventory: Optional[Dict[str, Any]] = None,  # migration_pcd_node_inventory row
+) -> Dict[str, Any]:
+    """
+    Compute HA-aware PCD compute node count from workload totals and a node profile.
+
+    HA policy:
+      - First 10 nodes: N+1
+      - 10+ nodes: N+2
+    Target cluster utilisation: ≤ max_cpu_util_pct / max_ram_util_pct / max_disk_util_pct
+    """
+    cpu_threads     = int(node_profile.get("cpu_threads", node_profile.get("cpu_cores", 48) * 2))
+    ram_gb_node     = float(node_profile.get("ram_gb", 384.0))
+    storage_tb_node = float(node_profile.get("storage_tb", 20.0))
+    max_cpu_pct     = float(node_profile.get("max_cpu_util_pct", 70.0)) / 100.0
+    max_ram_pct     = float(node_profile.get("max_ram_util_pct", 75.0)) / 100.0
+    max_disk_pct    = float(node_profile.get("max_disk_util_pct", 70.0)) / 100.0
+
+    req_vcpu  = int(totals["vcpu"])
+    req_ram   = float(totals["ram_gb"])
+    req_disk  = float(totals["disk_tb"])
+
+    # Already-consumed resources from existing inventory
+    inv_vcpu_used  = 0
+    inv_ram_used   = 0.0
+    inv_disk_used  = 0.0
+    inv_nodes      = 0
+    if existing_inventory:
+        inv_nodes     = int(existing_inventory.get("current_nodes", 0))
+        inv_vcpu_used = int(existing_inventory.get("current_vcpu_used", 0))
+        inv_ram_used  = float(existing_inventory.get("current_ram_gb_used", 0))
+        inv_disk_used = float(existing_inventory.get("current_disk_tb_used", 0))
+
+    # Effective capacity per node considering safe utilisation limit
+    eff_cpu_per_node  = cpu_threads    * max_cpu_pct
+    eff_ram_per_node  = ram_gb_node    * max_ram_pct
+    eff_disk_per_node = storage_tb_node * max_disk_pct
+
+    import math
+
+    # New demand beyond what existing nodes can handle
+    # Existing nodes' total usable capacity
+    exist_cap_cpu  = inv_nodes * eff_cpu_per_node  - inv_vcpu_used
+    exist_cap_ram  = inv_nodes * eff_ram_per_node  - inv_ram_used
+    exist_cap_disk = inv_nodes * eff_disk_per_node - inv_disk_used
+
+    additional_cpu  = max(0.0, req_vcpu - exist_cap_cpu)
+    additional_ram  = max(0.0, req_ram  - exist_cap_ram)
+    additional_disk = max(0.0, req_disk - exist_cap_disk)
+
+    nodes_for_cpu  = math.ceil(additional_cpu  / eff_cpu_per_node)  if eff_cpu_per_node  > 0 else 0
+    nodes_for_ram  = math.ceil(additional_ram  / eff_ram_per_node)  if eff_ram_per_node  > 0 else 0
+    nodes_for_disk = math.ceil(additional_disk / eff_disk_per_node) if eff_disk_per_node > 0 else 0
+
+    nodes_additional = max(nodes_for_cpu, nodes_for_ram, nodes_for_disk)
+    binding_dimension = (
+        "cpu"  if nodes_additional == nodes_for_cpu  and nodes_for_cpu  >= max(nodes_for_ram, nodes_for_disk)
+        else "ram" if nodes_for_ram >= nodes_for_disk else "disk"
+    )
+
+    total_nodes_min = inv_nodes + nodes_additional
+
+    # HA adjustment
+    if total_nodes_min <= 10:
+        ha_nodes = 1   # N+1
+    else:
+        ha_nodes = 2   # N+2
+
+    total_nodes_recommended = total_nodes_min + ha_nodes
+
+    # Post-migration utilisation with recommended cluster
+    cluster_vcpu  = total_nodes_recommended * cpu_threads
+    cluster_ram   = total_nodes_recommended * ram_gb_node
+    cluster_disk  = total_nodes_recommended * storage_tb_node
+
+    post_cpu_pct  = round((req_vcpu + inv_vcpu_used) / cluster_vcpu  * 100, 1) if cluster_vcpu  > 0 else 0
+    post_ram_pct  = round((req_ram  + inv_ram_used)  / cluster_ram   * 100, 1) if cluster_ram   > 0 else 0
+    post_disk_pct = round((req_disk + inv_disk_used) / cluster_disk  * 100, 1) if cluster_disk  > 0 else 0
+
+    # Warnings
+    warnings: List[str] = []
+    if post_cpu_pct > float(node_profile.get("max_cpu_util_pct", 70.0)):
+        warnings.append(f"Post-migration CPU utilisation {post_cpu_pct}% exceeds target {node_profile.get('max_cpu_util_pct', 70)}%")
+    if post_ram_pct > float(node_profile.get("max_ram_util_pct", 75.0)):
+        warnings.append(f"Post-migration RAM utilisation {post_ram_pct}% exceeds target {node_profile.get('max_ram_util_pct', 75)}%")
+    if post_disk_pct > float(node_profile.get("max_disk_util_pct", 70.0)):
+        warnings.append(f"Post-migration disk utilisation {post_disk_pct}% exceeds target {node_profile.get('max_disk_util_pct', 70)}%")
+
+    return {
+        "node_profile":             node_profile,
+        "existing_nodes":           inv_nodes,
+        "nodes_additional_required": nodes_additional,
+        "nodes_min_total":          total_nodes_min,
+        "ha_spares":                ha_nodes,
+        "ha_policy":                f"N+{ha_nodes}",
+        "nodes_recommended":        total_nodes_recommended,
+        "binding_dimension":        binding_dimension,
+        "nodes_by_dimension": {
+            "cpu":  nodes_for_cpu,
+            "ram":  nodes_for_ram,
+            "disk": nodes_for_disk,
+        },
+        "post_migration_utilisation": {
+            "cpu_pct":  post_cpu_pct,
+            "ram_pct":  post_ram_pct,
+            "disk_pct": post_disk_pct,
+        },
+        "warnings": warnings,
+    }
+
+
+# =====================================================================
+# Phase 2E — PCD Readiness Gap Analysis
+# =====================================================================
+
+def analyze_pcd_gaps(
+    tenants: List[Dict[str, Any]],
+    pcd_flavors: List[Dict[str, Any]],
+    pcd_networks: List[Dict[str, Any]],
+    pcd_images: List[Dict[str, Any]],
+    vmware_vms: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Compare what VMware VMs need vs what PCD already has and return a list of gaps.
+
+    Args:
+        tenants:       migration_tenants rows (include_in_plan=True only).
+        pcd_flavors:   list of Nova flavor dicts from PCD/OpenStack.
+        pcd_networks:  list of Neutron network dicts.
+        pcd_images:    list of Glance image dicts.
+        vmware_vms:    migration_vms rows.
+
+    Returns:
+        List of gap dicts: {gap_type, resource_name, tenant_name, severity, details, resolution}
+    """
+    gaps: List[Dict[str, Any]] = []
+    included_tenant_names = {
+        t["tenant_name"] for t in tenants if t.get("include_in_plan", True)
+    }
+
+    # ── Flavors: find (vcpu, ram_mb) combos with no matching PCD flavor ─────
+    needed_shapes: Dict[tuple, List[str]] = {}
+    for vm in vmware_vms:
+        if vm.get("tenant_name") not in included_tenant_names:
+            continue
+        key = (int(vm.get("cpu_count") or 0), int(vm.get("ram_mb") or 0))
+        if key not in needed_shapes:
+            needed_shapes[key] = []
+        needed_shapes[key].append(vm["vm_name"])
+
+    pcd_flavor_shapes = set()
+    for f in pcd_flavors:
+        pcd_flavor_shapes.add((int(f.get("vcpus") or 0), int(f.get("ram") or 0)))
+
+    for (vcpu, ram_mb), vms_list in needed_shapes.items():
+        if vcpu == 0 and ram_mb == 0:
+            continue
+        # Find nearest existing flavor
+        matched = any(
+            abs(fvcpu - vcpu) <= 1 and abs(fram_mb - ram_mb) / max(ram_mb, 1) < 0.1
+            for fvcpu, fram_mb in pcd_flavor_shapes
+        )
+        if not matched:
+            gaps.append({
+                "gap_type":     "flavor",
+                "resource_name": f"{vcpu}vCPU-{ram_mb // 1024}GB",
+                "tenant_name":  None,
+                "severity":     "warning",
+                "details":      {"vcpu": vcpu, "ram_mb": ram_mb, "vm_count": len(vms_list), "example_vms": vms_list[:3]},
+                "resolution":   f"Create flavor with {vcpu} vCPUs, {ram_mb} MB RAM in PCD",
+            })
+
+    # ── Networks: source VM networks not present in PCD ──────────────────────
+    pcd_network_names = {n.get("name", "").lower() for n in pcd_networks}
+    needed_networks: Dict[str, set] = {}
+    for vm in vmware_vms:
+        if vm.get("tenant_name") not in included_tenant_names:
+            continue
+        net = vm.get("network_name", "")
+        if not net:
+            continue
+        if net not in needed_networks:
+            needed_networks[net] = set()
+        needed_networks[net].add(vm.get("tenant_name"))
+
+    for net_name, tenants_using in needed_networks.items():
+        if net_name.lower() not in pcd_network_names:
+            gaps.append({
+                "gap_type":     "network",
+                "resource_name": net_name,
+                "tenant_name":  None,
+                "severity":     "critical" if len(tenants_using) > 1 else "warning",
+                "details":      {"vm_count": sum(1 for vm in vmware_vms if vm.get("network_name") == net_name),
+                                 "tenants": list(tenants_using)},
+                "resolution":   f"Create or map network '{net_name}' in PCD",
+            })
+
+    # ── Images: OS families needed ───────────────────────────────────────────
+    pcd_image_names_lower = {i.get("name", "").lower() for i in pcd_images}
+    needed_os: Dict[str, int] = {}
+    for vm in vmware_vms:
+        if vm.get("tenant_name") not in included_tenant_names:
+            continue
+        os_fam = vm.get("os_family", "other") or "other"
+        needed_os[os_fam] = needed_os.get(os_fam, 0) + 1
+
+    # Check if there's at least one image per OS family needed
+    for os_fam, count in needed_os.items():
+        if os_fam == "other":
+            continue
+        has_image = any(os_fam in name for name in pcd_image_names_lower)
+        if not has_image:
+            gaps.append({
+                "gap_type":     "image",
+                "resource_name": f"{os_fam}-base-image",
+                "tenant_name":  None,
+                "severity":     "warning",
+                "details":      {"os_family": os_fam, "vm_count": count},
+                "resolution":   f"Upload or register a {os_fam} cloud image in PCD Glance",
+            })
+
+    # ── Tenant mapping gaps: tenants with no target domain/project set ───────
+    for t in tenants:
+        if not t.get("include_in_plan", True):
+            continue
+        domain = t.get("target_domain_name") or t.get("target_domain") or ""
+        project = t.get("target_project_name") or t.get("target_project") or ""
+        if not domain or not project:
+            gaps.append({
+                "gap_type":     "mapping",
+                "resource_name": t["tenant_name"],
+                "tenant_name":  t["tenant_name"],
+                "severity":     "warning",
+                "details":      {"has_domain": bool(domain), "has_project": bool(project)},
+                "resolution":   "Set target_domain_name and target_project_name in tenant mapping",
+            })
+
+    return gaps

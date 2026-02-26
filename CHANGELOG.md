@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0] - 2026-02-27
+
+### Added
+- **Migration Planner Phase 2: Tenant Scoping, Target Mapping & Capacity Planning**
+  - **Phase 2A — Tenant Exclusion & Scoping**: per-tenant `include_in_plan` toggle; bulk-scope toolbar (select many, include/exclude); `exclude_reason` field shown inline when excluded; auto-exclude filter patterns (`GET/POST/DELETE /projects/{id}/tenant-filters`).
+  - **Phase 2B — Target Mapping**: inline editing of `target_domain_name`, `target_project_name`, `target_display_name` per tenant in the Tenants view.
+  - **Phase 2C — Quota & Overcommit Modeling**: three built-in overcommit presets (aggressive 8:1, balanced 4:1, conservative 2:1); quota requirements engine (`compute_quota_requirements()`) computes per-tenant and aggregate vCPU/RAM/disk needs; `GET /overcommit-profiles`, `PATCH /projects/{id}/overcommit-profile`, `GET /projects/{id}/quota-requirements`.
+  - **Phase 2D — PCD Hardware Node Sizing**: node profile CRUD (`GET/POST/DELETE/PATCH /projects/{id}/node-profiles`); current-inventory tracking (`GET/PUT /projects/{id}/node-inventory`); HA-aware sizing engine (`compute_node_sizing()`) — N+1 ≤10 nodes, N+2 >10 nodes; `GET /projects/{id}/node-sizing` returns recommended node count, HA spares, binding dimension, and post-migration utilisation.
+  - **Phase 2E — PCD Readiness & Gap Analysis**: PCD settings per project (`PATCH /projects/{id}/pcd-settings`); `analyze_pcd_gaps()` engine connects to PCD and checks missing flavors, networks, images, and unmapped tenants; gap table with severity (critical/warning/info) and "Mark Resolved" action (`PATCH /projects/{id}/pcd-gaps/{gid}/resolve`); readiness score (0-100).
+  - **UI: ⚖️ Capacity tab** — overcommit profile cards, per-tenant quota table, node profile editor, node sizing result with utilisation gauges and HA warnings.
+  - **UI: 🎯 PCD Readiness tab** — PCD connection form, one-click gap analysis, gap table with severity pills, "Mark Resolved" per row, readiness score badge.
+  - **DB migration**: `db/migrate_phase2_scoping.sql` (6 new tables + columns on migration_tenants/migration_projects; idempotent).
+
 ## [1.28.3] - 2026-02-26
 
 ### Added
