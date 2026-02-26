@@ -76,7 +76,8 @@ interface MigrationVM {
 }
 
 interface Tenant {
-  tenant_id: number;
+  id: number;  // actual DB primary key returned by API
+  tenant_id?: number;  // deprecated alias
   tenant_name: string;
   org_vdc: string | null;
   detection_method: string;
@@ -779,7 +780,7 @@ function DashboardView({ stats, hosts, clusters, tenants }: {
           <h3 style={{ marginTop: 0 }}>Detected Tenants</h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
             {tenants.map((t, idx) => (
-              <div key={t.tenant_id || t.tenant_name || idx} style={{
+              <div key={t.id ?? t.tenant_id ?? `${t.tenant_name}-${idx}`} style={{
                 padding: 10, borderRadius: 6, border: "1px solid var(--border, #e5e7eb)",
               }}>
                 <div style={{ fontWeight: 600 }}>{t.tenant_name}</div>
@@ -884,7 +885,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   /* ---- Bulk-scope state ---- */
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const allSelected = tenants.length > 0 && selected.size === tenants.length;
-  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(tenants.map(t => t.tenant_id)));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(tenants.map(t => t.id)));  
   const toggleOne = (id: number) => setSelected(prev => {
     const n = new Set(prev);
     n.has(id) ? n.delete(id) : n.add(id);
@@ -905,7 +906,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   };
 
   const startEdit = (t: Tenant) => {
-    setEditId(t.tenant_id);
+    setEditId(t.id);
     setEditName(t.tenant_name);
     setEditOrgVdc(t.org_vdc || "");
     setEditInclude(t.include_in_plan !== false);
@@ -1053,20 +1054,21 @@ function TenantsView({ tenants, projectId, onRefresh }: {
             </tr>
           </thead>
           <tbody>
-            {tenants.map(t => {
+            {tenants.map((t, tIdx) => {
               const included = t.include_in_plan !== false;
               const rowStyle: React.CSSProperties = {
                 borderBottom: "1px solid var(--border, #e5e7eb)",
                 opacity: included ? 1 : 0.55,
                 background: included ? undefined : "var(--card-bg, #f9fafb)",
               };
-              if (editId === t.tenant_id) {
+              const rowKey = t.id ?? tIdx;
+              if (editId === t.id) {
                 return (
-                  <React.Fragment key={t.tenant_id}>
+                  <React.Fragment key={rowKey}>
                     <tr style={rowStyle}>
                       <td style={{ ...tdStyle, textAlign: "center" }}>
-                        <input type="checkbox" checked={selected.has(t.tenant_id)}
-                          onChange={() => toggleOne(t.tenant_id)} />
+                        <input type="checkbox" checked={selected.has(t.id)}
+                          onChange={() => toggleOne(t.id)} />
                       </td>
                       <td style={{ ...tdStyle, textAlign: "center" }}>
                         <input type="checkbox" checked={editInclude}
@@ -1116,7 +1118,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                       </td>
                     </tr>
                     {!editInclude && (
-                      <tr style={{ background: "#fff7ed" }}>
+                      <tr key={`${rowKey}-reason`} style={{ background: "#fff7ed" }}>
                         <td colSpan={2} />
                         <td colSpan={10} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
                           <label style={{ ...labelStyle, display: "inline", marginRight: 8 }}>Exclude reason:</label>
@@ -1131,10 +1133,10 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                 );
               }
               return (
-                <tr key={t.tenant_id} style={rowStyle}>
+                <tr key={rowKey} style={rowStyle}>
                   <td style={{ ...tdStyle, textAlign: "center" }}>
-                    <input type="checkbox" checked={selected.has(t.tenant_id)}
-                      onChange={() => toggleOne(t.tenant_id)} />
+                    <input type="checkbox" checked={selected.has(t.id)}
+                      onChange={() => toggleOne(t.id)} />
                   </td>
                   <td style={{ ...tdStyle, textAlign: "center" }} title={included ? "In plan" : t.exclude_reason || "Excluded"}>
                     {included ? "✅" : "🚫"}
@@ -1472,7 +1474,7 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
               <th style={thStyle}>Warm</th>
               <th style={thStyle}>Warm Risky</th>
               <th style={thStyle}>Cold</th>
-              <th style={thStyle}>Phase1 (h)</th>
+              <th style={thStyle}>Copy/Phase1 (h)</th>
               <th style={thStyle}>Cutover (h)</th>
               <th style={thStyle}>Downtime</th>
               <th style={thStyle}>Risk</th>
@@ -1533,7 +1535,7 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
                             <th style={thStyleSm}>OS Ver</th>
                             <th style={thStyleSm}>Mode</th>
                             <th style={thStyleSm}>Risk</th>
-                            <th style={thStyleSm}>Warm Phase1</th>
+                            <th style={thStyleSm}>Copy / Phase 1</th>
                             <th style={thStyleSm}>Cutover / Cold</th>
                             <th style={thStyleSm}>Downtime</th>
                           </tr>
@@ -1576,8 +1578,10 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
                               <td style={tdStyleSm}>
                                 <strong>
                                   {(() => {
+                                    // Warm: downtime = cutover only (copy phase is live)
+                                    // Cold: downtime = full copy (VM is off throughout)
                                     const h = v.migration_mode !== "cold_required"
-                                      ? Number(v.warm_phase1_hours) + Number(v.warm_cutover_hours)
+                                      ? Number(v.warm_cutover_hours)
                                       : Number(v.cold_downtime_hours);
                                     return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
                                   })()}
@@ -1794,17 +1798,18 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
     setLoading(true);
     setError("");
     try {
-      const [prof, nodeProf] = await Promise.all([
+      const [profResp, nodeProf] = await Promise.all([
         apiFetch("/api/migration/overcommit-profiles"),
         apiFetch(`/api/migration/projects/${projectId}/node-profiles`),
       ]);
-      setProfiles(prof);
-      setNodeProfiles(nodeProf);
+      setProfiles(profResp.profiles || []);
+      setNodeProfiles(nodeProf.profiles || []);
 
-      const inv = await apiFetch(`/api/migration/projects/${projectId}/node-inventory`).catch(() => null);
-      if (inv?.current_nodes != null) setExistingNodes(inv.current_nodes);
+      const invResp = await apiFetch(`/api/migration/projects/${projectId}/node-inventory`).catch(() => null);
+      if (invResp?.inventory?.current_nodes != null) setExistingNodes(invResp.inventory.current_nodes);
 
-      const quota = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const quotaResp = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const quota = quotaResp?.quota;
       if (quota) setQuotaResult(quota);
       if (quota?.profile) setActiveProfile(quota.profile);
     } catch (e: any) { setError(e.message); }
@@ -1815,7 +1820,7 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
     setError("");
     try {
       const result = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`);
-      setSizingResult(result);
+      setSizingResult(result.sizing || null);
     } catch (e: any) { setError(e.message); }
   };
 
@@ -1824,10 +1829,11 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
     try {
       await apiFetch(`/api/migration/projects/${projectId}/overcommit-profile`, {
         method: "PATCH",
-        body: JSON.stringify({ profile_name: name }),
+        body: JSON.stringify({ overcommit_profile_name: name }),
       });
       setActiveProfile(name);
-      const quota = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const quotaResp = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const quota = quotaResp?.quota;
       if (quota) setQuotaResult(quota);
       setMsg("Overcommit profile updated.");
       setTimeout(() => setMsg(""), 3000);
@@ -1867,13 +1873,13 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
     } catch (e: any) { setError(e.message); }
   };
 
-  const setDefaultProfile = async (id: number) => {
+  const setDefaultProfile = async (np: NodeProfile) => {
     setError("");
     try {
-      await apiFetch(`/api/migration/projects/${projectId}/node-profiles/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ is_default: true }),
-      }).catch(() => null);
+      await apiFetch(`/api/migration/projects/${projectId}/node-profiles`, {
+        method: "POST",
+        body: JSON.stringify({ ...np, is_default: true }),
+      });
       load();
     } catch { load(); }
   };
@@ -2054,7 +2060,7 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
                   <td style={tdStyle}>{p.max_cpu_util_pct}%</td>
                   <td style={tdStyle}>{p.max_ram_util_pct}%</td>
                   <td style={tdStyle}>{p.max_disk_util_pct}%</td>
-                  <td style={tdStyle}>{p.is_default ? "⭐" : <button onClick={() => setDefaultProfile(p.id)} style={btnSmall}>Set</button>}</td>
+                  <td style={tdStyle}>{p.is_default ? "⭐" : <button onClick={() => setDefaultProfile(p)} style={btnSmall}>Set</button>}</td>
                   <td style={tdStyle}>
                     <button onClick={() => deleteNodeProfile(p.id)}
                       style={{ ...btnSmall, color: "#dc2626" }} title="Delete">🗑</button>
@@ -2164,13 +2170,15 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
   const loadGaps = async () => {
     try {
       const g = await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps`);
-      setGaps(g);
+      setGaps(g.gaps || []);
+      if (g.readiness_score != null) setReadinessScore(g.readiness_score);
     } catch { /* silent */ }
   };
 
   const loadProject = async () => {
     try {
-      const p = await apiFetch(`/api/migration/projects/${projectId}`);
+      const resp = await apiFetch(`/api/migration/projects/${projectId}`);
+      const p = resp.project || resp;
       if (p.pcd_auth_url) setPcdUrl(p.pcd_auth_url);
       if (p.pcd_region) setPcdRegion(p.pcd_region || "region-one");
       if (p.pcd_readiness_score != null) setReadinessScore(p.pcd_readiness_score);
@@ -2440,7 +2448,7 @@ const subTabStyle: React.CSSProperties = {
 };
 
 const subTabActive: React.CSSProperties = {
-  borderBottomColor: "#3b82f6", color: "#3b82f6",
+  borderBottom: "2px solid #3b82f6", color: "#3b82f6",
 };
 
 const btnPrimary: React.CSSProperties = {

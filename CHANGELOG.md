@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.1] - 2026-02-26
+
+### Fixed
+- **Tenant checkbox selected all instead of one** — `Tenant` interface was mapped to `tenant_id` but the API returns `id` (the actual DB primary key). `tenant_id` was always `undefined`, causing `selected.has(undefined)` to behave incorrectly. All checkbox logic now uses `t.id`; the interface declares `id: number` with `tenant_id` as an optional alias.
+- **Capacity tab showed blank page / `profiles.map is not a function`** — `CapacityPlanningView` was assigning full API response objects (`{status, profiles:[...]}`) directly to state. All Phase 2 API responses are now correctly unwrapped: `.profiles`, `.quota`, `.inventory.current_nodes`, `.sizing`.
+- **`setProfile()` body field mismatch** — PATCH body was sending `{profile_name}` but the Pydantic model `UpdateOvercommitRequest` expects `{overcommit_profile_name}`. Corrected field name.
+- **`setDefaultProfile()` called non-existent endpoint** — Was issuing `PATCH /node-profiles/{id}` which does not exist. Now correctly uses `POST /node-profiles` (upsert) with `is_default: true` on the full profile object.
+- **PCD Readiness tab — blank on load** — `loadProject` was reading `p.pcd_auth_url` from the raw response but the endpoint returns `{status, project: {...}}`. Fixed to `resp.project`. `loadGaps` was similarly unwrapping `g` instead of `g.gaps` / `g.readiness_score`.
+- **Duplicate React key warning (`Autosoft2`)** — All tenant `key` props were `undefined` because `t.tenant_id` was undefined; React deduplicated all rows to a single key. Fixed by using `t.id` as the unique key.
+- **React Fragment key error on edit row** — The inline-edit reason `<tr>` had no `key`. Now uses an explicit `rowKey`-derived key.
+- **`borderBottom` / `borderBottomColor` style conflict on sub-nav tabs** — `subTabStyle` declared `borderBottom: "2px solid transparent"` while `subTabActive` tried to override with `borderBottomColor`. CSS shorthand resets the color, so the active border never appeared. Fixed `subTabActive` to use `borderBottom: "2px solid #3b82f6"`.
+- **Warm migration downtime was too high** — Downtime column was summing `warm_phase1_hours + warm_cutover_hours`. Phase 1 is a live copy with no downtime; only `warm_cutover_hours` (the incremental delta + switchover window) counts as actual downtime. Fixed.
+- **Column header mislabelled** — "Warm Phase1" renamed to "Copy / Phase 1" to accurately describe the live-copy phase with no downtime.
+
 ## [1.29.0] - 2026-02-27
 
 ### Added
@@ -1072,7 +1086,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.4.1] - 2026-02-15
 
-### Fixed
+cd ..\### Fixed
 - **Snapshot Restore — cloud-init user_data preservation** — restored VMs now receive the original VM's cloud-init `user_data` (base64-encoded), preventing cloud-init from resetting credentials or configuration on first boot
   - During plan building, the original VM's `user_data` is fetched via Nova API (microversion 2.3+, `OS-EXT-SRV-ATTR:user_data`)
   - Stored in the plan's VM section and passed to `create_server` on restore execution
