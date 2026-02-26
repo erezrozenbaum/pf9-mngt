@@ -28,7 +28,11 @@ async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `API error ${res.status}`);
+    const detail = err.detail;
+    const msg = Array.isArray(detail)
+      ? detail.map((d: any) => `${(d.loc || []).join('.')}: ${d.msg}`).join('; ')
+      : (detail || `API error ${res.status}`);
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -896,9 +900,11 @@ function TenantsView({ tenants, projectId, onRefresh }: {
     if (selected.size === 0) return;
     setError("");
     try {
+      const ids = Array.from(selected).filter(id => id != null && Number.isFinite(id));
+      if (ids.length === 0) { setSelected(new Set()); return; }
       await apiFetch(`/api/migration/projects/${projectId}/tenants/bulk-scope`, {
         method: "PATCH",
-        body: JSON.stringify({ tenant_ids: Array.from(selected), include_in_plan: include }),
+        body: JSON.stringify({ tenant_ids: ids, include_in_plan: include }),
       });
       setSelected(new Set());
       onRefresh();
@@ -1438,12 +1444,18 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
       {/* Project summary */}
       <div style={sectionStyle}>
         <h3 style={{ marginTop: 0 }}>Project Summary</h3>
+        {ps.excluded_tenants > 0 && (
+          <div style={{ marginBottom: 10, padding: "6px 12px", background: "#fef3c7", borderRadius: 6,
+            border: "1px solid #fbbf24", fontSize: "0.85rem", color: "#92400e" }}>
+            ⚠️ <strong>{ps.excluded_tenants} tenant{ps.excluded_tenants > 1 ? "s" : ""} excluded</strong> from this plan. Totals reflect included tenants only.
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
           <StatCard label="Total VMs" value={ps.total_vms} />
           <StatCard label="Total Disk (TB)" value={ps.total_disk_tb} />
           <StatCard label="Warm Eligible" value={ps.warm_eligible} />
           <StatCard label="Cold Required" value={ps.cold_required} />
-          <StatCard label="Tenants" value={ps.total_tenants} />
+          <StatCard label="Tenants (incl.)" value={ps.total_tenants} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 12 }}>
           <StatCard label="Agents" value={ps.agent_count} />
@@ -1561,17 +1573,18 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
                                 </span>
                               </td>
                               <td style={tdStyleSm}>
-                                {v.migration_mode !== "cold_required" ? (() => {
-                                  const h = Number(v.warm_phase1_hours);
+                                {(() => {
+                                  // Warm: Phase 1 copy (live). Cold: full offline copy = the copy phase too.
+                                  const h = v.migration_mode !== "cold_required"
+                                    ? Number(v.warm_phase1_hours)
+                                    : Number(v.cold_total_hours);
                                   return h < 0.017 ? "<1min" : h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
-                                })() : "—"}
+                                })()} 
                               </td>
                               <td style={tdStyleSm}>
-                                {v.migration_mode !== "cold_required" ? (() => {
+                                {(() => {
+                                  // Warm: cutover only. Cold: boot/connect phase (same estimate as warm cutover)
                                   const h = Number(v.warm_cutover_hours);
-                                  return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
-                                })() : (() => {
-                                  const h = Number(v.cold_total_hours);
                                   return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
                                 })()}
                               </td>
@@ -1770,8 +1783,9 @@ interface SizingResult {
   ha_policy: string;
   nodes_recommended: number;
   binding_dimension: string;
-  nodes_by_dimension: { cpu: number; ram: number; disk: number };
-  post_migration_utilisation: { cpu_pct: number; ram_pct: number; disk_pct: number };
+  nodes_by_dimension: { cpu: number; ram: number };
+  post_migration_utilisation: { cpu_pct: number; ram_pct: number };
+  disk_tb_required?: number;
   warnings: string[];
 }
 
@@ -1782,6 +1796,10 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
   const [nodeProfiles, setNodeProfiles] = useState<NodeProfile[]>([]);
   const [sizingResult, setSizingResult] = useState<SizingResult | null>(null);
   const [existingNodes, setExistingNodes] = useState(0);
+  const [invVcpuUsed, setInvVcpuUsed] = useState(0);
+  const [invRamUsed, setInvRamUsed] = useState(0);
+  const [invDiskUsed, setInvDiskUsed] = useState(0);
+  const [liveCluster, setLiveCluster] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -1806,12 +1824,26 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
       setNodeProfiles(nodeProf.profiles || []);
 
       const invResp = await apiFetch(`/api/migration/projects/${projectId}/node-inventory`).catch(() => null);
-      if (invResp?.inventory?.current_nodes != null) setExistingNodes(invResp.inventory.current_nodes);
+      if (invResp?.inventory) {
+        const inv = invResp.inventory;
+        if (inv.current_nodes        != null) setExistingNodes(inv.current_nodes);
+        if (inv.current_vcpu_used    != null) setInvVcpuUsed(inv.current_vcpu_used);
+        if (inv.current_ram_gb_used  != null) setInvRamUsed(inv.current_ram_gb_used);
+        if (inv.current_disk_tb_used != null) setInvDiskUsed(inv.current_disk_tb_used);
+      }
+
+      // Load live PCD cluster data from hypervisors table
+      const liveResp = await apiFetch(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
+      if (liveResp?.live) setLiveCluster(liveResp.live);
 
       const quotaResp = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
       const quota = quotaResp?.quota;
       if (quota) setQuotaResult(quota);
-      if (quota?.profile) setActiveProfile(quota.profile);
+      if (quota?.profile) setActiveProfile(typeof quota.profile === 'object' ? quota.profile.profile_name : quota.profile);
+
+      // Auto-compute sizing if node profiles exist
+      const sizingResp = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`).catch(() => null);
+      if (sizingResp?.sizing) setSizingResult(sizingResp.sizing);
     } catch (e: any) { setError(e.message); }
     setLoading(false);
   };
@@ -1846,10 +1878,19 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
       const defaultProfile = nodeProfiles.find(p => p.is_default) || nodeProfiles[0];
       await apiFetch(`/api/migration/projects/${projectId}/node-inventory`, {
         method: "PUT",
-        body: JSON.stringify({ current_nodes: existingNodes, profile_id: defaultProfile?.id }),
+        body: JSON.stringify({
+          current_nodes:        existingNodes,
+          profile_id:           defaultProfile?.id,
+          current_vcpu_used:    invVcpuUsed,
+          current_ram_gb_used:  invRamUsed,
+          current_disk_tb_used: invDiskUsed,
+        }),
       });
-      setMsg("Inventory saved.");
-      setTimeout(() => setMsg(""), 3000);
+      setMsg("Inventory saved — recomputing sizing…");
+      // Auto-recompute so the displayed result reflects the new baseline
+      await computeSizing();
+      setMsg("Inventory saved and sizing updated.");
+      setTimeout(() => setMsg(""), 4000);
     } catch (e: any) { setError(e.message); }
   };
 
@@ -1922,7 +1963,7 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
       {/* ---- Phase 2C: Quota Table ---- */}
       {quotaResult && (
         <div style={sectionStyle}>
-          <h3 style={{ marginTop: 0 }}>📊 Quota Requirements ({quotaResult.profile})</h3>
+          <h3 style={{ marginTop: 0 }}>📊 Quota Requirements ({typeof quotaResult.profile === 'object' ? quotaResult.profile.profile_name : quotaResult.profile})</h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
             <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
               <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>vCPU needed</div>
@@ -1956,12 +1997,12 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
               {quotaResult.per_tenant.map(pt => (
                 <tr key={pt.tenant_name} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
                   <td style={tdStyle}><strong>{pt.tenant_name}</strong></td>
-                  <td style={tdStyle}>{pt.vcpu_allocated}</td>
-                  <td style={tdStyle}>{pt.vcpu_recommended}</td>
-                  <td style={tdStyle}>{pt.ram_gb_allocated.toFixed(0)}</td>
-                  <td style={tdStyle}>{pt.ram_gb_recommended.toFixed(0)}</td>
-                  <td style={tdStyle}>{pt.disk_tb_allocated.toFixed(3)}</td>
-                  <td style={tdStyle}>{pt.disk_tb_recommended.toFixed(3)}</td>
+                  <td style={tdStyle}>{pt.vcpu_alloc ?? pt.vcpu_allocated ?? 0}</td>
+                  <td style={tdStyle}>{pt.vcpu_recommended ?? 0}</td>
+                  <td style={tdStyle}>{((pt.ram_gb_alloc ?? pt.ram_gb_allocated) ?? 0).toFixed(0)}</td>
+                  <td style={tdStyle}>{(pt.ram_gb_recommended ?? 0).toFixed(0)}</td>
+                  <td style={tdStyle}>{((pt.disk_gb_alloc ?? pt.disk_tb_allocated) != null ? ((pt.disk_gb_alloc ?? pt.disk_tb_allocated) / 1024) : 0).toFixed(3)}</td>
+                  <td style={tdStyle}>{((pt.disk_gb_recommended ?? pt.disk_tb_recommended) != null ? ((pt.disk_gb_recommended ?? pt.disk_tb_recommended) / 1024) : 0).toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>
@@ -2075,14 +2116,69 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
       {/* ---- Phase 2D: Existing Inventory + Sizing ---- */}
       <div style={sectionStyle}>
         <h3 style={{ marginTop: 0 }}>📐 Node Sizing</h3>
-        <div style={{ display: "flex", gap: 12, alignItems: "end", marginBottom: 16, flexWrap: "wrap" }}>
+
+        {/* Live PCD cluster from inventory DB */}
+        {liveCluster && liveCluster.node_count > 0 && (
+          <div style={{ ...sectionStyle, margin: "0 0 16px", background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <strong style={{ color: "#15803d", fontSize: "0.9rem" }}>🖥️ Live PCD Cluster (from inventory DB)</strong>
+              <button
+                onClick={() => {
+                  setExistingNodes(liveCluster.node_count);
+                  setInvVcpuUsed(liveCluster.vcpus_used);
+                  setInvRamUsed(liveCluster.ram_gb_used);
+                  setInvDiskUsed(liveCluster.disk_tb_used);
+                  setMsg("Synced from live inventory — click 'Save & Recompute' to apply.");
+                  setTimeout(() => setMsg(""), 4000);
+                }}
+                style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 12px" }}
+              >
+                📥 Sync to Inventory
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
+              {[{label: "Nodes",       val: liveCluster.node_count,          suf: ""},
+                {label: "Total vCPU",  val: liveCluster.total_vcpus,         suf: ""},
+                {label: "Total RAM",   val: `${liveCluster.total_ram_gb} GB`, suf: ""},
+                {label: "vCPU in use", val: liveCluster.vcpus_used,          suf: ""},
+                {label: "RAM in use",  val: `${liveCluster.ram_gb_used} GB`,  suf: ""},
+                {label: "Disk alloc",  val: `${liveCluster.disk_tb_used} TB`, suf: ""},
+              ].map(d => (
+                <div key={d.label} style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>{d.label}</div>
+                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "#15803d" }}>{d.val}{d.suf}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Manual inventory form */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
           <div>
             <label style={labelStyle}>Existing PCD nodes</label>
-            <input type="number" style={{ ...inputStyle, width: 120 }} value={existingNodes}
+            <input type="number" style={inputStyle} value={existingNodes}
               onChange={e => setExistingNodes(+e.target.value)} min={0} />
           </div>
-          <button onClick={saveInventory} style={btnSecondary}>💾 Save Inventory</button>
-          <button onClick={computeSizing} style={btnPrimary}>📐 Compute Sizing</button>
+          <div>
+            <label style={labelStyle}>vCPU already used</label>
+            <input type="number" style={inputStyle} value={invVcpuUsed}
+              onChange={e => setInvVcpuUsed(+e.target.value)} min={0} />
+          </div>
+          <div>
+            <label style={labelStyle}>RAM already used (GB)</label>
+            <input type="number" style={inputStyle} value={invRamUsed}
+              onChange={e => setInvRamUsed(+e.target.value)} min={0} />
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-end" }}>
+            <div style={{ fontSize: "0.78rem", color: "#6b7280", padding: "0 0 8px", lineHeight: 1.4 }}>
+              💡 Disk (Cinder) is not a node-sizing driver — it scales independently via your storage backend.
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <button onClick={saveInventory} style={btnPrimary}>💾 Save &amp; Recompute</button>
+          <button onClick={computeSizing} style={btnSecondary}>📐 Compute Only (no save)</button>
         </div>
 
         {sizingResult && (
@@ -2106,7 +2202,7 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
                 <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>binding: {sizingResult.binding_dimension}</div>
               </div>
               <div style={{ ...sectionStyle, margin: 0 }}>
-                <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: 8 }}>Post-migration util</div>
+                <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: 8 }}>Post-migration util (compute)</div>
                 {util && (
                   <>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -2117,10 +2213,13 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
                       <span style={{ fontSize: "0.8rem" }}>RAM</span>
                       <span style={{ fontWeight: 600, color: utilColor(util.ram_pct) }}>{util.ram_pct.toFixed(1)}%</span>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: "0.8rem" }}>Disk</span>
-                      <span style={{ fontWeight: 600, color: utilColor(util.disk_pct) }}>{util.disk_pct.toFixed(1)}%</span>
-                    </div>
+                    {sizingResult.disk_tb_required != null && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border, #e5e7eb)" }}>
+                        <div style={{ fontSize: "0.72rem", color: "#6b7280" }}>Cinder storage needed</div>
+                        <div style={{ fontWeight: 600, color: "#3b82f6" }}>{sizingResult.disk_tb_required.toFixed(2)} TB</div>
+                        <div style={{ fontSize: "0.68rem", color: "#9ca3af" }}>provision separately</div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -2166,13 +2265,30 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
   const [savingSettings, setSavingSettings] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [sizingData, setSizingData] = useState<any>(null);
+  const [quotaSummary, setQuotaSummary] = useState<any>(null);
+  const [capacityError, setCapacityError] = useState("");
 
   const loadGaps = async () => {
     try {
       const g = await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps`);
       setGaps(g.gaps || []);
-      if (g.readiness_score != null) setReadinessScore(g.readiness_score);
+      if (g.readiness_score != null) setReadinessScore(Number(g.readiness_score));
     } catch { /* silent */ }
+  };
+
+  const loadCapacity = async () => {
+    setCapacityError("");
+    try {
+      const qr = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      if (qr?.quota) setQuotaSummary(qr.quota.totals_recommended);
+      const sr = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`).catch(() => null);
+      if (sr?.sizing) {
+        // Enrich sizing with live cluster data so node count reflects actual inventory
+        const lr = await apiFetch(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
+        setSizingData(lr?.live?.node_count ? { ...sr.sizing, _live: lr.live } : sr.sizing);
+      }
+    } catch (e: any) { setCapacityError(e.message); }
   };
 
   const loadProject = async () => {
@@ -2181,13 +2297,14 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
       const p = resp.project || resp;
       if (p.pcd_auth_url) setPcdUrl(p.pcd_auth_url);
       if (p.pcd_region) setPcdRegion(p.pcd_region || "region-one");
-      if (p.pcd_readiness_score != null) setReadinessScore(p.pcd_readiness_score);
+      if (p.pcd_readiness_score != null) setReadinessScore(Number(p.pcd_readiness_score));
     } catch { /* silent */ }
   };
 
   React.useEffect(() => {
     loadProject();
     loadGaps();
+    loadCapacity();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
@@ -2211,7 +2328,7 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
     try {
       const result = await apiFetch(`/api/migration/projects/${projectId}/pcd-gap-analysis`, { method: "POST" });
       setGaps(result.gaps || []);
-      if (result.readiness_score != null) setReadinessScore(result.readiness_score);
+      if (result.readiness_score != null) setReadinessScore(Number(result.readiness_score));
       setMsg(`Gap analysis complete. Found ${(result.gaps || []).length} gaps.`);
       setTimeout(() => setMsg(""), 5000);
     } catch (e: any) { setError(e.message); }
@@ -2230,6 +2347,7 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
 
   const scoreColor = (score: number) =>
     score >= 80 ? "#16a34a" : score >= 50 ? "#d97706" : "#dc2626";
+  const utilColor = (pct: number) => pct > 85 ? "#dc2626" : pct > 70 ? "#d97706" : "#16a34a";
 
   const severityStyle = (sev: string): React.CSSProperties =>
     sev === "critical" ? { background: "#fee2e2", color: "#dc2626" } :
@@ -2241,26 +2359,138 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
       {error && <div style={alertError}>{error}</div>}
       {msg && <div style={alertSuccess}>{msg}</div>}
 
-      {/* PCD Settings */}
-      <div style={sectionStyle}>
-        <h3 style={{ marginTop: 0 }}>🔌 PCD Connection Settings</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 12, alignItems: "end" }}>
+      {/* PCD Connection info */}
+      <div style={{ ...sectionStyle, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <label style={labelStyle}>PCD Auth URL <span style={{ fontWeight: 400, color: "#6b7280" }}>(leave blank to use global config)</span></label>
-            <input style={{ ...inputStyle, width: "100%" }} value={pcdUrl}
-              onChange={e => setPcdUrl(e.target.value)}
-              placeholder="https://my-pcd.example.com/keystone/v3" />
+            <strong style={{ color: "#15803d" }}>🔌 PCD Connection</strong>
+            <span style={{ marginLeft: 12, fontSize: "0.85rem", color: "#6b7280" }}>
+              Using global PF9 credentials from server config (.env). Gap analysis connects to your PCD environment automatically.
+            </span>
           </div>
-          <div>
-            <label style={labelStyle}>Region</label>
-            <input style={inputStyle} value={pcdRegion}
-              onChange={e => setPcdRegion(e.target.value)}
-              placeholder="region-one" />
-          </div>
-          <button onClick={saveSettings} disabled={savingSettings} style={btnSecondary}>
-            {savingSettings ? "Saving…" : "💾 Save"}
-          </button>
+          {pcdUrl && (
+            <span style={{ fontSize: "0.78rem", color: "#6b7280", fontFamily: "monospace" }}>{pcdUrl}</span>
+          )}
         </div>
+      </div>
+
+      {/* ── Capacity Assessment ── */}
+      <div style={sectionStyle}>
+        <h3 style={{ marginTop: 0 }}>📀 Capacity Assessment</h3>
+        {capacityError && (
+          <div style={{ color: "#6b7280", fontSize: "0.85rem", marginBottom: 8 }}>
+            {capacityError.includes("No node profile") ?
+              <span>⚠️ No PCD node profile configured. Add one in the <strong>⚖️ Capacity</strong> tab to enable capacity assessment.</span> :
+              <span>Could not load capacity data: {capacityError}</span>}
+          </div>
+        )}
+        {!sizingData && !capacityError && (
+          <p style={{ color: "#6b7280", fontSize: "0.85rem" }}>No capacity data yet. Add a node profile in the ⚖️ Capacity tab and run the assessment.</p>
+        )}
+        {quotaSummary && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#374151", marginBottom: 8 }}>Migration Requires (recommended PCD quotas)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "10px 8px" }}>
+                <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>vCPU</div>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{quotaSummary.vcpu?.toLocaleString() ?? "—"}</div>
+              </div>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "10px 8px" }}>
+                <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>RAM (GB)</div>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{Number(quotaSummary.ram_gb ?? 0).toFixed(0)}</div>
+              </div>
+              <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "10px 8px" }}>
+                <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>Disk (TB)</div>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{Number(quotaSummary.disk_tb ?? 0).toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
+        )}
+        {sizingData && (() => {
+          const s = sizingData;
+          const p = s.post_migration_utilisation || s.post_migration_utilization || {};
+          const np = s.node_profile || {};
+          const needMore = s.nodes_additional_required > 0;
+          return (
+            <div>
+              <div style={{ fontSize: "0.8rem", fontWeight: 600, color: "#374151", marginBottom: 8 }}>
+                PCD Node Profile: <code style={{ fontWeight: 400 }}>{np.profile_name || "—"}</code>
+                <span style={{ marginLeft: 12, color: "#6b7280", fontWeight: 400 }}>
+                  {np.cpu_threads || (np.cpu_cores * 2)} threads · {np.ram_gb} GB RAM · {np.storage_tb} TB storage per node
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
+                <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "12px 8px",
+                  borderLeft: `4px solid ${needMore ? "#d97706" : "#16a34a"}` }}>
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>Nodes Rec. (incl. HA)</div>
+                  <div style={{ fontSize: "1.8rem", fontWeight: 800, color: "#3b82f6" }}>{s.nodes_recommended}</div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>{s.ha_policy} — {s.ha_spares} spare{s.ha_spares !== 1 ? "s" : ""}</div>
+                </div>
+                <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "12px 8px" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>Currently Deployed</div>
+                  <div style={{ fontSize: "1.8rem", fontWeight: 800 }}>
+                    {s._live?.node_count ?? s.existing_nodes}
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>
+                    {s._live ? "from inventory DB" : "from manual entry"}
+                  </div>
+                  {s._live && s._live.node_count !== s.existing_nodes && (
+                    <div style={{ fontSize: "0.68rem", color: "#d97706" }}>
+                      ⚠️ inventory set to {s.existing_nodes}
+                    </div>
+                  )}
+                </div>
+                <div style={{ ...sectionStyle, textAlign: "center", margin: 0, padding: "12px 8px",
+                  background: needMore ? "#fffbeb" : "#f0fdf4", border: `1px solid ${needMore ? "#fde68a" : "#bbf7d0"}` }}>
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>Additional Needed</div>
+                  <div style={{ fontSize: "1.8rem", fontWeight: 800,
+                    color: needMore ? "#d97706" : "#16a34a" }}>
+                    {needMore ? `+${s.nodes_additional_required}` : "✔ 0"}
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>
+                    {needMore ? "new HW nodes required" : "sufficient capacity"}
+                  </div>
+                </div>
+                <div style={{ ...sectionStyle, margin: 0, padding: "12px 8px" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#6b7280", marginBottom: 6 }}>Post-migration utilisation (compute)</div>
+                  {[{label:"CPU", pct: p.cpu_pct},{label:"RAM", pct: p.ram_pct}].map(d => (
+                    <div key={d.label} style={{ display:"flex", justifyContent:"space-between", marginBottom: 2 }}>
+                      <span style={{ fontSize: "0.78rem" }}>{d.label}</span>
+                      <span style={{ fontSize: "0.78rem", fontWeight: 600, color: utilColor(d.pct ?? 0) }}>
+                        {d.pct != null ? `${Number(d.pct).toFixed(1)}%` : "—"}
+                      </span>
+                    </div>
+                  ))}
+                  {s.disk_tb_required != null && (
+                    <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid var(--border, #e5e7eb)" }}>
+                      <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>Cinder storage needed</div>
+                      <div style={{ fontWeight: 700, color: "#3b82f6" }}>{Number(s.disk_tb_required).toFixed(2)} TB</div>
+                      <div style={{ fontSize: "0.66rem", color: "#9ca3af" }}>provision via storage backend</div>
+                    </div>
+                  )}
+                  <div style={{ fontSize: "0.7rem", color: "#9ca3af", marginTop: 4 }}>
+                    binding: <strong>{s.binding_dimension}</strong>
+                  </div>
+                </div>
+              </div>
+              {s.nodes_by_dimension && (
+                <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: 8 }}>
+                  Nodes by dimension — CPU: {s.nodes_by_dimension.cpu} · RAM: {s.nodes_by_dimension.ram}
+                </div>
+              )}
+              {s.warnings?.length > 0 && (
+                <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "10px 14px" }}>
+                  <strong style={{ color: "#92400e", fontSize: "0.85rem" }}>⚠️ Capacity Warnings</strong>
+                  <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                    {s.warnings.map((w: string, i: number) => (
+                      <li key={i} style={{ fontSize: "0.82rem", color: "#92400e" }}>{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Readiness Score + Run Button */}
@@ -2311,41 +2541,75 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
                 <th style={thStyle}>Resource</th>
                 <th style={thStyle}>Tenant</th>
                 <th style={thStyle}>Severity</th>
+                <th style={thStyle}>Why / Details</th>
                 <th style={thStyle}>Resolution</th>
                 <th style={thStyle}>Status</th>
               </tr>
             </thead>
             <tbody>
-              {gaps.map(g => (
-                <tr key={g.id} style={{
-                  borderBottom: "1px solid var(--border, #e5e7eb)",
-                  opacity: g.resolved ? 0.5 : 1,
-                }}>
-                  <td style={tdStyle}>
-                    <span style={{ ...pillStyle, background: "#f3f4f6", color: "#374151" }}>
-                      {g.gap_type.replace(/_/g, " ")}
-                    </span>
-                  </td>
-                  <td style={tdStyle}><code style={{ fontSize: "0.8rem" }}>{g.resource_name}</code></td>
-                  <td style={tdStyle}>{g.tenant_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
-                  <td style={tdStyle}>
-                    <span style={{ ...pillStyle, ...severityStyle(g.severity) }}>
-                      {g.severity}
-                    </span>
-                  </td>
-                  <td style={{ ...tdStyle, maxWidth: 320, fontSize: "0.82rem" }}>{g.resolution}</td>
-                  <td style={tdStyle}>
-                    {g.resolved ? (
-                      <span style={{ ...pillStyle, background: "#dcfce7", color: "#16a34a" }}>✓ Resolved</span>
-                    ) : (
-                      <button onClick={() => resolveGap(g.id)}
-                        style={{ ...btnSmall, background: "#16a34a", color: "#fff", fontSize: "0.78rem" }}>
-                        Mark Resolved
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {gaps.map(g => {
+                const detailKeys = Object.keys(g.details || {}).filter(k => k !== "vms");
+                return (
+                  <tr key={g.id} style={{
+                    borderBottom: "1px solid var(--border, #e5e7eb)",
+                    opacity: g.resolved ? 0.5 : 1,
+                  }}>
+                    <td style={tdStyle}>
+                      <span style={{ ...pillStyle, background: "#f3f4f6", color: "#374151" }}>
+                        {g.gap_type.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td style={tdStyle}><code style={{ fontSize: "0.8rem" }}>{g.resource_name}</code></td>
+                    <td style={tdStyle}>{g.tenant_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                    <td style={tdStyle}>
+                      <span style={{ ...pillStyle, ...severityStyle(g.severity) }}>
+                        {g.severity}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle, maxWidth: 260 }}>
+                      {detailKeys.length > 0 ? (
+                        <div style={{ fontSize: "0.78rem" }}>
+                          {detailKeys.map(k => (
+                            <div key={k} style={{ display: "flex", gap: 4, marginBottom: 2 }}>
+                              <span style={{ color: "#9ca3af", minWidth: 80, flexShrink: 0 }}>{k.replace(/_/g, " ")}:</span>
+                              <span style={{ fontWeight: 600, color: "#374151", wordBreak: "break-all" }}>
+                                {k === "ram_mb"
+                                  ? `${Math.round(Number(g.details[k]) / 1024)} GB`
+                                  : String(g.details[k])}
+                              </span>
+                            </div>
+                          ))}
+                          {g.details?.vms?.length > 0 && (
+                            <details style={{ marginTop: 4 }}>
+                              <summary style={{ cursor: "pointer", color: "#6b7280", fontSize: "0.75rem" }}>
+                                {g.details.vms.length} affected VM{g.details.vms.length !== 1 ? "s" : ""}
+                              </summary>
+                              <div style={{ marginTop: 4, maxHeight: 100, overflowY: "auto" }}>
+                                {g.details.vms.map((v: string, i: number) => (
+                                  <div key={i} style={{ fontSize: "0.72rem", color: "#374151" }}>{v}</div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      ) : (
+                        <span style={{ color: "#9ca3af", fontSize: "0.78rem" }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ ...tdStyle, maxWidth: 280, fontSize: "0.82rem" }}>{g.resolution}</td>
+                    <td style={tdStyle}>
+                      {g.resolved ? (
+                        <span style={{ ...pillStyle, background: "#dcfce7", color: "#16a34a" }}>✓ Resolved</span>
+                      ) : (
+                        <button onClick={() => resolveGap(g.id)}
+                          style={{ ...btnSmall, background: "#16a34a", color: "#fff", fontSize: "0.78rem" }}>
+                          Mark Resolved
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

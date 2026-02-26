@@ -1002,7 +1002,8 @@ def estimate_vm_time(
     warm_cutover = cutover_overhead_hours
 
     # ── Cold migration ──
-    # Must transfer full provisioned disk at raw bandwidth
+    # Must transfer full provisioned disk at raw bandwidth.
+    # Entire copy is offline. After copy, same boot/connect cutover applies.
     cold_total = total_disk_gb / gb_per_hour if gb_per_hour > 0 else 0
 
     return VMTimeEstimate(
@@ -1015,7 +1016,7 @@ def estimate_vm_time(
         warm_total_hours=round(warm_phase1 + warm_cutover, 2),
         warm_downtime_hours=round(warm_cutover, 2),
         cold_total_hours=round(cold_total, 2),
-        cold_downtime_hours=round(cold_total, 2),
+        cold_downtime_hours=round(cold_total + warm_cutover, 2),
         mode=mode,
     )
 
@@ -1424,13 +1425,11 @@ def compute_node_sizing(
 
     nodes_for_cpu  = math.ceil(additional_cpu  / eff_cpu_per_node)  if eff_cpu_per_node  > 0 else 0
     nodes_for_ram  = math.ceil(additional_ram  / eff_ram_per_node)  if eff_ram_per_node  > 0 else 0
-    nodes_for_disk = math.ceil(additional_disk / eff_disk_per_node) if eff_disk_per_node > 0 else 0
 
-    nodes_additional = max(nodes_for_cpu, nodes_for_ram, nodes_for_disk)
-    binding_dimension = (
-        "cpu"  if nodes_additional == nodes_for_cpu  and nodes_for_cpu  >= max(nodes_for_ram, nodes_for_disk)
-        else "ram" if nodes_for_ram >= nodes_for_disk else "disk"
-    )
+    # NOTE: disk is Cinder block storage — it scales independently from compute nodes.
+    # We report the disk requirement separately but do NOT let it drive node count.
+    nodes_additional = max(nodes_for_cpu, nodes_for_ram)
+    binding_dimension = "cpu" if nodes_for_cpu >= nodes_for_ram else "ram"
 
     total_nodes_min = inv_nodes + nodes_additional
 
@@ -1442,23 +1441,24 @@ def compute_node_sizing(
 
     total_nodes_recommended = total_nodes_min + ha_nodes
 
-    # Post-migration utilisation with recommended cluster
+    # Post-migration utilisation with recommended cluster (compute only)
     cluster_vcpu  = total_nodes_recommended * cpu_threads
     cluster_ram   = total_nodes_recommended * ram_gb_node
-    cluster_disk  = total_nodes_recommended * storage_tb_node
 
     post_cpu_pct  = round((req_vcpu + inv_vcpu_used) / cluster_vcpu  * 100, 1) if cluster_vcpu  > 0 else 0
     post_ram_pct  = round((req_ram  + inv_ram_used)  / cluster_ram   * 100, 1) if cluster_ram   > 0 else 0
-    post_disk_pct = round((req_disk + inv_disk_used) / cluster_disk  * 100, 1) if cluster_disk  > 0 else 0
 
-    # Warnings
+    # Disk is Cinder — report the storage requirement but as a quota/capacity number, not node utilisation
+    disk_tb_required = round(req_disk + inv_disk_used, 3)
+
+    # Warnings (compute only — disk is a separate Cinder concern)
     warnings: List[str] = []
     if post_cpu_pct > float(node_profile.get("max_cpu_util_pct", 70.0)):
         warnings.append(f"Post-migration CPU utilisation {post_cpu_pct}% exceeds target {node_profile.get('max_cpu_util_pct', 70)}%")
     if post_ram_pct > float(node_profile.get("max_ram_util_pct", 75.0)):
         warnings.append(f"Post-migration RAM utilisation {post_ram_pct}% exceeds target {node_profile.get('max_ram_util_pct', 75)}%")
-    if post_disk_pct > float(node_profile.get("max_disk_util_pct", 70.0)):
-        warnings.append(f"Post-migration disk utilisation {post_disk_pct}% exceeds target {node_profile.get('max_disk_util_pct', 70)}%")
+    if disk_tb_required > 0:
+        warnings.append(f"Cinder storage required: {disk_tb_required} TB — provision independently via storage backend (Ceph/SAN/NFS)")
 
     return {
         "node_profile":             node_profile,
@@ -1472,13 +1472,12 @@ def compute_node_sizing(
         "nodes_by_dimension": {
             "cpu":  nodes_for_cpu,
             "ram":  nodes_for_ram,
-            "disk": nodes_for_disk,
         },
         "post_migration_utilisation": {
             "cpu_pct":  post_cpu_pct,
             "ram_pct":  post_ram_pct,
-            "disk_pct": post_disk_pct,
         },
+        "disk_tb_required": disk_tb_required,
         "warnings": warnings,
     }
 
