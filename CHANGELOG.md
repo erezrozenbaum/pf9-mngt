@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.3] - 2026-02-26
+
+### Added
+- **Excel report export** — New `GET /api/migration/projects/{id}/export-report.xlsx` endpoint returns a 4-sheet Excel workbook: Summary (project metadata + bandwidth model), Per-Tenant Assessment (one row per tenant, colour-coded), Daily Schedule (one row per VM per day, cold=red/risky=yellow), All VMs (full VM detail). Uses openpyxl with styled headers, alternating rows, freeze panes, and auto-filter.
+- **PDF report export** — New `GET /api/migration/projects/{id}/export-report.pdf` endpoint returns a landscape A4 PDF with Project Summary table, Per-Tenant Assessment table, and Daily Schedule table. Built with reportlab; includes page footer with project name + page numbers.
+- **Export buttons in UI** — Migration Plan tab now shows 5 action buttons: Refresh, Export JSON, Export CSV, **Export Excel** (blue), **Export PDF** (purple).
+- **`export_reports.py`** — New backend module (~320 lines) containing `generate_excel_report()` and `generate_pdf_report()` functions.
+- **reportlab dependency** — Added `reportlab>=4.0.0` to `api/requirements.txt`.
+
+### Fixed
+- **vCPU usage % was blank for all VMs** — RVTools vCPU sheet uses `overall` (MHz) and `cpus` columns instead of `% usage`. Parser now maps `overall` → `cpu_demand_mhz` and computes `cpu_usage_percent = min(demand / (cpus × 2400 MHz) × 100, 100)`.
+- **vMemory usage % was blank for all VMs** — RVTools vMemory sheet uses `consumed` (MiB) and `size mib` columns. Parser now maps `consumed` → `memory_usage_mb` and computes `memory_usage_percent = consumed / size_mib × 100`.
+- **Phase1 times all showing `<1min`** — `estimate_vm_time()` was multiplying `in_use_gb` by a 3–8% "compression factor" before dividing by bandwidth, giving nonsensical <1 min values for all VMs. Replaced with real-world bandwidth utilization (45–65% of raw throughput depending on VM size). Phase1 times now range ~3 min (40 GB) to ~1.5 h (1.4 TB).
+- **"Clear RVTools Data" left 121 network rows** — `migration_networks` was missing from the delete loop in `clear_rvtools_data()`. Now included.
+- **React key warning on tenant cards** — `key={t.tenant_id}` could be null; fallback to `t.tenant_name || idx`.
+
+### Changed
+- **MIGRATION_PLANNER_PHASES.md** — Phase 1.4 marked COMPLETE; Phase 1.5 (Report Export) added and marked COMPLETE.
+
 ## [1.28.2] - 2026-02-26
 
 ### Added
