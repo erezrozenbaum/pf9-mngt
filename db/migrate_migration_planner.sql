@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS migration_tenants (
     confirmed       BOOLEAN   NOT NULL DEFAULT false,
     vm_count        INTEGER   DEFAULT 0,
     total_disk_gb   NUMERIC(12,2) DEFAULT 0,
+    total_in_use_gb NUMERIC(12,2) DEFAULT 0,
     total_ram_mb    INTEGER   DEFAULT 0,
     total_vcpu      INTEGER   DEFAULT 0,
     -- Target mapping
@@ -171,6 +172,29 @@ CREATE TABLE IF NOT EXISTS migration_tenants (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mig_tenants_project ON migration_tenants(project_id);
+
+-- ─────────────────────────────────────────────────────────────
+-- 4b. Network infrastructure summary
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS migration_networks (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      TEXT NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
+    network_name    TEXT NOT NULL,
+    vlan_id         INT,
+    network_type    TEXT DEFAULT 'standard',
+    vm_count        INT DEFAULT 0,
+    subnet          TEXT,
+    gateway         TEXT,
+    dns_servers     TEXT,
+    ip_range        TEXT,
+    pcd_target      TEXT,
+    notes           TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (project_id, network_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mig_networks_project ON migration_networks(project_id);
 
 -- ─────────────────────────────────────────────────────────────
 -- 5. Source ESXi hosts (from vHost sheet)
@@ -254,9 +278,16 @@ CREATE TABLE IF NOT EXISTS migration_vms (
     ram_mb          INTEGER,
     -- Disk summary (detail in migration_vm_disks)
     total_disk_gb   NUMERIC(12,2),
+    provisioned_mb  BIGINT DEFAULT 0,      -- from vInfo Provisioned MB
+    in_use_mb       BIGINT DEFAULT 0,      -- from vInfo In Use MB
+    in_use_gb       NUMERIC(12,2) DEFAULT 0, -- best-known used disk (vPartition or vInfo)
+    partition_used_gb NUMERIC(12,2) DEFAULT 0, -- from vPartition sum
     disk_count      INTEGER DEFAULT 0,
     -- NIC summary (detail in migration_vm_nics)
     nic_count       INTEGER DEFAULT 0,
+    network_name    TEXT,                  -- primary NIC network (aggregated)
+    -- OS version (full string from RVTools)
+    os_version      TEXT,
     -- Snapshot summary (detail in migration_snapshots)
     snapshot_count  INTEGER DEFAULT 0,
     snapshot_oldest_days INTEGER,
@@ -325,6 +356,7 @@ CREATE TABLE IF NOT EXISTS migration_vm_disks (
     disk_label      TEXT,
     disk_path       TEXT,
     capacity_gb     NUMERIC(12,2),
+    consumed_gb     NUMERIC(12,2),         -- actual used space (from vPartition join)
     thin_provisioned BOOLEAN,
     eagerly_scrub   BOOLEAN,
     datastore       TEXT,
