@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.28.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.29.1-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -62,7 +62,7 @@ There is no native automated snapshot scheduler in Platform9 or OpenStack. No co
 
 Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You need full source inventory analysis, OS compatibility classification, warm-vs-cold mode determination, per-VM time estimation, per-tenant wave planning, and target capacity validation — before a single VM moves. No native tooling exists that ties RVTools data to PCD readiness in one workflow.
 
-**The engineering answer:** pf9-mngt includes a multi-phase Migration Planner. Phase 1 (complete) delivers RVTools ingestion with full vInfo, vPartition, vDisk, and vNetwork parsing; per-VM risk scoring (GREEN/YELLOW/RED); warm-eligible vs cold-required classification; OS version detection; network name mapping; actual disk usage from vPartition; per-VM/per-tenant time estimation with daily wave scheduling; and Excel/PDF combined report export (Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs). Phases 2–7 will add tenant exclusion, source→PCD target mapping, quota & overcommit modelling, N+1 HA-aware hardware node sizing, and end-to-end cutover orchestration. See [MIGRATION_PLANNER_PHASES.md](MIGRATION_PLANNER_PHASES.md) for the full roadmap.
+**The engineering answer:** pf9-mngt includes a multi-phase Migration Planner. Phase 1 (complete) delivers RVTools ingestion with full vInfo, vPartition, vDisk, and vNetwork parsing; per-VM risk scoring (GREEN/YELLOW/RED); warm-eligible vs cold-required classification; OS version detection; network name mapping; actual disk usage from vPartition; per-VM/per-tenant time estimation with daily wave scheduling; and Excel/PDF combined report export (Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs). Phase 2 (complete) adds per-tenant scoping and exclusion with bulk-select toolbar, source→PCD target mapping, overcommit profile modeling (aggressive/balanced/conservative), quota requirements engine, PCD node-profile CRUD with HA-aware N+1/N+2 sizing, and PCD readiness gap analysis with severity scoring and a 0–100 readiness score. Phases 3–7 will add migration wave planning, live execution tracking, and post-migration validation.
 
 ---
 
@@ -792,4 +792,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.28.3 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.29.1 | **Last Updated**: February 2026
