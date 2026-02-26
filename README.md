@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.26.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.28.3-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -58,7 +58,15 @@ There is no native automated snapshot scheduler in Platform9 or OpenStack. No co
 
 ---
 
-### 🐳 Deployment Flexibility — You Decide How to Run This
+### � Engineering Gap 4 — VMware Migration Assessment & Capacity Planning
+
+Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You need full source inventory analysis, OS compatibility classification, warm-vs-cold mode determination, per-VM time estimation, per-tenant wave planning, and target capacity validation — before a single VM moves. No native tooling exists that ties RVTools data to PCD readiness in one workflow.
+
+**The engineering answer:** pf9-mngt includes a multi-phase Migration Planner. Phase 1 (complete) delivers RVTools ingestion with full vInfo, vPartition, vDisk, and vNetwork parsing; per-VM risk scoring (GREEN/YELLOW/RED); warm-eligible vs cold-required classification; OS version detection; network name mapping; actual disk usage from vPartition; per-VM/per-tenant time estimation with daily wave scheduling; and Excel/PDF combined report export (Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs). Phases 2–7 will add tenant exclusion, source→PCD target mapping, quota & overcommit modelling, N+1 HA-aware hardware node sizing, and end-to-end cutover orchestration. See [MIGRATION_PLANNER_PHASES.md](MIGRATION_PLANNER_PHASES.md) for the full roadmap.
+
+---
+
+### �🐳 Deployment Flexibility — You Decide How to Run This
 
 pf9-mngt is currently developed on Windows using Docker containers. That is the development environment — but the architecture is deliberately not prescriptive about how you run it in production.
 
@@ -121,7 +129,7 @@ A 15-minute explainer video walking through the UI and key features:
 | **LDAP Server** | OpenLDAP | 389 | Enterprise authentication directory |
 | **LDAP Admin** | phpLDAPadmin | 8081 | Web-based LDAP management |
 | **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
-| **Database** | PostgreSQL 16 | 5432 | 48+ tables, history tracking, audit, metering, runbooks |
+| **Database** | PostgreSQL 16 | 5432 | 65+ tables, history tracking, audit, metering, runbooks, migration planner |
 | **Database Admin** | pgAdmin4 | 8080 | Web-based PostgreSQL management |
 | **Snapshot Worker** | Python | — | Automated snapshot management |
 | **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
@@ -665,6 +673,38 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.28.3 — Migration Plan Excel/PDF Export + Parser Fixes
+- ✅ **Excel Export** — `Export Excel` button downloads a 4-sheet openpyxl workbook: Project Summary, Per-Tenant Assessment (colour-coded), Daily Schedule, All VMs with full timing columns
+- ✅ **PDF Export** — `Export PDF` button downloads a landscape A4 PDF (reportlab) with all three sections and a page footer
+- ✅ **vCPU usage % fixed** — RVTools vCPU sheet uses `overall` (MHz) + `cpus`; parser now computes `cpu_usage_percent = min(demand / (cpus × 2400 MHz) × 100, 100)`
+- ✅ **vMemory usage % fixed** — RVTools vMemory sheet uses `consumed` + `size mib`; parser now computes correct memory %; all 448 VMs have valid values
+- ✅ **Phase1 times fixed** — `estimate_vm_time()` was multiplying data by 3–8% instead of applying 45–65% bandwidth utilization; fixed to show realistic 3 min–1.5 h range
+- ✅ **Clear RVTools fix** — `migration_networks` was missing from the reset loop; now included
+
+### v1.28.2 — Migration Plan UI, VM Expand, Per-Tenant Schedule
+- ✅ **Migration Plan tab** — Per-tenant assessment, phase-1/cutover/cold times, daily wave schedule, JSON + CSV export
+- ✅ **Expandable VM rows** — Click any VM to see per-disk and per-NIC detail inline
+- ✅ **Additional VM filters** — OS Family, Power State, Cluster dropdowns
+- ✅ **Per-VM time engine** — `estimate_vm_time()` computes warm phase-1, incremental, cutover, and cold times from disk/in-use data and bottleneck bandwidth
+
+### v1.28.1 — Live Bandwidth Preview & Schedule-Aware Agent Sizing
+- ✅ **Live bandwidth cards** — Update instantly on field change with `(live preview — save to persist)` indicator
+- ✅ **Migration Schedule section** — Duration, working hours/day, working days/week, target VMs/day
+- ✅ **Schedule-aware agent sizing** — Recommends agent count based on project timeline + throughput need
+- ✅ **Cluster-based tenant detection** — New `cluster` method as fallback for non-vCD environments
+- ✅ **Inline tenant editing** — Edit tenant name and OrgVDC inline; cascade to all VMs
+
+### v1.28.0 — Migration Intelligence & Execution Cockpit (Phase 1)
+- ✅ **Migration Planner tab** — 15 new DB tables, full lifecycle (draft → archived), RVTools XLSX import with 6-sheet parsing
+- ✅ **Risk scoring engine** — Configurable 0–100 score (GREEN/YELLOW/RED) with weighted OS, disk, snapshot, NIC factors
+- ✅ **Bandwidth model** — 4-constraint model (source NIC → link → agent → PCD storage) with latency penalties and bottleneck detection
+- ✅ **3 topology types** — Local, Cross-site dedicated, Cross-site internet with custom NIC/speed sliders
+- ✅ **vJailbreak agent sizing** — Recommendations for count, vCPU, RAM, and disk based on workload profile
+- ✅ **Full RBAC** — `migration` resource: viewer=read, technical=read+write, admin=all
+
+### v1.27.0 — Environment Data Reset (Admin)
+- ✅ **Data Reset tab** — Superadmin-only panel to purge operational data without dropping tables; 7 selectable categories with row-count preview and typed `RESET` confirmation
+
 ### v1.26.0 — Snapshot Quota-Aware Batching & Forecast Runbook
 - ✅ **Quota Pre-Check** — Cinder quota checked before snapshotting; volumes that would exceed GB/snapshot limits are flagged `quota_blocked` instead of failing with 413 errors
 - ✅ **Tenant-Grouped Batching** — Volumes batched by tenant with configurable `--batch-size` (default 20) and `--batch-delay` (default 5s) to avoid API rate limiting at scale (500+ tenants)
@@ -752,4 +792,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.26.0 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.28.3 | **Last Updated**: February 2026

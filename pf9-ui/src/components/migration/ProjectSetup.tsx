@@ -957,6 +957,107 @@ export default function ProjectSetup({ project, onProjectUpdated, onNavigate }: 
             )}
           </div>
         )}
+
+        {/* ---- Bandwidth Transfer Time Calculator ---- */}
+        {liveBw.bottleneck_mbps > 0 && (
+          <div style={{
+            marginTop: 12, padding: 14, borderRadius: 6, fontSize: "0.85rem",
+            background: "#f8fafc", border: "1px solid #e2e8f0",
+          }}>
+            <h4 style={{ margin: "0 0 8px 0", color: "#334155", fontWeight: 600 }}>
+              📊 Transfer Time Estimates
+            </h4>
+            <div style={{ fontSize: "0.75rem", color: "#64748b", marginBottom: 8 }}>
+              Based on current bottleneck: {liveBw.bottleneck_mbps.toLocaleString()} Mbps
+            </div>
+            
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12 }}>
+              {[
+                { label: "50 GB", gb: 50, description: "Small workload" },
+                { label: "100 GB", gb: 100, description: "Medium workload" },
+                { label: "500 GB", gb: 500, description: "Large workload" },
+                { label: "1 TB", gb: 1000, description: "Enterprise VM" },
+                { label: "5 TB", gb: 5000, description: "Database server" },
+                { label: "10 TB", gb: 10000, description: "File server" },
+              ].map(({ label, gb, description }) => {
+                // Real-world migration timing includes:
+                // 1. Data copy (with compression/dedup)
+                // 2. vJailbreak conversion (VMDK→QCOW)
+                // 3. Driver replacement and VM rebuild
+                // 4. Volume attachment and restarts
+                
+                // Base copy time with compression efficiency
+                let copyFactor: number;
+                if (gb <= 100) {
+                  copyFactor = 0.08; // Small VMs: 8% effective due to compression
+                } else if (gb <= 1000) {
+                  copyFactor = 0.05; // Medium VMs: 5% effective
+                } else {
+                  copyFactor = 0.03; // Large VMs: 3% effective
+                }
+                
+                const effectiveGb = gb * copyFactor;
+                const copyTimeMinutes = (effectiveGb * 8000) / liveBw.bottleneck_mbps;
+                
+                // Cutover overhead (vJailbreak conversion, driver replacement, VM rebuild)
+                // Based on user feedback: minimum 20-25 minutes total process
+                let cutoverMinutes: number;
+                if (gb <= 50) {
+                  cutoverMinutes = 18; // Small VMs: ~18min cutover
+                } else if (gb <= 200) {
+                  cutoverMinutes = 22; // Medium VMs: ~22min cutover  
+                } else if (gb <= 1000) {
+                  cutoverMinutes = 28; // Large VMs: ~28min cutover
+                } else {
+                  cutoverMinutes = 35; // XL VMs: ~35min cutover
+                }
+                
+                const totalMinutes = copyTimeMinutes + cutoverMinutes;
+                const totalHours = totalMinutes / 60;
+                
+                let displayTime: string;
+                let copyDisplay: string;
+                let cutoverDisplay: string;
+                
+                if (copyTimeMinutes < 60) {
+                  copyDisplay = `${Math.ceil(copyTimeMinutes)}min copy`;
+                } else {
+                  copyDisplay = `${(copyTimeMinutes/60).toFixed(1)}h copy`;
+                }
+                cutoverDisplay = `${Math.ceil(cutoverMinutes)}min cutover`;
+                
+                if (totalHours < 1) {
+                  displayTime = `${Math.ceil(totalMinutes)} min total`;
+                } else if (totalHours < 24) {
+                  displayTime = `${totalHours.toFixed(1)}h total`;
+                } else {
+                  const days = Math.ceil(totalHours / workingHours);
+                  displayTime = `${days} day${days > 1 ? 's' : ''} total`;
+                }
+
+                return (
+                  <div key={label} style={{
+                    padding: 8, borderRadius: 4, background: "#ffffff", border: "1px solid #e2e8f0",
+                    textAlign: "center" as const
+                  }}>
+                    <div style={{ fontWeight: 600, color: "#1e293b" }}>{label}</div>
+                    <div style={{ fontSize: "0.7rem", color: "#64748b", marginBottom: 2 }}>{description}</div>
+                    <div style={{ fontSize: "0.8rem", color: "#0ea5e9", fontWeight: 600 }}>{displayTime}</div>
+                    <div style={{ fontSize: "0.65rem", color: "#64748b", marginTop: 1 }}>
+                      {copyDisplay} + {cutoverDisplay}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ 
+              marginTop: 8, fontSize: "0.7rem", color: "#64748b", fontStyle: "italic"
+            }}>
+              * Includes data copy (compressed/deduped) + vJailbreak conversion + driver replacement + VM rebuild. Based on real-world migration experience: minimum 20-25min total.
+            </div>
+          </div>
+        )}
       </section>
 
       {/* ---- Save / Re-assess Buttons ---- */}

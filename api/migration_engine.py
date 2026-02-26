@@ -99,6 +99,40 @@ COLUMN_ALIASES: Dict[str, List[str]] = {
     "snap_created":     ["Date / time", "Date/Time", "Created", "Date", "Created Date"],
     "snap_size_mb":     ["Size MB", "Size MiB", "Size (MB)", "Size"],
     "snap_is_current":  ["Current", "IsCurrent"],
+
+    # --- vPartition sheet ---
+    "part_vm_name":     ["VM", "Name", "VM Name"],
+    "part_disk":        ["Disk", "Disk#", "Disk Number"],
+    "part_partition":   ["Partition", "Partition#"],
+    "part_capacity_mb": ["Capacity MB", "Capacity MiB", "Capacity (MB)", "Size MB"],
+    "part_consumed_mb": ["Consumed MB", "Consumed MiB", "Consumed (MB)", "Free MB"],
+    "part_free_space_mb": ["Free Space MB", "Free Space", "Free MB", "Free (MB)"],
+    "part_free_pct":    ["Free %", "Free%", "% Free"],
+
+    # --- vCPU sheet ---
+    "cpu_vm_name":      ["VM", "Name", "VM Name"],
+    "cpu_usage_percent": ["Usage %", "CPU Usage %", "CPU Usage", "Usage", "% Usage"],
+    "cpu_usage":        ["Usage %", "CPU Usage %", "CPU Usage", "Usage", "% Usage"],
+    "cpu_demand_mhz":   ["Demand MHz", "CPU Demand MHz", "Demand (MHz)", "CPU Demand"],
+    "demand_mhz":       ["Demand MHz", "CPU Demand MHz", "Demand (MHz)", "CPU Demand"],
+
+    # --- vMemory sheet ---
+    "mem_vm_name":      ["VM", "Name", "VM Name"],
+    "mem_usage_percent": ["Usage %", "Memory Usage %", "Mem Usage %", "Memory Usage", "Usage"],
+    "memory_usage":     ["Usage %", "Memory Usage %", "Mem Usage %", "Memory Usage", "Usage"],
+    "usage_percent":    ["Usage %", "Memory Usage %", "Mem Usage %", "Memory Usage", "Usage"],
+    "mem_usage_mb":     ["Usage MB", "Memory Usage MB", "Mem Usage MB", "Usage (MB)"],
+    "memory_usage_mb":  ["Usage MB", "Memory Usage MB", "Mem Usage MB", "Usage (MB)"],
+    "usage_mb":         ["Usage MB", "Memory Usage MB", "Mem Usage MB", "Usage (MB)"],
+
+    # --- vNetwork sheet ---
+    "net_vm_name":      ["VM", "Name", "VM Name"],
+    "net_network_name": ["Network", "Network Name", "Portgroup", "Port Group"],
+    "net_vlan_id":      ["VLAN", "VLAN ID", "Vlan", "VLAN#"],
+    "net_subnet":       ["Subnet", "IP Subnet", "Network Address"],
+    "net_gateway":      ["Gateway", "Default Gateway", "Gateway IP"],
+    "net_dns_servers":  ["DNS", "DNS Servers", "Name Servers"],
+    "net_ip_range":     ["IP Range", "Address Range", "DHCP Range"],
 }
 
 
@@ -131,6 +165,12 @@ def build_column_map(sheet_headers: List[str], prefix: str = "") -> Dict[str, in
         "capacity_mb", "thin", "eagerly_scrub",
         # vNIC columns (no nic_ prefix)
         "adapter_type", "network_name", "mac_address", "ip_address",
+        # vPartition columns (no part_ prefix)
+        "part_capacity_mb", "part_consumed_mb", "part_free_space_mb", "part_free_pct",
+        # vCPU columns (alternative names without cpu_ prefix)
+        "cpu_usage", "demand_mhz",
+        # vMemory columns (alternative names without mem_ prefix)
+        "memory_usage", "usage_percent", "memory_usage_mb", "usage_mb",
     }
 
     for canonical, aliases in COLUMN_ALIASES.items():
@@ -413,9 +453,66 @@ def classify_os_family(guest_os: str, guest_os_tools: str = "") -> str:
     return "other"
 
 
+def extract_os_version(guest_os: str, guest_os_tools: str = "") -> str:
+    """
+    Return the best available OS version string for display.
+
+    Prefers VMware Tools OS detection (more accurate) over config-based.
+    Falls back to config-based if tools string is empty.
+    Returns empty string if both are empty.
+
+    Examples:
+      - "Microsoft Windows Server 2019 (64-bit)"
+      - "Red Hat Enterprise Linux 8 (64-bit)"
+      - "Ubuntu Linux (64-bit)"
+    """
+    # VMware Tools provides the most accurate OS identification
+    tools = (guest_os_tools or "").strip()
+    config = (guest_os or "").strip()
+
+    if tools and tools.lower() not in ("", "unknown", "other", "other (32-bit)", "other (64-bit)"):
+        return tools
+    if config and config.lower() not in ("", "unknown"):
+        return config
+    return ""
+
+
 # =====================================================================
-# 4.  Risk & Complexity Scoring
+# 3b.  Network Classification Helpers
 # =====================================================================
+
+import re as _re
+
+_VLAN_PATTERN = _re.compile(r'[_\-\s]?vlan[_\-\s]?(\d+)', _re.IGNORECASE)
+_NSXT_PATTERNS = [
+    "nsx-t", "nsxt", "nsx_t", "overlay", "geneve", "segment",
+    "t0-", "t1-", "tier-0", "tier-1", "ls-",
+]
+_ISOLATED_PATTERNS = ["isolated", "internal-only", "no-uplink", "air-gap"]
+
+
+def extract_vlan_id(network_name: str) -> Optional[int]:
+    """Extract VLAN ID from a network/portgroup name like 'Tenant_vlan_3567'."""
+    m = _VLAN_PATTERN.search(network_name or "")
+    return int(m.group(1)) if m else None
+
+
+def classify_network_type(network_name: str) -> str:
+    """
+    Classify a network based on naming conventions:
+      - 'vlan_based'  — external VLAN-backed portgroup
+      - 'nsx_t'       — NSX-T overlay segment (not supported on PCD)
+      - 'isolated'    — isolated / internal-only network
+      - 'standard'    — standard vSwitch / unclassified
+    """
+    name_lower = (network_name or "").lower()
+    if any(p in name_lower for p in _NSXT_PATTERNS):
+        return "nsx_t"
+    if any(p in name_lower for p in _ISOLATED_PATTERNS):
+        return "isolated"
+    if _VLAN_PATTERN.search(name_lower):
+        return "vlan_based"
+    return "standard"
 
 @dataclass
 class RiskResult:
@@ -852,28 +949,60 @@ def estimate_vm_time(
       Full copy of total provisioned data while VM is off.  Downtime = total copy time.
     """
     total_disk_gb = float(vm.get("total_disk_gb", 0) or 0)
-    in_use_gb = float(vm.get("in_use_mb", 0) or 0) / 1024
+    # Prefer in_use_gb (from vPartition, most accurate), fallback to in_use_mb/1024 (vInfo)
+    in_use_gb = float(vm.get("in_use_gb", 0) or 0)
+    if in_use_gb <= 0:
+        in_use_gb = float(vm.get("in_use_mb", 0) or 0) / 1024
     if in_use_gb <= 0:
         in_use_gb = total_disk_gb  # Fallback if no in_use data
 
-    # Effective bandwidth: Mbps → GB/h
-    # bottleneck_mbps is in Megabits/s.  1 Mbps = 0.000125 GB/s = 0.45 GB/h
+    # Effective bandwidth: Mbps → GB/h (with real-world factors)
+    # bottleneck_mbps is in Megabits/s
+    # Conversion: Mbps / 8 = MB/s, then MB/s * 3600/1024 = GB/h
     if bottleneck_mbps <= 0:
         bottleneck_mbps = 1000  # Fallback 1 Gbps
 
-    gb_per_hour = (bottleneck_mbps / 8) * 3.6  # Mbps → MB/s → GB/h
+    # Raw theoretical throughput
+    raw_gb_per_hour = (bottleneck_mbps / 8) * 3600 / 1024  # Correct conversion
+
+    # Real-world factors: compression, deduplication, incremental efficiency
+    # Based on user feedback: 50GB in 20min, 1TB in 80min with 1Gbps source
+    # This suggests effective transfer is 5-10% of raw VM size due to:
+    # - VMware compression and deduplication
+    # - Warm migration pre-sync (95% data already transferred)
+    # - Change block tracking efficiency
+    compression_and_incremental_factor = 0.05  # 5% of raw data transferred in practice
+    gb_per_hour = raw_gb_per_hour  # Keep raw for cold migration calculations
 
     mode = str(vm.get("migration_mode", "warm_eligible") or "warm_eligible")
 
     # ── Warm migration ──
-    warm_phase1 = in_use_gb / gb_per_hour if gb_per_hour > 0 else 0
+    # Phase 1: Full live pre-copy of all in_use blocks while VM is running.
+    # The entire in_use_gb must be transferred; no data-size reduction.
+    # Real-world bandwidth utilization: 45-65% of raw due to random I/O,
+    # protocol overhead, VMware CBT scanning, and storage write latency.
+    bw_efficiency = 0.65 if in_use_gb > 1000 else 0.55 if in_use_gb > 100 else 0.45
+    effective_gb_per_hour = raw_gb_per_hour * bw_efficiency
+    copy_hours = in_use_gb / effective_gb_per_hour if effective_gb_per_hour > 0 else 0
+    
+    # Cutover overhead (vJailbreak + driver + rebuild + restarts)
+    # Based on user experience: minimum 20-25 minutes regardless of size
+    if in_use_gb <= 50:
+        cutover_overhead_hours = 0.3  # 18 min
+    elif in_use_gb <= 200:
+        cutover_overhead_hours = 0.37 # 22 min  
+    elif in_use_gb <= 1000:
+        cutover_overhead_hours = 0.47 # 28 min
+    else:
+        cutover_overhead_hours = 0.58 # 35 min
+    
+    warm_phase1 = copy_hours
     daily_delta_gb = in_use_gb * (daily_change_rate_pct / 100)
-    warm_incremental = daily_delta_gb / gb_per_hour if gb_per_hour > 0 else 0
-    # Cutover: last delta (~half-day of changes) + 15 min switchover
-    cutover_delta_gb = daily_delta_gb * 0.5
-    warm_cutover = (cutover_delta_gb / gb_per_hour + 0.25) if gb_per_hour > 0 else 0.25
+    warm_incremental = daily_delta_gb / effective_gb_per_hour if effective_gb_per_hour > 0 else 0
+    warm_cutover = cutover_overhead_hours
 
     # ── Cold migration ──
+    # Must transfer full provisioned disk at raw bandwidth
     cold_total = total_disk_gb / gb_per_hour if gb_per_hour > 0 else 0
 
     return VMTimeEstimate(
@@ -940,6 +1069,8 @@ def generate_migration_plan(
             "tenant_name": tname,
             "org_vdc": t.get("org_vdc"),
             "vm_count": 0,
+            "total_vcpu": 0,
+            "total_ram_mb": 0,
             "total_disk_gb": 0.0,
             "total_in_use_gb": 0.0,
             "warm_count": 0,
@@ -960,6 +1091,8 @@ def generate_migration_plan(
                 "tenant_name": tname,
                 "org_vdc": v.get("org_vdc"),
                 "vm_count": 0,
+                "total_vcpu": 0,
+                "total_ram_mb": 0,
                 "total_disk_gb": 0.0,
                 "total_in_use_gb": 0.0,
                 "warm_count": 0,
@@ -977,6 +1110,8 @@ def generate_migration_plan(
         mode = est.mode
 
         tp["vm_count"] += 1
+        tp["total_vcpu"] += int(v.get("cpu_count") or 0)
+        tp["total_ram_mb"] += int(v.get("ram_mb") or 0)
         tp["total_disk_gb"] += est.total_disk_gb
         tp["total_in_use_gb"] += est.in_use_gb
 
@@ -1006,12 +1141,14 @@ def generate_migration_plan(
             "total_disk_gb": round(est.total_disk_gb, 2),
             "in_use_gb": round(est.in_use_gb, 2),
             "os_family": v.get("os_family"),
+            "os_version": v.get("os_version", ""),
             "power_state": v.get("power_state"),
             "migration_mode": mode,
             "risk_category": risk_cat,
             "risk_score": v.get("risk_score"),
             "disk_count": v.get("disk_count", 0),
             "nic_count": v.get("nic_count", 0),
+            "network_name": v.get("network_name", ""),
             "primary_ip": v.get("primary_ip"),
             "warm_phase1_hours": est.warm_phase1_hours,
             "warm_cutover_hours": est.warm_cutover_hours,
@@ -1103,6 +1240,9 @@ def summarize_rvtools_stats(
     vhost_count: int,
     vcluster_count: int,
     vsnapshot_count: int,
+    vpartition_count: int = 0,
+    vcpu_count: int = 0,
+    vmemory_count: int = 0,
     power_state_counts: Optional[Dict[str, int]] = None,
     os_family_counts: Optional[Dict[str, int]] = None,
     tenant_count: int = 0,
@@ -1116,7 +1256,12 @@ def summarize_rvtools_stats(
         "vHost": vhost_count,
         "vCluster": vcluster_count,
         "vSnapshot": vsnapshot_count,
+        "vPartition": vpartition_count,
     }
+    if vcpu_count:
+        result["vCPU"] = vcpu_count
+    if vmemory_count:
+        result["vMemory"] = vmemory_count
     if power_state_counts:
         result["power_states"] = power_state_counts
     if os_family_counts:

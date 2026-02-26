@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, validator
 
 from auth import require_permission, get_current_user
@@ -57,6 +58,9 @@ from migration_engine import (
     build_column_map,
     extract_row,
     classify_os_family,
+    extract_os_version,
+    extract_vlan_id,
+    classify_network_type,
     assign_tenant,
     compute_risk,
     classify_migration_mode,
@@ -67,6 +71,7 @@ from migration_engine import (
     summarize_rvtools_stats,
     COLUMN_ALIASES,
 )
+from export_reports import generate_excel_report, generate_pdf_report
 
 logger = logging.getLogger("migration_planner")
 
@@ -580,8 +585,12 @@ async def upload_rvtools(project_id: str, file: UploadFile = File(...), user = D
 
             # ----- Parse vNIC -----
             vnic_count = 0
+            vnetwork_infrastructure_count = 0
             if "vNetwork" in wb.sheetnames:
+                # Parse NICs/adapters from vNetwork sheet
                 vnic_count = _parse_vnic_sheet(wb["vNetwork"], project_id, cur)
+                # Parse network infrastructure from vNetwork sheet
+                vnetwork_infrastructure_count = _parse_vnetwork_sheet(wb["vNetwork"], project_id, cur)
             elif "vNIC" in wb.sheetnames:
                 vnic_count = _parse_vnic_sheet(wb["vNIC"], project_id, cur)
 
@@ -590,8 +599,26 @@ async def upload_rvtools(project_id: str, file: UploadFile = File(...), user = D
             if "vSnapshot" in wb.sheetnames:
                 vsnapshot_count = _parse_vsnapshot_sheet(wb["vSnapshot"], project_id, cur)
 
+            # ----- Parse vPartition (used disk space) -----
+            vpartition_count = 0
+            if "vPartition" in wb.sheetnames:
+                vpartition_count = _parse_vpartition_sheet(wb["vPartition"], project_id, cur)
+
+            # ----- Parse vCPU (CPU usage metrics) -----
+            vcpu_count = 0
+            if "vCPU" in wb.sheetnames:
+                vcpu_count = _parse_vcpu_sheet(wb["vCPU"], project_id, cur)
+
+            # ----- Parse vMemory (Memory usage metrics) -----
+            vmemory_count = 0
+            if "vMemory" in wb.sheetnames:
+                vmemory_count = _parse_vmemory_sheet(wb["vMemory"], project_id, cur)
+
             # Update disk/nic/snapshot summaries on VMs
             _update_vm_summaries(project_id, cur)
+
+            # Build network infrastructure summary
+            _build_network_summary(project_id, cur)
 
             # Run tenant detection
             _run_tenant_detection(project_id, cur)
@@ -637,6 +664,9 @@ async def upload_rvtools(project_id: str, file: UploadFile = File(...), user = D
             # Update project metadata
             stats = summarize_rvtools_stats(
                 vinfo_count, vdisk_count, vnic_count, vhost_count, vcluster_count, vsnapshot_count,
+                vpartition_count=vpartition_count,
+                vcpu_count=vcpu_count,
+                vmemory_count=vmemory_count,
                 power_state_counts=power_state_counts,
                 os_family_counts=os_family_counts,
                 tenant_count=tenant_count,
@@ -685,7 +715,7 @@ async def clear_rvtools_data(project_id: str, user = Depends(get_current_user)):
                 "migration_wave_vms", "migration_waves", "migration_prep_tasks",
                 "migration_target_gaps", "migration_vm_snapshots", "migration_vm_nics",
                 "migration_vm_disks", "migration_vms", "migration_hosts",
-                "migration_clusters", "migration_tenants",
+                "migration_clusters", "migration_tenants", "migration_networks",
             ):
                 cur.execute(f"DELETE FROM {table} WHERE project_id = %s", (project_id,))
 
@@ -774,29 +804,31 @@ def _parse_vinfo_sheet(sheet, project_id: str, cur) -> int:
         guest_os = _safe_str(d.get("guest_os"))
         guest_os_tools = _safe_str(d.get("guest_os_tools"))
         os_family = classify_os_family(guest_os, guest_os_tools)
+        os_version = extract_os_version(guest_os, guest_os_tools)
 
         # Disk sizes from vInfo (rough — refined after vDisk parse)
         prov_mb = _safe_float(d.get("provisioned_mb"))
         in_use_raw = _safe_float(d.get("in_use_mb"))
         total_disk_gb = round(prov_mb / 1024, 2) if prov_mb else 0
+        in_use_gb = round(in_use_raw / 1024, 2) if in_use_raw else 0
 
         cur.execute("""
             INSERT INTO migration_vms (
                 project_id, vm_name, power_state, template,
-                guest_os, guest_os_tools, os_family,
+                guest_os, guest_os_tools, os_family, os_version,
                 folder_path, resource_pool, vapp_name, annotation,
                 cpu_count, ram_mb, total_disk_gb,
-                provisioned_mb, in_use_mb,
+                provisioned_mb, in_use_mb, in_use_gb,
                 host_name, cluster, datacenter,
                 vm_uuid, firmware, change_tracking, connection_state,
                 dns_name, primary_ip,
                 raw_data
             ) VALUES (
                 %s, %s, %s, %s,
-                %s, %s, %s,
+                %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s, %s,
-                %s, %s,
+                %s, %s, %s,
                 %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s,
@@ -808,6 +840,7 @@ def _parse_vinfo_sheet(sheet, project_id: str, cur) -> int:
                 guest_os = EXCLUDED.guest_os,
                 guest_os_tools = EXCLUDED.guest_os_tools,
                 os_family = EXCLUDED.os_family,
+                os_version = EXCLUDED.os_version,
                 folder_path = EXCLUDED.folder_path,
                 resource_pool = EXCLUDED.resource_pool,
                 vapp_name = EXCLUDED.vapp_name,
@@ -817,6 +850,7 @@ def _parse_vinfo_sheet(sheet, project_id: str, cur) -> int:
                 total_disk_gb = EXCLUDED.total_disk_gb,
                 provisioned_mb = EXCLUDED.provisioned_mb,
                 in_use_mb = EXCLUDED.in_use_mb,
+                in_use_gb = EXCLUDED.in_use_gb,
                 host_name = EXCLUDED.host_name,
                 cluster = EXCLUDED.cluster,
                 datacenter = EXCLUDED.datacenter,
@@ -832,7 +866,7 @@ def _parse_vinfo_sheet(sheet, project_id: str, cur) -> int:
             project_id, vm_name,
             _safe_str(d.get("power_state")),
             _safe_bool(d.get("template")),
-            guest_os, guest_os_tools, os_family,
+            guest_os, guest_os_tools, os_family, os_version,
             _safe_str(d.get("folder_path")),
             _safe_str(d.get("resource_pool")),
             _safe_str(d.get("vapp_name")),
@@ -842,6 +876,7 @@ def _parse_vinfo_sheet(sheet, project_id: str, cur) -> int:
             total_disk_gb,
             _safe_int(prov_mb),
             _safe_int(in_use_raw),
+            in_use_gb,
             _safe_str(d.get("host_name")),
             _safe_str(d.get("cluster")),
             _safe_str(d.get("datacenter")),
@@ -1067,6 +1102,254 @@ def _parse_vsnapshot_sheet(sheet, project_id: str, cur) -> int:
 
 
 # ---------------------------------------------------------------------------
+# vPartition parser — actual used disk space per VM partition
+# ---------------------------------------------------------------------------
+
+def _parse_vpartition_sheet(sheet, project_id: str, cur) -> int:
+    """
+    Parse the vPartition sheet from RVTools.
+    Aggregates consumed space per VM and updates migration_vms.partition_used_gb.
+    Also updates in_use_gb on migration_vms with partition data (more accurate than vInfo in_use_mb).
+    """
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="part_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    # Aggregate consumed MB per VM
+    vm_consumed: Dict[str, float] = {}
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        vm_name = _safe_str(d.get("part_vm_name") or d.get("vm_name"))
+        if not vm_name:
+            continue
+
+        consumed_mb = _safe_float(d.get("part_consumed_mb"))
+        capacity_mb = _safe_float(d.get("part_capacity_mb"))
+        free_mb = _safe_float(d.get("part_free_space_mb"))
+
+        # Some RVTools exports only have Free Space — derive consumed
+        if consumed_mb <= 0 and capacity_mb > 0 and free_mb >= 0:
+            consumed_mb = capacity_mb - free_mb
+
+        if consumed_mb > 0:
+            vm_consumed[vm_name] = vm_consumed.get(vm_name, 0) + consumed_mb
+        count += 1
+
+    # Bulk-update partition_used_gb and in_use_gb on VMs
+    for vm_name, total_consumed_mb in vm_consumed.items():
+        consumed_gb = round(total_consumed_mb / 1024, 2)
+        cur.execute("""
+            UPDATE migration_vms
+            SET partition_used_gb = %s,
+                in_use_gb = %s
+            WHERE project_id = %s AND vm_name = %s
+        """, (consumed_gb, consumed_gb, project_id, vm_name))
+
+    return count
+
+
+def _find_col(headers_lower: List[str], candidates: List[str]) -> int:
+    """Find column index by matching normalized header against candidate names. Returns -1 if not found."""
+    for candidate in candidates:
+        c = candidate.lower().strip()
+        for i, h in enumerate(headers_lower):
+            if h == c or h.replace(" ", "") == c.replace(" ", ""):
+                return i
+    return -1
+
+
+def _parse_vcpu_sheet(sheet, project_id: str, cur) -> int:
+    """
+    Parse the vCPU sheet from RVTools to extract CPU usage metrics.
+    Updates migration_vms with cpu_usage_percent and cpu_demand_mhz.
+    Uses direct column matching against known RVTools vCPU sheet header names.
+    """
+    headers = _sheet_headers(sheet)
+    headers_lower = [h.lower().strip() for h in headers]
+
+    # Find column indices by direct header matching - RVTools vCPU sheet uses these exact names
+    vm_col = _find_col(headers_lower, ["vm", "name", "vm name"])
+    # 'overall' = current CPU usage in MHz; 'cpus' = vCPU count for computing %
+    usage_col = _find_col(headers_lower, ["% usage", "usage %", "cpu usage %", "cpu usage", "average % usage", "avg % usage", "average usage %"])
+    demand_col = _find_col(headers_lower, ["demand mhz", "demand (mhz)", "cpu demand mhz", "demand", "cpu demand", "overall"])
+    cpus_col = _find_col(headers_lower, ["cpus", "cpu count", "vcpu count", "num cpus", "# cpus", "num vcpus"])
+
+
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        if vm_col < 0 or vm_col >= len(row_vals):
+            continue
+        vm_name = _safe_str(row_vals[vm_col])
+        if not vm_name:
+            continue
+
+        cpu_usage_pct = None
+        cpu_demand_mhz = None
+
+        if usage_col >= 0 and usage_col < len(row_vals):
+            v = row_vals[usage_col]
+            if v is not None and str(v).strip() not in ("", "None"):
+                try:
+                    cpu_usage_pct = float(v)
+                except (ValueError, TypeError):
+                    pass
+
+        if demand_col >= 0 and demand_col < len(row_vals):
+            v = row_vals[demand_col]
+            if v is not None and str(v).strip() not in ("", "None"):
+                try:
+                    cpu_demand_mhz = int(float(v))
+                except (ValueError, TypeError):
+                    pass
+
+        # If no direct % column, compute from demand_mhz / (cpus * ~2400 MHz) * 100
+        if cpu_usage_pct is None and cpu_demand_mhz is not None:
+            vcpus = None
+            if cpus_col >= 0 and cpus_col < len(row_vals):
+                cpuv = row_vals[cpus_col]
+                if cpuv is not None and str(cpuv).strip() not in ("", "None"):
+                    try:
+                        vcpus = int(float(cpuv))
+                    except (ValueError, TypeError):
+                        pass
+            if vcpus and vcpus > 0:
+                # 2400 MHz per vCPU is a reasonable ESXi average (modern hardware 2.0-3.5GHz)
+                cpu_usage_pct = round(min(cpu_demand_mhz / (vcpus * 2400.0) * 100, 100.0), 1)
+
+        if cpu_usage_pct is None and cpu_demand_mhz is None:
+            continue
+
+        cur.execute("""
+            UPDATE migration_vms
+            SET cpu_usage_percent = COALESCE(%s, cpu_usage_percent),
+                cpu_demand_mhz = COALESCE(%s, cpu_demand_mhz)
+            WHERE project_id = %s AND vm_name = %s
+        """, (cpu_usage_pct, cpu_demand_mhz, project_id, vm_name))
+
+        if cur.rowcount > 0:
+            count += 1
+
+    return count
+
+
+def _parse_vmemory_sheet(sheet, project_id: str, cur) -> int:
+    """
+    Parse the vMemory sheet from RVTools to extract memory usage metrics.
+    Updates migration_vms with memory_usage_percent and memory_usage_mb.
+    Uses direct column matching against known RVTools vMemory sheet header names.
+    """
+    headers = _sheet_headers(sheet)
+    headers_lower = [h.lower().strip() for h in headers]
+
+    # Find column indices by direct header matching - RVTools vMemory sheet uses these exact names
+    vm_col = _find_col(headers_lower, ["vm", "name", "vm name"])
+    usage_col = _find_col(headers_lower, ["% usage", "usage %", "memory usage %", "mem usage %", "memory usage", "average % usage", "avg % usage", "average usage %"])
+    usage_mb_col = _find_col(headers_lower, ["usage mb", "usage (mb)", "memory usage mb", "mem usage mb", "used mb", "consumed", "active"])
+    # For exports without a direct % column, compute from consumed / size_mib
+    size_mib_col = _find_col(headers_lower, ["size mib", "size (mib)", "size mb", "configured size", "memory size"])
+
+
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        if vm_col < 0 or vm_col >= len(row_vals):
+            continue
+        vm_name = _safe_str(row_vals[vm_col])
+        if not vm_name:
+            continue
+
+        memory_usage_pct = None
+        memory_usage_mb = None
+
+        if usage_col >= 0 and usage_col < len(row_vals):
+            v = row_vals[usage_col]
+            if v is not None and str(v).strip() not in ("", "None"):
+                try:
+                    memory_usage_pct = float(v)
+                except (ValueError, TypeError):
+                    pass
+
+        if usage_mb_col >= 0 and usage_mb_col < len(row_vals):
+            v = row_vals[usage_mb_col]
+            if v is not None and str(v).strip() not in ("", "None"):
+                try:
+                    memory_usage_mb = int(float(v))
+                except (ValueError, TypeError):
+                    pass
+
+        # Compute % from consumed / size_mib when no direct % column exists
+        if memory_usage_pct is None and memory_usage_mb is not None and size_mib_col >= 0 and size_mib_col < len(row_vals):
+            sz = row_vals[size_mib_col]
+            if sz is not None and str(sz).strip() not in ("", "None"):
+                try:
+                    size_mib = float(sz)
+                    if size_mib > 0:
+                        memory_usage_pct = round(memory_usage_mb / size_mib * 100, 1)
+                except (ValueError, TypeError):
+                    pass
+
+        if memory_usage_pct is None and memory_usage_mb is None:
+            continue
+
+        cur.execute("""
+            UPDATE migration_vms
+            SET memory_usage_percent = COALESCE(%s, memory_usage_percent),
+                memory_usage_mb = COALESCE(%s, memory_usage_mb)
+            WHERE project_id = %s AND vm_name = %s
+        """, (memory_usage_pct, memory_usage_mb, project_id, vm_name))
+
+        if cur.rowcount > 0:
+            count += 1
+
+    return count
+
+
+def _parse_vnetwork_sheet(sheet, project_id: str, cur) -> int:
+    """
+    Parse the vNetwork sheet from RVTools to extract network infrastructure data.
+    Updates migration_networks with subnet, gateway, DNS, and IP range information.
+    """
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="net_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        network_name = _safe_str(d.get("net_network_name") or d.get("network_name"))
+        if not network_name:
+            continue
+
+        # Extract network infrastructure data
+        vlan_id = _safe_str(d.get("net_vlan_id"))
+        subnet = _safe_str(d.get("net_subnet"))
+        gateway = _safe_str(d.get("net_gateway"))
+        dns_servers = _safe_str(d.get("net_dns_servers"))
+        ip_range = _safe_str(d.get("net_ip_range"))
+
+        # Update existing network record or skip if not found
+        # (Networks should already exist from NIC parsing)
+        cur.execute("""
+            UPDATE migration_networks
+            SET subnet = %s,
+                gateway = %s,
+                dns_servers = %s,
+                ip_range = %s
+            WHERE project_id = %s AND network_name = %s
+        """, (subnet, gateway, dns_servers, ip_range, project_id, network_name))
+        
+        if cur.rowcount > 0:
+            count += 1
+
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Post-parse: update VM summaries (disk/nic/snapshot counts from detail tables)
 # ---------------------------------------------------------------------------
 
@@ -1123,6 +1406,61 @@ def _update_vm_summaries(project_id: str, cur):
         ) sub
         WHERE mh.project_id = %s AND mh.host_name = sub.host_name
     """, (project_id, project_id))
+
+    # Network name from first NIC (primary network for each VM)
+    cur.execute("""
+        UPDATE migration_vms mv SET
+            network_name = sub.first_network
+        FROM (
+            SELECT DISTINCT ON (vm_name) vm_name, network_name as first_network
+            FROM migration_vm_nics
+            WHERE project_id = %s AND network_name IS NOT NULL AND network_name != ''
+            ORDER BY vm_name, id ASC
+        ) sub
+        WHERE mv.project_id = %s AND mv.vm_name = sub.vm_name
+    """, (project_id, project_id))
+
+    # If vPartition was NOT parsed, derive in_use_gb from vInfo in_use_mb
+    # (only for VMs where partition_used_gb is still 0)
+    cur.execute("""
+        UPDATE migration_vms
+        SET in_use_gb = CASE
+                WHEN in_use_mb > 0 THEN round(in_use_mb / 1024.0, 2)
+                ELSE total_disk_gb
+            END
+        WHERE project_id = %s
+          AND (partition_used_gb IS NULL OR partition_used_gb = 0)
+          AND (in_use_gb IS NULL OR in_use_gb = 0)
+    """, (project_id,))
+
+
+# ---------------------------------------------------------------------------
+# Network summary builder
+# ---------------------------------------------------------------------------
+
+def _build_network_summary(project_id: str, cur):
+    """Aggregate unique networks from NIC data, classify type, extract VLAN IDs."""
+    cur.execute("""
+        SELECT network_name, count(DISTINCT vm_name) as vm_count
+        FROM migration_vm_nics
+        WHERE project_id = %s AND network_name IS NOT NULL AND network_name != ''
+        GROUP BY network_name ORDER BY vm_count DESC
+    """, (project_id,))
+    networks = cur.fetchall()
+
+    for net in networks:
+        name = net["network_name"]
+        vlan_id = extract_vlan_id(name)
+        net_type = classify_network_type(name)
+        cur.execute("""
+            INSERT INTO migration_networks (project_id, network_name, vlan_id, network_type, vm_count)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (project_id, network_name) DO UPDATE SET
+                vlan_id = EXCLUDED.vlan_id,
+                network_type = EXCLUDED.network_type,
+                vm_count = EXCLUDED.vm_count,
+                updated_at = now()
+        """, (project_id, name, vlan_id, net_type, net["vm_count"]))
 
 
 # ---------------------------------------------------------------------------
@@ -1210,15 +1548,17 @@ def _run_tenant_detection(project_id: str, cur):
         """, (project_id, info["tenant_name"], info["org_vdc"] or None,
               info["detection_method"], info["vm_count"]))
 
-    # Update tenant disk/ram/vcpu totals
+    # Update tenant disk/ram/vcpu/in_use totals
     cur.execute("""
         UPDATE migration_tenants mt SET
             total_disk_gb = sub.disk_gb,
+            total_in_use_gb = sub.in_use_gb,
             total_ram_mb = sub.ram_mb,
             total_vcpu = sub.vcpu
         FROM (
             SELECT tenant_name, coalesce(org_vdc, '') as ovdc,
                    coalesce(sum(total_disk_gb), 0) as disk_gb,
+                   coalesce(sum(in_use_gb), 0) as in_use_gb,
                    coalesce(sum(ram_mb), 0) as ram_mb,
                    coalesce(sum(cpu_count), 0) as vcpu
             FROM migration_vms WHERE project_id = %s
@@ -1243,6 +1583,7 @@ async def list_vms(
     host: Optional[str] = Query(None),
     cluster: Optional[str] = Query(None),
     os_family: Optional[str] = Query(None),
+    os_version: Optional[str] = Query(None),
     power_state: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     exclude_templates: bool = Query(True),
@@ -1256,6 +1597,7 @@ async def list_vms(
         "vm_name", "risk_score", "total_disk_gb", "ram_mb", "cpu_count",
         "tenant_name", "host_name", "cluster", "migration_mode", "risk_category",
         "power_state", "priority", "nic_count", "disk_count", "in_use_mb",
+        "in_use_gb", "partition_used_gb", "network_name", "os_version",
         "primary_ip", "dns_name", "os_family",
     }
     if sort_by not in allowed_sorts:
@@ -1289,6 +1631,9 @@ async def list_vms(
             if os_family:
                 where += " AND os_family = %s"
                 params.append(os_family)
+            if os_version:
+                where += " AND os_version ILIKE %s"
+                params.append(f"%{os_version}%")
             if power_state:
                 where += " AND power_state = %s"
                 params.append(power_state)
@@ -1405,6 +1750,69 @@ async def update_tenant(project_id: str, tenant_id: int, req: UpdateTenantReques
                   resource_id=str(tenant_id), details=updates)
 
     return {"status": "ok", "tenant": _serialize_row(dict(tenant))}
+
+
+# =====================================================================
+# NETWORK ENDPOINTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/networks", dependencies=[Depends(require_permission("migration", "read"))])
+async def list_networks(project_id: str):
+    """List network infrastructure summary for a migration project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT mn.*,
+                       string_agg(DISTINCT vm.tenant_name, ', ' ORDER BY vm.tenant_name) as tenant_names,
+                       count(DISTINCT vm.tenant_name) as tenant_count
+                FROM migration_networks mn
+                LEFT JOIN migration_vm_nics nic ON mn.project_id = nic.project_id 
+                    AND mn.network_name = nic.network_name
+                LEFT JOIN migration_vms vm ON nic.project_id = vm.project_id 
+                    AND nic.vm_name = vm.vm_name
+                WHERE mn.project_id = %s
+                GROUP BY mn.id, mn.project_id, mn.network_name, mn.vlan_id, mn.network_type, 
+                         mn.vm_count, mn.subnet, mn.gateway, mn.dns_servers, mn.ip_range, 
+                         mn.pcd_target, mn.notes, mn.created_at, mn.updated_at
+                ORDER BY mn.vm_count DESC
+            """, (project_id,))
+            networks = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "networks": networks}
+
+
+@router.patch("/projects/{project_id}/networks/{network_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_network(project_id: str, network_id: int, req: Request, user=Depends(get_current_user)):
+    """Update editable network fields (subnet, gateway, dns_servers, ip_range, pcd_target, notes)."""
+    actor = user.username if user else "system"
+    body = await req.json()
+    allowed = {"subnet", "gateway", "dns_servers", "ip_range", "pcd_target", "notes", "network_type"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    set_clauses = [f"{k} = %s" for k in updates]
+    set_clauses.append("updated_at = now()")
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_networks
+                SET {', '.join(set_clauses)}
+                WHERE id = %s AND project_id = %s
+                RETURNING *
+            """, params + [network_id, project_id])
+            net = cur.fetchone()
+            if not net:
+                raise HTTPException(status_code=404, detail="Network not found")
+            conn.commit()
+
+    _log_activity(actor=actor, action="update_network", resource_type="migration_network",
+                  resource_id=str(network_id), details=updates)
+
+    return {"status": "ok", "network": _serialize_row(dict(net))}
 
 
 # =====================================================================
@@ -1872,6 +2280,88 @@ async def export_migration_plan(project_id: str):
         "topology_type": project["topology_type"],
         **plan,
     }
+
+
+@router.get("/projects/{project_id}/export-report.xlsx",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_report_excel(project_id: str):
+    """Download a full migration plan report as an Excel workbook (4 sheets)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_vms
+                WHERE project_id = %s AND NOT coalesce(template, false)
+                ORDER BY tenant_name, priority, total_disk_gb DESC NULLS LAST
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s ORDER BY vm_count DESC
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+    bw_model = compute_bandwidth_model(project)
+    plan = generate_migration_plan(
+        vms=vms, tenants=tenants, project_settings=project,
+        bottleneck_mbps=bw_model.bottleneck_mbps,
+    )
+    plan["bandwidth_model"] = {
+        "bottleneck": bw_model.bottleneck,
+        "source_effective_mbps": round(bw_model.source_effective_mbps, 1),
+        "link_effective_mbps": round(bw_model.link_effective_mbps, 1),
+        "agent_effective_mbps": round(bw_model.agent_effective_mbps, 1),
+        "storage_effective_mbps": round(bw_model.storage_effective_mbps, 1),
+    }
+
+    xlsx_bytes = generate_excel_report(plan, project["name"])
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="migration-plan-{safe_name}.xlsx"'},
+    )
+
+
+@router.get("/projects/{project_id}/export-report.pdf",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_report_pdf(project_id: str):
+    """Download a full migration plan report as a PDF (landscape A4)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_vms
+                WHERE project_id = %s AND NOT coalesce(template, false)
+                ORDER BY tenant_name, priority, total_disk_gb DESC NULLS LAST
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s ORDER BY vm_count DESC
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+    bw_model = compute_bandwidth_model(project)
+    plan = generate_migration_plan(
+        vms=vms, tenants=tenants, project_settings=project,
+        bottleneck_mbps=bw_model.bottleneck_mbps,
+    )
+    plan["bandwidth_model"] = {
+        "bottleneck": bw_model.bottleneck,
+        "source_effective_mbps": round(bw_model.source_effective_mbps, 1),
+        "link_effective_mbps": round(bw_model.link_effective_mbps, 1),
+        "agent_effective_mbps": round(bw_model.agent_effective_mbps, 1),
+        "storage_effective_mbps": round(bw_model.storage_effective_mbps, 1),
+    }
+
+    pdf_bytes = generate_pdf_report(plan, project["name"])
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="migration-plan-{safe_name}.pdf"'},
+    )
 
 
 # =====================================================================
