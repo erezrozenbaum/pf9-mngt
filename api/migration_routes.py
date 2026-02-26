@@ -1,10 +1,10 @@
 """
-Migration Planner API  —  Phase 1
-==================================
+Migration Planner API  —  Phase 1 + Phase 2
+=============================================
 CRUD for migration projects, RVTools XLSX upload/parse, tenant detection,
 VM listing, risk scoring, project lifecycle management.
 
-Routes:
+Phase 1 Routes:
   POST   /api/migration/projects              Create project
   GET    /api/migration/projects              List projects
   GET    /api/migration/projects/{id}         Get project detail
@@ -19,7 +19,7 @@ Routes:
   PATCH  /api/migration/projects/{id}/vms/{vm_id}  Update VM overrides
 
   GET    /api/migration/projects/{id}/tenants       Detected tenants
-  PATCH  /api/migration/projects/{id}/tenants/{tid} Confirm/edit tenant
+  PATCH  /api/migration/projects/{id}/tenants/{tid} Confirm/edit/scope tenant
 
   GET    /api/migration/projects/{id}/hosts         Source hosts
   GET    /api/migration/projects/{id}/clusters       Source clusters
@@ -36,6 +36,35 @@ Routes:
 
   GET    /api/migration/projects/{id}/bandwidth      Bandwidth model
   GET    /api/migration/projects/{id}/agent-recommendation  Agent sizing
+
+  GET    /api/migration/projects/{id}/export-plan   JSON migration plan
+  GET    /api/migration/projects/{id}/export-report.xlsx  Excel report
+  GET    /api/migration/projects/{id}/export-report.pdf   PDF report
+
+Phase 2A — Tenant Scoping:
+  PATCH  /api/migration/projects/{id}/tenants/bulk-scope   Bulk include/exclude
+  GET    /api/migration/projects/{id}/tenant-filters       List auto-exclude patterns
+  POST   /api/migration/projects/{id}/tenant-filters       Add auto-exclude pattern
+  DELETE /api/migration/projects/{id}/tenant-filters/{fid} Remove pattern
+
+Phase 2C — Quota & Overcommit:
+  GET    /api/migration/overcommit-profiles                   List profiles
+  PATCH  /api/migration/projects/{id}/overcommit-profile      Set active profile
+  GET    /api/migration/projects/{id}/quota-requirements      Compute per-tenant quota
+
+Phase 2D — PCD Node Sizing:
+  GET    /api/migration/projects/{id}/node-profiles           List node profiles
+  POST   /api/migration/projects/{id}/node-profiles           Create/update profile
+  DELETE /api/migration/projects/{id}/node-profiles/{pid}     Delete profile
+  GET    /api/migration/projects/{id}/node-inventory          Get current inventory
+  PUT    /api/migration/projects/{id}/node-inventory          Upsert inventory
+  GET    /api/migration/projects/{id}/node-sizing             HA-aware sizing result
+
+Phase 2E — PCD Readiness:
+  PATCH  /api/migration/projects/{id}/pcd-settings            Store PCD connection settings
+  POST   /api/migration/projects/{id}/pcd-gap-analysis        Run gap analysis
+  GET    /api/migration/projects/{id}/pcd-gaps                List gap results
+  PATCH  /api/migration/projects/{id}/pcd-gaps/{gid}/resolve  Mark gap resolved
 """
 
 import os
@@ -70,6 +99,11 @@ from migration_engine import (
     generate_migration_plan,
     summarize_rvtools_stats,
     COLUMN_ALIASES,
+    # Phase 2
+    compute_quota_requirements,
+    compute_node_sizing,
+    analyze_pcd_gaps,
+    OVERCOMMIT_PRESETS,
 )
 from export_reports import generate_excel_report, generate_pdf_report
 
@@ -252,6 +286,14 @@ class UpdateTenantRequest(BaseModel):
     tenant_name: Optional[str] = None
     org_vdc: Optional[str] = None
     confirmed: Optional[bool] = None
+    # Phase 2A — scoping
+    include_in_plan: Optional[bool] = None
+    exclude_reason: Optional[str] = None
+    # Phase 2B — target mapping
+    target_domain_name: Optional[str] = None
+    target_project_name: Optional[str] = None
+    target_display_name: Optional[str] = None
+    # Legacy aliases (kept for backwards compat)
     target_domain: Optional[str] = None
     target_project: Optional[str] = None
     notes: Optional[str] = None
@@ -2365,6 +2407,566 @@ async def export_report_pdf(project_id: str):
 
 
 # =====================================================================
+# Phase 2A — Tenant Exclusion / Include-in-plan
+# =====================================================================
+
+class BulkScopeRequest(BaseModel):
+    tenant_ids: List[int]
+    include_in_plan: bool
+    exclude_reason: Optional[str] = None
+
+
+@router.patch("/projects/{project_id}/tenants/bulk-scope",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_scope_tenants(project_id: str, req: BulkScopeRequest, user=Depends(get_current_user)):
+    """Include or exclude multiple tenants from the migration plan at once."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            for tid in req.tenant_ids:
+                cur.execute("""
+                    UPDATE migration_tenants
+                    SET include_in_plan = %s,
+                        exclude_reason  = %s,
+                        updated_at      = now()
+                    WHERE id = %s AND project_id = %s
+                """, (req.include_in_plan, req.exclude_reason if not req.include_in_plan else None,
+                      tid, project_id))
+        conn.commit()
+    _log_activity(actor=actor, action="bulk_scope_tenants", resource_type="migration_project",
+                  resource_id=project_id, details={"tenant_ids": req.tenant_ids, "include": req.include_in_plan})
+    return {"status": "ok", "updated": len(req.tenant_ids)}
+
+
+# ── Auto-exclude filter patterns ─────────────────────────────────────────────
+
+class TenantFilterRequest(BaseModel):
+    pattern: str
+    reason: Optional[str] = None
+    auto_exclude: Optional[bool] = True
+
+
+@router.get("/projects/{project_id}/tenant-filters",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_tenant_filters(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_tenant_filters WHERE project_id = %s ORDER BY id", (project_id,))
+            filters = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "filters": filters}
+
+
+@router.post("/projects/{project_id}/tenant-filters",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def add_tenant_filter(project_id: str, req: TenantFilterRequest, user=Depends(get_current_user)):
+    """Add an auto-exclude pattern (e.g. 'LAB-%') and optionally apply it now."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_tenant_filters (project_id, pattern, reason, auto_exclude)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (project_id, pattern) DO UPDATE
+                  SET reason = EXCLUDED.reason, auto_exclude = EXCLUDED.auto_exclude
+                RETURNING *
+            """, (project_id, req.pattern.strip(), req.reason, req.auto_exclude))
+            row = _serialize_row(dict(cur.fetchone()))
+
+            if req.auto_exclude:
+                # Apply the pattern immediately: exclude matching tenants
+                # Simple glob: only supports % wildcard → convert to SQL LIKE
+                sql_pattern = req.pattern.strip().replace("*", "%")
+                cur.execute("""
+                    UPDATE migration_tenants
+                    SET include_in_plan = false, exclude_reason = %s, updated_at = now()
+                    WHERE project_id = %s AND tenant_name ILIKE %s AND include_in_plan = true
+                """, (req.reason or f"Matched pattern: {req.pattern}", project_id, sql_pattern))
+                affected = cur.rowcount
+            else:
+                affected = 0
+
+        conn.commit()
+    _log_activity(actor=actor, action="add_tenant_filter", resource_type="migration_project",
+                  resource_id=project_id, details={"pattern": req.pattern, "affected": affected})
+    return {"status": "ok", "filter": row, "tenants_excluded": affected}
+
+
+@router.delete("/projects/{project_id}/tenant-filters/{filter_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_tenant_filter(project_id: str, filter_id: int, user=Depends(get_current_user)):
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_tenant_filters WHERE id = %s AND project_id = %s",
+                        (filter_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Filter not found")
+        conn.commit()
+    _log_activity(actor=actor, action="delete_tenant_filter", resource_type="migration_project",
+                  resource_id=project_id, details={"filter_id": filter_id})
+    return {"status": "ok"}
+
+
+# =====================================================================
+# Phase 2C — Quota & Overcommit Modeling
+# =====================================================================
+
+@router.get("/overcommit-profiles",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_overcommit_profiles():
+    """List all overcommit profiles (seeded presets + any custom ones)."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_overcommit_profiles ORDER BY id")
+            profiles = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "profiles": profiles}
+
+
+class UpdateOvercommitRequest(BaseModel):
+    overcommit_profile_name: str
+
+
+@router.patch("/projects/{project_id}/overcommit-profile",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def set_overcommit_profile(project_id: str, req: UpdateOvercommitRequest, user=Depends(get_current_user)):
+    """Set the active overcommit profile for a project."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM migration_overcommit_profiles WHERE profile_name = %s",
+                        (req.overcommit_profile_name,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail=f"Profile '{req.overcommit_profile_name}' not found")
+            cur.execute("""
+                UPDATE migration_projects SET overcommit_profile_name = %s, updated_at = now()
+                WHERE project_id = %s
+            """, (req.overcommit_profile_name, project_id))
+        conn.commit()
+    _log_activity(actor=actor, action="set_overcommit_profile", resource_type="migration_project",
+                  resource_id=project_id, details={"profile": req.overcommit_profile_name})
+    return {"status": "ok"}
+
+
+@router.get("/projects/{project_id}/quota-requirements",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_quota_requirements(project_id: str):
+    """
+    Compute per-tenant and aggregate quota requirements.
+    Uses the project's selected overcommit profile.
+    Only includes tenants where include_in_plan = true.
+    """
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+                ORDER BY vm_count DESC
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            profile_name = project.get("overcommit_profile_name") or "balanced"
+            cur.execute("SELECT * FROM migration_overcommit_profiles WHERE profile_name = %s", (profile_name,))
+            profile_row = cur.fetchone()
+            if profile_row:
+                profile = dict(profile_row)
+            else:
+                profile = {"profile_name": "balanced", "cpu_ratio": 4.0, "ram_ratio": 1.5, "disk_snapshot_factor": 1.5}
+
+    result = compute_quota_requirements(tenants, profile)
+    return {"status": "ok", "quota": result}
+
+
+# =====================================================================
+# Phase 2D — PCD Hardware Node Sizing
+# =====================================================================
+
+class NodeProfileRequest(BaseModel):
+    profile_name: str
+    cpu_cores: Optional[int] = 48
+    cpu_threads: Optional[int] = 96
+    ram_gb: Optional[float] = 384.0
+    storage_tb: Optional[float] = 20.0
+    max_cpu_util_pct: Optional[float] = 70.0
+    max_ram_util_pct: Optional[float] = 75.0
+    max_disk_util_pct: Optional[float] = 70.0
+    is_default: Optional[bool] = False
+
+
+@router.get("/projects/{project_id}/node-profiles",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_node_profiles(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_pcd_node_profiles WHERE project_id = %s ORDER BY id",
+                        (project_id,))
+            profiles = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "profiles": profiles}
+
+
+@router.post("/projects/{project_id}/node-profiles",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_node_profile(project_id: str, req: NodeProfileRequest, user=Depends(get_current_user)):
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if req.is_default:
+                cur.execute("UPDATE migration_pcd_node_profiles SET is_default = false WHERE project_id = %s",
+                            (project_id,))
+            cur.execute("""
+                INSERT INTO migration_pcd_node_profiles
+                  (project_id, profile_name, cpu_cores, cpu_threads, ram_gb, storage_tb,
+                   max_cpu_util_pct, max_ram_util_pct, max_disk_util_pct, is_default)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (project_id, profile_name) DO UPDATE
+                  SET cpu_cores=EXCLUDED.cpu_cores, cpu_threads=EXCLUDED.cpu_threads,
+                      ram_gb=EXCLUDED.ram_gb, storage_tb=EXCLUDED.storage_tb,
+                      max_cpu_util_pct=EXCLUDED.max_cpu_util_pct,
+                      max_ram_util_pct=EXCLUDED.max_ram_util_pct,
+                      max_disk_util_pct=EXCLUDED.max_disk_util_pct,
+                      is_default=EXCLUDED.is_default, updated_at=now()
+                RETURNING *
+            """, (project_id, req.profile_name, req.cpu_cores, req.cpu_threads, req.ram_gb,
+                  req.storage_tb, req.max_cpu_util_pct, req.max_ram_util_pct, req.max_disk_util_pct,
+                  req.is_default))
+            profile = _serialize_row(dict(cur.fetchone()))
+        conn.commit()
+    _log_activity(actor=actor, action="create_node_profile", resource_type="migration_project",
+                  resource_id=project_id, details={"profile_name": req.profile_name})
+    return {"status": "ok", "profile": profile}
+
+
+@router.delete("/projects/{project_id}/node-profiles/{profile_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_node_profile(project_id: str, profile_id: int, user=Depends(get_current_user)):
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_pcd_node_profiles WHERE id = %s AND project_id = %s",
+                        (profile_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Node profile not found")
+        conn.commit()
+    _log_activity(actor=actor, action="delete_node_profile", resource_type="migration_project",
+                  resource_id=project_id, details={"profile_id": profile_id})
+    return {"status": "ok"}
+
+
+class NodeInventoryRequest(BaseModel):
+    profile_id: Optional[int] = None
+    current_nodes: int = 0
+    current_vcpu_used: Optional[int] = 0
+    current_ram_gb_used: Optional[float] = 0.0
+    current_disk_tb_used: Optional[float] = 0.0
+    notes: Optional[str] = None
+
+
+@router.get("/projects/{project_id}/node-inventory",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_node_inventory(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_pcd_node_inventory WHERE project_id = %s", (project_id,))
+            row = cur.fetchone()
+    return {"status": "ok", "inventory": _serialize_row(dict(row)) if row else None}
+
+
+@router.put("/projects/{project_id}/node-inventory",
+            dependencies=[Depends(require_permission("migration", "write"))])
+async def upsert_node_inventory(project_id: str, req: NodeInventoryRequest, user=Depends(get_current_user)):
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_pcd_node_inventory
+                  (project_id, profile_id, current_nodes, current_vcpu_used, current_ram_gb_used, current_disk_tb_used, notes)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (project_id) DO UPDATE
+                  SET profile_id=EXCLUDED.profile_id, current_nodes=EXCLUDED.current_nodes,
+                      current_vcpu_used=EXCLUDED.current_vcpu_used,
+                      current_ram_gb_used=EXCLUDED.current_ram_gb_used,
+                      current_disk_tb_used=EXCLUDED.current_disk_tb_used,
+                      notes=EXCLUDED.notes, updated_at=now()
+                RETURNING *
+            """, (project_id, req.profile_id, req.current_nodes, req.current_vcpu_used,
+                  req.current_ram_gb_used, req.current_disk_tb_used, req.notes))
+            inv = _serialize_row(dict(cur.fetchone()))
+        conn.commit()
+    _log_activity(actor=actor, action="upsert_node_inventory", resource_type="migration_project",
+                  resource_id=project_id, details={"current_nodes": req.current_nodes})
+    return {"status": "ok", "inventory": inv}
+
+
+@router.get("/projects/{project_id}/node-sizing",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_node_sizing(project_id: str):
+    """
+    Compute HA-aware PCD node sizing based on quota requirements
+    and the project's default node profile.
+    """
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Tenants
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            # Overcommit profile
+            profile_name = project.get("overcommit_profile_name") or "balanced"
+            cur.execute("SELECT * FROM migration_overcommit_profiles WHERE profile_name = %s", (profile_name,))
+            profile_row = cur.fetchone()
+            profile = dict(profile_row) if profile_row else {"cpu_ratio": 4.0, "ram_ratio": 1.5, "disk_snapshot_factor": 1.5}
+
+            # Node profile (default for this project, or first)
+            cur.execute("""
+                SELECT * FROM migration_pcd_node_profiles
+                WHERE project_id = %s
+                ORDER BY is_default DESC, id ASC LIMIT 1
+            """, (project_id,))
+            node_profile_row = cur.fetchone()
+
+            # Existing inventory
+            cur.execute("SELECT * FROM migration_pcd_node_inventory WHERE project_id = %s", (project_id,))
+            inv_row = cur.fetchone()
+
+    if not node_profile_row:
+        raise HTTPException(status_code=400,
+                            detail="No node profile configured. Add a PCD node profile first.")
+
+    quota = compute_quota_requirements(tenants, profile)
+    sizing = compute_node_sizing(
+        totals=quota["totals_recommended"],
+        node_profile=dict(node_profile_row),
+        existing_inventory=dict(inv_row) if inv_row else None,
+    )
+    return {
+        "status": "ok",
+        "quota_summary": quota["totals_recommended"],
+        "sizing": sizing,
+    }
+
+
+# =====================================================================
+# Phase 2E — PCD Readiness & Gap Analysis
+# =====================================================================
+
+class PcdSettingsRequest(BaseModel):
+    pcd_auth_url: Optional[str] = None
+    pcd_username: Optional[str] = None
+    pcd_password_hint: Optional[str] = None
+    pcd_region: Optional[str] = "region-one"
+
+
+@router.patch("/projects/{project_id}/pcd-settings",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_pcd_settings(project_id: str, req: PcdSettingsRequest, user=Depends(get_current_user)):
+    """Store PCD connection info on the migration project. Password is stored as hint only."""
+    actor = user.username if user else "system"
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    set_parts = [f"{k} = %s" for k in updates]
+    set_parts.append("updated_at = now()")
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE migration_projects SET {', '.join(set_parts)} WHERE project_id = %s",
+                        params + [project_id])
+        conn.commit()
+    _log_activity(actor=actor, action="update_pcd_settings", resource_type="migration_project",
+                  resource_id=project_id, details=list(updates.keys()))
+    return {"status": "ok"}
+
+
+@router.post("/projects/{project_id}/pcd-gap-analysis",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def run_pcd_gap_analysis(project_id: str, user=Depends(get_current_user)):
+    """
+    Connect to PCD (using credentials from .env or project settings),
+    fetch flavors/networks/images, compare against VMware workload, and store gaps.
+    Falls back to offline analysis (only mapping-gap checks) if PCD is unreachable.
+    """
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT vm_name, cpu_count, ram_mb, os_family, network_name, tenant_name
+                FROM migration_vms WHERE project_id = %s
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+
+    # ── Try to connect to PCD ─────────────────────────────────────────────────
+    pcd_flavors: List[Dict[str, Any]] = []
+    pcd_networks: List[Dict[str, Any]] = []
+    pcd_images: List[Dict[str, Any]] = []
+    pcd_connected = False
+    pcd_error = None
+
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(__file__))
+        import p9_common  # type: ignore
+
+        # Override config with project-level PCD settings if provided
+        pcd_auth_url = project.get("pcd_auth_url") or p9_common.CFG.get("KEYSTONE_URL", "")
+        pcd_username  = project.get("pcd_username") or p9_common.CFG.get("USERNAME", "")
+        pcd_password  = os.getenv("PF9_PASSWORD", p9_common.CFG.get("PASSWORD", ""))
+
+        if pcd_auth_url and pcd_username and pcd_password:
+            # Temporarily patch global CFG if project has custom PCD settings
+            _orig_cfg = {}
+            if project.get("pcd_auth_url"):
+                _orig_cfg["KEYSTONE_URL"] = p9_common.CFG["KEYSTONE_URL"]
+                p9_common.CFG["KEYSTONE_URL"] = pcd_auth_url
+            if project.get("pcd_username"):
+                _orig_cfg["USERNAME"] = p9_common.CFG["USERNAME"]
+                p9_common.CFG["USERNAME"] = pcd_username
+            if project.get("pcd_region"):
+                _orig_cfg["REGION_NAME"] = p9_common.CFG.get("REGION_NAME", "region-one")
+                p9_common.CFG["REGION_NAME"] = project["pcd_region"]
+
+            try:
+                session = p9_common.get_session_best_scope()
+                pcd_flavors  = p9_common.nova_flavors(session)
+                pcd_networks = p9_common.neutron_list(session, "networks")
+                pcd_images   = p9_common.glance_images(session)
+                pcd_connected = True
+            finally:
+                # Restore original config
+                for k, v in _orig_cfg.items():
+                    p9_common.CFG[k] = v
+        else:
+            pcd_error = "PCD credentials not configured. Set PF9_AUTH_URL, PF9_USERNAME, PF9_PASSWORD in .env or project PCD settings."
+    except Exception as e:
+        pcd_error = str(e)
+        logger.warning(f"PCD gap analysis: could not connect to PCD: {e}")
+
+    # ── Run gap analysis ──────────────────────────────────────────────────────
+    gaps = analyze_pcd_gaps(tenants, pcd_flavors, pcd_networks, pcd_images, vms)
+
+    # ── Store gaps in DB ──────────────────────────────────────────────────────
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            # Clear old gaps for this project
+            cur.execute("DELETE FROM migration_pcd_gaps WHERE project_id = %s", (project_id,))
+            for g in gaps:
+                cur.execute("""
+                    INSERT INTO migration_pcd_gaps
+                      (project_id, gap_type, resource_name, tenant_name, details, severity, resolution)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (project_id, gap_type, resource_name, tenant_name)
+                    DO UPDATE SET details=EXCLUDED.details, severity=EXCLUDED.severity,
+                                  resolution=EXCLUDED.resolution, checked_at=now(), resolved=false
+                """, (project_id, g["gap_type"], g["resource_name"], g.get("tenant_name"),
+                      Json(g.get("details", {})), g.get("severity", "warning"), g.get("resolution")))
+
+            # Update readiness score on project (100 − penalties)
+            critical_count = sum(1 for g in gaps if g.get("severity") == "critical")
+            warning_count  = sum(1 for g in gaps if g.get("severity") == "warning")
+            score = max(0, 100 - critical_count * 15 - warning_count * 5)
+            cur.execute("""
+                UPDATE migration_projects
+                SET pcd_readiness_score = %s, pcd_last_checked_at = now(), updated_at = now()
+                WHERE project_id = %s
+            """, (score, project_id))
+
+        conn.commit()
+
+    _log_activity(actor=actor, action="pcd_gap_analysis", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"gaps": len(gaps), "pcd_connected": pcd_connected, "score": score})
+
+    return {
+        "status": "ok",
+        "pcd_connected": pcd_connected,
+        "pcd_error": pcd_error,
+        "gaps": gaps,
+        "gap_counts": {
+            "critical": critical_count,
+            "warning": warning_count,
+            "total": len(gaps),
+        },
+        "readiness_score": score,
+    }
+
+
+@router.get("/projects/{project_id}/pcd-gaps",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_pcd_gaps(
+    project_id: str,
+    resolved: Optional[bool] = Query(None),
+    gap_type: Optional[str] = Query(None),
+):
+    """List stored PCD gap analysis results for a project."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            conditions = ["project_id = %s"]
+            params: List[Any] = [project_id]
+            if resolved is not None:
+                conditions.append("resolved = %s"); params.append(resolved)
+            if gap_type:
+                conditions.append("gap_type = %s"); params.append(gap_type)
+            cur.execute(f"""
+                SELECT * FROM migration_pcd_gaps
+                WHERE {' AND '.join(conditions)}
+                ORDER BY severity DESC, gap_type, resource_name
+            """, params)
+            gaps = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    return {
+        "status": "ok",
+        "gaps": gaps,
+        "readiness_score": project.get("pcd_readiness_score"),
+        "last_checked_at": project.get("pcd_last_checked_at"),
+    }
+
+
+@router.patch("/projects/{project_id}/pcd-gaps/{gap_id}/resolve",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def resolve_pcd_gap(project_id: str, gap_id: int, user=Depends(get_current_user)):
+    """Mark a specific PCD gap as resolved."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_pcd_gaps SET resolved = true
+                WHERE id = %s AND project_id = %s
+            """, (gap_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Gap not found")
+        conn.commit()
+    _log_activity(actor=actor, action="resolve_pcd_gap", resource_type="migration_project",
+                  resource_id=project_id, details={"gap_id": gap_id})
+    return {"status": "ok"}
+
+
+# =====================================================================
 # Serialization helpers
 # =====================================================================
 
@@ -2384,3 +2986,4 @@ def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         else:
             result[k] = str(v)
     return result
+
