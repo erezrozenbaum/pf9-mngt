@@ -1748,7 +1748,7 @@ async def list_tenants(project_id: str):
     return {"status": "ok", "tenants": tenants}
 
 
-@router.patch("/projects/{project_id}/tenants/{tenant_id}",
+@router.patch("/projects/{project_id}/tenants/{tenant_id:int}",
               dependencies=[Depends(require_permission("migration", "write"))])
 async def update_tenant(project_id: str, tenant_id: int, req: UpdateTenantRequest, user = Depends(get_current_user)):
     actor = user.username if user else "system"
@@ -2290,23 +2290,38 @@ async def export_migration_plan(project_id: str):
     """
     Generate a comprehensive migration plan with per-tenant assessment,
     daily VM schedule, and per-VM time estimates (warm/cold).
+    Only includes tenants and VMs where include_in_plan = true.
     """
     with _get_conn() as conn:
         project = _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT * FROM migration_vms
-                WHERE project_id = %s
-                  AND NOT coalesce(template, false)
-                ORDER BY tenant_name, priority, total_disk_gb DESC NULLS LAST
-            """, (project_id,))
-            vms = [dict(r) for r in cur.fetchall()]
-
+            # Included tenants only
             cur.execute("""
                 SELECT * FROM migration_tenants
-                WHERE project_id = %s ORDER BY vm_count DESC
+                WHERE project_id = %s AND include_in_plan = true
+                ORDER BY vm_count DESC
             """, (project_id,))
             tenants = [dict(r) for r in cur.fetchall()]
+            included_names = {t["tenant_name"] for t in tenants}
+
+            # Excluded tenants count for project summary
+            cur.execute("""
+                SELECT count(*) FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = false
+            """, (project_id,))
+            excluded_count = cur.fetchone()["count"]
+
+            # Only VMs belonging to included tenants
+            cur.execute("""
+                SELECT v.* FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                WHERE v.project_id = %s
+                  AND NOT coalesce(v.template, false)
+                  AND t.include_in_plan = true
+                ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
 
     bw_model = compute_bandwidth_model(project)
     plan = generate_migration_plan(
@@ -2315,6 +2330,7 @@ async def export_migration_plan(project_id: str):
         project_settings=project,
         bottleneck_mbps=bw_model.bottleneck_mbps,
     )
+    plan["project_summary"]["excluded_tenants"] = int(excluded_count)
 
     return {
         "status": "ok",
@@ -2332,16 +2348,20 @@ async def export_report_excel(project_id: str):
         project = _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT * FROM migration_vms
-                WHERE project_id = %s AND NOT coalesce(template, false)
-                ORDER BY tenant_name, priority, total_disk_gb DESC NULLS LAST
-            """, (project_id,))
-            vms = [dict(r) for r in cur.fetchall()]
-            cur.execute("""
                 SELECT * FROM migration_tenants
-                WHERE project_id = %s ORDER BY vm_count DESC
+                WHERE project_id = %s AND include_in_plan = true
+                ORDER BY vm_count DESC
             """, (project_id,))
             tenants = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT v.* FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                WHERE v.project_id = %s AND NOT coalesce(v.template, false)
+                  AND t.include_in_plan = true
+                ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
 
     bw_model = compute_bandwidth_model(project)
     plan = generate_migration_plan(
@@ -2373,16 +2393,20 @@ async def export_report_pdf(project_id: str):
         project = _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT * FROM migration_vms
-                WHERE project_id = %s AND NOT coalesce(template, false)
-                ORDER BY tenant_name, priority, total_disk_gb DESC NULLS LAST
-            """, (project_id,))
-            vms = [dict(r) for r in cur.fetchall()]
-            cur.execute("""
                 SELECT * FROM migration_tenants
-                WHERE project_id = %s ORDER BY vm_count DESC
+                WHERE project_id = %s AND include_in_plan = true
+                ORDER BY vm_count DESC
             """, (project_id,))
             tenants = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT v.* FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                WHERE v.project_id = %s AND NOT coalesce(v.template, false)
+                  AND t.include_in_plan = true
+                ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
 
     bw_model = compute_bandwidth_model(project)
     plan = generate_migration_plan(
@@ -2678,6 +2702,66 @@ async def get_node_inventory(project_id: str):
             cur.execute("SELECT * FROM migration_pcd_node_inventory WHERE project_id = %s", (project_id,))
             row = cur.fetchone()
     return {"status": "ok", "inventory": _serialize_row(dict(row)) if row else None}
+
+
+@router.get("/projects/{project_id}/pcd-live-inventory",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_pcd_live_inventory(project_id: str):
+    """
+    Auto-discover current PCD cluster capacity from the hypervisors inventory table
+    (populated by pf9_rvtools.py).  Also pulls committed vCPU/RAM from servers+flavors.
+    Returns a 'live' snapshot the UI can offer to sync into the manual inventory form.
+    """
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # ── Hypervisor totals (PCD compute nodes) ───────────────────────
+            cur.execute("""
+                SELECT
+                  COUNT(*)::int                                              AS node_count,
+                  COALESCE(SUM(vcpus),       0)::int                        AS total_vcpus,
+                  ROUND(COALESCE(SUM(memory_mb), 0) / 1024.0, 1)           AS total_ram_gb,
+                  ROUND(COALESCE(SUM(local_gb),  0) / 1024.0, 3)           AS total_local_disk_tb,
+                  COALESCE(SUM(running_vms),  0)::int                       AS running_vms
+                FROM hypervisors
+                WHERE state = 'up' AND status = 'enabled'
+            """)
+            cluster = dict(cur.fetchone() or {})
+
+            # ── vCPU / RAM already committed (active servers × flavor) ──────
+            cur.execute("""
+                SELECT
+                  COUNT(s.id)::int                                           AS vm_count,
+                  COALESCE(SUM(f.vcpus), 0)::int                            AS vcpus_used,
+                  ROUND(COALESCE(SUM(f.ram), 0) / 1024.0, 1)               AS ram_gb_used
+                FROM servers s
+                LEFT JOIN flavors f ON f.id = s.flavor_id
+                WHERE s.status NOT IN ('DELETED', 'ERROR')
+            """)
+            usage = dict(cur.fetchone() or {})
+
+            # ── Cinder block-storage already allocated ───────────────────────
+            cur.execute("""
+                SELECT ROUND(COALESCE(SUM(size_gb), 0) / 1024.0, 3) AS disk_tb_used
+                FROM volumes
+                WHERE status NOT IN ('deleting', 'error')
+            """)
+            disk_row = dict(cur.fetchone() or {})
+
+    return {
+        "status": "ok",
+        "live": {
+            "node_count":         int(cluster.get("node_count",         0)),
+            "total_vcpus":        int(cluster.get("total_vcpus",        0)),
+            "total_ram_gb":       float(cluster.get("total_ram_gb",     0) or 0),
+            "total_local_disk_tb": float(cluster.get("total_local_disk_tb", 0) or 0),
+            "running_vms":        int(cluster.get("running_vms",        0)),
+            "vcpus_used":         int(usage.get("vcpus_used",           0)),
+            "ram_gb_used":        float(usage.get("ram_gb_used",        0) or 0),
+            "vm_count":           int(usage.get("vm_count",             0)),
+            "disk_tb_used":       float(disk_row.get("disk_tb_used",    0) or 0),
+        },
+    }
 
 
 @router.put("/projects/{project_id}/node-inventory",
