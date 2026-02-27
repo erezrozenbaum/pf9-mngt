@@ -777,7 +777,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_migration_usage.sql"; Desc="Migration Planner: usage metrics, OS version, network name, vPartition columns"},
     @{File="db\migrate_migration_networks.sql"; Desc="Migration Planner: network infrastructure summary, tenant in_use_gb"},
     @{File="db\migrate_vm_usage_metrics.sql"; Desc="Migration Planner: vCPU/memory usage percentages from RVTools vCPU/vMemory sheets"},
-    @{File="db\migrate_phase2_scoping.sql"; Desc="Migration Planner Phase 2: tenant scoping, target mapping, overcommit profiles, node sizing, PCD gap analysis"}
+    @{File="db\migrate_phase2_scoping.sql"; Desc="Migration Planner Phase 2: tenant scoping, target mapping, overcommit profiles, node sizing, PCD gap analysis"},
+    @{File="db\migrate_cohorts_and_foundations.sql"; Desc="Migration Planner Phase 2.10: cohorts, VM status/mode-override, tenant priority, VM dependencies, network mappings, tenant readiness"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

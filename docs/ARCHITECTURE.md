@@ -711,7 +711,7 @@ api/
 ├── navigation_routes.py  # Department & navigation visibility management (15+ endpoints)
 ├── performance_metrics.py # Thread-safe request tracking with locking
 ├── migration_engine.py   # Migration intelligence: risk scoring, bandwidth model, tenant detection, schedule-aware agent sizing
-├── migration_routes.py   # Migration planner API (25+ endpoints)
+├── migration_routes.py   # Migration planner API (45+ endpoints)
 ├── pf9_control.py       # Platform9 API integration
 ├── requirements.txt     # Python dependencies (incl. gunicorn)
 └── Dockerfile          # Container configuration (gunicorn CMD)
@@ -842,7 +842,7 @@ GET  /api/metering/export/api-usage        # CSV export: API usage
 GET  /api/metering/export/efficiency       # CSV export: efficiency
 GET  /api/metering/export/chargeback       # CSV export: chargeback report (multi-category)
 
-# Migration Planner (api/migration_routes.py - 25+ endpoints)
+# Migration Planner (api/migration_routes.py - 45+ endpoints)
 POST /api/migration/projects                           # Create migration project
 GET  /api/migration/projects                           # List all migration projects
 GET  /api/migration/projects/{id}                      # Get project details
@@ -864,6 +864,26 @@ POST /api/migration/projects/{id}/reset-plan           # Clear waves/tasks
 POST /api/migration/projects/{id}/approve              # Approve for migration
 GET  /api/migration/projects/{id}/bandwidth            # Bandwidth constraint model
 GET  /api/migration/projects/{id}/agent-recommendation # Agent sizing recommendation
+# Phase 2.10 — Foundations (v1.31.0)
+PATCH /api/migration/projects/{id}/vms/{vm_id}/status          # Update single VM migration status
+PATCH /api/migration/projects/{id}/vms/bulk-status             # Bulk VM status update
+PATCH /api/migration/projects/{id}/vms/{vm_id}/mode-override   # Force warm/cold/auto override
+GET  /api/migration/projects/{id}/vm-dependencies              # List VM dependencies
+POST /api/migration/projects/{id}/vms/{vm_id}/dependencies     # Add dependency (with circular check)
+DELETE /api/migration/projects/{id}/vms/{vm_id}/dependencies/{dep_id}  # Remove dependency
+GET  /api/migration/projects/{id}/network-mappings             # List (auto-seeds from VM data)
+POST /api/migration/projects/{id}/network-mappings             # Create/upsert mapping
+PATCH /api/migration/projects/{id}/network-mappings/{id}       # Update target network
+DELETE /api/migration/projects/{id}/network-mappings/{id}      # Delete mapping (admin)
+GET  /api/migration/projects/{id}/cohorts                      # List cohorts with rollups
+POST /api/migration/projects/{id}/cohorts                      # Create cohort
+PATCH /api/migration/projects/{id}/cohorts/{cid}               # Update cohort
+DELETE /api/migration/projects/{id}/cohorts/{cid}              # Delete cohort
+POST /api/migration/projects/{id}/cohorts/{cid}/assign-tenants # Assign/unassign tenants
+GET  /api/migration/projects/{id}/cohorts/{cid}/summary        # Cohort rollup (vCPU/RAM/status)
+POST /api/migration/projects/{id}/cohorts/auto-assign          # Auto-assign by priority/risk/equal_split
+GET  /api/migration/projects/{id}/tenants/{tid}/readiness      # Compute + persist readiness checks
+GET  /api/migration/projects/{id}/cohorts/{cid}/readiness-summary # All-tenant readiness in cohort
 
 # System Health & Testing
 GET  /health                     # Service health check

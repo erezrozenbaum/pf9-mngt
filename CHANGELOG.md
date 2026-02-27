@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0] - 2026-02-27
+
+### Added
+- **Migration Cohorts (Phase 2.10G)** ⭐ — Split large projects into independently planned, ordered workstreams. Each cohort has its own schedule, owner, dependency gate, and tenant/VM scope. Auto-assign strategies: by priority, by risk, or equal split. Full CRUD + tenant assignment panel + cohort summary rollup. New `🗃️ Cohorts` sub-tab in SourceAnalysis.
+- **Source → PCD Network Mapping (Phase 2.10F)** — New `migration_network_mappings` table and `🔌 Network Map` sub-tab. Auto-seeds from distinct `network_name` values in VM data on load. Editable target network per source network with ⚠️ unmapped-count banner. `GET/POST/PATCH/DELETE /projects/{id}/network-mappings`.
+- **VM Dependencies (Phase 2.10E)** — Annotate "VM A cannot start until VM B completes". Circular-dependency validation at API level. Shown as dependency badges in expanded VM row. `GET/POST/DELETE /projects/{id}/vm-dependencies`.
+- **Per-VM Migration Status (Phase 2.10B)** — `migration_status` column on `migration_vms` (`not_started|assigned|in_progress|migrated|failed|skipped`). Colour-coded pill column in VM table. Single and bulk update endpoints. Status dropdown in expanded VM row.
+- **Per-VM Migration Mode Override (Phase 2.10C)** — `migration_mode_override` column on `migration_vms` (`warm|cold|null`). Operator can force warm/cold regardless of engine classification. 🔒 icon on VM row when override is active. Override dropdown in expanded VM row. `PATCH /projects/{id}/vms/{vm_id}/mode-override`.
+- **Tenant Migration Priority (Phase 2.10D)** — `migration_priority INTEGER DEFAULT 999` on `migration_tenants`. Editable number field in Tenants tab. Sortable priority column. Used by cohort auto-assign. `migration_priority` added to `PATCH /tenants/{id}` request model.
+- **Per-Tenant Readiness Checks (Phase 2.10H)** — 5 auto-derived checks per tenant: `target_mapped`, `network_mapped`, `quota_sufficient`, `no_critical_gaps`, `vms_classified`. Results persisted to `migration_tenant_readiness` table. Readiness score button in Tenants tab. Cohort-level readiness summary endpoint.
+- **DB Migration** — `db/migrate_cohorts_and_foundations.sql` (idempotent): 4 new tables (`migration_cohorts`, `migration_vm_dependencies`, `migration_network_mappings`, `migration_tenant_readiness`), 5 new columns on `migration_vms`, 2 new columns on `migration_tenants`, 12 indexes.
+- **17 new API endpoints** added to `api/migration_routes.py` — VM status (×3), VM mode override (×1), VM dependencies (×3), network mappings (×4), cohorts (×7 incl. auto-assign + readiness summary), tenant readiness (×2). Total migration endpoints: 45+.
+
 ## [1.30.1] - 2026-02-27
 
 ### Changed
