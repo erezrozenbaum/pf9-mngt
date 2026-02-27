@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.6] - 2026-02-27
+
+### Added
+- **Confirm All for tenant target names** — New ✓ Confirm All button in the Tenants tab toolbar. One-click marks all unconfirmed tenant target names (`target_confirmed=true`) after a confirmation prompt. Reports how many rows were affected. New API endpoint: `POST /projects/{id}/tenants/confirm-all`.
+- **Confirm All for network mappings** — New ✓ Confirm All button in the Network Map tab toolbar. One-click marks all unconfirmed network mappings (`confirmed=true`) after a confirmation prompt. New API endpoint: `POST /projects/{id}/network-mappings/confirm-all`.
+
 ## [1.31.5] - 2026-02-27
 
 ### Added
