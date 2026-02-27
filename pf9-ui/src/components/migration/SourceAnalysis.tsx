@@ -1723,6 +1723,7 @@ function NetworksView({ networks, projectId, onRefresh }: {
       pcd_target: n.pcd_target || "",
       notes: n.notes || "",
       network_type: n.network_type || "standard",
+      vlan_id: n.vlan_id != null ? String(n.vlan_id) : "",
     });
   };
 
@@ -1735,7 +1736,10 @@ function NetworksView({ networks, projectId, onRefresh }: {
     try {
       await apiFetch(`/api/migration/projects/${projectId}/networks/${editId}`, {
         method: "PATCH",
-        body: JSON.stringify(editFields),
+        body: JSON.stringify({
+          ...editFields,
+          vlan_id: editFields.vlan_id !== "" ? parseInt(editFields.vlan_id, 10) || null : null,
+        }),
       });
       cancelEdit();
       onRefresh();
@@ -1806,7 +1810,15 @@ function NetworksView({ networks, projectId, onRefresh }: {
               {editId === n.id ? (
                 <>
                   <td style={tdStyle}><strong>{n.network_name}</strong></td>
-                  <td style={tdStyle}>{n.vlan_id ?? "—"}</td>
+                  <td style={tdStyle}>
+                    <input
+                      type="number"
+                      value={editFields.vlan_id ?? ""}
+                      onChange={e => setEditFields(f => ({ ...f, vlan_id: e.target.value }))}
+                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 72 }}
+                      placeholder="VLAN"
+                    />
+                  </td>
                   <td style={tdStyle}>
                     <select value={editFields.network_type} onChange={e => setEditFields(f => ({ ...f, network_type: e.target.value }))}
                       style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem" }}>
@@ -2159,10 +2171,10 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                     />
                   </td>
                   <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.8rem" }}>
-                    {isEditing ? (
+                    {isEditing || !isConfirmed ? (
                       <input
                         type="number"
-                        value={editVlanValues[m.id] ?? ""}
+                        value={editVlanValues[m.id] ?? (m.vlan_id != null ? String(m.vlan_id) : "")}
                         onChange={e => setEditVlanValues(prev => ({ ...prev, [m.id]: e.target.value }))}
                         placeholder="VLAN"
                         style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.8rem", width: 72 }}

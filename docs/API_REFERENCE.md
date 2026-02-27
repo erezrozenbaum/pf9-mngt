@@ -3218,13 +3218,13 @@ Remove a dependency record.
 **GET** `/api/migration/projects/{project_id}/network-mappings`  
 *Requires: migration:read*
 
-List all source→PCD network mappings. On each call, auto-seeds a `(source_network_name, target=\'\')` row for any distinct `network_name` found in in-scope VMs that doesn't already have an entry. Returns `unmapped_count` (rows where `target_network_name = ''`).
+List all source→PCD network mappings. On each call, auto-seeds a `(source_network_name, target=source_name, confirmed=false)` row for any distinct `network_name` found in in-scope VMs that doesn't already have an entry. Returns `unconfirmed_count` (rows not yet confirmed by operator).
 
 Response:
 ```json
 {
-  "mappings": [{"id": 1, "source_network_name": "VLAN-100", "target_network_name": "pf9-prod", "vm_count": 12}],
-  "unmapped_count": 3
+  "mappings": [{"id": 1, "source_network_name": "VLAN-100", "target_network_name": "pf9-prod", "vlan_id": 100, "vm_count": 12, "confirmed": true}],
+  "unconfirmed_count": 3
 }
 ```
 
@@ -3241,12 +3241,40 @@ Request:
 **PATCH** `/api/migration/projects/{project_id}/network-mappings/{mapping_id}`  
 *Requires: migration:write*
 
-Update target network name/ID on an existing mapping.
+Update target network name/ID, VLAN ID, or confirmed status on an existing mapping.
 
 Request:
 ```json
-{ "target_network_name": "pf9-dmz", "target_network_id": null }
+{ "target_network_name": "pf9-dmz", "target_network_id": null, "vlan_id": 3314, "confirmed": true }
 ```
+
+**POST** `/api/migration/projects/{project_id}/network-mappings/bulk-replace`  
+*Requires: migration:write*
+
+Find-and-replace in `target_network_name` across all mappings. Literal substring match (not regex). Affected rows are set to `confirmed=false`. Supports preview mode (dry-run).
+
+Request:
+```json
+{
+  "find": "_vLAN_",
+  "replace": "-vlan-",
+  "case_sensitive": false,
+  "unconfirmed_only": false,
+  "preview_only": true
+}
+```
+
+Response (preview):
+```json
+{ "status": "ok", "preview": [{"id": 1, "source_network_name": "...", "old_value": "...", "new_value": "..."}], "affected_count": 5 }
+```
+
+**POST** `/api/migration/projects/{project_id}/network-mappings/confirm-all`  
+*Requires: migration:write*
+
+Mark all unconfirmed network mappings as confirmed in one call.
+
+Response: `{ "status": "ok", "affected_count": 42 }`
 
 **DELETE** `/api/migration/projects/{project_id}/network-mappings/{mapping_id}`  
 *Requires: migration:admin*
@@ -3337,3 +3365,54 @@ Response:
 *Requires: migration:read*
 
 Run readiness checks for every tenant in the cohort and return a summary table plus cohort-level overall status (`all_pass`, `partial`, `blocked`).
+
+### Tenant Target Bulk Operations (v1.31.3+)
+
+**POST** `/api/migration/projects/{project_id}/tenants/bulk-replace-target`  
+*Requires: migration:write*
+
+Find-and-replace in a target field across all tenant rows. Affected rows are set to `target_confirmed=false`. Supports preview mode (dry-run). Allowed fields: `target_domain_name`, `target_domain_description`, `target_project_name`, `target_display_name`.
+
+Request:
+```json
+{
+  "field": "target_project_name",
+  "find": "_vDC_",
+  "replace": "-",
+  "case_sensitive": false,
+  "unconfirmed_only": false,
+  "preview_only": true
+}
+```
+
+Response (preview):
+```json
+{
+  "status": "ok",
+  "preview": [{"id": 1, "tenant_name": "Org1", "org_vdc": "Dev", "old_value": "Org1_vDC_Dev", "new_value": "Org1-Dev"}],
+  "affected_count": 18
+}
+```
+
+**POST** `/api/migration/projects/{project_id}/tenants/confirm-all`  
+*Requires: migration:write*
+
+Mark all unconfirmed tenant target names as confirmed in one call.
+
+Response: `{ "status": "ok", "affected_count": 34 }`
+
+### Tenant Description Fields (v1.31.7+)
+
+The `PATCH /projects/{id}/tenants/{tenant_id}` endpoint accepts two description fields in addition to name fields:
+
+| Field | PCD Mapping | Notes |
+|-------|------------|-------|
+| `target_domain_name` | Domain name | Auto-seeded from `tenant_name` |
+| `target_domain_description` | Domain description | Auto-seeded from `tenant_name`; editable |
+| `target_project_name` | Project name | Auto-seeded from OrgVDC or tenant_name |
+| `target_display_name` | Project description | Auto-seeded from project name; editable |
+| `target_confirmed` | — | `true` = operator reviewed |
+
+### Network Mapping VLAN Edit (v1.31.10+)
+
+`PATCH /network-mappings/{id}` accepts `vlan_id` to allow operators to manually set or correct a VLAN ID that was not auto-parsed from the source network name. Send `null` to clear it.
