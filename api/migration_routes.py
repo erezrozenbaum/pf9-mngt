@@ -301,6 +301,7 @@ class UpdateTenantRequest(BaseModel):
     target_domain_name: Optional[str] = None
     target_project_name: Optional[str] = None
     target_display_name: Optional[str] = None
+    target_confirmed: Optional[bool] = None  # true = user reviewed/confirmed the target names
     # Legacy aliases (kept for backwards compat)
     target_domain: Optional[str] = None
     target_project: Optional[str] = None
@@ -349,6 +350,7 @@ class NetworkMappingUpdateRequest(BaseModel):
     target_network_id: Optional[str] = None
     vlan_id: Optional[int] = None
     notes: Optional[str] = None
+    confirmed: Optional[bool] = None
 
 
 class CreateCohortRequest(BaseModel):
@@ -1739,17 +1741,21 @@ def _run_tenant_detection(project_id: str, cur):
             }
         tenant_map[key]["vm_count"] += 1
 
-    # Upsert tenants
+    # Upsert tenants — pre-seed target names from source name (confirmed=false = needs review)
     for (tname, ovdc), info in tenant_map.items():
         cur.execute("""
-            INSERT INTO migration_tenants (project_id, tenant_name, org_vdc, detection_method, vm_count)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO migration_tenants
+                (project_id, tenant_name, org_vdc, detection_method, vm_count,
+                 target_domain_name, target_project_name, target_confirmed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, false)
             ON CONFLICT (project_id, tenant_name, org_vdc) DO UPDATE SET
                 detection_method = EXCLUDED.detection_method,
                 vm_count = EXCLUDED.vm_count,
                 updated_at = now()
+                -- Do NOT overwrite target_domain_name / target_confirmed if already set by user
         """, (project_id, info["tenant_name"], info["org_vdc"] or None,
-              info["detection_method"], info["vm_count"]))
+              info["detection_method"], info["vm_count"],
+              info["tenant_name"], info["tenant_name"]))
 
     # Update tenant disk/ram/vcpu/in_use totals
     cur.execute("""
@@ -3694,10 +3700,12 @@ async def list_network_mappings(project_id: str):
     with _get_conn() as conn:
         _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Auto-seed: insert any source networks from VMs that don't have a mapping yet
+            # Auto-seed: insert any source networks from VMs that don't have a mapping yet.
+            # Default target = source name ("best guess, confirm or override"), confirmed=false.
             cur.execute("""
-                INSERT INTO migration_network_mappings (project_id, source_network_name)
-                SELECT DISTINCT %s, vm.network_name
+                INSERT INTO migration_network_mappings
+                    (project_id, source_network_name, target_network_name, confirmed)
+                SELECT DISTINCT %s, vm.network_name, vm.network_name, false
                 FROM migration_vms vm
                 WHERE vm.project_id = %s
                   AND vm.network_name IS NOT NULL
@@ -3727,8 +3735,9 @@ async def list_network_mappings(project_id: str):
             """, (project_id,))
             mappings = [_serialize_row(dict(r)) for r in cur.fetchall()]
 
-    unmapped_count = sum(1 for m in mappings if not m.get("target_network_name"))
-    return {"status": "ok", "mappings": mappings, "unmapped_count": unmapped_count,
+    # unconfirmed = auto-seeded rows (target = source name but not yet reviewed by user)
+    unconfirmed_count = sum(1 for m in mappings if not m.get("confirmed"))
+    return {"status": "ok", "mappings": mappings, "unconfirmed_count": unconfirmed_count,
             "total": len(mappings)}
 
 
@@ -4119,19 +4128,22 @@ def _compute_tenant_readiness(project_id: str, tenant_id: int, conn) -> List[Dic
         if not tenant:
             return []
 
-        # Check 1: target_mapped
+        # Check 1: target_mapped — requires confirmed=true (user reviewed, not just auto-seeded)
         results.append({
             "check_name": "target_mapped",
-            "check_status": "pass" if tenant.get("target_domain_name") else "fail",
-            "notes": "Target PCD domain is configured" if tenant.get("target_domain_name")
+            "check_status": "pass" if (tenant.get("target_domain_name") and tenant.get("target_confirmed"))
+                            else "pending" if tenant.get("target_domain_name")
+                            else "fail",
+            "notes": "Target PCD domain confirmed" if (tenant.get("target_domain_name") and tenant.get("target_confirmed"))
+                     else "Target pre-filled from source name — review and confirm in Tenants tab" if tenant.get("target_domain_name")
                      else "No target domain assigned — set in Tenants tab"
         })
 
-        # Check 2: network_mapped
+        # Check 2: network_mapped — requires confirmed=true (user reviewed, not just auto-seeded)
         cur.execute("""
             SELECT COUNT(DISTINCT v.network_name) AS total,
-                   COUNT(DISTINCT CASE WHEN m.target_network_name IS NOT NULL
-                         THEN v.network_name END) AS mapped
+                   COUNT(DISTINCT CASE WHEN m.confirmed = true
+                         THEN v.network_name END) AS confirmed
             FROM migration_vms v
             LEFT JOIN migration_network_mappings m
                 ON m.project_id = v.project_id AND m.source_network_name = v.network_name
@@ -4140,11 +4152,12 @@ def _compute_tenant_readiness(project_id: str, tenant_id: int, conn) -> List[Dic
         """, (project_id, tenant["tenant_name"]))
         nm = cur.fetchone()
         total_nets = nm["total"] or 0
-        mapped_nets = nm["mapped"] or 0
+        confirmed_nets = nm["confirmed"] or 0
         results.append({
             "check_name": "network_mapped",
-            "check_status": "pass" if (total_nets == 0 or total_nets == mapped_nets) else "fail",
-            "notes": f"{mapped_nets}/{total_nets} networks mapped to PCD target"
+            "check_status": "pass" if (total_nets == 0 or total_nets == confirmed_nets) else "pending",
+            "notes": f"{confirmed_nets}/{total_nets} networks confirmed " +
+                     ("" if total_nets == confirmed_nets else "— review Network Map tab and confirm each mapping")
         })
 
         # Check 3: quota_sufficient — target_project_name or quota model exists
