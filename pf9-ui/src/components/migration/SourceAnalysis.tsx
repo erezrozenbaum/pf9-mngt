@@ -1139,6 +1139,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   const [frPreview, setFrPreview] = useState<{ id: number; tenant_name: string; org_vdc: string | null; old_value: string; new_value: string }[] | null>(null);
   const [frLoading, setFrLoading] = useState(false);
   const [frApplied, setFrApplied] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
 
   const runFindReplace = async (applyMode: boolean) => {
     if (!frFind.trim()) return;
@@ -1304,6 +1305,24 @@ function TenantsView({ tenants, projectId, onRefresh }: {
         <button onClick={() => { setShowFindReplace(!showFindReplace); setFrPreview(null); setFrApplied(false); }}
           style={{ ...btnSecondary, background: showFindReplace ? "#eff6ff" : undefined, color: showFindReplace ? "#2563eb" : undefined }}>
           🔍 Find &amp; Replace
+        </button>
+        <button
+          disabled={confirmingAll}
+          onClick={async () => {
+            if (!window.confirm("Mark ALL unconfirmed tenant target names as confirmed?")) return;
+            setConfirmingAll(true);
+            try {
+              const r = await apiFetch<{ affected_count: number }>(
+                `/api/migration/projects/${projectId}/tenants/confirm-all`,
+                { method: "POST" }
+              );
+              onRefresh();
+              alert(`✓ ${r.affected_count} tenant${r.affected_count !== 1 ? "s" : ""} confirmed.`);
+            } catch (e: any) { setError(e.message); }
+            finally { setConfirmingAll(false); }
+          }}
+          style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac" }}>
+          {confirmingAll ? "⏳..." : "✓ Confirm All"}
         </button>
         {selected.size > 0 && (
           <>
@@ -1879,6 +1898,7 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const [frPreview, setFrPreview] = useState<{ id: number; source_network_name: string; old_value: string; new_value: string }[] | null>(null);
   const [frLoading, setFrLoading] = useState(false);
   const [frApplied, setFrApplied] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1950,6 +1970,24 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
             onClick={() => { setShowFR(!showFR); setFrPreview(null); setFrApplied(false); }}
             style={{ ...btnSecondary, background: showFR ? "#eff6ff" : undefined }}>
             🔍 Find &amp; Replace
+          </button>
+          <button
+            disabled={confirmingAll}
+            onClick={async () => {
+              if (!window.confirm("Mark ALL unconfirmed network mappings as confirmed?")) return;
+              setConfirmingAll(true);
+              try {
+                const r = await apiFetch<{ affected_count: number }>(
+                  `/api/migration/projects/${projectId}/network-mappings/confirm-all`,
+                  { method: "POST" }
+                );
+                load();
+                alert(`✓ ${r.affected_count} network${r.affected_count !== 1 ? "s" : ""} confirmed.`);
+              } catch (e: any) { setError(e.message); }
+              finally { setConfirmingAll(false); }
+            }}
+            style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac" }}>
+            {confirmingAll ? "⏳..." : "✓ Confirm All"}
           </button>
           <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
         </div>
