@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.29.7-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.30.1-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -62,7 +62,7 @@ There is no native automated snapshot scheduler in Platform9 or OpenStack. No co
 
 Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You need full source inventory analysis, OS compatibility classification, warm-vs-cold mode determination, per-VM time estimation, per-tenant wave planning, and target capacity validation — before a single VM moves. No native tooling exists that ties RVTools data to PCD readiness in one workflow.
 
-**The engineering answer:** pf9-mngt includes a multi-phase Migration Planner. Phase 1 (complete) delivers RVTools ingestion with full vInfo, vPartition, vDisk, and vNetwork parsing; per-VM risk scoring (GREEN/YELLOW/RED); warm-eligible vs cold-required classification; OS version detection; network name mapping; actual disk usage from vPartition; per-VM/per-tenant time estimation with daily wave scheduling; and Excel/PDF combined report export (Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs). Phase 2 (complete) adds per-tenant scoping and exclusion with bulk-select toolbar, source→PCD target mapping, overcommit profile modeling (aggressive/balanced/conservative), quota requirements engine, PCD node-profile CRUD with HA-aware N+1/N+2 sizing, and PCD readiness gap analysis with severity scoring and a 0–100 readiness score. Phases 3–7 will add migration wave planning, live execution tracking, and post-migration validation.
+**The engineering answer:** pf9-mngt includes a multi-phase Migration Planner. Phase 1 (complete) delivers RVTools ingestion with full vInfo, vPartition, vDisk, and vNetwork parsing; per-VM risk scoring (GREEN/YELLOW/RED); warm-eligible vs cold-required classification; OS version detection; network name mapping; actual disk usage from vPartition; per-VM/per-tenant time estimation with daily wave scheduling; and Excel/PDF combined report export (Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs). Phase 2 (complete) adds per-tenant scoping and exclusion with bulk-select toolbar, source→PCD target mapping, overcommit profile modeling (aggressive/balanced/conservative), quota requirements engine, PCD node-profile CRUD with **performance-based node sizing** (uses actual `cpu_usage_percent`/`memory_usage_percent` from RVtools data for accurate physical demand — not allocation ÷ overcommit), auto-detect node profile from live PCD inventory, PCD readiness gap analysis with severity scoring, downloadable Excel/PDF gap action report, plan export auth fix, and risk breakdown per VM. Phases 3–7 will add migration wave planning, live execution tracking, and post-migration validation.
 
 ---
 
@@ -687,6 +687,23 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 - ✅ **Additional VM filters** — OS Family, Power State, Cluster dropdowns
 - ✅ **Per-VM time engine** — `estimate_vm_time()` computes warm phase-1, incremental, cutover, and cold times from disk/in-use data and bottleneck bandwidth
 
+### v1.30.1 — Performance-Based Node Sizing
+- ✅ **Actual VM utilisation for sizing** — Node sizing now uses `cpu_usage_percent`/`memory_usage_percent` per VM (from RVtools data) instead of configured vCPU ÷ overcommit. For the PoC cluster: 125 vCPU actually running vs 1,371 allocated — result is +2 new nodes needed, not +9
+- ✅ **Three-tier basis** — Prefers actual performance data (when ≥50% coverage), falls back to allocation ÷ overcommit, then tenant quota
+- ✅ **Sizing basis badge** — Capacity tab shows green/amber pill identifying whether sizing was based on real utilisation or allocation estimate, with coverage %, actual vCPU/RAM, and allocated vCPU/RAM
+
+### v1.30.0 — Pre-Phase 3 Polish (Phase 2.8)
+- ✅ **Auto-Detect PCD node profile** — "🔍 Auto-Detect from PCD" button pre-fills node spec from dominant hypervisor type in inventory; no manual spec entry needed
+- ✅ **Gap Analysis Action Report** — Excel (3 sheets: Executive Summary, Action Items, All Gaps) + PDF export from PCD Readiness tab
+- ✅ **Plan export auth fix** — Excel/PDF plan export was failing without auth token; replaced `<a>` navigation with `downloadAuthBlob()` helper
+- ✅ **Risk breakdown per VM** — Expanded VM detail row shows each risk rule that fired with its score contribution
+
+### v1.29.7 — Node Sizing CPU+RAM Only (v1.29.1–v1.29.7)
+- ✅ **Node sizing driven by CPU+RAM only** — Cinder storage is independent infrastructure; compute node count now driven by vCPU and RAM exclusively
+- ✅ **Live PCD cluster panel** — Capacity tab shows real node count, vCPU/RAM totals and in-use from `hypervisors` table; "📥 Sync to Inventory" pre-fills all fields
+- ✅ **PCD Readiness capacity section** — Shows node recommendation, existing vs additional needed, post-migration util, binding dimension
+- ✅ **Numerous bug fixes** — Tenant checkbox, Capacity tab blank page, cold downtime, export excluded tenants, route ordering 422, overcommit object crash, and more
+
 ### v1.28.1 — Live Bandwidth Preview & Schedule-Aware Agent Sizing
 - ✅ **Live bandwidth cards** — Update instantly on field change with `(live preview — save to persist)` indicator
 - ✅ **Migration Schedule section** — Duration, working hours/day, working days/week, target VMs/day
@@ -792,4 +809,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.29.2 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.30.1 | **Last Updated**: February 2026

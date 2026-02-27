@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.1] - 2026-02-27
+
+### Changed
+- **Node sizing uses actual VM performance data** — `GET /projects/{id}/node-sizing` now queries `cpu_usage_percent` and `memory_usage_percent` per VM (stored by the RVtools v1.28.3 parser) instead of `SUM(cpu_count) / overcommit_ratio`. Actual physical demand is `SUM(cpu_count × cpu_usage_percent/100)` — this is already physical scheduler load, so no overcommit division is applied. For the PoC cluster: 324 powered-on VMs, 100% performance data coverage, actual demand = **125 vCPU / 622 GB RAM** vs 1,371 vCPU / 4,616 GB allocated. Result: **+2 new nodes needed (6 total)** at 70% cap with 15% peak buffer vs the previous incorrect +9 (13 total).
+- **Three-tier basis selection** — (1) `actual_performance` when ≥50% of powered-on VMs have `cpu_usage_percent`; (2) `allocation` fallback: allocation ÷ overcommit ratio; (3) `quota` last-resort when no RVtools VM data exists. Basis and perf coverage percentage are returned in the API response.
+
+### Added
+- **Sizing basis badge in Capacity tab** — Green pill "📊 Based on actual VM performance data · {N}% VM coverage · {actual} vCPU running of {alloc} allocated · {active} GB active of {alloc_gb} GB allocated" or amber pill "⚠️ Based on vCPU allocation ÷ overcommit (no performance data)" shown below the resource comparison table.
+- **New fields on `SizingResult`** — `sizing_basis`, `perf_coverage_pct`, `vm_vcpu_alloc`, `vm_ram_gb_alloc`, `source_node_count` added to both backend response and TypeScript interface.
+- **HW Demand tooltip and footnote** updated to conditionally explain the calculation basis (actual utilisation formula vs allocation ÷ overcommit formula).
+
+## [1.30.0] - 2026-02-27
+
+### Added
+- **Auto-Detect PCD Node Profile** — New `GET /api/migration/projects/{id}/pcd-auto-detect-profile` endpoint queries the `hypervisors` inventory table to identify the dominant compute node type (most common vCPU + RAM configuration). Returns a ready-to-use node-profile suggestion with `cpu_cores`, `cpu_threads`, `ram_gb`, `storage_tb`. The Capacity tab now has a **🔍 Auto-Detect from PCD** button that fetches the dominant node type and pre-fills the new-profile form — no manual node spec entry needed for environments with inventory sync active.
+- **Gap Analysis Action Report** — New `GET /api/migration/projects/{id}/export-gaps-report.xlsx` and `GET /api/migration/projects/{id}/export-gaps-report.pdf` endpoints generate a downloadable PCD Readiness action report. Excel: 3 sheets — Executive Summary (readiness score, gap counts by severity, gap-type breakdown), Action Items (unresolved gaps with step-by-step remediation instructions and effort estimate, sorted critical-first), All Gaps (full list including resolved). PDF: landscape A4 with colour-coded severity rows and the same structure. Download buttons appear in the PCD Readiness tab gaps section.
+- **`generate_gaps_excel_report()`** and **`generate_gaps_pdf_report()`** added to `api/export_reports.py` (~250 lines).
+
+### Fixed
+- **PDF & Excel plan export broken** — `downloadXlsx()` and `downloadPdf()` in `MigrationPlanView` were using direct `<a href>` navigation which does not include the `Authorization: Bearer` token, causing the request to fail or redirect to a login/error page. Replaced both with a new `downloadAuthBlob()` helper that uses `fetch()` with the auth header → `Response.blob()` → `URL.createObjectURL()` → programmatic click. Downloads now work correctly for all authenticated sessions.
+- **Risk breakdown hidden** — VM expanded detail row now shows an **⚠️ Risk Factors** section listing each rule that fired during risk assessment (e.g., "Large disk: 2400 GB (≥ 2000 GB) (+10)"). Data was already stored in `migration_vms.risk_reasons JSONB` and returned by `GET /vms` — only the UI display was missing. Added `risk_reasons?: string[]` to the `VM` TypeScript interface and rendered as a styled list below the disk/NIC tables in the expanded row.
+
 ## [1.29.7] - 2026-02-26
 
 ### Fixed
