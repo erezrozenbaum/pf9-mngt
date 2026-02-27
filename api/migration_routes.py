@@ -2796,6 +2796,46 @@ async def bulk_replace_network(project_id: str, req: BulkReplaceNetworkRequest,
     return {"status": "ok", "affected_count": len(preview), "preview": preview}
 
 
+@router.post("/projects/{project_id}/tenants/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def confirm_all_tenants(project_id: str, user=Depends(get_current_user)):
+    """Mark target_confirmed=true on every tenant in the project that is currently unconfirmed."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_tenants
+                SET target_confirmed = true, updated_at = now()
+                WHERE project_id = %s AND target_confirmed = false
+            """, (project_id,))
+            affected = cur.rowcount
+        conn.commit()
+    _log_activity(actor=actor, action="confirm_all_tenants", resource_type="migration_project",
+                  resource_id=project_id, details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.post("/projects/{project_id}/network-mappings/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def confirm_all_networks(project_id: str, user=Depends(get_current_user)):
+    """Mark confirmed=true on every network mapping in the project that is currently unconfirmed."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_network_mappings
+                SET confirmed = true, updated_at = now()
+                WHERE project_id = %s AND confirmed = false
+            """, (project_id,))
+            affected = cur.rowcount
+        conn.commit()
+    _log_activity(actor=actor, action="confirm_all_networks", resource_type="migration_project",
+                  resource_id=project_id, details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
 # ── Auto-exclude filter patterns ─────────────────────────────────────────────
 
 class TenantFilterRequest(BaseModel):
