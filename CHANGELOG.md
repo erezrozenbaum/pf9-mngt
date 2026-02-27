@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.3] - 2026-02-27
+
+### Added
+- **Find & Replace for target names** — New 🔍 Find & Replace panel in the Tenants tab toolbar. Allows mass-edit of `target_project_name` (OrgVDC) or `target_domain_name` (Org) across all tenants using literal substring search and replace. Supports case-insensitive matching (default), an "Unconfirmed rows only" scope filter, and a Preview mode that shows the before/after for every affected row before committing. After applying, changed rows are marked `target_confirmed=false` so operators review the result. New API endpoint: `POST /projects/{id}/tenants/bulk-replace-target`.
+
 ## [1.31.2] - 2026-02-27
 
 ### Fixed
