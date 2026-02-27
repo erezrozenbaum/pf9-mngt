@@ -2,6 +2,17 @@
 
 ## Recent Major Enhancements
 
+### Migration Planner Phase 2.10 — Pre-Wave Foundations (v1.31.0 - NEW ✨)
+- **🗃️ Migration Cohorts**: Split large migration projects into independent, ordered workstreams. Each cohort has its own schedule, owner, dependency gate, tenant/VM scope, and (in Phase 3) its own wave plan. New **🗃️ Cohorts** sub-tab in SourceAnalysis with cohort cards, drag-to-order hints, tenant assignment panel, and three auto-assign strategies (priority, risk, equal split). A project with no cohorts continues to work as a single-scope plan unchanged.
+- **🔌 Network Mapping**: New **🔌 Network Map** sub-tab auto-seeds a mapping row for every distinct source VMware network in the project's in-scope VMs. Operators fill in the PCD target network name. Unmapped networks show a ⚠️ banner counted across all VMs — required input before Phase 3 wave planning can generate cutover tasks. `GET/POST/PATCH/DELETE /projects/{id}/network-mappings`.
+- **VM Dependency Annotation**: Operators annotate ordering constraints between VMs ("web-tier cannot start until db-vm is migrated"). Circular dependency check enforced at API level. Shown as dependency badges in the expanded VM row. `GET/POST/DELETE /projects/{id}/vm-dependencies`.
+- **Per-VM Migration Status**: New `migration_status` column on `migration_vms` with six values: `not_started`, `assigned`, `in_progress`, `migrated`, `failed`, `skipped`. Colour-coded pill column in the VM table. Single and bulk update endpoints. Dropdown in expanded VM row.
+- **Per-VM Mode Override**: Operators can force `warm` or `cold` on any VM regardless of engine classification. 🔒 icon on VM row when override is active. Mode override dropdown in expanded VM row. `PATCH /projects/{id}/vms/{vm_id}/mode-override`.
+- **Tenant Migration Priority**: Integer priority field (lower = earlier) on `migration_tenants`. Editable column in the Tenants tab. Used by cohort auto-assign "by priority" strategy. Sortable.
+- **Per-Tenant Readiness Checks**: 5 auto-derived checks per tenant — `target_mapped`, `network_mapped`, `quota_sufficient`, `no_critical_gaps`, `vms_classified`. Check button in Tenants tab shows 🟢/🟡/🔴 with score. Cohort-level readiness summary endpoint rolls up all tenants in a cohort.
+- **DB Migration**: `db/migrate_cohorts_and_foundations.sql` — 4 new tables (`migration_cohorts`, `migration_vm_dependencies`, `migration_network_mappings`, `migration_tenant_readiness`), 5 new columns on `migration_vms`, 2 new columns on `migration_tenants`, 12 indexes. Fully idempotent.
+- **17 new API endpoints** — VM status (×3), VM dependencies (×3), network mappings (×4), cohorts (×7 incl. auto-assign + readiness summary), tenant readiness (×2). Total migration endpoints: 45+.
+
 ### Migration Intelligence & Execution Cockpit (v1.28 - NEW ✨)
 - **🚀 Migration Planner Tab**: Full-featured VMware → Platform9 PCD migration planning via vJailbreak. Located in the **Migration Planning** nav group — accessible to Engineering, Tier3 Support, Management, and Marketing departments.
 - **Project-Based Workflow**: Create named migration projects with lifecycle management (draft → assessment → planned → approved → preparing → ready). Admin approval gate required before any PCD resources are created.

@@ -78,6 +78,11 @@ interface MigrationVM {
   memory_usage_percent: number | null;
   cpu_demand_mhz: number | null;
   memory_usage_mb: number | null;
+  // Phase 2.10
+  id?: number;
+  migration_status?: string;
+  migration_status_note?: string;
+  migration_mode_override?: string | null;
 }
 
 interface Tenant {
@@ -98,6 +103,10 @@ interface Tenant {
   target_domain_name: string | null;
   target_project_name: string | null;
   target_display_name: string | null;
+  // Phase 2.10
+  migration_priority?: number;
+  cohort_id?: number | null;
+  cohort_name?: string | null;
 }
 
 interface NetworkSummary {
@@ -119,7 +128,7 @@ interface Props {
   onProjectUpdated: (p: MigrationProject) => void;
 }
 
-type SubView = "dashboard" | "vms" | "tenants" | "networks" | "risk" | "plan" | "capacity" | "readiness";
+type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "networks" | "netmap" | "risk" | "plan" | "capacity" | "readiness";
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -156,9 +165,17 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
 
   /* ---- VM detail expansion ---- */
   const [expandedVm, setExpandedVm] = useState<string | null>(null);
+  const [expandedVmData, setExpandedVmData] = useState<MigrationVM | null>(null);
   const [vmDisks, setVmDisks] = useState<any[]>([]);
   const [vmNics, setVmNics] = useState<any[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  /* Phase 2.10 — VM deps, status, mode override ---- */
+  const [vmDeps, setVmDeps] = useState<any[]>([]);
+  const [depsLoading, setDepsLoading] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
+  const [modeOverrideUpdating, setModeOverrideUpdating] = useState(false);
+  const [vmStatusLocal, setVmStatusLocal] = useState<Record<string, string>>({});
+  const [vmModeOverrideLocal, setVmModeOverrideLocal] = useState<Record<string, string | null>>({});
 
   /* ---- Networks ---- */
   const [networks, setNetworks] = useState<NetworkSummary[]>([]);
@@ -206,13 +223,54 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
     finally { setDetailLoading(false); }
   }, [pid]);
 
-  const toggleVmExpand = (vmName: string) => {
-    if (expandedVm === vmName) {
+  const toggleVmExpand = (vm: MigrationVM) => {
+    if (expandedVm === vm.vm_name) {
       setExpandedVm(null);
+      setExpandedVmData(null);
+      setVmDeps([]);
     } else {
-      setExpandedVm(vmName);
-      loadVmDetails(vmName);
+      setExpandedVm(vm.vm_name);
+      setExpandedVmData(vm);
+      loadVmDetails(vm.vm_name);
+      if (vm.id) loadVmDeps(vm.id);
     }
+  };
+
+  const loadVmDeps = useCallback(async (vmId: number) => {
+    setDepsLoading(true);
+    try {
+      const data = await apiFetch<{ dependencies: any[] }>(
+        `/api/migration/projects/${pid}/vm-dependencies?vm_id=${vmId}`
+      );
+      setVmDeps(data.dependencies);
+    } catch { setVmDeps([]); }
+    finally { setDepsLoading(false); }
+  }, [pid]);
+
+  const updateVmStatus = async (vmId: number, status: string) => {
+    setStatusUpdating(true);
+    try {
+      await apiFetch(`/api/migration/projects/${pid}/vms/${vmId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      setVmStatusLocal(prev => ({ ...prev, [vmId]: status }));
+      loadVMs();
+    } catch (e: any) { alert(e.message); }
+    finally { setStatusUpdating(false); }
+  };
+
+  const updateVmModeOverride = async (vmId: number, override: string | null) => {
+    setModeOverrideUpdating(true);
+    try {
+      await apiFetch(`/api/migration/projects/${pid}/vms/${vmId}/mode-override`, {
+        method: "PATCH",
+        body: JSON.stringify({ override }),
+      });
+      setVmModeOverrideLocal(prev => ({ ...prev, [vmId]: override }));
+      loadVMs();
+    } catch (e: any) { alert(e.message); }
+    finally { setModeOverrideUpdating(false); }
   };
 
   const loadTenants = useCallback(async () => {
@@ -411,7 +469,9 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
           { id: "dashboard" as SubView, label: "📊 Dashboard" },
           { id: "vms" as SubView, label: "🖥️ VMs" },
           { id: "tenants" as SubView, label: "🏢 Tenants" },
+          { id: "cohorts" as SubView, label: "🗃️ Cohorts" },
           { id: "networks" as SubView, label: "🌐 Networks" },
+          { id: "netmap" as SubView, label: "🔌 Network Map" },
           { id: "capacity" as SubView, label: "⚖️ Capacity" },
           { id: "readiness" as SubView, label: "🎯 PCD Readiness" },
           { id: "plan" as SubView, label: "📋 Migration Plan" },
@@ -502,6 +562,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                     { key: "tenant_name", label: "Tenant" },
                     { key: "risk_category", label: "Risk" },
                     { key: "migration_mode", label: "Mode" },
+                    { key: "migration_status", label: "Status" },
                     { key: "primary_ip", label: "IP" },
                   ].map(col => (
                     <th key={col.key}
@@ -521,7 +582,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                 {vms.map(vm => (
                   <React.Fragment key={vm.vm_id}>
                     <tr style={{ borderBottom: "1px solid var(--border, #e5e7eb)", cursor: "pointer" }}
-                        onClick={() => toggleVmExpand(vm.vm_name)}>
+                        onClick={() => toggleVmExpand(vm)}>
                       <td style={tdStyle}>
                         <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>
                           {expandedVm === vm.vm_name ? "▼" : "▶"}
@@ -600,9 +661,24 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                       <td style={tdStyle}>
                         {vm.migration_mode ? (
                           <span style={{ ...pillStyle, ...modePillColor(vm.migration_mode) }}>
-                            {vm.migration_mode.replace(/_/g, " ")}
+                            {vm.migration_mode_override ? "🔒 " : ""}{vm.migration_mode.replace(/_/g, " ")}
                           </span>
                         ) : "—"}
+                      </td>
+                      <td style={tdStyle}>
+                        {(() => {
+                          const st = vmStatusLocal[vm.id ?? -1] ?? vm.migration_status ?? "not_started";
+                          const colors: Record<string, [string, string]> = {
+                            not_started: ["#f3f4f6", "#6b7280"],
+                            assigned:    ["#dbeafe", "#1d4ed8"],
+                            in_progress: ["#fef9c3", "#854d0e"],
+                            migrated:    ["#dcfce7", "#15803d"],
+                            failed:      ["#fee2e2", "#dc2626"],
+                            skipped:     ["#f3f4f6", "#9ca3af"],
+                          };
+                          const [bg, col] = colors[st] || colors.not_started;
+                          return <span style={{ ...pillStyle, background: bg, color: col, fontSize: "0.7rem" }}>{st.replace(/_/g, " ")}</span>;
+                        })()}
                       </td>
                       <td style={tdStyle}>
                         <span style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{vm.primary_ip || "—"}</span>
@@ -611,7 +687,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                     {/* ── Expanded detail row ── */}
                     {expandedVm === vm.vm_name && (
                       <tr>
-                        <td colSpan={16} style={{ padding: "8px 16px 12px 40px", background: "var(--card-bg, #f9fafb)" }}>
+                        <td colSpan={20} style={{ padding: "8px 16px 12px 40px", background: "var(--card-bg, #f9fafb)" }}>
                           {detailLoading ? (
                             <span style={{ color: "#6b7280" }}>Loading details...</span>
                           ) : (
@@ -695,6 +771,67 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                                 </ul>
                               </div>
                             )}
+                            {/* Phase 2.10: Mode Override + Status + Dependencies */}
+                            <div style={{ marginTop: 12, display: "flex", gap: 16, flexWrap: "wrap" }}>
+                              {/* Mode Override */}
+                              {vm.id && (
+                                <div style={{ padding: "8px 14px", background: "#eff6ff", borderRadius: 6, border: "1px solid #bfdbfe", minWidth: 220 }}>
+                                  <h4 style={{ margin: "0 0 6px", fontSize: "0.85rem", color: "#1d4ed8" }}>🔒 Mode Override</h4>
+                                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                    <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>Engine: <strong>{vm.migration_mode || "(none)"}</strong></span>
+                                    <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>→ Override:</span>
+                                    <select
+                                      value={vmModeOverrideLocal[vm.id] !== undefined ? (vmModeOverrideLocal[vm.id] ?? "") : (vm.migration_mode_override ?? "")}
+                                      disabled={modeOverrideUpdating}
+                                      onChange={e => updateVmModeOverride(vm.id!, e.target.value || null)}
+                                      style={{ fontSize: "0.8rem", padding: "2px 6px", borderRadius: 4, border: "1px solid #93c5fd" }}
+                                    >
+                                      <option value="">Auto (engine)</option>
+                                      <option value="warm">🔥 Warm</option>
+                                      <option value="cold">❄️ Cold</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              )}
+                              {/* Migration Status */}
+                              {vm.id && (
+                                <div style={{ padding: "8px 14px", background: "#f0fdf4", borderRadius: 6, border: "1px solid #bbf7d0", minWidth: 220 }}>
+                                  <h4 style={{ margin: "0 0 6px", fontSize: "0.85rem", color: "#15803d" }}>🟢 Migration Status</h4>
+                                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                    <select
+                                      value={vmStatusLocal[vm.id] ?? vm.migration_status ?? "not_started"}
+                                      disabled={statusUpdating}
+                                      onChange={e => updateVmStatus(vm.id!, e.target.value)}
+                                      style={{ fontSize: "0.8rem", padding: "2px 6px", borderRadius: 4, border: "1px solid #86efac" }}
+                                    >
+                                      <option value="not_started">not started</option>
+                                      <option value="assigned">assigned</option>
+                                      <option value="in_progress">in progress</option>
+                                      <option value="migrated">✅ migrated</option>
+                                      <option value="failed">❌ failed</option>
+                                      <option value="skipped">skipped</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            {/* VM Dependencies */}
+                            {vm.id && (
+                              <div style={{ marginTop: 12, padding: "8px 14px", background: "#fafafa", borderRadius: 6, border: "1px solid #e5e7eb" }}>
+                                <h4 style={{ margin: "0 0 6px", fontSize: "0.85rem", color: "#374151" }}>🔗 Dependencies</h4>
+                                {depsLoading ? <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>Loading...</span> : (
+                                  vmDeps.length === 0
+                                    ? <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>No dependencies. This VM migrates independently.</span>
+                                    : <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                        {vmDeps.map(d => (
+                                          <span key={d.id} style={{ ...pillStyle, background: "#e5e7eb", color: "#374151", fontSize: "0.78rem" }}>
+                                            must wait for → <strong>{d.depends_on_vm_name}</strong>
+                                          </span>
+                                        ))}
+                                      </div>
+                                )}
+                              </div>
+                            )}
                             </>
                           )}
                         </td>
@@ -703,7 +840,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                   </React.Fragment>
                 ))}
                 {vms.length === 0 && (
-                  <tr><td colSpan={16} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+                  <tr><td colSpan={20} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
                     No VMs found. Upload RVTools data first.
                   </td></tr>
                 )}
@@ -727,9 +864,19 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
         <TenantsView tenants={tenants} projectId={pid} onRefresh={() => { loadTenants(); loadStats(); }} />
       )}
 
+      {/* ---- Cohorts ---- */}
+      {subView === "cohorts" && (
+        <CohortsView projectId={pid} tenants={tenants} onRefreshTenants={() => { loadTenants(); loadStats(); }} />
+      )}
+
       {/* ---- Networks ---- */}
       {subView === "networks" && (
         <NetworksView networks={networks} projectId={pid} onRefresh={loadNetworks} />
+      )}
+
+      {/* ---- Network Map ---- */}
+      {subView === "netmap" && (
+        <NetworkMappingView projectId={pid} />
       )}
 
       {/* ---- Capacity Planning ---- */}
@@ -949,7 +1096,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   const [newPattern, setNewPattern] = useState("");
   const [error, setError] = useState("");
 
-  /* ---- Inline editing state (basic + Phase 2A/2B) ---- */
+  /* ---- Inline editing state (basic + Phase 2A/2B + Phase 2.10D) ---- */
   const [editId, setEditId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editOrgVdc, setEditOrgVdc] = useState("");
@@ -958,7 +1105,20 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   const [editDomain, setEditDomain] = useState("");
   const [editProject, setEditProject] = useState("");
   const [editDisplayName, setEditDisplayName] = useState("");
+  const [editPriority, setEditPriority] = useState<number>(999);
   const [editSaving, setEditSaving] = useState(false);
+
+  /* Phase 2.10H — readiness cache ---- */
+  const [readinessCache, setReadinessCache] = useState<Record<number, { overall: string; score: string }>>({});
+
+  const loadReadiness = async (tenantId: number) => {
+    try {
+      const data = await apiFetch<{ overall: string; score: string }>(
+        `/api/migration/projects/${projectId}/tenants/${tenantId}/readiness`
+      );
+      setReadinessCache(prev => ({ ...prev, [tenantId]: { overall: data.overall, score: data.score } }));
+    } catch {}
+  };
 
   /* ---- Search + Sort state ---- */
   const [tenantSearch, setTenantSearch] = useState("");
@@ -997,6 +1157,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
     setEditDomain(t.target_domain_name || "");
     setEditProject(t.target_project_name || "");
     setEditDisplayName(t.target_display_name || "");
+    setEditPriority(t.migration_priority ?? 999);
   };
 
   const cancelEdit = () => { setEditId(null); };
@@ -1016,6 +1177,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
           target_domain_name: editDomain.trim() || null,
           target_project_name: editProject.trim() || null,
           target_display_name: editDisplayName.trim() || null,
+          migration_priority: editPriority,
         }),
       });
       cancelEdit();
@@ -1071,14 +1233,15 @@ function TenantsView({ tenants, projectId, onRefresh }: {
         (t.target_project_name || "").toLowerCase().includes(q)
       );
     }
-    list.sort((a: any, b: any) => {
+            list.sort((a: any, b: any) => {
       let av: any, bv: any;
       switch (tenantSort) {
-        case "vm_count":      av = a.vm_count || 0;      bv = b.vm_count || 0;      break;
-        case "total_vcpu":    av = a.total_vcpu || 0;    bv = b.total_vcpu || 0;    break;
-        case "total_ram_gb":  av = a.total_ram_mb || 0;  bv = b.total_ram_mb || 0;  break;
-        case "total_disk_gb": av = a.total_disk_gb || 0; bv = b.total_disk_gb || 0; break;
-        default:              av = (a.tenant_name || "").toLowerCase(); bv = (b.tenant_name || "").toLowerCase();
+        case "vm_count":           av = a.vm_count || 0;               bv = b.vm_count || 0;               break;
+        case "total_vcpu":         av = a.total_vcpu || 0;             bv = b.total_vcpu || 0;             break;
+        case "total_ram_gb":       av = a.total_ram_mb || 0;           bv = b.total_ram_mb || 0;           break;
+        case "total_disk_gb":      av = a.total_disk_gb || 0;          bv = b.total_disk_gb || 0;          break;
+        case "migration_priority": av = a.migration_priority ?? 999;   bv = b.migration_priority ?? 999;  break;
+        default:                   av = (a.tenant_name || "").toLowerCase(); bv = (b.tenant_name || "").toLowerCase();
       }
       const cmp = typeof av === "string" ? av.localeCompare(bv) : (av - bv);
       return tenantSortDir === "asc" ? cmp : -cmp;
@@ -1168,12 +1331,13 @@ function TenantsView({ tenants, projectId, onRefresh }: {
               </th>
               <th style={{ ...thStyle, width: 24, textAlign: "center" }} title="In scope">📋</th>
               {([
-                { key: "tenant_name",  label: "Tenant"   },
-                { key: "org_vdc",      label: "OrgVDC",  noSort: true },
-                { key: "vm_count",     label: "VMs"      },
-                { key: "total_vcpu",   label: "vCPU"     },
-                { key: "total_ram_gb", label: "RAM GB"   },
-                { key: "total_disk_gb",label: "Disk GB"  },
+                { key: "tenant_name",        label: "Tenant"    },
+                { key: "org_vdc",            label: "OrgVDC",   noSort: true },
+                { key: "vm_count",           label: "VMs"       },
+                { key: "total_vcpu",         label: "vCPU"      },
+                { key: "total_ram_gb",       label: "RAM GB"    },
+                { key: "total_disk_gb",      label: "Disk GB"   },
+                { key: "migration_priority", label: "Priority"  },
               ] as {key:string;label:string;noSort?:boolean}[]).map(col => (
                 <th key={col.key}
                   style={{ ...thStyle,
@@ -1193,6 +1357,8 @@ function TenantsView({ tenants, projectId, onRefresh }: {
               <th style={thStyle}>Target Domain</th>
               <th style={thStyle}>Target Project</th>
               <th style={thStyle}>Display Name</th>
+              <th style={thStyle} title="Cohort assignment">Cohort</th>
+              <th style={thStyle} title="Run readiness checks to see status">Readiness</th>
               <th style={thStyle}>Actions</th>
             </tr>
           </thead>
@@ -1233,6 +1399,13 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                       <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
                       <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(0) : "0"}</td>
                       <td style={tdStyle}>
+                        <input type="number" value={editPriority}
+                          onChange={e => setEditPriority(Number(e.target.value) || 999)}
+                          style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem", width: 64 }}
+                          min={1} max={9999}
+                          onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
+                      </td>
+                      <td style={tdStyle}>
                         <input value={editDomain} onChange={e => setEditDomain(e.target.value)}
                           style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
                           placeholder="e.g. Default"
@@ -1250,6 +1423,10 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                           placeholder="e.g. ACME Production"
                           onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
                       </td>
+                      <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#9ca3af" }}>
+                        {t.cohort_id ? <span style={{ ...pillStyle, background: "#e0e7ff", color: "#4338ca", fontSize: "0.72rem" }}>C{t.cohort_id}</span> : "—"}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>—</td>
                       <td style={tdStyle}>
                         <div style={{ display: "flex", gap: 4 }}>
                           <button onClick={saveEdit} disabled={editSaving}
@@ -1263,7 +1440,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                     {!editInclude && (
                       <tr key={`${rowKey}-reason`} style={{ background: "#fff7ed" }}>
                         <td colSpan={2} />
-                        <td colSpan={10} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
+                        <td colSpan={13} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
                           <label style={{ ...labelStyle, display: "inline", marginRight: 8 }}>Exclude reason:</label>
                           <input value={editExcludeReason}
                             onChange={e => setEditExcludeReason(e.target.value)}
@@ -1295,9 +1472,29 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                   <td style={tdStyle}>{t.total_vcpu || 0}</td>
                   <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
                   <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(0) : "0"}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", color: (t.migration_priority ?? 999) < 999 ? "#1d4ed8" : "#9ca3af" }}>
+                    {(t.migration_priority ?? 999) < 999 ? t.migration_priority : "—"}
+                  </td>
                   <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_domain_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
                   <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_project_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
                   <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_display_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", fontSize: "0.78rem" }}>
+                    {t.cohort_id
+                      ? <span style={{ ...pillStyle, background: "#e0e7ff", color: "#4338ca", fontSize: "0.72rem" }}>C{t.cohort_id}</span>
+                      : <span style={{ color: "#d1d5db" }}>unassigned</span>}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    {readinessCache[t.id] ? (
+                      <span style={{ cursor: "default" }} title={`${readinessCache[t.id].score} checks passed`}>
+                        {readinessCache[t.id].overall === "pass" ? "🟢" : readinessCache[t.id].overall === "fail" ? "🔴" : "🟡"}
+                        <span style={{ fontSize: "0.7rem", color: "#6b7280", marginLeft: 4 }}>{readinessCache[t.id].score}</span>
+                      </span>
+                    ) : (
+                      <button onClick={() => loadReadiness(t.id)}
+                        style={{ ...btnSmall, fontSize: "0.7rem", padding: "1px 5px" }}
+                        title="Check readiness">check</button>
+                    )}
+                  </td>
                   <td style={tdStyle}>
                     <button onClick={() => startEdit(t)} style={btnSmall} title="Edit">✏️</button>
                   </td>
@@ -1305,7 +1502,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
               );
             })}
             {displayTenants.length === 0 && (
-              <tr><td colSpan={12} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+              <tr><td colSpan={15} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
                 {tenants.length === 0
                   ? "No tenants detected. Add rules above or run assessment."
                   : `No tenants match "${tenantSearch}".`}
@@ -1505,6 +1702,447 @@ function NetworksView({ networks, projectId, onRefresh }: {
           )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/*  Network Mapping View  (Phase 2.10F)                              */
+/* ================================================================== */
+
+function NetworkMappingView({ projectId }: { projectId: number }) {
+  const [mappings, setMappings] = useState<any[]>([]);
+  const [unmappedCount, setUnmappedCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState<number | null>(null);
+  const [editValues, setEditValues] = useState<Record<number, string>>({});
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch<{ mappings: any[]; unmapped_count: number }>(
+        `/api/migration/projects/${projectId}/network-mappings`
+      );
+      setMappings(data.mappings);
+      setUnmappedCount(data.unmapped_count);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [projectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const saveMapping = async (id: number) => {
+    setSaving(id);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ target_network_name: editValues[id] || null }),
+      });
+      setEditValues(prev => { const n = { ...prev }; delete n[id]; return n; });
+      load();
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(null); }
+  };
+
+  if (loading) return <div style={{ color: "#6b7280", padding: 16 }}>Loading network mappings...</div>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>🔌 Source → PCD Network Mapping</h3>
+          <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "0.85rem" }}>
+            Map each source VMware network to its corresponding PCD network. All powered-on VM networks are auto-populated.
+          </p>
+        </div>
+        <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
+      </div>
+      {unmappedCount > 0 && (
+        <div style={{ marginBottom: 12, padding: "8px 14px", background: "#fff7ed",
+          borderRadius: 6, border: "1px solid #fdba74", color: "#9a3412", fontSize: "0.85rem" }}>
+          ⚠️ {unmappedCount} network{unmappedCount !== 1 ? "s" : ""} not yet mapped to a PCD target.
+          Wave planning requires all used networks to be mapped.
+        </div>
+      )}
+      {error && <div style={alertError}>{error}</div>}
+      <div style={{ overflowX: "auto" }}>
+        <table style={tableStyle}>
+          <thead>
+            <tr>
+              <th style={thStyle}>Source Network (VMware)</th>
+              <th style={{ ...thStyle, width: 70, textAlign: "center" }}>VMs</th>
+              <th style={thStyle}>PCD Target Network</th>
+              <th style={{ ...thStyle, width: 80 }}>VLAN ID</th>
+              <th style={{ ...thStyle, width: 80 }}>Status</th>
+              <th style={{ ...thStyle, width: 70 }}>Save</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mappings.map(m => {
+              const editVal = editValues[m.id];
+              const current = editVal !== undefined ? editVal : (m.target_network_name || "");
+              const isDirty = editVal !== undefined && editVal !== (m.target_network_name || "");
+              return (
+                <tr key={m.id} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
+                  <td style={tdStyle}>
+                    <strong style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{m.source_network_name}</strong>
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>{m.vm_count ?? 0}</td>
+                  <td style={tdStyle}>
+                    <input
+                      value={current}
+                      onChange={e => setEditValues(prev => ({ ...prev, [m.id]: e.target.value }))}
+                      placeholder="Enter PCD network name..."
+                      style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.85rem",
+                        background: isDirty ? "#eff6ff" : undefined }}
+                      onKeyDown={e => { if (e.key === "Enter") saveMapping(m.id); }}
+                    />
+                  </td>
+                  <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.8rem" }}>{m.vlan_id ?? "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    {m.target_network_name
+                      ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ mapped</span>
+                      : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem" }}>⚠ unmapped</span>}
+                  </td>
+                  <td style={tdStyle}>
+                    <button
+                      onClick={() => saveMapping(m.id)}
+                      disabled={saving === m.id || !isDirty}
+                      style={{ ...btnSmall, background: isDirty ? "#2563eb" : "#e5e7eb",
+                        color: isDirty ? "#fff" : "#9ca3af" }}>
+                      {saving === m.id ? "..." : "Save"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {mappings.length === 0 && (
+              <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+                No networks found. Upload RVTools data and run assessment first.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/*  Cohorts View  (Phase 2.10G)                                       */
+/* ================================================================== */
+
+interface Cohort {
+  id: number;
+  project_id: string;
+  name: string;
+  description: string | null;
+  cohort_order: number;
+  status: string;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  owner_name: string | null;
+  depends_on_cohort_id: number | null;
+  tenant_count: number;
+  vm_count: number;
+  total_vcpu: number;
+  total_ram_gb: number;
+}
+
+function CohortsView({ projectId, tenants, onRefreshTenants }: {
+  projectId: number; tenants: Tenant[]; onRefreshTenants: () => void
+}) {
+  const [cohorts, setCohorts] = useState<Cohort[]>([]);
+  const [unassignedCount, setUnassignedCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newOrder, setNewOrder] = useState(1);
+  const [newOwner, setNewOwner] = useState("");
+  const [newStart, setNewStart] = useState("");
+  const [newEnd, setNewEnd] = useState("");
+  const [newDependsOn, setNewDependsOn] = useState<number | "">("");
+  const [creating, setCreating] = useState(false);
+  const [selectedCohort, setSelectedCohort] = useState<number | null>(null);
+  const [selectedTenants, setSelectedTenants] = useState<Set<number>>(new Set());
+  const [assigning, setAssigning] = useState(false);
+  const [autoStrategy, setAutoStrategy] = useState("priority");
+  const [autoAssigning, setAutoAssigning] = useState(false);
+
+  const loadCohorts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch<{ cohorts: Cohort[]; unassigned_tenant_count: number }>(
+        `/api/migration/projects/${projectId}/cohorts`
+      );
+      setCohorts(data.cohorts);
+      setUnassignedCount(data.unassigned_tenant_count);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [projectId]);
+
+  useEffect(() => { loadCohorts(); }, [loadCohorts]);
+
+  const createCohort = async () => {
+    if (!newName.trim()) return;
+    setCreating(true);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/cohorts`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: newName.trim(),
+          cohort_order: newOrder,
+          owner_name: newOwner.trim() || null,
+          scheduled_start: newStart || null,
+          scheduled_end: newEnd || null,
+          depends_on_cohort_id: newDependsOn || null,
+        }),
+      });
+      setNewName(""); setNewOrder(cohorts.length + 1); setNewOwner("");
+      setNewStart(""); setNewEnd(""); setNewDependsOn("");
+      setShowCreate(false);
+      loadCohorts();
+    } catch (e: any) { setError(e.message); }
+    finally { setCreating(false); }
+  };
+
+  const deleteCohort = async (id: number) => {
+    if (!confirm("Delete this cohort? Tenants will be unassigned (not deleted).")) return;
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/cohorts/${id}`, { method: "DELETE" });
+      loadCohorts(); onRefreshTenants();
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const assignTenants = async () => {
+    if (!selectedCohort || selectedTenants.size === 0) return;
+    setAssigning(true);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/cohorts/${selectedCohort}/assign-tenants`, {
+        method: "POST",
+        body: JSON.stringify({ tenant_ids: Array.from(selectedTenants) }),
+      });
+      setSelectedTenants(new Set());
+      loadCohorts(); onRefreshTenants();
+    } catch (e: any) { setError(e.message); }
+    finally { setAssigning(false); }
+  };
+
+  const autoAssign = async () => {
+    if (!confirm(`Auto-assign all unassigned tenants to cohorts using "${autoStrategy}" strategy?`)) return;
+    setAutoAssigning(true);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/cohorts/auto-assign?strategy=${autoStrategy}`, {
+        method: "POST",
+      });
+      loadCohorts(); onRefreshTenants();
+    } catch (e: any) { setError(e.message); }
+    finally { setAutoAssigning(false); }
+  };
+
+  const statusColors: Record<string, [string, string]> = {
+    planning:  ["#f3f4f6", "#6b7280"],
+    ready:     ["#dbeafe", "#1d4ed8"],
+    executing: ["#fef9c3", "#854d0e"],
+    complete:  ["#dcfce7", "#15803d"],
+    paused:    ["#f5f3ff", "#7c3aed"],
+  };
+
+  const unassignedTenants = tenants.filter(t => !t.cohort_id && t.include_in_plan !== false);
+
+  if (loading) return <div style={{ color: "#6b7280", padding: 16 }}>Loading cohorts...</div>;
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>🗃️ Migration Cohorts</h3>
+        <span style={{ fontSize: "0.85rem", color: "#6b7280" }}>
+          {cohorts.length} cohort{cohorts.length !== 1 ? "s" : ""} &nbsp;·&nbsp;
+          {unassignedCount} tenant{unassignedCount !== 1 ? "s" : ""} unassigned
+        </span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <select value={autoStrategy} onChange={e => setAutoStrategy(e.target.value)} style={{ ...inputStyle, maxWidth: 160, fontSize: "0.82rem" }}>
+            <option value="priority">By Priority</option>
+            <option value="risk">By Risk (low-risk first)</option>
+            <option value="equal_split">Equal Split</option>
+          </select>
+          <button onClick={autoAssign} disabled={autoAssigning || cohorts.length === 0}
+            style={btnSecondary} title="Auto-assign all unassigned tenants">
+            {autoAssigning ? "..." : "⚡ Auto-Assign"}
+          </button>
+          <button onClick={() => setShowCreate(!showCreate)} style={btnPrimary}>+ New Cohort</button>
+        </div>
+      </div>
+      {error && <div style={alertError}>{error}</div>}
+
+      {/* Create form */}
+      {showCreate && (
+        <div style={{ ...sectionStyle, marginBottom: 16 }}>
+          <h4 style={{ margin: "0 0 8px" }}>New Cohort</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <div>
+              <label style={labelStyle}>Name *</label>
+              <input value={newName} onChange={e => setNewName(e.target.value)}
+                style={inputStyle} placeholder="e.g. Wave 1 - Dev/Test" />
+            </div>
+            <div>
+              <label style={labelStyle}>Order</label>
+              <input type="number" value={newOrder} onChange={e => setNewOrder(Number(e.target.value))}
+                style={inputStyle} min={1} />
+            </div>
+            <div>
+              <label style={labelStyle}>Owner</label>
+              <input value={newOwner} onChange={e => setNewOwner(e.target.value)}
+                style={inputStyle} placeholder="e.g. Cloud Team" />
+            </div>
+            <div>
+              <label style={labelStyle}>Depends On</label>
+              <select value={newDependsOn} onChange={e => setNewDependsOn(e.target.value ? Number(e.target.value) : "")}
+                style={inputStyle}>
+                <option value="">None (can start any time)</option>
+                {cohorts.map(c => (
+                  <option key={c.id} value={c.id}>Cohort {c.cohort_order}: {c.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "end" }}>
+            <div>
+              <label style={labelStyle}>Scheduled Start</label>
+              <input type="date" value={newStart} onChange={e => setNewStart(e.target.value)} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Scheduled End</label>
+              <input type="date" value={newEnd} onChange={e => setNewEnd(e.target.value)} style={inputStyle} />
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={createCohort} disabled={creating || !newName.trim()}
+                style={{ ...btnPrimary }}>{creating ? "..." : "Create"}</button>
+              <button onClick={() => setShowCreate(false)} style={btnSecondary}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cohort cards */}
+      {cohorts.length === 0 ? (
+        <div style={{ padding: "40px 24px", textAlign: "center", color: "#9ca3af", background: "var(--card-bg, #f9fafb)", borderRadius: 8, border: "1px dashed #d1d5db" }}>
+          <div style={{ fontSize: "2rem", marginBottom: 8 }}>🗃️</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>No cohorts yet</div>
+          <div style={{ fontSize: "0.85rem" }}>
+            Create cohorts to split your migration into manageable groups.<br />
+            Each cohort gets its own schedule, owner, and tenant assignments.
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16, marginBottom: 20 }}>
+          {cohorts.map(c => {
+            const [sbg, scol] = statusColors[c.status] || statusColors.planning;
+            return (
+              <div key={c.id} style={{ border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, padding: 16,
+                background: "var(--card-bg, #ffffff)",
+                boxShadow: selectedCohort === c.id ? "0 0 0 2px #2563eb" : undefined }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                  <div>
+                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "#9ca3af", letterSpacing: "0.05em" }}>
+                      COHORT {c.cohort_order}
+                    </span>
+                    <div style={{ fontWeight: 700, fontSize: "1rem" }}>{c.name}</div>
+                    {c.owner_name && <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>👤 {c.owner_name}</div>}
+                  </div>
+                  <div style={{ display: "flex", gap: 4, flexDirection: "column", alignItems: "flex-end" }}>
+                    <span style={{ ...pillStyle, background: sbg, color: scol, fontSize: "0.72rem" }}>{c.status}</span>
+                    {c.depends_on_cohort_id && (
+                      <span style={{ fontSize: "0.7rem", color: "#9ca3af" }}>
+                        🔒 after C{cohorts.find(x => x.id === c.depends_on_cohort_id)?.cohort_order ?? "?"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12, fontSize: "0.82rem" }}>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{c.tenant_count}</div>
+                    <div style={{ color: "#6b7280" }}>Tenants</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{c.vm_count}</div>
+                    <div style={{ color: "#6b7280" }}>VMs</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{c.total_vcpu}</div>
+                    <div style={{ color: "#6b7280" }}>vCPU</div>
+                  </div>
+                </div>
+                {(c.scheduled_start || c.scheduled_end) && (
+                  <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: 8 }}>
+                    📅 {c.scheduled_start || "?"} → {c.scheduled_end || "?"}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button onClick={() => setSelectedCohort(selectedCohort === c.id ? null : c.id)}
+                    style={{ ...btnSmall, background: selectedCohort === c.id ? "#2563eb" : "#e5e7eb",
+                      color: selectedCohort === c.id ? "#fff" : undefined }}>
+                    {selectedCohort === c.id ? "✓ Selected" : "Select for Assignment"}
+                  </button>
+                  <button onClick={() => deleteCohort(c.id)}
+                    style={{ ...btnSmall, color: "#dc2626" }} title="Delete cohort">🗑</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Tenant assignment panel */}
+      {unassignedTenants.length > 0 && (
+        <div style={sectionStyle}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+            <h4 style={{ margin: 0 }}>Unassigned Tenants ({unassignedTenants.length})</h4>
+            {selectedCohort !== null && selectedTenants.size > 0 && (
+              <button onClick={assignTenants} disabled={assigning}
+                style={{ ...btnPrimary, marginLeft: "auto" }}>
+                {assigning ? "..." : `Assign ${selectedTenants.size} tenant${selectedTenants.size !== 1 ? "s" : ""} → Cohort ${cohorts.find(c => c.id === selectedCohort)?.cohort_order}`}
+              </button>
+            )}
+            {selectedCohort === null && (
+              <span style={{ marginLeft: "auto", fontSize: "0.8rem", color: "#9ca3af" }}>
+                Select a cohort card above to enable assignment
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {unassignedTenants.map(t => (
+              <div key={t.id}
+                onClick={() => {
+                  if (selectedCohort === null) return;
+                  setSelectedTenants(prev => {
+                    const n = new Set(prev);
+                    n.has(t.id) ? n.delete(t.id) : n.add(t.id);
+                    return n;
+                  });
+                }}
+                style={{
+                  padding: "6px 12px", borderRadius: 6,
+                  border: "1px solid",
+                  borderColor: selectedTenants.has(t.id) ? "#2563eb" : "var(--border, #e5e7eb)",
+                  background: selectedTenants.has(t.id) ? "#eff6ff" : "var(--card-bg, #ffffff)",
+                  cursor: selectedCohort !== null ? "pointer" : "default",
+                  fontSize: "0.82rem",
+                  userSelect: "none",
+                }}>
+                <span style={{ fontWeight: 600 }}>{t.tenant_name}</span>
+                <span style={{ color: "#9ca3af", marginLeft: 6 }}>{t.vm_count} VMs</span>
+                {(t.migration_priority ?? 999) < 999 && (
+                  <span style={{ color: "#1d4ed8", marginLeft: 4 }}>P{t.migration_priority}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
