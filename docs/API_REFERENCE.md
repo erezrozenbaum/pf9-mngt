@@ -3149,3 +3149,191 @@ Response:
   }
 }
 ```
+
+---
+
+## Migration Planner Phase 2.10 Endpoints
+
+> All Phase 2.10 endpoints are under `/api/migration/projects/{project_id}/...` and require `migration:read` unless noted.
+
+### VM Migration Status
+
+**PATCH** `/api/migration/projects/{project_id}/vms/{vm_id}/status`  
+*Requires: migration:write*
+
+Update single VM migration status.
+
+Request:
+```json
+{ "status": "in_progress", "status_note": "Kick-off batch 3" }
+```
+Values: `not_started` | `assigned` | `in_progress` | `migrated` | `failed` | `skipped`
+
+**PATCH** `/api/migration/projects/{project_id}/vms/bulk-status`  
+*Requires: migration:write*
+
+Update multiple VMs to the same status in one call.
+
+Request:
+```json
+{ "vm_ids": [1, 2, 3], "status": "skipped", "status_note": "Out of scope" }
+```
+
+### VM Mode Override
+
+**PATCH** `/api/migration/projects/{project_id}/vms/{vm_id}/mode-override`  
+*Requires: migration:write*
+
+Force warm/cold classification regardless of engine result. Send `null` to revert to engine classification.
+
+Request:
+```json
+{ "override": "warm" }
+```
+
+### VM Dependencies
+
+**GET** `/api/migration/projects/{project_id}/vm-dependencies`  
+*Requires: migration:read*
+
+List all VM dependency pairs for the project. Optional `?vm_id=N` to filter to a specific VM. Returns source and target VM names via JOIN.
+
+**POST** `/api/migration/projects/{project_id}/vms/{vm_id}/dependencies`  
+*Requires: migration:write*
+
+Add a dependency: `vm_id` must complete before `depends_on_vm_id` starts. Returns 409 if a circular dependency is detected.
+
+Request:
+```json
+{ "depends_on_vm_id": 42, "dependency_type": "must_complete_before", "notes": "DB before web tier" }
+```
+
+**DELETE** `/api/migration/projects/{project_id}/vms/{vm_id}/dependencies/{dep_id}`  
+*Requires: migration:write*
+
+Remove a dependency record.
+
+### Network Mappings
+
+**GET** `/api/migration/projects/{project_id}/network-mappings`  
+*Requires: migration:read*
+
+List all source→PCD network mappings. On each call, auto-seeds a `(source_network_name, target=\'\')` row for any distinct `network_name` found in in-scope VMs that doesn't already have an entry. Returns `unmapped_count` (rows where `target_network_name = ''`).
+
+Response:
+```json
+{
+  "mappings": [{"id": 1, "source_network_name": "VLAN-100", "target_network_name": "pf9-prod", "vm_count": 12}],
+  "unmapped_count": 3
+}
+```
+
+**POST** `/api/migration/projects/{project_id}/network-mappings`  
+*Requires: migration:write*
+
+Create or upsert a mapping.
+
+Request:
+```json
+{ "source_network_name": "VLAN-100", "target_network_name": "pf9-prod", "target_network_id": "uuid", "notes": "" }
+```
+
+**PATCH** `/api/migration/projects/{project_id}/network-mappings/{mapping_id}`  
+*Requires: migration:write*
+
+Update target network name/ID on an existing mapping.
+
+Request:
+```json
+{ "target_network_name": "pf9-dmz", "target_network_id": null }
+```
+
+**DELETE** `/api/migration/projects/{project_id}/network-mappings/{mapping_id}`  
+*Requires: migration:admin*
+
+Delete a mapping row.
+
+### Cohorts
+
+**GET** `/api/migration/projects/{project_id}/cohorts`  
+*Requires: migration:read*
+
+List cohorts with per-cohort tenant count, VM count, total vCPU/RAM/disk aggregated from in-scope VMs. Returns `unassigned_tenant_count`.
+
+**POST** `/api/migration/projects/{project_id}/cohorts`  
+*Requires: migration:write*
+
+Create a cohort.
+
+Request:
+```json
+{
+  "name": "Wave Alpha — Low Risk",
+  "cohort_order": 1,
+  "owner_name": "Team Infra",
+  "scheduled_start": "2026-04-01",
+  "scheduled_end": "2026-04-14",
+  "depends_on_cohort_id": null,
+  "notes": ""
+}
+```
+
+**PATCH** `/api/migration/projects/{project_id}/cohorts/{cohort_id}`  
+*Requires: migration:write*
+
+Update cohort fields (name, dates, order, owner, status, notes, depends_on_cohort_id).
+
+**DELETE** `/api/migration/projects/{project_id}/cohorts/{cohort_id}`  
+*Requires: migration:write*
+
+Delete a cohort. All assigned tenants are unassigned (cohort_id set to NULL) before deletion.
+
+**POST** `/api/migration/projects/{project_id}/cohorts/{cohort_id}/assign-tenants`  
+*Requires: migration:write*
+
+Assign or unassign tenant IDs to a cohort. Use `cohort_id = 0` in the URL to unassign.
+
+Request:
+```json
+{ "tenant_ids": [1, 2, 5], "replace": false }
+```
+
+**GET** `/api/migration/projects/{project_id}/cohorts/{cohort_id}/summary`  
+*Requires: migration:read*
+
+Rollup: tenant count, VM count, total vCPU/RAM/disk, estimated migration hours, migration status breakdown.
+
+**POST** `/api/migration/projects/{project_id}/cohorts/auto-assign`  
+*Requires: migration:write*
+
+Auto-assign all unassigned tenants across cohorts using the chosen strategy.
+
+Query params: `?strategy=priority` (default) | `equal_split` | `risk`
+
+### Tenant Readiness
+
+**GET** `/api/migration/projects/{project_id}/tenants/{tenant_id}/readiness`  
+*Requires: migration:read*
+
+Compute and persist 5 readiness checks for the tenant. Returns overall pass/fail, score (0–5), and per-check details.
+
+Response:
+```json
+{
+  "tenant_id": 7,
+  "overall": "pass",
+  "score": 4,
+  "checks": [
+    {"check_name": "target_mapped", "check_status": "pass"},
+    {"check_name": "network_mapped", "check_status": "fail", "notes": "2 unmapped networks"},
+    {"check_name": "quota_sufficient", "check_status": "pass"},
+    {"check_name": "no_critical_gaps", "check_status": "pass"},
+    {"check_name": "vms_classified", "check_status": "pass"}
+  ]
+}
+```
+
+**GET** `/api/migration/projects/{project_id}/cohorts/{cohort_id}/readiness-summary`  
+*Requires: migration:read*
+
+Run readiness checks for every tenant in the cohort and return a summary table plus cohort-level overall status (`all_pass`, `partial`, `blocked`).
