@@ -1128,6 +1128,46 @@ function TenantsView({ tenants, projectId, onRefresh }: {
 
   /* ---- Bulk-scope state ---- */
   const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  /* ---- Find & Replace state ---- */
+  const [showFindReplace, setShowFindReplace] = useState(false);
+  const [frField, setFrField] = useState<"target_domain_name" | "target_project_name">("target_project_name");
+  const [frFind, setFrFind] = useState("");
+  const [frReplace, setFrReplace] = useState("");
+  const [frCaseSensitive, setFrCaseSensitive] = useState(false);
+  const [frUnconfirmedOnly, setFrUnconfirmedOnly] = useState(false);
+  const [frPreview, setFrPreview] = useState<{ id: number; tenant_name: string; org_vdc: string | null; old_value: string; new_value: string }[] | null>(null);
+  const [frLoading, setFrLoading] = useState(false);
+  const [frApplied, setFrApplied] = useState(false);
+
+  const runFindReplace = async (applyMode: boolean) => {
+    if (!frFind.trim()) return;
+    setFrLoading(true); setFrApplied(false);
+    try {
+      const data = await apiFetch<{ preview: typeof frPreview; affected_count: number }>(
+        `/api/migration/projects/${projectId}/tenants/bulk-replace-target`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            field: frField,
+            find: frFind,
+            replace: frReplace,
+            case_sensitive: frCaseSensitive,
+            unconfirmed_only: frUnconfirmedOnly,
+            preview_only: !applyMode,
+          }),
+        }
+      );
+      setFrPreview(data.preview);
+      if (applyMode) {
+        setFrApplied(true);
+        loadTenants();
+        setFrFind(""); setFrReplace(""); setFrPreview(null);
+      }
+    } catch (e: any) { setError(e.message); }
+    finally { setFrLoading(false); }
+  };
+
   const toggleOne = (id: number) => setSelected(prev => {
     const n = new Set(prev);
     n.has(id) ? n.delete(id) : n.add(id);
@@ -1261,6 +1301,10 @@ function TenantsView({ tenants, projectId, onRefresh }: {
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <button onClick={() => setShowAdd(!showAdd)} style={btnSecondary}>+ Add Tenant Rule</button>
         <button onClick={rerun} style={btnSecondary}>🔄 Re-run Detection</button>
+        <button onClick={() => { setShowFindReplace(!showFindReplace); setFrPreview(null); setFrApplied(false); }}
+          style={{ ...btnSecondary, background: showFindReplace ? "#eff6ff" : undefined, color: showFindReplace ? "#2563eb" : undefined }}>
+          🔍 Find &amp; Replace
+        </button>
         {selected.size > 0 && (
           <>
             <span style={{ fontSize: "0.85rem", color: "#6b7280", margin: "0 4px" }}>
@@ -1293,6 +1337,92 @@ function TenantsView({ tenants, projectId, onRefresh }: {
         </span>
       </div>
       {error && <div style={alertError}>{error}</div>}
+
+      {/* Find & Replace panel */}
+      {showFindReplace && (
+        <div style={{ ...sectionStyle, marginBottom: 12, border: "1px solid #bfdbfe", background: "#eff6ff" }}>
+          <div style={{ fontWeight: 700, marginBottom: 10, color: "#1d4ed8" }}>🔍 Find &amp; Replace in Target Names</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10, alignItems: "end" }}>
+            <div>
+              <label style={labelStyle}>Field</label>
+              <select value={frField} onChange={e => { setFrField(e.target.value as any); setFrPreview(null); }}
+                style={inputStyle}>
+                <option value="target_project_name">Target Project Name (OrgVDC)</option>
+                <option value="target_domain_name">Target Domain Name (Org)</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Find (substring)</label>
+              <input value={frFind} onChange={e => { setFrFind(e.target.value); setFrPreview(null); }}
+                style={inputStyle} placeholder={`e.g. _vDC_`} />
+            </div>
+            <div>
+              <label style={labelStyle}>Replace with</label>
+              <input value={frReplace} onChange={e => { setFrReplace(e.target.value); setFrPreview(null); }}
+                style={inputStyle} placeholder="leave empty to strip" />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label style={{ ...labelStyle, marginBottom: 0 }}>
+                <input type="checkbox" checked={frCaseSensitive}
+                  onChange={e => { setFrCaseSensitive(e.target.checked); setFrPreview(null); }}
+                  style={{ marginRight: 4 }} />
+                Case sensitive
+              </label>
+              <label style={{ ...labelStyle, marginBottom: 0 }}>
+                <input type="checkbox" checked={frUnconfirmedOnly}
+                  onChange={e => { setFrUnconfirmedOnly(e.target.checked); setFrPreview(null); }}
+                  style={{ marginRight: 4 }} />
+                Unconfirmed rows only
+              </label>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: frPreview ? 12 : 0 }}>
+            <button onClick={() => runFindReplace(false)} disabled={frLoading || !frFind.trim()}
+              style={{ ...btnSecondary, background: "#dbeafe", color: "#1d4ed8" }}>
+              {frLoading && !frApplied ? "..." : "👁 Preview"}
+            </button>
+            {frPreview !== null && frPreview.length > 0 && (
+              <button onClick={() => runFindReplace(true)} disabled={frLoading}
+                style={{ ...btnPrimary }}>
+                {frLoading ? "..." : `✅ Apply to ${frPreview.length} row${frPreview.length !== 1 ? "s" : ""}`}
+              </button>
+            )}
+            {frPreview !== null && frPreview.length === 0 && (
+              <span style={{ fontSize: "0.85rem", color: "#6b7280" }}>No matches found.</span>
+            )}
+            {frApplied && (
+              <span style={{ fontSize: "0.85rem", color: "#16a34a", fontWeight: 600 }}>✓ Applied! Rows marked unconfirmed for review.</span>
+            )}
+          </div>
+          {/* Preview table */}
+          {frPreview !== null && frPreview.length > 0 && (
+            <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid #bfdbfe", borderRadius: 6 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                <thead>
+                  <tr style={{ background: "#dbeafe", position: "sticky", top: 0 }}>
+                    <th style={{ ...thStyle, textAlign: "left" }}>Tenant</th>
+                    <th style={{ ...thStyle, textAlign: "left" }}>OrgVDC</th>
+                    <th style={{ ...thStyle, textAlign: "left", color: "#dc2626" }}>Before</th>
+                    <th style={{ ...thStyle, textAlign: "left", color: "#16a34a" }}>After</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {frPreview.map(row => (
+                    <tr key={row.id} style={{ borderTop: "1px solid #e0e7ff" }}>
+                      <td style={tdStyle}>{row.tenant_name}</td>
+                      <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.78rem" }}>{row.org_vdc || "—"}</td>
+                      <td style={{ ...tdStyle, color: "#dc2626", fontFamily: "monospace" }}>{row.old_value}</td>
+                      <td style={{ ...tdStyle, color: "#16a34a", fontFamily: "monospace" }}>
+                        {row.new_value || <span style={{ color: "#9ca3af", fontStyle: "italic" }}>(empty)</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Add Tenant Rule form */}
       {showAdd && (

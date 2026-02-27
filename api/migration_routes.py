@@ -76,6 +76,7 @@ import os
 import io
 import json
 import logging
+import re
 import traceback
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -2614,6 +2615,15 @@ class BulkScopeRequest(BaseModel):
     exclude_reason: Optional[str] = None
 
 
+class BulkReplaceTargetRequest(BaseModel):
+    field: str                       # "target_domain_name" | "target_project_name"
+    find: str                        # literal substring to find
+    replace: str                     # replacement string (empty string = strip)
+    case_sensitive: bool = False     # default: case-insensitive
+    unconfirmed_only: bool = False   # if true, only affect rows not yet confirmed
+    preview_only: bool = False       # if true, return preview without writing
+
+
 @router.patch("/projects/{project_id}/tenants/bulk-scope",
               dependencies=[Depends(require_permission("migration", "write"))])
 async def bulk_scope_tenants(project_id: str, req: BulkScopeRequest, user=Depends(get_current_user)):
@@ -2635,6 +2645,83 @@ async def bulk_scope_tenants(project_id: str, req: BulkScopeRequest, user=Depend
     _log_activity(actor=actor, action="bulk_scope_tenants", resource_type="migration_project",
                   resource_id=project_id, details={"tenant_ids": req.tenant_ids, "include": req.include_in_plan})
     return {"status": "ok", "updated": len(req.tenant_ids)}
+
+
+@router.post("/projects/{project_id}/tenants/bulk-replace-target",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_replace_target(project_id: str, req: BulkReplaceTargetRequest,
+                               user=Depends(get_current_user)):
+    """
+    Find-and-replace in target_domain_name or target_project_name across all tenants.
+    Supports case-insensitive matching (default) and preview mode (dry run).
+    Matching is literal substring — not regex — to keep it safe and predictable.
+    After apply, affected rows are marked target_confirmed=false so operator reviews the result.
+    """
+    ALLOWED_FIELDS = {"target_domain_name", "target_project_name"}
+    if req.field not in ALLOWED_FIELDS:
+        raise HTTPException(status_code=400, detail=f"field must be one of {ALLOWED_FIELDS}")
+    if not req.find:
+        raise HTTPException(status_code=400, detail="find string must not be empty")
+
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch candidates — rows where the target field contains the find substring
+            if req.unconfirmed_only:
+                filter_sql = "AND target_confirmed = false"
+            else:
+                filter_sql = ""
+
+            cur.execute(f"""
+                SELECT id, tenant_name, org_vdc,
+                       {req.field} AS current_value
+                FROM migration_tenants
+                WHERE project_id = %s
+                  AND {req.field} IS NOT NULL
+                  AND {req.field} != ''
+                  {filter_sql}
+                ORDER BY tenant_name
+            """, (project_id,))
+            rows = cur.fetchall()
+
+            # Compute replacements in Python (safe from SQL injection, predictable)
+            preview = []
+            for r in rows:
+                old = r["current_value"] or ""
+                if req.case_sensitive:
+                    new = old.replace(req.find, req.replace)
+                else:
+                    new = re.sub(re.escape(req.find), req.replace,
+                                 old, flags=re.IGNORECASE)
+                if old != new:
+                    preview.append({
+                        "id": r["id"],
+                        "tenant_name": r["tenant_name"],
+                        "org_vdc": r["org_vdc"],
+                        "old_value": old,
+                        "new_value": new,
+                    })
+
+            if req.preview_only:
+                return {"status": "ok", "preview": preview, "affected_count": len(preview)}
+
+            # Apply updates
+            for item in preview:
+                cur.execute(f"""
+                    UPDATE migration_tenants
+                    SET {req.field} = %s,
+                        target_confirmed = false,
+                        updated_at = now()
+                    WHERE id = %s AND project_id = %s
+                """, (item["new_value"], item["id"], project_id))
+            conn.commit()
+
+    _log_activity(actor=actor, action="bulk_replace_target", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"field": req.field, "find": req.find, "replace": req.replace,
+                           "affected": len(preview)})
+    return {"status": "ok", "affected_count": len(preview), "preview": preview}
 
 
 # ── Auto-exclude filter patterns ─────────────────────────────────────────────
