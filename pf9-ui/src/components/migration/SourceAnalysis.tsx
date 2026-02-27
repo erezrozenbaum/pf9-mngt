@@ -1133,7 +1133,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
 
   /* ---- Find & Replace state ---- */
   const [showFindReplace, setShowFindReplace] = useState(false);
-  const [frField, setFrField] = useState<"target_domain_name" | "target_project_name">("target_project_name");
+  const [frField, setFrField] = useState<"target_domain_name" | "target_domain_description" | "target_project_name" | "target_display_name">("target_project_name");
   const [frFind, setFrFind] = useState("");
   const [frReplace, setFrReplace] = useState("");
   const [frCaseSensitive, setFrCaseSensitive] = useState(false);
@@ -1370,8 +1370,10 @@ function TenantsView({ tenants, projectId, onRefresh }: {
               <label style={labelStyle}>Field</label>
               <select value={frField} onChange={e => { setFrField(e.target.value as any); setFrPreview(null); }}
                 style={inputStyle}>
-                <option value="target_project_name">Target Project Name (OrgVDC)</option>
-                <option value="target_domain_name">Target Domain Name (Org)</option>
+                <option value="target_project_name">Target Project Name</option>
+                <option value="target_display_name">Project Description</option>
+                <option value="target_domain_name">Target Domain Name</option>
+                <option value="target_domain_description">Domain Description</option>
               </select>
             </div>
             <div>
@@ -1956,9 +1958,13 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const saveMapping = async (id: number) => {
     setSaving(id);
     try {
+      // Fall back to the current server value so clicking Confirm on an unedited row
+      // doesn't accidentally null-out the target network name.
+      const current = mappings.find(m => m.id === id)?.target_network_name ?? null;
+      const value = editValues[id] !== undefined ? editValues[id] : current;
       await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ target_network_name: editValues[id] ?? null, confirmed: true }),
+        body: JSON.stringify({ target_network_name: value, confirmed: true }),
       });
       setEditValues(prev => { const n = { ...prev }; delete n[id]; return n; });
       load();
@@ -1966,16 +1972,12 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
     finally { setSaving(null); }
   };
 
-  const unconfirmMapping = async (id: number) => {
-    setSaving(id);
-    try {
-      await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ confirmed: false }),
-      });
-      load();
-    } catch (e: any) { setError(e.message); }
-    finally { setSaving(null); }
+  const startEditMapping = (id: number, currentValue: string) => {
+    setEditValues(prev => ({ ...prev, [id]: currentValue }));
+  };
+
+  const cancelEditMapping = (id: number) => {
+    setEditValues(prev => { const n = { ...prev }; delete n[id]; return n; });
   };
 
   if (loading) return <div style={{ color: "#6b7280", padding: 16 }}>Loading network mappings...</div>;
@@ -2116,7 +2118,8 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
             {mappings.map(m => {
               const editVal = editValues[m.id];
               const current = editVal !== undefined ? editVal : (m.target_network_name || "");
-              const isDirty = editVal !== undefined && editVal !== (m.target_network_name || "");
+              const isEditing = editVal !== undefined;
+              const isDirty = isEditing && editVal !== (m.target_network_name || "");
               const isConfirmed = m.confirmed === true;
               return (
                 <tr key={m.id} style={{
@@ -2144,26 +2147,34 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                       : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem" }}>⚠ review</span>}
                   </td>
                   <td style={tdStyle}>
-                    {isDirty || !isConfirmed ? (
-                      <button
-                        onClick={() => saveMapping(m.id)}
-                        disabled={saving === m.id}
-                        style={{ ...btnSmall,
-                          background: isDirty ? "#2563eb" : "#f97316",
-                          color: "#fff" }}
-                        title={isDirty ? "Save changes" : "Confirm this mapping"}>
-                        {saving === m.id ? "..." : isDirty ? "Save" : "Confirm"}
-                      </button>
-                    ) : (
-                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    {isEditing || !isConfirmed ? (
+                      <div style={{ display: "flex", gap: 4 }}>
                         <button
-                          onClick={() => unconfirmMapping(m.id)}
+                          onClick={() => saveMapping(m.id)}
                           disabled={saving === m.id}
-                          style={{ ...btnSmall, background: "#f3f4f6", color: "#374151", fontSize: "0.75rem" }}
-                          title="Un-confirm to re-edit this mapping">
-                          {saving === m.id ? "..." : "✏️ Edit"}
+                          style={{ ...btnSmall,
+                            background: isDirty ? "#2563eb" : "#f97316",
+                            color: "#fff" }}
+                          title={isDirty ? "Save changes" : "Confirm this mapping"}>
+                          {saving === m.id ? "..." : isDirty ? "Save" : "Confirm"}
                         </button>
+                        {isEditing && (
+                          <button
+                            onClick={() => cancelEditMapping(m.id)}
+                            disabled={saving === m.id}
+                            style={{ ...btnSmall, background: "#e5e7eb", color: "#374151" }}
+                            title="Cancel edit">
+                            ✕
+                          </button>
+                        )}
                       </div>
+                    ) : (
+                      <button
+                        onClick={() => startEditMapping(m.id, m.target_network_name || "")}
+                        style={{ ...btnSmall, background: "#f3f4f6", color: "#374151", fontSize: "0.75rem" }}
+                        title="Edit this mapping">
+                        ✏️ Edit
+                      </button>
                     )}
                   </td>
                 </tr>
