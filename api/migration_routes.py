@@ -305,6 +305,81 @@ class UpdateTenantRequest(BaseModel):
     target_domain: Optional[str] = None
     target_project: Optional[str] = None
     notes: Optional[str] = None
+    # Phase 2.10D — priority
+    migration_priority: Optional[int] = None
+    # Phase 2.10G — cohort assignment
+    cohort_id: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.10 request models
+# ---------------------------------------------------------------------------
+
+class VMStatusUpdateRequest(BaseModel):
+    status: str  # not_started|assigned|in_progress|migrated|failed|skipped
+    status_note: Optional[str] = None
+
+
+class VMBulkStatusRequest(BaseModel):
+    vm_ids: List[int]
+    status: str
+    status_note: Optional[str] = None
+
+
+class VMModeOverrideRequest(BaseModel):
+    override: Optional[str] = None  # 'warm' | 'cold' | None (= clear override)
+
+
+class VMDependencyRequest(BaseModel):
+    depends_on_vm_id: int
+    dependency_type: Optional[str] = "must_complete_before"
+    notes: Optional[str] = None
+
+
+class NetworkMappingCreateRequest(BaseModel):
+    source_network_name: str
+    target_network_name: Optional[str] = None
+    target_network_id: Optional[str] = None
+    vlan_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class NetworkMappingUpdateRequest(BaseModel):
+    target_network_name: Optional[str] = None
+    target_network_id: Optional[str] = None
+    vlan_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class CreateCohortRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    cohort_order: Optional[int] = 999
+    scheduled_start: Optional[str] = None  # ISO date string
+    scheduled_end: Optional[str] = None
+    owner_name: Optional[str] = None
+    depends_on_cohort_id: Optional[int] = None
+    overcommit_profile_override: Optional[str] = None
+    agent_slots_override: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class UpdateCohortRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    cohort_order: Optional[int] = None
+    status: Optional[str] = None
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+    owner_name: Optional[str] = None
+    depends_on_cohort_id: Optional[int] = None
+    overcommit_profile_override: Optional[str] = None
+    agent_slots_override: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class AssignTenantsToCohortRequest(BaseModel):
+    tenant_ids: List[int]
 
 
 # ---------------------------------------------------------------------------
@@ -3412,6 +3487,770 @@ async def export_gaps_report_pdf(project_id: str):
 # =====================================================================
 # Serialization helpers
 # =====================================================================
+
+# =====================================================================
+# PHASE 2.10 — VM STATUS & MODE OVERRIDE
+# =====================================================================
+
+VALID_VM_STATUSES = {"not_started", "assigned", "in_progress", "migrated", "failed", "skipped"}
+VALID_MODE_OVERRIDES = {"warm", "cold", None}
+
+
+@router.patch("/projects/{project_id}/vms/{vm_id}/status",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_vm_status(project_id: str, vm_id: int, req: VMStatusUpdateRequest,
+                           user=Depends(get_current_user)):
+    """Update the migration status of a single VM."""
+    actor = user.username if user else "system"
+    if req.status not in VALID_VM_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Valid: {sorted(VALID_VM_STATUSES)}")
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_vms
+                SET migration_status = %s,
+                    migration_status_note = %s,
+                    migration_status_updated_at = now(),
+                    migration_status_updated_by = %s,
+                    updated_at = now()
+                WHERE project_id = %s AND id = %s
+                RETURNING id, vm_name, migration_status, migration_status_note,
+                          migration_status_updated_at, migration_status_updated_by
+            """, (req.status, req.status_note, actor, project_id, vm_id))
+            vm = cur.fetchone()
+            if not vm:
+                raise HTTPException(status_code=404, detail="VM not found")
+            conn.commit()
+
+    _log_activity(actor=actor, action="update_vm_status", resource_type="migration_vm",
+                  resource_id=str(vm_id), details={"status": req.status, "note": req.status_note})
+    return {"status": "ok", "vm": _serialize_row(dict(vm))}
+
+
+@router.patch("/projects/{project_id}/vms/bulk-status",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_update_vm_status(project_id: str, req: VMBulkStatusRequest,
+                                user=Depends(get_current_user)):
+    """Bulk-update migration status for multiple VMs."""
+    actor = user.username if user else "system"
+    if req.status not in VALID_VM_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Valid: {sorted(VALID_VM_STATUSES)}")
+    if not req.vm_ids:
+        raise HTTPException(status_code=400, detail="vm_ids must not be empty")
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_vms
+                SET migration_status = %s,
+                    migration_status_note = %s,
+                    migration_status_updated_at = now(),
+                    migration_status_updated_by = %s,
+                    updated_at = now()
+                WHERE project_id = %s AND id = ANY(%s)
+            """, (req.status, req.status_note, actor, project_id, req.vm_ids))
+            updated = cur.rowcount
+            conn.commit()
+
+    _log_activity(actor=actor, action="bulk_update_vm_status", resource_type="migration_vm",
+                  resource_id=project_id, details={"status": req.status, "count": updated, "vm_ids": req.vm_ids})
+    return {"status": "ok", "updated_count": updated}
+
+
+@router.patch("/projects/{project_id}/vms/{vm_id}/mode-override",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_vm_mode_override(project_id: str, vm_id: int, req: VMModeOverrideRequest,
+                                  user=Depends(get_current_user)):
+    """Set or clear a per-VM migration mode override (warm/cold/null=auto)."""
+    actor = user.username if user else "system"
+    if req.override not in VALID_MODE_OVERRIDES:
+        raise HTTPException(status_code=400, detail="override must be 'warm', 'cold', or null")
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_vms
+                SET migration_mode_override = %s, updated_at = now()
+                WHERE project_id = %s AND id = %s
+                RETURNING id, vm_name, migration_mode, migration_mode_override
+            """, (req.override, project_id, vm_id))
+            vm = cur.fetchone()
+            if not vm:
+                raise HTTPException(status_code=404, detail="VM not found")
+            conn.commit()
+
+    _log_activity(actor=actor, action="update_vm_mode_override", resource_type="migration_vm",
+                  resource_id=str(vm_id), details={"override": req.override})
+    return {"status": "ok", "vm": _serialize_row(dict(vm))}
+
+
+# =====================================================================
+# PHASE 2.10 — VM DEPENDENCIES
+# =====================================================================
+
+@router.get("/projects/{project_id}/vm-dependencies",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_vm_dependencies(project_id: str, vm_id: Optional[int] = Query(None)):
+    """List VM dependencies for a project, optionally filtered by vm_id."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if vm_id is not None:
+                cur.execute("""
+                    SELECT d.*,
+                           v1.vm_name AS vm_name,
+                           v2.vm_name AS depends_on_vm_name
+                    FROM migration_vm_dependencies d
+                    JOIN migration_vms v1 ON d.vm_id = v1.id
+                    JOIN migration_vms v2 ON d.depends_on_vm_id = v2.id
+                    WHERE d.project_id = %s AND d.vm_id = %s
+                    ORDER BY d.created_at
+                """, (project_id, vm_id))
+            else:
+                cur.execute("""
+                    SELECT d.*,
+                           v1.vm_name AS vm_name,
+                           v2.vm_name AS depends_on_vm_name
+                    FROM migration_vm_dependencies d
+                    JOIN migration_vms v1 ON d.vm_id = v1.id
+                    JOIN migration_vms v2 ON d.depends_on_vm_id = v2.id
+                    WHERE d.project_id = %s
+                    ORDER BY v1.vm_name, d.created_at
+                """, (project_id,))
+            deps = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "dependencies": deps}
+
+
+@router.post("/projects/{project_id}/vms/{vm_id}/dependencies",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def add_vm_dependency(project_id: str, vm_id: int, req: VMDependencyRequest,
+                            user=Depends(get_current_user)):
+    """Add a dependency: this VM must wait for depends_on_vm_id to complete first."""
+    actor = user.username if user else "system"
+    if vm_id == req.depends_on_vm_id:
+        raise HTTPException(status_code=400, detail="A VM cannot depend on itself")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Circular dependency check (A→B and B→A)
+            cur.execute("""
+                SELECT 1 FROM migration_vm_dependencies
+                WHERE project_id = %s AND vm_id = %s AND depends_on_vm_id = %s
+            """, (project_id, req.depends_on_vm_id, vm_id))
+            if cur.fetchone():
+                raise HTTPException(status_code=409,
+                    detail="Circular dependency detected: the target VM already depends on this VM")
+
+            cur.execute("""
+                INSERT INTO migration_vm_dependencies
+                    (project_id, vm_id, depends_on_vm_id, dependency_type, notes)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (vm_id, depends_on_vm_id) DO UPDATE
+                    SET dependency_type = EXCLUDED.dependency_type,
+                        notes = EXCLUDED.notes
+                RETURNING *
+            """, (project_id, vm_id, req.depends_on_vm_id, req.dependency_type, req.notes))
+            dep = cur.fetchone()
+            conn.commit()
+
+    _log_activity(actor=actor, action="add_vm_dependency", resource_type="migration_vm_dependency",
+                  resource_id=str(dep["id"]), details={"vm_id": vm_id, "depends_on": req.depends_on_vm_id})
+    return {"status": "ok", "dependency": _serialize_row(dict(dep))}
+
+
+@router.delete("/projects/{project_id}/vms/{vm_id}/dependencies/{dep_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_vm_dependency(project_id: str, vm_id: int, dep_id: int,
+                               user=Depends(get_current_user)):
+    """Remove a VM dependency."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM migration_vm_dependencies
+                WHERE id = %s AND project_id = %s AND vm_id = %s
+            """, (dep_id, project_id, vm_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Dependency not found")
+            conn.commit()
+    _log_activity(actor=actor, action="delete_vm_dependency", resource_type="migration_vm_dependency",
+                  resource_id=str(dep_id), details={"vm_id": vm_id})
+    return {"status": "ok"}
+
+
+# =====================================================================
+# PHASE 2.10 — NETWORK MAPPINGS (Source → PCD)
+# =====================================================================
+
+@router.get("/projects/{project_id}/network-mappings",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_network_mappings(project_id: str):
+    """
+    List all source network → PCD network mappings for this project.
+    Auto-seeds unmapped entries from distinct VM network_name values.
+    """
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Auto-seed: insert any source networks from VMs that don't have a mapping yet
+            cur.execute("""
+                INSERT INTO migration_network_mappings (project_id, source_network_name)
+                SELECT DISTINCT %s, vm.network_name
+                FROM migration_vms vm
+                WHERE vm.project_id = %s
+                  AND vm.network_name IS NOT NULL
+                  AND vm.network_name != ''
+                  AND vm.power_state = 'poweredOn'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM migration_network_mappings m
+                      WHERE m.project_id = %s AND m.source_network_name = vm.network_name
+                  )
+                ON CONFLICT DO NOTHING
+            """, (project_id, project_id, project_id))
+            conn.commit()
+
+            # Fetch all mappings with VM count per source network
+            cur.execute("""
+                SELECT m.*,
+                       COUNT(DISTINCT v.id) AS vm_count
+                FROM migration_network_mappings m
+                LEFT JOIN migration_vms v
+                    ON v.project_id = m.project_id
+                    AND v.network_name = m.source_network_name
+                    AND v.power_state = 'poweredOn'
+                WHERE m.project_id = %s
+                GROUP BY m.id, m.project_id, m.source_network_name, m.target_network_name,
+                         m.target_network_id, m.vlan_id, m.notes, m.created_at, m.updated_at
+                ORDER BY vm_count DESC, m.source_network_name
+            """, (project_id,))
+            mappings = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    unmapped_count = sum(1 for m in mappings if not m.get("target_network_name"))
+    return {"status": "ok", "mappings": mappings, "unmapped_count": unmapped_count,
+            "total": len(mappings)}
+
+
+@router.post("/projects/{project_id}/network-mappings",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_network_mapping(project_id: str, req: NetworkMappingCreateRequest,
+                                 user=Depends(get_current_user)):
+    """Create a source→PCD network mapping entry."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_network_mappings
+                    (project_id, source_network_name, target_network_name,
+                     target_network_id, vlan_id, notes)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (project_id, source_network_name) DO UPDATE
+                    SET target_network_name = EXCLUDED.target_network_name,
+                        target_network_id = EXCLUDED.target_network_id,
+                        vlan_id = EXCLUDED.vlan_id,
+                        notes = EXCLUDED.notes,
+                        updated_at = now()
+                RETURNING *
+            """, (project_id, req.source_network_name, req.target_network_name,
+                  req.target_network_id, req.vlan_id, req.notes))
+            mapping = cur.fetchone()
+            conn.commit()
+    _log_activity(actor=actor, action="create_network_mapping", resource_type="migration_network_mapping",
+                  resource_id=str(mapping["id"]), details={"source": req.source_network_name})
+    return {"status": "ok", "mapping": _serialize_row(dict(mapping))}
+
+
+@router.patch("/projects/{project_id}/network-mappings/{mapping_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_network_mapping(project_id: str, mapping_id: int,
+                                 req: NetworkMappingUpdateRequest, user=Depends(get_current_user)):
+    """Update target network name/ID for a mapping entry."""
+    actor = user.username if user else "system"
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_network_mappings
+                SET {', '.join(set_clauses)}
+                WHERE id = %s AND project_id = %s
+                RETURNING *
+            """, params + [mapping_id, project_id])
+            mapping = cur.fetchone()
+            if not mapping:
+                raise HTTPException(status_code=404, detail="Network mapping not found")
+            conn.commit()
+    _log_activity(actor=actor, action="update_network_mapping", resource_type="migration_network_mapping",
+                  resource_id=str(mapping_id), details=updates)
+    return {"status": "ok", "mapping": _serialize_row(dict(mapping))}
+
+
+@router.delete("/projects/{project_id}/network-mappings/{mapping_id}",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_network_mapping(project_id: str, mapping_id: int,
+                                 user=Depends(get_current_user)):
+    """Delete a network mapping entry."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_network_mappings WHERE id = %s AND project_id = %s",
+                        (mapping_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Network mapping not found")
+            conn.commit()
+    _log_activity(actor=actor, action="delete_network_mapping", resource_type="migration_network_mapping",
+                  resource_id=str(mapping_id), details={})
+    return {"status": "ok"}
+
+
+# =====================================================================
+# PHASE 2.10 — MIGRATION COHORTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/cohorts",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_cohorts(project_id: str):
+    """List all cohorts for a project with per-cohort VM and tenant counts."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT c.*,
+                       COUNT(DISTINCT t.id) AS tenant_count,
+                       COALESCE(SUM(t.vm_count), 0) AS vm_count,
+                       COALESCE(SUM(t.allocated_vcpu), 0) AS total_vcpu,
+                       COALESCE(ROUND(SUM(t.allocated_ram_gb)::numeric, 1), 0) AS total_ram_gb,
+                       COALESCE(ROUND(SUM(t.allocated_disk_gb)::numeric, 1), 0) AS total_disk_gb
+                FROM migration_cohorts c
+                LEFT JOIN migration_tenants t ON t.cohort_id = c.id
+                WHERE c.project_id = %s
+                GROUP BY c.id
+                ORDER BY c.cohort_order, c.created_at
+            """, (project_id,))
+            cohorts = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+            # Count unassigned tenants (in this project with no cohort)
+            cur.execute("""
+                SELECT COUNT(*) AS cnt FROM migration_tenants
+                WHERE project_id = %s AND cohort_id IS NULL AND include_in_plan = true
+            """, (project_id,))
+            unassigned_count = cur.fetchone()["cnt"]
+
+    return {"status": "ok", "cohorts": cohorts, "unassigned_tenant_count": unassigned_count}
+
+
+@router.post("/projects/{project_id}/cohorts",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_cohort(project_id: str, req: CreateCohortRequest,
+                        user=Depends(get_current_user)):
+    """Create a new migration cohort."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_cohorts
+                    (project_id, name, description, cohort_order,
+                     scheduled_start, scheduled_end, owner_name,
+                     depends_on_cohort_id, overcommit_profile_override,
+                     agent_slots_override, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (project_id, req.name, req.description, req.cohort_order,
+                  req.scheduled_start, req.scheduled_end, req.owner_name,
+                  req.depends_on_cohort_id, req.overcommit_profile_override,
+                  req.agent_slots_override, req.notes))
+            cohort = cur.fetchone()
+            conn.commit()
+    _log_activity(actor=actor, action="create_cohort", resource_type="migration_cohort",
+                  resource_id=str(cohort["id"]), details={"name": req.name})
+    return {"status": "ok", "cohort": _serialize_row(dict(cohort))}
+
+
+@router.patch("/projects/{project_id}/cohorts/{cohort_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_cohort(project_id: str, cohort_id: int, req: UpdateCohortRequest,
+                        user=Depends(get_current_user)):
+    """Update cohort metadata."""
+    actor = user.username if user else "system"
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_cohorts
+                SET {', '.join(set_clauses)}
+                WHERE id = %s AND project_id = %s
+                RETURNING *
+            """, params + [cohort_id, project_id])
+            cohort = cur.fetchone()
+            if not cohort:
+                raise HTTPException(status_code=404, detail="Cohort not found")
+            conn.commit()
+    _log_activity(actor=actor, action="update_cohort", resource_type="migration_cohort",
+                  resource_id=str(cohort_id), details=updates)
+    return {"status": "ok", "cohort": _serialize_row(dict(cohort))}
+
+
+@router.delete("/projects/{project_id}/cohorts/{cohort_id}",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_cohort(project_id: str, cohort_id: int, user=Depends(get_current_user)):
+    """Delete a cohort. Tenants are unassigned (cohort_id = NULL), not deleted."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            # Unassign tenants first
+            cur.execute("UPDATE migration_tenants SET cohort_id = NULL WHERE cohort_id = %s",
+                        (cohort_id,))
+            cur.execute("DELETE FROM migration_cohorts WHERE id = %s AND project_id = %s",
+                        (cohort_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Cohort not found")
+            conn.commit()
+    _log_activity(actor=actor, action="delete_cohort", resource_type="migration_cohort",
+                  resource_id=str(cohort_id), details={})
+    return {"status": "ok"}
+
+
+@router.post("/projects/{project_id}/cohorts/{cohort_id}/assign-tenants",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def assign_tenants_to_cohort(project_id: str, cohort_id: int,
+                                   req: AssignTenantsToCohortRequest,
+                                   user=Depends(get_current_user)):
+    """Assign a list of tenants to a cohort (or unassign with cohort_id=0)."""
+    actor = user.username if user else "system"
+    if not req.tenant_ids:
+        raise HTTPException(status_code=400, detail="tenant_ids must not be empty")
+
+    # cohort_id=0 means unassign
+    target_cohort_id = None if cohort_id == 0 else cohort_id
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        if target_cohort_id is not None:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT id FROM migration_cohorts WHERE id = %s AND project_id = %s",
+                            (target_cohort_id, project_id))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Cohort not found")
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_tenants
+                SET cohort_id = %s, updated_at = now()
+                WHERE project_id = %s AND id = ANY(%s)
+            """, (target_cohort_id, project_id, req.tenant_ids))
+            updated = cur.rowcount
+            conn.commit()
+
+    _log_activity(actor=actor, action="assign_tenants_to_cohort", resource_type="migration_cohort",
+                  resource_id=str(cohort_id),
+                  details={"tenant_ids": req.tenant_ids, "updated": updated})
+    return {"status": "ok", "updated_count": updated}
+
+
+@router.get("/projects/{project_id}/cohorts/{cohort_id}/summary",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_cohort_summary(project_id: str, cohort_id: int):
+    """Detailed summary for one cohort: tenant list, VM counts, resource totals, status breakdown."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_cohorts WHERE id = %s AND project_id = %s",
+                        (cohort_id, project_id))
+            cohort = cur.fetchone()
+            if not cohort:
+                raise HTTPException(status_code=404, detail="Cohort not found")
+
+            # Tenants in this cohort
+            cur.execute("""
+                SELECT id, tenant_name, include_in_plan, migration_priority,
+                       vm_count, allocated_vcpu, allocated_ram_gb, allocated_disk_gb,
+                       target_domain_name, target_project_name
+                FROM migration_tenants
+                WHERE cohort_id = %s AND project_id = %s
+                ORDER BY migration_priority, tenant_name
+            """, (cohort_id, project_id))
+            tenants = [_serialize_row(dict(r)) for r in cur.fetchall()]
+            tenant_ids = [t["id"] for t in tenants]
+
+            # VM status breakdown for this cohort
+            status_breakdown = {}
+            if tenant_ids:
+                placeholders = ', '.join(['%s'] * len(tenant_ids))
+                cur.execute(f"""
+                    SELECT migration_status, COUNT(*) as cnt,
+                           COALESCE(SUM(allocated_vcpu), 0) as vcpu,
+                           COALESCE(ROUND(SUM(allocated_ram_gb)::numeric, 1), 0) as ram_gb
+                    FROM migration_vms
+                    WHERE project_id = %s
+                      AND tenant_name IN (
+                          SELECT tenant_name FROM migration_tenants
+                          WHERE id IN ({placeholders})
+                      )
+                      AND power_state = 'poweredOn'
+                    GROUP BY migration_status
+                """, [project_id] + tenant_ids)
+                for row in cur.fetchall():
+                    status_breakdown[row["migration_status"] or "not_started"] = {
+                        "count": row["cnt"], "vcpu": row["vcpu"], "ram_gb": float(row["ram_gb"])
+                    }
+
+    return {
+        "status": "ok",
+        "cohort": _serialize_row(dict(cohort)),
+        "tenants": tenants,
+        "status_breakdown": status_breakdown,
+        "tenant_count": len(tenants),
+        "vm_count": sum(t.get("vm_count") or 0 for t in tenants),
+        "total_vcpu": sum(t.get("allocated_vcpu") or 0 for t in tenants),
+        "total_ram_gb": round(sum(float(t.get("allocated_ram_gb") or 0) for t in tenants), 1),
+    }
+
+
+# =====================================================================
+# PHASE 2.10 — AUTO-ASSIGN TENANTS TO COHORTS
+# =====================================================================
+
+@router.post("/projects/{project_id}/cohorts/auto-assign",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def auto_assign_tenants_to_cohorts(project_id: str,
+                                         strategy: str = Query("priority",
+                                             description="priority | risk | equal_split"),
+                                         user=Depends(get_current_user)):
+    """
+    Auto-assign all in-scope unassigned tenants across existing cohorts.
+    strategy=priority:    assign by migration_priority order to cohorts in order
+    strategy=risk:        high-risk tenants → last cohort, low-risk → first
+    strategy=equal_split: distribute evenly across cohorts by VM count
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get ordered cohorts
+            cur.execute("""
+                SELECT id, cohort_order FROM migration_cohorts
+                WHERE project_id = %s ORDER BY cohort_order, id
+            """, (project_id,))
+            cohorts = cur.fetchall()
+            if not cohorts:
+                raise HTTPException(status_code=400,
+                    detail="No cohorts exist. Create cohorts first.")
+
+            cohort_ids = [c["id"] for c in cohorts]
+
+            # Get unassigned in-scope tenants
+            if strategy == "risk":
+                cur.execute("""
+                    SELECT t.id, t.tenant_name, t.vm_count,
+                           AVG(v.risk_score) AS avg_risk
+                    FROM migration_tenants t
+                    LEFT JOIN migration_vms v ON v.project_id = t.project_id
+                        AND v.tenant_name = t.tenant_name
+                    WHERE t.project_id = %s AND t.cohort_id IS NULL
+                      AND t.include_in_plan = true
+                    GROUP BY t.id, t.tenant_name, t.vm_count
+                    ORDER BY avg_risk ASC NULLS LAST
+                """, (project_id,))
+            else:
+                cur.execute("""
+                    SELECT id, tenant_name, vm_count
+                    FROM migration_tenants
+                    WHERE project_id = %s AND cohort_id IS NULL AND include_in_plan = true
+                    ORDER BY migration_priority ASC, tenant_name
+                """, (project_id,))
+            tenants = cur.fetchall()
+
+            if not tenants:
+                return {"status": "ok", "message": "All in-scope tenants already assigned",
+                        "updated_count": 0}
+
+            # Assign tenants round-robin (equal_split) or sequentially (priority/risk)
+            assignments = []
+            if strategy == "equal_split":
+                # Round-robin by VM count to balance cohorts
+                cohort_vm_counts = {cid: 0 for cid in cohort_ids}
+                for t in tenants:
+                    lightest = min(cohort_vm_counts, key=cohort_vm_counts.get)
+                    assignments.append((lightest, t["id"]))
+                    cohort_vm_counts[lightest] += (t["vm_count"] or 0)
+            else:
+                # Divide tenants into len(cohorts) equal chunks
+                chunk = max(1, -(-len(tenants) // len(cohort_ids)))  # ceiling division
+                for i, t in enumerate(tenants):
+                    cid = cohort_ids[min(i // chunk, len(cohort_ids) - 1)]
+                    assignments.append((cid, t["id"]))
+
+            # Apply assignments
+            for cid, tid in assignments:
+                cur.execute("""
+                    UPDATE migration_tenants SET cohort_id = %s, updated_at = now()
+                    WHERE id = %s
+                """, (cid, tid))
+            conn.commit()
+
+    _log_activity(actor=actor, action="auto_assign_cohorts", resource_type="migration_cohort",
+                  resource_id=project_id, details={"strategy": strategy, "assigned": len(assignments)})
+    return {"status": "ok", "updated_count": len(assignments), "strategy": strategy}
+
+
+# =====================================================================
+# PHASE 2.10 — TENANT READINESS CHECKS
+# =====================================================================
+
+def _compute_tenant_readiness(project_id: str, tenant_id: int, conn) -> List[Dict]:
+    """Compute readiness check results for one tenant. Returns list of check dicts."""
+    results = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM migration_tenants WHERE id = %s AND project_id = %s",
+                    (tenant_id, project_id))
+        tenant = cur.fetchone()
+        if not tenant:
+            return []
+
+        # Check 1: target_mapped
+        results.append({
+            "check_name": "target_mapped",
+            "check_status": "pass" if tenant.get("target_domain_name") else "fail",
+            "notes": "Target PCD domain is configured" if tenant.get("target_domain_name")
+                     else "No target domain assigned — set in Tenants tab"
+        })
+
+        # Check 2: network_mapped
+        cur.execute("""
+            SELECT COUNT(DISTINCT v.network_name) AS total,
+                   COUNT(DISTINCT CASE WHEN m.target_network_name IS NOT NULL
+                         THEN v.network_name END) AS mapped
+            FROM migration_vms v
+            LEFT JOIN migration_network_mappings m
+                ON m.project_id = v.project_id AND m.source_network_name = v.network_name
+            WHERE v.project_id = %s AND v.tenant_name = %s
+              AND v.power_state = 'poweredOn' AND v.network_name IS NOT NULL
+        """, (project_id, tenant["tenant_name"]))
+        nm = cur.fetchone()
+        total_nets = nm["total"] or 0
+        mapped_nets = nm["mapped"] or 0
+        results.append({
+            "check_name": "network_mapped",
+            "check_status": "pass" if (total_nets == 0 or total_nets == mapped_nets) else "fail",
+            "notes": f"{mapped_nets}/{total_nets} networks mapped to PCD target"
+        })
+
+        # Check 3: quota_sufficient — target_project_name or quota model exists
+        results.append({
+            "check_name": "quota_sufficient",
+            "check_status": "pass" if tenant.get("target_project_name") else "pending",
+            "notes": "Target PCD project set" if tenant.get("target_project_name")
+                     else "Set target PCD project to enable quota validation"
+        })
+
+        # Check 4: no_critical_gaps — check migration_pcd_gaps for this project
+        cur.execute("""
+            SELECT COUNT(*) AS cnt FROM migration_pcd_gaps
+            WHERE project_id = %s AND severity = 'critical' AND status != 'resolved'
+        """, (project_id,))
+        critical_gaps = cur.fetchone()["cnt"]
+        results.append({
+            "check_name": "no_critical_gaps",
+            "check_status": "pass" if critical_gaps == 0 else "fail",
+            "notes": f"{critical_gaps} unresolved critical PCD gap(s)" if critical_gaps > 0
+                     else "No critical gaps"
+        })
+
+        # Check 5: vms_classified — all powered-on VMs have a migration mode
+        cur.execute("""
+            SELECT COUNT(*) AS total,
+                   COUNT(CASE WHEN migration_mode IS NOT NULL THEN 1 END) AS classified
+            FROM migration_vms
+            WHERE project_id = %s AND tenant_name = %s AND power_state = 'poweredOn'
+        """, (project_id, tenant["tenant_name"]))
+        vc = cur.fetchone()
+        results.append({
+            "check_name": "vms_classified",
+            "check_status": "pass" if (vc["total"] == 0 or vc["classified"] == vc["total"]) else "fail",
+            "notes": f"{vc['classified']}/{vc['total']} VMs have migration mode assigned"
+        })
+
+    return results
+
+
+@router.get("/projects/{project_id}/tenants/{tenant_id}/readiness",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_tenant_readiness(project_id: str, tenant_id: int):
+    """Compute and return readiness check results for a single tenant."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        checks = _compute_tenant_readiness(project_id, tenant_id, conn)
+        if not checks:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        # Persist latest results
+        with conn.cursor() as cur:
+            for c in checks:
+                cur.execute("""
+                    INSERT INTO migration_tenant_readiness
+                        (tenant_id, check_name, check_status, checked_at, notes)
+                    VALUES (%s, %s, %s, now(), %s)
+                    ON CONFLICT (tenant_id, check_name) DO UPDATE
+                        SET check_status = EXCLUDED.check_status,
+                            checked_at = EXCLUDED.checked_at,
+                            notes = EXCLUDED.notes
+                """, (tenant_id, c["check_name"], c["check_status"], c["notes"]))
+            conn.commit()
+
+    passed = sum(1 for c in checks if c["check_status"] == "pass")
+    overall = "pass" if passed == len(checks) else ("fail" if any(c["check_status"] == "fail" for c in checks) else "pending")
+    return {"status": "ok", "tenant_id": tenant_id, "checks": checks,
+            "overall": overall, "score": f"{passed}/{len(checks)}"}
+
+
+@router.get("/projects/{project_id}/cohorts/{cohort_id}/readiness-summary",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_cohort_readiness_summary(project_id: str, cohort_id: int):
+    """Readiness summary for all tenants in a cohort."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id, tenant_name FROM migration_tenants WHERE cohort_id = %s AND project_id = %s",
+                        (cohort_id, project_id))
+            tenants = cur.fetchall()
+
+        tenant_results = []
+        for t in tenants:
+            checks = _compute_tenant_readiness(project_id, t["id"], conn)
+            passed = sum(1 for c in checks if c["check_status"] == "pass")
+            overall = "pass" if passed == len(checks) else (
+                "fail" if any(c["check_status"] == "fail" for c in checks) else "pending")
+            tenant_results.append({
+                "tenant_id": t["id"],
+                "tenant_name": t["tenant_name"],
+                "overall": overall,
+                "score": f"{passed}/{len(checks)}",
+                "checks": checks
+            })
+
+    ready = sum(1 for t in tenant_results if t["overall"] == "pass")
+    return {
+        "status": "ok",
+        "cohort_id": cohort_id,
+        "tenants": tenant_results,
+        "ready_count": ready,
+        "total_count": len(tenant_results),
+        "all_ready": (ready == len(tenant_results) and len(tenant_results) > 0)
+    }
+
+
+
 
 def _serialize_project(row: Dict[str, Any]) -> Dict[str, Any]:
     """Convert DB row to JSON-safe dict."""
