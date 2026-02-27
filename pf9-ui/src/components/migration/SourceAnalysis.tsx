@@ -4,7 +4,7 @@
  *                  and assessment controls.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { API_BASE } from "../../config";
 import type { MigrationProject } from "../MigrationPlannerTab";
 
@@ -71,6 +71,7 @@ interface MigrationVM {
   org_vdc: string | null;
   risk_score: number | null;
   risk_category: string | null;
+  risk_reasons?: string[] | null;
   migration_mode: string | null;
   estimated_minutes: number | null;
   cpu_usage_percent: number | null;
@@ -304,6 +305,33 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
     }
   };
 
+  /* ---- Re-parse ONLY the vMemory sheet (fix Consumed → Active, no data loss) ---- */
+  const reparseMemoryRef = useRef<HTMLInputElement>(null);
+  const [reparseMsg, setReparseMsg] = useState("");
+  const onReparseMemoryFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    e.target.value = "";
+    setLoading(true);
+    setReparseMsg("");
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const res = await apiFetch<{ message: string; updated_vms: number }>(
+        `/api/migration/projects/${pid}/reparse-memory`,
+        { method: "POST", body: fd },
+      );
+      setReparseMsg(`✓ ${res.message}`);
+      loadVMs();
+      loadStats();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   /* ---- Clear all uploaded RVTools data ---- */
   const clearRvtoolsData = async () => {
     if (!confirm("Delete ALL uploaded RVTools data (VMs, disks, NICs, tenants, etc.)? Project settings will be preserved. This cannot be undone.")) return;
@@ -346,6 +374,20 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
             ♻️ Reset Assessment
           </button>
           {project.rvtools_filename && (
+            <>
+              {/* Hidden file input for vMemory-only re-parse */}
+              <input ref={reparseMemoryRef} type="file" accept=".xlsx,.xls"
+                style={{ display: "none" }} onChange={onReparseMemoryFile} />
+              <button
+                onClick={() => reparseMemoryRef.current?.click()}
+                disabled={loading}
+                title="Re-parse only the vMemory sheet to replace Consumed with Active memory — no other data is changed"
+                style={{ ...btnSecondary, fontSize: "0.82rem" }}>
+                🧠 Fix Mem %
+              </button>
+            </>
+          )}
+          {project.rvtools_filename && (
             <button onClick={clearRvtoolsData} disabled={loading}
               style={{ ...btnDanger, background: "#9333ea" }}>
               🗑️ Clear RVTools Data
@@ -355,6 +397,13 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
       </div>
 
       {error && <div style={alertError}>{error}</div>}
+      {reparseMsg && (
+        <div style={{ ...alertError, background: "#d1fae5", border: "1px solid #34d399", color: "#065f46",
+                      display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>{reparseMsg}</span>
+          <button onClick={() => setReparseMsg("")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1rem" }}>✕</button>
+        </div>
+      )}
 
       {/* Sub-nav */}
       <div style={{ display: "flex", gap: 4, marginBottom: 16, borderBottom: "2px solid var(--border, #e5e7eb)" }}>
@@ -406,7 +455,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
             </select>
             <select value={vmTenant} onChange={e => { setVmTenant(e.target.value); setVmPage(1); }} style={inputStyle}>
               <option value="">All Tenants</option>
-              {tenants.map(t => <option key={t.tenant_id} value={t.tenant_name}>{t.tenant_name}</option>)}
+              {tenants.map((t, i) => <option key={t.tenant_id ?? t.tenant_name ?? i} value={t.tenant_name}>{t.tenant_name}</option>)}
             </select>
             <select value={vmOsFamily} onChange={e => { setVmOsFamily(e.target.value); setVmPage(1); }} style={inputStyle}>
               <option value="">All OS Family</option>
@@ -455,11 +504,15 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                     { key: "migration_mode", label: "Mode" },
                     { key: "primary_ip", label: "IP" },
                   ].map(col => (
-                    <th key={col.key} style={thStyle} onClick={() => {
-                      if (vmSort === col.key) setVmOrder(o => o === "asc" ? "desc" : "asc");
-                      else { setVmSort(col.key); setVmOrder("asc"); }
-                    }}>
-                      {col.label} {vmSort === col.key ? (vmOrder === "asc" ? "▲" : "▼") : ""}
+                    <th key={col.key}
+                      style={{ ...thStyle, cursor: "pointer", userSelect: "none",
+                        background: vmSort === col.key ? "#1e40af" : undefined }}
+                      title={`Sort by ${col.label}`}
+                      onClick={() => {
+                        if (vmSort === col.key) setVmOrder(o => o === "asc" ? "desc" : "asc");
+                        else { setVmSort(col.key); setVmOrder("asc"); }
+                      }}>
+                      {col.label} {vmSort === col.key ? (vmOrder === "asc" ? " ▲" : " ▼") : " ⇅"}
                     </th>
                   ))}
                 </tr>
@@ -489,9 +542,15 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                       <td style={tdStyle}>{vm.ram_mb ? vm.ram_mb.toLocaleString() : "—"}</td>
                       <td style={tdStyle}>
                         {vm.memory_usage_percent != null && Number(vm.memory_usage_percent) > 0 ? (
-                          <span style={{ color: Number(vm.memory_usage_percent) > 80 ? "#dc2626" : Number(vm.memory_usage_percent) > 60 ? "#f59e0b" : "#10b981" }}>
-                            {Number(vm.memory_usage_percent).toFixed(1)}%
-                          </span>
+                          (() => {
+                            const pct = Number(vm.memory_usage_percent);
+                            const color = pct > 100 ? "#7c3aed" : pct > 85 ? "#dc2626" : pct > 70 ? "#f59e0b" : "#10b981";
+                            return (
+                              <span style={{ color, fontWeight: pct > 100 ? 700 : undefined }} title={pct > 100 ? "Memory overcommit / ballooning active" : undefined}>
+                                {pct.toFixed(1)}%{pct > 100 ? " ↑" : ""}
+                              </span>
+                            );
+                          })()
                         ) : <span style={{ color: "#d1d5db" }}>—</span>}
                       </td>
                       <td style={tdStyle}>{vm.total_disk_gb != null ? Number(vm.total_disk_gb).toFixed(1) : "—"}</td>
@@ -556,6 +615,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                           {detailLoading ? (
                             <span style={{ color: "#6b7280" }}>Loading details...</span>
                           ) : (
+                            <>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                               {/* Disks */}
                               <div>
@@ -622,6 +682,20 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                                 )}
                               </div>
                             </div>
+                            {/* Risk Breakdown */}
+                            {vm.risk_reasons && (vm.risk_reasons as string[]).length > 0 && (
+                              <div style={{ marginTop: 12, padding: "8px 14px",
+                                background: "#fffbeb", borderRadius: 6,
+                                border: "1px solid #fde68a" }}>
+                                <h4 style={{ margin: "0 0 6px", fontSize: "0.85rem", color: "#92400e" }}>⚠️ Risk Factors</h4>
+                                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                                  {(vm.risk_reasons as string[]).map((r, i) => (
+                                    <li key={i} style={{ fontSize: "0.8rem", color: "#92400e", lineHeight: 1.6 }}>{r}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            </>
                           )}
                         </td>
                       </tr>
@@ -886,10 +960,13 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   const [editDisplayName, setEditDisplayName] = useState("");
   const [editSaving, setEditSaving] = useState(false);
 
+  /* ---- Search + Sort state ---- */
+  const [tenantSearch, setTenantSearch] = useState("");
+  const [tenantSort, setTenantSort] = useState("tenant_name");
+  const [tenantSortDir, setTenantSortDir] = useState<"asc" | "desc">("asc");
+
   /* ---- Bulk-scope state ---- */
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const allSelected = tenants.length > 0 && selected.size === tenants.length;
-  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(tenants.map(t => t.id)));  
   const toggleOne = (id: number) => setSelected(prev => {
     const n = new Set(prev);
     n.has(id) ? n.delete(id) : n.add(id);
@@ -982,6 +1059,37 @@ function TenantsView({ tenants, projectId, onRefresh }: {
 
   const scopedCount = tenants.filter(t => t.include_in_plan !== false).length;
 
+  /* ---- Filtered + sorted display list ---- */
+  const displayTenants = (() => {
+    let list = [...tenants];
+    if (tenantSearch) {
+      const q = tenantSearch.toLowerCase();
+      list = list.filter(t =>
+        (t.tenant_name || "").toLowerCase().includes(q) ||
+        (t.org_vdc || "").toLowerCase().includes(q) ||
+        (t.target_domain_name || "").toLowerCase().includes(q) ||
+        (t.target_project_name || "").toLowerCase().includes(q)
+      );
+    }
+    list.sort((a: any, b: any) => {
+      let av: any, bv: any;
+      switch (tenantSort) {
+        case "vm_count":      av = a.vm_count || 0;      bv = b.vm_count || 0;      break;
+        case "total_vcpu":    av = a.total_vcpu || 0;    bv = b.total_vcpu || 0;    break;
+        case "total_ram_gb":  av = a.total_ram_mb || 0;  bv = b.total_ram_mb || 0;  break;
+        case "total_disk_gb": av = a.total_disk_gb || 0; bv = b.total_disk_gb || 0; break;
+        default:              av = (a.tenant_name || "").toLowerCase(); bv = (b.tenant_name || "").toLowerCase();
+      }
+      const cmp = typeof av === "string" ? av.localeCompare(bv) : (av - bv);
+      return tenantSortDir === "asc" ? cmp : -cmp;
+    });
+    return list;
+  })();
+  const allSelected = displayTenants.length > 0 && displayTenants.every(t => selected.has(t.id));
+  const toggleAll = () => setSelected(allSelected
+    ? new Set([...selected].filter(id => !displayTenants.find(t => t.id === id)))
+    : new Set([...selected, ...displayTenants.map(t => t.id)]));
+
   return (
     <div>
       {/* Toolbar */}
@@ -1003,8 +1111,20 @@ function TenantsView({ tenants, projectId, onRefresh }: {
             </button>
           </>
         )}
+        <input
+          placeholder="Search tenants..."
+          value={tenantSearch}
+          onChange={e => setTenantSearch(e.target.value)}
+          style={{ ...inputStyle, width: 200, padding: "4px 8px" }}
+        />
+        {tenantSearch && (
+          <button onClick={() => setTenantSearch("")} style={btnSmall}>✕ Clear</button>
+        )}
         <span style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#6b7280" }}>
-          {scopedCount} / {tenants.length} tenants in scope
+          {tenantSearch
+            ? `${displayTenants.length} / ${tenants.length} tenants`
+            : `${scopedCount} / ${tenants.length} tenants in scope`
+          }
         </span>
       </div>
       {error && <div style={alertError}>{error}</div>}
@@ -1047,12 +1167,29 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                 <input type="checkbox" checked={allSelected} onChange={toggleAll} title="Select all" />
               </th>
               <th style={{ ...thStyle, width: 24, textAlign: "center" }} title="In scope">📋</th>
-              <th style={thStyle}>Tenant</th>
-              <th style={thStyle}>OrgVDC</th>
-              <th style={thStyle}>VMs</th>
-              <th style={thStyle}>vCPU</th>
-              <th style={thStyle}>RAM GB</th>
-              <th style={thStyle}>Disk GB</th>
+              {([
+                { key: "tenant_name",  label: "Tenant"   },
+                { key: "org_vdc",      label: "OrgVDC",  noSort: true },
+                { key: "vm_count",     label: "VMs"      },
+                { key: "total_vcpu",   label: "vCPU"     },
+                { key: "total_ram_gb", label: "RAM GB"   },
+                { key: "total_disk_gb",label: "Disk GB"  },
+              ] as {key:string;label:string;noSort?:boolean}[]).map(col => (
+                <th key={col.key}
+                  style={{ ...thStyle,
+                    cursor: col.noSort ? undefined : "pointer",
+                    userSelect: "none",
+                    background: !col.noSort && tenantSort === col.key ? "#1e40af" : undefined }}
+                  onClick={() => {
+                    if (col.noSort) return;
+                    if (tenantSort === col.key) setTenantSortDir(d => d === "asc" ? "desc" : "asc");
+                    else { setTenantSort(col.key); setTenantSortDir("asc"); }
+                  }}>
+                  {col.label}{!col.noSort && (tenantSort === col.key
+                    ? (tenantSortDir === "asc" ? " ⇑" : " ⇓")
+                    : " ⇍")}
+                </th>
+              ))}
               <th style={thStyle}>Target Domain</th>
               <th style={thStyle}>Target Project</th>
               <th style={thStyle}>Display Name</th>
@@ -1060,7 +1197,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
             </tr>
           </thead>
           <tbody>
-            {tenants.map((t, tIdx) => {
+            {displayTenants.map((t, tIdx) => {
               const included = t.include_in_plan !== false;
               const rowStyle: React.CSSProperties = {
                 borderBottom: "1px solid var(--border, #e5e7eb)",
@@ -1167,9 +1304,11 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                 </tr>
               );
             })}
-            {tenants.length === 0 && (
+            {displayTenants.length === 0 && (
               <tr><td colSpan={12} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
-                No tenants detected. Add rules above or run assessment.
+                {tenants.length === 0
+                  ? "No tenants detected. Add rules above or run assessment."
+                  : `No tenants match "${tenantSearch}".`}
               </td></tr>
             )}
           </tbody>
@@ -1186,6 +1325,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
 function NetworksView({ networks, projectId, onRefresh }: {
   networks: NetworkSummary[]; projectId: number; onRefresh: () => void
 }) {
+  const [netSearch, setNetSearch] = useState("");
   const [editId, setEditId] = useState<number | null>(null);
   const [editFields, setEditFields] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -1231,12 +1371,34 @@ function NetworksView({ networks, projectId, onRefresh }: {
     return { background: "#f3f4f6", color: "#6b7280" };
   };
 
+  const filteredNetworks = netSearch
+    ? networks.filter(n =>
+        (n.network_name || "").toLowerCase().includes(netSearch.toLowerCase()) ||
+        (n.tenant_names || "").toLowerCase().includes(netSearch.toLowerCase()) ||
+        (n.network_type || "").toLowerCase().includes(netSearch.toLowerCase()) ||
+        (n.subnet || "").includes(netSearch) ||
+        (n.pcd_target || "").toLowerCase().includes(netSearch.toLowerCase())
+      )
+    : networks;
+
   return (
     <div>
-      <p style={{ color: "#6b7280", fontSize: "0.85rem", marginBottom: 12 }}>
+      <p style={{ color: "#6b7280", fontSize: "0.85rem", marginBottom: 8 }}>
         Network infrastructure extracted from RVTools. VLAN IDs and types are auto-detected from naming patterns.
         Click ✏️ to manually add subnet, gateway, DNS, and PCD target mapping.
       </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <input
+          placeholder="Search networks, tenants, type, subnet…"
+          value={netSearch}
+          onChange={e => setNetSearch(e.target.value)}
+          style={{ ...inputStyle, maxWidth: 320 }}
+        />
+        {netSearch && (
+          <button onClick={() => setNetSearch("")} style={btnSmall}>✕ Clear</button>
+        )}
+        <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{filteredNetworks.length} / {networks.length} networks</span>
+      </div>
       {error && <div style={alertError}>{error}</div>}
 
       <table style={tableStyle}>
@@ -1257,7 +1419,7 @@ function NetworksView({ networks, projectId, onRefresh }: {
           </tr>
         </thead>
         <tbody>
-          {networks.map(n => (
+          {filteredNetworks.map(n => (
             <tr key={n.id} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
               {editId === n.id ? (
                 <>
@@ -1409,21 +1571,36 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
     URL.revokeObjectURL(url);
   };
 
-  const downloadXlsx = () => {
-    const url = `/api/migration/projects/${projectId}/export-report.xlsx`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `migration-plan-${projectName.replace(/\s+/g, "_")}.xlsx`;
-    a.click();
+  const downloadAuthBlob = async (apiPath: string, filename: string) => {
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}${apiPath}`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!res.ok) { alert(`Download failed: ${res.status} ${res.statusText}`); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) { alert(`Download error: ${e.message}`); }
   };
 
-  const downloadPdf = () => {
-    const url = `/api/migration/projects/${projectId}/export-report.pdf`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `migration-plan-${projectName.replace(/\s+/g, "_")}.pdf`;
-    a.click();
-  };
+  const downloadXlsx = () =>
+    downloadAuthBlob(
+      `/api/migration/projects/${projectId}/export-report.xlsx`,
+      `migration-plan-${projectName.replace(/\s+/g, "_")}.xlsx`
+    );
+
+  const downloadPdf = () =>
+    downloadAuthBlob(
+      `/api/migration/projects/${projectId}/export-report.pdf`,
+      `migration-plan-${projectName.replace(/\s+/g, "_")}.pdf`
+    );
 
   if (loading) return <p style={{ color: "#6b7280" }}>Generating migration plan...</p>;
   if (error) return <div style={alertError}>{error}</div>;
@@ -1753,12 +1930,14 @@ interface OvercommitProfile {
 
 interface QuotaResult {
   profile: string;
-  totals_allocated: { vcpu: number; ram_gb: number; disk_tb: number };
+  totals_allocated: { vcpu: number; ram_gb: number; ram_used_gb: number; disk_tb: number };
   totals_recommended: { vcpu: number; ram_gb: number; disk_tb: number };
   per_tenant: Array<{
     tenant_name: string;
-    vcpu_allocated: number; ram_gb_allocated: number; disk_tb_allocated: number;
-    vcpu_recommended: number; ram_gb_recommended: number; disk_tb_recommended: number;
+    vcpu_alloc?: number; ram_gb_alloc?: number; disk_gb_alloc?: number;
+    vcpu_allocated?: number; ram_gb_allocated?: number; disk_tb_allocated?: number;
+    ram_used_gb?: number;
+    vcpu_recommended: number; ram_gb_recommended: number; disk_gb_recommended?: number; disk_tb_recommended?: number;
   }>;
 }
 
@@ -1776,17 +1955,49 @@ interface NodeProfile {
 }
 
 interface SizingResult {
-  existing_nodes: number;
+  // Live cluster
+  node_count_current: number;
+  cluster_vcpu_total: number;
+  cluster_ram_total: number;
+  vcpu_per_node: number;
+  ram_per_node: number;
+  // Policy
+  max_util_pct: number;
+  peak_buffer_pct: number;
+  // Sizing math
+  safe_vcpu: number;
+  safe_ram: number;
+  already_used_vcpu: number;
+  already_used_ram: number;
+  headroom_vcpu: number;
+  headroom_ram: number;
+  demand_vcpu: number;
+  demand_ram: number;
+  deficit_vcpu: number;
+  deficit_ram: number;
+  nodes_to_add: number;
+  nodes_total: number;
+  binding_dimension: string;
+  post_cpu_pct: number;
+  post_ram_pct: number;
+  disk_tb_required?: number;
+  steps: string[];
+  warnings: string[];
+  // VM footprint (source of physical demand)
+  vm_powered_on_count?: number;
+  vm_vcpu_actual?: number;      // actual running vCPU (perf) OR alloc÷overcommit (fallback)
+  vm_ram_gb_actual?: number;    // active RAM (perf) OR allocated (fallback)
+  vm_vcpu_alloc?: number;       // raw allocated vCPU (always from RVtools)
+  vm_ram_gb_alloc?: number;     // raw allocated RAM GB (always from RVtools)
+  sizing_basis?: string;        // "actual_performance" | "allocation" | "quota"
+  source_node_count?: number;   // distinct vSphere hosts running the VMs
+  perf_coverage_pct?: number;   // % of powered-on VMs that have cpu_usage_percent
+  // Legacy aliases
+  nodes_recommended: number;
   nodes_additional_required: number;
-  nodes_min_total: number;
+  existing_nodes: number;
   ha_spares: number;
   ha_policy: string;
-  nodes_recommended: number;
-  binding_dimension: string;
-  nodes_by_dimension: { cpu: number; ram: number };
-  post_migration_utilisation: { cpu_pct: number; ram_pct: number };
-  disk_tb_required?: number;
-  warnings: string[];
 }
 
 function CapacityPlanningView({ projectId }: { projectId: number }) {
@@ -1795,14 +2006,13 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
   const [quotaResult, setQuotaResult] = useState<QuotaResult | null>(null);
   const [nodeProfiles, setNodeProfiles] = useState<NodeProfile[]>([]);
   const [sizingResult, setSizingResult] = useState<SizingResult | null>(null);
-  const [existingNodes, setExistingNodes] = useState(0);
-  const [invVcpuUsed, setInvVcpuUsed] = useState(0);
-  const [invRamUsed, setInvRamUsed] = useState(0);
-  const [invDiskUsed, setInvDiskUsed] = useState(0);
+  const [maxUtilPct, setMaxUtilPct] = useState(70);
+  const [peakBufferPct, setPeakBufferPct] = useState(15);
   const [liveCluster, setLiveCluster] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [autoDetecting, setAutoDetecting] = useState(false);
 
   /* New node-profile form */
   const [showNewProfile, setShowNewProfile] = useState(false);
@@ -1811,6 +2021,34 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
     ram_gb: 512, storage_tb: 20, max_cpu_util_pct: 75,
     max_ram_util_pct: 75, max_disk_util_pct: 85, is_default: false,
   });
+
+  const autoDetectNodeProfile = async () => {
+    setAutoDetecting(true);
+    setError("");
+    try {
+      const result = await apiFetch<any>(`/api/migration/projects/${projectId}/pcd-auto-detect-profile`);
+      if (result.status === "no_data") {
+        setError(result.message);
+        return;
+      }
+      const d = result.dominant_profile;
+      setNpForm({
+        profile_name: d.suggested_name || `${d.cpu_threads}vCPU-${d.ram_gb}GB`,
+        cpu_cores: d.cpu_cores,
+        cpu_threads: d.cpu_threads,
+        ram_gb: d.ram_gb,
+        storage_tb: d.storage_tb,
+        max_cpu_util_pct: 75,
+        max_ram_util_pct: 75,
+        max_disk_util_pct: 85,
+        is_default: true,
+      });
+      setShowNewProfile(true);
+      setMsg(result.message);
+      setTimeout(() => setMsg(""), 6000);
+    } catch (e: any) { setError(e.message); }
+    setAutoDetecting(false);
+  };
 
   const load = async () => {
     setLoading(true);
@@ -1823,15 +2061,6 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
       setProfiles(profResp.profiles || []);
       setNodeProfiles(nodeProf.profiles || []);
 
-      const invResp = await apiFetch(`/api/migration/projects/${projectId}/node-inventory`).catch(() => null);
-      if (invResp?.inventory) {
-        const inv = invResp.inventory;
-        if (inv.current_nodes        != null) setExistingNodes(inv.current_nodes);
-        if (inv.current_vcpu_used    != null) setInvVcpuUsed(inv.current_vcpu_used);
-        if (inv.current_ram_gb_used  != null) setInvRamUsed(inv.current_ram_gb_used);
-        if (inv.current_disk_tb_used != null) setInvDiskUsed(inv.current_disk_tb_used);
-      }
-
       // Load live PCD cluster data from hypervisors table
       const liveResp = await apiFetch(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
       if (liveResp?.live) setLiveCluster(liveResp.live);
@@ -1842,17 +2071,21 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
       if (quota?.profile) setActiveProfile(typeof quota.profile === 'object' ? quota.profile.profile_name : quota.profile);
 
       // Auto-compute sizing if node profiles exist
-      const sizingResp = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`).catch(() => null);
-      if (sizingResp?.sizing) setSizingResult(sizingResp.sizing);
+      const sizingResp = await apiFetch(`/api/migration/projects/${projectId}/node-sizing?max_util_pct=${maxUtilPct}&peak_buffer_pct=${peakBufferPct}`).catch(() => null);
+      if (sizingResp?.sizing) {
+        setSizingResult(sizingResp.sizing);
+        if (sizingResp.live_cluster) setLiveCluster(sizingResp.live_cluster);
+      }
     } catch (e: any) { setError(e.message); }
     setLoading(false);
   };
 
-  const computeSizing = async () => {
+  const computeSizing = async (util = maxUtilPct, peak = peakBufferPct) => {
     setError("");
     try {
-      const result = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`);
+      const result = await apiFetch(`/api/migration/projects/${projectId}/node-sizing?max_util_pct=${util}&peak_buffer_pct=${peak}`);
       setSizingResult(result.sizing || null);
+      if (result.live_cluster) setLiveCluster(result.live_cluster);
     } catch (e: any) { setError(e.message); }
   };
 
@@ -1873,25 +2106,7 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
   };
 
   const saveInventory = async () => {
-    setError("");
-    try {
-      const defaultProfile = nodeProfiles.find(p => p.is_default) || nodeProfiles[0];
-      await apiFetch(`/api/migration/projects/${projectId}/node-inventory`, {
-        method: "PUT",
-        body: JSON.stringify({
-          current_nodes:        existingNodes,
-          profile_id:           defaultProfile?.id,
-          current_vcpu_used:    invVcpuUsed,
-          current_ram_gb_used:  invRamUsed,
-          current_disk_tb_used: invDiskUsed,
-        }),
-      });
-      setMsg("Inventory saved — recomputing sizing…");
-      // Auto-recompute so the displayed result reflects the new baseline
-      await computeSizing();
-      setMsg("Inventory saved and sizing updated.");
-      setTimeout(() => setMsg(""), 4000);
-    } catch (e: any) { setError(e.message); }
+    // Legacy: no longer used — inventory is read live from PCD
   };
 
   const addNodeProfile = async () => {
@@ -1928,7 +2143,6 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   React.useEffect(() => { load(); }, [projectId]);
 
-  const util = sizingResult?.post_migration_utilisation;
   const utilColor = (pct: number) =>
     pct <= 70 ? "#16a34a" : pct <= 85 ? "#d97706" : "#dc2626";
 
@@ -1971,9 +2185,12 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
               <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>of {quotaResult.totals_allocated.vcpu.toLocaleString()} allocated</div>
             </div>
             <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
-              <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>RAM needed (GB)</div>
+              <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>PCD Quota (GB)</div>
               <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{quotaResult.totals_recommended.ram_gb.toFixed(0)}</div>
-              <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>of {quotaResult.totals_allocated.ram_gb.toFixed(0)} GB allocated</div>
+              <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>vCloud alloc: {quotaResult.totals_allocated.ram_gb.toFixed(0)} GB</div>
+              {(quotaResult.totals_allocated.ram_used_gb ?? 0) > 0 && (
+                <div style={{ fontSize: "0.75rem", color: "#d97706" }}>actual used: {(quotaResult.totals_allocated.ram_used_gb ?? 0).toFixed(0)} GB</div>
+              )}
             </div>
             <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
               <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Disk needed (TB)</div>
@@ -1985,24 +2202,28 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
             <thead>
               <tr>
                 <th style={thStyle}>Tenant</th>
-                <th style={thStyle}>vCPU alloc</th>
-                <th style={thStyle}>vCPU needed</th>
-                <th style={thStyle}>RAM alloc GB</th>
-                <th style={thStyle}>RAM needed GB</th>
-                <th style={thStyle}>Disk alloc TB</th>
-                <th style={thStyle}>Disk needed TB</th>
+                <th style={thStyle}>vCPU Alloc</th>
+                <th style={thStyle}>PCD vCPU Quota</th>
+                <th style={thStyle}>RAM Alloc (GB)</th>
+                <th style={thStyle}>RAM Used (GB)</th>
+                <th style={thStyle}>PCD RAM Quota (GB)</th>
+                <th style={thStyle}>Disk Alloc (TB)</th>
+                <th style={thStyle}>PCD Disk Quota (TB)</th>
               </tr>
             </thead>
             <tbody>
-              {quotaResult.per_tenant.map(pt => (
-                <tr key={pt.tenant_name} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
+              {quotaResult.per_tenant.map((pt, i) => (
+                <tr key={`${pt.tenant_name}-${(pt as any).org_vdc || i}`} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
                   <td style={tdStyle}><strong>{pt.tenant_name}</strong></td>
                   <td style={tdStyle}>{pt.vcpu_alloc ?? pt.vcpu_allocated ?? 0}</td>
                   <td style={tdStyle}>{pt.vcpu_recommended ?? 0}</td>
                   <td style={tdStyle}>{((pt.ram_gb_alloc ?? pt.ram_gb_allocated) ?? 0).toFixed(0)}</td>
+                  <td style={{ ...tdStyle, color: (pt.ram_used_gb ?? 0) > (pt.ram_gb_alloc ?? pt.ram_gb_allocated ?? 0) ? "#dc2626" : "inherit" }}>
+                    {(pt.ram_used_gb ?? 0) > 0 ? (pt.ram_used_gb as number).toFixed(0) : "—"}
+                  </td>
                   <td style={tdStyle}>{(pt.ram_gb_recommended ?? 0).toFixed(0)}</td>
-                  <td style={tdStyle}>{((pt.disk_gb_alloc ?? pt.disk_tb_allocated) != null ? ((pt.disk_gb_alloc ?? pt.disk_tb_allocated) / 1024) : 0).toFixed(3)}</td>
-                  <td style={tdStyle}>{((pt.disk_gb_recommended ?? pt.disk_tb_recommended) != null ? ((pt.disk_gb_recommended ?? pt.disk_tb_recommended) / 1024) : 0).toFixed(3)}</td>
+                  <td style={tdStyle}>{((pt.disk_gb_alloc ?? 0) / 1024).toFixed(3)}</td>
+                  <td style={tdStyle}>{((pt.disk_gb_recommended ?? pt.disk_tb_recommended ?? 0) / (pt.disk_gb_recommended ? 1024 : 1)).toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>
@@ -2014,7 +2235,12 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
       <div style={sectionStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h3 style={{ margin: 0 }}>🖥️ PCD Node Profiles</h3>
-          <button onClick={() => setShowNewProfile(!showNewProfile)} style={btnSecondary}>+ New Profile</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={autoDetectNodeProfile} disabled={autoDetecting} style={btnSecondary}>
+              {autoDetecting ? "⏳ Detecting…" : "🔍 Auto-Detect from PCD"}
+            </button>
+            <button onClick={() => setShowNewProfile(!showNewProfile)} style={btnSecondary}>+ New Profile</button>
+          </div>
         </div>
         {showNewProfile && (
           <div style={{ ...sectionStyle, marginBottom: 12, background: "#f8fafc" }}>
@@ -2113,118 +2339,338 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
         )}
       </div>
 
-      {/* ---- Phase 2D: Existing Inventory + Sizing ---- */}
+      {/* ---- Phase 2D: Node Sizing ---- */}
       <div style={sectionStyle}>
-        <h3 style={{ marginTop: 0 }}>📐 Node Sizing</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3 style={{ margin: 0 }}>📐 Node Sizing</h3>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ fontSize: "0.82rem", color: "#6b7280", whiteSpace: "nowrap" }}>Max utilisation %</label>
+              <input
+                type="number" min={50} max={95} step={5}
+                value={maxUtilPct}
+                onChange={e => setMaxUtilPct(+e.target.value)}
+                style={{ ...inputStyle, width: 60, textAlign: "center" }}
+              />
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ fontSize: "0.82rem", color: "#6b7280", whiteSpace: "nowrap" }}>Peak buffer %</label>
+              <input
+                type="number" min={0} max={50} step={5}
+                value={peakBufferPct}
+                onChange={e => setPeakBufferPct(+e.target.value)}
+                style={{ ...inputStyle, width: 60, textAlign: "center" }}
+              />
+            </div>
+            <button onClick={() => computeSizing(maxUtilPct, peakBufferPct)} style={btnPrimary}>
+              🔄 Recalculate
+            </button>
+          </div>
+        </div>
+        <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: 16, lineHeight: 1.5 }}>
+          <strong>{maxUtilPct}% max utilisation</strong> is your HA strategy — it ensures nodes can absorb a failure without overloading.
+          An additional <strong>{peakBufferPct}% peak buffer</strong> is added on top of migration demand to handle burst traffic.
+        </div>
 
-        {/* Live PCD cluster from inventory DB */}
+        {/* Live PCD cluster read-only facts */}
         {liveCluster && liveCluster.node_count > 0 && (
           <div style={{ ...sectionStyle, margin: "0 0 16px", background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <strong style={{ color: "#15803d", fontSize: "0.9rem" }}>🖥️ Live PCD Cluster (from inventory DB)</strong>
-              <button
-                onClick={() => {
-                  setExistingNodes(liveCluster.node_count);
-                  setInvVcpuUsed(liveCluster.vcpus_used);
-                  setInvRamUsed(liveCluster.ram_gb_used);
-                  setInvDiskUsed(liveCluster.disk_tb_used);
-                  setMsg("Synced from live inventory — click 'Save & Recompute' to apply.");
-                  setTimeout(() => setMsg(""), 4000);
-                }}
-                style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 12px" }}
-              >
-                📥 Sync to Inventory
-              </button>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10 }}>
-              {[{label: "Nodes",       val: liveCluster.node_count,          suf: ""},
-                {label: "Total vCPU",  val: liveCluster.total_vcpus,         suf: ""},
-                {label: "Total RAM",   val: `${liveCluster.total_ram_gb} GB`, suf: ""},
-                {label: "vCPU in use", val: liveCluster.vcpus_used,          suf: ""},
-                {label: "RAM in use",  val: `${liveCluster.ram_gb_used} GB`,  suf: ""},
-                {label: "Disk alloc",  val: `${liveCluster.disk_tb_used} TB`, suf: ""},
+            <strong style={{ color: "#15803d", fontSize: "0.9rem" }}>🖥️ Live PCD Cluster (from inventory DB)</strong>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginTop: 10 }}>
+              {[
+                { label: "Nodes",        val: liveCluster.node_count },
+                { label: "Total vCPU",   val: liveCluster.total_vcpus },
+                { label: "Total RAM",    val: `${liveCluster.total_ram_gb} GB` },
+                { label: "vCPU in use",  val: liveCluster.vcpus_used },
+                { label: "RAM in use",   val: `${liveCluster.ram_gb_used} GB` },
+                { label: "Disk alloc",   val: `${liveCluster.disk_tb_used} TB` },
               ].map(d => (
                 <div key={d.label} style={{ textAlign: "center" }}>
                   <div style={{ fontSize: "0.7rem", color: "#6b7280" }}>{d.label}</div>
-                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "#15803d" }}>{d.val}{d.suf}</div>
+                  <div style={{ fontSize: "1rem", fontWeight: 700, color: "#15803d" }}>{d.val}</div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Manual inventory form */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
+        {sizingResult ? (
           <div>
-            <label style={labelStyle}>Existing PCD nodes</label>
-            <input type="number" style={inputStyle} value={existingNodes}
-              onChange={e => setExistingNodes(+e.target.value)} min={0} />
-          </div>
-          <div>
-            <label style={labelStyle}>vCPU already used</label>
-            <input type="number" style={inputStyle} value={invVcpuUsed}
-              onChange={e => setInvVcpuUsed(+e.target.value)} min={0} />
-          </div>
-          <div>
-            <label style={labelStyle}>RAM already used (GB)</label>
-            <input type="number" style={inputStyle} value={invRamUsed}
-              onChange={e => setInvRamUsed(+e.target.value)} min={0} />
-          </div>
-          <div style={{ display: "flex", alignItems: "flex-end" }}>
-            <div style={{ fontSize: "0.78rem", color: "#6b7280", padding: "0 0 8px", lineHeight: 1.4 }}>
-              💡 Disk (Cinder) is not a node-sizing driver — it scales independently via your storage backend.
-            </div>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <button onClick={saveInventory} style={btnPrimary}>💾 Save &amp; Recompute</button>
-          <button onClick={computeSizing} style={btnSecondary}>📐 Compute Only (no save)</button>
-        </div>
+            {/* ── Migration Delivery Summary ── */}
+            {(() => {
+              const vcpuPerNode  = sizingResult.vcpu_per_node  || 0;
+              const ramPerNode   = sizingResult.ram_per_node   || 0;
+              const nodesTotal   = sizingResult.nodes_total    || 0;
+              const maxUtil      = sizingResult.max_util_pct   || 70;
+              const newTotalVcpu = nodesTotal * vcpuPerNode;
+              const newTotalRam  = nodesTotal * ramPerNode;
+              const newSafeVcpu  = newTotalVcpu * (maxUtil / 100);
+              const newSafeRam   = newTotalRam  * (maxUtil / 100);
+              const demandVcpu   = sizingResult.demand_vcpu    ?? 0;
+              const demandRam    = sizingResult.demand_ram     ?? 0;
+              const postCpuPct   = sizingResult.post_cpu_pct   ?? 0;
+              const postRamPct   = sizingResult.post_ram_pct   ?? 0;
+              const peakPct      = sizingResult.peak_buffer_pct ?? 0;
+              const quotaVcpu    = quotaResult?.totals_recommended?.vcpu ?? null;
+              const quotaRamGb   = quotaResult?.totals_recommended?.ram_gb ?? null;
+              const quotaDiskTb  = quotaResult?.totals_recommended?.disk_tb ?? sizingResult.disk_tb_required ?? null;
 
-        {sizingResult && (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
-              <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
-                <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Nodes Recommended</div>
-                <div style={{ fontSize: "2rem", fontWeight: 800, color: "#3b82f6" }}>{sizingResult.nodes_recommended}</div>
-                <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>({sizingResult.ha_policy})</div>
-              </div>
-              <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
-                <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>Additional Needed</div>
-                <div style={{ fontSize: "2rem", fontWeight: 800, color: sizingResult.nodes_additional_required > 0 ? "#d97706" : "#16a34a" }}>
-                  {sizingResult.nodes_additional_required >= 0 ? `+${sizingResult.nodes_additional_required}` : sizingResult.nodes_additional_required}
-                </div>
-                <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>from {sizingResult.existing_nodes} existing</div>
-              </div>
-              <div style={{ ...sectionStyle, textAlign: "center", margin: 0 }}>
-                <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>HA Spares</div>
-                <div style={{ fontSize: "2rem", fontWeight: 800 }}>{sizingResult.ha_spares}</div>
-                <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>binding: {sizingResult.binding_dimension}</div>
-              </div>
-              <div style={{ ...sectionStyle, margin: 0 }}>
-                <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: 8 }}>Post-migration util (compute)</div>
-                {util && (
-                  <>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: "0.8rem" }}>CPU</span>
-                      <span style={{ fontWeight: 600, color: utilColor(util.cpu_pct) }}>{util.cpu_pct.toFixed(1)}%</span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: "0.8rem" }}>RAM</span>
-                      <span style={{ fontWeight: 600, color: utilColor(util.ram_pct) }}>{util.ram_pct.toFixed(1)}%</span>
-                    </div>
-                    {sizingResult.disk_tb_required != null && (
-                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border, #e5e7eb)" }}>
-                        <div style={{ fontSize: "0.72rem", color: "#6b7280" }}>Cinder storage needed</div>
-                        <div style={{ fontWeight: 600, color: "#3b82f6" }}>{sizingResult.disk_tb_required.toFixed(2)} TB</div>
-                        <div style={{ fontSize: "0.68rem", color: "#9ca3af" }}>provision separately</div>
+              const pctBar = (used: number, total: number, cap: number) => {
+                if (!total || !isFinite(total)) return <div style={{ height: 8 }} />;
+                const usedPct  = Math.min((used  / total) * 100, 100);
+                const capPct   = Math.min((cap   / total) * 100, 100);
+                const col = usedPct <= capPct * 0.85 ? "#16a34a" : usedPct <= capPct ? "#d97706" : "#dc2626";
+                return (
+                  <div style={{ position: "relative", background: "#e5e7eb", borderRadius: 999, height: 8, overflow: "hidden", marginTop: 4 }}>
+                    {/* cap marker */}
+                    <div style={{ position: "absolute", left: `${capPct}%`, top: 0, bottom: 0, width: 2, background: "#9ca3af", zIndex: 1 }} title={`${cap.toFixed(0)} (${sizingResult.max_util_pct}% cap)`} />
+                    {/* used fill */}
+                    <div style={{ width: `${usedPct}%`, height: "100%", background: col, borderRadius: 999 }} />
+                  </div>
+                );
+              };
+
+              return (
+                <div style={{ ...sectionStyle, margin: "0 0 16px", background: "#f8fafc", border: "1px solid #e2e8f0" }}>
+                  <div style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: 14, color: "#1e293b" }}>
+                    🗂️ Migration Capacity Summary
+                  </div>
+
+                  {/* Headline deliverables */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+                    <div style={{
+                      textAlign: "center", padding: "12px 8px", borderRadius: 8,
+                      background: sizingResult.nodes_to_add > 0 ? "#fff7ed" : "#f0fdf4",
+                      border: `1px solid ${sizingResult.nodes_to_add > 0 ? "#fed7aa" : "#bbf7d0"}`,
+                    }}>
+                      <div style={{ fontSize: "0.72rem", color: "#6b7280", marginBottom: 2 }}>HW nodes to provision</div>
+                      <div style={{ fontSize: "1.8rem", fontWeight: 900, color: sizingResult.nodes_to_add > 0 ? "#d97706" : "#16a34a", lineHeight: 1 }}>
+                        {sizingResult.nodes_to_add > 0 ? `+${sizingResult.nodes_to_add}` : "None"}
                       </div>
+                      <div style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: 3 }}>
+                        {sizingResult.nodes_to_add > 0
+                          ? `${sizingResult.node_count_current} existing → ${sizingResult.nodes_total} total`
+                          : `${sizingResult.nodes_total} current nodes sufficient`}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 8px", borderRadius: 8, background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+                      <div style={{ fontSize: "0.72rem", color: "#6b7280", marginBottom: 2 }}>Cinder storage to provision</div>
+                      <div style={{ fontSize: "1.8rem", fontWeight: 900, color: "#3b82f6", lineHeight: 1 }}>
+                        {quotaDiskTb != null ? `${quotaDiskTb.toFixed(1)} TB` : "—"}
+                      </div>
+                      <div style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: 3 }}>Ceph/SAN — independent of HW nodes</div>
+                    </div>
+                    <div style={{ textAlign: "center", padding: "12px 8px", borderRadius: 8, background: "#f5f3ff", border: "1px solid #ddd6fe" }}>
+                      <div style={{ fontSize: "0.72rem", color: "#6b7280", marginBottom: 2 }}>Binding constraint</div>
+                      <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#7c3aed", lineHeight: 1, textTransform: "uppercase" }}>
+                        {sizingResult.binding_dimension}
+                      </div>
+                      <div style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: 3 }}>
+                        post-migration: CPU {postCpuPct.toFixed(1)}% · RAM {postRamPct.toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Resource table: quota vs HW demand vs HW capacity */}
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.83rem" }}>
+                    <thead>
+                      <tr style={{ background: "#f1f5f9" }}>
+                        <th style={{ ...thStyle, textAlign: "left", width: "10%" }}>Resource</th>
+                        <th style={{ ...thStyle, textAlign: "right", width: "20%" }}>
+                          <span title="OpenStack quota to configure for tenants in PCD">Tenant Quota (PCD) ℹ️</span>
+                        </th>
+                        <th style={{ ...thStyle, textAlign: "right", width: "22%" }}>
+                          <span title={
+                            sizingResult.sizing_basis === "actual_performance"
+                              ? `Based on ACTUAL CPU/RAM utilisation from RVtools performance data. ` +
+                                `${sizingResult.vm_powered_on_count ?? 0} powered-on VMs with ${sizingResult.perf_coverage_pct ?? 0}% perf coverage. ` +
+                                `Actual running: ${sizingResult.vm_vcpu_actual ?? 0} vCPU, ${sizingResult.vm_ram_gb_actual ?? 0} GB RAM (of ${sizingResult.vm_vcpu_alloc ?? 0} vCPU / ${sizingResult.vm_ram_gb_alloc ?? 0} GB allocated). ` +
+                                `Demand = actual × (1 + ${peakPct}% peak buffer).`
+                              : sizingResult.sizing_basis === "allocation"
+                              ? `Based on configured vCPU allocation ÷ overcommit ratio (no sufficient performance data). ` +
+                                `${sizingResult.vm_powered_on_count ?? 0} powered-on VMs: ${sizingResult.vm_vcpu_alloc ?? 0} vCPU allocated ÷ overcommit + ${peakPct}% peak buffer.`
+                              : `Based on tenant quota totals + ${peakPct}% peak buffer.`
+                          }>HW Demand (+{peakPct}% peak) ℹ️</span>
+                        </th>
+                        <th style={{ ...thStyle, textAlign: "right", width: "22%" }}>
+                          <span title={`Usable capacity of ${nodesTotal} nodes at ${maxUtil}% utilisation cap`}>HW Usable ({maxUtil}% cap) ℹ️</span>
+                        </th>
+                        <th style={{ ...thStyle, textAlign: "right", width: "14%" }}>Surplus</th>
+                        <th style={{ ...thStyle, width: "12%" }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* vCPU row */}
+                      <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ ...tdStyle, fontWeight: 600 }}>vCPU</td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          {quotaVcpu != null ? <><strong>{quotaVcpu.toLocaleString()}</strong> cores</> : <span style={{ color: "#9ca3af" }}>—</span>}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          <strong>{demandVcpu.toFixed(0)}</strong> cores
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#15803d", fontWeight: 600 }}>
+                          {newSafeVcpu.toFixed(0)} cores
+                          <div style={{ fontSize: "0.72rem", color: "#9ca3af", fontWeight: 400 }}>
+                            {newTotalVcpu.toFixed(0)} total × {maxUtil}%
+                          </div>
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: newSafeVcpu - demandVcpu >= 0 ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                          {newSafeVcpu - demandVcpu >= 0 ? "+" : ""}
+                          {(newSafeVcpu - demandVcpu).toFixed(0)}
+                        </td>
+                        <td style={tdStyle}>
+                          {pctBar(demandVcpu, newTotalVcpu, newSafeVcpu)}
+                        </td>
+                      </tr>
+                      {/* RAM row */}
+                      <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ ...tdStyle, fontWeight: 600 }}>RAM</td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          {quotaRamGb != null ? <><strong>{quotaRamGb.toFixed(0)}</strong> GB</> : <span style={{ color: "#9ca3af" }}>—</span>}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          <strong>{demandRam.toFixed(0)}</strong> GB
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#15803d", fontWeight: 600 }}>
+                          {newSafeRam.toFixed(0)} GB
+                          <div style={{ fontSize: "0.72rem", color: "#9ca3af", fontWeight: 400 }}>
+                            {newTotalRam.toFixed(0)} GB total × {maxUtil}%
+                          </div>
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: newSafeRam - demandRam >= 0 ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
+                          {newSafeRam - demandRam >= 0 ? "+" : ""}
+                          {(newSafeRam - demandRam).toFixed(0)} GB
+                        </td>
+                        <td style={tdStyle}>
+                          {pctBar(demandRam, newTotalRam, newSafeRam)}
+                        </td>
+                      </tr>
+                      {/* Storage row */}
+                      <tr>
+                        <td style={{ ...tdStyle, fontWeight: 600 }}>Storage</td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          {quotaDiskTb != null ? <><strong>{quotaDiskTb.toFixed(2)}</strong> TB</> : <span style={{ color: "#9ca3af" }}>—</span>}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          {sizingResult.disk_tb_required != null
+                            ? <><strong>{sizingResult.disk_tb_required.toFixed(2)}</strong> TB</>
+                            : <span style={{ color: "#9ca3af" }}>—</span>}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#3b82f6" }}>
+                          Provision separately
+                          <div style={{ fontSize: "0.72rem", color: "#9ca3af" }}>Ceph / SAN / NFS</div>
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>—</td>
+                        <td style={tdStyle}></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  {/* Sizing basis badge */}
+                  <div style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    fontSize: "0.71rem", marginTop: 10, padding: "3px 10px",
+                    borderRadius: 99, border: "1px solid",
+                    background: sizingResult.sizing_basis === "actual_performance" ? "#f0fdf4" : sizingResult.sizing_basis === "allocation" ? "#fefce8" : "#f1f5f9",
+                    borderColor: sizingResult.sizing_basis === "actual_performance" ? "#86efac" : sizingResult.sizing_basis === "allocation" ? "#fde68a" : "#e2e8f0",
+                    color: sizingResult.sizing_basis === "actual_performance" ? "#15803d" : sizingResult.sizing_basis === "allocation" ? "#92400e" : "#475569",
+                  }}>
+                    <span>{sizingResult.sizing_basis === "actual_performance" ? "📊" : sizingResult.sizing_basis === "allocation" ? "⚠️" : "ℹ️"}</span>
+                    {sizingResult.sizing_basis === "actual_performance" && (
+                      <>Demand based on <strong>actual VM performance data</strong> · {sizingResult.vm_powered_on_count ?? 0} powered-on VMs · {sizingResult.perf_coverage_pct ?? 0}% perf coverage · {sizingResult.vm_vcpu_actual ?? 0} vCPU running of {sizingResult.vm_vcpu_alloc ?? 0} allocated · {sizingResult.vm_ram_gb_actual ?? 0} GB active of {sizingResult.vm_ram_gb_alloc ?? 0} GB allocated</>    
                     )}
-                  </>
-                )}
-              </div>
+                    {sizingResult.sizing_basis === "allocation" && (
+                      <>Demand based on <strong>vCPU allocation ÷ overcommit</strong> — no performance data available · {sizingResult.vm_powered_on_count ?? 0} powered-on VMs · {sizingResult.perf_coverage_pct ?? 0}% perf coverage</>
+                    )}
+                    {(sizingResult.sizing_basis === "quota" || !sizingResult.sizing_basis) && (
+                      <>Demand based on <strong>tenant quota</strong> — no RVtools VM data imported yet</>
+                    )}
+                  </div>
+                  <div style={{ fontSize: "0.72rem", color: "#9ca3af", marginTop: 6 }}>
+                    ℹ️ <em>Tenant Quota</em> = OpenStack quota to set per tenant in PCD.&nbsp;
+                    <em>HW Demand</em> = physical cores/RAM the cluster must supply ({sizingResult.sizing_basis === "actual_performance" ? `actual utilisation × (1+${peakPct}% peak)` : `allocation ÷ overcommit × (1+${peakPct}% peak)`}).&nbsp;
+                    <em>HW Usable</em> = safe capacity of the final {nodesTotal}-node cluster at the {maxUtil}% HA cap.
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Result headline */}
+            <div style={{
+              ...sectionStyle, margin: "0 0 16px",
+              background: sizingResult.nodes_to_add > 0 ? "#fff7ed" : "#f0fdf4",
+              border: `1px solid ${sizingResult.nodes_to_add > 0 ? "#fed7aa" : "#bbf7d0"}`,
+              textAlign: "center",
+            }}>
+              {sizingResult.nodes_to_add > 0 ? (
+                <>
+                  <div style={{ fontSize: "0.85rem", color: "#92400e", marginBottom: 4 }}>Nodes to add</div>
+                  <div style={{ fontSize: "3rem", fontWeight: 900, color: "#d97706", lineHeight: 1 }}>
+                    +{sizingResult.nodes_to_add}
+                  </div>
+                  <div style={{ fontSize: "0.8rem", color: "#92400e", marginTop: 4 }}>
+                    Total cluster: {sizingResult.nodes_total} nodes · binding dimension: <strong>{sizingResult.binding_dimension}</strong>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "#16a34a" }}>✅ Current cluster is sufficient</div>
+                  <div style={{ fontSize: "0.85rem", color: "#15803d", marginTop: 4 }}>
+                    {sizingResult.nodes_total} existing nodes can absorb the full migration demand with headroom to spare.
+                  </div>
+                </>
+              )}
             </div>
-            {sizingResult.warnings.length > 0 && (
+
+            {/* Post-migration utilisation */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+              {[
+                { label: "Post-migration CPU util", pct: sizingResult.post_cpu_pct ?? 0 },
+                { label: "Post-migration RAM util", pct: sizingResult.post_ram_pct ?? 0 },
+              ].map(({ label, pct }) => (
+                <div key={label} style={{ ...sectionStyle, margin: 0 }}>
+                  <div style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: 6 }}>{label}</div>
+                  <div style={{ background: "#e5e7eb", borderRadius: 999, height: 10, overflow: "hidden" }}>
+                    <div style={{
+                      width: `${Math.min(pct, 100).toFixed(1)}%`,
+                      height: "100%",
+                      background: utilColor(pct),
+                      borderRadius: 999,
+                      transition: "width 0.4s",
+                    }} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                    <span style={{ fontSize: "0.78rem", fontWeight: 700, color: utilColor(pct) }}>{pct.toFixed(1)}%</span>
+                    <span style={{ fontSize: "0.72rem", color: "#9ca3af" }}>target ≤ {sizingResult.max_util_pct}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Step-by-step calculation */}
+            {sizingResult.steps && sizingResult.steps.length > 0 && (
+              <div style={{ ...sectionStyle, margin: "0 0 12px", background: "#f8fafc" }}>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 8, color: "#374151" }}>📋 Calculation breakdown</div>
+                <ol style={{ margin: 0, paddingLeft: 20 }}>
+                  {sizingResult.steps.map((s, i) => (
+                    <li key={i} style={{ fontSize: "0.83rem", color: "#374151", marginBottom: 3, lineHeight: 1.5 }}>{s}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {/* Disk storage note */}
+            {sizingResult.disk_tb_required != null && (
+              <div style={{ ...sectionStyle, margin: "0 0 12px", background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+                <div style={{ fontSize: "0.85rem", color: "#1e40af" }}>
+                  💾 <strong>Cinder storage needed: {sizingResult.disk_tb_required.toFixed(2)} TB</strong>
+                  <span style={{ color: "#6b7280", marginLeft: 8, fontSize: "0.78rem" }}>— provision separately via your storage backend</span>
+                </div>
+              </div>
+            )}
+
+            {/* Warnings */}
+            {sizingResult.warnings && sizingResult.warnings.length > 0 && (
               <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: 12 }}>
                 <strong style={{ color: "#92400e" }}>⚠️ Warnings</strong>
                 <ul style={{ margin: "6px 0 0 0", paddingLeft: 20 }}>
@@ -2235,6 +2681,12 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
               </div>
             )}
           </div>
+        ) : (
+          !loading && (
+            <div style={{ color: "#6b7280", textAlign: "center", padding: 24 }}>
+              No sizing result yet. Add a node profile above and click <strong>Recalculate</strong>.
+            </div>
+          )
         )}
       </div>
     </div>
@@ -2339,6 +2791,26 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
     try {
       await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps/${gapId}/resolve`, { method: "PATCH" });
       setGaps(prev => prev.map(g => g.id === gapId ? { ...g, resolved: true } : g));
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const downloadGapReport = async (fmt: "xlsx" | "pdf") => {
+    try {
+      const token = getToken();
+      const res = await fetch(
+        `${API_BASE}/api/migration/projects/${projectId}/export-gaps-report.${fmt}`,
+        { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } }
+      );
+      if (!res.ok) { setError(`Download failed: ${res.status}`); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `pcd-readiness-gaps.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (e: any) { setError(e.message); }
   };
 
@@ -2533,7 +3005,15 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
       {/* Gaps Table */}
       {gaps.length > 0 && (
         <div style={sectionStyle}>
-          <h3 style={{ marginTop: 0 }}>📋 Gaps ({unresolvedGaps.length} open)</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <h3 style={{ margin: 0 }}>📋 Gaps ({unresolvedGaps.length} open)</h3>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => downloadGapReport("xlsx")}
+                style={{ ...btnSecondary, fontSize: "0.83rem" }}>📥 Excel Report</button>
+              <button onClick={() => downloadGapReport("pdf")}
+                style={{ ...btnSecondary, fontSize: "0.83rem" }}>📑 PDF Report</button>
+            </div>
+          </div>
           <table style={tableStyle}>
             <thead>
               <tr>
