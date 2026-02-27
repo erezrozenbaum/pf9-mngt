@@ -363,6 +363,8 @@ class CreateCohortRequest(BaseModel):
     depends_on_cohort_id: Optional[int] = None
     overcommit_profile_override: Optional[str] = None
     agent_slots_override: Optional[int] = None
+    schedule_duration_days: Optional[int] = None   # planned working days for this cohort
+    target_vms_per_day: Optional[int] = None        # per-cohort VMs/day override
     notes: Optional[str] = None
 
 
@@ -377,6 +379,8 @@ class UpdateCohortRequest(BaseModel):
     depends_on_cohort_id: Optional[int] = None
     overcommit_profile_override: Optional[str] = None
     agent_slots_override: Optional[int] = None
+    schedule_duration_days: Optional[int] = None
+    target_vms_per_day: Optional[int] = None
     notes: Optional[str] = None
 
 
@@ -1755,7 +1759,10 @@ def _run_tenant_detection(project_id: str, cur):
                 -- Do NOT overwrite target_domain_name / target_confirmed if already set by user
         """, (project_id, info["tenant_name"], info["org_vdc"] or None,
               info["detection_method"], info["vm_count"],
-              info["tenant_name"], info["tenant_name"]))
+              info["tenant_name"],
+              # target_project_name: use OrgVDC if available (maps to PCD Project),
+              # else fall back to tenant_name (non-vCloud or unknown VDC)
+              info["org_vdc"] or info["tenant_name"]))
 
     # Update tenant disk/ram/vcpu/in_use totals
     cur.execute("""
@@ -3717,6 +3724,17 @@ async def list_network_mappings(project_id: str):
                   )
                 ON CONFLICT DO NOTHING
             """, (project_id, project_id, project_id))
+            # Backfill VLAN ID from network name pattern (e.g. "mynet_vlan_3399" → 3399)
+            cur.execute("""
+                UPDATE migration_network_mappings
+                SET vlan_id = CAST(
+                    NULLIF(substring(source_network_name from '[Vv][Ll][Aa][Nn][_-]?([0-9]+)'), '')
+                    AS INTEGER
+                )
+                WHERE project_id = %s
+                  AND vlan_id IS NULL
+                  AND source_network_name ~ '[Vv][Ll][Aa][Nn][_-]?[0-9]+'
+            """, (project_id,))
             conn.commit()
 
             # Fetch all mappings with VM count per source network
@@ -3833,9 +3851,9 @@ async def list_cohorts(project_id: str):
                 SELECT c.*,
                        COUNT(DISTINCT t.id) AS tenant_count,
                        COALESCE(SUM(t.vm_count), 0) AS vm_count,
-                       COALESCE(SUM(t.allocated_vcpu), 0) AS total_vcpu,
-                       COALESCE(ROUND(SUM(t.allocated_ram_gb)::numeric, 1), 0) AS total_ram_gb,
-                       COALESCE(ROUND(SUM(t.allocated_disk_gb)::numeric, 1), 0) AS total_disk_gb
+                       COALESCE(SUM(t.total_vcpu), 0) AS total_vcpu,
+                       COALESCE(ROUND(SUM(t.total_ram_mb / 1024.0)::numeric, 1), 0) AS total_ram_gb,
+                       COALESCE(ROUND(SUM(t.total_disk_gb)::numeric, 1), 0) AS total_disk_gb
                 FROM migration_cohorts c
                 LEFT JOIN migration_tenants t ON t.cohort_id = c.id
                 WHERE c.project_id = %s
@@ -3868,13 +3886,14 @@ async def create_cohort(project_id: str, req: CreateCohortRequest,
                     (project_id, name, description, cohort_order,
                      scheduled_start, scheduled_end, owner_name,
                      depends_on_cohort_id, overcommit_profile_override,
-                     agent_slots_override, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     agent_slots_override, schedule_duration_days, target_vms_per_day, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING *
             """, (project_id, req.name, req.description, req.cohort_order,
                   req.scheduled_start, req.scheduled_end, req.owner_name,
                   req.depends_on_cohort_id, req.overcommit_profile_override,
-                  req.agent_slots_override, req.notes))
+                  req.agent_slots_override, req.schedule_duration_days,
+                  req.target_vms_per_day, req.notes))
             cohort = cur.fetchone()
             conn.commit()
     _log_activity(actor=actor, action="create_cohort", resource_type="migration_cohort",
@@ -3984,7 +4003,7 @@ async def get_cohort_summary(project_id: str, cohort_id: int):
             # Tenants in this cohort
             cur.execute("""
                 SELECT id, tenant_name, include_in_plan, migration_priority,
-                       vm_count, allocated_vcpu, allocated_ram_gb, allocated_disk_gb,
+                       vm_count, total_vcpu, total_ram_mb, total_disk_gb,
                        target_domain_name, target_project_name
                 FROM migration_tenants
                 WHERE cohort_id = %s AND project_id = %s
@@ -3999,8 +4018,8 @@ async def get_cohort_summary(project_id: str, cohort_id: int):
                 placeholders = ', '.join(['%s'] * len(tenant_ids))
                 cur.execute(f"""
                     SELECT migration_status, COUNT(*) as cnt,
-                           COALESCE(SUM(allocated_vcpu), 0) as vcpu,
-                           COALESCE(ROUND(SUM(allocated_ram_gb)::numeric, 1), 0) as ram_gb
+                           COALESCE(SUM(cpu_count), 0) as vcpu,
+                           COALESCE(ROUND(SUM(ram_mb / 1024.0)::numeric, 1), 0) as ram_gb
                     FROM migration_vms
                     WHERE project_id = %s
                       AND tenant_name IN (
@@ -4022,8 +4041,8 @@ async def get_cohort_summary(project_id: str, cohort_id: int):
         "status_breakdown": status_breakdown,
         "tenant_count": len(tenants),
         "vm_count": sum(t.get("vm_count") or 0 for t in tenants),
-        "total_vcpu": sum(t.get("allocated_vcpu") or 0 for t in tenants),
-        "total_ram_gb": round(sum(float(t.get("allocated_ram_gb") or 0) for t in tenants), 1),
+        "total_vcpu": sum(t.get("total_vcpu") or 0 for t in tenants),
+        "total_ram_gb": round(sum(float(t.get("total_ram_mb") or 0) / 1024.0 for t in tenants), 1),
     }
 
 

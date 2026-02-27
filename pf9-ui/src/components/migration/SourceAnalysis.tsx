@@ -516,7 +516,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
             </select>
             <select value={vmTenant} onChange={e => { setVmTenant(e.target.value); setVmPage(1); }} style={inputStyle}>
               <option value="">All Tenants</option>
-              {tenants.map((t, i) => <option key={t.tenant_id ?? t.tenant_name ?? i} value={t.tenant_name}>{t.tenant_name}</option>)}
+              {tenants.map((t, i) => <option key={t.id ?? `${t.tenant_name}-${i}`} value={t.tenant_name}>{t.tenant_name}</option>)}
             </select>
             <select value={vmOsFamily} onChange={e => { setVmOsFamily(e.target.value); setVmPage(1); }} style={inputStyle}>
               <option value="">All OS Family</option>
@@ -1872,6 +1872,8 @@ interface Cohort {
   scheduled_end: string | null;
   owner_name: string | null;
   depends_on_cohort_id: number | null;
+  schedule_duration_days: number | null;  // planned working days
+  target_vms_per_day: number | null;       // VMs/day override (null = use project level)
   tenant_count: number;
   vm_count: number;
   total_vcpu: number;
@@ -1892,6 +1894,8 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
   const [newStart, setNewStart] = useState("");
   const [newEnd, setNewEnd] = useState("");
   const [newDependsOn, setNewDependsOn] = useState<number | "">("");
+  const [newDurationDays, setNewDurationDays] = useState<number | "">("");
+  const [newVmsPerDay, setNewVmsPerDay] = useState<number | "">("");
   const [creating, setCreating] = useState(false);
   const [selectedCohort, setSelectedCohort] = useState<number | null>(null);
   const [selectedTenants, setSelectedTenants] = useState<Set<number>>(new Set());
@@ -1926,10 +1930,13 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
           scheduled_start: newStart || null,
           scheduled_end: newEnd || null,
           depends_on_cohort_id: newDependsOn || null,
+          schedule_duration_days: newDurationDays || null,
+          target_vms_per_day: newVmsPerDay || null,
         }),
       });
       setNewName(""); setNewOrder(cohorts.length + 1); setNewOwner("");
       setNewStart(""); setNewEnd(""); setNewDependsOn("");
+      setNewDurationDays(""); setNewVmsPerDay("");
       setShowCreate(false);
       loadCohorts();
     } catch (e: any) { setError(e.message); }
@@ -2046,6 +2053,21 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
               <label style={labelStyle}>Scheduled End</label>
               <input type="date" value={newEnd} onChange={e => setNewEnd(e.target.value)} style={inputStyle} />
             </div>
+            <div />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "end" }}>
+            <div>
+              <label style={labelStyle}>Duration (working days)</label>
+              <input type="number" min={1} value={newDurationDays} placeholder="e.g. 10"
+                onChange={e => setNewDurationDays(e.target.value ? Number(e.target.value) : "")}
+                style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>VMs / day <span style={{ color: "#9ca3af", fontWeight: 400 }}>(overrides project)</span></label>
+              <input type="number" min={1} value={newVmsPerDay} placeholder="e.g. 5"
+                onChange={e => setNewVmsPerDay(e.target.value ? Number(e.target.value) : "")}
+                style={inputStyle} />
+            </div>
             <div style={{ display: "flex", gap: 6 }}>
               <button onClick={createCohort} disabled={creating || !newName.trim()}
                 style={{ ...btnPrimary }}>{creating ? "..." : "Create"}</button>
@@ -2107,6 +2129,13 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
                 {(c.scheduled_start || c.scheduled_end) && (
                   <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: 8 }}>
                     📅 {c.scheduled_start || "?"} → {c.scheduled_end || "?"}
+                  </div>
+                )}
+                {(c.schedule_duration_days || c.target_vms_per_day) && (
+                  <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: 8 }}>
+                    {c.schedule_duration_days && <span>⏱ {c.schedule_duration_days} days</span>}
+                    {c.schedule_duration_days && c.target_vms_per_day && <span style={{ margin: "0 4px" }}>·</span>}
+                    {c.target_vms_per_day && <span>⚡ {c.target_vms_per_day} VMs/day</span>}
                   </div>
                 )}
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
