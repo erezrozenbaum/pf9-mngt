@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.10] - 2026-02-27
+
+### Fixed
+- **VLAN ID editable on network map rows** — The VLAN ID column was read-only with no way to manually fill in a missing value. Clicking **✏️ Edit** (or typing in the network name input) now also activates a number input for VLAN ID in the same row. The VLAN is included in the PATCH on Save/Confirm. Initialized to the current value so existing VLANs are not accidentally cleared.
+
 ## [1.31.9] - 2026-02-27
 
 ### Added

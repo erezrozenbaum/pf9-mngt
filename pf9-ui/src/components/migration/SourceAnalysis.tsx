@@ -1901,6 +1901,7 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<number | null>(null);
   const [editValues, setEditValues] = useState<Record<number, string>>({});
+  const [editVlanValues, setEditVlanValues] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
 
   /* ---- Find & Replace state ---- */
@@ -1958,26 +1959,36 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const saveMapping = async (id: number) => {
     setSaving(id);
     try {
+      const mapping = mappings.find(m => m.id === id);
       // Fall back to the current server value so clicking Confirm on an unedited row
       // doesn't accidentally null-out the target network name.
-      const current = mappings.find(m => m.id === id)?.target_network_name ?? null;
-      const value = editValues[id] !== undefined ? editValues[id] : current;
+      const currentName = mapping?.target_network_name ?? null;
+      const value = editValues[id] !== undefined ? editValues[id] : currentName;
+      const body: Record<string, any> = { target_network_name: value, confirmed: true };
+      // Only send vlan_id if the user actually edited it
+      if (editVlanValues[id] !== undefined) {
+        const parsed = parseInt(editVlanValues[id], 10);
+        body.vlan_id = isNaN(parsed) ? null : parsed;
+      }
       await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ target_network_name: value, confirmed: true }),
+        body: JSON.stringify(body),
       });
       setEditValues(prev => { const n = { ...prev }; delete n[id]; return n; });
+      setEditVlanValues(prev => { const n = { ...prev }; delete n[id]; return n; });
       load();
     } catch (e: any) { setError(e.message); }
     finally { setSaving(null); }
   };
 
-  const startEditMapping = (id: number, currentValue: string) => {
+  const startEditMapping = (id: number, currentValue: string, currentVlan: number | null) => {
     setEditValues(prev => ({ ...prev, [id]: currentValue }));
+    setEditVlanValues(prev => ({ ...prev, [id]: currentVlan != null ? String(currentVlan) : "" }));
   };
 
   const cancelEditMapping = (id: number) => {
     setEditValues(prev => { const n = { ...prev }; delete n[id]; return n; });
+    setEditVlanValues(prev => { const n = { ...prev }; delete n[id]; return n; });
   };
 
   if (loading) return <div style={{ color: "#6b7280", padding: 16 }}>Loading network mappings...</div>;
@@ -2133,14 +2144,32 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                   <td style={tdStyle}>
                     <input
                       value={current}
-                      onChange={e => setEditValues(prev => ({ ...prev, [m.id]: e.target.value }))}
+                      onChange={e => {
+                        setEditValues(prev => ({ ...prev, [m.id]: e.target.value }));
+                        // Also initialize vlan edit state if not yet set, so VLAN input shows current value
+                        setEditVlanValues(prev => {
+                          if (prev[m.id] !== undefined) return prev;
+                          return { ...prev, [m.id]: m.vlan_id != null ? String(m.vlan_id) : "" };
+                        });
+                      }}
                       placeholder="PCD network name..."
                       style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.85rem",
                         background: isDirty ? "#eff6ff" : undefined }}
                       onKeyDown={e => { if (e.key === "Enter") saveMapping(m.id); }}
                     />
                   </td>
-                  <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.8rem" }}>{m.vlan_id ?? "—"}</td>
+                  <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.8rem" }}>
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        value={editVlanValues[m.id] ?? ""}
+                        onChange={e => setEditVlanValues(prev => ({ ...prev, [m.id]: e.target.value }))}
+                        placeholder="VLAN"
+                        style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.8rem", width: 72 }}
+                        onKeyDown={e => { if (e.key === "Enter") saveMapping(m.id); }}
+                      />
+                    ) : (m.vlan_id ?? "—")}
+                  </td>
                   <td style={{ ...tdStyle, textAlign: "center" }}>
                     {isConfirmed
                       ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ confirmed</span>
@@ -2170,7 +2199,7 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                       </div>
                     ) : (
                       <button
-                        onClick={() => startEditMapping(m.id, m.target_network_name || "")}
+                        onClick={() => startEditMapping(m.id, m.target_network_name || "", m.vlan_id ?? null)}
                         style={{ ...btnSmall, background: "#f3f4f6", color: "#374151", fontSize: "0.75rem" }}
                         title="Edit this mapping">
                         ✏️ Edit
