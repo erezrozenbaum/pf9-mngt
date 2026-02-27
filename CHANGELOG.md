@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.1] - 2026-02-27
+
+### Fixed
+- **Target name pre-seeding + confirmed flags** — Network mappings and tenant target names are now auto-seeded from the source name (best-guess default) rather than left blank. Both tables gain a `confirmed` flag: `migration_network_mappings.confirmed` and `migration_tenants.target_confirmed`. DB migration `db/migrate_target_preseeding.sql` adds the columns and pre-seeded 122 existing tenant rows with `target_domain_name = target_project_name = tenant_name, confirmed=false`.
+- **Readiness checks updated** — `target_mapped` now returns `pending` (not `fail`) when names are auto-seeded but not yet confirmed; `network_mapped` returns `pending` (not `fail`) while unreviewed networks exist. This prevents false alarms before any operator action.
+- **Unmapped → Unconfirmed rename** — `unmapped_count` response field on the network mappings endpoint renamed to `unconfirmed_count`; counts rows where `confirmed=false`. UI state, banner, and status column updated to match.
+- **Network Map UI action button** — Shows **Confirm** (auto-seeded, unedited), **Save** (edited/dirty), or **✓** (confirmed and clean). Unconfirmed rows highlighted amber (`#fffbeb`) with ⚠️ badge. Clicking Save or Confirm sends `confirmed: true` to the API.
+- **Tenant target review badges** — `target_domain_name` and `target_project_name` columns show an orange ⚠️ icon when `target_confirmed=false`; disappears after the operator saves the tenant row.
+- **Tenant detect-upsert is non-destructive** — The `ON CONFLICT DO UPDATE` clause does **not** overwrite `target_domain_name`, `target_project_name`, or `target_confirmed`, so re-running tenant detection never loses operator edits.
+
 ## [1.31.0] - 2026-02-27
 
 ### Added
