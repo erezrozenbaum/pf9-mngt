@@ -2022,10 +2022,10 @@ async def list_networks(project_id: str):
 @router.patch("/projects/{project_id}/networks/{network_id}",
               dependencies=[Depends(require_permission("migration", "write"))])
 async def update_network(project_id: str, network_id: int, req: Request, user=Depends(get_current_user)):
-    """Update editable network fields (subnet, gateway, dns_servers, ip_range, pcd_target, notes)."""
+    """Update editable network fields (subnet, gateway, dns_servers, ip_range, pcd_target, notes, network_type, vlan_id)."""
     actor = user.username if user else "system"
     body = await req.json()
-    allowed = {"subnet", "gateway", "dns_servers", "ip_range", "pcd_target", "notes", "network_type"}
+    allowed = {"subnet", "gateway", "dns_servers", "ip_range", "pcd_target", "notes", "network_type", "vlan_id"}
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid fields to update")

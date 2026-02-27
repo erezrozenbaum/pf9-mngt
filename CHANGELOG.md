@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.11] - 2026-02-27
+
+### Fixed
+- **VLAN ID not editable in Networks tab** — The Networks tab edit row showed VLAN ID as static text (no input). Added a number input for VLAN ID to the edit row; `vlan_id` added to the API allowlist for `PATCH /networks/{id}` (was silently ignored).
+- **VLAN ID not editable on unconfirmed Network Map rows** — The VLAN input only appeared when a row was already in local edit mode (via ✏️ Edit). Unconfirmed rows showing the orange Confirm button had a static VLAN column. Now the VLAN input is shown for all rows in the Network Map that are either in edit mode or unconfirmed, so it's always accessible before confirming.
+
 ## [1.31.10] - 2026-02-27
 
 ### Fixed
