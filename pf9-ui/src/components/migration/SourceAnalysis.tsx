@@ -102,7 +102,8 @@ interface Tenant {
   // Phase 2B
   target_domain_name: string | null;
   target_project_name: string | null;
-  target_display_name: string | null;
+  target_display_name: string | null;       // project description / friendly name
+  target_domain_description: string | null; // domain description
   target_confirmed?: boolean;  // false = auto-seeded, needs review
   // Phase 2.10
   migration_priority?: number;
@@ -1106,6 +1107,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   const [editDomain, setEditDomain] = useState("");
   const [editProject, setEditProject] = useState("");
   const [editDisplayName, setEditDisplayName] = useState("");
+  const [editDomainDesc, setEditDomainDesc] = useState("");
   const [editPriority, setEditPriority] = useState<number>(999);
   const [editSaving, setEditSaving] = useState(false);
 
@@ -1199,6 +1201,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
     setEditDomain(t.target_domain_name || "");
     setEditProject(t.target_project_name || "");
     setEditDisplayName(t.target_display_name || "");
+    setEditDomainDesc(t.target_domain_description || "");
     setEditPriority(t.migration_priority ?? 999);
   };
 
@@ -1219,6 +1222,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
           target_domain_name: editDomain.trim() || null,
           target_project_name: editProject.trim() || null,
           target_display_name: editDisplayName.trim() || null,
+          target_domain_description: editDomainDesc.trim() || null,
           target_confirmed: true,  // saving = user reviewed and confirmed
           migration_priority: editPriority,
         }),
@@ -1506,8 +1510,9 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                 </th>
               ))}
               <th style={thStyle}>Target Domain</th>
+              <th style={{ ...thStyle, color: "#6b7280", fontStyle: "italic", fontSize: "0.78rem" }} title="Optional description for the PCD Domain">Domain Desc.</th>
               <th style={thStyle}>Target Project</th>
-              <th style={thStyle}>Display Name</th>
+              <th style={{ ...thStyle, color: "#6b7280", fontStyle: "italic", fontSize: "0.78rem" }} title="Optional description for the PCD Project (pre-filled from Project name)">Proj. Desc.</th>
               <th style={thStyle} title="Cohort assignment">Cohort</th>
               <th style={thStyle} title="Run readiness checks to see status">Readiness</th>
               <th style={thStyle}>Actions</th>
@@ -1563,6 +1568,12 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                           onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
                       </td>
                       <td style={tdStyle}>
+                        <input value={editDomainDesc} onChange={e => setEditDomainDesc(e.target.value)}
+                          style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
+                          placeholder="Domain description (optional)"
+                          onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
+                      </td>
+                      <td style={tdStyle}>
                         <input value={editProject} onChange={e => setEditProject(e.target.value)}
                           style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
                           placeholder="e.g. acme-prod"
@@ -1571,7 +1582,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                       <td style={tdStyle}>
                         <input value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)}
                           style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
-                          placeholder="e.g. ACME Production"
+                          placeholder="Project description (optional)"
                           onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
                       </td>
                       <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#9ca3af" }}>
@@ -1591,7 +1602,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                     {!editInclude && (
                       <tr key={`${rowKey}-reason`} style={{ background: "#fff7ed" }}>
                         <td colSpan={2} />
-                        <td colSpan={13} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
+                        <td colSpan={14} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
                           <label style={{ ...labelStyle, display: "inline", marginRight: 8 }}>Exclude reason:</label>
                           <input value={editExcludeReason}
                             onChange={e => setEditExcludeReason(e.target.value)}
@@ -1637,6 +1648,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                         </span>
                       : <span style={{ color: "#9ca3af" }}>—</span>}
                   </td>
+                  <td style={{ ...tdStyle, fontSize: "0.78rem", color: "#6b7280", fontStyle: t.target_domain_description ? undefined : "italic" }}>{t.target_domain_description || <span style={{ color: "#d1d5db" }}>—</span>}</td>
                   <td style={{ ...tdStyle, fontSize: "0.8rem" }}>
                     {t.target_project_name
                       ? <span>
@@ -1648,7 +1660,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                         </span>
                       : <span style={{ color: "#9ca3af" }}>—</span>}
                   </td>
-                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_display_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                  <td style={{ ...tdStyle, fontSize: "0.78rem", color: "#6b7280", fontStyle: t.target_display_name ? undefined : "italic" }}>{t.target_display_name || <span style={{ color: "#d1d5db" }}>—</span>}</td>
                   <td style={{ ...tdStyle, textAlign: "center", fontSize: "0.78rem" }}>
                     {t.cohort_id
                       ? <span style={{ ...pillStyle, background: "#e0e7ff", color: "#4338ca", fontSize: "0.72rem" }}>C{t.cohort_id}</span>
@@ -1673,7 +1685,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
               );
             })}
             {displayTenants.length === 0 && (
-              <tr><td colSpan={15} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+              <tr><td colSpan={16} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
                 {tenants.length === 0
                   ? "No tenants detected. Add rules above or run assessment."
                   : `No tenants match "${tenantSearch}".`}

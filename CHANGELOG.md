@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.7] - 2026-02-27
+
+### Fixed
+- **Stale network mappings on re-upload** — When RVTools data was deleted and re-uploaded, network mappings (including confirmed ones) for networks that no longer exist in the new VM data were silently retained. On each upload, mappings for source networks not present in the new VM dataset are now deleted automatically.
+
+### Added
+- **Proj. Desc. auto-seeded from Project Name** — When tenants are first seeded from RVTools data, `target_display_name` (Project Description) is now pre-populated from `target_project_name` as a starting-point hint. Operators can keep, edit, or clear it.
+- **Domain Description field** — PCD Domains have a description field just like Projects. Added `target_domain_description` column to `migration_tenants`. Exposed as "Domain Desc." column in the Tenants table (editable inline). DB migration: `db/migrate_descriptions.sql`. Columns and order: Target Domain → Domain Desc. → Target Project → Proj. Desc.
+
 ## [1.31.6] - 2026-02-27
 
 ### Added
