@@ -1316,6 +1316,7 @@ def compute_quota_requirements(
     per_tenant = []
     total_vcpu_alloc = total_ram_gb_alloc = total_disk_gb_alloc = 0.0
     total_vcpu_rec   = total_ram_gb_rec   = total_disk_gb_rec   = 0.0
+    total_ram_gb_used = 0.0
 
     for t in tenants:
         if not t.get("include_in_plan", True):
@@ -1341,12 +1342,15 @@ def compute_quota_requirements(
         if disk_gb_rec > 50_000:
             warnings.append(f"Recommended disk quota {disk_gb_rec/1024:.1f} TB — verify PCD storage capacity")
 
+        ram_used_gb = round(float(t.get("ram_used_gb", 0) or 0), 1)
+
         per_tenant.append({
             "tenant_name":           t.get("tenant_name", ""),
             "target_domain_name":    t.get("target_domain_name") or t.get("target_domain") or "",
             "target_project_name":   t.get("target_project_name") or t.get("target_project") or "",
             "vcpu_alloc":            vcpu,
             "ram_gb_alloc":          round(ram_gb, 1),
+            "ram_used_gb":           ram_used_gb,
             "disk_gb_alloc":         round(disk_gb, 1),
             "in_use_gb":             round(in_use_gb, 1),
             "vcpu_recommended":      vcpu_rec,
@@ -1358,10 +1362,11 @@ def compute_quota_requirements(
         total_vcpu_alloc  += vcpu;      total_vcpu_rec  += vcpu_rec
         total_ram_gb_alloc += ram_gb;   total_ram_gb_rec += ram_gb_rec
         total_disk_gb_alloc += disk_gb; total_disk_gb_rec += disk_gb_rec
+        total_ram_gb_used  += ram_used_gb
 
     return {
         "profile":            overcommit_profile,
-        "totals_allocated":   {"vcpu": int(total_vcpu_alloc), "ram_gb": round(total_ram_gb_alloc, 1), "disk_tb": round(total_disk_gb_alloc / 1024, 2)},
+        "totals_allocated":   {"vcpu": int(total_vcpu_alloc), "ram_gb": round(total_ram_gb_alloc, 1), "ram_used_gb": round(total_ram_gb_used, 1), "disk_tb": round(total_disk_gb_alloc / 1024, 2)},
         "totals_recommended": {"vcpu": int(total_vcpu_rec),   "ram_gb": round(total_ram_gb_rec, 1),   "disk_tb": round(total_disk_gb_rec / 1024, 2)},
         "per_tenant":         per_tenant,
     }
@@ -1374,111 +1379,152 @@ def compute_quota_requirements(
 def compute_node_sizing(
     totals: Dict[str, Any],             # totals_recommended from compute_quota_requirements
     node_profile: Dict[str, Any],       # migration_pcd_node_profiles row
-    existing_inventory: Optional[Dict[str, Any]] = None,  # migration_pcd_node_inventory row
+    existing_inventory: Optional[Dict[str, Any]] = None,  # migration_pcd_node_inventory row (legacy)
+    live_cluster: Optional[Dict[str, Any]] = None,        # live data from get_pcd_live_inventory
+    max_util_pct: float = 70.0,         # hard ceiling – HA headroom lives inside this
+    peak_buffer_pct: float = 15.0,      # extra headroom for traffic spikes
 ) -> Dict[str, Any]:
     """
-    Compute HA-aware PCD compute node count from workload totals and a node profile.
+    Calculate how many additional PCD compute nodes are needed to absorb the
+    migration workload, given the cluster's current state.
 
-    HA policy:
-      - First 10 nodes: N+1
-      - 10+ nodes: N+2
-    Target cluster utilisation: ≤ max_cpu_util_pct / max_ram_util_pct / max_disk_util_pct
+    Key principles
+    ──────────────
+    • The max_util_pct (default 70 %) IS the HA strategy.  At 70 % utilisation
+      the cluster can absorb a node failure without guest impact — we do NOT add
+      separate "HA spare" nodes on top.
+    • If live_cluster data is provided it takes precedence over node_profile
+      dimensions, so per-node capacity is derived from the real hardware.
+    • peak_buffer_pct adds a future-growth / spike buffer to the migration
+      workload before checking whether it fits into available headroom.
     """
-    cpu_threads     = int(node_profile.get("cpu_threads", node_profile.get("cpu_cores", 48) * 2))
-    ram_gb_node     = float(node_profile.get("ram_gb", 384.0))
-    storage_tb_node = float(node_profile.get("storage_tb", 20.0))
-    max_cpu_pct     = float(node_profile.get("max_cpu_util_pct", 70.0)) / 100.0
-    max_ram_pct     = float(node_profile.get("max_ram_util_pct", 75.0)) / 100.0
-    max_disk_pct    = float(node_profile.get("max_disk_util_pct", 70.0)) / 100.0
-
-    req_vcpu  = int(totals["vcpu"])
-    req_ram   = float(totals["ram_gb"])
-    req_disk  = float(totals["disk_tb"])
-
-    # Already-consumed resources from existing inventory
-    inv_vcpu_used  = 0
-    inv_ram_used   = 0.0
-    inv_disk_used  = 0.0
-    inv_nodes      = 0
-    if existing_inventory:
-        inv_nodes     = int(existing_inventory.get("current_nodes", 0))
-        inv_vcpu_used = int(existing_inventory.get("current_vcpu_used", 0))
-        inv_ram_used  = float(existing_inventory.get("current_ram_gb_used", 0))
-        inv_disk_used = float(existing_inventory.get("current_disk_tb_used", 0))
-
-    # Effective capacity per node considering safe utilisation limit
-    eff_cpu_per_node  = cpu_threads    * max_cpu_pct
-    eff_ram_per_node  = ram_gb_node    * max_ram_pct
-    eff_disk_per_node = storage_tb_node * max_disk_pct
-
     import math
 
-    # New demand beyond what existing nodes can handle
-    # Existing nodes' total usable capacity
-    exist_cap_cpu  = inv_nodes * eff_cpu_per_node  - inv_vcpu_used
-    exist_cap_ram  = inv_nodes * eff_ram_per_node  - inv_ram_used
-    exist_cap_disk = inv_nodes * eff_disk_per_node - inv_disk_used
-
-    additional_cpu  = max(0.0, req_vcpu - exist_cap_cpu)
-    additional_ram  = max(0.0, req_ram  - exist_cap_ram)
-    additional_disk = max(0.0, req_disk - exist_cap_disk)
-
-    nodes_for_cpu  = math.ceil(additional_cpu  / eff_cpu_per_node)  if eff_cpu_per_node  > 0 else 0
-    nodes_for_ram  = math.ceil(additional_ram  / eff_ram_per_node)  if eff_ram_per_node  > 0 else 0
-
-    # NOTE: disk is Cinder block storage — it scales independently from compute nodes.
-    # We report the disk requirement separately but do NOT let it drive node count.
-    nodes_additional = max(nodes_for_cpu, nodes_for_ram)
-    binding_dimension = "cpu" if nodes_for_cpu >= nodes_for_ram else "ram"
-
-    total_nodes_min = inv_nodes + nodes_additional
-
-    # HA adjustment
-    if total_nodes_min <= 10:
-        ha_nodes = 1   # N+1
+    # ── Per-node capacity ─────────────────────────────────────────────
+    # Prefer live cluster data (actual measurement) over node profile (estimate).
+    if live_cluster and live_cluster.get("node_count", 0) > 0:
+        node_count_current  = int(live_cluster["node_count"])
+        cluster_vcpu_total  = int(live_cluster.get("total_vcpus", 0))
+        cluster_ram_total   = float(live_cluster.get("total_ram_gb", 0.0))
+        # Derive per-node capacity from actual cluster (handles mixed or non-standard nodes)
+        vcpu_per_node = cluster_vcpu_total / node_count_current if node_count_current else \
+                        int(node_profile.get("cpu_threads", node_profile.get("cpu_cores", 48) * 2))
+        ram_per_node  = cluster_ram_total  / node_count_current if node_count_current else \
+                        float(node_profile.get("ram_gb", 384.0))
+        already_used_vcpu = int(live_cluster.get("vcpus_used", 0))
+        already_used_ram  = float(live_cluster.get("ram_gb_used", 0.0))
     else:
-        ha_nodes = 2   # N+2
+        node_count_current  = int(existing_inventory.get("current_nodes", 0)) if existing_inventory else 0
+        vcpu_per_node = int(node_profile.get("cpu_threads", node_profile.get("cpu_cores", 48) * 2))
+        ram_per_node  = float(node_profile.get("ram_gb", 384.0))
+        cluster_vcpu_total  = node_count_current * vcpu_per_node
+        cluster_ram_total   = node_count_current * ram_per_node
+        already_used_vcpu = int(existing_inventory.get("current_vcpu_used", 0)) if existing_inventory else 0
+        already_used_ram  = float(existing_inventory.get("current_ram_gb_used", 0.0)) if existing_inventory else 0.0
 
-    total_nodes_recommended = total_nodes_min + ha_nodes
+    util_frac   = max_util_pct / 100.0
+    peak_frac   = 1.0 + peak_buffer_pct / 100.0
 
-    # Post-migration utilisation with recommended cluster (compute only)
-    cluster_vcpu  = total_nodes_recommended * cpu_threads
-    cluster_ram   = total_nodes_recommended * ram_gb_node
+    # ── Safe capacity of the CURRENT cluster ─────────────────────────
+    safe_vcpu_current = cluster_vcpu_total * util_frac
+    safe_ram_current  = cluster_ram_total  * util_frac
 
-    post_cpu_pct  = round((req_vcpu + inv_vcpu_used) / cluster_vcpu  * 100, 1) if cluster_vcpu  > 0 else 0
-    post_ram_pct  = round((req_ram  + inv_ram_used)  / cluster_ram   * 100, 1) if cluster_ram   > 0 else 0
+    # ── Available headroom (safe capacity minus what is already running)
+    headroom_vcpu = max(0.0, safe_vcpu_current - already_used_vcpu)
+    headroom_ram  = max(0.0, safe_ram_current  - already_used_ram)
 
-    # Disk is Cinder — report the storage requirement but as a quota/capacity number, not node utilisation
-    disk_tb_required = round(req_disk + inv_disk_used, 3)
+    # ── Migration workload with peak buffer ───────────────────────────
+    req_vcpu  = int(totals.get("vcpu", 0))
+    req_ram   = float(totals.get("ram_gb", 0.0))
+    req_disk  = float(totals.get("disk_tb", 0.0))
 
-    # Warnings (compute only — disk is a separate Cinder concern)
+    demand_vcpu = req_vcpu  * peak_frac
+    demand_ram  = req_ram   * peak_frac
+
+    # ── Deficit = how much workload the current cluster CANNOT absorb ─
+    deficit_vcpu = max(0.0, demand_vcpu - headroom_vcpu)
+    deficit_ram  = max(0.0, demand_ram  - headroom_ram)
+
+    # ── Additional nodes to cover the deficit ─────────────────────────
+    # Each new node provides vcpu_per_node * util_frac usable vCPU / RAM
+    eff_vcpu_per_new_node = vcpu_per_node * util_frac
+    eff_ram_per_new_node  = ram_per_node  * util_frac
+
+    nodes_for_vcpu = math.ceil(deficit_vcpu / eff_vcpu_per_new_node) if eff_vcpu_per_new_node > 0 else 0
+    nodes_for_ram  = math.ceil(deficit_ram  / eff_ram_per_new_node)  if eff_ram_per_new_node  > 0 else 0
+
+    nodes_to_add      = max(nodes_for_vcpu, nodes_for_ram)
+    binding_dimension = "cpu" if nodes_for_vcpu >= nodes_for_ram else "ram"
+
+    nodes_total      = node_count_current + nodes_to_add
+    total_vcpu_final = nodes_total * vcpu_per_node
+    total_ram_final  = nodes_total * ram_per_node
+
+    # ── Post-migration utilisation ─────────────────────────────────────
+    total_demand_vcpu = already_used_vcpu + demand_vcpu
+    total_demand_ram  = already_used_ram  + demand_ram
+    post_cpu_pct = round(total_demand_vcpu / total_vcpu_final * 100, 1) if total_vcpu_final > 0 else 0.0
+    post_ram_pct = round(total_demand_ram  / total_ram_final  * 100, 1) if total_ram_final  > 0 else 0.0
+
+    disk_tb_required = round(req_disk, 3)
+
+    # ── Explanation steps for UI display ──────────────────────────────
+    steps = [
+        f"Cluster capacity ({node_count_current} nodes): {cluster_vcpu_total} vCPU | {cluster_ram_total:.0f} GB RAM",
+        f"Safe limit ({max_util_pct:.0f}% utilisation target): {safe_vcpu_current:.0f} vCPU | {safe_ram_current:.0f} GB",
+        f"Currently in use: {already_used_vcpu} vCPU | {already_used_ram:.0f} GB",
+        f"Available headroom: {headroom_vcpu:.0f} vCPU | {headroom_ram:.0f} GB",
+        f"Migration workload (×{peak_frac:.2f} peak buffer): {demand_vcpu:.0f} vCPU | {demand_ram:.0f} GB",
+        f"Deficit: {deficit_vcpu:.0f} vCPU | {deficit_ram:.0f} GB  →  add {nodes_to_add} node(s) (binding: {binding_dimension})",
+        f"Post-migration utilisation: CPU {post_cpu_pct}% | RAM {post_ram_pct}%  (target ≤ {max_util_pct:.0f}%)",
+    ]
+
     warnings: List[str] = []
-    if post_cpu_pct > float(node_profile.get("max_cpu_util_pct", 70.0)):
-        warnings.append(f"Post-migration CPU utilisation {post_cpu_pct}% exceeds target {node_profile.get('max_cpu_util_pct', 70)}%")
-    if post_ram_pct > float(node_profile.get("max_ram_util_pct", 75.0)):
-        warnings.append(f"Post-migration RAM utilisation {post_ram_pct}% exceeds target {node_profile.get('max_ram_util_pct', 75)}%")
+    if post_cpu_pct > max_util_pct:
+        warnings.append(f"Post-migration CPU utilisation {post_cpu_pct}% exceeds {max_util_pct:.0f}% target")
+    if post_ram_pct > max_util_pct:
+        warnings.append(f"Post-migration RAM utilisation {post_ram_pct}% exceeds {max_util_pct:.0f}% target")
     if disk_tb_required > 0:
-        warnings.append(f"Cinder storage required: {disk_tb_required} TB — provision independently via storage backend (Ceph/SAN/NFS)")
+        warnings.append(f"Cinder storage required: {disk_tb_required} TB — provision independently (Ceph/SAN/NFS)")
 
     return {
-        "node_profile":             node_profile,
-        "existing_nodes":           inv_nodes,
-        "nodes_additional_required": nodes_additional,
-        "nodes_min_total":          total_nodes_min,
-        "ha_spares":                ha_nodes,
-        "ha_policy":                f"N+{ha_nodes}",
-        "nodes_recommended":        total_nodes_recommended,
-        "binding_dimension":        binding_dimension,
-        "nodes_by_dimension": {
-            "cpu":  nodes_for_cpu,
-            "ram":  nodes_for_ram,
-        },
-        "post_migration_utilisation": {
-            "cpu_pct":  post_cpu_pct,
-            "ram_pct":  post_ram_pct,
-        },
-        "disk_tb_required": disk_tb_required,
-        "warnings": warnings,
+        # Current cluster facts
+        "node_count_current":   node_count_current,
+        "cluster_vcpu_total":   cluster_vcpu_total,
+        "cluster_ram_total":    round(cluster_ram_total, 1),
+        "vcpu_per_node":        round(vcpu_per_node, 1),
+        "ram_per_node":         round(ram_per_node, 1),
+        # Policy
+        "max_util_pct":         max_util_pct,
+        "peak_buffer_pct":      peak_buffer_pct,
+        # Headroom
+        "safe_vcpu":            round(safe_vcpu_current, 0),
+        "safe_ram":             round(safe_ram_current, 1),
+        "already_used_vcpu":    already_used_vcpu,
+        "already_used_ram":     round(already_used_ram, 1),
+        "headroom_vcpu":        round(headroom_vcpu, 0),
+        "headroom_ram":         round(headroom_ram, 1),
+        # Migration demand
+        "demand_vcpu":          round(demand_vcpu, 0),
+        "demand_ram":           round(demand_ram, 1),
+        "deficit_vcpu":         round(deficit_vcpu, 0),
+        "deficit_ram":          round(deficit_ram, 1),
+        # Result
+        "nodes_to_add":         nodes_to_add,
+        "nodes_total":          nodes_total,
+        "binding_dimension":    binding_dimension,
+        "post_cpu_pct":         post_cpu_pct,
+        "post_ram_pct":         post_ram_pct,
+        "disk_tb_required":     disk_tb_required,
+        "steps":                steps,
+        "warnings":             warnings,
+        # Legacy aliases kept for backwards-compat with any other consumers
+        "nodes_recommended":             nodes_total,
+        "nodes_additional_required":     nodes_to_add,
+        "existing_nodes":                node_count_current,
+        "ha_spares":                     0,
+        "ha_policy":                     f"70% utilisation cap (HA embedded)",
+        "post_migration_utilisation":    {"cpu_pct": post_cpu_pct, "ram_pct": post_ram_pct},
     }
 
 
