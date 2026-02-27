@@ -103,6 +103,7 @@ interface Tenant {
   target_domain_name: string | null;
   target_project_name: string | null;
   target_display_name: string | null;
+  target_confirmed?: boolean;  // false = auto-seeded, needs review
   // Phase 2.10
   migration_priority?: number;
   cohort_id?: number | null;
@@ -1177,6 +1178,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
           target_domain_name: editDomain.trim() || null,
           target_project_name: editProject.trim() || null,
           target_display_name: editDisplayName.trim() || null,
+          target_confirmed: true,  // saving = user reviewed and confirmed
           migration_priority: editPriority,
         }),
       });
@@ -1475,8 +1477,28 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                   <td style={{ ...tdStyle, textAlign: "center", color: (t.migration_priority ?? 999) < 999 ? "#1d4ed8" : "#9ca3af" }}>
                     {(t.migration_priority ?? 999) < 999 ? t.migration_priority : "—"}
                   </td>
-                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_domain_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
-                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_project_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>
+                    {t.target_domain_name
+                      ? <span>
+                          {t.target_domain_name}
+                          {!t.target_confirmed && (
+                            <span title="Auto-seeded from source name — edit to confirm"
+                              style={{ marginLeft: 4, fontSize: "0.7rem", color: "#ea580c", cursor: "help" }}>⚠️</span>
+                          )}
+                        </span>
+                      : <span style={{ color: "#9ca3af" }}>—</span>}
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>
+                    {t.target_project_name
+                      ? <span>
+                          {t.target_project_name}
+                          {!t.target_confirmed && (
+                            <span title="Auto-seeded from source name — edit to confirm"
+                              style={{ marginLeft: 4, fontSize: "0.7rem", color: "#ea580c", cursor: "help" }}>⚠️</span>
+                          )}
+                        </span>
+                      : <span style={{ color: "#9ca3af" }}>—</span>}
+                  </td>
                   <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{t.target_display_name || <span style={{ color: "#9ca3af" }}>—</span>}</td>
                   <td style={{ ...tdStyle, textAlign: "center", fontSize: "0.78rem" }}>
                     {t.cohort_id
@@ -1712,7 +1734,7 @@ function NetworksView({ networks, projectId, onRefresh }: {
 
 function NetworkMappingView({ projectId }: { projectId: number }) {
   const [mappings, setMappings] = useState<any[]>([]);
-  const [unmappedCount, setUnmappedCount] = useState(0);
+  const [unconfirmedCount, setUnconfirmedCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<number | null>(null);
   const [editValues, setEditValues] = useState<Record<number, string>>({});
@@ -1721,11 +1743,11 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiFetch<{ mappings: any[]; unmapped_count: number }>(
+      const data = await apiFetch<{ mappings: any[]; unconfirmed_count: number }>(
         `/api/migration/projects/${projectId}/network-mappings`
       );
       setMappings(data.mappings);
-      setUnmappedCount(data.unmapped_count);
+      setUnconfirmedCount(data.unconfirmed_count);
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }, [projectId]);
@@ -1737,7 +1759,7 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
     try {
       await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ target_network_name: editValues[id] || null }),
+        body: JSON.stringify({ target_network_name: editValues[id] ?? null, confirmed: true }),
       });
       setEditValues(prev => { const n = { ...prev }; delete n[id]; return n; });
       load();
@@ -1758,11 +1780,11 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
         </div>
         <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
       </div>
-      {unmappedCount > 0 && (
+      {unconfirmedCount > 0 && (
         <div style={{ marginBottom: 12, padding: "8px 14px", background: "#fff7ed",
           borderRadius: 6, border: "1px solid #fdba74", color: "#9a3412", fontSize: "0.85rem" }}>
-          ⚠️ {unmappedCount} network{unmappedCount !== 1 ? "s" : ""} not yet mapped to a PCD target.
-          Wave planning requires all used networks to be mapped.
+          ⚠️ {unconfirmedCount} network{unconfirmedCount !== 1 ? "s" : ""} pre-filled from source name but not yet confirmed.
+          Review the PCD target name for each row and click <strong>Confirm</strong> to approve.
         </div>
       )}
       {error && <div style={alertError}>{error}</div>}
@@ -1774,8 +1796,8 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
               <th style={{ ...thStyle, width: 70, textAlign: "center" }}>VMs</th>
               <th style={thStyle}>PCD Target Network</th>
               <th style={{ ...thStyle, width: 80 }}>VLAN ID</th>
-              <th style={{ ...thStyle, width: 80 }}>Status</th>
-              <th style={{ ...thStyle, width: 70 }}>Save</th>
+              <th style={{ ...thStyle, width: 90 }}>Status</th>
+              <th style={{ ...thStyle, width: 90 }}>Action</th>
             </tr>
           </thead>
           <tbody>
@@ -1783,8 +1805,12 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
               const editVal = editValues[m.id];
               const current = editVal !== undefined ? editVal : (m.target_network_name || "");
               const isDirty = editVal !== undefined && editVal !== (m.target_network_name || "");
+              const isConfirmed = m.confirmed === true;
               return (
-                <tr key={m.id} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
+                <tr key={m.id} style={{
+                  borderBottom: "1px solid var(--border, #e5e7eb)",
+                  background: isConfirmed ? undefined : "#fffbeb",
+                }}>
                   <td style={tdStyle}>
                     <strong style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{m.source_network_name}</strong>
                   </td>
@@ -1793,7 +1819,7 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                     <input
                       value={current}
                       onChange={e => setEditValues(prev => ({ ...prev, [m.id]: e.target.value }))}
-                      placeholder="Enter PCD network name..."
+                      placeholder="PCD network name..."
                       style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.85rem",
                         background: isDirty ? "#eff6ff" : undefined }}
                       onKeyDown={e => { if (e.key === "Enter") saveMapping(m.id); }}
@@ -1801,17 +1827,19 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                   </td>
                   <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.8rem" }}>{m.vlan_id ?? "—"}</td>
                   <td style={{ ...tdStyle, textAlign: "center" }}>
-                    {m.target_network_name
-                      ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ mapped</span>
-                      : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem" }}>⚠ unmapped</span>}
+                    {isConfirmed
+                      ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ confirmed</span>
+                      : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem" }}>⚠ review</span>}
                   </td>
                   <td style={tdStyle}>
                     <button
                       onClick={() => saveMapping(m.id)}
-                      disabled={saving === m.id || !isDirty}
-                      style={{ ...btnSmall, background: isDirty ? "#2563eb" : "#e5e7eb",
-                        color: isDirty ? "#fff" : "#9ca3af" }}>
-                      {saving === m.id ? "..." : "Save"}
+                      disabled={saving === m.id}
+                      style={{ ...btnSmall,
+                        background: isDirty ? "#2563eb" : isConfirmed ? "#e5e7eb" : "#f97316",
+                        color: isConfirmed && !isDirty ? "#9ca3af" : "#fff" }}
+                      title={isConfirmed ? "Re-confirm" : "Confirm this mapping"}>
+                      {saving === m.id ? "..." : isDirty ? "Save" : isConfirmed ? "✓" : "Confirm"}
                     </button>
                   </td>
                 </tr>
