@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.8] - 2026-02-27
+
+### Fixed
+- **Network mappings not cleared on "Clear RVTools Data"** — The `DELETE /rvtools` endpoint ("Clear RVTools Data" button) was missing `migration_network_mappings` from its table purge list. Confirmed mappings silently survived a clear + re-upload, causing stale confirmed state to persist. Now included in the clear.
+
+### Changed
+- **Network Map re-edit UX** — Confirmed rows in the Network Map no longer show a useless greyed-out `✓` button that looks like a disabled status indicator. They now show an explicit **✏️ Edit** button that un-confirms the row (sets `confirmed=false`), making the orange **Confirm** button reappear so the operator can re-edit and re-confirm cleanly.
+
 ## [1.31.7] - 2026-02-27
 
 ### Fixed
