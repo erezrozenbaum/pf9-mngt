@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.9] - 2026-02-27
+
+### Added
+- **Domain Desc. auto-seeded from Domain Name** — When tenants are first seeded from RVTools data, `target_domain_description` is now pre-populated from `target_domain_name` (the tenant/org name), matching the same behaviour as Project Description. Operators can keep, edit, or clear it in the inline edit row.
+- **Find & Replace extended to all 4 target fields** — The Tenants F&R panel now covers all four editable target fields: **Target Project Name**, **Project Description**, **Target Domain Name**, and **Domain Description** (previously only the first two were available). The API `bulk-replace-target` endpoint now accepts `target_display_name` and `target_domain_description` in addition to the existing name fields.
+
+### Fixed
+- **Network Map single-row edit restored** — The `✏️ Edit` button on confirmed network mapping rows no longer makes an API call to un-confirm the row. Clicking **✏️ Edit** now enters a purely local edit mode — the input field activates and **Save** + **✕ Cancel** buttons appear. The save writes the new value (with `confirmed=true`) only when the operator explicitly clicks Save. Also fixed a latent bug where clicking Confirm on an unedited unconfirmed row would send `null` as the target network name, clearing it.
+
 ## [1.31.8] - 2026-02-27
 
 ### Fixed
