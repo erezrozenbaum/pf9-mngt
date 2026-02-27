@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.4] - 2026-02-27
+
+### Fixed
+- **Find & Replace `loadTenants` scope error** — `runFindReplace` inside `TenantsView` was calling `loadTenants()` which is defined in the parent component and not in scope. Fixed to call `onRefresh()` (the existing prop already wired to `loadTenants` + `loadStats`).
+
 ## [1.31.3] - 2026-02-27
 
 ### Added
