@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.2] - 2026-02-27
+
+### Fixed
+- **Cohorts tab 500 error** — `list_cohorts` and `get_cohort_summary` queries were referencing non-existent columns `allocated_vcpu`, `allocated_ram_gb`, `allocated_disk_gb` on `migration_tenants` and `migration_vms`. Fixed to use actual column names: `total_vcpu`, `total_ram_mb / 1024.0`, `total_disk_gb` (tenants) and `cpu_count`, `ram_mb / 1024.0` (VMs).
+- **Target mapping logic** — Tenant detect-upsert now seeds `target_project_name = org_vdc` (the vCloud OrgVDC maps to a PCD Project), while `target_domain_name = tenant_name` (the vCloud Organization maps to a PCD Domain). Previously both were set to `tenant_name`. DB migration updated 120 existing rows. For non-vCloud tenants with no OrgVDC, both names fall back to `tenant_name`.
+- **Duplicate React key warning** — VM filter tenant dropdown was using `t.tenant_name` as `key`, causing duplicate-key warnings when the same organization has multiple OrgVDC entries (e.g. `Autosoft2` × 4). Fixed to use `t.id` (unique DB PK).
+- **VLAN ID auto-populated** — Network mappings `vlan_id` column is now set on INSERT (auto-seed) and on backfill for existing rows, by parsing the VLAN number from the source network name (e.g. `Amagon_vlan_3283` → 3283). 116 existing rows backfilled. Pattern: `[Vv][Ll][Aa][Nn][_-]?[0-9]+`.
+
+### Added
+- **Per-cohort schedule overrides** — `migration_cohorts` gains two new columns: `schedule_duration_days INTEGER` (planned working days for this cohort) and `target_vms_per_day INTEGER` (overrides the project-level VMs/day setting for wave planning). Both exposed in the Create Cohort form and displayed on cohort cards (⏱ N days · ⚡ N VMs/day). API models updated accordingly.
+
 ## [1.31.1] - 2026-02-27
 
 ### Fixed
