@@ -920,6 +920,7 @@ async def clear_rvtools_data(project_id: str, user = Depends(get_current_user)):
                 "migration_target_gaps", "migration_vm_snapshots", "migration_vm_nics",
                 "migration_vm_disks", "migration_vms", "migration_hosts",
                 "migration_clusters", "migration_tenants", "migration_networks",
+                "migration_network_mappings",
             ):
                 cur.execute(f"DELETE FROM {table} WHERE project_id = %s", (project_id,))
 

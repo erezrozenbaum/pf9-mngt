@@ -1966,6 +1966,18 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
     finally { setSaving(null); }
   };
 
+  const unconfirmMapping = async (id: number) => {
+    setSaving(id);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ confirmed: false }),
+      });
+      load();
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(null); }
+  };
+
   if (loading) return <div style={{ color: "#6b7280", padding: 16 }}>Loading network mappings...</div>;
 
   return (
@@ -2132,15 +2144,27 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                       : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem" }}>⚠ review</span>}
                   </td>
                   <td style={tdStyle}>
-                    <button
-                      onClick={() => saveMapping(m.id)}
-                      disabled={saving === m.id}
-                      style={{ ...btnSmall,
-                        background: isDirty ? "#2563eb" : isConfirmed ? "#e5e7eb" : "#f97316",
-                        color: isConfirmed && !isDirty ? "#9ca3af" : "#fff" }}
-                      title={isConfirmed ? "Re-confirm" : "Confirm this mapping"}>
-                      {saving === m.id ? "..." : isDirty ? "Save" : isConfirmed ? "✓" : "Confirm"}
-                    </button>
+                    {isDirty || !isConfirmed ? (
+                      <button
+                        onClick={() => saveMapping(m.id)}
+                        disabled={saving === m.id}
+                        style={{ ...btnSmall,
+                          background: isDirty ? "#2563eb" : "#f97316",
+                          color: "#fff" }}
+                        title={isDirty ? "Save changes" : "Confirm this mapping"}>
+                        {saving === m.id ? "..." : isDirty ? "Save" : "Confirm"}
+                      </button>
+                    ) : (
+                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        <button
+                          onClick={() => unconfirmMapping(m.id)}
+                          disabled={saving === m.id}
+                          style={{ ...btnSmall, background: "#f3f4f6", color: "#374151", fontSize: "0.75rem" }}
+                          title="Un-confirm to re-edit this mapping">
+                          {saving === m.id ? "..." : "✏️ Edit"}
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
