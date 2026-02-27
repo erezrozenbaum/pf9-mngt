@@ -65,6 +65,11 @@ Phase 2E — PCD Readiness:
   POST   /api/migration/projects/{id}/pcd-gap-analysis        Run gap analysis
   GET    /api/migration/projects/{id}/pcd-gaps                List gap results
   PATCH  /api/migration/projects/{id}/pcd-gaps/{gid}/resolve  Mark gap resolved
+
+Phase 2.8 — Pre-Phase 3 Polish:
+  GET    /api/migration/projects/{id}/pcd-auto-detect-profile Detect dominant PCD node type from hypervisors
+  GET    /api/migration/projects/{id}/export-gaps-report.xlsx PCD Readiness action report (Excel)
+  GET    /api/migration/projects/{id}/export-gaps-report.pdf  PCD Readiness action report (PDF)
 """
 
 import os
@@ -105,7 +110,10 @@ from migration_engine import (
     analyze_pcd_gaps,
     OVERCOMMIT_PRESETS,
 )
-from export_reports import generate_excel_report, generate_pdf_report
+from export_reports import (
+    generate_excel_report, generate_pdf_report,
+    generate_gaps_excel_report, generate_gaps_pdf_report,
+)
 
 logger = logging.getLogger("migration_planner")
 
@@ -740,6 +748,64 @@ async def upload_rvtools(project_id: str, file: UploadFile = File(...), user = D
 
 
 # ---------------------------------------------------------------------------
+# Re-parse ONLY the vMemory sheet (to fix active vs consumed without full re-upload)
+# ---------------------------------------------------------------------------
+
+@router.post("/projects/{project_id}/reparse-memory",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def reparse_memory(project_id: str, file: UploadFile = File(...), user = Depends(get_current_user)):
+    """
+    Re-parse ONLY the vMemory sheet from a fresh RVTools XLSX to update
+    memory_usage_percent and memory_usage_mb on existing VMs — without
+    wiping any other data (VMs, tenants, disks, etc.).
+
+    Use this when the initial upload captured 'Consumed' instead of 'Active',
+    giving all VMs ~100% memory utilisation.
+    """
+    actor = user.username if user else "system"
+
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx/.xls files accepted")
+
+    contents = await file.read()
+    if len(contents) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 100 MB)")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Cannot read XLSX: {exc}")
+
+        if "vMemory" not in wb.sheetnames:
+            raise HTTPException(status_code=400, detail="vMemory sheet not found in the uploaded file")
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Reset existing memory columns so COALESCE picks up fresh values
+            cur.execute("""
+                UPDATE migration_vms
+                SET memory_usage_percent = NULL, memory_usage_mb = NULL
+                WHERE project_id = %s
+            """, (project_id,))
+
+            updated = _parse_vmemory_sheet(wb["vMemory"], project_id, cur)
+
+        conn.commit()
+        wb.close()
+
+    _log_activity(actor=actor, action="reparse_memory", resource_type="migration_project",
+                  resource_id=project_id, details={"filename": file.filename, "updated": updated})
+
+    return {
+        "status": "ok",
+        "message": f"Memory metrics updated for {updated} VMs from {file.filename}",
+        "updated_vms": updated,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Clear uploaded RVTools data (keep project settings)
 # ---------------------------------------------------------------------------
 
@@ -1289,10 +1355,28 @@ def _parse_vmemory_sheet(sheet, project_id: str, cur) -> int:
 
     # Find column indices by direct header matching - RVTools vMemory sheet uses these exact names
     vm_col = _find_col(headers_lower, ["vm", "name", "vm name"])
-    usage_col = _find_col(headers_lower, ["% usage", "usage %", "memory usage %", "mem usage %", "memory usage", "average % usage", "avg % usage", "average usage %"])
-    usage_mb_col = _find_col(headers_lower, ["usage mb", "usage (mb)", "memory usage mb", "mem usage mb", "used mb", "consumed", "active"])
-    # For exports without a direct % column, compute from consumed / size_mib
-    size_mib_col = _find_col(headers_lower, ["size mib", "size (mib)", "size mb", "configured size", "memory size"])
+
+    # Explicit % column from vSphere real-time stats (may be absent in static RVTools exports)
+    usage_col = _find_col(headers_lower, ["% usage", "usage %", "memory usage %", "mem usage %",
+                                          "memory usage", "average % usage", "avg % usage",
+                                          "average usage %", "% mem", "mem %"])
+
+    # Prefer "Active (MiB)" — the guest working set actually being read/written.
+    # "Consumed (MiB)" is configured RAM + VMkernel overhead and is always ~100% for
+    # powered-on VMs regardless of real guest utilisation — do NOT use it for the % indicator.
+    usage_mb_col = _find_col(headers_lower, [
+        "active (mib)", "active mib", "active mb", "active",   # real guest working set ← preferred
+        "usage mb", "usage (mb)", "memory usage mb", "mem usage mb", "used mb",
+        "consumed (mib)", "consumed mib", "consumed",           # fallback — always ≈ configured RAM
+    ])
+
+    # Separate lookup for consumed so we can still log/store it for reference (optional)
+    consumed_col = _find_col(headers_lower, ["consumed (mib)", "consumed mib", "consumed"])
+
+    # Configured memory size — needed to compute % when no explicit % column exists
+    # RVTools vMemory uses "Memory" (MB) or "Size MiB"
+    size_mib_col = _find_col(headers_lower, ["size mib", "size (mib)", "size mb",
+                                              "configured size", "memory size", "memory"])
 
 
     rows = _sheet_rows(sheet)
@@ -1324,7 +1408,9 @@ def _parse_vmemory_sheet(sheet, project_id: str, cur) -> int:
                 except (ValueError, TypeError):
                     pass
 
-        # Compute % from consumed / size_mib when no direct % column exists
+        # Compute % from active / configured when no direct % column exists.
+        # If usage_mb came from "consumed" this will still be ~100% (expected); if from
+        # "active" it will correctly reflect the guest's real working-set utilisation.
         if memory_usage_pct is None and memory_usage_mb is not None and size_mib_col >= 0 and size_mib_col < len(row_vals):
             sz = row_vals[size_mib_col]
             if sz is not None and str(sz).strip() not in ("", "None"):
@@ -2594,6 +2680,26 @@ async def get_quota_requirements(project_id: str):
             """, (project_id,))
             tenants = [dict(r) for r in cur.fetchall()]
 
+            # Actual RAM usage per tenant+org_vdc from vMemory telemetry
+            # Key by (tenant_name, org_vdc) so that tenants split across multiple
+            # org_vdcs (e.g. Autosoft2) don't each get the full aggregate total.
+            cur.execute("""
+                SELECT tenant_name,
+                       COALESCE(org_vdc, '') AS org_vdc,
+                       ROUND(SUM(COALESCE(memory_usage_mb, 0)) / 1024.0, 1) AS ram_used_gb
+                FROM migration_vms
+                WHERE project_id = %s
+                  AND memory_usage_mb IS NOT NULL AND memory_usage_mb > 0
+                GROUP BY tenant_name, COALESCE(org_vdc, '')
+            """, (project_id,))
+            ram_used_map = {
+                (r["tenant_name"], r["org_vdc"]): float(r["ram_used_gb"])
+                for r in cur.fetchall()
+            }
+            for t in tenants:
+                key = (t.get("tenant_name", ""), t.get("org_vdc") or "")
+                t["ram_used_gb"] = ram_used_map.get(key, 0.0)
+
             profile_name = project.get("overcommit_profile_name") or "balanced"
             cur.execute("SELECT * FROM migration_overcommit_profiles WHERE profile_name = %s", (profile_name,))
             profile_row = cur.fetchone()
@@ -2733,7 +2839,7 @@ async def get_pcd_live_inventory(project_id: str):
                 SELECT
                   COUNT(s.id)::int                                           AS vm_count,
                   COALESCE(SUM(f.vcpus), 0)::int                            AS vcpus_used,
-                  ROUND(COALESCE(SUM(f.ram), 0) / 1024.0, 1)               AS ram_gb_used
+                  ROUND(COALESCE(SUM(f.ram_mb), 0) / 1024.0, 1)            AS ram_gb_used
                 FROM servers s
                 LEFT JOIN flavors f ON f.id = s.flavor_id
                 WHERE s.status NOT IN ('DELETED', 'ERROR')
@@ -2793,28 +2899,33 @@ async def upsert_node_inventory(project_id: str, req: NodeInventoryRequest, user
 
 @router.get("/projects/{project_id}/node-sizing",
             dependencies=[Depends(require_permission("migration", "read"))])
-async def get_node_sizing(project_id: str):
+async def get_node_sizing(
+    project_id: str,
+    max_util_pct: float = Query(70.0, ge=10.0, le=100.0,
+        description="Maximum cluster utilisation target (%). HA headroom lives inside this cap."),
+    peak_buffer_pct: float = Query(15.0, ge=0.0, le=100.0,
+        description="Extra buffer added to migration workload for traffic spikes (%)."),
+):
     """
-    Compute HA-aware PCD node sizing based on quota requirements
-    and the project's default node profile.
+    Compute PCD node sizing based on quota requirements and the current live cluster.
+
+    Uses a 70%-utilisation HA model: the utilisation cap IS the HA strategy —
+    no separate spare nodes are added on top.
     """
     with _get_conn() as conn:
         project = _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Tenants
             cur.execute("""
                 SELECT * FROM migration_tenants
                 WHERE project_id = %s AND include_in_plan = true
             """, (project_id,))
             tenants = [dict(r) for r in cur.fetchall()]
 
-            # Overcommit profile
             profile_name = project.get("overcommit_profile_name") or "balanced"
             cur.execute("SELECT * FROM migration_overcommit_profiles WHERE profile_name = %s", (profile_name,))
             profile_row = cur.fetchone()
             profile = dict(profile_row) if profile_row else {"cpu_ratio": 4.0, "ram_ratio": 1.5, "disk_snapshot_factor": 1.5}
 
-            # Node profile (default for this project, or first)
             cur.execute("""
                 SELECT * FROM migration_pcd_node_profiles
                 WHERE project_id = %s
@@ -2822,24 +2933,130 @@ async def get_node_sizing(project_id: str):
             """, (project_id,))
             node_profile_row = cur.fetchone()
 
-            # Existing inventory
             cur.execute("SELECT * FROM migration_pcd_node_inventory WHERE project_id = %s", (project_id,))
             inv_row = cur.fetchone()
+
+            # ── Actual VM footprint from RVtools (source of truth for HW sizing) ──
+            # Prefer actual performance data (cpu_usage_percent/memory_usage_percent)
+            # when available — these reflect real running consumption, not allocation.
+            # SUM(cpu_count * cpu_usage_percent/100) = actual physical vCPU demand:
+            # no overcommit division needed because utilisation already represents
+            # real scheduler pressure on the host (not theoretical peak).
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE power_state = 'poweredOn')                            AS powered_on_count,
+                    -- Performance-based actual demand
+                    COUNT(*) FILTER (WHERE power_state = 'poweredOn'
+                                     AND cpu_usage_percent IS NOT NULL)                          AS vms_with_cpu_perf,
+                    COUNT(*) FILTER (WHERE power_state = 'poweredOn'
+                                     AND memory_usage_percent IS NOT NULL)                       AS vms_with_ram_perf,
+                    COALESCE(SUM(cpu_count * cpu_usage_percent / 100.0)
+                             FILTER (WHERE power_state = 'poweredOn'
+                                      AND cpu_usage_percent IS NOT NULL), 0)                    AS actual_vcpu_used,
+                    COALESCE(SUM(ram_mb * memory_usage_percent / 100.0)
+                             FILTER (WHERE power_state = 'poweredOn'
+                                      AND memory_usage_percent IS NOT NULL), 0) / 1024.0        AS actual_ram_gb,
+                    -- Allocation-based fallback
+                    COALESCE(SUM(cpu_count)    FILTER (WHERE power_state = 'poweredOn'), 0)     AS vm_vcpu_alloc,
+                    COALESCE(SUM(ram_mb)       FILTER (WHERE power_state = 'poweredOn'), 0)
+                        / 1024.0                                                                AS vm_ram_gb_alloc,
+                    COALESCE(SUM(total_disk_gb)FILTER (WHERE power_state = 'poweredOn'), 0)
+                        / 1024.0                                                                AS vm_disk_tb,
+                    COUNT(DISTINCT host_name)                                                    AS source_node_count
+                FROM migration_vms
+                WHERE project_id = %s
+            """, (project_id,))
+            vm_row = dict(cur.fetchone() or {})
 
     if not node_profile_row:
         raise HTTPException(status_code=400,
                             detail="No node profile configured. Add a PCD node profile first.")
 
+    # Fetch live cluster state (preferred over manual inventory)
+    live_cluster = None
+    try:
+        live_resp = await get_pcd_live_inventory(project_id)
+        live = live_resp.get("live", {})
+        if live.get("node_count", 0) > 0:
+            live_cluster = live
+    except Exception:
+        pass  # Fall back to manual inventory
+
     quota = compute_quota_requirements(tenants, profile)
+
+    # ── Physical demand for HW sizing ──────────────────────────────────────────────
+    # Priority 1 — Actual performance data (cpu_usage_percent / memory_usage_percent)
+    #   SUM(cpu_count × cpu_usage_percent/100) = physical vCPU actually consumed.
+    #   No overcommit division needed: utilisation is already physical scheduler load.
+    #
+    # Priority 2 — Allocation ÷ overcommit ratio (fallback when <50% VMs have perf data)
+    #   SUM(cpu_count) is vCPU configured, not running. Divide by PCD overcommit ratio
+    #   to convert to physical core demand.
+    #
+    # Priority 3 — Tenant quota (if no VM data at all, e.g. RVtools not yet imported)
+    #   Quota already has overcommit baked in; using fallback avoids a zero-node result.
+    # ─────────────────────────────────────────────────────────────────────────────────
+    cpu_ratio          = float(profile.get("cpu_ratio", 4.0))
+    powered_on         = int(vm_row.get("powered_on_count") or 0)
+    vms_with_cpu_perf  = int(vm_row.get("vms_with_cpu_perf") or 0)
+    vms_with_ram_perf  = int(vm_row.get("vms_with_ram_perf") or 0)
+    actual_vcpu_used   = float(vm_row.get("actual_vcpu_used") or 0)
+    actual_ram_gb      = float(vm_row.get("actual_ram_gb") or 0)
+    vm_vcpu_alloc      = float(vm_row.get("vm_vcpu_alloc") or 0)
+    vm_ram_gb_alloc    = float(vm_row.get("vm_ram_gb_alloc") or 0)
+    vm_disk_tb         = float(vm_row.get("vm_disk_tb") or 0)
+    source_node_count  = int(vm_row.get("source_node_count") or 0)
+
+    perf_threshold = 0.5  # require ≥50% of powered-on VMs to have perf data
+    cpu_perf_coverage = vms_with_cpu_perf / max(powered_on, 1)
+    ram_perf_coverage = vms_with_ram_perf / max(powered_on, 1)
+
+    if powered_on > 0 and cpu_perf_coverage >= perf_threshold:
+        # ✅ Use actual performance data — most accurate physical demand
+        phys_vcpu  = round(actual_vcpu_used)
+        phys_ram   = round(actual_ram_gb if ram_perf_coverage >= perf_threshold else vm_ram_gb_alloc, 1)
+        sizing_basis = "actual_performance"
+    elif vm_vcpu_alloc > 0:
+        # ⚠️ Fallback: allocation ÷ overcommit
+        phys_vcpu  = round(vm_vcpu_alloc / cpu_ratio)
+        phys_ram   = round(vm_ram_gb_alloc, 1)
+        sizing_basis = "allocation"
+    else:
+        # 🔴 Last resort: tenant quota totals
+        phys_vcpu  = quota["totals_recommended"]["vcpu"]
+        phys_ram   = quota["totals_recommended"]["ram_gb"]
+        sizing_basis = "quota"
+
+    physical_totals = {
+        "vcpu":    phys_vcpu,
+        "ram_gb":  phys_ram,
+        "disk_tb": quota["totals_recommended"]["disk_tb"],  # quota disk includes snapshot factor
+    }
+
     sizing = compute_node_sizing(
-        totals=quota["totals_recommended"],
+        totals=physical_totals,
         node_profile=dict(node_profile_row),
         existing_inventory=dict(inv_row) if inv_row else None,
+        live_cluster=live_cluster,
+        max_util_pct=max_util_pct,
+        peak_buffer_pct=peak_buffer_pct,
     )
+
+    # Attach metadata so the UI can explain what basis was used
+    sizing["sizing_basis"]         = sizing_basis
+    sizing["vm_powered_on_count"]   = powered_on
+    sizing["vm_vcpu_actual"]        = round(actual_vcpu_used) if sizing_basis == "actual_performance" else round(vm_vcpu_alloc / max(cpu_ratio, 1))
+    sizing["vm_ram_gb_actual"]      = round(actual_ram_gb)    if sizing_basis == "actual_performance" else round(vm_ram_gb_alloc)
+    sizing["vm_vcpu_alloc"]         = round(vm_vcpu_alloc)
+    sizing["vm_ram_gb_alloc"]       = round(vm_ram_gb_alloc)
+    sizing["source_node_count"]     = source_node_count
+    sizing["perf_coverage_pct"]     = round(cpu_perf_coverage * 100)
+
     return {
         "status": "ok",
         "quota_summary": quota["totals_recommended"],
         "sizing": sizing,
+        "live_cluster": live_cluster,
     }
 
 
@@ -3048,6 +3265,148 @@ async def resolve_pcd_gap(project_id: str, gap_id: int, user=Depends(get_current
     _log_activity(actor=actor, action="resolve_pcd_gap", resource_type="migration_project",
                   resource_id=project_id, details={"gap_id": gap_id})
     return {"status": "ok"}
+
+
+# =====================================================================
+# Phase 2.8 — Auto-detect PCD node profile from hypervisors inventory
+# =====================================================================
+
+@router.get("/projects/{project_id}/pcd-auto-detect-profile",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def auto_detect_pcd_node_profile(project_id: str):
+    """
+    Auto-detect the dominant PCD compute node type from the hypervisors
+    inventory table (populated by pf9_rvtools.py nightly sync).
+    Groups active hypervisors by (vcpus, memory_mb) and returns the most
+    common configuration as a ready-to-use node-profile suggestion.
+    """
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                  vcpus,
+                  memory_mb,
+                  COUNT(*)::int                         AS node_count,
+                  ROUND(AVG(local_gb), 0)::int          AS avg_local_disk_gb
+                FROM hypervisors
+                WHERE state = 'up' AND status = 'enabled'
+                GROUP BY vcpus, memory_mb
+                ORDER BY node_count DESC
+                LIMIT 5
+            """)
+            groups = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT COUNT(*)::int AS total_nodes
+                FROM hypervisors
+                WHERE state = 'up' AND status = 'enabled'
+            """)
+            total_row = cur.fetchone()
+
+    if not groups:
+        return {
+            "status": "no_data",
+            "message": (
+                "No active hypervisors found in inventory. "
+                "Ensure the PCD inventory sync has run (pf9_rvtools.py) and "
+                "hypervisors are in state=up / status=enabled."
+            ),
+            "profiles": [],
+        }
+
+    total_nodes = int((total_row or {}).get("total_nodes") or 0)
+    suggestions = []
+    for g in groups:
+        vcpus     = int(g["vcpus"]   or 0)
+        ram_gb    = round(int(g["memory_mb"] or 0) / 1024)
+        disk_gb   = int(float(g["avg_local_disk_gb"] or 0))
+        storage_tb = round(disk_gb / 1024, 2)
+        # Assume HT: cpu_threads = vcpus, cpu_cores = vcpus / 2
+        cpu_cores   = max(1, vcpus // 2)
+        cpu_threads = vcpus
+        suggestions.append({
+            "suggested_name":  f"{vcpus}vCPU-{ram_gb}GB",
+            "cpu_cores":       cpu_cores,
+            "cpu_threads":     cpu_threads,
+            "ram_gb":          ram_gb,
+            "storage_tb":      storage_tb,
+            "node_count":      int(g["node_count"]),
+        })
+
+    dominant = suggestions[0]
+    return {
+        "status":           "ok",
+        "total_nodes":      total_nodes,
+        "dominant_profile": dominant,
+        "all_configurations": suggestions,
+        "message": (
+            f"Detected {len(groups)} node configuration(s) across "
+            f"{total_nodes} active hypervisor(s). "
+            f"Dominant: {dominant['cpu_threads']} vCPU · {dominant['ram_gb']} GB RAM · "
+            f"{total_nodes} node(s)."
+        ),
+    }
+
+
+# =====================================================================
+# Phase 2.8 — Gap Analysis Action Report export (Excel + PDF)
+# =====================================================================
+
+@router.get("/projects/{project_id}/export-gaps-report.xlsx",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_gaps_report_excel(project_id: str):
+    """Download PCD readiness gap analysis as a styled Excel workbook."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_pcd_gaps
+                WHERE project_id = %s
+                ORDER BY severity DESC, gap_type, resource_name
+            """, (project_id,))
+            gaps = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    readiness_score = project.get("pcd_readiness_score")
+    excel_bytes = generate_gaps_excel_report(
+        gaps=gaps,
+        project_name=project["name"],
+        readiness_score=float(readiness_score) if readiness_score is not None else None,
+    )
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(excel_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="pcd-readiness-{safe_name}.xlsx"'},
+    )
+
+
+@router.get("/projects/{project_id}/export-gaps-report.pdf",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_gaps_report_pdf(project_id: str):
+    """Download PCD readiness gap analysis as a landscape A4 PDF."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_pcd_gaps
+                WHERE project_id = %s
+                ORDER BY severity DESC, gap_type, resource_name
+            """, (project_id,))
+            gaps = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    readiness_score = project.get("pcd_readiness_score")
+    pdf_bytes = generate_gaps_pdf_report(
+        gaps=gaps,
+        project_name=project["name"],
+        readiness_score=float(readiness_score) if readiness_score is not None else None,
+    )
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="pcd-readiness-{safe_name}.pdf"'},
+    )
 
 
 # =====================================================================
