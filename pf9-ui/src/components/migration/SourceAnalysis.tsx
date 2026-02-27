@@ -1870,6 +1870,16 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const [editValues, setEditValues] = useState<Record<number, string>>({});
   const [error, setError] = useState("");
 
+  /* ---- Find & Replace state ---- */
+  const [showFR, setShowFR] = useState(false);
+  const [frFind, setFrFind] = useState("");
+  const [frReplace, setFrReplace] = useState("");
+  const [frCaseSensitive, setFrCaseSensitive] = useState(false);
+  const [frUnconfirmedOnly, setFrUnconfirmedOnly] = useState(false);
+  const [frPreview, setFrPreview] = useState<{ id: number; source_network_name: string; old_value: string; new_value: string }[] | null>(null);
+  const [frLoading, setFrLoading] = useState(false);
+  const [frApplied, setFrApplied] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -1883,6 +1893,33 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   }, [projectId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const runNetworkFR = async (applyMode: boolean) => {
+    if (!frFind.trim()) return;
+    setFrLoading(true); setFrApplied(false);
+    try {
+      const data = await apiFetch<{ preview: typeof frPreview; affected_count: number }>(
+        `/api/migration/projects/${projectId}/network-mappings/bulk-replace`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            find: frFind,
+            replace: frReplace,
+            case_sensitive: frCaseSensitive,
+            unconfirmed_only: frUnconfirmedOnly,
+            preview_only: !applyMode,
+          }),
+        }
+      );
+      setFrPreview(data.preview);
+      if (applyMode) {
+        setFrApplied(true);
+        load();
+        setFrFind(""); setFrReplace(""); setFrPreview(null);
+      }
+    } catch (e: any) { setError(e.message); }
+    finally { setFrLoading(false); }
+  };
 
   const saveMapping = async (id: number) => {
     setSaving(id);
@@ -1908,8 +1945,91 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
             Map each source VMware network to its corresponding PCD network. All powered-on VM networks are auto-populated.
           </p>
         </div>
-        <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={() => { setShowFR(!showFR); setFrPreview(null); setFrApplied(false); }}
+            style={{ ...btnSecondary, background: showFR ? "#eff6ff" : undefined }}>
+            🔍 Find &amp; Replace
+          </button>
+          <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
+        </div>
       </div>
+      {showFR && (
+        <div style={{ marginBottom: 16, padding: 16, background: "#eff6ff",
+          border: "1px solid #bfdbfe", borderRadius: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 10, color: "#1e40af" }}>🔍 Find &amp; Replace — Target Network Name</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 }}>
+            <div>
+              <label style={{ fontSize: "0.78rem", color: "#374151", display: "block", marginBottom: 3 }}>Find</label>
+              <input value={frFind} onChange={e => { setFrFind(e.target.value); setFrPreview(null); }}
+                placeholder="e.g. _vlan_"
+                style={{ ...inputStyle, width: 180, padding: "5px 8px", fontSize: "0.85rem" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.78rem", color: "#374151", display: "block", marginBottom: 3 }}>Replace with</label>
+              <input value={frReplace} onChange={e => { setFrReplace(e.target.value); setFrPreview(null); }}
+                placeholder="leave empty to strip"
+                style={{ ...inputStyle, width: 200, padding: "5px 8px", fontSize: "0.85rem" }} />
+            </div>
+            <div style={{ display: "flex", gap: 16, alignSelf: "center", paddingTop: 4 }}>
+              <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                <input type="checkbox" checked={frCaseSensitive}
+                  onChange={e => { setFrCaseSensitive(e.target.checked); setFrPreview(null); }} />
+                Case sensitive
+              </label>
+              <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                <input type="checkbox" checked={frUnconfirmedOnly}
+                  onChange={e => { setFrUnconfirmedOnly(e.target.checked); setFrPreview(null); }} />
+                Unconfirmed only
+              </label>
+            </div>
+            <button onClick={() => runNetworkFR(false)} disabled={frLoading || !frFind.trim()}
+              style={{ ...btnSecondary, alignSelf: "flex-end" }}>
+              {frLoading && !frApplied ? "⏳ Searching..." : "👁 Preview"}
+            </button>
+          </div>
+          {frApplied && (
+            <div style={{ color: "#15803d", fontWeight: 500, marginBottom: 8 }}>✓ Applied! Rows marked unconfirmed for review.</div>
+          )}
+          {frPreview !== null && (
+            <>
+              {frPreview.length === 0
+                ? <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>No matches found.</div>
+                : (
+                  <>
+                    <div style={{ fontSize: "0.82rem", color: "#374151", marginBottom: 6 }}>
+                      {frPreview.length} network{frPreview.length !== 1 ? "s" : ""} will be affected.
+                    </div>
+                    <div style={{ overflowX: "auto", maxHeight: 240, overflowY: "auto" }}>
+                      <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
+                        <thead>
+                          <tr>
+                            <th style={thStyle}>Source Network</th>
+                            <th style={thStyle}>Before</th>
+                            <th style={thStyle}>After</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {frPreview.map(row => (
+                            <tr key={row.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                              <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.78rem" }}>{row.source_network_name}</td>
+                              <td style={{ ...tdStyle, fontFamily: "monospace", color: "#dc2626", fontSize: "0.78rem" }}>{row.old_value}</td>
+                              <td style={{ ...tdStyle, fontFamily: "monospace", color: "#16a34a", fontSize: "0.78rem" }}>{row.new_value}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <button onClick={() => runNetworkFR(true)} disabled={frLoading}
+                      style={{ ...btnPrimary, marginTop: 10 }}>
+                      {frLoading ? "⏳ Applying..." : `✅ Apply to ${frPreview.length} network${frPreview.length !== 1 ? "s" : ""}`}
+                    </button>
+                  </>
+                )}
+            </>
+          )}
+        </div>
+      )}
       {unconfirmedCount > 0 && (
         <div style={{ marginBottom: 12, padding: "8px 14px", background: "#fff7ed",
           borderRadius: 6, border: "1px solid #fdba74", color: "#9a3412", fontSize: "0.85rem" }}>

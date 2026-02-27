@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.5] - 2026-02-27
+
+### Added
+- **Find & Replace for network target names** — New 🔍 Find & Replace panel in the Network Map tab toolbar. Allows mass-edit of `target_network_name` across all network mappings using the same literal-substring preview/apply pattern as the Tenants tab. Supports case-insensitive matching (default), an "Unconfirmed rows only" scope filter, and a scrollable preview table showing Source Network / Before / After before committing. After applying, changed rows are marked `confirmed=false` for operator review. New API endpoint: `POST /projects/{id}/network-mappings/bulk-replace`.
+
 ## [1.31.4] - 2026-02-27
 
 ### Fixed

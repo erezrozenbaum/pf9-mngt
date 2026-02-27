@@ -2624,6 +2624,14 @@ class BulkReplaceTargetRequest(BaseModel):
     preview_only: bool = False       # if true, return preview without writing
 
 
+class BulkReplaceNetworkRequest(BaseModel):
+    find: str                        # literal substring to find
+    replace: str                     # replacement string (empty string = strip)
+    case_sensitive: bool = False     # default: case-insensitive
+    unconfirmed_only: bool = False   # if true, only affect rows where confirmed=false
+    preview_only: bool = False       # if true, return preview without writing
+
+
 @router.patch("/projects/{project_id}/tenants/bulk-scope",
               dependencies=[Depends(require_permission("migration", "write"))])
 async def bulk_scope_tenants(project_id: str, req: BulkScopeRequest, user=Depends(get_current_user)):
@@ -2721,6 +2729,70 @@ async def bulk_replace_target(project_id: str, req: BulkReplaceTargetRequest,
                   resource_id=project_id,
                   details={"field": req.field, "find": req.find, "replace": req.replace,
                            "affected": len(preview)})
+    return {"status": "ok", "affected_count": len(preview), "preview": preview}
+
+
+@router.post("/projects/{project_id}/network-mappings/bulk-replace",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_replace_network(project_id: str, req: BulkReplaceNetworkRequest,
+                               user=Depends(get_current_user)):
+    """
+    Find-and-replace in target_network_name across all network mappings.
+    Supports case-insensitive matching (default) and preview mode (dry run).
+    Matching is literal substring — not regex — to keep it safe and predictable.
+    After apply, affected rows are marked confirmed=false so operator reviews the result.
+    """
+    if not req.find:
+        raise HTTPException(status_code=400, detail="find string must not be empty")
+
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            filter_sql = "AND confirmed = false" if req.unconfirmed_only else ""
+            cur.execute(f"""
+                SELECT id, source_network_name, target_network_name
+                FROM migration_network_mappings
+                WHERE project_id = %s
+                  AND target_network_name IS NOT NULL
+                  AND target_network_name != ''
+                  {filter_sql}
+                ORDER BY source_network_name
+            """, (project_id,))
+            rows = cur.fetchall()
+
+            preview = []
+            for r in rows:
+                old = r["target_network_name"] or ""
+                if req.case_sensitive:
+                    new = old.replace(req.find, req.replace)
+                else:
+                    new = re.sub(re.escape(req.find), req.replace,
+                                 old, flags=re.IGNORECASE)
+                if old != new:
+                    preview.append({
+                        "id": r["id"],
+                        "source_network_name": r["source_network_name"],
+                        "old_value": old,
+                        "new_value": new,
+                    })
+
+            if req.preview_only:
+                return {"status": "ok", "preview": preview, "affected_count": len(preview)}
+
+            for item in preview:
+                cur.execute("""
+                    UPDATE migration_network_mappings
+                    SET target_network_name = %s,
+                        confirmed = false,
+                        updated_at = now()
+                    WHERE id = %s AND project_id = %s
+                """, (item["new_value"], item["id"], project_id))
+            conn.commit()
+
+    _log_activity(actor=actor, action="bulk_replace_network", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"find": req.find, "replace": req.replace, "affected": len(preview)})
     return {"status": "ok", "affected_count": len(preview), "preview": preview}
 
 
