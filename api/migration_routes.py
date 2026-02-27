@@ -1767,8 +1767,9 @@ def _run_tenant_detection(project_id: str, cur):
         cur.execute("""
             INSERT INTO migration_tenants
                 (project_id, tenant_name, org_vdc, detection_method, vm_count,
-                 target_domain_name, target_project_name, target_display_name, target_confirmed)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)
+                 target_domain_name, target_domain_description,
+                 target_project_name, target_display_name, target_confirmed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false)
             ON CONFLICT (project_id, tenant_name, org_vdc) DO UPDATE SET
                 detection_method = EXCLUDED.detection_method,
                 vm_count = EXCLUDED.vm_count,
@@ -1776,6 +1777,8 @@ def _run_tenant_detection(project_id: str, cur):
                 -- Do NOT overwrite target names / target_confirmed if already set by user
         """, (project_id, info["tenant_name"], info["org_vdc"] or None,
               info["detection_method"], info["vm_count"],
+              info["tenant_name"],
+              # target_domain_description: seeded as a description hint from domain name
               info["tenant_name"],
               # target_project_name: use OrgVDC if available (maps to PCD Project),
               # else fall back to tenant_name (non-vCloud or unknown VDC)
@@ -2683,7 +2686,8 @@ async def bulk_replace_target(project_id: str, req: BulkReplaceTargetRequest,
     Matching is literal substring — not regex — to keep it safe and predictable.
     After apply, affected rows are marked target_confirmed=false so operator reviews the result.
     """
-    ALLOWED_FIELDS = {"target_domain_name", "target_project_name"}
+    ALLOWED_FIELDS = {"target_domain_name", "target_domain_description",
+                       "target_project_name", "target_display_name"}
     if req.field not in ALLOWED_FIELDS:
         raise HTTPException(status_code=400, detail=f"field must be one of {ALLOWED_FIELDS}")
     if not req.find:
