@@ -1161,7 +1161,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
       setFrPreview(data.preview);
       if (applyMode) {
         setFrApplied(true);
-        loadTenants();
+        onRefresh();
         setFrFind(""); setFrReplace(""); setFrPreview(null);
       }
     } catch (e: any) { setError(e.message); }
