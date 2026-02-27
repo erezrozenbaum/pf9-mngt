@@ -301,7 +301,8 @@ class UpdateTenantRequest(BaseModel):
     # Phase 2B — target mapping
     target_domain_name: Optional[str] = None
     target_project_name: Optional[str] = None
-    target_display_name: Optional[str] = None
+    target_display_name: Optional[str] = None         # project description / friendly name
+    target_domain_description: Optional[str] = None  # domain description
     target_confirmed: Optional[bool] = None  # true = user reviewed/confirmed the target names
     # Legacy aliases (kept for backwards compat)
     target_domain: Optional[str] = None
@@ -754,6 +755,19 @@ async def upload_rvtools(project_id: str, file: UploadFile = File(...), user = D
 
             # Run tenant detection
             _run_tenant_detection(project_id, cur)
+
+            # Clean up network mappings for source networks no longer in VM data
+            cur.execute("""
+                DELETE FROM migration_network_mappings
+                WHERE project_id = %s
+                  AND source_network_name NOT IN (
+                      SELECT DISTINCT network_name
+                      FROM migration_vms
+                      WHERE project_id = %s
+                        AND network_name IS NOT NULL
+                        AND network_name != ''
+                  )
+            """, (project_id, project_id))
 
             # ---- Collect enriched stats from DB ----
             # Power state breakdown
@@ -1748,22 +1762,25 @@ def _run_tenant_detection(project_id: str, cur):
 
     # Upsert tenants — pre-seed target names from source name (confirmed=false = needs review)
     for (tname, ovdc), info in tenant_map.items():
+        target_project = info["org_vdc"] or info["tenant_name"]
         cur.execute("""
             INSERT INTO migration_tenants
                 (project_id, tenant_name, org_vdc, detection_method, vm_count,
-                 target_domain_name, target_project_name, target_confirmed)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, false)
+                 target_domain_name, target_project_name, target_display_name, target_confirmed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false)
             ON CONFLICT (project_id, tenant_name, org_vdc) DO UPDATE SET
                 detection_method = EXCLUDED.detection_method,
                 vm_count = EXCLUDED.vm_count,
                 updated_at = now()
-                -- Do NOT overwrite target_domain_name / target_confirmed if already set by user
+                -- Do NOT overwrite target names / target_confirmed if already set by user
         """, (project_id, info["tenant_name"], info["org_vdc"] or None,
               info["detection_method"], info["vm_count"],
               info["tenant_name"],
               # target_project_name: use OrgVDC if available (maps to PCD Project),
               # else fall back to tenant_name (non-vCloud or unknown VDC)
-              info["org_vdc"] or info["tenant_name"]))
+              target_project,
+              # target_display_name: seeded as a description hint from target_project_name
+              target_project))
 
     # Update tenant disk/ram/vcpu/in_use totals
     cur.execute("""
