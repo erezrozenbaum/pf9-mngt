@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0] - 2026-02-28
+
+### Added
+- **Cohort-Sequential Daily Scheduler** — Daily migration schedule is now fully cohort-aware. The scheduler processes each cohort as a sequential block (using `itertools.groupby`) so cohorts never mix within a day. Each cohort starts on a fresh day and exhausts completely before the next cohort begins. Engine: `generate_migration_plan()` in `migration_engine.py`.
+- **`cohort_schedule_summary` in export-plan response** — `GET /projects/{id}/export-plan` now returns a `cohort_schedule_summary` list: `[{cohort_name, start_day, end_day, duration_days, vm_count}]` for the Cohort Execution Plan table.
+- **📦 Cohort Execution Plan table in Migration Plan tab** — New summary table displayed above the per-tenant breakdown, showing each cohort's start day, end day, duration, and VM count from `cohort_schedule_summary`.
+- **Migration Plan: cohort-grouped tenant table** — The per-tenant assessment table is now grouped by cohort with `📦 Cohort N — Name` header rows and subtotal rows (tenants, VMs, hours) per cohort group.
+- **Daily Schedule: cohort separator rows + Cohort(s) column** — Full-width `📦 Cohort Name` separator rows appear at cohort transitions in the daily schedule table. Each day row has a new "Cohort(s)" column.
+- **What-If Estimator: two-model comparison** — The What-If estimator now shows two independent models side-by-side per cohort:
+  - **BW Days** (bandwidth / transfer model) — formula: `effMbps = bw × 0.75; transferH = (diskGb × 1024 × 8) / (effMbps × 3600) × 1.14; cutoverH = tenants × 0.25 / agentSlots; bwDays = totalH / hoursPerDay`
+  - **Sched. Days** (VM-slots model) — `schedDays = vm_count / effectiveVmsPerDay`; mirrors the backend scheduler exactly
+- **What-If: project deadline check banner** — Green/red banner compares both BW Days and Sched. Days against the project's `migration_duration_days`; turns red if either model exceeds the configured duration.
+- **Cohort card: expandable tenant list** — Each cohort card has a `▾ N Tenants` toggle that expands inline to show all assigned tenants with ease score badges and a **Move to…** cohort dropdown for immediate reassignment.
+
+### Fixed
+- **What-If formula: transferH 1000× too small** — `3_600_000` ms divisor corrected to `3_600` s; estimated transfer hours were 1000× underestimated before this fix.
+- **`migration_cohorts` not deleted on Clear RVTools** — `DELETE /projects/{id}/rvtools` (Clear RVTools Data) now includes `migration_cohorts` in its table purge list. Ghost cohort shells no longer survive a data clear.
+- **`migration_cohorts` not deleted on re-upload** — RVTools re-import now deletes `migration_cohorts` before re-ingesting data (clean slate). Previously cohort assignments silently persisted after re-upload.
+- **export_migration_plan missing cohort context** — SQL now JOINs `migration_cohorts` to supply `cohort_name` and `cohort_order` per tenant; ORDER BY `cohort_order NULLS LAST, vm_count DESC`.
+
+### Changed
+- **What-If: bandwidth range extended to 100 Gbps** — Slider max raised from 10 Gbps to 100 Gbps; a free-form number input is added alongside the slider for direct value entry.
+- **What-If: ⓘ tooltips on Bandwidth and Agent Slots** — Tooltip labels explain what each parameter controls (shared pipe vs parallelism).
+- **`project` prop added to CohortsView** — Required to supply `migration_duration_days` to the deadline check banner.
+- **`tenant_plans` sorted by cohort order** — `generate_migration_plan()` sorts `tenant_map.values()` by `(cohort_order or 9999, -vm_count)` so plans are output in cohort sequence.
+- **VM sort key includes cohort** — VMs are sorted by `(cohort_order or 9999, tenant_name, priority, -disk_gb)` at the start of scheduling.
+
+## [1.32.1] - 2026-02-28
+
+### Changed
+- **Smart Auto-Assign panel — Ramp Profile mode** — New **Uniform / Ramp Profile** toggle replaces the single "Target Cohorts N" field. Ramp mode lets you define named cohorts each with their own VM cap (e.g. 🧪 Pilot: 10 VMs → 🔄 Wave 1: 50 VMs → 🚀 Wave 2: unlimited). Four quick-presets: Pilot → Bulk, 3-Wave, 4-Wave, 5-Wave. Rows can be renamed, re-capped, added, or removed inline.
+- **Strategy tooltips + descriptions** — Every field label now has an `ⓘ` tooltip. A plain-English description of the selected strategy appears directly below the dropdown so operators understand the distribution logic before previewing.
+- **Unassigned pool bar** — A visual easy/medium/hard distribution bar shows the current unassigned tenant pool composition before any preview is run.
+- **Preview table — Avg Ease column** — The post-preview cohort summary table now includes an Avg Ease column (colour-coded green/amber/red) alongside Tenants, VMs, Disk, and Avg Risk.
+- **Apply locked until Preview** — Apply button is disabled and labelled "locked until Preview" until a preview has been run, preventing accidental commits.
+- **Backend: `cohort_profiles` parameter** — `AutoAssignRequest` now accepts an optional `cohort_profiles: [{name, max_vms}]` list. When present, the engine uses per-cohort VM caps and the profile names for cohort creation. The `_format_auto_assign_result` helper now also returns `avg_risk` in each cohort summary row.
+
+## [1.32.0] - 2026-02-28
+
+### Added
+- **Phase 3.0 — Smart Cohort Planning** — Full implementation of the Tenant Ease Score system and intelligent cohort auto-assignment.
+  - **Tenant Ease Score engine** (`migration_engine.py`) — Computes an 8-dimension difficulty score per tenant: disk used, avg risk, unsupported OS ratio, VM count, network count, cross-tenant dependencies, cold-VM ratio, and unconfirmed network mappings. Each dimension is weighted (configurable) and normalised to 0–100 (lower = easier).
+  - **6 Auto-Assign strategies** — `easiest_first`, `riskiest_last`, `pilot_bulk`, `balanced_load`, `os_first`, `by_priority`. Guardrails: max VMs/cohort, max disk TB, max avg risk %, min OS support %, pilot cohort size.
+  - **`GET /api/migration/projects/{id}/tenant-ease-scores`** — Returns per-tenant ease score with dimension breakdown and label (Easy / Medium / Hard).
+  - **`POST /api/migration/projects/{id}/cohorts/auto-assign`** — Runs the selected strategy with guardrails; supports `dry_run: true` preview before committing. Creates missing cohorts when `create_cohorts_if_missing: true`.
+  - **Tenants tab — Ease column** — New sortable `Ease ↓` column with colour-coded badge (green/amber/red). Click opens a per-dimension breakdown popover.
+  - **Cohorts tab — Smart Auto-Assign panel** — Collapsible panel with strategy picker, target cohort count, and 5 guardrail sliders. Preview button shows a per-cohort summary table before committing.
+  - **Cohorts tab — Enhanced cohort cards** — Each card now shows `Avg Ease`, `Total Disk`, `Avg Risk`, and a mini difficulty distribution bar (easy/medium/hard breakdown).
+  - **Cohorts tab — What-If Estimator** — Collapsible estimator with bandwidth (Mbps) and parallel agent slot sliders. Computes estimated migration hours and 8 h/day working days per cohort using member ease-score disk data.
+
 ## [1.31.11] - 2026-02-27
 
 ### Fixed

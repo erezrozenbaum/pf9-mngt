@@ -111,6 +111,24 @@ interface Tenant {
   cohort_name?: string | null;
 }
 
+// Phase 3.0 — Tenant Ease Score
+interface TenantEaseScore {
+  tenant_id: number;
+  tenant_name: string;
+  ease_score: number;
+  ease_label: "Easy" | "Medium" | "Hard";
+  vm_count: number;
+  total_used_gb: number;
+  avg_risk_score: number;
+  os_support_rate: number;
+  distinct_network_count: number;
+  cross_tenant_dep_count: number;
+  cold_vm_ratio: number;
+  unconfirmed_ratio: number;
+  dimension_scores: Record<string, number>;
+  dimension_weights: Record<string, number>;
+}
+
 interface NetworkSummary {
   id: number;
   network_name: string;
@@ -868,7 +886,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
 
       {/* ---- Cohorts ---- */}
       {subView === "cohorts" && (
-        <CohortsView projectId={pid} tenants={tenants} onRefreshTenants={() => { loadTenants(); loadStats(); }} />
+        <CohortsView projectId={pid} project={project} tenants={tenants} onRefreshTenants={() => { loadTenants(); loadStats(); }} />
       )}
 
       {/* ---- Networks ---- */}
@@ -1111,6 +1129,20 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   const [editPriority, setEditPriority] = useState<number>(999);
   const [editSaving, setEditSaving] = useState(false);
 
+  /* Phase 3.0 — Ease scores ---- */
+  const [easeScores, setEaseScores] = useState<Record<number, TenantEaseScore>>({});
+  const [easePopover, setEasePopover] = useState<number | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ tenant_ease_scores: TenantEaseScore[] }>(
+      `/api/migration/projects/${projectId}/tenant-ease-scores`
+    ).then(d => {
+      const map: Record<number, TenantEaseScore> = {};
+      for (const s of d.tenant_ease_scores) map[s.tenant_id] = s;
+      setEaseScores(map);
+    }).catch(() => {});
+  }, [projectId, tenants.length]);
+
   /* Phase 2.10H — readiness cache ---- */
   const [readinessCache, setReadinessCache] = useState<Record<number, { overall: string; score: string }>>({});
 
@@ -1288,6 +1320,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
         case "total_ram_gb":       av = a.total_ram_mb || 0;           bv = b.total_ram_mb || 0;           break;
         case "total_disk_gb":      av = a.total_disk_gb || 0;          bv = b.total_disk_gb || 0;          break;
         case "migration_priority": av = a.migration_priority ?? 999;   bv = b.migration_priority ?? 999;  break;
+        case "ease_score":          av = easeScores[a.id]?.ease_score ?? 999; bv = easeScores[b.id]?.ease_score ?? 999; break;
         default:                   av = (a.tenant_name || "").toLowerCase(); bv = (b.tenant_name || "").toLowerCase();
       }
       const cmp = typeof av === "string" ? av.localeCompare(bv) : (av - bv);
@@ -1495,6 +1528,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                 { key: "total_ram_gb",       label: "RAM GB"    },
                 { key: "total_disk_gb",      label: "Disk GB"   },
                 { key: "migration_priority", label: "Priority"  },
+                { key: "ease_score",         label: "Ease ↓"     },
               ] as {key:string;label:string;noSort?:boolean}[]).map(col => (
                 <th key={col.key}
                   style={{ ...thStyle,
@@ -1638,6 +1672,58 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                   <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(0) : "0"}</td>
                   <td style={{ ...tdStyle, textAlign: "center", color: (t.migration_priority ?? 999) < 999 ? "#1d4ed8" : "#9ca3af" }}>
                     {(t.migration_priority ?? 999) < 999 ? t.migration_priority : "—"}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center", position: "relative" }}>
+                    {(() => {
+                      const es = easeScores[t.id];
+                      if (!es) return <span style={{ color: "#d1d5db" }}>—</span>;
+                      const bg = es.ease_score < 30 ? "#dcfce7" : es.ease_score < 60 ? "#fef9c3" : "#fee2e2";
+                      const col = es.ease_score < 30 ? "#15803d" : es.ease_score < 60 ? "#854d0e" : "#dc2626";
+                      return (
+                        <span
+                          title="Click for breakdown"
+                          onClick={() => setEasePopover(easePopover === t.id ? null : t.id)}
+                          style={{ ...pillStyle, background: bg, color: col, cursor: "pointer", fontSize: "0.72rem", fontWeight: 700 }}>
+                          {es.ease_score.toFixed(0)}
+                        </span>
+                      );
+                    })()}
+                    {easePopover === t.id && (() => {
+                      const es = easeScores[t.id]!;
+                      const dimLabels: Record<string, string> = {
+                        disk: "Disk (used GB)", risk: "Avg Risk", os: "OS (unsupported)",
+                        vm_count: "VM Count", networks: "Networks", deps: "Cross-tenant deps",
+                        cold: "Cold VM ratio", unconf: "Unconfirmed mappings",
+                      };
+                      return (
+                        <div onClick={e => e.stopPropagation()} style={{
+                          position: "absolute", zIndex: 100, top: "110%", left: "50%", transform: "translateX(-50%)",
+                          background: "var(--card-bg, #fff)", border: "1px solid #e5e7eb", borderRadius: 8,
+                          boxShadow: "0 4px 16px rgba(0,0,0,0.15)", padding: "12px 16px", minWidth: 260, textAlign: "left"
+                        }}>
+                          <div style={{ fontWeight: 700, marginBottom: 6, fontSize: "0.9rem" }}>
+                            Ease Score: {es.ease_score.toFixed(1)} — {es.ease_label}
+                          </div>
+                          <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse" }}>
+                            <tbody>
+                              {Object.entries(es.dimension_scores).map(([dim, val]) => (
+                                <tr key={dim}>
+                                  <td style={{ padding: "2px 4px", color: "#6b7280" }}>{dimLabels[dim] || dim}</td>
+                                  <td style={{ padding: "2px 4px", textAlign: "right", fontWeight: 600,
+                                    color: val > es.dimension_weights[dim] * 0.7 ? "#dc2626" : "#15803d" }}>
+                                    {val.toFixed(1)} / {es.dimension_weights[dim].toFixed(0)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <div style={{ marginTop: 8, fontSize: "0.72rem", color: "#9ca3af", borderTop: "1px solid #e5e7eb", paddingTop: 4 }}>
+                            {es.vm_count} VMs · {es.total_used_gb.toFixed(1)} GB used · Risk {es.avg_risk_score.toFixed(0)}
+                          </div>
+                          <button onClick={() => setEasePopover(null)} style={{ ...btnSmall, marginTop: 6, width: "100%" }}>Close</button>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td style={{ ...tdStyle, fontSize: "0.8rem" }}>
                     {t.target_domain_name
@@ -2256,8 +2342,8 @@ interface Cohort {
   total_ram_gb: number;
 }
 
-function CohortsView({ projectId, tenants, onRefreshTenants }: {
-  projectId: number; tenants: Tenant[]; onRefreshTenants: () => void
+function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
+  projectId: number; project: MigrationProject; tenants: Tenant[]; onRefreshTenants: () => void
 }) {
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [unassignedCount, setUnassignedCount] = useState(0);
@@ -2276,8 +2362,30 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
   const [selectedCohort, setSelectedCohort] = useState<number | null>(null);
   const [selectedTenants, setSelectedTenants] = useState<Set<number>>(new Set());
   const [assigning, setAssigning] = useState(false);
-  const [autoStrategy, setAutoStrategy] = useState("priority");
+  const [autoStrategy, setAutoStrategy] = useState("easiest_first");
   const [autoAssigning, setAutoAssigning] = useState(false);
+  const [showAutoPanel, setShowAutoPanel] = useState(false);
+  const [numCohorts, setNumCohorts] = useState(3);
+  const [maxVms, setMaxVms] = useState(9999);
+  const [maxDiskTb, setMaxDiskTb] = useState(9999);
+  const [maxAvgRisk, setMaxAvgRisk] = useState(100);
+  const [minOsSupport, setMinOsSupport] = useState(0);
+  const [pilotSize, setPilotSize] = useState(5);
+  const [pilotWaves, setPilotWaves] = useState<string[]>(["\u{1F9EA} Pilot", "\u{1F504} Wave 1", "\u{1F680} Main"]);
+  const [autoPreview, setAutoPreview] = useState<any>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [cohortEaseScores, setCohortEaseScores] = useState<Record<number, TenantEaseScore>>({});
+  const [showWhatIf, setShowWhatIf] = useState(false);
+  const [expandedCohort, setExpandedCohort] = useState<number | null>(null);
+  const [reassigning, setReassigning] = useState<Record<number, boolean>>({});
+  const [bandwidthMbps, setBandwidthMbps] = useState(1000);
+  const [agentSlots, setAgentSlots] = useState(2);
+  const [rampMode, setRampMode] = useState(false);
+  const [cohortProfiles, setCohortProfiles] = useState<{ name: string; max_vms: number | null }[]>([
+    { name: "🧪 Pilot",  max_vms: 10 },
+    { name: "🔄 Wave 1", max_vms: 50 },
+    { name: "🚀 Wave 2", max_vms: null },
+  ]);
 
   const loadCohorts = useCallback(async () => {
     setLoading(true);
@@ -2341,13 +2449,57 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
     finally { setAssigning(false); }
   };
 
+  useEffect(() => {
+    apiFetch<{ tenant_ease_scores: TenantEaseScore[] }>(
+      `/api/migration/projects/${projectId}/tenant-ease-scores`
+    ).then(d => {
+      const map: Record<number, TenantEaseScore> = {};
+      for (const s of d.tenant_ease_scores) map[s.tenant_id] = s;
+      setCohortEaseScores(map);
+    }).catch(() => {});
+  }, [projectId, tenants.length]);
+
+  const buildGuardrails = () => ({
+    max_vms_per_cohort: maxVms,
+    max_disk_tb_per_cohort: maxDiskTb,
+    max_avg_risk: maxAvgRisk,
+    min_os_support_rate: minOsSupport,
+    pilot_size: pilotSize,
+  });
+
+  const previewAutoAssign = async () => {
+    setPreviewLoading(true); setAutoPreview(null);
+    try {
+      const isPilotWave = !rampMode && autoStrategy === "pilot_bulk";
+      const result = await apiFetch(`/api/migration/projects/${projectId}/cohorts/auto-assign`, {
+        method: "POST",
+        body: JSON.stringify({
+          strategy: autoStrategy,
+          num_cohorts: rampMode ? cohortProfiles.length : isPilotWave ? pilotWaves.length : numCohorts,
+          guardrails: buildGuardrails(), dry_run: true, create_cohorts_if_missing: true,
+          cohort_profiles: rampMode ? cohortProfiles : isPilotWave ? pilotWaves.map(n => ({ name: n, max_vms: null })) : undefined,
+        }),
+      });
+      setAutoPreview(result);
+    } catch (e: any) { setError(e.message); }
+    finally { setPreviewLoading(false); }
+  };
+
   const autoAssign = async () => {
-    if (!confirm(`Auto-assign all unassigned tenants to cohorts using "${autoStrategy}" strategy?`)) return;
+    if (!confirm(`Apply auto-assign using "${autoStrategy}" strategy? This will update tenant cohort assignments.`)) return;
     setAutoAssigning(true);
     try {
-      await apiFetch(`/api/migration/projects/${projectId}/cohorts/auto-assign?strategy=${autoStrategy}`, {
+      const isPilotWave = !rampMode && autoStrategy === "pilot_bulk";
+      await apiFetch(`/api/migration/projects/${projectId}/cohorts/auto-assign`, {
         method: "POST",
+        body: JSON.stringify({
+          strategy: autoStrategy,
+          num_cohorts: rampMode ? cohortProfiles.length : isPilotWave ? pilotWaves.length : numCohorts,
+          guardrails: buildGuardrails(), dry_run: false, create_cohorts_if_missing: true,
+          cohort_profiles: rampMode ? cohortProfiles : isPilotWave ? pilotWaves.map(n => ({ name: n, max_vms: null })) : undefined,
+        }),
       });
+      setAutoPreview(null); setShowAutoPanel(false);
       loadCohorts(); onRefreshTenants();
     } catch (e: any) { setError(e.message); }
     finally { setAutoAssigning(false); }
@@ -2375,19 +2527,324 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
           {unassignedCount} tenant{unassignedCount !== 1 ? "s" : ""} unassigned
         </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <select value={autoStrategy} onChange={e => setAutoStrategy(e.target.value)} style={{ ...inputStyle, maxWidth: 160, fontSize: "0.82rem" }}>
-            <option value="priority">By Priority</option>
-            <option value="risk">By Risk (low-risk first)</option>
-            <option value="equal_split">Equal Split</option>
-          </select>
-          <button onClick={autoAssign} disabled={autoAssigning || cohorts.length === 0}
-            style={btnSecondary} title="Auto-assign all unassigned tenants">
-            {autoAssigning ? "..." : "⚡ Auto-Assign"}
+          <button onClick={() => { setShowAutoPanel(v => !v); setAutoPreview(null); }}
+            style={{ ...btnSecondary, background: showAutoPanel ? "#eff6ff" : undefined, color: showAutoPanel ? "#1d4ed8" : undefined }}
+            title="Smart auto-assign tenants to cohorts">
+            ⚡ Smart Auto-Assign {showAutoPanel ? "▲" : "▼"}
           </button>
           <button onClick={() => setShowCreate(!showCreate)} style={btnPrimary}>+ New Cohort</button>
         </div>
       </div>
       {error && <div style={alertError}>{error}</div>}
+
+      {/* ── Smart Auto-Assign panel ── */}
+      {showAutoPanel && (
+        <div style={{ ...sectionStyle, marginBottom: 16, background: "#f0f9ff", borderColor: "#bae6fd" }}>
+
+          {/* Header + mode toggle */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontWeight: 700, fontSize: "0.9rem", color: "#0369a1" }}>⚡ Smart Auto-Assign — Phase 3.0</div>
+            <div style={{ display: "flex", background: "#e0f2fe", borderRadius: 20, padding: 2, gap: 2 }}>
+              <button onClick={() => { setRampMode(false); setAutoPreview(null); }}
+                style={{ padding: "3px 14px", borderRadius: 18, border: "none", cursor: "pointer", fontSize: "0.78rem",
+                  background: !rampMode ? "#0369a1" : "transparent", color: !rampMode ? "#fff" : "#0369a1", fontWeight: 600 }}>
+                Uniform
+              </button>
+              <button onClick={() => { setRampMode(true); setAutoPreview(null); }}
+                style={{ padding: "3px 14px", borderRadius: 18, border: "none", cursor: "pointer", fontSize: "0.78rem",
+                  background: rampMode ? "#0369a1" : "transparent", color: rampMode ? "#fff" : "#0369a1", fontWeight: 600 }}
+                title="Define named cohorts with individual VM caps — e.g. Pilot (5 VMs) → Wave 1 (30 VMs) → Wave 2 (unlimited)">
+                Ramp Profile
+              </button>
+            </div>
+          </div>
+
+          {/* Unassigned pool distribution bar */}
+          {(() => {
+            const unassigned = tenants.filter(t => !t.cohort_id && t.include_in_plan !== false);
+            const us = unassigned.map(t => cohortEaseScores[t.id]).filter(Boolean);
+            if (!unassigned.length) return null;
+            const easy = us.filter(e => e.ease_score < 30).length;
+            const med  = us.filter(e => e.ease_score >= 30 && e.ease_score < 60).length;
+            const hard = us.filter(e => e.ease_score >= 60).length;
+            const total = us.length || 1;
+            return (
+              <div style={{ marginBottom: 12, background: "#e0f2fe", borderRadius: 6, padding: "6px 10px" }}>
+                <div style={{ fontSize: "0.75rem", color: "#0369a1", fontWeight: 600, marginBottom: 4 }}>
+                  {unassigned.length} unassigned tenant{unassigned.length !== 1 ? "s" : ""} in pool
+                  {us.length < unassigned.length && <span style={{ marginLeft: 6, color: "#9ca3af", fontWeight: 400 }}>(ease scores loading…)</span>}
+                </div>
+                {us.length > 0 && (
+                  <>
+                    <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", gap: 1, marginBottom: 3 }}>
+                      {easy > 0 && <div style={{ flex: easy, background: "#86efac" }} title={`${easy} easy tenants`} />}
+                      {med  > 0 && <div style={{ flex: med,  background: "#fde68a" }} title={`${med} medium tenants`} />}
+                      {hard > 0 && <div style={{ flex: hard, background: "#fca5a5" }} title={`${hard} hard tenants`} />}
+                    </div>
+                    <div style={{ display: "flex", gap: 12, fontSize: "0.72rem" }}>
+                      {easy > 0 && <span style={{ color: "#15803d" }}>● {easy} easy ({Math.round(easy/total*100)}%)</span>}
+                      {med  > 0 && <span style={{ color: "#854d0e" }}>● {med} medium ({Math.round(med/total*100)}%)</span>}
+                      {hard > 0 && <span style={{ color: "#dc2626" }}>● {hard} hard ({Math.round(hard/total*100)}%)</span>}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Strategy picker + description */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={labelStyle}>
+              Strategy <span title="How tenants are sorted and distributed across cohorts" style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span>
+            </label>
+            <select value={autoStrategy} onChange={e => {
+              const s = e.target.value;
+              setAutoStrategy(s);
+              setAutoPreview(null);
+              // initialise pilot wave list when switching to pilot_bulk
+              if (s === "pilot_bulk" && pilotWaves.length < 2) {
+                setPilotWaves(["\u{1F9EA} Pilot", "\u{1F504} Wave 1", "\u{1F680} Main"]);
+              }
+            }}
+              style={{ ...inputStyle, maxWidth: 260 }}>
+              <option value="easiest_first">Easiest First</option>
+              <option value="riskiest_last">Riskiest Last</option>
+              <option value="pilot_bulk">Pilot + Waves</option>
+              <option value="balanced_load">Balanced Load (by disk GB)</option>
+              <option value="os_first">OS First (Linux → Windows)</option>
+              <option value="by_priority">By Priority</option>
+            </select>
+            <div style={{ marginTop: 5, fontSize: "0.75rem", color: "#6b7280", fontStyle: "italic", maxWidth: 520 }}>
+              {({
+                easiest_first: "Tenants sorted by ease score (lowest = easiest). Each cohort fills to its limit before the next. Best for low-risk early waves.",
+                riskiest_last: "High-risk tenants (above threshold %) always land in the final cohort. Safe tenants fill earlier cohorts by ease score.",
+                pilot_bulk:    "The N easiest tenants form a small Pilot cohort. Remaining tenants fill Wave 1 … Wave N-1 in ease order, with the last cohort as Main. Use Target Cohorts to set how many waves (2 = Pilot + Main, 3 = Pilot + Wave 1 + Main, etc.).",
+                balanced_load: "Greedy bin-packing by used-disk GB to equalise migration workload across cohorts. Best for bandwidth budget planning.",
+                os_first:      "Linux tenants fill early cohorts, Windows fill later ones. Use when Linux migrations are faster or simpler for your team.",
+                by_priority:   "Uses the Migration Priority number you assigned per tenant. Lower number = earlier cohort. Ties broken by ease score.",
+              } as Record<string,string>)[autoStrategy]}
+            </div>
+          </div>
+
+          {/* ── UNIFORM MODE ── */}
+          {!rampMode && (
+            <div style={{ marginBottom: 12 }}>
+              {/* Pilot+Waves: interactive wave list */}
+              {autoStrategy === "pilot_bulk" ? (
+                <div>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ fontSize: "0.75rem", color: "#0369a1", fontWeight: 600 }}>Quick presets:</span>
+                    {([
+                      { label: "Pilot → Main",   waves: ["\u{1F9EA} Pilot", "\u{1F680} Main"] },
+                      { label: "3-Wave",         waves: ["\u{1F9EA} Pilot", "\u{1F504} Wave 1", "\u{1F680} Main"] },
+                      { label: "4-Wave",         waves: ["\u{1F9EA} Pilot", "\u{1F504} Wave 1", "\u{1F504} Wave 2", "\u{1F680} Main"] },
+                      { label: "5-Wave",         waves: ["\u{1F9EA} Pilot", "\u{1F504} Wave 1", "\u{1F504} Wave 2", "\u{1F504} Wave 3", "\u{1F680} Main"] },
+                    ] as { label: string; waves: string[] }[]).map(p => (
+                      <button key={p.label} onClick={() => { setPilotWaves(p.waves); setAutoPreview(null); }}
+                        style={{ ...btnSmall, fontSize: "0.72rem" }}>{p.label}</button>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+                    {pilotWaves.map((name, idx) => (
+                      <div key={idx} style={{ display: "flex", gap: 6, alignItems: "center", background: "#fff",
+                        borderRadius: 6, padding: "5px 10px", border: "1px solid #bae6fd" }}>
+                        <span style={{ fontSize: "0.72rem", color: "#0369a1", fontWeight: 700, minWidth: 18, textAlign: "right" }}>{idx + 1}.</span>
+                        <input value={name}
+                          onChange={e => { setPilotWaves(ws => ws.map((w, i) => i === idx ? e.target.value : w)); setAutoPreview(null); }}
+                          style={{ ...inputStyle, maxWidth: 200, marginBottom: 0 }} placeholder="Wave name" />
+                        {idx === 0 && (
+                          <span style={{ fontSize: "0.72rem", color: "#6b7280", whiteSpace: "nowrap" }}>
+                            Pilot size: <input type="number" min={1} value={pilotSize}
+                              onChange={e => { setPilotSize(Number(e.target.value)); setAutoPreview(null); }}
+                              style={{ ...inputStyle, maxWidth: 52, marginBottom: 0, display: "inline-block" }} />
+                          </span>
+                        )}
+                        {pilotWaves.length > 2 && idx > 0 && idx < pilotWaves.length - 1 && (
+                          <button onClick={() => { setPilotWaves(ws => ws.filter((_, i) => i !== idx)); setAutoPreview(null); }}
+                            style={{ ...btnSmall, color: "#dc2626", padding: "1px 6px" }} title="Remove this wave">✕</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                    <button onClick={() => {
+                      setPilotWaves(ws => [
+                        ...ws.slice(0, -1),
+                        `\u{1F504} Wave ${ws.length - 1}`,
+                        ws[ws.length - 1],
+                      ]); setAutoPreview(null);
+                    }} style={btnSmall}>+ Add Wave</button>
+                    <span style={{ fontSize: "0.72rem", color: "#6b7280" }}>ⓘ Pilot catches the N easiest tenants. Remaining tenants fill waves in ease order. Last cohort catches overflow.</span>
+                  </div>
+                  {/* Guardrail row for pilot_bulk */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 8 }}>
+                    <div>
+                      <label style={labelStyle}>Max VMs / Wave <span title="Hard cap on VM count per wave. Overflow goes to the next wave." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                      <input type="number" min={1} value={maxVms === 9999 ? "" : maxVms} placeholder="unlimited"
+                        onChange={e => { setMaxVms(e.target.value ? Number(e.target.value) : 9999); setAutoPreview(null); }} style={inputStyle} />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Max Disk TB / Wave <span title="Hard cap on used-disk per wave (TB)." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                      <input type="number" min={0.1} step={0.1} value={maxDiskTb === 9999 ? "" : maxDiskTb} placeholder="unlimited"
+                        onChange={e => { setMaxDiskTb(e.target.value ? Number(e.target.value) : 9999); setAutoPreview(null); }} style={inputStyle} />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* All other strategies: uniform grid of guardrail controls */
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: 8 }}>
+                  <div>
+                    <label style={labelStyle}>Target Cohorts <span title="Number of cohorts to distribute tenants into. New cohorts are created automatically when Apply is clicked." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                    <input type="number" min={1} max={20} value={numCohorts}
+                      onChange={e => { setNumCohorts(Number(e.target.value)); setAutoPreview(null); }} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Max VMs / Cohort <span title="Hard cap on VM count per cohort. When a tenant would push over this, the engine overflows it into the next cohort." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                    <input type="number" min={1} value={maxVms === 9999 ? "" : maxVms} placeholder="unlimited"
+                      onChange={e => { setMaxVms(e.target.value ? Number(e.target.value) : 9999); setAutoPreview(null); }} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Max Disk TB / Cohort <span title="Hard cap on total used-disk (TB) per cohort. 1 TB = 1024 GB." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                    <input type="number" min={0.1} step={0.1} value={maxDiskTb === 9999 ? "" : maxDiskTb} placeholder="unlimited"
+                      onChange={e => { setMaxDiskTb(e.target.value ? Number(e.target.value) : 9999); setAutoPreview(null); }} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Max Avg Risk % <span title="If a cohort's running average risk score would exceed this %, the overflowing tenant is pushed to the next cohort." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                    <input type="number" min={0} max={100} value={maxAvgRisk === 100 ? "" : maxAvgRisk} placeholder="100"
+                      onChange={e => { setMaxAvgRisk(e.target.value ? Number(e.target.value) : 100); setAutoPreview(null); }} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Min OS Support % <span title="Minimum % of VMs in a cohort that must have a recognised OS." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                    <input type="number" min={0} max={100} step={5} value={minOsSupport || ""} placeholder="0"
+                      onChange={e => { setMinOsSupport(e.target.value ? Number(e.target.value) : 0); setAutoPreview(null); }} style={inputStyle} />
+                  </div>
+                  {autoStrategy === "riskiest_last" && (
+                    <div>
+                      <label style={labelStyle}>Risk Threshold %
+                        <span title="Tenants whose average risk score is at or above this value are always placed in the last cohort."
+                          style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem", marginLeft: 3 }}>ⓘ</span>
+                      </label>
+                      <input type="number" min={0} max={100} defaultValue={70} placeholder="70"
+                        onChange={e => setMaxAvgRisk(e.target.value ? Number(e.target.value) : 70)} style={inputStyle} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── RAMP PROFILE MODE ── */}
+          {rampMode && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ fontSize: "0.75rem", color: "#0369a1", fontWeight: 600 }}>Quick presets:</span>
+                {([
+                  { label: "Pilot → Bulk",  profiles: [{ name: "🧪 Pilot", max_vms: 5 }, { name: "🚀 Bulk", max_vms: null }] },
+                  { label: "3-Wave",        profiles: [{ name: "🧪 Pilot", max_vms: 10 }, { name: "🔄 Wave 1", max_vms: 50 }, { name: "🚀 Wave 2", max_vms: null }] },
+                  { label: "4-Wave",        profiles: [{ name: "🧪 Pilot", max_vms: 5 }, { name: "🔄 Wave 1", max_vms: 25 }, { name: "🔄 Wave 2", max_vms: 60 }, { name: "🚀 Wave 3", max_vms: null }] },
+                  { label: "5-Wave",        profiles: [{ name: "🧪 Pilot", max_vms: 5 }, { name: "🔄 Wave 1", max_vms: 15 }, { name: "🔄 Wave 2", max_vms: 35 }, { name: "🔄 Wave 3", max_vms: 60 }, { name: "🚀 Wave 4", max_vms: null }] },
+                ] as { label: string; profiles: { name: string; max_vms: number | null }[] }[]).map(p => (
+                  <button key={p.label} onClick={() => { setCohortProfiles(p.profiles); setAutoPreview(null); }}
+                    style={{ ...btnSmall, fontSize: "0.72rem" }}>{p.label}</button>
+                ))}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                {cohortProfiles.map((profile, idx) => (
+                  <div key={idx} style={{ display: "flex", gap: 6, alignItems: "center", background: "#fff",
+                    borderRadius: 6, padding: "6px 10px", border: "1px solid #bae6fd" }}>
+                    <span style={{ fontSize: "0.72rem", color: "#0369a1", fontWeight: 700, minWidth: 18, textAlign: "right" }}>{idx + 1}.</span>
+                    <input value={profile.name}
+                      onChange={e => { setCohortProfiles(pf => pf.map((p, i) => i === idx ? { ...p, name: e.target.value } : p)); setAutoPreview(null); }}
+                      style={{ ...inputStyle, maxWidth: 180, marginBottom: 0 }} placeholder="Cohort name" />
+                    <span style={{ fontSize: "0.75rem", color: "#6b7280", whiteSpace: "nowrap" }}>
+                      Max VMs <span title="Maximum number of VMs this cohort can absorb. When full, remaining tenants spill into the next cohort. Leave blank for unlimited (the last cohort always catches all overflow)." style={{ cursor: "help", color: "#9ca3af" }}>ⓘ</span>
+                    </span>
+                    <input type="number" min={1} value={profile.max_vms ?? ""} placeholder="∞"
+                      onChange={e => { setCohortProfiles(pf => pf.map((p, i) => i === idx ? { ...p, max_vms: e.target.value ? Number(e.target.value) : null } : p)); setAutoPreview(null); }}
+                      style={{ ...inputStyle, maxWidth: 72, marginBottom: 0 }} />
+                    {cohortProfiles.length > 1 && (
+                      <button onClick={() => { setCohortProfiles(pf => pf.filter((_, i) => i !== idx)); setAutoPreview(null); }}
+                        style={{ ...btnSmall, color: "#dc2626", padding: "1px 6px" }} title="Remove this cohort">✕</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+                <button onClick={() => setCohortProfiles(pf => [...pf, { name: `🔄 Wave ${pf.length}`, max_vms: null }])}
+                  style={btnSmall}>+ Add Cohort</button>
+                <span style={{ fontSize: "0.72rem", color: "#6b7280" }}>
+                  ⓘ Tenants are sorted by the selected strategy and fill each cohort in order. The last cohort always catches overflow.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Action row */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
+            <button onClick={previewAutoAssign} disabled={previewLoading} style={{ ...btnSecondary }}>
+              {previewLoading ? "⏳ Calculating..." : "🔍 Preview"}
+            </button>
+            <button onClick={autoAssign} disabled={autoAssigning || !autoPreview} style={{ ...btnPrimary }}
+              title={!autoPreview ? "Run Preview first to validate before committing" : undefined}>
+              {autoAssigning ? "Applying..." : "✅ Apply"}
+            </button>
+            <button onClick={() => { setShowAutoPanel(false); setAutoPreview(null); }} style={btnSecondary}>✕ Close</button>
+            {!autoPreview && (
+              <span style={{ fontSize: "0.78rem", color: "#6b7280" }}>
+                🔒 Preview first — Apply is locked until you see the projected assignment.
+              </span>
+            )}
+          </div>
+
+          {/* Preview results */}
+          {autoPreview && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8, color: "#0369a1" }}>
+                Preview — {autoPreview.assignments?.length ?? 0} tenants →{" "}
+                {(autoPreview.cohort_summaries ?? []).length} cohorts
+                {autoPreview.warnings?.length > 0 && (
+                  <span style={{ marginLeft: 8, color: "#ea580c", fontSize: "0.78rem" }}>
+                    ⚠️ {autoPreview.warnings.length} warning{autoPreview.warnings.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+              {autoPreview.warnings?.map((w: string, i: number) => (
+                <div key={i} style={{ fontSize: "0.78rem", color: "#ea580c", marginBottom: 4 }}>⚠️ {w}</div>
+              ))}
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse", background: "#fff", borderRadius: 6 }}>
+                  <thead>
+                    <tr style={{ background: "#f0f9ff" }}>
+                      {["Cohort", "Tenants", "VMs", "Disk (GB)", "Avg Risk", "Avg Ease"].map(h => (
+                        <th key={h} style={{ padding: "5px 8px", textAlign: h === "Cohort" ? "left" : "right",
+                          fontWeight: 600, color: "#374151", borderBottom: "1px solid #bae6fd" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(autoPreview.cohort_summaries ?? []).map((row: any, i: number) => (
+                      <tr key={i} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ padding: "4px 8px", fontWeight: 600 }}>{row.name ?? `Cohort ${i+1}`}</td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{row.tenant_count ?? "—"}</td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{row.vm_count ?? "—"}</td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{typeof row.total_disk_gb === "number" ? row.total_disk_gb.toFixed(0) : "—"}</td>
+                        <td style={{ padding: "4px 8px", textAlign: "right",
+                          color: (row.avg_risk ?? row.avg_risk_score ?? 0) > 70 ? "#dc2626" : "#15803d" }}>
+                          {typeof (row.avg_risk ?? row.avg_risk_score) === "number" ? (row.avg_risk ?? row.avg_risk_score).toFixed(0) : "—"}
+                        </td>
+                        <td style={{ padding: "4px 8px", textAlign: "right", fontWeight: 700,
+                          color: (row.avg_ease_score ?? 50) < 30 ? "#15803d" : (row.avg_ease_score ?? 50) < 60 ? "#854d0e" : "#dc2626" }}>
+                          {typeof row.avg_ease_score === "number" ? row.avg_ease_score.toFixed(0) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Create form */}
       {showCreate && (
@@ -2467,6 +2924,17 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16, marginBottom: 20 }}>
           {cohorts.map(c => {
             const [sbg, scol] = statusColors[c.status] || statusColors.planning;
+            // Phase 3.0: compute ease stats from member tenants
+            const members = tenants.filter(t => t.cohort_id === c.id);
+            const memberScores = members.map(t => cohortEaseScores[t.id]).filter(Boolean);
+            const avgEase = memberScores.length > 0
+              ? memberScores.reduce((s, e) => s + e.ease_score, 0) / memberScores.length : null;
+            const totalDiskGb = memberScores.reduce((s, e) => s + e.total_used_gb, 0);
+            const avgRisk = memberScores.length > 0
+              ? memberScores.reduce((s, e) => s + e.avg_risk_score, 0) / memberScores.length : null;
+            const easyCount = memberScores.filter(e => e.ease_score < 30).length;
+            const medCount  = memberScores.filter(e => e.ease_score >= 30 && e.ease_score < 60).length;
+            const hardCount = memberScores.filter(e => e.ease_score >= 60).length;
             return (
               <div key={c.id} style={{ border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, padding: 16,
                 background: "var(--card-bg, #ffffff)",
@@ -2488,7 +2956,7 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
                     )}
                   </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12, fontSize: "0.82rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8, fontSize: "0.82rem" }}>
                   <div style={{ textAlign: "center" }}>
                     <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{c.tenant_count}</div>
                     <div style={{ color: "#6b7280" }}>Tenants</div>
@@ -2502,6 +2970,47 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
                     <div style={{ color: "#6b7280" }}>vCPU</div>
                   </div>
                 </div>
+
+                {/* Phase 3.0 — enhanced stats row */}
+                {memberScores.length > 0 && (
+                  <div style={{ fontSize: "0.75rem", background: "var(--bg, #f9fafb)", borderRadius: 6,
+                    padding: "6px 10px", marginBottom: 8, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                    <div>
+                      <div style={{ color: "#6b7280", marginBottom: 2 }}>Avg Ease</div>
+                      <div style={{ fontWeight: 700,
+                        color: avgEase! < 30 ? "#15803d" : avgEase! < 60 ? "#854d0e" : "#dc2626" }}>
+                        {avgEase!.toFixed(0)}
+                        <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 2 }}>/ 100</span>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ color: "#6b7280", marginBottom: 2 }}>Total Disk</div>
+                      <div style={{ fontWeight: 700 }}>{totalDiskGb > 1024 ? (totalDiskGb / 1024).toFixed(1) + " TB" : totalDiskGb.toFixed(0) + " GB"}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: "#6b7280", marginBottom: 2 }}>Avg Risk</div>
+                      <div style={{ fontWeight: 700,
+                        color: (avgRisk ?? 0) > 70 ? "#dc2626" : (avgRisk ?? 0) > 40 ? "#854d0e" : "#15803d" }}>
+                        {avgRisk ? avgRisk.toFixed(0) : "—"}%
+                      </div>
+                    </div>
+                    {/* Mini difficulty bar */}
+                    {memberScores.length > 0 && (
+                      <div style={{ gridColumn: "1 / -1", marginTop: 4 }}>
+                        <div style={{ display: "flex", height: 6, borderRadius: 3, overflow: "hidden", gap: 1 }}>
+                          {easyCount > 0 && <div style={{ flex: easyCount, background: "#86efac" }} title={`${easyCount} easy`} />}
+                          {medCount  > 0 && <div style={{ flex: medCount,  background: "#fde68a" }} title={`${medCount} medium`} />}
+                          {hardCount > 0 && <div style={{ flex: hardCount, background: "#fca5a5" }} title={`${hardCount} hard`} />}
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 2, color: "#9ca3af" }}>
+                          {easyCount > 0 && <span style={{ color: "#15803d" }}>●{easyCount} easy</span>}
+                          {medCount  > 0 && <span style={{ color: "#854d0e" }}>●{medCount} med</span>}
+                          {hardCount > 0 && <span style={{ color: "#dc2626" }}>●{hardCount} hard</span>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {(c.scheduled_start || c.scheduled_end) && (
                   <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: 8 }}>
                     📅 {c.scheduled_start || "?"} → {c.scheduled_end || "?"}
@@ -2514,6 +3023,83 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
                     {c.target_vms_per_day && <span>⚡ {c.target_vms_per_day} VMs/day</span>}
                   </div>
                 )}
+
+                {/* Expandable tenant list with reassignment */}
+                {members.length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <button onClick={() => setExpandedCohort(expandedCohort === c.id ? null : c.id)}
+                      style={{ ...btnSmall, color: "#2563eb", background: "none", border: "none",
+                        padding: "2px 0", fontWeight: 500, cursor: "pointer", fontSize: "0.78rem" }}>
+                      {expandedCohort === c.id ? "▴" : "▾"} {members.length} Tenant{members.length !== 1 ? "s" : ""}
+                    </button>
+                    {expandedCohort === c.id && (
+                      <div style={{ maxHeight: 200, overflowY: "auto", marginTop: 4, border: "1px solid #e5e7eb",
+                        borderRadius: 6, background: "var(--bg, #f9fafb)" }}>
+                        <table style={{ width: "100%", fontSize: "0.75rem", borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "#eff6ff" }}>
+                              <th style={{ padding: "3px 8px", textAlign: "left", fontWeight: 600, color: "#1e40af" }}>Tenant</th>
+                              <th style={{ padding: "3px 8px", textAlign: "center", fontWeight: 600, color: "#1e40af" }}>Ease</th>
+                              <th style={{ padding: "3px 8px", textAlign: "right", fontWeight: 600, color: "#1e40af" }}>Move to</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {members.map(t => {
+                              const sc = cohortEaseScores[t.id];
+                              const ease = sc?.ease_score ?? null;
+                              return (
+                                <tr key={t.id} style={{ borderTop: "1px solid #e5e7eb" }}>
+                                  <td style={{ padding: "3px 8px", maxWidth: 140, overflow: "hidden",
+                                    textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                                    title={t.tenant_name}>{t.tenant_name}</td>
+                                  <td style={{ padding: "3px 8px", textAlign: "center" }}>
+                                    {ease !== null ? (
+                                      <span style={{
+                                        background: ease < 30 ? "#dcfce7" : ease < 60 ? "#fef9c3" : "#fee2e2",
+                                        color:      ease < 30 ? "#15803d" : ease < 60 ? "#854d0e" : "#dc2626",
+                                        padding: "1px 6px", borderRadius: 10, fontWeight: 600
+                                      }}>{ease.toFixed(0)}</span>
+                                    ) : "—"}
+                                  </td>
+                                  <td style={{ padding: "3px 8px", textAlign: "right" }}>
+                                    {reassigning[t.id] ? (
+                                      <span style={{ color: "#6b7280" }}>Moving…</span>
+                                    ) : (
+                                      <select
+                                        value=""
+                                        onChange={async e => {
+                                          const targetId = Number(e.target.value);
+                                          if (!targetId) return;
+                                          setReassigning(r => ({ ...r, [t.id]: true }));
+                                          try {
+                                            await apiFetch(`/api/migration/projects/${projectId}/cohorts/${targetId}/assign-tenants`, {
+                                              method: "POST", headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ tenant_ids: [t.id] })
+                                            });
+                                            loadCohorts();
+                                            if (onRefreshTenants) onRefreshTenants();
+                                          } catch (_) {}
+                                          setReassigning(r => ({ ...r, [t.id]: false }));
+                                        }}
+                                        style={{ fontSize: "0.72rem", padding: "1px 4px", borderRadius: 4,
+                                          border: "1px solid #d1d5db", cursor: "pointer", maxWidth: 110 }}>
+                                        <option value="">Move…</option>
+                                        {cohorts.filter(x => x.id !== c.id).map(x => (
+                                          <option key={x.id} value={x.id}>{x.cohort_order}. {x.name}</option>
+                                        ))}
+                                      </select>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   <button onClick={() => setSelectedCohort(selectedCohort === c.id ? null : c.id)}
                     style={{ ...btnSmall, background: selectedCohort === c.id ? "#2563eb" : "#e5e7eb",
@@ -2526,6 +3112,188 @@ function CohortsView({ projectId, tenants, onRefreshTenants }: {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ⸺ What-if estimator ⸺ */}
+      {cohorts.length > 0 && Object.keys(cohortEaseScores).length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <button onClick={() => setShowWhatIf(v => !v)}
+            style={{ ...btnSecondary, fontSize: "0.82rem", background: showWhatIf ? "#f5f3ff" : undefined, color: showWhatIf ? "#7c3aed" : undefined }}>
+            🔮 What-If Estimator {showWhatIf ? "▲" : "▼"}
+          </button>
+          {showWhatIf && (
+            <div style={{ ...sectionStyle, marginTop: 8, background: "#faf5ff", borderColor: "#e9d5ff" }}>
+              <div style={{ fontWeight: 700, marginBottom: 12, color: "#7c3aed", fontSize: "0.9rem" }}>🔮 Migration Time Estimator</div>
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 14, alignItems: "flex-end" }}>
+                <div>
+                  <label style={{ ...labelStyle, color: "#7c3aed" }}>
+                    Bandwidth (Mbps)
+                    <span title="Total available network bandwidth between source and target. Used to estimate data transfer time. Effective throughput is ~75% of this (protocol & network overhead). Increase for faster links (10 GbE = 10000 Mbps, 100 GbE = 100000 Mbps)."
+                      style={{ cursor: "help", color: "#9ca3af", fontSize: "0.72rem", marginLeft: 4 }}>ⓘ</span>
+                  </label>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="range" min={100} max={100000} step={100} value={bandwidthMbps}
+                      onChange={e => setBandwidthMbps(Number(e.target.value))}
+                      style={{ display: "block", width: 200 }} />
+                    <input type="number" min={100} max={400000} step={100} value={bandwidthMbps}
+                      onChange={e => setBandwidthMbps(Math.max(100, Number(e.target.value)))}
+                      style={{ ...inputStyle, width: 90, marginBottom: 0, fontSize: "0.78rem" }} />
+                    <span style={{ fontSize: "0.78rem", color: "#7c3aed", minWidth: 60 }}>
+                      {bandwidthMbps >= 1000 ? (bandwidthMbps / 1000).toFixed(bandwidthMbps % 1000 === 0 ? 0 : 1) + " Gbps" : bandwidthMbps + " Mbps"}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ ...labelStyle, color: "#7c3aed" }}>
+                    Parallel Agent Slots
+                    <span title="Number of PF9 migration agents running concurrently. Each agent handles one tenant at a time. More agents = more tenants migrating in parallel, reducing total wall-clock time. Does NOT increase network bandwidth — all agents share the same pipe."
+                      style={{ cursor: "help", color: "#9ca3af", fontSize: "0.72rem", marginLeft: 4 }}>ⓘ</span>
+                  </label>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="range" min={1} max={32} step={1} value={agentSlots}
+                      onChange={e => setAgentSlots(Number(e.target.value))}
+                      style={{ display: "block", width: 120 }} />
+                    <span style={{ fontSize: "0.78rem", color: "#7c3aed" }}>{agentSlots} slot{agentSlots !== 1 ? "s" : ""}</span>
+                  </div>
+                </div>
+              </div>
+              {(() => {
+                // --- VM-slots / schedule model (mirrors the project engine) ---
+                // This is what produced the original "30 days" estimate in the Migration Plan.
+                // Based on: how many VMs can flow through concurrent agent slots per working day.
+                const workHours = project.working_hours_per_day || 8;
+                const configuredDays = project.migration_duration_days || 0;
+                const concSlots = (project.agent_count || 2) * (project.agent_concurrent_vms || 5);
+                const avgVmH = 2; // rough average hours per VM migration cycle
+                const derivedVmsPerDay = concSlots * (workHours / avgVmH);
+                const effectiveVmsPerDay = (project.target_vms_per_day || 0) > 0
+                  ? (project.target_vms_per_day as number) : derivedVmsPerDay;
+
+                let totalBwDays = 0;
+                let totalSchedDays = 0;
+
+                const rows = cohorts.map(c => {
+                  const members = tenants.filter(t => t.cohort_id === c.id);
+                  const memberScores2 = members.map(t => cohortEaseScores[t.id]).filter(Boolean);
+                  const diskGb = memberScores2.reduce((s, e) => s + (e.total_used_gb || 0), 0);
+
+                  // Bandwidth model
+                  const effMbps = bandwidthMbps * 0.75;
+                  const rawTransferH = diskGb > 0 && effMbps > 0
+                    ? (diskGb * 1024 * 8) / (effMbps * 3_600) : 0;
+                  const transferH = rawTransferH * 1.14;
+                  const cutoverH = members.length > 0 ? (members.length * 0.25) / Math.max(agentSlots, 1) : 0;
+                  const totalH = transferH + cutoverH;
+                  const bwDays = totalH / workHours;
+
+                  // VM-slots/schedule model (cohorts run sequentially)
+                  const schedDays = c.vm_count > 0 && effectiveVmsPerDay > 0
+                    ? c.vm_count / effectiveVmsPerDay : 0;
+
+                  totalBwDays += bwDays;
+                  totalSchedDays += schedDays;
+                  return { c, members, diskGb, transferH, cutoverH, totalH, bwDays, schedDays };
+                });
+
+                return (
+                  <>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", fontSize: "0.8rem", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr style={{ background: "#ede9fe" }}>
+                            {([
+                              { h: "Cohort",      tip: "" },
+                              { h: "Tenants",     tip: "Number of tenants in this cohort" },
+                              { h: "VMs",         tip: "Total VMs in this cohort" },
+                              { h: "Used GB",     tip: "Total used disk (GB) across all VMs — the actual data volume to transfer" },
+                              { h: "Transfer h",  tip: "Data transfer time: UsedGB × 8 bits / (BW × 75%) / 3600. All agents share the same pipe." },
+                              { h: "Cutover h",   tip: "Cutover overhead: 15 min per tenant ÷ agent slots." },
+                              { h: "Total h",     tip: "Transfer (×1.14 live re-sync) + cutover hours." },
+                              { h: "BW Days",     tip: `Bandwidth model: Total h ÷ ${workHours}h working day. ${bandwidthMbps >= 1000 ? (bandwidthMbps/1000).toFixed(1)+"Gbps" : bandwidthMbps+"Mbps"} link, 75% efficiency.` },
+                              { h: "Sched. Days", tip: `VM-slots model: cohort VMs ÷ ${effectiveVmsPerDay.toFixed(0)} VMs/day. ` +
+                                ((project.target_vms_per_day || 0) > 0
+                                  ? `Project configured to ${project.target_vms_per_day} VMs/day.`
+                                  : `Derived from ${project.agent_count} agents × ${project.agent_concurrent_vms} concurrent × ${workHours}h/day ÷ ${avgVmH}h/VM. This is what the Migration Plan engine uses.`) },
+                            ] as {h:string; tip:string}[]).map(({ h, tip }) => (
+                              <th key={h} style={{ padding: "4px 10px", fontWeight: 600, color: "#4c1d95",
+                                textAlign: h === "Cohort" ? "left" : "right", borderBottom: "1px solid #ddd6fe" }}>
+                                {h}{tip && <span title={tip} style={{ cursor: "help", color: "#a78bfa", marginLeft: 3, fontWeight: 400 }}>ⓘ</span>}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map(({ c, diskGb, transferH, cutoverH, totalH, bwDays, schedDays }) => (
+                            <tr key={c.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                              <td style={{ padding: "4px 10px", fontWeight: 600 }}>{c.cohort_order}. {c.name}</td>
+                              <td style={{ padding: "4px 10px", textAlign: "right" }}>{c.tenant_count}</td>
+                              <td style={{ padding: "4px 10px", textAlign: "right" }}>{c.vm_count}</td>
+                              <td style={{ padding: "4px 10px", textAlign: "right" }}>{diskGb > 0 ? diskGb.toFixed(0) : "—"}</td>
+                              <td style={{ padding: "4px 10px", textAlign: "right", color: "#6b7280" }}>
+                                {transferH > 0 ? transferH.toFixed(1) : "—"}
+                              </td>
+                              <td style={{ padding: "4px 10px", textAlign: "right", color: "#6b7280" }}>
+                                {cutoverH > 0 ? cutoverH.toFixed(1) : "—"}
+                              </td>
+                              <td style={{ padding: "4px 10px", textAlign: "right",
+                                color: totalH > 48 ? "#dc2626" : totalH > 16 ? "#d97706" : "#15803d", fontWeight: 700 }}>
+                                {totalH > 0 ? totalH.toFixed(1) : "—"}
+                              </td>
+                              <td style={{ padding: "4px 10px", textAlign: "right",
+                                color: bwDays > (configuredDays || 9999) ? "#dc2626" : bwDays > 14 ? "#d97706" : "#15803d" }}>
+                                {bwDays > 0 ? bwDays.toFixed(1) : "—"}
+                              </td>
+                              <td style={{ padding: "4px 10px", textAlign: "right",
+                                color: schedDays > (configuredDays || 9999) ? "#dc2626" : schedDays > 14 ? "#d97706" : "#15803d", fontWeight: 600 }}>
+                                {schedDays > 0 ? schedDays.toFixed(1) : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                          {/* Totals row */}
+                          <tr style={{ borderTop: "2px solid #ddd6fe", background: "#f5f3ff", fontWeight: 700 }}>
+                            <td style={{ padding: "4px 10px" }} colSpan={7}>Total (sequential)</td>
+                            <td style={{ padding: "4px 10px", textAlign: "right",
+                              color: configuredDays > 0 && totalBwDays > configuredDays ? "#dc2626" : "#15803d" }}>
+                              {totalBwDays.toFixed(1)}
+                            </td>
+                            <td style={{ padding: "4px 10px", textAlign: "right",
+                              color: configuredDays > 0 && totalSchedDays > configuredDays ? "#dc2626" : "#15803d" }}>
+                              {totalSchedDays.toFixed(1)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Project deadline check */}
+                    {configuredDays > 0 && (
+                      <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6, fontSize: "0.78rem",
+                        background: (totalBwDays > configuredDays || totalSchedDays > configuredDays) ? "#fef2f2" : "#f0fdf4",
+                        border: `1px solid ${(totalBwDays > configuredDays || totalSchedDays > configuredDays) ? "#fca5a5" : "#86efac"}`,
+                        color: (totalBwDays > configuredDays || totalSchedDays > configuredDays) ? "#dc2626" : "#15803d" }}>
+                        {(totalBwDays > configuredDays || totalSchedDays > configuredDays) ? "⚠️" : "✅"}
+                        {" "}Project deadline: <strong>{configuredDays} days</strong>
+                        {" · "}{totalSchedDays > configuredDays
+                          ? `Sched. model needs ${totalSchedDays.toFixed(1)} days — ${(totalSchedDays - configuredDays).toFixed(1)} days over budget.`
+                          : `Sched. model fits (${totalSchedDays.toFixed(1)} days).`}
+                        {" · "}{totalBwDays > configuredDays
+                          ? `BW model needs ${totalBwDays.toFixed(1)} days — ${(totalBwDays - configuredDays).toFixed(1)} days over budget.`
+                          : `BW model fits (${totalBwDays.toFixed(1)} days).`}
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: 6, fontSize: "0.72rem", color: "#9ca3af" }}>
+                      <strong>BW Days</strong> = bandwidth/transfer model ({bandwidthMbps >= 1000 ? (bandwidthMbps/1000).toFixed(1)+"Gbps" : bandwidthMbps+"Mbps"} link, 75% effective, {workHours}h/day).
+                      {" "}<strong>Sched. Days</strong> = VM-slots model ({effectiveVmsPerDay.toFixed(0)} VMs/day via {project.agent_count} agents × {project.agent_concurrent_vms} concurrent{(project.target_vms_per_day||0)>0 ? " [configured]" : " [derived]"}).
+                      {" "}Use the higher of the two — that's your real bottleneck.
+                      {configuredDays > 0 && ` Project configured for ${configuredDays} days.`}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
         </div>
       )}
 
@@ -2717,148 +3485,241 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
         </div>
       </div>
 
-      {/* Per-tenant plans */}
-      <div style={sectionStyle}>
-        <h3 style={{ marginTop: 0 }}>Per-Tenant Assessment</h3>
-        <table style={tableStyle}>
-          <thead>
-            <tr>
-              <th style={{ ...thStyle, width: 30 }}></th>
-              <th style={thStyle}>Tenant</th>
-              <th style={thStyle}>OrgVDC</th>
-              <th style={thStyle}>VMs</th>
-              <th style={thStyle}>vCPU</th>
-              <th style={thStyle}>RAM (GB)</th>
-              <th style={thStyle}>Disk (GB)</th>
-              <th style={thStyle}>In Use (GB)</th>
-              <th style={thStyle}>Warm</th>
-              <th style={thStyle}>Warm Risky</th>
-              <th style={thStyle}>Cold</th>
-              <th style={thStyle}>Copy/Phase1 (h)</th>
-              <th style={thStyle}>Cutover (h)</th>
-              <th style={thStyle}>Downtime</th>
-              <th style={thStyle}>Risk</th>
-            </tr>
-          </thead>
-          <tbody>
-            {plan.tenant_plans.map((tp: any) => (
-              <React.Fragment key={tp.tenant_name}>
-                <tr style={{ borderBottom: "1px solid var(--border, #e5e7eb)", cursor: "pointer" }}
-                    onClick={() => setExpandedTenant(expandedTenant === tp.tenant_name ? null : tp.tenant_name)}>
-                  <td style={tdStyle}>
-                    <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>
-                      {expandedTenant === tp.tenant_name ? "▼" : "▶"}
-                    </span>
+      {/* Cohort schedule summary */}
+      {plan.cohort_schedule_summary?.length > 0 && (
+        <div style={sectionStyle}>
+          <h3 style={{ marginTop: 0 }}>📦 Cohort Execution Plan</h3>
+          <p style={{ color: "#6b7280", fontSize: "0.85rem", marginTop: -8, marginBottom: 10 }}>
+            Each cohort runs sequentially. The schedule below shows which calendar days
+            are allocated to each wave. Total: <strong>{ps.estimated_schedule_days} working days</strong>.
+          </p>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+            <thead>
+              <tr style={{ background: "#eff6ff" }}>
+                {["Cohort", "VMs", "Start Day", "End Day", "Duration (days)"].map(h => (
+                  <th key={h} style={{ padding: "5px 12px", fontWeight: 600, color: "#1e40af",
+                    textAlign: h === "Cohort" ? "left" : "right", borderBottom: "2px solid #93c5fd" }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {plan.cohort_schedule_summary.map((cs: any) => (
+                <tr key={cs.cohort_name} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                  <td style={{ padding: "5px 12px", fontWeight: 600 }}>
+                    {cs.cohort_order != null ? `${cs.cohort_order}. ` : ""}{cs.cohort_name}
                   </td>
-                  <td style={tdStyle}><strong>{tp.tenant_name}</strong></td>
-                  <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>{tp.org_vdc || "—"}</td>
-                  <td style={tdStyle}>{tp.vm_count}</td>
-                  <td style={tdStyle}>{tp.total_vcpu || 0}</td>
-                  <td style={tdStyle}>{tp.total_ram_mb ? (tp.total_ram_mb / 1024).toFixed(0) : "0"}</td>
-                  <td style={tdStyle}>{Number(tp.total_disk_gb).toFixed(1)}</td>
-                  <td style={tdStyle}>{Number(tp.total_in_use_gb).toFixed(1)}</td>
-                  <td style={tdStyle}>
-                    <span style={{ ...pillStyle, background: "#dcfce7", color: "#16a34a" }}>{tp.warm_count}</span>
-                  </td>
-                  <td style={tdStyle}>
-                    {tp.warm_risky_count > 0 && <span style={{ ...pillStyle, background: "#fef9c3", color: "#a16207" }}>{tp.warm_risky_count}</span>}
-                    {!tp.warm_risky_count && "—"}
-                  </td>
-                  <td style={tdStyle}>
-                    {tp.cold_count > 0 && <span style={{ ...pillStyle, background: "#fee2e2", color: "#dc2626" }}>{tp.cold_count}</span>}
-                    {!tp.cold_count && "—"}
-                  </td>
-                  <td style={tdStyle}>{Number(tp.total_warm_phase1_hours).toFixed(1)}</td>
-                  <td style={tdStyle}>{Number(tp.total_warm_cutover_hours + tp.total_cold_hours).toFixed(1)}</td>
-                  <td style={tdStyle}><strong>{Number(tp.total_downtime_hours).toFixed(1)}h</strong></td>
-                  <td style={tdStyle}>
-                    <span style={{ fontSize: "0.75rem" }}>
-                      {tp.risk_distribution.GREEN > 0 && <span style={{ color: "#22c55e" }}>🟢{tp.risk_distribution.GREEN} </span>}
-                      {tp.risk_distribution.YELLOW > 0 && <span style={{ color: "#eab308" }}>🟡{tp.risk_distribution.YELLOW} </span>}
-                      {tp.risk_distribution.RED > 0 && <span style={{ color: "#ef4444" }}>🔴{tp.risk_distribution.RED}</span>}
-                    </span>
+                  <td style={{ padding: "5px 12px", textAlign: "right" }}>{cs.vm_count}</td>
+                  <td style={{ padding: "5px 12px", textAlign: "right" }}>Day {cs.start_day}</td>
+                  <td style={{ padding: "5px 12px", textAlign: "right" }}>Day {cs.end_day}</td>
+                  <td style={{ padding: "5px 12px", textAlign: "right", fontWeight: 600,
+                    color: cs.duration_days > 14 ? "#d97706" : "#15803d" }}>
+                    {cs.duration_days}
                   </td>
                 </tr>
-                {/* Expanded VM list for this tenant */}
-                {expandedTenant === tp.tenant_name && (
-                  <tr>
-                    <td colSpan={15} style={{ padding: "4px 16px 12px 40px", background: "var(--card-bg, #f9fafb)" }}>
-                      <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
-                        <thead>
-                          <tr>
-                            <th style={thStyleSm}>VM Name</th>
-                            <th style={thStyleSm}>vCPU</th>
-                            <th style={thStyleSm}>RAM</th>
-                            <th style={thStyleSm}>Disk (GB)</th>
-                            <th style={thStyleSm}>In Use</th>
-                            <th style={thStyleSm}>OS</th>
-                            <th style={thStyleSm}>OS Ver</th>
-                            <th style={thStyleSm}>Mode</th>
-                            <th style={thStyleSm}>Risk</th>
-                            <th style={thStyleSm}>Copy / Phase 1</th>
-                            <th style={thStyleSm}>Cutover / Cold</th>
-                            <th style={thStyleSm}>Downtime</th>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Per-tenant plans — grouped by cohort */}
+      <div style={sectionStyle}>
+        <h3 style={{ marginTop: 0 }}>Per-Tenant Assessment</h3>
+        {(() => {
+          // Group tenant_plans by cohort_order (null → uncohorted at end)
+          const plans: any[] = plan.tenant_plans;
+          const cohortGroups: Map<string, any[]> = new Map();
+          for (const tp of plans) {
+            const key = tp.cohort_order != null
+              ? `${String(tp.cohort_order).padStart(4, "0")}:${tp.cohort_name}`
+              : "9999:Uncohorted";
+            if (!cohortGroups.has(key)) cohortGroups.set(key, []);
+            cohortGroups.get(key)!.push(tp);
+          }
+          const sortedKeys = [...cohortGroups.keys()].sort();
+          const tableColSpan = 15;
+          return (
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <th style={{ ...thStyle, width: 30 }}></th>
+                  <th style={thStyle}>Tenant</th>
+                  <th style={thStyle}>OrgVDC</th>
+                  <th style={thStyle}>VMs</th>
+                  <th style={thStyle}>vCPU</th>
+                  <th style={thStyle}>RAM (GB)</th>
+                  <th style={thStyle}>Disk (GB)</th>
+                  <th style={thStyle}>In Use (GB)</th>
+                  <th style={thStyle}>Warm</th>
+                  <th style={thStyle}>Warm Risky</th>
+                  <th style={thStyle}>Cold</th>
+                  <th style={thStyle}>Copy/Phase1 (h)</th>
+                  <th style={thStyle}>Cutover (h)</th>
+                  <th style={thStyle}>Downtime</th>
+                  <th style={thStyle}>Risk</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedKeys.map(key => {
+                  const group = cohortGroups.get(key)!;
+                  const isUncohorted = key.startsWith("9999:");
+                  const labelParts = key.split(":");
+                  const cohortLabel = isUncohorted
+                    ? "Uncohorted Tenants"
+                    : `Cohort ${parseInt(labelParts[0])}: ${labelParts.slice(1).join(":")}`;
+                  // Subtotals for this cohort
+                  const subtotalVMs    = group.reduce((s, tp) => s + tp.vm_count, 0);
+                  const subtotalDisk   = group.reduce((s, tp) => s + Number(tp.total_disk_gb), 0);
+                  const subtotalUsed   = group.reduce((s, tp) => s + Number(tp.total_in_use_gb), 0);
+                  const subtotalDown   = group.reduce((s, tp) => s + Number(tp.total_downtime_hours), 0);
+                  return (
+                    <React.Fragment key={key}>
+                      {/* Cohort header row */}
+                      <tr style={{ background: isUncohorted ? "#f9fafb" : "#eff6ff", borderTop: "2px solid #93c5fd" }}>
+                        <td colSpan={tableColSpan} style={{ padding: "6px 12px", fontWeight: 700,
+                          color: isUncohorted ? "#9ca3af" : "#1e40af", fontSize: "0.82rem", letterSpacing: "0.02em" }}>
+                          {isUncohorted ? "⚠️" : "📦"} {cohortLabel}
+                          <span style={{ fontWeight: 400, color: "#6b7280", marginLeft: 8 }}>
+                            {group.length} tenant{group.length !== 1 ? "s" : ""} · {subtotalVMs} VMs · {subtotalDisk.toFixed(0)} GB alloc · {subtotalUsed.toFixed(0)} GB used
+                          </span>
+                        </td>
+                      </tr>
+                      {/* Tenant rows */}
+                      {group.map((tp: any) => (
+                        <React.Fragment key={tp.tenant_name}>
+                          <tr style={{ borderBottom: "1px solid var(--border, #e5e7eb)", cursor: "pointer" }}
+                              onClick={() => setExpandedTenant(expandedTenant === tp.tenant_name ? null : tp.tenant_name)}>
+                            <td style={tdStyle}>
+                              <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>
+                                {expandedTenant === tp.tenant_name ? "▼" : "▶"}
+                              </span>
+                            </td>
+                            <td style={tdStyle}><strong>{tp.tenant_name}</strong></td>
+                            <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>{tp.org_vdc || "—"}</td>
+                            <td style={tdStyle}>{tp.vm_count}</td>
+                            <td style={tdStyle}>{tp.total_vcpu || 0}</td>
+                            <td style={tdStyle}>{tp.total_ram_mb ? (tp.total_ram_mb / 1024).toFixed(0) : "0"}</td>
+                            <td style={tdStyle}>{Number(tp.total_disk_gb).toFixed(1)}</td>
+                            <td style={tdStyle}>{Number(tp.total_in_use_gb).toFixed(1)}</td>
+                            <td style={tdStyle}>
+                              <span style={{ ...pillStyle, background: "#dcfce7", color: "#16a34a" }}>{tp.warm_count}</span>
+                            </td>
+                            <td style={tdStyle}>
+                              {tp.warm_risky_count > 0 && <span style={{ ...pillStyle, background: "#fef9c3", color: "#a16207" }}>{tp.warm_risky_count}</span>}
+                              {!tp.warm_risky_count && "—"}
+                            </td>
+                            <td style={tdStyle}>
+                              {tp.cold_count > 0 && <span style={{ ...pillStyle, background: "#fee2e2", color: "#dc2626" }}>{tp.cold_count}</span>}
+                              {!tp.cold_count && "—"}
+                            </td>
+                            <td style={tdStyle}>{Number(tp.total_warm_phase1_hours).toFixed(1)}</td>
+                            <td style={tdStyle}>{Number(tp.total_warm_cutover_hours + tp.total_cold_hours).toFixed(1)}</td>
+                            <td style={tdStyle}><strong>{Number(tp.total_downtime_hours).toFixed(1)}h</strong></td>
+                            <td style={tdStyle}>
+                              <span style={{ fontSize: "0.75rem" }}>
+                                {tp.risk_distribution.GREEN > 0 && <span style={{ color: "#22c55e" }}>🟢{tp.risk_distribution.GREEN} </span>}
+                                {tp.risk_distribution.YELLOW > 0 && <span style={{ color: "#eab308" }}>🟡{tp.risk_distribution.YELLOW} </span>}
+                                {tp.risk_distribution.RED > 0 && <span style={{ color: "#ef4444" }}>🔴{tp.risk_distribution.RED}</span>}
+                              </span>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {tp.vms.map((v: any) => (
-                            <tr key={v.vm_name} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                              <td style={tdStyleSm}><strong>{v.vm_name}</strong></td>
-                              <td style={tdStyleSm}>{v.cpu_count || "—"}</td>
-                              <td style={tdStyleSm}>{v.ram_mb ? `${(v.ram_mb / 1024).toFixed(1)}G` : "—"}</td>
-                              <td style={tdStyleSm}>{Number(v.total_disk_gb).toFixed(1)}</td>
-                              <td style={tdStyleSm}>{Number(v.in_use_gb).toFixed(1)}</td>
-                              <td style={tdStyleSm}>{osIcon(v.os_family)} {v.os_family || "—"}</td>
-                              <td style={tdStyleSm}>{v.os_version || "—"}</td>
-                              <td style={tdStyleSm}>
-                                <span style={{ ...pillStyle, ...modePillColor(v.migration_mode), fontSize: "0.7rem" }}>
-                                  {v.migration_mode?.replace(/_/g, " ")}
-                                </span>
-                              </td>
-                              <td style={tdStyleSm}>
-                                <span style={{ ...pillStyle, ...riskPillColor(v.risk_category), fontSize: "0.7rem" }}>
-                                  {v.risk_category}
-                                </span>
-                              </td>
-                              <td style={tdStyleSm}>
-                                {(() => {
-                                  // Warm: Phase 1 copy (live). Cold: full offline copy = the copy phase too.
-                                  const h = v.migration_mode !== "cold_required"
-                                    ? Number(v.warm_phase1_hours)
-                                    : Number(v.cold_total_hours);
-                                  return h < 0.017 ? "<1min" : h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
-                                })()} 
-                              </td>
-                              <td style={tdStyleSm}>
-                                {(() => {
-                                  // Warm: cutover only. Cold: boot/connect phase (same estimate as warm cutover)
-                                  const h = Number(v.warm_cutover_hours);
-                                  return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
-                                })()}
-                              </td>
-                              <td style={tdStyleSm}>
-                                <strong>
-                                  {(() => {
-                                    // Warm: downtime = cutover only (copy phase is live)
-                                    // Cold: downtime = full copy (VM is off throughout)
-                                    const h = v.migration_mode !== "cold_required"
-                                      ? Number(v.warm_cutover_hours)
-                                      : Number(v.cold_downtime_hours);
-                                    return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
-                                  })()}
-                                </strong>
+                          {/* Expanded VM list for this tenant */}
+                          {expandedTenant === tp.tenant_name && (
+                            <tr>
+                              <td colSpan={tableColSpan} style={{ padding: "4px 16px 12px 40px", background: "var(--card-bg, #f9fafb)" }}>
+                                <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
+                                  <thead>
+                                    <tr>
+                                      <th style={thStyleSm}>VM Name</th>
+                                      <th style={thStyleSm}>vCPU</th>
+                                      <th style={thStyleSm}>RAM</th>
+                                      <th style={thStyleSm}>Disk (GB)</th>
+                                      <th style={thStyleSm}>In Use</th>
+                                      <th style={thStyleSm}>OS</th>
+                                      <th style={thStyleSm}>OS Ver</th>
+                                      <th style={thStyleSm}>Mode</th>
+                                      <th style={thStyleSm}>Risk</th>
+                                      <th style={thStyleSm}>Copy / Phase 1</th>
+                                      <th style={thStyleSm}>Cutover / Cold</th>
+                                      <th style={thStyleSm}>Downtime</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {tp.vms.map((v: any) => (
+                                      <tr key={v.vm_name} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                                        <td style={tdStyleSm}><strong>{v.vm_name}</strong></td>
+                                        <td style={tdStyleSm}>{v.cpu_count || "—"}</td>
+                                        <td style={tdStyleSm}>{v.ram_mb ? `${(v.ram_mb / 1024).toFixed(1)}G` : "—"}</td>
+                                        <td style={tdStyleSm}>{Number(v.total_disk_gb).toFixed(1)}</td>
+                                        <td style={tdStyleSm}>{Number(v.in_use_gb).toFixed(1)}</td>
+                                        <td style={tdStyleSm}>{osIcon(v.os_family)} {v.os_family || "—"}</td>
+                                        <td style={tdStyleSm}>{v.os_version || "—"}</td>
+                                        <td style={tdStyleSm}>
+                                          <span style={{ ...pillStyle, ...modePillColor(v.migration_mode), fontSize: "0.7rem" }}>
+                                            {v.migration_mode?.replace(/_/g, " ")}
+                                          </span>
+                                        </td>
+                                        <td style={tdStyleSm}>
+                                          <span style={{ ...pillStyle, ...riskPillColor(v.risk_category), fontSize: "0.7rem" }}>
+                                            {v.risk_category}
+                                          </span>
+                                        </td>
+                                        <td style={tdStyleSm}>
+                                          {(() => {
+                                            const h = v.migration_mode !== "cold_required"
+                                              ? Number(v.warm_phase1_hours)
+                                              : Number(v.cold_total_hours);
+                                            return h < 0.017 ? "<1min" : h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
+                                          })()}
+                                        </td>
+                                        <td style={tdStyleSm}>
+                                          {(() => {
+                                            const h = Number(v.warm_cutover_hours);
+                                            return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
+                                          })()}
+                                        </td>
+                                        <td style={tdStyleSm}>
+                                          <strong>
+                                            {(() => {
+                                              const h = v.migration_mode !== "cold_required"
+                                                ? Number(v.warm_cutover_hours)
+                                                : Number(v.cold_downtime_hours);
+                                              return h < 1 ? `${Math.round(h * 60)}min` : `${h.toFixed(2)}h`;
+                                            })()}
+                                          </strong>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
                               </td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
+                          )}
+                        </React.Fragment>
+                      ))}
+                      {/* Cohort subtotal row */}
+                      <tr style={{ background: isUncohorted ? "#f9fafb" : "#dbeafe",
+                        borderBottom: "2px solid #93c5fd", fontSize: "0.78rem", color: "#1e40af", fontWeight: 600 }}>
+                        <td colSpan={3} style={{ padding: "4px 12px", textAlign: "right", color: "#6b7280", fontWeight: 400 }}>
+                          Subtotal ({group.length} tenants)
+                        </td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{subtotalVMs}</td>
+                        <td colSpan={2} style={{ padding: "4px 8px" }}></td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{subtotalDisk.toFixed(0)}</td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{subtotalUsed.toFixed(0)}</td>
+                        <td colSpan={5} style={{ padding: "4px 8px" }}></td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{subtotalDown.toFixed(1)}h</td>
+                        <td></td>
+                      </tr>
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+        })()}
       </div>
 
       {/* Daily schedule */}
@@ -2866,58 +3727,77 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
         <div style={sectionStyle}>
           <h3 style={{ marginTop: 0 }}>Daily Migration Schedule (Estimated)</h3>
           <p style={{ color: "#6b7280", fontSize: "0.85rem", marginBottom: 12 }}>
-            VMs ordered by tenant → priority → disk size. Each day fills up to {ps.total_concurrent_slots} concurrent slots.
+            VMs ordered by <strong>cohort → tenant → priority → disk size</strong>. Each day fills up to {ps.total_concurrent_slots} concurrent slots.
           </p>
-          <div style={{ maxHeight: 400, overflowY: "auto" }}>
+          <div style={{ maxHeight: 500, overflowY: "auto" }}>
             <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
               <thead>
                 <tr>
                   <th style={thStyleSm}>Day</th>
+                  <th style={thStyleSm}>Cohort(s)</th>
                   <th style={thStyleSm}>VMs</th>
-                  <th style={thStyleSm}>VM Names</th>
+                  <th style={thStyleSm}>Tenant / VM Detail</th>
                   <th style={thStyleSm}>Est. Hours</th>
                 </tr>
               </thead>
               <tbody>
-                {plan.daily_schedule.map((day: any) => (
-                  <tr key={day.day} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                    <td style={tdStyleSm}><strong>Day {day.day}</strong></td>
-                    <td style={tdStyleSm}>{day.vm_count}</td>
-                    <td style={tdStyleSm}>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        {Object.entries(
-                          day.vms.reduce((acc: any, v: any) => {
-                            const tenant = v.tenant_name || "Unassigned";
-                            if (!acc[tenant]) acc[tenant] = [];
-                            acc[tenant].push(v);
-                            return acc;
-                          }, {})
-                        ).map(([tenantName, vms]: [string, any]) => (
-                          <div key={tenantName} style={{ marginBottom: 4, width: "100%" }}>
-                            <div style={{ 
-                              fontSize: "0.7rem", fontWeight: 600, color: "#4f46e5", 
-                              marginBottom: 2
-                            }}>
-                              📁 {tenantName} ({(vms as any[]).length} VMs)
-                            </div>
-                            <div style={{ display: "flex", gap: 2, flexWrap: "wrap", marginLeft: 8 }}>
-                              {(vms as any[]).map((v: any) => (
-                                <span key={v.vm_name} style={{
-                                  ...pillStyle, fontSize: "0.65rem", padding: "2px 4px",
-                                  background: v.mode === "cold_required" ? "#fee2e2" : "#dcfce7",
-                                  color: v.mode === "cold_required" ? "#dc2626" : "#16a34a",
-                                }}>
-                                  {v.vm_name} ({v.disk_gb}GB)
-                                </span>
+                {(() => {
+                  let lastCohort: string | null = null;
+                  return plan.daily_schedule.map((day: any) => {
+                    const dayCohortLabel = (day.cohorts?.length > 0)
+                      ? day.cohorts.join(" + ")
+                      : "Uncohorted";
+                    const cohortChanged = dayCohortLabel !== lastCohort;
+                    lastCohort = dayCohortLabel;
+                    return (
+                      <React.Fragment key={day.day}>
+                        {cohortChanged && (
+                          <tr style={{ background: "#eff6ff", borderTop: "2px solid #93c5fd" }}>
+                            <td colSpan={5} style={{ padding: "5px 10px", fontWeight: 700,
+                              color: "#1e40af", fontSize: "0.78rem" }}>
+                              📦 {dayCohortLabel}
+                            </td>
+                          </tr>
+                        )}
+                        <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                          <td style={tdStyleSm}><strong>Day {day.day}</strong></td>
+                          <td style={{ ...tdStyleSm, fontSize: "0.7rem", color: "#6b7280" }}>{dayCohortLabel}</td>
+                          <td style={tdStyleSm}>{day.vm_count}</td>
+                          <td style={tdStyleSm}>
+                            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                              {Object.entries(
+                                day.vms.reduce((acc: any, v: any) => {
+                                  const tenant = v.tenant_name || "Unassigned";
+                                  if (!acc[tenant]) acc[tenant] = [];
+                                  acc[tenant].push(v);
+                                  return acc;
+                                }, {})
+                              ).map(([tenantName, vms]: [string, any]) => (
+                                <div key={tenantName} style={{ marginBottom: 4, width: "100%" }}>
+                                  <div style={{ fontSize: "0.7rem", fontWeight: 600, color: "#4f46e5", marginBottom: 2 }}>
+                                    📁 {tenantName} ({(vms as any[]).length} VMs)
+                                  </div>
+                                  <div style={{ display: "flex", gap: 2, flexWrap: "wrap", marginLeft: 8 }}>
+                                    {(vms as any[]).map((v: any) => (
+                                      <span key={v.vm_name} style={{
+                                        ...pillStyle, fontSize: "0.65rem", padding: "2px 4px",
+                                        background: v.mode === "cold_required" ? "#fee2e2" : "#dcfce7",
+                                        color: v.mode === "cold_required" ? "#dc2626" : "#16a34a",
+                                      }}>
+                                        {v.vm_name} ({v.disk_gb}GB)
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
                               ))}
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    </td>
-                    <td style={tdStyleSm}>{day.total_estimated_hours.toFixed(1)}h</td>
-                  </tr>
-                ))}
+                          </td>
+                          <td style={tdStyleSm}>{day.total_estimated_hours.toFixed(1)}h</td>
+                        </tr>
+                      </React.Fragment>
+                    );
+                  });
+                })()}
               </tbody>
             </table>
           </div>
