@@ -5074,10 +5074,10 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
 
             # Ordered cohorts for the project
             cur.execute("""
-                SELECT id, name, "order"
+                SELECT id, name, cohort_order
                 FROM migration_cohorts
                 WHERE project_id = %s
-                ORDER BY "order" NULLS LAST, id
+                ORDER BY cohort_order NULLS LAST, id
             """, (project_id,))
             ordered_cohorts = [dict(r) for r in cur.fetchall()]
 
