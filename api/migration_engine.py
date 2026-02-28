@@ -2107,3 +2107,244 @@ def _format_auto_assign_result(
         "cohort_names":    names or [f"Cohort {i+1}" for i in range(num_cohorts)],
         "warnings":        list(dict.fromkeys(warnings)),  # deduplicate
     }
+
+
+# =====================================================================
+# 11.  Wave Planning Engine  (Phase 3)
+# =====================================================================
+
+WAVE_STRATEGIES = ("by_tenant", "by_risk", "pilot_first", "by_priority", "balanced")
+
+PREFLIGHT_CHECKS = [
+    # (check_name, label, severity)
+    ("network_mapped",      "All VM networks mapped to PCD",       "blocker"),
+    ("target_project_set",  "Target PCD project/domain confirmed", "blocker"),
+    ("vms_assessed",        "All VMs have risk & mode set",        "warning"),
+    ("no_critical_gaps",    "No unresolved critical PCD gaps",     "blocker"),
+    ("agent_reachable",     "Migration agent connectivity",        "warning"),
+    ("snapshot_baseline",   "Pre-migration snapshot taken",        "info"),
+]
+
+
+def build_wave_plan(
+    vms: List[Dict[str, Any]],
+    tenants: List[Dict[str, Any]],
+    dependencies: List[Dict[str, Any]],     # [{vm_id, depends_on_vm_id}]
+    strategy: str = "pilot_first",
+    max_vms_per_wave: int = 30,
+    pilot_vm_count: int = 5,
+    wave_name_prefix: str = "Wave",
+) -> Dict[str, Any]:
+    """
+    Build a wave plan from a set of powered-on, in-scope VM records.
+
+    Strategies
+    ----------
+    pilot_first  : Wave 0 = N lowest-risk, smallest VMs; rest fill subsequent waves.
+    by_tenant    : One wave per tenant, sorted by tenant migration_priority.
+    by_risk      : Green VMs → Wave 1, Yellow → Wave 2, Red → Wave 3.
+    by_priority  : Fill waves sequentially respecting tenant migration_priority ordering.
+    balanced     : Minimise variance in total_disk_gb across waves.
+
+    Returns
+    -------
+    dict with keys: waves, strategy, warnings, unassigned_vm_ids
+    """
+    strategy = strategy if strategy in WAVE_STRATEGIES else "pilot_first"
+    warnings: List[str] = []
+
+    # --- Build tenant lookup -----------------------------------------------
+    tenant_by_name: Dict[str, Dict] = {t["tenant_name"]: t for t in tenants}
+
+    # --- Filter to powered-on, in-scope VMs only ---------------------------
+    candidate_vms = [
+        v for v in vms
+        if (v.get("power_state") or "").lower() in ("poweredon", "powered_on", "on")
+        and v.get("migration_status") not in ("migrated", "skipped")
+    ]
+    if not candidate_vms:
+        candidate_vms = [v for v in vms
+                         if v.get("migration_status") not in ("migrated", "skipped")]
+    if not candidate_vms:
+        return {"waves": [], "strategy": strategy,
+                "warnings": ["No eligible VMs found"], "unassigned_vm_ids": []}
+
+    # --- Dependency graph: vm_id → set of vm_ids it depends on ------------
+    dep_graph: Dict[int, set] = {}
+    for d in dependencies:
+        src = d.get("vm_id")
+        dep = d.get("depends_on_vm_id")
+        if src and dep:
+            dep_graph.setdefault(src, set()).add(dep)
+    all_ids = {v["id"] for v in candidate_vms if v.get("id")}
+
+    def _risk_order(v: Dict) -> int:
+        """Lower = safer"""
+        rc = (v.get("risk_classification") or "GREEN").upper()
+        return {"GREEN": 0, "YELLOW": 1, "RED": 2}.get(rc, 1)
+
+    def _vm_disk(v: Dict) -> float:
+        used = v.get("in_use_gb") or v.get("total_disk_gb") or 0
+        return float(used)
+
+    def _tenant_priority(v: Dict) -> int:
+        t = tenant_by_name.get(v.get("tenant_name") or "", {})
+        return t.get("migration_priority") or 999
+
+    # -----------------------------------------------------------------------
+    #  Strategy implementations
+    # -----------------------------------------------------------------------
+    waves_spec: List[Dict[str, Any]] = []   # [{name, wave_type, vm_ids}]
+
+    if strategy == "pilot_first":
+        # Sort by risk asc, then disk asc → take first N as pilot
+        sorted_vms = sorted(candidate_vms, key=lambda v: (_risk_order(v), _vm_disk(v)))
+        pilot_ids = [v["id"] for v in sorted_vms[:pilot_vm_count] if v.get("id")]
+        rest = [v for v in sorted_vms[pilot_vm_count:] if v.get("id")]
+        waves_spec.append({"name": "🧪 Pilot", "wave_type": "pilot", "vm_ids": pilot_ids})
+        # Fill regular waves
+        for chunk_start in range(0, len(rest), max_vms_per_wave):
+            chunk = rest[chunk_start:chunk_start + max_vms_per_wave]
+            wnum = len(waves_spec) + 1
+            waves_spec.append({
+                "name": f"{wave_name_prefix} {wnum}",
+                "wave_type": "regular",
+                "vm_ids": [v["id"] for v in chunk],
+            })
+
+    elif strategy == "by_tenant":
+        # One wave per tenant, sorted by tenant priority then ease score
+        tenant_groups: Dict[str, List[Dict]] = {}
+        for v in candidate_vms:
+            tname = v.get("tenant_name") or "Unassigned"
+            tenant_groups.setdefault(tname, []).append(v)
+        # Sort tenants by priority
+        ordered_tenants = sorted(
+            tenant_groups.keys(),
+            key=lambda t: (tenant_by_name.get(t, {}).get("migration_priority") or 999, t)
+        )
+        for i, tname in enumerate(ordered_tenants, 1):
+            tvms = sorted(tenant_groups[tname], key=lambda v: (_risk_order(v), _vm_disk(v)))
+            # Split tenant if too large
+            for chunk_start in range(0, len(tvms), max_vms_per_wave):
+                chunk = tvms[chunk_start:chunk_start + max_vms_per_wave]
+                suffix = f" (part {chunk_start // max_vms_per_wave + 1})" if len(tvms) > max_vms_per_wave else ""
+                waves_spec.append({
+                    "name": f"{wave_name_prefix} {len(waves_spec) + 1} — {tname}{suffix}",
+                    "wave_type": "regular",
+                    "vm_ids": [v["id"] for v in chunk if v.get("id")],
+                })
+
+    elif strategy == "by_risk":
+        # Green → Wave 1, Yellow → Wave 2, Red → Wave 3+
+        buckets = {"GREEN": [], "YELLOW": [], "RED": []}
+        for v in candidate_vms:
+            rc = (v.get("risk_classification") or "GREEN").upper()
+            buckets.get(rc, buckets["RED"]).append(v)
+        for band, label in [("GREEN", "🟢 Low Risk"), ("YELLOW", "🟡 Medium Risk"), ("RED", "🔴 High Risk")]:
+            bvms = sorted(buckets[band], key=lambda v: (_vm_disk(v), _tenant_priority(v)))
+            for chunk_start in range(0, len(bvms), max_vms_per_wave):
+                chunk = bvms[chunk_start:chunk_start + max_vms_per_wave]
+                suffix = f" pt{chunk_start // max_vms_per_wave + 1}" if len(bvms) > max_vms_per_wave else ""
+                waves_spec.append({
+                    "name": f"{wave_name_prefix} {len(waves_spec) + 1} — {label}{suffix}",
+                    "wave_type": "regular",
+                    "vm_ids": [v["id"] for v in chunk if v.get("id")],
+                })
+
+    elif strategy == "by_priority":
+        # All VMs sorted by (tenant_priority, risk, disk), chunked into waves
+        sorted_vms = sorted(candidate_vms, key=lambda v: (_tenant_priority(v), _risk_order(v), _vm_disk(v)))
+        for chunk_start in range(0, len(sorted_vms), max_vms_per_wave):
+            chunk = sorted_vms[chunk_start:chunk_start + max_vms_per_wave]
+            waves_spec.append({
+                "name": f"{wave_name_prefix} {len(waves_spec) + 1}",
+                "wave_type": "regular",
+                "vm_ids": [v["id"] for v in chunk if v.get("id")],
+            })
+
+    elif strategy == "balanced":
+        # Distribute VMs to minimise variance in total_disk_gb per wave
+        num_waves = max(1, math.ceil(len(candidate_vms) / max_vms_per_wave))
+        wave_disks = [0.0] * num_waves
+        wave_vms: List[List[int]] = [[] for _ in range(num_waves)]
+        sorted_vms = sorted(candidate_vms, key=lambda v: -_vm_disk(v))  # largest first
+        for v in sorted_vms:
+            if not v.get("id"):
+                continue
+            # Assign to wave with least disk so far
+            idx = min(range(num_waves), key=lambda i: (len(wave_vms[i]) >= max_vms_per_wave, wave_disks[i]))
+            wave_vms[idx].append(v["id"])
+            wave_disks[idx] += _vm_disk(v)
+        for i, vids in enumerate(wave_vms, 1):
+            if vids:
+                waves_spec.append({
+                    "name": f"{wave_name_prefix} {i}",
+                    "wave_type": "regular",
+                    "vm_ids": vids,
+                })
+
+    # -----------------------------------------------------------------------
+    #  Dependency check — flag cross-wave dependency violations
+    # -----------------------------------------------------------------------
+    vm_to_wave: Dict[int, int] = {}
+    for wi, w in enumerate(waves_spec):
+        for vid in w["vm_ids"]:
+            vm_to_wave[vid] = wi
+
+    for vid, deps in dep_graph.items():
+        my_wave = vm_to_wave.get(vid)
+        if my_wave is None:
+            continue
+        for dep_id in deps:
+            dep_wave = vm_to_wave.get(dep_id)
+            if dep_wave is not None and dep_wave >= my_wave:
+                warnings.append(
+                    f"VM id={vid} is in Wave {my_wave + 1} but depends on VM id={dep_id} "
+                    f"which is in Wave {dep_wave + 1} — dependency may not be satisfied."
+                )
+
+    # -----------------------------------------------------------------------
+    #  Build final wave dicts with statistics
+    # -----------------------------------------------------------------------
+    vm_by_id: Dict[int, Dict] = {v["id"]: v for v in candidate_vms if v.get("id")}
+    waves_out = []
+    assigned_ids: set = set()
+    for wave_number, ws in enumerate(waves_spec, 1):
+        vids = ws["vm_ids"]
+        wave_vms_data = [vm_by_id[vid] for vid in vids if vid in vm_by_id]
+        risk_dist: Dict[str, int] = {"GREEN": 0, "YELLOW": 0, "RED": 0}
+        tenant_names: set = set()
+        total_disk = 0.0
+        for v in wave_vms_data:
+            rc = (v.get("risk_classification") or "GREEN").upper()
+            risk_dist[rc] = risk_dist.get(rc, 0) + 1
+            tenant_names.add(v.get("tenant_name") or "?")
+            total_disk += _vm_disk(v)
+        assigned_ids.update(vids)
+        waves_out.append({
+            "wave_number":      wave_number,
+            "name":             ws["name"],
+            "wave_type":        ws.get("wave_type", "regular"),
+            "status":           "planned",
+            "vm_ids":           vids,
+            "vm_count":         len(vids),
+            "tenant_names":     sorted(tenant_names),
+            "risk_distribution": risk_dist,
+            "total_disk_gb":    round(total_disk, 1),
+        })
+
+    unassigned = [v["id"] for v in candidate_vms
+                  if v.get("id") and v["id"] not in assigned_ids]
+    if unassigned:
+        warnings.append(f"{len(unassigned)} VMs could not be assigned to any wave.")
+
+    return {
+        "waves":             waves_out,
+        "strategy":          strategy,
+        "warnings":          list(dict.fromkeys(warnings)),
+        "unassigned_vm_ids": unassigned,
+        "preflight_checks":  [{"check_name": c[0], "check_label": c[1],
+                               "severity": c[2]} for c in PREFLIGHT_CHECKS],
+    }
+
