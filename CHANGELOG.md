@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0] - 2026-02-28
+
+### Added
+- **Phase 3 — Migration Wave Planning** — Full wave lifecycle from planning through completion, scoped within cohorts.
+  - **`db/migrate_wave_planning.sql`** — Extends `migration_waves` (adds `cohort_id` FK, `status` with CHECK constraint, `wave_type`, `agent_slots_override`, `scheduled_start/end`, `owner_name`, `notes`, `started_at`, `completed_at`) and `migration_wave_vms` (adds `vm_id` FK with UNIQUE, `migration_order`, `assigned_at`, `wave_vm_status`). Creates new `migration_wave_preflights` table.
+  - **`build_wave_plan()` engine** — Five auto-build strategies: `pilot_first` (safest VMs in Wave 0), `by_tenant` (one wave per tenant), `by_risk` (GREEN → YELLOW → RED), `by_priority` (tenant migration priority order), `balanced` (equal disk GB per wave). Dependency-graph cross-wave violation warnings. Returns wave plan with risk distribution, disk totals, and tenant lists.
+  - **`PREFLIGHT_CHECKS` constant** — 6 pre-flight checks with severity levels (blocker/warning/info): network_mapped, target_project_set, vms_assessed, no_critical_gaps, agent_reachable, snapshot_baseline.
+  - **11 new API routes** — `GET/POST /projects/{id}/waves`, `PATCH/DELETE /projects/{id}/waves/{wid}`, `POST .../assign-vms`, `DELETE .../vms/{vm_id}`, `POST .../advance`, `POST /auto-waves` (dry-run support), `GET/PATCH .../preflights/{check_name}`, `GET /migration-funnel`.
+  - **Wave status lifecycle with transitions** — `planned → pre_checks_passed → executing → validating → complete / failed / cancelled` with `started_at`/`completed_at` timestamps.
+  - **🌊 Wave Planner UI sub-tab** — Full `WavePlannerView` React component: VM migration funnel progress bar, cohort filter, auto-build panel (strategy picker with descriptions, max VMs/wave slider, pilot count, dry-run preview table + apply), wave cards with type/status badges, pre-flight checklist (pass/fail/skip per check), VM list table, advance-status buttons, delete (planned-only).
+
 ## [1.33.0] - 2026-02-28
 
 ### Added

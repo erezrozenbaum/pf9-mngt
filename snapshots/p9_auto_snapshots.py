@@ -73,6 +73,15 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import Json
 
+# Load .env from the repo root before importing p9_common, because p9_common
+# reads CFG values via os.getenv() at module-import time.
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    load_dotenv(_env_path)
+except ImportError:
+    pass  # python-dotenv not installed; rely on pre-set environment variables
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from p9_common import (
