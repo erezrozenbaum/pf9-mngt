@@ -148,7 +148,61 @@ interface Props {
   onProjectUpdated: (p: MigrationProject) => void;
 }
 
-type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "networks" | "netmap" | "risk" | "plan" | "capacity" | "readiness";
+type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "risk" | "plan" | "capacity" | "readiness";
+
+// Phase 3 — Wave Planning types
+interface Wave {
+  id: number;
+  project_id: string;
+  wave_number: number;
+  name: string;
+  wave_type: "pilot" | "regular" | "cleanup";
+  cohort_id: number | null;
+  cohort_name?: string;
+  status: "planned" | "pre_checks_passed" | "executing" | "validating" | "complete" | "failed" | "cancelled";
+  agent_slots_override: number | null;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  owner_name: string | null;
+  notes: string | null;
+  vm_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+  vms?: WaveVM[];
+}
+
+interface WaveVM {
+  id: number;
+  vm_name: string;
+  tenant_name: string;
+  risk_classification: string;
+  migration_mode: string;
+  migration_status: string;
+  total_disk_gb: number;
+  in_use_gb: number;
+  wave_vm_status: string;
+  migration_order: number;
+}
+
+interface WavePreflight {
+  id: number;
+  check_name: string;
+  check_label: string;
+  check_status: "pending" | "pass" | "fail" | "skipped" | "na";
+  severity: "info" | "warning" | "blocker";
+  notes: string | null;
+  checked_at: string | null;
+}
+
+interface MigrationFunnel {
+  total: number;
+  not_started?: number;
+  assigned?: number;
+  in_progress?: number;
+  migrated?: number;
+  failed?: number;
+  skipped?: number;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -490,6 +544,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
           { id: "vms" as SubView, label: "🖥️ VMs" },
           { id: "tenants" as SubView, label: "🏢 Tenants" },
           { id: "cohorts" as SubView, label: "🗃️ Cohorts" },
+          { id: "waves" as SubView, label: "🌊 Wave Planner" },
           { id: "networks" as SubView, label: "🌐 Networks" },
           { id: "netmap" as SubView, label: "🔌 Network Map" },
           { id: "capacity" as SubView, label: "⚖️ Capacity" },
@@ -913,6 +968,11 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
       {subView === "risk" && (
         <RiskConfigView riskConfig={riskConfig} projectId={pid}
           onRefresh={() => { loadRiskConfig(); }} />
+      )}
+
+      {/* ---- Wave Planner ---- */}
+      {subView === "waves" && (
+        <WavePlannerView projectId={pid} project={project} tenants={tenants} />
       )}
 
       {/* ---- Migration Plan ---- */}
@@ -3347,6 +3407,601 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
     </div>
   );
 }
+
+
+/* ================================================================== */
+/*  Wave Planner View  (Phase 3)                                      */
+/* ================================================================== */
+
+const WAVE_STATUS_COLORS: Record<string, string> = {
+  planned:           "#6b7280",
+  pre_checks_passed: "#3b82f6",
+  executing:         "#f59e0b",
+  validating:        "#8b5cf6",
+  complete:          "#22c55e",
+  failed:            "#ef4444",
+  cancelled:         "#d1d5db",
+};
+
+const WAVE_STATUS_LABELS: Record<string, string> = {
+  planned:           "📋 Planned",
+  pre_checks_passed: "✅ Pre-checks Passed",
+  executing:         "🚀 Executing",
+  validating:        "🔍 Validating",
+  complete:          "✅ Complete",
+  failed:            "❌ Failed",
+  cancelled:         "🚫 Cancelled",
+};
+
+const WAVE_STATUS_NEXT: Record<string, string[]> = {
+  planned:           ["pre_checks_passed", "cancelled"],
+  pre_checks_passed: ["executing", "planned"],
+  executing:         ["validating", "failed"],
+  validating:        ["complete", "failed"],
+  complete:          [],
+  failed:            ["planned"],
+  cancelled:         ["planned"],
+};
+
+const PREFLIGHT_STATUS_ICONS: Record<string, string> = {
+  pending: "⏳", pass: "✅", fail: "❌", skipped: "⏭️", na: "—",
+};
+
+function WavePlannerView({ projectId, project, tenants }: {
+  projectId: number;
+  project: MigrationProject;
+  tenants: Tenant[];
+}) {
+  const [waves, setWaves] = useState<Wave[]>([]);
+  const [funnel, setFunnel] = useState<MigrationFunnel | null>(null);
+  const [cohorts, setCohorts] = useState<any[]>([]);
+  const [selectedCohortId, setSelectedCohortId] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [expandedWave, setExpandedWave] = useState<number | null>(null);
+  const [expandedPreflights, setExpandedPreflights] = useState<number | null>(null);
+  const [preflights, setPreflights] = useState<Record<number, WavePreflight[]>>({});
+  const [loadingPreflights, setLoadingPreflights] = useState<Record<number, boolean>>({});
+  const [showAutoPanel, setShowAutoPanel] = useState(false);
+  const [autoStrategy, setAutoStrategy] = useState("pilot_first");
+  const [autoMaxVms, setAutoMaxVms] = useState(30);
+  const [autoPilotCount, setAutoPilotCount] = useState(5);
+  const [autoPrefix, setAutoPrefix] = useState("Wave");
+  const [autoDryRun, setAutoDryRun] = useState(true);
+  const [autoPreview, setAutoPreview] = useState<any>(null);
+  const [loadingAuto, setLoadingAuto] = useState(false);
+  const [advancingWave, setAdvancingWave] = useState<number | null>(null);
+  const [deletingWave, setDeletingWave] = useState<number | null>(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [wavesData, funnelData, cohortsData] = await Promise.all([
+        apiFetch<any>(`/api/migration/projects/${projectId}/waves${selectedCohortId ? `?cohort_id=${selectedCohortId}` : ""}`),
+        apiFetch<any>(`/api/migration/projects/${projectId}/migration-funnel`),
+        apiFetch<any>(`/api/migration/projects/${projectId}/cohorts`),
+      ]);
+      setWaves(wavesData.waves || []);
+      setFunnel(funnelData.funnel || null);
+      setCohorts(cohortsData.cohorts || []);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, selectedCohortId]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const loadPreflights = async (waveId: number) => {
+    if (preflights[waveId]) { setExpandedPreflights(expandedPreflights === waveId ? null : waveId); return; }
+    setLoadingPreflights(p => ({ ...p, [waveId]: true }));
+    try {
+      const data = await apiFetch<any>(`/api/migration/projects/${projectId}/waves/${waveId}/preflights`);
+      setPreflights(p => ({ ...p, [waveId]: data.checks || [] }));
+      setExpandedPreflights(waveId);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoadingPreflights(p => ({ ...p, [waveId]: false })); }
+  };
+
+  const updatePreflight = async (waveId: number, checkName: string, status: string) => {
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/waves/${waveId}/preflights/${checkName}`,
+        { method: "PATCH", body: JSON.stringify({ check_status: status }) });
+      setPreflights(p => ({
+        ...p,
+        [waveId]: (p[waveId] || []).map(c =>
+          c.check_name === checkName ? { ...c, check_status: status as any } : c
+        )
+      }));
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const advanceWave = async (waveId: number, toStatus: string) => {
+    setAdvancingWave(waveId);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/waves/${waveId}/advance`,
+        { method: "POST", body: JSON.stringify({ status: toStatus }) });
+      await loadData();
+    } catch (e: any) { setError(e.message); }
+    finally { setAdvancingWave(null); }
+  };
+
+  const deleteWave = async (waveId: number) => {
+    if (!window.confirm("Delete this wave? All VM assignments in this wave will be removed.")) return;
+    setDeletingWave(waveId);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/waves/${waveId}`, { method: "DELETE" });
+      await loadData();
+    } catch (e: any) { setError(e.message); }
+    finally { setDeletingWave(null); }
+  };
+
+  const runAutoWaves = async (dryRun: boolean) => {
+    setLoadingAuto(true);
+    setError("");
+    try {
+      const data = await apiFetch<any>(`/api/migration/projects/${projectId}/auto-waves`, {
+        method: "POST",
+        body: JSON.stringify({
+          strategy: autoStrategy,
+          cohort_id: selectedCohortId ?? null,
+          max_vms_per_wave: autoMaxVms,
+          pilot_vm_count: autoPilotCount,
+          wave_name_prefix: autoPrefix,
+          dry_run: dryRun,
+        }),
+      });
+      if (dryRun) {
+        setAutoPreview(data);
+      } else {
+        setAutoPreview(null);
+        setShowAutoPanel(false);
+        await loadData();
+      }
+    } catch (e: any) { setError(e.message); }
+    finally { setLoadingAuto(false); }
+  };
+
+  const totalVms = funnel?.total ?? 0;
+  const migratedVms = funnel?.migrated ?? 0;
+  const assignedVms = funnel?.assigned ?? 0;
+  const failedVms = funnel?.failed ?? 0;
+  const notStartedVms = funnel?.not_started ?? 0;
+
+  return (
+    <div>
+      <h3 style={{ marginTop: 0 }}>🌊 Migration Wave Planner</h3>
+
+      {/* ---- Migration Funnel ---- */}
+      {funnel && totalVms > 0 && (
+        <div style={{ ...sectionStyle, marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>📊 VM Migration Progress</span>
+            {[
+              { label: "Not Started", value: notStartedVms, color: "#9ca3af" },
+              { label: "Assigned", value: assignedVms, color: "#3b82f6" },
+              { label: "In Progress", value: funnel.in_progress ?? 0, color: "#f59e0b" },
+              { label: "Migrated", value: migratedVms, color: "#22c55e" },
+              { label: "Failed", value: failedVms, color: "#ef4444" },
+              { label: "Skipped", value: funnel.skipped ?? 0, color: "#d1d5db" },
+            ].map(({ label, value, color }) => value > 0 ? (
+              <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem" }}>
+                <div style={{ width: 12, height: 12, borderRadius: 3, background: color }} />
+                <span>{label}: <strong>{value}</strong></span>
+              </div>
+            ) : null)}
+            <span style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#6b7280" }}>
+              {totalVms > 0 ? `${Math.round(migratedVms / totalVms * 100)}% migrated` : "0%"}
+            </span>
+          </div>
+          {/* Progress bar */}
+          <div style={{ marginTop: 8, height: 8, borderRadius: 4, background: "#f3f4f6", overflow: "hidden", display: "flex" }}>
+            {[
+              { value: migratedVms, color: "#22c55e" },
+              { value: funnel.in_progress ?? 0, color: "#f59e0b" },
+              { value: assignedVms, color: "#3b82f6" },
+              { value: failedVms, color: "#ef4444" },
+            ].map(({ value, color }, i) => (
+              <div key={i} style={{ width: `${(value / Math.max(totalVms, 1)) * 100}%`, background: color, height: "100%" }} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {error && <div style={alertError}>{error}</div>}
+
+      {/* ---- Toolbar ---- */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        {/* Cohort filter */}
+        {cohorts.length > 0 && (
+          <select value={selectedCohortId ?? ""} onChange={e => setSelectedCohortId(e.target.value ? Number(e.target.value) : null)}
+            style={inputStyle}>
+            <option value="">All Cohorts</option>
+            {cohorts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        )}
+        <button onClick={() => setShowAutoPanel(!showAutoPanel)} style={btnSecondary}>
+          🤖 {showAutoPanel ? "Hide Auto-Build" : "Auto-Build Waves"}
+        </button>
+        <button onClick={loadData} disabled={loading} style={btnSecondary}>
+          🔄 Refresh
+        </button>
+        <span style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#6b7280" }}>
+          {waves.length} wave{waves.length !== 1 ? "s" : ""}
+          {selectedCohortId ? ` in ${cohorts.find(c => c.id === selectedCohortId)?.name ?? "cohort"}` : ""}
+        </span>
+      </div>
+
+      {/* ---- Auto-Build Panel ---- */}
+      {showAutoPanel && (
+        <div style={{ ...sectionStyle, marginBottom: 16, background: "#f8fafc", border: "1px solid #cbd5e1" }}>
+          <h4 style={{ marginTop: 0 }}>🤖 Auto-Build Wave Plan</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, marginBottom: 12 }}>
+            <div>
+              <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, marginBottom: 4 }}>
+                Strategy
+              </label>
+              <select value={autoStrategy} onChange={e => { setAutoStrategy(e.target.value); setAutoPreview(null); }} style={inputStyle}>
+                <option value="pilot_first">🧪 Pilot First — safest VMs in Wave 0</option>
+                <option value="by_tenant">🏢 By Tenant — one wave per tenant</option>
+                <option value="by_risk">🎯 By Risk — green → yellow → red</option>
+                <option value="by_priority">🔢 By Priority — tenant migration priority</option>
+                <option value="balanced">⚖️ Balanced — equal disk per wave</option>
+              </select>
+              <p style={{ fontSize: "0.75rem", color: "#6b7280", margin: "4px 0 0" }}>
+                {autoStrategy === "pilot_first" && "Creates a small pilot wave with the safest/smallest VMs to validate the toolchain first."}
+                {autoStrategy === "by_tenant" && "One wave per tenant (sorted by migration priority). Large tenants are split if they exceed the VM cap."}
+                {autoStrategy === "by_risk" && "Groups VMs by risk band: Green (low risk) → Yellow → Red. Validates on safe VMs before attempting risky ones."}
+                {autoStrategy === "by_priority" && "Fills waves in tenant priority order (lower number = earlier). Same priority tenants are spread evenly."}
+                {autoStrategy === "balanced" && "Distributes VMs to minimise variance in total disk GB per wave so each wave takes roughly equal time."}
+              </p>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, marginBottom: 4 }}>
+                Max VMs per Wave &nbsp;<span style={{ fontWeight: 400, color: "#6b7280" }}>({autoMaxVms})</span>
+              </label>
+              <input type="range" min={5} max={100} value={autoMaxVms}
+                onChange={e => { setAutoMaxVms(Number(e.target.value)); setAutoPreview(null); }}
+                style={{ width: "100%" }} />
+            </div>
+            {autoStrategy === "pilot_first" && (
+              <div>
+                <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, marginBottom: 4 }}>
+                  Pilot VM Count &nbsp;<span style={{ fontWeight: 400, color: "#6b7280" }}>({autoPilotCount})</span>
+                </label>
+                <input type="range" min={1} max={20} value={autoPilotCount}
+                  onChange={e => { setAutoPilotCount(Number(e.target.value)); setAutoPreview(null); }}
+                  style={{ width: "100%" }} />
+              </div>
+            )}
+            <div>
+              <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, marginBottom: 4 }}>Wave Name Prefix</label>
+              <input value={autoPrefix} onChange={e => setAutoPrefix(e.target.value)} style={inputStyle} />
+            </div>
+          </div>
+
+          {/* Preview table */}
+          {autoPreview && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8, fontSize: "0.9rem" }}>
+                Preview — {autoPreview.waves?.length ?? 0} waves
+                {autoPreview.warnings?.length > 0 && (
+                  <span style={{ color: "#d97706", marginLeft: 8, fontSize: "0.82rem" }}>
+                    ⚠️ {autoPreview.warnings.length} warning{autoPreview.warnings.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <th style={thStyleSm}>#</th>
+                    <th style={thStyleSm}>Name</th>
+                    <th style={thStyleSm}>Type</th>
+                    <th style={thStyleSm}>VMs</th>
+                    <th style={thStyleSm}>Disk (GB)</th>
+                    <th style={thStyleSm}>Risk</th>
+                    <th style={thStyleSm}>Tenants</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(autoPreview.waves || []).map((w: any) => (
+                    <tr key={w.wave_number}>
+                      <td style={tdStyleSm}>{w.wave_number}</td>
+                      <td style={tdStyleSm}>{w.name}</td>
+                      <td style={tdStyleSm}>
+                        <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.75rem",
+                          background: w.wave_type === "pilot" ? "#e0f2fe" : "#f0f9ff",
+                          color: w.wave_type === "pilot" ? "#0369a1" : "#0284c7" }}>
+                          {w.wave_type}
+                        </span>
+                      </td>
+                      <td style={tdStyleSm}>{w.vm_count}</td>
+                      <td style={tdStyleSm}>{w.total_disk_gb}</td>
+                      <td style={tdStyleSm}>
+                        {w.risk_distribution && (
+                          <span style={{ fontSize: "0.75rem" }}>
+                            {w.risk_distribution.GREEN > 0 ? `🟢${w.risk_distribution.GREEN} ` : ""}
+                            {w.risk_distribution.YELLOW > 0 ? `🟡${w.risk_distribution.YELLOW} ` : ""}
+                            {w.risk_distribution.RED > 0 ? `🔴${w.risk_distribution.RED}` : ""}
+                          </span>
+                        )}
+                      </td>
+                      <td style={tdStyleSm}>{w.tenant_names?.join(", ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {autoPreview.warnings?.length > 0 && (
+                <ul style={{ margin: "8px 0 0", padding: "0 0 0 16px", fontSize: "0.8rem", color: "#d97706" }}>
+                  {autoPreview.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => runAutoWaves(true)} disabled={loadingAuto} style={btnSecondary}>
+              {loadingAuto ? "…" : "🔍 Preview"}
+            </button>
+            {autoPreview && (
+              <button onClick={() => runAutoWaves(false)} disabled={loadingAuto}
+                style={{ ...btnPrimary, background: "#22c55e" }}>
+                {loadingAuto ? "Building…" : "✅ Apply & Create Waves"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {loading && <p style={{ color: "#6b7280" }}>Loading waves…</p>}
+
+      {/* ---- Wave Cards ---- */}
+      {!loading && waves.length === 0 && (
+        <div style={{ ...sectionStyle, textAlign: "center", color: "#6b7280", padding: 32 }}>
+          <p style={{ fontSize: "1.1rem", margin: "0 0 8px" }}>🌊 No waves yet</p>
+          <p style={{ fontSize: "0.85rem", margin: 0 }}>
+            Use <strong>Auto-Build Waves</strong> to generate a wave plan automatically, or create waves manually via the API.
+          </p>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {waves.map(wave => {
+          const isExpanded = expandedWave === wave.id;
+          const isPreflightsExpanded = expandedPreflights === wave.id;
+          const wavePreflights = preflights[wave.id] || [];
+          const statusColor = WAVE_STATUS_COLORS[wave.status] ?? "#6b7280";
+          const nextStatuses = WAVE_STATUS_NEXT[wave.status] ?? [];
+          const passedChecks = wavePreflights.filter(c => c.check_status === "pass").length;
+          const blockerFails = wavePreflights.filter(c => c.severity === "blocker" && c.check_status === "fail").length;
+
+          return (
+            <div key={wave.id} style={{
+              border: `2px solid ${statusColor}30`,
+              borderLeft: `4px solid ${statusColor}`,
+              borderRadius: 8,
+              background: "var(--bg, #fff)",
+              overflow: "hidden",
+            }}>
+              {/* Card header */}
+              <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                {/* Wave number badge */}
+                <div style={{
+                  width: 32, height: 32, borderRadius: 6, background: statusColor,
+                  color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+                  fontWeight: 700, fontSize: "0.9rem", flexShrink: 0,
+                }}>
+                  {wave.wave_number}
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, fontSize: "1rem" }}>{wave.name}</span>
+                    {/* Type badge */}
+                    <span style={{
+                      padding: "2px 8px", borderRadius: 12, fontSize: "0.72rem", fontWeight: 600,
+                      background: wave.wave_type === "pilot" ? "#dbeafe" : wave.wave_type === "cleanup" ? "#fef9c3" : "#f3f4f6",
+                      color: wave.wave_type === "pilot" ? "#1d4ed8" : wave.wave_type === "cleanup" ? "#854d0e" : "#374151",
+                    }}>
+                      {wave.wave_type === "pilot" ? "🧪 Pilot" : wave.wave_type === "cleanup" ? "🧹 Cleanup" : "🔄 Regular"}
+                    </span>
+                    {/* Status badge */}
+                    <span style={{
+                      padding: "2px 8px", borderRadius: 12, fontSize: "0.72rem", fontWeight: 600,
+                      background: `${statusColor}18`, color: statusColor,
+                    }}>
+                      {WAVE_STATUS_LABELS[wave.status] ?? wave.status}
+                    </span>
+                    {/* Cohort badge */}
+                    {wave.cohort_name && (
+                      <span style={{ fontSize: "0.75rem", color: "#6b7280", background: "#f3f4f6",
+                        padding: "2px 6px", borderRadius: 8 }}>
+                        📦 {wave.cohort_name}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 16, marginTop: 4, fontSize: "0.8rem", color: "#6b7280", flexWrap: "wrap" }}>
+                    <span>{wave.vm_count} VM{wave.vm_count !== 1 ? "s" : ""}</span>
+                    {wave.owner_name && <span>👤 {wave.owner_name}</span>}
+                    {wave.scheduled_start && <span>📅 {wave.scheduled_start} → {wave.scheduled_end ?? "?"}</span>}
+                    {wave.agent_slots_override && <span>⚡ {wave.agent_slots_override} agents</span>}
+                    {wavePreflights.length > 0 && (
+                      <span style={{ color: blockerFails > 0 ? "#dc2626" : passedChecks === wavePreflights.length ? "#16a34a" : "#6b7280" }}>
+                        {blockerFails > 0 ? `❌ ${blockerFails} blocker` : passedChecks === wavePreflights.length ? "✅ All checks passed" : `⏳ ${passedChecks}/${wavePreflights.length} checks`}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  {/* Advance status */}
+                  {nextStatuses.map(ns => (
+                    <button key={ns} onClick={() => advanceWave(wave.id, ns)}
+                      disabled={advancingWave === wave.id}
+                      style={{
+                        ...btnSmall,
+                        background: ns === "complete" ? "#22c55e" : ns === "executing" ? "#f59e0b" :
+                          ns === "failed" || ns === "cancelled" ? "#ef4444" : "#3b82f6",
+                        color: "#fff", border: "none", fontWeight: 600, fontSize: "0.75rem",
+                      }}>
+                      {advancingWave === wave.id ? "…" : (
+                        ns === "executing" ? "▶️ Start" : ns === "complete" ? "✅ Complete" :
+                        ns === "pre_checks_passed" ? "✅ Pass Checks" : ns === "validating" ? "🔍 Validate" :
+                        ns === "failed" ? "❌ Fail" : ns === "cancelled" ? "🚫 Cancel" :
+                        ns === "planned" ? "↩ Reopen" : ns
+                      )}
+                    </button>
+                  ))}
+
+                  {/* Pre-flight toggle */}
+                  <button onClick={() => loadPreflights(wave.id)}
+                    disabled={loadingPreflights[wave.id]}
+                    style={{ ...btnSmall, fontSize: "0.75rem" }}>
+                    {loadingPreflights[wave.id] ? "…" : isPreflightsExpanded ? "▴ Checks" : "▾ Checks"}
+                  </button>
+
+                  {/* VM list toggle */}
+                  <button onClick={() => setExpandedWave(isExpanded ? null : wave.id)}
+                    style={{ ...btnSmall, fontSize: "0.75rem" }}>
+                    {isExpanded ? "▴ VMs" : `▾ VMs (${wave.vm_count})`}
+                  </button>
+
+                  {/* Delete (only planned) */}
+                  {wave.status === "planned" && (
+                    <button onClick={() => deleteWave(wave.id)}
+                      disabled={deletingWave === wave.id}
+                      style={{ ...btnSmall, color: "#ef4444", borderColor: "#ef4444", fontSize: "0.75rem" }}>
+                      {deletingWave === wave.id ? "…" : "🗑️"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Pre-flight checklist */}
+              {isPreflightsExpanded && wavePreflights.length > 0 && (
+                <div style={{ borderTop: "1px solid var(--border, #e5e7eb)", padding: "12px 16px",
+                  background: "#fafafa" }}>
+                  <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 8 }}>
+                    🔍 Pre-flight Checklist
+                  </div>
+                  <table style={tableStyle}>
+                    <thead>
+                      <tr>
+                        <th style={thStyleSm}>Check</th>
+                        <th style={thStyleSm}>Severity</th>
+                        <th style={thStyleSm}>Status</th>
+                        <th style={thStyleSm}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {wavePreflights.map(c => (
+                        <tr key={c.check_name} style={{ background: c.check_status === "fail" && c.severity === "blocker" ? "#fef2f2" : undefined }}>
+                          <td style={tdStyleSm}>{c.check_label}</td>
+                          <td style={tdStyleSm}>
+                            <span style={{
+                              padding: "1px 6px", borderRadius: 6, fontSize: "0.72rem",
+                              background: c.severity === "blocker" ? "#fef2f2" : c.severity === "warning" ? "#fffbeb" : "#f0f9ff",
+                              color: c.severity === "blocker" ? "#dc2626" : c.severity === "warning" ? "#d97706" : "#0369a1",
+                            }}>
+                              {c.severity}
+                            </span>
+                          </td>
+                          <td style={tdStyleSm}>
+                            {PREFLIGHT_STATUS_ICONS[c.check_status]} {c.check_status}
+                          </td>
+                          <td style={tdStyleSm}>
+                            <div style={{ display: "flex", gap: 4 }}>
+                              {c.check_status !== "pass" && (
+                                <button onClick={() => updatePreflight(wave.id, c.check_name, "pass")}
+                                  style={{ ...btnSmall, fontSize: "0.7rem", background: "#dcfce7", border: "1px solid #86efac", color: "#166534" }}>
+                                  ✅ Pass
+                                </button>
+                              )}
+                              {c.check_status !== "fail" && (
+                                <button onClick={() => updatePreflight(wave.id, c.check_name, "fail")}
+                                  style={{ ...btnSmall, fontSize: "0.7rem", background: "#fef2f2", border: "1px solid #fca5a5", color: "#dc2626" }}>
+                                  ❌ Fail
+                                </button>
+                              )}
+                              {c.check_status !== "skipped" && (
+                                <button onClick={() => updatePreflight(wave.id, c.check_name, "skipped")}
+                                  style={{ ...btnSmall, fontSize: "0.7rem" }}>
+                                  ⏭️ Skip
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* VM list */}
+              {isExpanded && (
+                <div style={{ borderTop: "1px solid var(--border, #e5e7eb)", padding: "12px 16px" }}>
+                  {(!wave.vms || wave.vms.length === 0) ? (
+                    <p style={{ color: "#6b7280", fontSize: "0.85rem", margin: 0 }}>No VMs assigned to this wave.</p>
+                  ) : (
+                    <table style={tableStyle}>
+                      <thead>
+                        <tr>
+                          <th style={thStyleSm}>VM Name</th>
+                          <th style={thStyleSm}>Tenant</th>
+                          <th style={thStyleSm}>Mode</th>
+                          <th style={thStyleSm}>Risk</th>
+                          <th style={thStyleSm}>Used (GB)</th>
+                          <th style={thStyleSm}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {wave.vms.map((v, i) => (
+                          <tr key={v.id ?? i}>
+                            <td style={tdStyleSm}>{v.vm_name}</td>
+                            <td style={tdStyleSm}>{v.tenant_name}</td>
+                            <td style={tdStyleSm}>
+                              <span style={{ fontSize: "0.75rem", padding: "1px 5px", borderRadius: 4,
+                                background: v.migration_mode?.includes("warm") ? "#dcfce7" : "#fef9c3",
+                                color: v.migration_mode?.includes("warm") ? "#166534" : "#854d0e" }}>
+                                {v.migration_mode?.replace("_", " ") ?? "—"}
+                              </span>
+                            </td>
+                            <td style={tdStyleSm}>
+                              <span style={{ color: v.risk_classification === "GREEN" ? "#16a34a" :
+                                v.risk_classification === "RED" ? "#dc2626" : "#d97706" }}>
+                                {v.risk_classification === "GREEN" ? "🟢" : v.risk_classification === "RED" ? "🔴" : "🟡"}
+                                {v.risk_classification ?? "—"}
+                              </span>
+                            </td>
+                            <td style={tdStyleSm}>{v.in_use_gb?.toFixed(1) ?? "—"}</td>
+                            <td style={tdStyleSm}>
+                              <span style={{ fontSize: "0.72rem", padding: "1px 5px", borderRadius: 4,
+                                background: v.wave_vm_status === "complete" ? "#dcfce7" :
+                                  v.wave_vm_status === "failed" ? "#fef2f2" : "#f3f4f6",
+                                color: v.wave_vm_status === "complete" ? "#166534" :
+                                  v.wave_vm_status === "failed" ? "#dc2626" : "#374151" }}>
+                                {v.wave_vm_status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 /* ================================================================== */
 /*  Migration Plan View                                               */

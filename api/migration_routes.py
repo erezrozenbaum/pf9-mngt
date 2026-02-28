@@ -113,6 +113,9 @@ from migration_engine import (
     # Phase 3.0
     compute_tenant_ease_scores,
     auto_assign_cohorts,
+    # Phase 3 — Wave Planning
+    build_wave_plan,
+    PREFLIGHT_CHECKS,
 )
 from export_reports import (
     generate_excel_report, generate_pdf_report,
@@ -4694,9 +4697,528 @@ async def auto_assign_cohorts_endpoint(
     return {"status": "ok", **result}
 
 
+# =====================================================================
+# PHASE 3 — WAVE PLANNING
+# =====================================================================
 
-    """Convert DB row to JSON-safe dict."""
-    return _serialize_row(row)
+class CreateWaveRequest(BaseModel):
+    wave_number: Optional[int] = None          # auto-assigned if None
+    name: Optional[str] = None
+    wave_type: str = "regular"                 # pilot | regular | cleanup
+    cohort_id: Optional[int] = None
+    agent_slots_override: Optional[int] = None
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+    owner_name: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class UpdateWaveRequest(BaseModel):
+    name: Optional[str] = None
+    wave_type: Optional[str] = None
+    cohort_id: Optional[int] = None
+    agent_slots_override: Optional[int] = None
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+    owner_name: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AssignVmsRequest(BaseModel):
+    vm_ids: List[int]
+    replace: bool = False       # True = replace all current assignments; False = add
+
+
+class AdvanceWaveRequest(BaseModel):
+    status: str  # pre_checks_passed | executing | validating | complete | failed | cancelled
+    notes: Optional[str] = None
+
+
+class AutoWaveRequest(BaseModel):
+    strategy: str = "pilot_first"    # by_tenant | by_risk | pilot_first | by_priority | balanced
+    cohort_id: Optional[int] = None  # scope to a specific cohort; None = whole project
+    max_vms_per_wave: int = 30
+    pilot_vm_count: int = 5
+    wave_name_prefix: str = "Wave"
+    dry_run: bool = True
+
+
+class UpdatePreflightRequest(BaseModel):
+    check_status: str   # pass | fail | skipped | na
+    notes: Optional[str] = None
+
+
+# --- Helper ---
+def _next_wave_number(project_id: str, cohort_id: Optional[int], conn) -> int:
+    with conn.cursor() as cur:
+        if cohort_id:
+            cur.execute(
+                "SELECT COALESCE(MAX(wave_number),0)+1 FROM migration_waves "
+                "WHERE project_id=%s AND cohort_id=%s", (project_id, cohort_id))
+        else:
+            cur.execute(
+                "SELECT COALESCE(MAX(wave_number),0)+1 FROM migration_waves "
+                "WHERE project_id=%s", (project_id,))
+        return cur.fetchone()[0]
+
+
+@router.get("/projects/{project_id}/waves",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_waves(project_id: str, cohort_id: Optional[int] = None):
+    """List all waves for a project, optionally filtered by cohort."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if cohort_id is not None:
+                cur.execute("""
+                    SELECT w.*,
+                           COUNT(wv.id) AS vm_count,
+                           COALESCE(c.name, '') AS cohort_name
+                    FROM migration_waves w
+                    LEFT JOIN migration_wave_vms wv
+                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number AND wv.vm_id IS NOT NULL
+                    LEFT JOIN migration_cohorts c ON c.id = w.cohort_id
+                    WHERE w.project_id = %s AND w.cohort_id = %s
+                    GROUP BY w.id, c.name
+                    ORDER BY w.wave_number
+                """, (project_id, cohort_id))
+            else:
+                cur.execute("""
+                    SELECT w.*,
+                           COUNT(wv.id) AS vm_count,
+                           COALESCE(c.name, '') AS cohort_name
+                    FROM migration_waves w
+                    LEFT JOIN migration_wave_vms wv
+                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number AND wv.vm_id IS NOT NULL
+                    LEFT JOIN migration_cohorts c ON c.id = w.cohort_id
+                    WHERE w.project_id = %s
+                    GROUP BY w.id, c.name
+                    ORDER BY w.cohort_id NULLS LAST, w.wave_number
+                """, (project_id,))
+            waves = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+        # Attach VM summaries to each wave
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            for w in waves:
+                cur.execute("""
+                    SELECT v.id, v.vm_name, v.tenant_name, v.risk_classification,
+                           v.migration_mode, v.migration_status, v.total_disk_gb,
+                           v.in_use_gb, wv.wave_vm_status, wv.migration_order
+                    FROM migration_wave_vms wv
+                    JOIN migration_vms v ON v.id = wv.vm_id
+                    WHERE wv.project_id = %s AND wv.wave_number = %s
+                    ORDER BY wv.migration_order, v.vm_name
+                """, (project_id, w["wave_number"]))
+                w["vms"] = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    return {"waves": waves}
+
+
+@router.post("/projects/{project_id}/waves",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_wave(project_id: str, req: CreateWaveRequest,
+                      user=Depends(get_current_user)):
+    """Create a migration wave manually."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        wave_number = req.wave_number or _next_wave_number(project_id, req.cohort_id, conn)
+        wave_name = req.name or f"Wave {wave_number}"
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_waves
+                    (project_id, wave_number, name, wave_type, cohort_id,
+                     agent_slots_override, scheduled_start, scheduled_end,
+                     owner_name, notes, status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'planned')
+                ON CONFLICT (project_id, wave_number) DO UPDATE SET
+                    name=EXCLUDED.name, wave_type=EXCLUDED.wave_type,
+                    cohort_id=EXCLUDED.cohort_id, updated_at=now()
+                RETURNING *
+            """, (project_id, wave_number, wave_name, req.wave_type, req.cohort_id,
+                  req.agent_slots_override, req.scheduled_start, req.scheduled_end,
+                  req.owner_name, req.notes))
+            wave = _serialize_row(dict(cur.fetchone()))
+        # Seed pre-flight checklist
+        with conn.cursor() as cur:
+            for cname, clabel, severity in PREFLIGHT_CHECKS:
+                cur.execute("""
+                    INSERT INTO migration_wave_preflights (wave_id, check_name, check_label, severity)
+                    VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
+                """, (wave["id"], cname, clabel, severity))
+        conn.commit()
+    _log_activity(actor=user.get("username", "?"), action="create_wave",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"wave_number": wave_number, "name": wave_name})
+    return {"status": "ok", "wave": wave}
+
+
+@router.patch("/projects/{project_id}/waves/{wave_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_wave(project_id: str, wave_id: int, req: UpdateWaveRequest,
+                      user=Depends(get_current_user)):
+    """Update wave metadata."""
+    updates: Dict[str, Any] = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    allowed = {"name", "wave_type", "cohort_id", "agent_slots_override",
+               "scheduled_start", "scheduled_end", "owner_name", "notes"}
+    fields = {k: v for k, v in updates.items() if k in allowed}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No valid fields")
+    set_clause = ", ".join(f"{k}=%s" for k in fields) + ", updated_at=now()"
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"UPDATE migration_waves SET {set_clause} "
+                "WHERE id=%s AND project_id=%s RETURNING *",
+                (*fields.values(), wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave = _serialize_row(dict(row))
+        conn.commit()
+    return {"status": "ok", "wave": wave}
+
+
+@router.delete("/projects/{project_id}/waves/{wave_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_wave(project_id: str, wave_id: int, user=Depends(get_current_user)):
+    """Delete a wave (must be in planned status)."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT status FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            if row["status"] not in ("planned",):
+                raise HTTPException(status_code=400,
+                    detail=f"Cannot delete a wave in '{row['status']}' status")
+            cur.execute("DELETE FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+        conn.commit()
+    _log_activity(actor=user.get("username", "?"), action="delete_wave",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"wave_id": wave_id})
+    return {"status": "ok"}
+
+
+@router.post("/projects/{project_id}/waves/{wave_id}/assign-vms",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def assign_vms_to_wave(project_id: str, wave_id: int, req: AssignVmsRequest,
+                             user=Depends(get_current_user)):
+    """Assign VM IDs to a wave. replace=True clears current assignments first."""
+    if not req.vm_ids:
+        raise HTTPException(status_code=400, detail="vm_ids is empty")
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT wave_number, project_id FROM migration_waves "
+                        "WHERE id=%s AND project_id=%s", (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave_number = row["wave_number"]
+
+        with conn.cursor() as cur:
+            if req.replace:
+                cur.execute("DELETE FROM migration_wave_vms WHERE project_id=%s AND wave_number=%s",
+                            (project_id, wave_number))
+            for order, vm_id in enumerate(req.vm_ids):
+                cur.execute("""
+                    INSERT INTO migration_wave_vms
+                        (project_id, wave_number, vm_id, migration_order, assigned_at)
+                    VALUES (%s,%s,%s,%s,now())
+                    ON CONFLICT DO NOTHING
+                """, (project_id, wave_number, vm_id, order))
+                # Update migration_vms.migration_status → assigned
+                cur.execute("""
+                    UPDATE migration_vms SET migration_status='assigned'
+                    WHERE id=%s AND project_id=%s AND migration_status='not_started'
+                """, (vm_id, project_id))
+        conn.commit()
+    _log_activity(actor=user.get("username", "?"), action="assign_vms_to_wave",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"wave_id": wave_id, "vm_count": len(req.vm_ids), "replace": req.replace})
+    return {"status": "ok", "assigned": len(req.vm_ids)}
+
+
+@router.delete("/projects/{project_id}/waves/{wave_id}/vms/{vm_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def remove_vm_from_wave(project_id: str, wave_id: int, vm_id: int,
+                              user=Depends(get_current_user)):
+    """Remove a VM assignment from a wave."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT wave_number FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave_number = row["wave_number"]
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_wave_vms "
+                        "WHERE project_id=%s AND wave_number=%s AND vm_id=%s",
+                        (project_id, wave_number, vm_id))
+            # Revert VM status to not_started if no other wave claims it
+            cur.execute("""
+                UPDATE migration_vms SET migration_status='not_started'
+                WHERE id=%s AND project_id=%s AND migration_status='assigned'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM migration_wave_vms wv2
+                    WHERE wv2.vm_id=%s AND wv2.project_id=%s
+                  )
+            """, (vm_id, project_id, vm_id, project_id))
+        conn.commit()
+    return {"status": "ok"}
+
+
+WAVE_STATUS_TRANSITIONS = {
+    "planned":           ["pre_checks_passed", "cancelled"],
+    "pre_checks_passed": ["executing", "planned", "cancelled"],
+    "executing":         ["validating", "failed"],
+    "validating":        ["complete", "failed"],
+    "complete":          [],
+    "failed":            ["planned"],
+    "cancelled":         ["planned"],
+}
+
+
+@router.post("/projects/{project_id}/waves/{wave_id}/advance",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveRequest,
+                              user=Depends(get_current_user)):
+    """Advance (or regress) a wave's status through the lifecycle."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT status FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            current_status = row["status"]
+            allowed = WAVE_STATUS_TRANSITIONS.get(current_status, [])
+            if req.status not in allowed:
+                raise HTTPException(status_code=400,
+                    detail=f"Cannot transition from '{current_status}' to '{req.status}'. "
+                           f"Allowed: {allowed}")
+            extras = ""
+            if req.status == "executing":
+                extras = ", started_at=now()"
+            elif req.status in ("complete", "failed", "cancelled"):
+                extras = ", completed_at=now()"
+            cur.execute(
+                f"UPDATE migration_waves SET status=%s{extras}, updated_at=now() "
+                "WHERE id=%s AND project_id=%s RETURNING *",
+                (req.status, wave_id, project_id))
+            wave = _serialize_row(dict(cur.fetchone()))
+        conn.commit()
+    _log_activity(actor=user.get("username", "?"), action="advance_wave_status",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"wave_id": wave_id, "from": current_status, "to": req.status})
+    return {"status": "ok", "wave": wave}
+
+
+@router.post("/projects/{project_id}/auto-waves",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def auto_build_waves(project_id: str, req: AutoWaveRequest,
+                           user=Depends(get_current_user)):
+    """Auto-build a wave plan using the engine. dry_run=True previews without saving."""
+    with _get_conn() as conn:
+        proj = _get_project(project_id, conn)
+
+        # Fetch VMs
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if req.cohort_id is not None:
+                cur.execute("""
+                    SELECT v.id, v.vm_name, v.tenant_name, v.power_state,
+                           v.risk_classification, v.migration_mode, v.migration_status,
+                           v.total_disk_gb, v.in_use_gb, v.cpu_count,
+                           v.risk_score, v.cpu_usage_percent
+                    FROM migration_vms v
+                    JOIN migration_tenants t ON t.project_id=v.project_id
+                        AND t.tenant_name=v.tenant_name AND t.include_in_plan=true
+                        AND t.cohort_id=%s
+                    WHERE v.project_id=%s AND v.migration_status NOT IN ('migrated','skipped')
+                """, (req.cohort_id, project_id))
+            else:
+                cur.execute("""
+                    SELECT v.id, v.vm_name, v.tenant_name, v.power_state,
+                           v.risk_classification, v.migration_mode, v.migration_status,
+                           v.total_disk_gb, v.in_use_gb, v.cpu_count,
+                           v.risk_score, v.cpu_usage_percent
+                    FROM migration_vms v
+                    JOIN migration_tenants t ON t.project_id=v.project_id
+                        AND t.tenant_name=v.tenant_name AND t.include_in_plan=true
+                    WHERE v.project_id=%s AND v.migration_status NOT IN ('migrated','skipped')
+                """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+
+            # Fetch tenants
+            cur.execute("""
+                SELECT id, tenant_name, migration_priority, cohort_id
+                FROM migration_tenants
+                WHERE project_id=%s AND include_in_plan=true
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            # Fetch dependencies
+            cur.execute("""
+                SELECT vm_id, depends_on_vm_id
+                FROM migration_vm_dependencies
+                WHERE project_id=%s
+            """, (project_id,))
+            deps = [dict(r) for r in cur.fetchall()]
+
+    result = build_wave_plan(
+        vms=vms, tenants=tenants, dependencies=deps,
+        strategy=req.strategy,
+        max_vms_per_wave=req.max_vms_per_wave,
+        pilot_vm_count=req.pilot_vm_count,
+        wave_name_prefix=req.wave_name_prefix,
+    )
+
+    if req.dry_run:
+        result["dry_run"] = True
+        return {"status": "ok", **result}
+
+    # Commit to DB
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Find max existing wave_number for safe ordering
+            cur.execute("SELECT COALESCE(MAX(wave_number),0) FROM migration_waves WHERE project_id=%s",
+                        (project_id,))
+            base = cur.fetchone()[0]
+
+        created_waves: List[Dict] = []
+        for w in result["waves"]:
+            wave_number = base + w["wave_number"]
+            wave_name = w["name"]
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO migration_waves
+                        (project_id, wave_number, name, wave_type, cohort_id, status)
+                    VALUES (%s,%s,%s,%s,%s,'planned')
+                    ON CONFLICT (project_id, wave_number) DO UPDATE SET
+                        name=EXCLUDED.name, wave_type=EXCLUDED.wave_type, updated_at=now()
+                    RETURNING id, wave_number
+                """, (project_id, wave_number, wave_name, w["wave_type"], req.cohort_id))
+                wave_row = cur.fetchone()
+                wave_id = wave_row["id"]
+
+            with conn.cursor() as cur:
+                # Seed pre-flight checklist
+                for cname, clabel, severity in PREFLIGHT_CHECKS:
+                    cur.execute("""
+                        INSERT INTO migration_wave_preflights (wave_id, check_name, check_label, severity)
+                        VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
+                    """, (wave_id, cname, clabel, severity))
+                # Assign VMs
+                for order, vm_id in enumerate(w["vm_ids"]):
+                    cur.execute("""
+                        INSERT INTO migration_wave_vms
+                            (project_id, wave_number, vm_id, migration_order, assigned_at)
+                        VALUES (%s,%s,%s,%s,now()) ON CONFLICT DO NOTHING
+                    """, (project_id, wave_number, vm_id, order))
+                    cur.execute("""
+                        UPDATE migration_vms SET migration_status='assigned'
+                        WHERE id=%s AND project_id=%s AND migration_status='not_started'
+                    """, (vm_id, project_id))
+            conn.commit()
+            created_waves.append({"wave_number": wave_number, "name": wave_name,
+                                   "wave_id": wave_id, "vm_count": len(w["vm_ids"])})
+
+    _log_activity(actor=user.get("username", "?"), action="auto_build_waves",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"strategy": req.strategy, "waves_created": len(created_waves),
+                           "cohort_id": req.cohort_id})
+    result["dry_run"] = False
+    result["created_waves"] = created_waves
+    return {"status": "ok", **result}
+
+
+@router.get("/projects/{project_id}/waves/{wave_id}/preflights",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_wave_preflights(project_id: str, wave_id: int):
+    """Get the pre-flight checklist for a wave."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Wave not found")
+            # Seed missing checks lazily
+            for cname, clabel, severity in PREFLIGHT_CHECKS:
+                cur.execute("""
+                    INSERT INTO migration_wave_preflights (wave_id, check_name, check_label, severity)
+                    VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
+                """, (wave_id, cname, clabel, severity))
+            cur.execute("""
+                SELECT * FROM migration_wave_preflights WHERE wave_id=%s ORDER BY id
+            """, (wave_id,))
+            checks = [_serialize_row(dict(r)) for r in cur.fetchall()]
+        conn.commit()
+    passed = sum(1 for c in checks if c["check_status"] == "pass")
+    blockers_failing = sum(1 for c in checks
+                           if c["severity"] == "blocker" and c["check_status"] == "fail")
+    return {
+        "checks": checks,
+        "summary": {
+            "total": len(checks),
+            "passed": passed,
+            "blocker_failures": blockers_failing,
+            "ready_to_advance": blockers_failing == 0,
+        }
+    }
+
+
+@router.patch("/projects/{project_id}/waves/{wave_id}/preflights/{check_name}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_wave_preflight(project_id: str, wave_id: int, check_name: str,
+                                req: UpdatePreflightRequest, user=Depends(get_current_user)):
+    """Update a pre-flight check status."""
+    allowed_statuses = ("pending", "pass", "fail", "skipped", "na")
+    if req.check_status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail=f"check_status must be one of {allowed_statuses}")
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Wave not found")
+            cur.execute("""
+                UPDATE migration_wave_preflights
+                SET check_status=%s, notes=%s, checked_at=now(), checked_by=%s
+                WHERE wave_id=%s AND check_name=%s
+                RETURNING *
+            """, (req.check_status, req.notes, user.get("username", "?"), wave_id, check_name))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Preflight check not found")
+            check = _serialize_row(dict(row))
+        conn.commit()
+    return {"status": "ok", "check": check}
+
+
+# Progress funnel: project-level VM migration status rollup
+@router.get("/projects/{project_id}/migration-funnel",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_migration_funnel(project_id: str):
+    """Counts of VMs by migration_status for the project funnel view."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT migration_status, COUNT(*) AS cnt
+                FROM migration_vms
+                WHERE project_id=%s
+                GROUP BY migration_status
+                ORDER BY migration_status
+            """, (project_id,))
+            rows = cur.fetchall()
+    funnel = {r[0] or "not_started": r[1] for r in rows}
+    total = sum(funnel.values())
+    funnel["total"] = total
+    return {"funnel": funnel}
 
 
 def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -4710,4 +5232,5 @@ def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         else:
             result[k] = str(v)
     return result
+
 
