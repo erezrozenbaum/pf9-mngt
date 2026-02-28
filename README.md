@@ -58,11 +58,46 @@ There is no native automated snapshot scheduler in Platform9 or OpenStack. No co
 
 ---
 
-### � Engineering Gap 4 — VMware Migration Assessment & Capacity Planning
+### 📦 Engineering Gap 4 — VMware Migration Assessment & Capacity Planning
 
-Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You need full source inventory analysis, OS compatibility classification, warm-vs-cold mode determination, per-VM time estimation, per-tenant wave planning, and target capacity validation — before a single VM moves. No native tooling exists that ties RVTools data to PCD readiness in one workflow.
+Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You need full source inventory analysis, OS compatibility classification, warm-vs-cold mode determination, per-VM time estimation, cohort planning, and target capacity validation — before a single VM moves. No native tooling ties RVTools data to PCD readiness in one end-to-end workflow.
 
-**The engineering answer:** pf9-mngt includes a multi-phase Migration Planner. Phase 1 (complete) delivers RVTools ingestion with full vInfo, vPartition, vDisk, and vNetwork parsing; per-VM risk scoring (GREEN/YELLOW/RED); warm-eligible vs cold-required classification; OS version detection; network name mapping; actual disk usage from vPartition; per-VM/per-tenant time estimation with daily wave scheduling; and Excel/PDF combined report export (Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs). Phase 2 (complete) adds per-tenant scoping and exclusion with bulk-select toolbar, source→PCD target mapping, overcommit profile modeling (aggressive/balanced/conservative), quota requirements engine, PCD node-profile CRUD with **performance-based node sizing** (uses actual `cpu_usage_percent`/`memory_usage_percent` from RVtools data for accurate physical demand — not allocation ÷ overcommit), auto-detect node profile from live PCD inventory, PCD readiness gap analysis with severity scoring, downloadable Excel/PDF gap action report, plan export auth fix, and risk breakdown per VM. Phase 2.10 (complete, v1.31.0) adds the pre-wave-planning foundations: **Migration Cohorts** (split large projects into ordered workstreams with independent schedules, owners, and dependency gates), **Source → PCD Network Mapping** (auto-seeded from VM inventory with best-guess target name from source + amber ⚠️ confirmed-flag review pattern), **VM Dependency Annotation** (mark app-stack ordering constraints with circular-dep validation), **Per-VM Migration Status & Mode Override** (operator-controlled status tracking and warm/cold force-override), **Tenant Migration Priority** (integer ordering for cohort auto-assign), and **Per-Tenant Readiness Checks** (5 auto-derived checks: target mapped, network mapped, quota sufficient, no critical gaps, VMs classified). v1.31.1 adds the target name pre-seeding correctness fix: both `migration_network_mappings` and `migration_tenants` now auto-seed target fields from source names with a `confirmed` flag — readiness checks return `pending` while unreviewed, preventing false alarms before any operator action. Phase 3 (complete, v1.34.0) adds cohort-scoped wave planning: VMs are split into waves per cohort in `cohort_order` sequence using one of five scheduling strategies (bandwidth-paced, risk-tiered, even-spread, dependency-ordered, pilot-first), with configurable daily capacity, pilot-wave support, full wave lifecycle management (draft → confirmed → in-progress → complete), operator pre-flight checklists per wave, and a Wave Planner UI with per-cohort wave cards, VM assignment tables, and preflight status tracking. v1.34.1 resolves all post-release wave planner bugs: cohort-scoped iteration, cohort_order column name, wave naming with cohort prefix, risk_category column, vm_name NOT NULL, RealDictCursor scalar fetch, Pydantic v2 getattr, and double-emoji badge. Phases 4–7 will add live execution tracking and post-migration validation.
+**The engineering answer:** pf9-mngt includes a full **Migration Planner** — a multi-stage workflow that takes you from raw RVTools data all the way to an approved, wave-sequenced migration plan ready for execution.
+
+**📥 Source Inventory & Assessment**
+- RVTools XLSX ingestion — parses vInfo, vPartition, vDisk, vNetwork sheets into a structured per-VM inventory
+- Per-VM risk scoring (GREEN / YELLOW / RED) with configurable weighted rules (OS, disk size, NIC count, snapshots)
+- Warm-eligible vs cold-required classification — based on risk score and operator overrides
+- OS family and version detection; actual used-disk data from vPartition (not provisioned size)
+- Per-VM time estimation — warm phase-1 copy, incremental sync, cutover window, and cold total downtime
+- Excel + PDF export — Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs
+
+**🗺️ Target Mapping & Capacity Planning**
+- Per-tenant scoping — mark tenants in or out of plan with bulk-select toolbar and exclusion reasons
+- Source → PCD target mapping — map each tenant to a target PCD domain and project; auto-seeded with confirmed-flag review workflow
+- Source → PCD network mapping — auto-seeded from VM inventory; VLAN ID, confirmed status, Find & Replace, Confirm All
+- VM dependency annotation — mark app-stack ordering constraints (web → DB) with circular-dependency validation
+- Per-tenant readiness checks — 5 auto-derived: target mapped, network mapped, quota sufficient, no critical gaps, VMs classified
+- Overcommit profile modeling — Aggressive / Balanced / Conservative presets with configurable ratios
+- Quota requirements engine — recommended per-tenant vCPU, RAM, and storage on the PCD side
+- **Performance-based node sizing** — uses actual `cpu_usage_percent` / `memory_usage_percent` from RVTools data (not vCPU allocation ÷ overcommit) for accurate physical node demand; falls back to allocation or quota if performance data is unavailable
+- Auto-detect PCD node profile from live hypervisor inventory with one click
+- PCD readiness gap analysis — missing flavors, networks, images, unmapped tenants — with severity scoring and downloadable action report (Excel + PDF)
+
+**🗃️ Cohort Planning**
+- **Migration Cohorts** — split large projects into ordered workstreams, each with its own schedule, owner, and dependency gate
+- **Tenant ease scoring** — composite 0–100 score per tenant based on VM count, disk size, risk score, OS support rate, network complexity, and cross-tenant dependencies; configurable dimension weights
+- **Auto-assign strategies** — six algorithms: easiest-first, riskiest-last, pilot + bulk, balanced load, OS-first, by-priority; with guardrails (max VMs, max disk, max avg risk per cohort)
+- **What-if estimator** — two side-by-side models per cohort (bandwidth/transfer model + VM-slots scheduler model); live recalculation as you adjust agent slots or bandwidth; project deadline banner turns red if either model exceeds the target duration
+- Expandable cohort cards — avg ease, risk distribution, OS mix, readiness counts, and cross-cohort dependency warnings
+- Gantt-style date bars and dependency lock indicators
+
+**🌊 Wave Planning**
+- Cohort-scoped auto-builder — builds independent wave sets per cohort in execution order; five strategies: bandwidth-paced, risk-tiered, even-spread, dependency-ordered, pilot-first
+- Pilot wave support — auto-creates a low-risk pilot wave per cohort to validate toolchain before committing the bulk
+- Full wave lifecycle — planned → confirmed → in-progress → complete, with timestamps and transition guards
+- Per-wave pre-flight checklists — network mapped, target project set, VMs assessed, no critical gaps, agent reachable, snapshot baseline
+- Wave Planner UI — VM migration funnel, per-cohort wave cards, VM assignment tables, preflight status panel, dry-run preview before committing
 
 ---
 
