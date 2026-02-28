@@ -213,11 +213,19 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 ADMIN_USERNAME = os.getenv("PF9_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("PF9_ADMIN_PASSWORD")
 ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # React UI
-    "http://localhost:3000",  # Development
-    os.getenv("PF9_ALLOWED_ORIGIN", "http://localhost:5173")
+    "http://localhost:5173",   # React UI (Vite dev server)
+    "http://127.0.0.1:5173",  # React UI via 127.0.0.1
+    "http://localhost:3000",   # Alt dev port
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",   # Direct API access
+    "http://127.0.0.1:8000",
 ]
-ALLOWED_ORIGINS = [origin for origin in ALLOWED_ORIGINS if origin]  # Remove None values
+# Allow extra origins via comma-separated env var, e.g. PF9_ALLOWED_ORIGINS=https://myhost:5173
+for _extra in os.getenv("PF9_ALLOWED_ORIGINS", os.getenv("PF9_ALLOWED_ORIGIN", "")).split(","):
+    _extra = _extra.strip()
+    if _extra and _extra not in ALLOWED_ORIGINS:
+        ALLOWED_ORIGINS.append(_extra)
+ALLOWED_ORIGINS = [o for o in ALLOWED_ORIGINS if o]
 
 # Validate configuration on import
 ConfigValidator.validate_and_exit_on_error()

@@ -110,6 +110,9 @@ from migration_engine import (
     compute_node_sizing,
     analyze_pcd_gaps,
     OVERCOMMIT_PRESETS,
+    # Phase 3.0
+    compute_tenant_ease_scores,
+    auto_assign_cohorts,
 )
 from export_reports import (
     generate_excel_report, generate_pdf_report,
@@ -390,6 +393,25 @@ class AssignTenantsToCohortRequest(BaseModel):
     tenant_ids: List[int]
 
 
+class AutoAssignGuardrails(BaseModel):
+    max_vms_per_cohort: int = 9999
+    max_disk_tb_per_cohort: float = 9999.0
+    max_avg_risk: float = 100.0
+    min_os_support_rate: float = 0.0
+    risk_threshold: float = 70.0   # for riskiest_last strategy
+    pilot_size: int = 5            # for pilot_bulk strategy
+
+
+class AutoAssignRequest(BaseModel):
+    strategy: str = "easiest_first"  # easiest_first | riskiest_last | pilot_bulk | balanced_load | os_first | by_priority
+    num_cohorts: int = 3
+    guardrails: AutoAssignGuardrails = AutoAssignGuardrails()
+    ease_weights: Optional[Dict[str, float]] = None
+    dry_run: bool = True
+    create_cohorts_if_missing: bool = False  # create cohorts 1..num_cohorts if fewer exist
+    cohort_profiles: Optional[List[Dict[str, Any]]] = None  # [{name, max_vms}] for ramp mode
+
+
 # ---------------------------------------------------------------------------
 # Helper: get project or 404
 # ---------------------------------------------------------------------------
@@ -473,7 +495,7 @@ async def create_project(req: CreateProjectRequest, user = Depends(get_current_u
     _log_activity(actor=actor, action="create", resource_type="migration_project",
                   resource_id=project["project_id"], resource_name=req.name)
 
-    return {"status": "ok", "project": _serialize_project(project)}
+    return {"status": "ok", "project": _serialize_row(project)}
 
 
 @router.get("/projects", dependencies=[Depends(require_permission("migration", "read"))])
@@ -505,7 +527,7 @@ async def list_projects(
             cur.execute(f"SELECT count(*) as cnt FROM migration_projects {where}", params)
             total = cur.fetchone()["cnt"]
 
-    return {"status": "ok", "total": total, "projects": [_serialize_project(p) for p in projects]}
+    return {"status": "ok", "total": total, "projects": [_serialize_row(p) for p in projects]}
 
 
 @router.get("/projects/{project_id}", dependencies=[Depends(require_permission("migration", "read"))])
@@ -545,7 +567,7 @@ async def get_project(project_id: str):
             cur.execute("SELECT count(*) as cnt FROM migration_tenants WHERE project_id = %s", (project_id,))
             totals["tenant_count"] = cur.fetchone()["cnt"]
 
-    result = _serialize_project(project)
+    result = _serialize_row(project)
     result["risk_summary"] = risk_summary
     result["mode_summary"] = mode_summary
     result["totals"] = _serialize_row(totals)
@@ -583,7 +605,7 @@ async def update_project(project_id: str, req: UpdateProjectRequest, user = Depe
     _log_activity(actor=actor, action="update", resource_type="migration_project",
                   resource_id=project_id, details=updates)
 
-    return {"status": "ok", "project": _serialize_project(project)}
+    return {"status": "ok", "project": _serialize_row(project)}
 
 
 @router.delete("/projects/{project_id}", dependencies=[Depends(require_permission("migration", "admin"))])
@@ -685,12 +707,12 @@ async def upload_rvtools(project_id: str, file: UploadFile = File(...), user = D
             raise HTTPException(status_code=400, detail=f"Cannot read XLSX: {exc}")
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Clear existing data for re-import
+            # Clear existing data for re-import (including cohorts — full clean slate)
             for table in (
                 "migration_wave_vms", "migration_waves", "migration_prep_tasks",
                 "migration_target_gaps", "migration_vm_snapshots", "migration_vm_nics",
                 "migration_vm_disks", "migration_vms", "migration_hosts",
-                "migration_clusters", "migration_tenants",
+                "migration_clusters", "migration_tenants", "migration_cohorts",
             ):
                 cur.execute(f"DELETE FROM {table} WHERE project_id = %s", (project_id,))
 
@@ -915,12 +937,14 @@ async def clear_rvtools_data(project_id: str, user = Depends(get_current_user)):
     with _get_conn() as conn:
         project = _get_project(project_id, conn)
         with conn.cursor() as cur:
+            # Delete cohorts first (FK: migration_tenants.cohort_id → migration_cohorts.id)
+            # then the rest of the rvtools-derived tables.
             for table in (
                 "migration_wave_vms", "migration_waves", "migration_prep_tasks",
                 "migration_target_gaps", "migration_vm_snapshots", "migration_vm_nics",
                 "migration_vm_disks", "migration_vms", "migration_hosts",
                 "migration_clusters", "migration_tenants", "migration_networks",
-                "migration_network_mappings",
+                "migration_network_mappings", "migration_cohorts",
             ):
                 cur.execute(f"DELETE FROM {table} WHERE project_id = %s", (project_id,))
 
@@ -938,7 +962,7 @@ async def clear_rvtools_data(project_id: str, user = Depends(get_current_user)):
     _log_activity(actor=actor, action="clear_rvtools", resource_type="migration_project",
                   resource_id=project_id, resource_name=project["name"])
 
-    return {"status": "ok", "message": "All RVTools data cleared. Project reset to draft."}
+    return {"status": "ok", "message": "All RVTools data cleared (including cohorts). Project reset to draft."}
 
 
 # ---------------------------------------------------------------------------
@@ -2491,11 +2515,15 @@ async def export_migration_plan(project_id: str):
     with _get_conn() as conn:
         project = _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Included tenants only
+            # Included tenants only — join cohort so Migration Plan knows which wave
             cur.execute("""
-                SELECT * FROM migration_tenants
-                WHERE project_id = %s AND include_in_plan = true
-                ORDER BY vm_count DESC
+                SELECT t.*,
+                       c.name  AS cohort_name,
+                       c.cohort_order AS cohort_order
+                FROM migration_tenants t
+                LEFT JOIN migration_cohorts c ON c.id = t.cohort_id
+                WHERE t.project_id = %s AND t.include_in_plan = true
+                ORDER BY c.cohort_order NULLS LAST, t.vm_count DESC
             """, (project_id,))
             tenants = [dict(r) for r in cur.fetchall()]
             included_names = {t["tenant_name"] for t in tenants}
@@ -4268,95 +4296,9 @@ async def get_cohort_summary(project_id: str, cohort_id: int):
 
 
 # =====================================================================
-# PHASE 2.10 — AUTO-ASSIGN TENANTS TO COHORTS
-# =====================================================================
-
-@router.post("/projects/{project_id}/cohorts/auto-assign",
-             dependencies=[Depends(require_permission("migration", "write"))])
-async def auto_assign_tenants_to_cohorts(project_id: str,
-                                         strategy: str = Query("priority",
-                                             description="priority | risk | equal_split"),
-                                         user=Depends(get_current_user)):
-    """
-    Auto-assign all in-scope unassigned tenants across existing cohorts.
-    strategy=priority:    assign by migration_priority order to cohorts in order
-    strategy=risk:        high-risk tenants → last cohort, low-risk → first
-    strategy=equal_split: distribute evenly across cohorts by VM count
-    """
-    actor = user.username if user else "system"
-    with _get_conn() as conn:
-        _get_project(project_id, conn)
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get ordered cohorts
-            cur.execute("""
-                SELECT id, cohort_order FROM migration_cohorts
-                WHERE project_id = %s ORDER BY cohort_order, id
-            """, (project_id,))
-            cohorts = cur.fetchall()
-            if not cohorts:
-                raise HTTPException(status_code=400,
-                    detail="No cohorts exist. Create cohorts first.")
-
-            cohort_ids = [c["id"] for c in cohorts]
-
-            # Get unassigned in-scope tenants
-            if strategy == "risk":
-                cur.execute("""
-                    SELECT t.id, t.tenant_name, t.vm_count,
-                           AVG(v.risk_score) AS avg_risk
-                    FROM migration_tenants t
-                    LEFT JOIN migration_vms v ON v.project_id = t.project_id
-                        AND v.tenant_name = t.tenant_name
-                    WHERE t.project_id = %s AND t.cohort_id IS NULL
-                      AND t.include_in_plan = true
-                    GROUP BY t.id, t.tenant_name, t.vm_count
-                    ORDER BY avg_risk ASC NULLS LAST
-                """, (project_id,))
-            else:
-                cur.execute("""
-                    SELECT id, tenant_name, vm_count
-                    FROM migration_tenants
-                    WHERE project_id = %s AND cohort_id IS NULL AND include_in_plan = true
-                    ORDER BY migration_priority ASC, tenant_name
-                """, (project_id,))
-            tenants = cur.fetchall()
-
-            if not tenants:
-                return {"status": "ok", "message": "All in-scope tenants already assigned",
-                        "updated_count": 0}
-
-            # Assign tenants round-robin (equal_split) or sequentially (priority/risk)
-            assignments = []
-            if strategy == "equal_split":
-                # Round-robin by VM count to balance cohorts
-                cohort_vm_counts = {cid: 0 for cid in cohort_ids}
-                for t in tenants:
-                    lightest = min(cohort_vm_counts, key=cohort_vm_counts.get)
-                    assignments.append((lightest, t["id"]))
-                    cohort_vm_counts[lightest] += (t["vm_count"] or 0)
-            else:
-                # Divide tenants into len(cohorts) equal chunks
-                chunk = max(1, -(-len(tenants) // len(cohort_ids)))  # ceiling division
-                for i, t in enumerate(tenants):
-                    cid = cohort_ids[min(i // chunk, len(cohort_ids) - 1)]
-                    assignments.append((cid, t["id"]))
-
-            # Apply assignments
-            for cid, tid in assignments:
-                cur.execute("""
-                    UPDATE migration_tenants SET cohort_id = %s, updated_at = now()
-                    WHERE id = %s
-                """, (cid, tid))
-            conn.commit()
-
-    _log_activity(actor=actor, action="auto_assign_cohorts", resource_type="migration_cohort",
-                  resource_id=project_id, details={"strategy": strategy, "assigned": len(assignments)})
-    return {"status": "ok", "updated_count": len(assignments), "strategy": strategy}
-
-
-# =====================================================================
 # PHASE 2.10 — TENANT READINESS CHECKS
 # =====================================================================
+# NOTE: auto-assign endpoint moved to Phase 3.0 section below (auto_assign_cohorts_endpoint)
 
 def _compute_tenant_readiness(project_id: str, tenant_id: int, conn) -> List[Dict]:
     """Compute readiness check results for one tenant. Returns list of check dicts."""
@@ -4503,9 +4445,256 @@ async def get_cohort_readiness_summary(project_id: str, cohort_id: int):
     }
 
 
+# =====================================================================
+# PHASE 3.0 — TENANT EASE SCORES & AUTO-ASSIGN COHORTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/tenant-ease-scores",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_tenant_ease_scores(
+    project_id: str,
+    weights: Optional[str] = None,  # JSON string of {dim: weight} overrides
+):
+    """
+    Compute a 0–100 ease score per tenant (lower = easier to migrate first).
+    Returns per-tenant score with dimension-level breakdown.
+    """
+    import json as _json
+    ease_weights = None
+    if weights:
+        try:
+            ease_weights = _json.loads(weights)
+        except Exception:
+            raise HTTPException(status_code=400, detail="weights must be a valid JSON object")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch tenant-level aggregates needed for scoring
+            cur.execute("""
+                SELECT
+                    t.id                              AS tenant_id,
+                    t.tenant_name,
+                    t.migration_priority,
+                    t.include_in_plan,
+                    COALESCE(t.vm_count, 0)            AS vm_count,
+                    COALESCE(
+                        ROUND(SUM(v.in_use_gb)::numeric, 2),
+                        ROUND(t.total_disk_gb::numeric / 1024.0, 2),
+                        0
+                    )                                  AS total_used_gb,
+                    COALESCE(ROUND(AVG(v.risk_score)::numeric, 1), 0) AS avg_risk_score,
+                    -- OS support rate: fraction of VMs with known (non-other) os_family
+                    CASE WHEN COUNT(v.id) = 0 THEN 1.0
+                         ELSE ROUND(
+                           COUNT(CASE WHEN v.os_family IN ('windows','linux') THEN 1 END)::numeric
+                           / NULLIF(COUNT(v.id),0)
+                         , 3) END                      AS os_support_rate,
+                    -- dominant OS family for os_first strategy
+                    MODE() WITHIN GROUP (ORDER BY v.os_family) AS os_family,
+                    -- distinct source networks
+                    COUNT(DISTINCT v.network_name)     AS distinct_network_count,
+                    -- cross-tenant VM dependencies (edges pointing OUT of this tenant)
+                    COALESCE((
+                        SELECT COUNT(*) FROM migration_vm_dependencies d
+                        JOIN migration_vms dv ON dv.id = d.vm_id
+                        JOIN migration_vms dov ON dov.id = d.depends_on_vm_id
+                        WHERE dv.tenant_name = t.tenant_name
+                          AND dov.tenant_name <> t.tenant_name
+                          AND dv.project_id = t.project_id
+                    ), 0)                              AS cross_tenant_dep_count,
+                    -- cold VM count
+                    COUNT(CASE WHEN COALESCE(v.migration_mode_override, v.migration_mode) = 'cold' THEN 1 END)
+                                                       AS cold_vm_count,
+                    -- unconfirmed: target mapping unconfirmed + network mappings unconfirmed
+                    CASE WHEN COALESCE(t.target_confirmed, false) THEN 0 ELSE 1 END
+                    + COALESCE((
+                        SELECT COUNT(*) FROM migration_network_mappings nm
+                        WHERE nm.project_id = t.project_id
+                          AND nm.confirmed = false
+                          AND nm.source_network_name IN (
+                              SELECT DISTINCT network_name FROM migration_vms
+                              WHERE tenant_name = t.tenant_name AND project_id = t.project_id
+                          )
+                    ), 0)                              AS unconfirmed_count,
+                    -- denominator: 1 (target) + distinct networks
+                    1 + COUNT(DISTINCT v.network_name) AS total_vm_or_mapping
+                FROM migration_tenants t
+                LEFT JOIN migration_vms v ON v.tenant_name = t.tenant_name
+                    AND v.project_id = t.project_id
+                    AND v.power_state = 'poweredOn'
+                WHERE t.project_id = %s
+                  AND t.include_in_plan = true
+                GROUP BY t.id, t.tenant_name, t.migration_priority, t.include_in_plan,
+                         t.vm_count, t.total_disk_gb, t.target_confirmed
+                ORDER BY t.tenant_name
+            """, (project_id,))
+            raw_tenants = [dict(r) for r in cur.fetchall()]
+
+    scored = compute_tenant_ease_scores(raw_tenants, ease_weights)
+    return {"status": "ok", "tenant_ease_scores": scored, "count": len(scored)}
 
 
-def _serialize_project(row: Dict[str, Any]) -> Dict[str, Any]:
+@router.post("/projects/{project_id}/cohorts/auto-assign",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def auto_assign_cohorts_endpoint(
+    project_id: str,
+    req: AutoAssignRequest,
+    user=Depends(get_current_user),
+):
+    """
+    Propose (or apply) an automatic tenant → cohort assignment.
+
+    Always returns a preview.  Set dry_run=false to commit the assignment to DB.
+    If create_cohorts_if_missing=true and fewer cohorts exist than num_cohorts,
+    new cohorts are created automatically.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get all in-scope tenants with aggregates
+            cur.execute("""
+                SELECT
+                    t.id                              AS tenant_id,
+                    t.tenant_name,
+                    t.migration_priority,
+                    COALESCE(t.vm_count, 0)            AS vm_count,
+                    COALESCE(
+                        ROUND(SUM(v.in_use_gb)::numeric, 2),
+                        ROUND(t.total_disk_gb::numeric / 1024.0, 2),
+                        0
+                    )                                  AS total_used_gb,
+                    COALESCE(ROUND(AVG(v.risk_score)::numeric, 1), 0) AS avg_risk_score,
+                    CASE WHEN COUNT(v.id) = 0 THEN 1.0
+                         ELSE ROUND(
+                           COUNT(CASE WHEN v.os_family IN ('windows','linux') THEN 1 END)::numeric
+                           / NULLIF(COUNT(v.id),0), 3) END AS os_support_rate,
+                    MODE() WITHIN GROUP (ORDER BY v.os_family)          AS os_family,
+                    COUNT(DISTINCT v.network_name)      AS distinct_network_count,
+                    COALESCE((
+                        SELECT COUNT(*) FROM migration_vm_dependencies d
+                        JOIN migration_vms dv ON dv.id = d.vm_id
+                        JOIN migration_vms dov ON dov.id = d.depends_on_vm_id
+                        WHERE dv.tenant_name = t.tenant_name
+                          AND dov.tenant_name <> t.tenant_name
+                          AND dv.project_id = t.project_id
+                    ), 0)                               AS cross_tenant_dep_count,
+                    COUNT(CASE WHEN COALESCE(v.migration_mode_override, v.migration_mode) = 'cold' THEN 1 END)
+                                                        AS cold_vm_count,
+                    CASE WHEN COALESCE(t.target_confirmed, false) THEN 0 ELSE 1 END
+                    + COALESCE((
+                        SELECT COUNT(*) FROM migration_network_mappings nm
+                        WHERE nm.project_id = t.project_id
+                          AND nm.confirmed = false
+                          AND nm.source_network_name IN (
+                              SELECT DISTINCT network_name FROM migration_vms
+                              WHERE tenant_name = t.tenant_name AND project_id = t.project_id
+                          )
+                    ), 0)                               AS unconfirmed_count,
+                    1 + COUNT(DISTINCT v.network_name)  AS total_vm_or_mapping
+                FROM migration_tenants t
+                LEFT JOIN migration_vms v ON v.tenant_name = t.tenant_name
+                    AND v.project_id = t.project_id
+                    AND v.power_state = 'poweredOn'
+                WHERE t.project_id = %s
+                  AND t.include_in_plan = true
+                GROUP BY t.id, t.tenant_name, t.migration_priority,
+                         t.vm_count, t.total_disk_gb, t.target_confirmed
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            # Get existing cohorts
+            cur.execute("""
+                SELECT c.id, c.name, c.cohort_order,
+                       COALESCE(SUM(t2.vm_count), 0) AS vm_count,
+                       0.0 AS total_used_gb
+                FROM migration_cohorts c
+                LEFT JOIN migration_tenants t2 ON t2.cohort_id = c.id
+                WHERE c.project_id = %s
+                GROUP BY c.id, c.name, c.cohort_order
+                ORDER BY c.cohort_order
+            """, (project_id,))
+            existing_cohorts = [dict(r) for r in cur.fetchall()]
+
+        # If we need more cohorts and create_cohorts_if_missing is set, create them
+        created_cohort_ids: Dict[int, int] = {}   # slot → DB id
+        if not req.dry_run and req.create_cohorts_if_missing:
+            effective_num_cohorts = len(req.cohort_profiles) if req.cohort_profiles else req.num_cohorts
+            existing_count = len(existing_cohorts)
+            for slot in range(existing_count + 1, effective_num_cohorts + 1):
+                strategy_names = {
+                    "pilot_bulk": ["\U0001f9ea Pilot", "\U0001f680 Main"],
+                }
+                default_names = strategy_names.get(req.strategy, [])
+                if req.cohort_profiles and slot - 1 < len(req.cohort_profiles):
+                    cname = req.cohort_profiles[slot - 1].get("name") or f"Cohort {slot}"
+                else:
+                    cname = default_names[slot - 1] if slot - 1 < len(default_names) else f"Cohort {slot}"
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        INSERT INTO migration_cohorts (project_id, name, cohort_order)
+                        VALUES (%s, %s, %s) RETURNING id
+                    """, (project_id, cname, slot))
+                    new_id = cur.fetchone()["id"]
+                    created_cohort_ids[slot] = new_id
+                    conn.commit()
+            # Refresh existing cohorts list after creation
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, name, cohort_order FROM migration_cohorts
+                    WHERE project_id = %s ORDER BY cohort_order
+                """, (project_id,))
+                existing_cohorts = [dict(r) for r in cur.fetchall()]
+
+        # Build slot → DB cohort id mapping
+        slot_to_cohort_id: Dict[int, int] = {}
+        for c in existing_cohorts:
+            slot_to_cohort_id[c["cohort_order"]] = c["id"]
+        # fill from created_cohort_ids too
+        slot_to_cohort_id.update(created_cohort_ids)
+
+    # Run engine
+    result = auto_assign_cohorts(
+        tenants=tenants,
+        existing_cohorts=existing_cohorts,
+        strategy=req.strategy,
+        num_cohorts=len(req.cohort_profiles) if req.cohort_profiles else req.num_cohorts,
+        guardrails=req.guardrails.dict(),
+        ease_weights=req.ease_weights,
+        cohort_profiles=req.cohort_profiles,
+    )
+
+    if not req.dry_run:
+        # Commit assignments to DB
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                for assignment in result["assignments"]:
+                    tid  = assignment["tenant_id"]
+                    slot = assignment["cohort_slot"]
+                    cid  = slot_to_cohort_id.get(slot)
+                    if cid is None:
+                        continue
+                    cur.execute("""
+                        UPDATE migration_tenants SET cohort_id = %s, updated_at = now()
+                        WHERE id = %s AND project_id = %s
+                    """, (cid, tid, project_id))
+                conn.commit()
+        _log_activity(actor=actor, action="auto_assign_cohorts",
+                      resource_type="migration_project", resource_id=project_id,
+                      details={"strategy": req.strategy, "num_cohorts": req.num_cohorts,
+                               "tenant_count": len(result["assignments"]),
+                               "created_cohorts": len(created_cohort_ids)})
+        # Annotate assignments with resolved cohort DB ids
+        for a in result["assignments"]:
+            a["cohort_id"] = slot_to_cohort_id.get(a["cohort_slot"])
+
+    result["dry_run"] = req.dry_run
+    result["slot_to_cohort_map"] = slot_to_cohort_id
+    return {"status": "ok", **result}
+
+
+
     """Convert DB row to JSON-safe dict."""
     return _serialize_row(row)
 

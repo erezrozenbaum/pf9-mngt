@@ -15,6 +15,7 @@ Responsibilities:
 from __future__ import annotations
 
 import re
+import math
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1055,8 +1056,17 @@ def generate_migration_plan(
         est = estimate_vm_time(vm, bottleneck_mbps, daily_change_rate)
         vm_estimates.append({**vm, "_estimate": est})
 
-    # Sort by tenant, then priority, then disk size descending
+    # Build cohort metadata lookup from tenants list
+    tenant_cohort: Dict[str, Any] = {}
+    for t in tenants:
+        tenant_cohort[t.get("tenant_name", "")] = {
+            "cohort_name":  t.get("cohort_name"),
+            "cohort_order": t.get("cohort_order"),
+        }
+
+    # Sort by cohort_order first (uncohorted last), then tenant, priority, disk size desc
     vm_estimates.sort(key=lambda v: (
+        tenant_cohort.get(v.get("tenant_name", ""), {}).get("cohort_order") or 9999,
         v.get("tenant_name") or "zzz",
         v.get("priority", 50),
         -(float(v.get("total_disk_gb", 0) or 0)),
@@ -1069,6 +1079,8 @@ def generate_migration_plan(
         tenant_map[tname] = {
             "tenant_name": tname,
             "org_vdc": t.get("org_vdc"),
+            "cohort_name":  t.get("cohort_name"),
+            "cohort_order": t.get("cohort_order"),
             "vm_count": 0,
             "total_vcpu": 0,
             "total_ram_mb": 0,
@@ -1091,6 +1103,8 @@ def generate_migration_plan(
             tenant_map[tname] = {
                 "tenant_name": tname,
                 "org_vdc": v.get("org_vdc"),
+                "cohort_name":  tenant_cohort.get(tname, {}).get("cohort_name"),
+                "cohort_order": tenant_cohort.get(tname, {}).get("cohort_order"),
                 "vm_count": 0,
                 "total_vcpu": 0,
                 "total_ram_mb": 0,
@@ -1159,40 +1173,63 @@ def generate_migration_plan(
             "effective_hours": round(effective_hours, 2),
         })
 
-    # Build daily schedule
-    remaining_vms = list(vm_estimates)  # all VMs to schedule
+    # Build daily schedule — process cohorts sequentially, each cohort starts on a fresh day
+    # Group VMs by cohort (already sorted by cohort_order → tenant → priority → disk)
+    from itertools import groupby as _groupby
+
+    def _vm_cohort_key(v: Dict) -> tuple:
+        tc = tenant_cohort.get(v.get("tenant_name", ""), {})
+        return (tc.get("cohort_order") or 9999, tc.get("cohort_name") or "Uncohorted")
+
     daily_schedule: List[Dict[str, Any]] = []
+    cohort_schedule_summary: List[Dict[str, Any]] = []
     day_number = 0
-    vm_idx = 0
 
-    while vm_idx < len(remaining_vms) and day_number < effective_days:
-        day_number += 1
-        # How many VMs can we process today?
-        # Estimate: each VM slot takes effective_hours/working_hours of a day
-        day_vms: List[Dict[str, Any]] = []
-        day_hours_used = 0.0
+    for (cohort_order, cohort_name), cohort_vms_iter in _groupby(vm_estimates, key=_vm_cohort_key):
+        cohort_vms = list(cohort_vms_iter)
+        cohort_start_day = day_number + 1
+        vm_idx = 0
 
-        while vm_idx < len(remaining_vms) and len(day_vms) < total_concurrent:
-            v = remaining_vms[vm_idx]
-            est = v["_estimate"]
-            eff_h = est.warm_total_hours if "cold" not in est.mode else est.cold_total_hours
-            if day_hours_used + eff_h > working_hours * total_concurrent and day_vms:
-                break
-            day_vms.append({
-                "vm_name": v.get("vm_name"),
-                "tenant_name": v.get("tenant_name"),
-                "mode": est.mode,
-                "disk_gb": round(est.total_disk_gb, 2),
-                "estimated_hours": round(eff_h, 2),
+        while vm_idx < len(cohort_vms):
+            day_number += 1
+            day_vms: List[Dict[str, Any]] = []
+            day_hours_used = 0.0
+
+            while vm_idx < len(cohort_vms) and len(day_vms) < total_concurrent:
+                v = cohort_vms[vm_idx]
+                est = v["_estimate"]
+                eff_h = est.warm_total_hours if "cold" not in est.mode else est.cold_total_hours
+                if day_hours_used + eff_h > working_hours * total_concurrent and day_vms:
+                    break
+                day_vms.append({
+                    "vm_name": v.get("vm_name"),
+                    "tenant_name": v.get("tenant_name"),
+                    "cohort_name": cohort_name,
+                    "cohort_order": cohort_order if cohort_order != 9999 else None,
+                    "mode": est.mode,
+                    "disk_gb": round(est.total_disk_gb, 2),
+                    "estimated_hours": round(eff_h, 2),
+                })
+                day_hours_used += eff_h
+                vm_idx += 1
+
+            daily_schedule.append({
+                "day": day_number,
+                "cohort_name": cohort_name,
+                "cohort_order": cohort_order if cohort_order != 9999 else None,
+                "cohorts": [cohort_name],
+                "vm_count": len(day_vms),
+                "vms": day_vms,
+                "total_estimated_hours": round(day_hours_used, 2),
             })
-            day_hours_used += eff_h
-            vm_idx += 1
 
-        daily_schedule.append({
-            "day": day_number,
-            "vm_count": len(day_vms),
-            "vms": day_vms,
-            "total_estimated_hours": round(day_hours_used, 2),
+        cohort_schedule_summary.append({
+            "cohort_order": cohort_order if cohort_order != 9999 else None,
+            "cohort_name": cohort_name,
+            "start_day": cohort_start_day,
+            "end_day": day_number,
+            "duration_days": day_number - cohort_start_day + 1,
+            "vm_count": len(cohort_vms),
         })
 
     # Totals
@@ -1230,8 +1267,16 @@ def generate_migration_plan(
             "estimated_schedule_days": day_number,
             "total_downtime_hours": round(total_downtime_h, 2),
         },
-        "tenant_plans": sorted(tenant_map.values(), key=lambda t: -(t["vm_count"])),
+        # Sort tenant plans by cohort_order (uncohorted last), then vm_count desc
+        "tenant_plans": sorted(
+            tenant_map.values(),
+            key=lambda t: (
+                t.get("cohort_order") or 9999,
+                -(t["vm_count"]),
+            ),
+        ),
         "daily_schedule": daily_schedule,
+        "cohort_schedule_summary": cohort_schedule_summary,
     }
 
 def summarize_rvtools_stats(
@@ -1655,3 +1700,410 @@ def analyze_pcd_gaps(
             })
 
     return gaps
+
+
+# =====================================================================
+# 9.  Phase 3.0 — Tenant Ease Score & Auto-Assign Cohorts
+# =====================================================================
+
+# Default weights — must sum to 100
+DEFAULT_EASE_WEIGHTS: Dict[str, float] = {
+    "disk":      20.0,   # total used disk GB (bigger = harder)
+    "risk":      25.0,   # average risk score (higher = harder)
+    "os":        20.0,   # unsupported OS rate (1 - support_rate)
+    "vm_count":  15.0,   # number of VMs in tenant
+    "networks":  10.0,   # distinct source networks
+    "deps":       5.0,   # cross-tenant VM dependencies
+    "cold":       3.0,   # fraction of VMs classified cold
+    "unconf":     2.0,   # fraction of target/network mappings unconfirmed
+}
+
+
+def _norm(value: float, max_val: float) -> float:
+    """Normalise a value to 0–1.  Returns 0 if max_val is 0."""
+    if max_val <= 0:
+        return 0.0
+    return min(value / max_val, 1.0)
+
+
+def compute_tenant_ease_scores(
+    tenants: List[Dict[str, Any]],
+    weights: Optional[Dict[str, float]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Compute a 0–100 ease score for each tenant.
+
+    Lower score  ⟹  easier (migrate first: small, low-risk, fully-supported).
+    Higher score ⟹  harder (save for later: large, risky, unsupported OS).
+
+    Each input tenant dict should contain:
+        tenant_id, tenant_name
+        vm_count               (int)
+        total_used_gb          (float)   — sum(in_use_gb) across VMs
+        avg_risk_score         (float)   — average risk score 0–100
+        os_support_rate        (float)   — fraction 0–1 of VMs with supported OS
+        distinct_network_count (int)
+        cross_tenant_dep_count (int)     — dependency edges pointing outside this tenant
+        cold_vm_count          (int)     — VMs classified cold
+        unconfirmed_count      (int)     — unconfirmed target+network mappings
+        total_vm_or_mapping    (int)     — denominator for unconfirmed_ratio
+    """
+    w = dict(DEFAULT_EASE_WEIGHTS)
+    if weights:
+        w.update(weights)
+    # Normalise weights so they sum to 100
+    total_w = sum(w.values()) or 100.0
+    w = {k: v / total_w * 100 for k, v in w.items()}
+
+    # --- Compute per-dimension maxima across all tenants (for normalisation) ---
+    # float() cast is required: DB may return decimal.Decimal for aggregated columns
+    max_used_gb    = float(max((float(t.get("total_used_gb", 0) or 0) for t in tenants), default=1))
+    max_vm_count   = float(max((int(t.get("vm_count", 0)        or 0) for t in tenants), default=1))
+    max_networks   = float(max((int(t.get("distinct_network_count", 0) or 0) for t in tenants), default=1))
+    max_deps       = float(max((int(t.get("cross_tenant_dep_count", 0) or 0) for t in tenants), default=1))
+
+    results = []
+    for t in tenants:
+        used_gb    = float(t.get("total_used_gb", 0) or 0)
+        vm_count   = int(t.get("vm_count", 0)        or 0)
+        cold_cnt   = int(t.get("cold_vm_count", 0)   or 0)
+        avg_risk   = float(t.get("avg_risk_score", 0) or 0)
+        os_rate    = float(t.get("os_support_rate", 1) or 1)
+        net_cnt    = int(t.get("distinct_network_count", 0) or 0)
+        dep_cnt    = int(t.get("cross_tenant_dep_count", 0) or 0)
+        unconf     = int(t.get("unconfirmed_count", 0) or 0)
+        denom      = int(t.get("total_vm_or_mapping", max(vm_count, 1)) or max(vm_count, 1))
+
+        cold_ratio  = cold_cnt / vm_count  if vm_count  > 0 else 0.0
+        unconf_ratio = unconf / denom      if denom     > 0 else 0.0
+
+        dims = {
+            "disk":     _norm(used_gb, max_used_gb)    * w["disk"],
+            "risk":     _norm(avg_risk, 100)           * w["risk"],
+            "os":       (1.0 - os_rate)                * w["os"],
+            "vm_count": _norm(vm_count, max_vm_count)  * w["vm_count"],
+            "networks": _norm(net_cnt, max_networks)   * w["networks"],
+            "deps":     _norm(dep_cnt, max_deps)       * w["deps"],
+            "cold":     cold_ratio                     * w["cold"],
+            "unconf":   unconf_ratio                   * w["unconf"],
+        }
+        score = sum(dims.values())
+
+        results.append({
+            "tenant_id":     t.get("tenant_id") or t.get("id"),
+            "tenant_name":   t.get("tenant_name", ""),
+            "ease_score":    round(score, 1),
+            "ease_label":    "Easy" if score < 30 else ("Medium" if score < 60 else "Hard"),
+            "vm_count":      vm_count,
+            "total_used_gb": round(used_gb, 1),
+            "avg_risk_score": round(avg_risk, 1),
+            "os_support_rate": round(os_rate, 3),
+            "distinct_network_count": net_cnt,
+            "cross_tenant_dep_count": dep_cnt,
+            "cold_vm_ratio": round(cold_ratio, 3),
+            "unconfirmed_ratio": round(unconf_ratio, 3),
+            "dimension_scores": {k: round(v, 2) for k, v in dims.items()},
+            "dimension_weights": {k: round(w[k], 1) for k in w},
+        })
+
+    return sorted(results, key=lambda x: x["ease_score"])
+
+
+def auto_assign_cohorts(
+    tenants: List[Dict[str, Any]],          # rows with ease_score, vm_count, total_used_gb, avg_risk_score, os_family_counts
+    existing_cohorts: List[Dict[str, Any]], # [{id, name, cohort_order, vm_count, total_used_gb}]
+    strategy: str = "easiest_first",
+    num_cohorts: int = 3,
+    guardrails: Optional[Dict[str, Any]] = None,
+    ease_weights: Optional[Dict[str, float]] = None,
+    cohort_profiles: Optional[List[Dict[str, Any]]] = None,  # [{name, max_vms}] — ramp mode
+) -> Dict[str, Any]:
+    """
+    Propose a tenant → cohort assignment.
+
+    Strategies
+    ----------
+    easiest_first  : sort by ease_score ASC, fill cohorts in order respecting guardrails
+    riskiest_last  : high-risk tenants always go into the last cohort; rest by ease_score
+    pilot_bulk     : top-N easiest → "🧪 Pilot" cohort; rest → "🚀 Main" cohort
+    balanced_load  : greedy bin-pack by total_used_gb to minimise max-cohort GB
+    os_first       : Linux tenants before Windows tenants, then by ease_score
+    by_priority    : sort by migration_priority ASC (lower = earlier), ties broken by ease_score
+
+    Returns a dict with:
+        assignments    : [{tenant_id, tenant_name, cohort_slot (1-based)}]
+        cohort_summaries : [{slot, tenant_count, vm_count, total_used_gb, avg_ease_score, est_hours}]
+        warnings       : [str]   (guardrail violations or dependency warnings)
+        new_cohort_names : [str] if strategy created implicit cohort names
+    """
+    guardrails = guardrails or {}
+    max_vms    = guardrails.get("max_vms_per_cohort", 9999)
+    max_gb     = guardrails.get("max_disk_tb_per_cohort", 9999) * 1024  # convert TB → GB
+    max_risk   = guardrails.get("max_avg_risk", 100)
+    min_os_rt  = guardrails.get("min_os_support_rate", 0.0)
+
+    # Compute ease scores if not already present
+    scored = compute_tenant_ease_scores(tenants, ease_weights)
+    by_id  = {t["tenant_id"]: t for t in scored}
+
+    warnings: List[str] = []
+
+    # ---- Ramp Profile mode (per-cohort VM caps) ----
+    if cohort_profiles:
+        num_cohorts = len(cohort_profiles)
+        scored = compute_tenant_ease_scores(tenants, ease_weights)
+        by_id  = {t["tenant_id"]: t for t in scored}
+
+        # Build ordering based on chosen strategy
+        if strategy == "os_first":
+            def _osk(t: Dict) -> int:
+                f = (t.get("os_family") or "other").lower()
+                return 0 if f == "linux" else (1 if f == "windows" else 2)
+            ordering: List[Dict] = sorted(scored, key=lambda x: (_osk(x), x["ease_score"]))
+        elif strategy == "riskiest_last":
+            rth = (guardrails or {}).get("risk_threshold", 70)
+            high = sorted([t for t in scored if t["avg_risk_score"] >= rth], key=lambda x: x["ease_score"])
+            safe = sorted([t for t in scored if t["avg_risk_score"] <  rth], key=lambda x: x["ease_score"])
+            ordering = safe + high
+        elif strategy == "by_priority":
+            ordering = sorted(
+                scored,
+                key=lambda x: (
+                    next((t.get("migration_priority") or 999 for t in tenants
+                          if (t.get("tenant_id") or t.get("id")) == x["tenant_id"]), 999),
+                    x["ease_score"]
+                )
+            )
+        elif strategy == "balanced_load":
+            ordering = sorted(scored, key=lambda x: x["total_used_gb"], reverse=True)
+        else:  # easiest_first, pilot_bulk, unknown
+            ordering = sorted(scored, key=lambda x: x["ease_score"])
+
+        slots: Dict[int, int] = {}
+        profile_vm_counts = [0] * num_cohorts
+
+        # ---- pilot_bulk in ramp mode: first pilot_size easiest → slot 1, rest fill slots 2..N ----
+        if strategy == "pilot_bulk":
+            pilot_size_val = (guardrails or {}).get("pilot_size", 5)
+            pilot   = ordering[:pilot_size_val]
+            rest    = ordering[pilot_size_val:]
+            for t in pilot:
+                slots[t["tenant_id"]] = 1
+                profile_vm_counts[0] += t["vm_count"]
+            cur_wave = 1  # start from slot index 1 (= wave slot 2)
+            for t in rest:
+                for _ in range(max(num_cohorts - 1, 1)):
+                    # per-profile cap takes priority, else fall back to guardrail max_vms
+                    cap = cohort_profiles[cur_wave].get("max_vms") or max_vms
+                    if profile_vm_counts[cur_wave] + t["vm_count"] <= cap:
+                        break
+                    if cur_wave < num_cohorts - 1:
+                        cur_wave += 1
+                        warnings.append(
+                            f"Wave {cur_wave} guardrail hit — overflow tenant '{t['tenant_name']}' placed in next wave"
+                        )
+                slots[t["tenant_id"]] = cur_wave + 1
+                profile_vm_counts[cur_wave] += t["vm_count"]
+        else:
+            for t in ordering:
+                placed = False
+                for slot_idx, profile in enumerate(cohort_profiles):
+                    # per-profile cap takes priority, else fall back to guardrail max_vms
+                    cap = profile.get("max_vms") or max_vms
+                    if profile_vm_counts[slot_idx] + t["vm_count"] <= cap:
+                        slots[t["tenant_id"]] = slot_idx + 1
+                        profile_vm_counts[slot_idx] += t["vm_count"]
+                        placed = True
+                        break
+                if not placed:
+                    slots[t["tenant_id"]] = num_cohorts
+                    warnings.append(
+                        f"Tenant \u2018{t['tenant_name']}\u2019 overflowed all cohort caps \u2014 placed in last cohort"
+                    )
+
+        names = [p.get("name") or f"Cohort {i+1}" for i, p in enumerate(cohort_profiles)]
+        return _format_auto_assign_result(scored, slots, num_cohorts, names, by_id, warnings)
+
+    # ---- Strategy: pilot + waves (N cohorts) ----
+    if strategy == "pilot_bulk":
+        pilot_size = guardrails.get("pilot_size", 5)
+        sorted_easy = sorted(scored, key=lambda x: x["ease_score"])
+        pilot     = sorted_easy[:pilot_size]
+        remaining = sorted_easy[pilot_size:]
+
+        slots: Dict[int, int] = {t["tenant_id"]: 1 for t in pilot}
+
+        # Distribute remaining tenants across wave slots (2..num_cohorts)
+        n_wave_slots = max(num_cohorts - 1, 1)
+        wave_vms  = [0]   * n_wave_slots
+        wave_gb   = [0.0] * n_wave_slots
+        cur_wave  = 0
+        for t in remaining:
+            for _ in range(n_wave_slots):
+                v = wave_vms[cur_wave] + t["vm_count"]
+                g = wave_gb[cur_wave]  + t["total_used_gb"]
+                if v <= max_vms and g <= max_gb:
+                    break
+                cur_wave = min(cur_wave + 1, n_wave_slots - 1)
+                warnings.append(f"Cohort {cur_wave + 1} guardrail hit — overflow tenant '{t['tenant_name']}' placed in next wave")
+            slots[t["tenant_id"]] = cur_wave + 2  # slot 2 = Wave 1, etc.
+            wave_vms[cur_wave] += t["vm_count"]
+            wave_gb[cur_wave]  += t["total_used_gb"]
+
+        # Auto-name: Pilot / Wave 1 / Wave 2 / ... / Main
+        if num_cohorts == 2:
+            names = ["🧪 Pilot", "🚀 Main"]
+        else:
+            names = ["🧪 Pilot"] + [f"🔄 Wave {i}" for i in range(1, num_cohorts - 1)] + ["🚀 Main"]
+
+        return _format_auto_assign_result(scored, slots, num_cohorts, names, by_id, warnings)
+
+    # ---- Strategy: riskiest_last ----
+    if strategy == "riskiest_last":
+        risk_threshold = guardrails.get("risk_threshold", 70)
+        high_risk = [t for t in scored if t["avg_risk_score"] >= risk_threshold]
+        safe      = [t for t in scored if t["avg_risk_score"] <  risk_threshold]
+        # safe fill slots 1..num_cohorts-1, high_risk always slot num_cohorts
+        safe_sorted = sorted(safe, key=lambda x: x["ease_score"])
+        slots: Dict[int, int] = {}
+        inner_n = max(num_cohorts - 1, 1)
+        buckets = [[] for _ in range(inner_n)]
+        for i, t in enumerate(safe_sorted):
+            buckets[i % inner_n].append(t)
+        for slot_idx, bucket in enumerate(buckets, start=1):
+            for t in bucket:
+                slots[t["tenant_id"]] = slot_idx
+        for t in high_risk:
+            slots[t["tenant_id"]] = num_cohorts
+        return _format_auto_assign_result(scored, slots, num_cohorts, [], by_id, warnings)
+
+    # ---- Strategy: balanced_load (minimise max cohort GB) ----
+    if strategy == "balanced_load":
+        # Greedy: always add next-largest tenant to the lightest cohort
+        sorted_by_gb = sorted(scored, key=lambda x: x["total_used_gb"], reverse=True)
+        cohort_gb  = [0.0] * num_cohorts
+        cohort_vms = [0]   * num_cohorts
+        slots = {}
+        for t in sorted_by_gb:
+            # pick cohort with least GB that still has room
+            candidates = [
+                i for i in range(num_cohorts)
+                if cohort_vms[i] + t["vm_count"] <= max_vms
+                and cohort_gb[i] + t["total_used_gb"] <= max_gb
+            ]
+            if not candidates:
+                candidates = range(num_cohorts)
+                warnings.append(f"Guardrail exceeded for tenant '{t['tenant_name']}' — placed in closest cohort")
+            pick = min(candidates, key=lambda i: cohort_gb[i])
+            slots[t["tenant_id"]] = pick + 1
+            cohort_gb[pick]  += t["total_used_gb"]
+            cohort_vms[pick] += t["vm_count"]
+        return _format_auto_assign_result(scored, slots, num_cohorts, [], by_id, warnings)
+
+    # ---- Strategy: os_first ----
+    if strategy == "os_first":
+        def os_key(t: Dict) -> int:
+            family = (t.get("os_family") or "other").lower()
+            return 0 if family == "linux" else (1 if family == "windows" else 2)
+        sorted_os = sorted(scored, key=lambda x: (os_key(x), x["ease_score"]))
+        slots = {}
+        bucket_size = max(1, math.ceil(len(sorted_os) / num_cohorts))
+        for i, t in enumerate(sorted_os):
+            slots[t["tenant_id"]] = min(i // bucket_size + 1, num_cohorts)
+        return _format_auto_assign_result(scored, slots, num_cohorts, [], by_id, warnings)
+
+    # ---- Strategy: by_priority ----
+    if strategy == "by_priority":
+        sorted_p = sorted(tenants, key=lambda x: (x.get("migration_priority") or 999, by_id.get(x.get("tenant_id") or x.get("id"), {}).get("ease_score", 50)))
+        slots = {}
+        bucket_size = max(1, math.ceil(len(sorted_p) / num_cohorts))
+        for i, t in enumerate(sorted_p):
+            tid = t.get("tenant_id") or t.get("id")
+            slots[tid] = min(i // bucket_size + 1, num_cohorts)
+        return _format_auto_assign_result(scored, slots, num_cohorts, [], by_id, warnings)
+
+    # ---- Default: easiest_first ----
+    sorted_easy = sorted(scored, key=lambda x: x["ease_score"])
+    slots = {}
+    cohort_vms = [0]   * num_cohorts
+    cohort_gb  = [0.0] * num_cohorts
+    current_slot = 0
+    for t in sorted_easy:
+        # Advance slot if guardrails would be violated
+        for _ in range(num_cohorts):
+            v  = cohort_vms[current_slot] + t["vm_count"]
+            g  = cohort_gb[current_slot]  + t["total_used_gb"]
+            ar = (cohort_gb[current_slot] / max(cohort_vms[current_slot], 1)) if cohort_vms[current_slot] > 0 else t["avg_risk_score"]
+            if v <= max_vms and g <= max_gb:
+                break
+            current_slot = min(current_slot + 1, num_cohorts - 1)
+            warnings.append(f"Cohort {current_slot} guardrail hit — overflow tenant '{t['tenant_name']}' placed in next cohort")
+
+        # Additional per-cohort risk / OS guardrail warning (informational only)
+        if t["avg_risk_score"] > max_risk:
+            warnings.append(f"Tenant '{t['tenant_name']}' has avg risk {t['avg_risk_score']:.0f} (threshold {max_risk})")
+        if t["os_support_rate"] < min_os_rt:
+            warnings.append(f"Tenant '{t['tenant_name']}' OS support {t['os_support_rate']*100:.0f}% < minimum {min_os_rt*100:.0f}%")
+
+        slots[t["tenant_id"]] = current_slot + 1
+        cohort_vms[current_slot] += t["vm_count"]
+        cohort_gb[current_slot]  += t["total_used_gb"]
+
+    return _format_auto_assign_result(scored, slots, num_cohorts, [], by_id, warnings)
+
+
+def _format_auto_assign_result(
+    scored: List[Dict[str, Any]],
+    slots: Dict[int, int],
+    num_cohorts: int,
+    names: List[str],
+    by_id: Dict[int, Dict[str, Any]],
+    warnings: List[str],
+) -> Dict[str, Any]:
+    """Format the auto-assign output into a consistent response shape."""
+    assignments = []
+    for t in scored:
+        tid  = t["tenant_id"]
+        slot = slots.get(tid, num_cohorts)
+        assignments.append({
+            "tenant_id":   tid,
+            "tenant_name": t["tenant_name"],
+            "cohort_slot": slot,
+            "ease_score":  t["ease_score"],
+            "ease_label":  t["ease_label"],
+        })
+    assignments.sort(key=lambda x: (x["cohort_slot"], x["ease_score"]))
+
+    # Build per-cohort summary
+    cohort_map: Dict[int, List[Dict]] = {}
+    for a in assignments:
+        cohort_map.setdefault(a["cohort_slot"], []).append(a)
+
+    summaries = []
+    for slot in range(1, num_cohorts + 1):
+        members = cohort_map.get(slot, [])
+        t_data  = [by_id.get(m["tenant_id"], {}) for m in members]
+        vm_cnt  = sum(td.get("vm_count", 0) or 0     for td in t_data)
+        used_gb = sum(td.get("total_used_gb", 0) or 0 for td in t_data)
+        avg_ease = (sum(m["ease_score"] for m in members) / len(members)
+                    if members else 0)
+        avg_risk = (sum(td.get("avg_risk_score", 0) or 0 for td in t_data) / len(t_data)
+                    if t_data else 0)
+        summaries.append({
+            "slot":           slot,
+            "name":           names[slot - 1] if slot - 1 < len(names) else f"Cohort {slot}",
+            "tenant_count":   len(members),
+            "vm_count":       vm_cnt,
+            "total_disk_gb":  round(used_gb, 1),
+            "avg_ease_score": round(avg_ease, 1),
+            "avg_risk":       round(avg_risk, 1),
+        })
+
+    return {
+        "strategy":        "auto_assign",
+        "num_cohorts":     num_cohorts,
+        "assignments":     assignments,
+        "cohort_summaries": summaries,
+        "cohort_names":    names or [f"Cohort {i+1}" for i in range(num_cohorts)],
+        "warnings":        list(dict.fromkeys(warnings)),  # deduplicate
+    }
