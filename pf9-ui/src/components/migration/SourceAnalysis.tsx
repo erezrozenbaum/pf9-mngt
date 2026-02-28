@@ -175,7 +175,7 @@ interface WaveVM {
   id: number;
   vm_name: string;
   tenant_name: string;
-  risk_classification: string;
+  risk_category: string;
   migration_mode: string;
   migration_status: string;
   total_disk_gb: number;
@@ -3960,7 +3960,7 @@ function WavePlannerView({ projectId, project, tenants }: {
                       </thead>
                       <tbody>
                         {wave.vms.map((v, i) => (
-                          <tr key={v.id ?? i}>
+                          <tr key={`${wave.id}-${v.vm_name ?? i}`}>
                             <td style={tdStyleSm}>{v.vm_name}</td>
                             <td style={tdStyleSm}>{v.tenant_name}</td>
                             <td style={tdStyleSm}>

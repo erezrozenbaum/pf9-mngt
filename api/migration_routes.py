@@ -4801,7 +4801,7 @@ async def list_waves(project_id: str, cohort_id: Optional[int] = None):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             for w in waves:
                 cur.execute("""
-                    SELECT v.id, v.vm_name, v.tenant_name, v.risk_classification,
+                    SELECT v.id, v.vm_name, v.tenant_name, v.risk_category,
                            v.migration_mode, v.migration_status, v.total_disk_gb,
                            v.in_use_gb, wv.wave_vm_status, wv.migration_order
                     FROM migration_wave_vms wv
@@ -4923,13 +4923,22 @@ async def assign_vms_to_wave(project_id: str, wave_id: int, req: AssignVmsReques
             if req.replace:
                 cur.execute("DELETE FROM migration_wave_vms WHERE project_id=%s AND wave_number=%s",
                             (project_id, wave_number))
+            # Look up vm_names so we can satisfy NOT NULL constraint
+            vm_id_list = list(req.vm_ids)
+            cur.execute("SELECT id, vm_name FROM migration_vms WHERE id = ANY(%s) AND project_id=%s",
+                        (vm_id_list, project_id))
+            vm_name_map = {r[0]: r[1] for r in cur.fetchall()}
+
             for order, vm_id in enumerate(req.vm_ids):
+                vm_name = vm_name_map.get(vm_id, str(vm_id))
                 cur.execute("""
                     INSERT INTO migration_wave_vms
-                        (project_id, wave_number, vm_id, migration_order, assigned_at)
-                    VALUES (%s,%s,%s,%s,now())
-                    ON CONFLICT DO NOTHING
-                """, (project_id, wave_number, vm_id, order))
+                        (project_id, wave_number, vm_id, vm_name, migration_order, assigned_at)
+                    VALUES (%s,%s,%s,%s,%s,now())
+                    ON CONFLICT (project_id, vm_id) WHERE vm_id IS NOT NULL DO UPDATE
+                        SET wave_number=EXCLUDED.wave_number, migration_order=EXCLUDED.migration_order,
+                            assigned_at=EXCLUDED.assigned_at
+                """, (project_id, wave_number, vm_id, vm_name, order))
                 # Update migration_vms.migration_status → assigned
                 cur.execute("""
                     UPDATE migration_vms SET migration_status='assigned'
@@ -5031,7 +5040,7 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
             if req.cohort_id is not None:
                 cur.execute("""
                     SELECT v.id, v.vm_name, v.tenant_name, v.power_state,
-                           v.risk_classification, v.migration_mode, v.migration_status,
+                           v.risk_category AS risk_classification, v.migration_mode, v.migration_status,
                            v.total_disk_gb, v.in_use_gb, v.cpu_count,
                            v.risk_score, v.cpu_usage_percent
                     FROM migration_vms v
@@ -5043,7 +5052,7 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
             else:
                 cur.execute("""
                     SELECT v.id, v.vm_name, v.tenant_name, v.power_state,
-                           v.risk_classification, v.migration_mode, v.migration_status,
+                           v.risk_category AS risk_classification, v.migration_mode, v.migration_status,
                            v.total_disk_gb, v.in_use_gb, v.cpu_count,
                            v.risk_score, v.cpu_usage_percent
                     FROM migration_vms v
@@ -5113,12 +5122,17 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
                         VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
                     """, (wave_id, cname, clabel, severity))
                 # Assign VMs
+                vm_name_map = {v["id"]: v["vm_name"] for v in vms}
                 for order, vm_id in enumerate(w["vm_ids"]):
+                    vm_name = vm_name_map.get(vm_id, str(vm_id))
                     cur.execute("""
                         INSERT INTO migration_wave_vms
-                            (project_id, wave_number, vm_id, migration_order, assigned_at)
-                        VALUES (%s,%s,%s,%s,now()) ON CONFLICT DO NOTHING
-                    """, (project_id, wave_number, vm_id, order))
+                            (project_id, wave_number, vm_id, vm_name, migration_order, assigned_at)
+                        VALUES (%s,%s,%s,%s,%s,now())
+                        ON CONFLICT (project_id, vm_id) WHERE vm_id IS NOT NULL DO UPDATE
+                            SET wave_number=EXCLUDED.wave_number, migration_order=EXCLUDED.migration_order,
+                                assigned_at=EXCLUDED.assigned_at
+                    """, (project_id, wave_number, vm_id, vm_name, order))
                     cur.execute("""
                         UPDATE migration_vms SET migration_status='assigned'
                         WHERE id=%s AND project_id=%s AND migration_status='not_started'
