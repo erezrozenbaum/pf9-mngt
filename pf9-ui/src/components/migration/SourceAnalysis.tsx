@@ -3726,7 +3726,7 @@ function WavePlannerView({ projectId, project, tenants }: {
                         <td style={tdStyleSm}>
                           {w.cohort_name
                             ? <span style={{ fontSize: "0.75rem", background: "#f0f9ff", color: "#0369a1",
-                                padding: "2px 5px", borderRadius: 6 }}>📦 {w.cohort_name}</span>
+                                padding: "2px 5px", borderRadius: 6 }}>{w.cohort_name}</span>
                             : <span style={{ color: "#9ca3af" }}>—</span>}
                         </td>
                       )}
@@ -3838,7 +3838,7 @@ function WavePlannerView({ projectId, project, tenants }: {
                     {wave.cohort_name && (
                       <span style={{ fontSize: "0.75rem", color: "#6b7280", background: "#f3f4f6",
                         padding: "2px 6px", borderRadius: 8 }}>
-                        📦 {wave.cohort_name}
+                        {wave.cohort_name}
                       </span>
                     )}
                   </div>

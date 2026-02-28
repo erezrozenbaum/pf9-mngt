@@ -5130,7 +5130,7 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
     for grp in cohort_groups:
         if not grp["vms"]:
             continue
-        prefix = f"{req.wave_name_prefix} ({grp['cohort_name']})" if grp["cohort_name"] else req.wave_name_prefix
+        prefix = grp["cohort_name"] if grp["cohort_name"] else req.wave_name_prefix
         r = build_wave_plan(
             vms=grp["vms"], tenants=grp["tenants"], dependencies=deps,
             strategy=req.strategy,
