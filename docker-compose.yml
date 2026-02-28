@@ -130,6 +130,8 @@ services:
     build:
       context: ./pf9-ui
     container_name: pf9_ui
+    environment:
+      VITE_API_TARGET: http://pf9_api:8000
     ports:
       - "5173:5173"
     depends_on:
