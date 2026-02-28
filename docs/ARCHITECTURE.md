@@ -881,7 +881,9 @@ PATCH /api/migration/projects/{id}/cohorts/{cid}               # Update cohort
 DELETE /api/migration/projects/{id}/cohorts/{cid}              # Delete cohort
 POST /api/migration/projects/{id}/cohorts/{cid}/assign-tenants # Assign/unassign tenants
 GET  /api/migration/projects/{id}/cohorts/{cid}/summary        # Cohort rollup (vCPU/RAM/status)
-POST /api/migration/projects/{id}/cohorts/auto-assign          # Auto-assign by priority/risk/equal_split
+POST /api/migration/projects/{id}/cohorts/auto-assign          # Auto-assign (6 strategies + guardrails + ramp-profile; dry_run support)
+# Phase 3.0 — Smart Cohort Planning (v1.32.0) + Phase 3.0.1 Cohort-Aligned Scheduling (v1.33.0)
+GET  /api/migration/projects/{id}/tenant-ease-scores           # Per-tenant ease score (8-dimension, configurable weights)
 GET  /api/migration/projects/{id}/tenants/{tid}/readiness      # Compute + persist readiness checks
 GET  /api/migration/projects/{id}/cohorts/{cid}/readiness-summary # All-tenant readiness in cohort
 

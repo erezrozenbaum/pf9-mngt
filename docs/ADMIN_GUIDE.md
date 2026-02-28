@@ -2,6 +2,26 @@
 
 ## Recent Major Enhancements
 
+### Migration Planner Phase 3.0.1 — Cohort-Aligned Scheduling & Plan Enhancements (v1.33.0 ✅ Complete)
+- **Cohort-Sequential Daily Scheduler**: The migration scheduler now processes cohorts one at a time. Each cohort starts on a fresh day and exhausts completely before the next cohort begins — cohorts never mix within a day. Backend: `generate_migration_plan()` rewritten with `itertools.groupby` cohort blocks.
+- **📦 Cohort Execution Plan table**: New summary table in the Migration Plan tab shows each cohort's start day, end day, duration, and VM count. Sourced from new `cohort_schedule_summary` field in the export-plan API response.
+- **Migration Plan cohort grouping**: The per-tenant breakdown table is grouped by cohort with `📦 Cohort N — Name` header rows and subtotal rows per cohort.
+- **Daily Schedule cohort separator rows**: Full-width separator rows appear at cohort transitions in the daily schedule; each day row has a new "Cohort(s)" column.
+- **What-If two-model estimator**: The What-If panel now shows two independent estimates side-by-side — **BW Days** (bandwidth/transfer model) and **Sched. Days** (VM-slots model mirroring the backend scheduler). Includes a project deadline banner (green/red) comparing both models against the configured `migration_duration_days`.
+- **What-If formula fix**: The transfer time formula had a `3_600_000` ms divisor that made transfer hours 1000× too small; corrected to `3_600` s.
+- **100 Gbps bandwidth support**: What-If slider max extended from 10 Gbps to 100 Gbps; free-form number input added alongside the slider.
+- **Cohort card expandable tenant list**: Each cohort card has a `▾ N Tenants` toggle; expands to show tenant rows with ease score badges and a **Move to…** dropdown for immediate tenant reassignment between cohorts.
+- **Clean slate on Clear / Re-Upload**: Both "Clear RVTools Data" and re-import now delete `migration_cohorts`, ensuring no ghost cohort shells persist after a data refresh.
+
+### Migration Planner Phase 3.0 — Smart Cohort Planning (v1.32.0–v1.32.1 ✅ Complete)
+- **Tenant Ease Score Engine**: 8-dimension difficulty score (0–100, lower = easier) per tenant: disk used, avg risk, unsupported OS %, VM count, distinct networks, cross-tenant dependencies, cold-VM ratio, unconfirmed mappings. Configurable weights. `GET /projects/{id}/tenant-ease-scores` with per-dimension breakdown and Easy/Medium/Hard label.
+- **Six Auto-Assign Strategies**: `easiest_first`, `riskiest_last`, `pilot_bulk`, `balanced_load`, `os_first`, `by_priority`. Configurable guardrails: max VMs/cohort, max disk TB, max avg risk, min OS support %. Supports `dry_run: true` preview before committing. `POST /projects/{id}/cohorts/auto-assign`.
+- **Ramp Profile Mode** (v1.32.1): Auto-assign supports named cohort profiles with individual VM caps (e.g. 🧪 Pilot: 10 → 🔄 Wave 1: 50 → 🚀 Wave 2: unlimited). Quick-presets: Pilot+Bulk, 3-Wave, 4-Wave, 5-Wave. Apply locked until Preview run.
+- **Ease Score column in Tenants tab**: Colour-coded badge (green/amber/red) with click-to-expand breakdown popover.
+- **Smart Auto-Assign panel in Cohorts tab**: Strategy picker, target cohort count, guardrail sliders, ramp-profile mode, preview diff table (Avg Ease column), unassigned pool distribution bar, strategy tooltips.
+- **Enhanced cohort cards**: Each card shows Avg Ease, Total Disk, Avg Risk, and a mini difficulty distribution bar (easy/medium/hard).
+- **DB Migration**: No new tables — all inputs are from existing VM/tenant/dependency data.
+
 ### Migration Planner Phase 2.10 — Pre-Wave Foundations (v1.31.0–v1.31.10 ✅ Complete)
 - **🗃️ Migration Cohorts**: Split large migration projects into independent, ordered workstreams. Each cohort has its own schedule, owner, dependency gate, tenant/VM scope, and (in Phase 3) its own wave plan. New **🗃️ Cohorts** sub-tab in SourceAnalysis with cohort cards, drag-to-order hints, tenant assignment panel, and three auto-assign strategies (priority, risk, equal split). A project with no cohorts continues to work as a single-scope plan unchanged.
 - **🔌 Network Mapping**: New **🔌 Network Map** sub-tab auto-seeds a mapping row for every distinct source VMware network in the project's in-scope VMs. Operators fill in the PCD target network name and optionally set/correct the VLAN ID (editable inline with ✏️ Edit button). Unconfirmed networks show ⚠️ review status; confirmed rows show ✓ confirmed. `GET/POST/PATCH/DELETE /projects/{id}/network-mappings`.

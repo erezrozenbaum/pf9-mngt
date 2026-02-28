@@ -1,7 +1,6 @@
 // Centralised API configuration — override via VITE_API_BASE environment variable.
-// In Docker-compose, the Vite dev-server proxy (/api → pf9_api:8000) is available,
-// so you can set VITE_API_BASE="" to use relative URLs.  For local development
-// outside Docker the default http://localhost:8000 is used.
+// Default is the API container on localhost:8000 (direct calls with CORS).
+// Set VITE_API_BASE="" to use relative URLs through the Vite proxy instead.
 export const API_BASE: string =
   import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
