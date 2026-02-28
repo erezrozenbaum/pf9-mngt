@@ -371,7 +371,17 @@ In the **🌊 Wave Planner** sub-tab → **🤖 Auto-Build Waves**:
 | Wave name prefix | "Wave" | E.g. "Wave 1", "Wave 2" |
 | Cohort filter | All | Scope auto-build to a specific cohort |
 
-**Always run Preview first.** The preview table shows wave number, name, type, VM count, total disk GB, risk distribution, and tenant names — plus any warnings (e.g. cross-wave dependency violations).
+#### Cohort-aware building
+
+When cohorts are defined and **All Cohorts** is selected, the engine builds waves **cohort-by-cohort** in `cohort_order` sequence:
+- Each cohort gets its own pilot wave (named `🧪 <Cohort Name>`) plus as many regular waves as needed to fit within the Max VMs/wave cap (named `<Cohort Name> 1`, `<Cohort Name> 2`, …).
+- Each wave is tagged with its `cohort_id` — waves from different cohorts never mix.
+- VMs not assigned to any cohort are grouped last as "Unassigned".
+- The preview table shows a **Cohort** column and a cohort count badge when multiple cohorts are present.
+
+When a **specific cohort** is selected, only VMs/tenants in that cohort are included.
+
+**Always run Preview first.** The preview table shows wave number, name, cohort, type, VM count, total disk GB, risk distribution, and tenant names — plus any warnings (e.g. cross-wave dependency violations).
 
 Once satisfied, click **✅ Apply & Create Waves**.
 
