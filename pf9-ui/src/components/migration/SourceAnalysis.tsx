@@ -175,7 +175,7 @@ interface WaveVM {
   id: number;
   vm_name: string;
   tenant_name: string;
-  risk_classification: string;
+  risk_category: string;
   migration_mode: string;
   migration_status: string;
   total_disk_gb: number;
@@ -3687,17 +3687,29 @@ function WavePlannerView({ projectId, project, tenants }: {
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontWeight: 600, marginBottom: 8, fontSize: "0.9rem" }}>
                 Preview — {autoPreview.waves?.length ?? 0} waves
+                {(autoPreview.cohort_count ?? 0) > 1 && (
+                  <span style={{ marginLeft: 8, background: "#dbeafe", color: "#1d4ed8",
+                    padding: "2px 7px", borderRadius: 10, fontSize: "0.76rem", fontWeight: 600 }}>
+                    📦 {autoPreview.cohort_count} cohorts
+                  </span>
+                )}
                 {autoPreview.warnings?.length > 0 && (
                   <span style={{ color: "#d97706", marginLeft: 8, fontSize: "0.82rem" }}>
                     ⚠️ {autoPreview.warnings.length} warning{autoPreview.warnings.length > 1 ? "s" : ""}
                   </span>
                 )}
               </div>
+              {autoPreview.unassigned_vm_ids?.length > 0 && (
+                <div style={{ fontSize: "0.78rem", color: "#b45309", marginBottom: 6 }}>
+                  ⚠️ {autoPreview.unassigned_vm_ids.length} VM{autoPreview.unassigned_vm_ids.length > 1 ? "s" : ""} could not be assigned to any wave.
+                </div>
+              )}
               <table style={tableStyle}>
                 <thead>
                   <tr>
                     <th style={thStyleSm}>#</th>
                     <th style={thStyleSm}>Name</th>
+                    {(autoPreview.cohort_count ?? 0) > 1 && <th style={thStyleSm}>Cohort</th>}
                     <th style={thStyleSm}>Type</th>
                     <th style={thStyleSm}>VMs</th>
                     <th style={thStyleSm}>Disk (GB)</th>
@@ -3710,6 +3722,14 @@ function WavePlannerView({ projectId, project, tenants }: {
                     <tr key={w.wave_number}>
                       <td style={tdStyleSm}>{w.wave_number}</td>
                       <td style={tdStyleSm}>{w.name}</td>
+                      {(autoPreview.cohort_count ?? 0) > 1 && (
+                        <td style={tdStyleSm}>
+                          {w.cohort_name
+                            ? <span style={{ fontSize: "0.75rem", background: "#f0f9ff", color: "#0369a1",
+                                padding: "2px 5px", borderRadius: 6 }}>{w.cohort_name}</span>
+                            : <span style={{ color: "#9ca3af" }}>—</span>}
+                        </td>
+                      )}
                       <td style={tdStyleSm}>
                         <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: "0.75rem",
                           background: w.wave_type === "pilot" ? "#e0f2fe" : "#f0f9ff",
@@ -3718,7 +3738,7 @@ function WavePlannerView({ projectId, project, tenants }: {
                         </span>
                       </td>
                       <td style={tdStyleSm}>{w.vm_count}</td>
-                      <td style={tdStyleSm}>{w.total_disk_gb}</td>
+                      <td style={tdStyleSm}>{typeof w.total_disk_gb === "number" ? w.total_disk_gb.toFixed(0) : w.total_disk_gb}</td>
                       <td style={tdStyleSm}>
                         {w.risk_distribution && (
                           <span style={{ fontSize: "0.75rem" }}>
@@ -3818,7 +3838,7 @@ function WavePlannerView({ projectId, project, tenants }: {
                     {wave.cohort_name && (
                       <span style={{ fontSize: "0.75rem", color: "#6b7280", background: "#f3f4f6",
                         padding: "2px 6px", borderRadius: 8 }}>
-                        📦 {wave.cohort_name}
+                        {wave.cohort_name}
                       </span>
                     )}
                   </div>
@@ -3960,7 +3980,7 @@ function WavePlannerView({ projectId, project, tenants }: {
                       </thead>
                       <tbody>
                         {wave.vms.map((v, i) => (
-                          <tr key={v.id ?? i}>
+                          <tr key={`${wave.id}-${v.vm_name ?? i}`}>
                             <td style={tdStyleSm}>{v.vm_name}</td>
                             <td style={tdStyleSm}>{v.tenant_name}</td>
                             <td style={tdStyleSm}>

@@ -4801,7 +4801,7 @@ async def list_waves(project_id: str, cohort_id: Optional[int] = None):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             for w in waves:
                 cur.execute("""
-                    SELECT v.id, v.vm_name, v.tenant_name, v.risk_classification,
+                    SELECT v.id, v.vm_name, v.tenant_name, v.risk_category,
                            v.migration_mode, v.migration_status, v.total_disk_gb,
                            v.in_use_gb, wv.wave_vm_status, wv.migration_order
                     FROM migration_wave_vms wv
@@ -4846,7 +4846,7 @@ async def create_wave(project_id: str, req: CreateWaveRequest,
                     VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
                 """, (wave["id"], cname, clabel, severity))
         conn.commit()
-    _log_activity(actor=user.get("username", "?"), action="create_wave",
+    _log_activity(actor=getattr(user, "username", "?"), action="create_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_number": wave_number, "name": wave_name})
     return {"status": "ok", "wave": wave}
@@ -4897,7 +4897,7 @@ async def delete_wave(project_id: str, wave_id: int, user=Depends(get_current_us
             cur.execute("DELETE FROM migration_waves WHERE id=%s AND project_id=%s",
                         (wave_id, project_id))
         conn.commit()
-    _log_activity(actor=user.get("username", "?"), action="delete_wave",
+    _log_activity(actor=getattr(user, "username", "?"), action="delete_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id})
     return {"status": "ok"}
@@ -4923,20 +4923,29 @@ async def assign_vms_to_wave(project_id: str, wave_id: int, req: AssignVmsReques
             if req.replace:
                 cur.execute("DELETE FROM migration_wave_vms WHERE project_id=%s AND wave_number=%s",
                             (project_id, wave_number))
+            # Look up vm_names so we can satisfy NOT NULL constraint
+            vm_id_list = list(req.vm_ids)
+            cur.execute("SELECT id, vm_name FROM migration_vms WHERE id = ANY(%s) AND project_id=%s",
+                        (vm_id_list, project_id))
+            vm_name_map = {r[0]: r[1] for r in cur.fetchall()}
+
             for order, vm_id in enumerate(req.vm_ids):
+                vm_name = vm_name_map.get(vm_id, str(vm_id))
                 cur.execute("""
                     INSERT INTO migration_wave_vms
-                        (project_id, wave_number, vm_id, migration_order, assigned_at)
-                    VALUES (%s,%s,%s,%s,now())
-                    ON CONFLICT DO NOTHING
-                """, (project_id, wave_number, vm_id, order))
+                        (project_id, wave_number, vm_id, vm_name, migration_order, assigned_at)
+                    VALUES (%s,%s,%s,%s,%s,now())
+                    ON CONFLICT (project_id, vm_id) WHERE vm_id IS NOT NULL DO UPDATE
+                        SET wave_number=EXCLUDED.wave_number, migration_order=EXCLUDED.migration_order,
+                            assigned_at=EXCLUDED.assigned_at
+                """, (project_id, wave_number, vm_id, vm_name, order))
                 # Update migration_vms.migration_status → assigned
                 cur.execute("""
                     UPDATE migration_vms SET migration_status='assigned'
                     WHERE id=%s AND project_id=%s AND migration_status='not_started'
                 """, (vm_id, project_id))
         conn.commit()
-    _log_activity(actor=user.get("username", "?"), action="assign_vms_to_wave",
+    _log_activity(actor=getattr(user, "username", "?"), action="assign_vms_to_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id, "vm_count": len(req.vm_ids), "replace": req.replace})
     return {"status": "ok", "assigned": len(req.vm_ids)}
@@ -5012,7 +5021,7 @@ async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveReq
                 (req.status, wave_id, project_id))
             wave = _serialize_row(dict(cur.fetchone()))
         conn.commit()
-    _log_activity(actor=user.get("username", "?"), action="advance_wave_status",
+    _log_activity(actor=getattr(user, "username", "?"), action="advance_wave_status",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id, "from": current_status, "to": req.status})
     return {"status": "ok", "wave": wave}
@@ -5022,118 +5031,199 @@ async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveReq
              dependencies=[Depends(require_permission("migration", "write"))])
 async def auto_build_waves(project_id: str, req: AutoWaveRequest,
                            user=Depends(get_current_user)):
-    """Auto-build a wave plan using the engine. dry_run=True previews without saving."""
+    """Auto-build a wave plan using the engine. dry_run=True previews without saving.
+
+    When cohorts exist and no cohort_id filter is specified, waves are built
+    cohort-by-cohort (one build_wave_plan() call per cohort) so wave boundaries
+    always respect cohort boundaries.  When a specific cohort_id is supplied the
+    plan is scoped to that cohort only.  If no cohorts exist the project-wide VM
+    pool is used as a single implicit cohort.
+    """
     with _get_conn() as conn:
-        proj = _get_project(project_id, conn)
+        _get_project(project_id, conn)
 
-        # Fetch VMs
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            if req.cohort_id is not None:
-                cur.execute("""
-                    SELECT v.id, v.vm_name, v.tenant_name, v.power_state,
-                           v.risk_classification, v.migration_mode, v.migration_status,
-                           v.total_disk_gb, v.in_use_gb, v.cpu_count,
-                           v.risk_score, v.cpu_usage_percent
-                    FROM migration_vms v
-                    JOIN migration_tenants t ON t.project_id=v.project_id
-                        AND t.tenant_name=v.tenant_name AND t.include_in_plan=true
-                        AND t.cohort_id=%s
-                    WHERE v.project_id=%s AND v.migration_status NOT IN ('migrated','skipped')
-                """, (req.cohort_id, project_id))
-            else:
-                cur.execute("""
-                    SELECT v.id, v.vm_name, v.tenant_name, v.power_state,
-                           v.risk_classification, v.migration_mode, v.migration_status,
-                           v.total_disk_gb, v.in_use_gb, v.cpu_count,
-                           v.risk_score, v.cpu_usage_percent
-                    FROM migration_vms v
-                    JOIN migration_tenants t ON t.project_id=v.project_id
-                        AND t.tenant_name=v.tenant_name AND t.include_in_plan=true
-                    WHERE v.project_id=%s AND v.migration_status NOT IN ('migrated','skipped')
-                """, (project_id,))
-            vms = [dict(r) for r in cur.fetchall()]
+            # Always include t.cohort_id on each VM so we can group later
+            cur.execute("""
+                SELECT v.id, v.vm_name, v.tenant_name, v.power_state,
+                       v.risk_category AS risk_classification, v.migration_mode, v.migration_status,
+                       v.total_disk_gb, v.in_use_gb, v.cpu_count,
+                       v.risk_score, v.cpu_usage_percent,
+                       t.cohort_id AS vm_cohort_id
+                FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name AND t.include_in_plan = true
+                WHERE v.project_id = %s
+                  AND v.migration_status NOT IN ('migrated', 'skipped')
+            """, (project_id,))
+            all_vms = [dict(r) for r in cur.fetchall()]
 
-            # Fetch tenants
             cur.execute("""
                 SELECT id, tenant_name, migration_priority, cohort_id
                 FROM migration_tenants
-                WHERE project_id=%s AND include_in_plan=true
+                WHERE project_id = %s AND include_in_plan = true
             """, (project_id,))
-            tenants = [dict(r) for r in cur.fetchall()]
+            all_tenants = [dict(r) for r in cur.fetchall()]
 
-            # Fetch dependencies
             cur.execute("""
                 SELECT vm_id, depends_on_vm_id
                 FROM migration_vm_dependencies
-                WHERE project_id=%s
+                WHERE project_id = %s
             """, (project_id,))
             deps = [dict(r) for r in cur.fetchall()]
 
-    result = build_wave_plan(
-        vms=vms, tenants=tenants, dependencies=deps,
-        strategy=req.strategy,
-        max_vms_per_wave=req.max_vms_per_wave,
-        pilot_vm_count=req.pilot_vm_count,
-        wave_name_prefix=req.wave_name_prefix,
-    )
+            # Ordered cohorts for the project
+            cur.execute("""
+                SELECT id, name, cohort_order
+                FROM migration_cohorts
+                WHERE project_id = %s
+                ORDER BY cohort_order NULLS LAST, id
+            """, (project_id,))
+            ordered_cohorts = [dict(r) for r in cur.fetchall()]
+
+    vm_name_map = {v["id"]: v["vm_name"] for v in all_vms}
+
+    # -----------------------------------------------------------------
+    # Decide cohort groups to process
+    # -----------------------------------------------------------------
+    if req.cohort_id is not None:
+        # Single cohort requested
+        cohort_groups = [{"cohort_id": req.cohort_id,
+                          "cohort_name": next((c["name"] for c in ordered_cohorts
+                                               if c["id"] == req.cohort_id), f"Cohort {req.cohort_id}"),
+                          "vms": [v for v in all_vms if v.get("vm_cohort_id") == req.cohort_id],
+                          "tenants": [t for t in all_tenants if t.get("cohort_id") == req.cohort_id]}]
+    elif ordered_cohorts:
+        # Multi-cohort: one group per cohort + catch unassigned VMs
+        cohort_groups = []
+        assigned_vm_ids: set = set()
+        for c in ordered_cohorts:
+            cid = c["id"]
+            c_vms = [v for v in all_vms if v.get("vm_cohort_id") == cid]
+            c_tenants = [t for t in all_tenants if t.get("cohort_id") == cid]
+            if c_vms:
+                cohort_groups.append({"cohort_id": cid, "cohort_name": c["name"],
+                                      "vms": c_vms, "tenants": c_tenants})
+                assigned_vm_ids.update(v["id"] for v in c_vms if v.get("id"))
+        # Any VMs not in any cohort get their own "Unassigned" group
+        unassigned = [v for v in all_vms if v.get("id") not in assigned_vm_ids]
+        if unassigned:
+            cohort_groups.append({"cohort_id": None, "cohort_name": "Unassigned",
+                                   "vms": unassigned,
+                                   "tenants": [t for t in all_tenants if not t.get("cohort_id")]})
+    else:
+        # No cohorts — treat the whole project as one group
+        cohort_groups = [{"cohort_id": None, "cohort_name": None,
+                          "vms": all_vms, "tenants": all_tenants}]
+
+    # -----------------------------------------------------------------
+    # Build a wave plan per cohort group
+    # -----------------------------------------------------------------
+    all_preview_waves: List[Dict] = []
+    all_warnings: List[str] = []
+    all_unassigned: List[int] = []
+
+    # Tracks global wave_number offset so waves across cohorts don't collide
+    wave_number_offset = 0
+
+    cohort_plans = []  # [{cohort_id, cohort_name, result, wave_number_offset}]
+    for grp in cohort_groups:
+        if not grp["vms"]:
+            continue
+        prefix = grp["cohort_name"] if grp["cohort_name"] else req.wave_name_prefix
+        r = build_wave_plan(
+            vms=grp["vms"], tenants=grp["tenants"], dependencies=deps,
+            strategy=req.strategy,
+            max_vms_per_wave=req.max_vms_per_wave,
+            pilot_vm_count=req.pilot_vm_count,
+            wave_name_prefix=prefix,
+        )
+        # Apply global offset so wave numbers are unique across cohorts
+        for w in r.get("waves", []):
+            w["wave_number"] = wave_number_offset + w["wave_number"]
+            w["cohort_id"] = grp["cohort_id"]
+            w["cohort_name"] = grp["cohort_name"]
+        wave_number_offset += len(r.get("waves", []))
+        all_preview_waves.extend(r.get("waves", []))
+        all_warnings.extend(r.get("warnings", []))
+        all_unassigned.extend(r.get("unassigned_vm_ids", []))
+        cohort_plans.append({"cohort_id": grp["cohort_id"], "cohort_name": grp["cohort_name"],
+                              "result": r})
+
+    combined_result = {
+        "waves": all_preview_waves,
+        "strategy": req.strategy,
+        "warnings": all_warnings,
+        "unassigned_vm_ids": all_unassigned,
+        "preflight_checks": PREFLIGHT_CHECKS,
+        "cohort_count": len(cohort_plans),
+    }
 
     if req.dry_run:
-        result["dry_run"] = True
-        return {"status": "ok", **result}
+        combined_result["dry_run"] = True
+        return {"status": "ok", **combined_result}
 
+    # -----------------------------------------------------------------
     # Commit to DB
+    # -----------------------------------------------------------------
     with _get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Find max existing wave_number for safe ordering
+        with conn.cursor() as cur:
             cur.execute("SELECT COALESCE(MAX(wave_number),0) FROM migration_waves WHERE project_id=%s",
                         (project_id,))
             base = cur.fetchone()[0]
 
         created_waves: List[Dict] = []
-        for w in result["waves"]:
+        for w in all_preview_waves:
             wave_number = base + w["wave_number"]
             wave_name = w["name"]
+            cohort_id_for_wave = w.get("cohort_id")
+
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO migration_waves
                         (project_id, wave_number, name, wave_type, cohort_id, status)
                     VALUES (%s,%s,%s,%s,%s,'planned')
                     ON CONFLICT (project_id, wave_number) DO UPDATE SET
-                        name=EXCLUDED.name, wave_type=EXCLUDED.wave_type, updated_at=now()
+                        name=EXCLUDED.name, wave_type=EXCLUDED.wave_type,
+                        cohort_id=EXCLUDED.cohort_id, updated_at=now()
                     RETURNING id, wave_number
-                """, (project_id, wave_number, wave_name, w["wave_type"], req.cohort_id))
+                """, (project_id, wave_number, wave_name, w["wave_type"], cohort_id_for_wave))
                 wave_row = cur.fetchone()
                 wave_id = wave_row["id"]
 
             with conn.cursor() as cur:
-                # Seed pre-flight checklist
                 for cname, clabel, severity in PREFLIGHT_CHECKS:
                     cur.execute("""
                         INSERT INTO migration_wave_preflights (wave_id, check_name, check_label, severity)
                         VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
                     """, (wave_id, cname, clabel, severity))
-                # Assign VMs
                 for order, vm_id in enumerate(w["vm_ids"]):
+                    vm_name = vm_name_map.get(vm_id, str(vm_id))
                     cur.execute("""
                         INSERT INTO migration_wave_vms
-                            (project_id, wave_number, vm_id, migration_order, assigned_at)
-                        VALUES (%s,%s,%s,%s,now()) ON CONFLICT DO NOTHING
-                    """, (project_id, wave_number, vm_id, order))
+                            (project_id, wave_number, vm_id, vm_name, migration_order, assigned_at)
+                        VALUES (%s,%s,%s,%s,%s,now())
+                        ON CONFLICT (project_id, vm_id) WHERE vm_id IS NOT NULL DO UPDATE
+                            SET wave_number=EXCLUDED.wave_number,
+                                migration_order=EXCLUDED.migration_order,
+                                assigned_at=EXCLUDED.assigned_at
+                    """, (project_id, wave_number, vm_id, vm_name, order))
                     cur.execute("""
                         UPDATE migration_vms SET migration_status='assigned'
                         WHERE id=%s AND project_id=%s AND migration_status='not_started'
                     """, (vm_id, project_id))
             conn.commit()
             created_waves.append({"wave_number": wave_number, "name": wave_name,
-                                   "wave_id": wave_id, "vm_count": len(w["vm_ids"])})
+                                   "wave_id": wave_id, "cohort_id": cohort_id_for_wave,
+                                   "vm_count": len(w["vm_ids"])})
 
-    _log_activity(actor=user.get("username", "?"), action="auto_build_waves",
+    _log_activity(actor=getattr(user, "username", "?"), action="auto_build_waves",
                   resource_type="migration_project", resource_id=project_id,
                   details={"strategy": req.strategy, "waves_created": len(created_waves),
-                           "cohort_id": req.cohort_id})
-    result["dry_run"] = False
-    result["created_waves"] = created_waves
-    return {"status": "ok", **result}
+                           "cohort_count": len(cohort_plans), "cohort_id": req.cohort_id})
+    combined_result["dry_run"] = False
+    combined_result["created_waves"] = created_waves
+    return {"status": "ok", **combined_result}
 
 
 @router.get("/projects/{project_id}/waves/{wave_id}/preflights",
@@ -5190,7 +5280,7 @@ async def update_wave_preflight(project_id: str, wave_id: int, check_name: str,
                 SET check_status=%s, notes=%s, checked_at=now(), checked_by=%s
                 WHERE wave_id=%s AND check_name=%s
                 RETURNING *
-            """, (req.check_status, req.notes, user.get("username", "?"), wave_id, check_name))
+            """, (req.check_status, req.notes, getattr(user, "username", "?"), wave_id, check_name))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Preflight check not found")
@@ -5232,5 +5322,6 @@ def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         else:
             result[k] = str(v)
     return result
+
 
 

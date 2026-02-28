@@ -2201,13 +2201,13 @@ def build_wave_plan(
         sorted_vms = sorted(candidate_vms, key=lambda v: (_risk_order(v), _vm_disk(v)))
         pilot_ids = [v["id"] for v in sorted_vms[:pilot_vm_count] if v.get("id")]
         rest = [v for v in sorted_vms[pilot_vm_count:] if v.get("id")]
-        waves_spec.append({"name": "🧪 Pilot", "wave_type": "pilot", "vm_ids": pilot_ids})
-        # Fill regular waves
-        for chunk_start in range(0, len(rest), max_vms_per_wave):
+        # Pilot wave name uses the prefix so each cohort's pilot is identifiable
+        waves_spec.append({"name": f"🧪 {wave_name_prefix}", "wave_type": "pilot", "vm_ids": pilot_ids})
+        # Fill regular waves — counter starts at 1 (independent of the pilot slot)
+        for n, chunk_start in enumerate(range(0, len(rest), max_vms_per_wave), 1):
             chunk = rest[chunk_start:chunk_start + max_vms_per_wave]
-            wnum = len(waves_spec) + 1
             waves_spec.append({
-                "name": f"{wave_name_prefix} {wnum}",
+                "name": f"{wave_name_prefix} {n}",
                 "wave_type": "regular",
                 "vm_ids": [v["id"] for v in chunk],
             })
