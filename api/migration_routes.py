@@ -4846,7 +4846,7 @@ async def create_wave(project_id: str, req: CreateWaveRequest,
                     VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
                 """, (wave["id"], cname, clabel, severity))
         conn.commit()
-    _log_activity(actor=user.get("username", "?"), action="create_wave",
+    _log_activity(actor=getattr(user, "username", "?"), action="create_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_number": wave_number, "name": wave_name})
     return {"status": "ok", "wave": wave}
@@ -4897,7 +4897,7 @@ async def delete_wave(project_id: str, wave_id: int, user=Depends(get_current_us
             cur.execute("DELETE FROM migration_waves WHERE id=%s AND project_id=%s",
                         (wave_id, project_id))
         conn.commit()
-    _log_activity(actor=user.get("username", "?"), action="delete_wave",
+    _log_activity(actor=getattr(user, "username", "?"), action="delete_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id})
     return {"status": "ok"}
@@ -4945,7 +4945,7 @@ async def assign_vms_to_wave(project_id: str, wave_id: int, req: AssignVmsReques
                     WHERE id=%s AND project_id=%s AND migration_status='not_started'
                 """, (vm_id, project_id))
         conn.commit()
-    _log_activity(actor=user.get("username", "?"), action="assign_vms_to_wave",
+    _log_activity(actor=getattr(user, "username", "?"), action="assign_vms_to_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id, "vm_count": len(req.vm_ids), "replace": req.replace})
     return {"status": "ok", "assigned": len(req.vm_ids)}
@@ -5021,7 +5021,7 @@ async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveReq
                 (req.status, wave_id, project_id))
             wave = _serialize_row(dict(cur.fetchone()))
         conn.commit()
-    _log_activity(actor=user.get("username", "?"), action="advance_wave_status",
+    _log_activity(actor=getattr(user, "username", "?"), action="advance_wave_status",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id, "from": current_status, "to": req.status})
     return {"status": "ok", "wave": wave}
@@ -5217,7 +5217,7 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
                                    "wave_id": wave_id, "cohort_id": cohort_id_for_wave,
                                    "vm_count": len(w["vm_ids"])})
 
-    _log_activity(actor=user.get("username", "?"), action="auto_build_waves",
+    _log_activity(actor=getattr(user, "username", "?"), action="auto_build_waves",
                   resource_type="migration_project", resource_id=project_id,
                   details={"strategy": req.strategy, "waves_created": len(created_waves),
                            "cohort_count": len(cohort_plans), "cohort_id": req.cohort_id})
@@ -5280,7 +5280,7 @@ async def update_wave_preflight(project_id: str, wave_id: int, check_name: str,
                 SET check_status=%s, notes=%s, checked_at=now(), checked_by=%s
                 WHERE wave_id=%s AND check_name=%s
                 RETURNING *
-            """, (req.check_status, req.notes, user.get("username", "?"), wave_id, check_name))
+            """, (req.check_status, req.notes, getattr(user, "username", "?"), wave_id, check_name))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Preflight check not found")
@@ -5322,5 +5322,6 @@ def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
         else:
             result[k] = str(v)
     return result
+
 
 
