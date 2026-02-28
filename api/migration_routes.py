@@ -5092,7 +5092,7 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
 
     # Commit to DB
     with _get_conn() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with conn.cursor() as cur:
             # Find max existing wave_number for safe ordering
             cur.execute("SELECT COALESCE(MAX(wave_number),0) FROM migration_waves WHERE project_id=%s",
                         (project_id,))
