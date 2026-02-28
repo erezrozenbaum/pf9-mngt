@@ -2,6 +2,14 @@
 
 ## Recent Major Enhancements
 
+### Migration Planner Phase 3 — Wave Planning (v1.34.0–v1.34.1 ✅ Complete)
+- **🌊 Wave Planner sub-tab**: VM migration funnel progress bar, cohort filter (All / individual cohort), auto-build panel, wave cards with type/status/cohort badges, per-wave VM tables, pre-flight checklist, advance-status buttons.
+- **Cohort-scoped auto-building**: When multiple cohorts exist and "All Cohorts" is selected, the engine calls `build_wave_plan()` once per cohort in `cohort_order` sequence. Each wave is tagged with its source cohort — VMs from different cohorts never mix in one wave.
+- **5 auto-build strategies**: `pilot_first` (safest VMs first), `by_tenant`, `by_risk` (GREEN → YELLOW → RED), `by_priority`, `balanced` (equal disk per wave). Dry-run preview shows wave number, cohort, type, VM count, disk, risk distribution, and tenants before committing.
+- **Wave lifecycle**: `planned → pre_checks_passed → executing → validating → complete / failed / cancelled` with `started_at`/`completed_at` timestamps.
+- **6 pre-flight checks** seeded per wave (blocker/warning/info): network_mapped, target_project_set, vms_assessed, no_critical_gaps, agent_reachable, snapshot_baseline.
+- **⚠️ Clear RVTools Data** clears wave data too (`migration_wave_vms`, `migration_waves`; preflights cascade via FK).
+
 ### Migration Planner Phase 3.0.1 — Cohort-Aligned Scheduling & Plan Enhancements (v1.33.0 ✅ Complete)
 - **Cohort-Sequential Daily Scheduler**: The migration scheduler now processes cohorts one at a time. Each cohort starts on a fresh day and exhausts completely before the next cohort begins — cohorts never mix within a day. Backend: `generate_migration_plan()` rewritten with `itertools.groupby` cohort blocks.
 - **📦 Cohort Execution Plan table**: New summary table in the Migration Plan tab shows each cohort's start day, end day, duration, and VM count. Sourced from new `cohort_schedule_summary` field in the export-plan API response.

@@ -691,7 +691,7 @@ src/
 **Port**: 8000
 **Workers**: 4 uvicorn workers via Gunicorn (configurable)
 **Responsibilities**:
-- RESTful API endpoints (140+ routes across infrastructure, analytics, tenant health, notifications, restore, metering, and migration planning)
+- RESTful API endpoints (150+ routes across infrastructure, analytics, tenant health, notifications, restore, metering, and migration planning)
 - Database operations via connection pool (psycopg2 ThreadedConnectionPool)
 - Platform9 integration proxy
 - Administrative operations
@@ -711,7 +711,7 @@ api/
 ├── navigation_routes.py  # Department & navigation visibility management (15+ endpoints)
 ├── performance_metrics.py # Thread-safe request tracking with locking
 ├── migration_engine.py   # Migration intelligence: risk scoring, bandwidth model, tenant detection, schedule-aware agent sizing
-├── migration_routes.py   # Migration planner API (45+ endpoints)
+├── migration_routes.py   # Migration planner API (70+ endpoints)
 ├── pf9_control.py       # Platform9 API integration
 ├── requirements.txt     # Python dependencies (incl. gunicorn)
 └── Dockerfile          # Container configuration (gunicorn CMD)
@@ -842,7 +842,7 @@ GET  /api/metering/export/api-usage        # CSV export: API usage
 GET  /api/metering/export/efficiency       # CSV export: efficiency
 GET  /api/metering/export/chargeback       # CSV export: chargeback report (multi-category)
 
-# Migration Planner (api/migration_routes.py - 45+ endpoints)
+# Migration Planner (api/migration_routes.py - 70+ endpoints)
 POST /api/migration/projects                           # Create migration project
 GET  /api/migration/projects                           # List all migration projects
 GET  /api/migration/projects/{id}                      # Get project details
@@ -886,6 +886,18 @@ POST /api/migration/projects/{id}/cohorts/auto-assign          # Auto-assign (6 
 GET  /api/migration/projects/{id}/tenant-ease-scores           # Per-tenant ease score (8-dimension, configurable weights)
 GET  /api/migration/projects/{id}/tenants/{tid}/readiness      # Compute + persist readiness checks
 GET  /api/migration/projects/{id}/cohorts/{cid}/readiness-summary # All-tenant readiness in cohort
+# Phase 3 — Migration Wave Planning (v1.34.0 / v1.34.1)
+GET  /api/migration/projects/{id}/waves                        # List waves with rollups and VM list
+POST /api/migration/projects/{id}/waves                        # Create wave manually
+PATCH /api/migration/projects/{id}/waves/{wid}                 # Update wave (name/type/dates/owner)
+DELETE /api/migration/projects/{id}/waves/{wid}                # Delete wave (planned status only)
+POST /api/migration/projects/{id}/waves/{wid}/assign-vms       # Assign VM IDs to wave (replace flag)
+DELETE /api/migration/projects/{id}/waves/{wid}/vms/{vm_id}    # Remove single VM from wave
+POST /api/migration/projects/{id}/waves/{wid}/advance          # Advance wave lifecycle status
+POST /api/migration/projects/{id}/auto-waves                   # Auto-build cohort-scoped wave plan (dry_run support)
+GET  /api/migration/projects/{id}/waves/{wid}/preflights       # List pre-flight checks for wave
+PATCH /api/migration/projects/{id}/waves/{wid}/preflights/{check} # Update check status (pass/fail/skip)
+GET  /api/migration/projects/{id}/migration-funnel             # VM status funnel rollup
 
 # System Health & Testing
 GET  /health                     # Service health check
