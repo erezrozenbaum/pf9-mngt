@@ -62,7 +62,7 @@ There is no native automated snapshot scheduler in Platform9 or OpenStack. No co
 
 Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You need full source inventory analysis, OS compatibility classification, warm-vs-cold mode determination, per-VM time estimation, per-tenant wave planning, and target capacity validation — before a single VM moves. No native tooling exists that ties RVTools data to PCD readiness in one workflow.
 
-**The engineering answer:** pf9-mngt includes a multi-phase Migration Planner. Phase 1 (complete) delivers RVTools ingestion with full vInfo, vPartition, vDisk, and vNetwork parsing; per-VM risk scoring (GREEN/YELLOW/RED); warm-eligible vs cold-required classification; OS version detection; network name mapping; actual disk usage from vPartition; per-VM/per-tenant time estimation with daily wave scheduling; and Excel/PDF combined report export (Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs). Phase 2 (complete) adds per-tenant scoping and exclusion with bulk-select toolbar, source→PCD target mapping, overcommit profile modeling (aggressive/balanced/conservative), quota requirements engine, PCD node-profile CRUD with **performance-based node sizing** (uses actual `cpu_usage_percent`/`memory_usage_percent` from RVtools data for accurate physical demand — not allocation ÷ overcommit), auto-detect node profile from live PCD inventory, PCD readiness gap analysis with severity scoring, downloadable Excel/PDF gap action report, plan export auth fix, and risk breakdown per VM. Phase 2.10 (complete, v1.31.0) adds the pre-wave-planning foundations: **Migration Cohorts** (split large projects into ordered workstreams with independent schedules, owners, and dependency gates), **Source → PCD Network Mapping** (auto-seeded from VM inventory with best-guess target name from source + amber ⚠️ confirmed-flag review pattern), **VM Dependency Annotation** (mark app-stack ordering constraints with circular-dep validation), **Per-VM Migration Status & Mode Override** (operator-controlled status tracking and warm/cold force-override), **Tenant Migration Priority** (integer ordering for cohort auto-assign), and **Per-Tenant Readiness Checks** (5 auto-derived checks: target mapped, network mapped, quota sufficient, no critical gaps, VMs classified). v1.31.1 adds the target name pre-seeding correctness fix: both `migration_network_mappings` and `migration_tenants` now auto-seed target fields from source names with a `confirmed` flag — readiness checks return `pending` while unreviewed, preventing false alarms before any operator action. Phase 3 will add wave planning scoped within cohorts. Phases 4–7 will add live execution tracking and post-migration validation.
+**The engineering answer:** pf9-mngt includes a multi-phase Migration Planner. Phase 1 (complete) delivers RVTools ingestion with full vInfo, vPartition, vDisk, and vNetwork parsing; per-VM risk scoring (GREEN/YELLOW/RED); warm-eligible vs cold-required classification; OS version detection; network name mapping; actual disk usage from vPartition; per-VM/per-tenant time estimation with daily wave scheduling; and Excel/PDF combined report export (Project Summary, Per-Tenant Assessment, Daily Schedule, All VMs). Phase 2 (complete) adds per-tenant scoping and exclusion with bulk-select toolbar, source→PCD target mapping, overcommit profile modeling (aggressive/balanced/conservative), quota requirements engine, PCD node-profile CRUD with **performance-based node sizing** (uses actual `cpu_usage_percent`/`memory_usage_percent` from RVtools data for accurate physical demand — not allocation ÷ overcommit), auto-detect node profile from live PCD inventory, PCD readiness gap analysis with severity scoring, downloadable Excel/PDF gap action report, plan export auth fix, and risk breakdown per VM. Phase 2.10 (complete, v1.31.0) adds the pre-wave-planning foundations: **Migration Cohorts** (split large projects into ordered workstreams with independent schedules, owners, and dependency gates), **Source → PCD Network Mapping** (auto-seeded from VM inventory with best-guess target name from source + amber ⚠️ confirmed-flag review pattern), **VM Dependency Annotation** (mark app-stack ordering constraints with circular-dep validation), **Per-VM Migration Status & Mode Override** (operator-controlled status tracking and warm/cold force-override), **Tenant Migration Priority** (integer ordering for cohort auto-assign), and **Per-Tenant Readiness Checks** (5 auto-derived checks: target mapped, network mapped, quota sufficient, no critical gaps, VMs classified). v1.31.1 adds the target name pre-seeding correctness fix: both `migration_network_mappings` and `migration_tenants` now auto-seed target fields from source names with a `confirmed` flag — readiness checks return `pending` while unreviewed, preventing false alarms before any operator action. Phase 3 (complete, v1.34.0) adds cohort-scoped wave planning: VMs are split into waves per cohort in `cohort_order` sequence using one of five scheduling strategies (bandwidth-paced, risk-tiered, even-spread, dependency-ordered, pilot-first), with configurable daily capacity, pilot-wave support, full wave lifecycle management (draft → confirmed → in-progress → complete), operator pre-flight checklists per wave, and a Wave Planner UI with per-cohort wave cards, VM assignment tables, and preflight status tracking. v1.34.1 resolves all post-release wave planner bugs: cohort-scoped iteration, cohort_order column name, wave naming with cohort prefix, risk_category column, vm_name NOT NULL, RealDictCursor scalar fetch, Pydantic v2 getattr, and double-emoji badge. Phases 4–7 will add live execution tracking and post-migration validation.
 
 ---
 
@@ -106,6 +106,12 @@ Every service is containerized. That means **you decide**:
 ### Snapshot Restore Audit
 ![Snapshot Restore Audit](docs/images/Snapshot-restore-audit.png)
 
+### Migration Planner — Project Setup & Cohort Configuration
+![Migration Planner Setup](docs/images/Migration-planner-setup.png)
+
+### Migration Planner — Wave Plan Creation
+![Migration Planner Wave Plan](docs/images/Migration-planner-plan-creation.png)
+
 ---
 
 ## 🎬 Video Walkthrough
@@ -124,8 +130,8 @@ A 15-minute explainer video walking through the UI and key features:
 
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
-| **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 27 management tabs + admin panel |
-| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 155+ REST endpoints, RBAC middleware, 4 workers |
+| **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 28+ management tabs + admin panel |
+| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 150+ REST endpoints, RBAC middleware, 4 workers |
 | **LDAP Server** | OpenLDAP | 389 | Enterprise authentication directory |
 | **LDAP Admin** | phpLDAPadmin | 8081 | Web-based LDAP management |
 | **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
@@ -538,6 +544,7 @@ pf9-mngt/
 | [Quick Reference](docs/QUICK_REFERENCE.md) | Common commands and URLs cheat sheet |
 | [Kubernetes Migration](docs/KUBERNETES_MIGRATION_GUIDE.md) | K8s migration planning guide |
 | [Linux Deployment](docs/LINUX_DEPLOYMENT_GUIDE.md) | Running pf9-mngt on Linux instead of Windows |
+| [Migration Planner Guide](docs/MIGRATION_PLANNER_GUIDE.md) | Comprehensive operator guide for all Migration Planner phases |
 | [Contributing](CONTRIBUTING.md) | Contribution guidelines |
 
 ---
@@ -673,6 +680,46 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.34.1 — Wave Planner Bug Fixes
+- ✅ **Cohort-scoped iteration** — `auto_build_waves` now calls `build_wave_plan()` per cohort in `cohort_order` sequence; each cohort builds its own independent wave set
+- ✅ **`cohort_order` column** — SQL query fixed from `"order"` to `cohort_order`
+- ✅ **Wave naming** — Waves use cohort name as prefix; pilot wave `🧪 <Cohort>`, regular waves numbered from 1 per cohort
+- ✅ **`risk_category` column** — Fixed all SQL queries referencing the wrong column name `risk_classification`
+- ✅ **`vm_name` NOT NULL** — Wave VM INSERT now resolves vm_name from `vm_name_map` lookup before inserting
+- ✅ **`RealDictCursor` scalar fetch** — Plain cursor used for scalar queries; no more `fetchone()[0]` TypeError on dicts
+- ✅ **Pydantic v2 compatibility** — All `user.get()` calls replaced with `getattr(user, "username", "?")`
+- ✅ **Double emoji badge** — Removed hardcoded `📦` prefix; cohort badge now uses `wave.cohort_name` directly
+
+### v1.34.0 — Phase 3: Wave Planning (Complete)
+- ✅ **Cohort-scoped wave building** — VMs assigned to waves per cohort independently, respecting cohort ordering
+- ✅ **5 scheduling strategies** — bandwidth-paced, risk-tiered, even-spread, dependency-ordered, pilot-first
+- ✅ **Wave lifecycle** — Full draft → confirmed → in-progress → complete state machine with timestamps
+- ✅ **Pre-flight checklists** — Per-wave operator checklist items with completion tracking and sign-off
+- ✅ **Wave Planner UI** — Per-cohort wave cards, VM assignment tables, preflight status panel, cohort summary badges
+- ✅ **Daily capacity controls** — Configurable VMs/day per wave with pilot-wave support and bandwidth-aware scheduling
+- ✅ **11 new API routes** — Full wave CRUD, preflight management, auto-build, strategy configuration
+
+### v1.33.0 — Cohort Scheduling & What-If Modeling
+- ✅ **Cohort-aligned scheduling** — Per-cohort start date, working hours, and capacity independent from project defaults
+- ✅ **Two-model What-If** — Side-by-side comparison of bandwidth/schedule scenarios per cohort
+- ✅ **Execution plan view** — Calendar-style wave schedule with per-day VM count and cumulative progress
+- ✅ **Cohort dependency gates** — Block cohort start until predecessor cohort reaches defined completion threshold
+
+### v1.32.0–v1.32.1 — Smart Cohort Planning
+- ✅ **Auto-assign VMs to cohorts** — Intelligent assignment based on tenant priority, risk score, and VM size
+- ✅ **Ease scores** — Per-VM migration ease scoring combining risk, disk size, OS family, and dependency count
+- ✅ **Ramp profile mode** — Conservative/standard/aggressive ramp controls for wave capacity curve
+- ✅ **Cohort health dashboard** — Per-cohort readiness summary with blocking issue count and completion estimate
+
+### v1.31.0–v1.31.1 — Migration Cohorts & Network Mapping (Phase 2.10)
+- ✅ **Migration Cohorts** — Split large projects into ordered workstreams with independent schedules, owners, and dependency gates
+- ✅ **Source → PCD Network Mapping** — Auto-seeded from VM inventory with best-guess target name and amber ⚠️ confirmed-flag review pattern
+- ✅ **VM Dependency Annotation** — Mark app-stack ordering constraints with circular-dependency validation
+- ✅ **Per-VM Migration Status & Mode Override** — Operator-controlled status tracking and warm/cold force-override
+- ✅ **Tenant Migration Priority** — Integer ordering for cohort auto-assign
+- ✅ **Per-Tenant Readiness Checks** — 5 auto-derived checks: target mapped, network mapped, quota sufficient, no critical gaps, VMs classified
+- ✅ **Target name pre-seeding fix** (v1.31.1) — Both `migration_network_mappings` and `migration_tenants` auto-seed target fields with `confirmed` flag; readiness checks return `pending` until reviewed
+
 ### v1.28.3 — Migration Plan Excel/PDF Export + Parser Fixes
 - ✅ **Excel Export** — `Export Excel` button downloads a 4-sheet openpyxl workbook: Project Summary, Per-Tenant Assessment (colour-coded), Daily Schedule, All VMs with full timing columns
 - ✅ **PDF Export** — `Export PDF` button downloads a landscape A4 PDF (reportlab) with all three sections and a page footer
@@ -797,7 +844,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 120+ commits, 22 releases, 12 containerized services, 160+ API endpoints — built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 130+ commits, 25 releases, 12 containerized services, 150+ API endpoints — built alongside regular responsibilities.
 
 ---
 
@@ -809,4 +856,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.30.1 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.34.1 | **Last Updated**: February 2026
