@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.1] - 2026-02-28
+
+### Fixed
+- **Cohort-scoped wave building** — `auto_build_waves` now calls `build_wave_plan()` once per cohort (in `cohort_order` sequence) when multiple cohorts exist. Previously, all VMs from all cohorts were merged into a single pool and waves were built without cohort affinity. Each wave is now tagged with its source `cohort_id`. Unassigned VMs (not in any cohort) are handled as a final "Unassigned" group. Preview table shows a **Cohort** column and cohort count badge when multiple cohorts are present.
+- **Wave naming clarity in `pilot_first` strategy** — Pilot wave name now uses the cohort name as prefix (e.g. `🧪 🚀 Main`) so each cohort's pilot is uniquely identifiable. Regular waves are numbered from 1 independently of the pilot slot (`🚀 Main 1`, `🚀 Main 2`, …).
+- **`risk_category` column name** — VM SQL queries now use `v.risk_category AS risk_classification` consistently; previously referenced the non-existent column `v.risk_classification`.
+- **`migration_wave_vms.vm_name` NOT NULL violation** — Both `auto_build_waves` and `assign_vms_to_wave` routes now build a `vm_name_map` before INSERT and pass `vm_name` in every row. ON CONFLICT uses the correct partial unique index `(project_id, vm_id) WHERE vm_id IS NOT NULL`.
+- **`RealDictCursor.fetchone()[0]` TypeError** — The `COALESCE(MAX(wave_number),0)` scalar query now uses a plain `conn.cursor()` instead of `RealDictCursor` so `[0]` indexing works correctly.
+- **`user.get()` AttributeError on Pydantic v2 `User` model** — All activity-log calls in wave routes replaced `user.get("username", "?")` with `getattr(user, "username", "?")`.
+- **`"order"` column on `migration_cohorts`** — Cohort ordering query now uses the actual column name `cohort_order` instead of `"order"`.
+- **Double emoji in cohort badges** — Cohort names already carry emoji; removed the extra hardcoded `📦` prefix from the preview table cohort column and wave card header badges.
+
 ## [1.34.0] - 2026-02-28
 
 ### Added
