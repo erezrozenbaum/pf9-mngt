@@ -264,15 +264,20 @@ A 15-minute explainer video walking through the UI and key features:
 - **Chargeback Export**: Per-tenant cost breakdown with one-click CSV export
 - **8 Sub-Tab UI**: Overview, Resources, Snapshots, Restores, API Usage, Efficiency, Pricing, Export
 
-### 🏢 Customer Provisioning & Domain Management *(v1.16)*
-- **5-Step Provisioning Wizard**: Domain → Project → User/Role → Quotas → Network/Security Group
+### 🏢 Customer Provisioning & Domain Management *(v1.16 → v1.34.2)*
+- **5-Step Provisioning Wizard**: Domain → Project → User/Role → Quotas → Networks/Security Group
+- **Multi-Network Support** *(v1.34.2)*: Add any combination of 3 network kinds per provisioning run:
+  - 🔌 **Physical Managed** — provider/external VLAN network (`<domain>_tenant_extnet_vlan_<id>`)
+  - 🔗 **Physical L2 (Beta)** — provider L2 network, no subnet (`<domain>_tenant_L2net_vlan_<id>`)
+  - ☁️ **Virtual** — standard tenant network (`<domain>_tenant_virtnet[_N]`)
 - **Dynamic Keystone Roles**: Fetches roles from PF9 Keystone, filters internal system roles
 - **Tabbed Quota Editor**: Compute, Block Storage, Network tabs with "Set Unlimited" toggles
 - **Network Auto-Discovery**: Physical networks from Neutron with VLAN/flat/VXLAN support
-- **Customer Welcome Email**: HTML template with opt-in toggle and editable recipients
+- **Customer Welcome Email**: HTML template listing all provisioned networks (kind, VLAN, subnet, gateway) per network card
 - **Domain Management**: Full lifecycle — enable/disable, typed confirmation delete, resource inspection
 - **Resource Deletion**: 8 DELETE endpoints for individual resources across all types
 - **Central Activity Log**: Full audit trail for all provisioning and domain operations
+- **DB Persistence**: `networks_config` + `networks_created` JSONB columns in `provisioning_jobs` store full input and output network details
 
 ### 📋 Reports & Resource Management *(v1.17)*
 - **16 Report Types**: VM Report, Tenant Quota Usage, Domain Overview, Snapshot Compliance, Flavor Usage, Metering Summary, Resource Inventory, User/Role Audit, Idle Resources, Security Group Audit, Capacity Planning, Backup Status, Activity Log, Network Topology, Cost Allocation, Drift Summary
@@ -714,6 +719,14 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.34.2 — Multi-Network Customer Provisioning
+- ✅ **3 network kinds** — Physical Managed (external VLAN), Physical L2 (no subnet), Virtual; any combination per provisioning run
+- ✅ **Naming conventions** — Auto-derived from `domain_name`: `extnet_vlan_<id>` / `L2net_vlan_<id>` / `virtnet[_N]`
+- ✅ **VLAN ID naming bug fixed** — Full multi-digit VLAN captured via atomic `setForm` update
+- ✅ **Welcome email updated** — Loops over all created networks; per-network card with kind, VLAN, subnet, DNS
+- ✅ **DB schema** — `networks_config` + `networks_created` JSONB columns added to `provisioning_jobs`; migration: `db/migrate_provisioning_networks.sql` (auto-applied on startup)
+- ✅ **Provisioning Tools → Networks** — Physical Managed + Physical L2 creation with provider type, physical network, VLAN ID fields
 
 ### v1.34.1 — Wave Planner Bug Fixes
 - ✅ **Cohort-scoped iteration** — `auto_build_waves` now calls `build_wave_plan()` per cohort in `cohort_order` sequence; each cohort builds its own independent wave set
