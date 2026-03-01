@@ -5886,10 +5886,10 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
               </tr>
             </thead>
             <tbody>
-              {gaps.map(g => {
+              {gaps.map((g, gi) => {
                 const detailKeys = Object.keys(g.details || {}).filter(k => k !== "vms");
                 return (
-                  <tr key={g.id} style={{
+                  <tr key={g.id ?? `gap-${gi}`} style={{
                     borderBottom: "1px solid var(--border, #e5e7eb)",
                     opacity: g.resolved ? 0.5 : 1,
                   }}>
