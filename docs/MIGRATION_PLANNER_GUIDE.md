@@ -1,6 +1,6 @@
 # Migration Planner — Operator Guide
 
-> **Version**: v1.36.0 | **Last Updated**: 2026-03-01
+> **Version**: v1.36.2 | **Last Updated**: 2026-03-01
 > Complete reference for the pf9-mngt Migration Planner — from RVTools ingestion through wave execution.
 
 ---
@@ -37,6 +37,8 @@ The **Migration Planner** is an integrated module within pf9-mngt that guides op
 | 3 | Wave planning — auto-build, lifecycle management, pre-flight checklists, VM funnel tracking | ✅ Complete |
 | 4A | PCD Data Enrichment — subnet details, flavor staging, image checklist, user definitions | ✅ Complete |
 | 4B | PCD Auto-Provisioning — domains, projects, quotas, networks, flavors, users, roles | ✅ Complete |
+| 4B.1 | Phase 4B Polish — run confirmation modal, execution summary panel, completion notification | ✅ Complete |
+| 4B.2 | Phase 4B Approval Workflow (2-step gate), Dry Run simulation, Audit Log | ✅ Complete |
 | 4C | vJailbreak Handoff — credential bundle + tenant handoff sheet | 🔲 Planned |
 | 5 | vJailbreak integration & live execution | 🔲 Planned |
 | 6 | Post-migration validation | 🔲 Planned |
@@ -502,12 +504,15 @@ The **⚙️ Prepare PCD** tab gate (`GET /prep-readiness`) will show red ✗ fo
 
 1. Open the **⚙️ Prepare PCD** sub-tab in the Migration Planner.
 2. Verify the Readiness grid shows all four cards green.
-3. Click **🔄 Generate Plan** — calls `POST /prepare`, creates an ordered task list (~667 tasks for a typical 120-tenant project).
-4. Review the task table. Tasks are ordered: `create_domain` → `create_project` → `set_quotas` → `create_network` → `create_subnet` → `create_flavor` → `create_user` → `assign_role`.
-5. Click **▶ Run All** to execute all pending tasks in order, or use the per-row **▶** button to execute individually.
-6. Failed tasks show an inline error — fix the root cause and re-run the individual task.
-7. Use **↩ Rollback** on any `done` task to delete the PCD resource and reset to `pending`.
-8. When all tasks are `done` or `skipped`, Phase 4B is complete — PCD UUIDs are written back to all source tables.
+3. Click **🔄 Generate Plan** — calls `POST /prepare`, creates an ordered task list and sets plan status to `pending_approval`. A `prep_approval_requested` notification is fired to subscribed admins.
+4. Review the task table (ordered: `create_domain` → `create_project` → `set_quotas` → `create_network` → `create_subnet` → `create_flavor` → `create_user` → `assign_role`).
+5. *(Optional)* Click **🧪 Dry Run** — simulates execution against a live PCD without writing anything. Review the `would_create` / `would_skip_existing` / `would_execute` breakdown per task type.
+6. An **admin** (requires `migration:admin` permission) approves or rejects the plan using the inline approval banner or `POST /prep-approval`. The person who generated the plan cannot approve their own plan (separation of duties).
+7. Once the banner turns green (approved), **▶ Run All** becomes available. Click it to open the confirmation modal showing resource counts, then confirm to execute all pending tasks in order.
+8. Failed tasks show an inline error — fix the root cause and use the per-row **▶** button to re-run the individual task.
+9. Use **↩ Rollback** on any `done` task to delete the PCD resource and reset it to `pending`.
+10. Use **📋 Audit Log** to review the full approval history, activity log, and execution history.
+11. When all tasks are `done` or `skipped`, Phase 4B is complete — PCD UUIDs are written back to all source tables.
 
 ### Task Types
 
@@ -527,12 +532,17 @@ The **⚙️ Prepare PCD** tab gate (`GET /prep-readiness`) will show red ✗ fo
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/migration/projects/{id}/prep-readiness` | Pre-flight check — returns 4A gate status per item |
-| `POST` | `/api/migration/projects/{id}/prepare` | Generate ordered task plan (clears previous pending/failed) |
+| `POST` | `/api/migration/projects/{id}/prepare` | Generate ordered task plan (sets `pending_approval`, fires notification) |
 | `GET` | `/api/migration/projects/{id}/prep-tasks` | List all tasks with status counts |
 | `POST` | `/api/migration/projects/{id}/prep-tasks/{task_id}/execute` | Execute a single task |
-| `POST` | `/api/migration/projects/{id}/prepare/run` | Run all pending/failed tasks in order |
+| `POST` | `/api/migration/projects/{id}/prepare/run` | Run all pending/failed tasks in order (requires `approved` status) |
 | `POST` | `/api/migration/projects/{id}/prep-tasks/{task_id}/rollback` | Undo a completed task |
 | `DELETE` | `/api/migration/projects/{id}/prep-tasks` | Clear all pending/failed tasks |
+| `GET` | `/api/migration/projects/{id}/prep-summary` | Post-run summary counts by task type (v1.36.1) |
+| `GET` | `/api/migration/projects/{id}/prep-approval` | Get approval status, approver, and full history (v1.36.2) |
+| `POST` | `/api/migration/projects/{id}/prep-approval` | Approve or reject the plan — requires `migration:admin` (v1.36.2) |
+| `POST` | `/api/migration/projects/{id}/prepare/dry-run` | Dry-run simulation — classifies tasks without executing (v1.36.2) |
+| `GET` | `/api/migration/projects/{id}/prep-audit` | Full audit trail: approvals, activity log, execution history (v1.36.2) |
 
 ---
 

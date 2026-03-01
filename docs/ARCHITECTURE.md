@@ -918,12 +918,17 @@ DELETE /api/migration/projects/{id}/tenant-users/{id}                # Remove us
 
 # Phase 4B — PCD Auto-Provisioning
 GET  /api/migration/projects/{id}/prep-readiness                     # Pre-flight 4A gate check
-POST /api/migration/projects/{id}/prepare                            # Generate ordered task plan
+POST /api/migration/projects/{id}/prepare                            # Generate ordered task plan (sets pending_approval)
 GET  /api/migration/projects/{id}/prep-tasks                         # List tasks with status counts
 POST /api/migration/projects/{id}/prep-tasks/{task_id}/execute       # Execute single task against PCD
-POST /api/migration/projects/{id}/prepare/run                        # Run all pending/failed tasks
+POST /api/migration/projects/{id}/prepare/run                        # Run all pending/failed tasks (requires approved)
 POST /api/migration/projects/{id}/prep-tasks/{task_id}/rollback      # Roll back completed task
 DELETE /api/migration/projects/{id}/prep-tasks                       # Clear pending/failed tasks
+GET  /api/migration/projects/{id}/prep-summary                       # Post-run summary counts by task type (v1.36.1)
+GET  /api/migration/projects/{id}/prep-approval                      # Get approval status + history (v1.36.2)
+POST /api/migration/projects/{id}/prep-approval                      # Approve or reject plan — migration:admin (v1.36.2)
+POST /api/migration/projects/{id}/prepare/dry-run                    # Dry-run simulation — no PCD writes (v1.36.2)
+GET  /api/migration/projects/{id}/prep-audit                         # Full audit trail: approvals + activity + executions (v1.36.2)
 
 # System Health & Testing
 GET  /health                     # Service health check
