@@ -6286,6 +6286,13 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<Record<number, { glance_image_name?: string; glance_image_id?: string; notes?: string }>>({});
   const [saving, setSaving] = useState<number | null>(null);
+  const [confirmingAll, setConfirmingAll] = useState(false);
+  const [showFR, setShowFR] = useState(false);
+  const [frFind, setFrFind] = useState("");
+  const [frReplace, setFrReplace] = useState("");
+  const [frPreview, setFrPreview] = useState<any[] | null>(null);
+  const [frApplying, setFrApplying] = useState(false);
+  const [frApplied, setFrApplied] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -6302,9 +6309,9 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const r = await apiFetch<{ seeded: number; updated: number }>(`/api/migration/projects/${projectId}/image-requirements/refresh`, { method: "POST" });
+      const r = await apiFetch<{ inserted: number; updated: number }>(`/api/migration/projects/${projectId}/image-requirements/refresh`, { method: "POST" });
       await load();
-      alert(`✓ Image requirements refreshed: ${r.seeded} seeded, ${r.updated} updated.`);
+      alert(`✓ Image requirements refreshed: ${r.inserted} inserted, ${r.updated} updated.`);
     } catch (e: any) { setError(e.message); }
     finally { setRefreshing(false); }
   };
