@@ -55,6 +55,31 @@ interface CustomSgRule {
   description: string;
 }
 
+type NetworkKind = "physical_managed" | "physical_l2" | "virtual";
+
+interface NetworkEntry {
+  network_kind: NetworkKind;
+  name: string;
+  // Provider fields (physical_managed + physical_l2)
+  physical_network: string;
+  network_type: "vlan" | "flat";
+  vlan_id: string;
+  mtu: string;
+  // Flags
+  is_external: boolean;
+  shared: boolean;
+  port_security_enabled: boolean;
+  // Subnet (physical_managed + virtual — skipped for physical_l2)
+  create_subnet: boolean;
+  subnet_name: string;
+  subnet_cidr: string;
+  gateway_ip: string;
+  enable_dhcp: boolean;
+  dns_nameservers: string;
+  allocation_pool_start: string;
+  allocation_pool_end: string;
+}
+
 interface ProvisionForm {
   domain_name: string;
   domain_description: string;
@@ -66,17 +91,7 @@ interface ProvisionForm {
   user_email: string;
   user_password: string;
   user_role: string;
-  create_network: boolean;
-  network_name: string;
-  network_type: "vlan" | "flat" | "vxlan";
-  physical_network: string;
-  vlan_id: string;
-  subnet_cidr: string;
-  gateway_ip: string;
-  dns_nameservers: string;
-  enable_dhcp: boolean;
-  allocation_pool_start: string;
-  allocation_pool_end: string;
+  networks: NetworkEntry[];
   create_security_group: boolean;
   security_group_name: string;
   custom_sg_rules: CustomSgRule[];
@@ -192,10 +207,7 @@ const INIT_FORM: ProvisionForm = {
   domain_name: "", domain_description: "", existing_domain_id: "",
   project_name: "", project_description: "", subscription_id: "",
   username: "", user_email: "", user_password: "", user_role: "member",
-  create_network: true, network_name: "", network_type: "vlan",
-  physical_network: "", vlan_id: "", subnet_cidr: "10.0.0.0/24",
-  gateway_ip: "", dns_nameservers: "8.8.8.8, 8.8.4.4",
-  enable_dhcp: true, allocation_pool_start: "", allocation_pool_end: "",
+  networks: [],
   create_security_group: true, security_group_name: "default-sg",
   custom_sg_rules: [], send_welcome_email: true, include_user_email: false, email_recipients: "",
   compute_quotas: { ...DEFAULT_COMPUTE_QUOTAS },
@@ -482,22 +494,29 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
   useEffect(() => { fetchLogs(); fetchPhysicalNetworks(); fetchRoles(); }, [fetchLogs, fetchPhysicalNetworks, fetchRoles]);
   useEffect(() => { if (selectedJob) fetchJobDetail(selectedJob); }, [selectedJob, fetchJobDetail]);
 
-  // ── Helper: derive external network name from project name + vlan ──
+  // ── Helpers: derive network names using domain_name + kind ──
   const deriveNetworkName = (projectName: string, vlanId: string): string => {
-    if (!projectName) return "";
-    const tenantBase = projectName.includes("_subid_")
-      ? projectName.split("_subid_")[0]
-      : projectName;
-    return vlanId ? `${tenantBase}_extnet_vlan_${vlanId}` : `${tenantBase}_extnet`;
+    // Legacy helper for backward-compat references; uses domain_name from form
+    const base = form.domain_name || (projectName.includes("_subid_") ? projectName.split("_subid_")[0] : projectName);
+    return vlanId ? `${base}_tenant_extnet_vlan_${vlanId}` : `${base}_tenant_extnet`;
+  };
+
+  const deriveNetName = (kind: NetworkKind, domainName: string, vlanId: string, virtIdx: number): string => {
+    if (!domainName) return "";
+    if (kind === "physical_managed") {
+      return vlanId ? `${domainName}_tenant_extnet_vlan_${vlanId}` : `${domainName}_tenant_extnet`;
+    } else if (kind === "physical_l2") {
+      return vlanId ? `${domainName}_tenant_L2net_vlan_${vlanId}` : `${domainName}_tenant_L2net`;
+    } else {
+      return virtIdx > 1 ? `${domainName}_tenant_virtnet_${virtIdx}` : `${domainName}_tenant_virtnet`;
+    }
   };
 
   // ── Domain name change with debounced check ──
   const handleDomainNameChange = (value: string) => {
     const base: Partial<ProvisionForm> = { domain_name: value, existing_domain_id: "" };
     if (value && form.subscription_id) {
-      const proj = `${value}_tenant_subid_${form.subscription_id}`;
-      base.project_name = proj;
-      base.network_name = deriveNetworkName(proj, form.vlan_id);
+      base.project_name = `${value}_tenant_subid_${form.subscription_id}`;
     }
     setForm((p: ProvisionForm) => ({ ...p, ...base }));
     setDomainCheck(null); setDomainAction(null);
@@ -505,11 +524,10 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
     domainCheckTimer.current = setTimeout(() => checkDomain(value), 600);
   };
 
-  // ── Subscription ID change → auto-update project name + network name ──
+  // ── Subscription ID change → auto-update project name ──
   const handleSubscriptionIdChange = (value: string) => {
     const proj = form.domain_name ? `${form.domain_name}_tenant_subid_${value}` : "";
-    const netName = proj ? deriveNetworkName(proj, form.vlan_id) : "";
-    setForm((p: ProvisionForm) => ({ ...p, subscription_id: value, project_name: proj, network_name: netName }));
+    setForm((p: ProvisionForm) => ({ ...p, subscription_id: value, project_name: proj }));
     if (proj) {
       if (projectCheckTimer.current) clearTimeout(projectCheckTimer.current);
       projectCheckTimer.current = setTimeout(() => checkProject(proj, form.existing_domain_id || undefined), 600);
@@ -532,6 +550,47 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
 
   const updateQuota = (cat: "compute_quotas" | "network_quotas" | "storage_quotas", field: string, value: number) =>
     setForm((p: ProvisionForm) => ({ ...p, [cat]: { ...(p[cat] as any), [field]: value } }));
+
+  // ── Network entry helpers ──
+  const makeNetworkEntry = (kind: NetworkKind, currentNetworks: NetworkEntry[], domainName: string): NetworkEntry => {
+    const defaultPhysNet = physicalNetworks[0] || "physnet1";
+    const virtIdx = currentNetworks.filter((n) => n.network_kind === "virtual").length + 1;
+    const autoName = deriveNetName(kind, domainName, "", virtIdx);
+    return {
+      network_kind: kind,
+      name: autoName,
+      physical_network: defaultPhysNet,
+      network_type: "vlan",
+      vlan_id: "",
+      mtu: "",
+      is_external: kind === "physical_managed",
+      shared: false,
+      port_security_enabled: true,
+      create_subnet: kind === "physical_managed",
+      subnet_name: "",
+      subnet_cidr: kind === "physical_managed" ? "10.0.0.0/24" : "",
+      gateway_ip: "",
+      enable_dhcp: true,
+      dns_nameservers: "8.8.8.8, 8.8.4.4",
+      allocation_pool_start: "",
+      allocation_pool_end: "",
+    };
+  };
+
+  const addNetwork = (kind: NetworkKind) =>
+    setForm((p: ProvisionForm) => ({
+      ...p,
+      networks: [...p.networks, makeNetworkEntry(kind, p.networks, p.domain_name)],
+    }));
+
+  const removeNetwork = (idx: number) =>
+    setForm((p: ProvisionForm) => ({ ...p, networks: p.networks.filter((_: NetworkEntry, i: number) => i !== idx) }));
+
+  const updateNetwork = (idx: number, field: keyof NetworkEntry, value: any) =>
+    setForm((p: ProvisionForm) => ({
+      ...p,
+      networks: p.networks.map((net: NetworkEntry, i: number) => i === idx ? { ...net, [field]: value } : net),
+    }));
 
   // ── Custom SG rules ──
   const addCustomRule = () => {
@@ -556,15 +615,36 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
     setProvisioning(true); setProvisionResult(null);
     try {
       const extraRecipients = form.email_recipients.split(",").map((s: string) => s.trim()).filter(Boolean);
+      // Serialize networks: convert UI string fields to API types
+      const networksPayload = form.networks.map((net) => ({
+        ...net,
+        vlan_id: net.vlan_id ? parseInt(net.vlan_id) : null,
+        mtu: net.mtu ? parseInt(net.mtu) : null,
+        dns_nameservers: net.dns_nameservers.split(",").map((s: string) => s.trim()).filter(Boolean),
+      }));
       const payload = {
-        ...form,
+        domain_name: form.domain_name,
+        domain_description: form.domain_description,
         existing_domain_id: form.existing_domain_id || null,
-        vlan_id: form.vlan_id ? parseInt(form.vlan_id) : null,
-        dns_nameservers: form.dns_nameservers.split(",").map((s: string) => s.trim()).filter(Boolean),
+        project_name: form.project_name,
+        project_description: form.project_description,
+        subscription_id: form.subscription_id,
+        username: form.username,
+        user_email: form.user_email,
+        user_password: form.user_password || null,
+        user_role: form.user_role,
+        networks: networksPayload,
+        // send legacy create_network=false so backend uses the networks list exclusively
+        create_network: false,
+        create_security_group: form.create_security_group,
+        security_group_name: form.security_group_name,
+        custom_sg_rules: form.custom_sg_rules,
+        send_welcome_email: form.send_welcome_email,
         include_user_email: form.include_user_email,
         email_recipients: extraRecipients,
-        // Convert RAM from GiB (UI) to MB (API)
         compute_quotas: { ...form.compute_quotas, ram: form.compute_quotas.ram * 1024 },
+        network_quotas: form.network_quotas,
+        storage_quotas: form.storage_quotas,
       };
       const res = await fetch(`${API_BASE}/api/provisioning/provision`, {
         method: "POST", headers: authHeaders(), body: JSON.stringify(payload),
@@ -578,7 +658,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
   };
 
   const resetWizard = () => {
-    setForm({ ...INIT_FORM, physical_network: physicalNetworks[0] || "" }); setWizardStep(0); setProvisionResult(null);
+    setForm({ ...INIT_FORM }); setWizardStep(0); setProvisionResult(null);
     setDomainCheck(null); setDomainAction(null); setProjectCheck(null); setQuotaTab("compute");
   };
 
@@ -862,106 +942,190 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
           <div style={{ display: "grid", gap: 16 }}>
             <h3 style={{ margin: 0, color: "var(--pf9-heading)" }}>🔒 Network & Security Group</h3>
 
-            {/* External Network */}
-            <div style={{ background: "var(--pf9-bg-card)", borderRadius: 8, padding: 16, border: "1px solid var(--pf9-border)" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, cursor: "pointer" }}>
-                <input type="checkbox" checked={form.create_network}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("create_network", e.target.checked)} />
-                <span style={{ fontWeight: 600, fontSize: 14 }}>Create External Network</span>
-              </label>
-              {form.create_network && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>Network Name</span>
-                    <input value={form.network_name}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("network_name", e.target.value)}
-                      placeholder={deriveNetworkName(form.project_name || "tenant", form.vlan_id) || "tenant_extnet"} style={inputStyle} />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>Network Type</span>
-                    <select value={form.network_type}
-                      onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateForm("network_type", e.target.value)}
-                      style={inputStyle}>
-                      <option value="vlan">VLAN</option>
-                      <option value="flat">Flat</option>
-                      <option value="vxlan">VXLAN</option>
-                    </select>
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>Physical Network</span>
-                    {physNetsLoading ? (
-                      <div style={{ ...inputStyle, color: "var(--pf9-text-muted)" }}>Loading...</div>
-                    ) : (
-                      <select
-                        value={form.physical_network}
-                        onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateForm("physical_network", e.target.value)}
-                        style={inputStyle}
-                      >
-                        {physicalNetworks.map((pn) => (
-                          <option key={pn} value={pn}>{pn}</option>
-                        ))}
-                      </select>
-                    )}
-                    <span style={{ fontSize: 11, color: "var(--pf9-text-muted)" }}>
-                      {physicalNetworks.length <= 1 ? "System default physical network" : `${physicalNetworks.length} physical networks available`}
-                    </span>
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>VLAN ID <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
-                    <input type="number" value={form.vlan_id}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        const v = e.target.value;
-                        const netName = form.project_name ? deriveNetworkName(form.project_name, v) : "";
-                        setForm((p: ProvisionForm) => ({ ...p, vlan_id: v, network_name: netName }));
-                      }}
-                      placeholder="e.g. 100" style={inputStyle} />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>Subnet CIDR</span>
-                    <input value={form.subnet_cidr}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("subnet_cidr", e.target.value)}
-                      placeholder="10.0.0.0/24" style={inputStyle} />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>Gateway IP <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
-                    <input value={form.gateway_ip}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("gateway_ip", e.target.value)}
-                      placeholder="e.g. 10.0.0.1" style={inputStyle} />
-                  </label>
-                  <label style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "span 2" }}>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>DNS Nameservers <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(comma-separated)</span></span>
-                    <input value={form.dns_nameservers}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("dns_nameservers", e.target.value)}
-                      placeholder="8.8.8.8, 8.8.4.4" style={inputStyle} />
-                  </label>
-
-                  {/* DHCP Toggle */}
-                  <label style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: "span 2", cursor: "pointer", marginTop: 4 }}>
-                    <input type="checkbox" checked={form.enable_dhcp}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("enable_dhcp", e.target.checked)} />
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>Enable DHCP</span>
-                    <span style={{ fontSize: 11, color: "var(--pf9-text-muted)" }}>(allocates IPs automatically to instances on this subnet)</span>
-                  </label>
-
-                  {/* Allocation Pool (shown when DHCP is enabled) */}
-                  {form.enable_dhcp && (
-                    <>
-                      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <span style={{ fontSize: 13, fontWeight: 500 }}>Allocation Pool Start <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
-                        <input value={form.allocation_pool_start}
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("allocation_pool_start", e.target.value)}
-                          placeholder="e.g. 10.0.0.10" style={inputStyle} />
-                      </label>
-                      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        <span style={{ fontSize: 13, fontWeight: 500 }}>Allocation Pool End <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
-                        <input value={form.allocation_pool_end}
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateForm("allocation_pool_end", e.target.value)}
-                          placeholder="e.g. 10.0.0.254" style={inputStyle} />
-                      </label>
-                    </>
-                  )}
+            {/* Networks — multi-type list */}
+            <div>
+              {/* Add-network buttons */}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                <button onClick={() => addNetwork("physical_managed")}
+                  style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--pf9-border)", background: "var(--pf9-bg-card)", color: "var(--pf9-text)", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
+                  + Physical Network (Managed)
+                </button>
+                <button onClick={() => addNetwork("physical_l2")}
+                  style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--pf9-border)", background: "var(--pf9-bg-card)", color: "var(--pf9-text)", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
+                  + Physical Network (Layer 2 – Beta)
+                </button>
+                <button onClick={() => addNetwork("virtual")}
+                  style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--pf9-border)", background: "var(--pf9-bg-card)", color: "var(--pf9-text)", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
+                  + Virtual Network
+                </button>
+              </div>
+              {form.networks.length === 0 && (
+                <div style={{ padding: "12px 16px", borderRadius: 8, color: "var(--pf9-text-muted)", fontSize: 13, border: "1px dashed var(--pf9-border)", textAlign: "center" }}>
+                  No networks configured. Click a button above to add one, or skip if not needed.
                 </div>
               )}
+              {form.networks.map((net: NetworkEntry, idx: number) => {
+                const kindLabel =
+                  net.network_kind === "physical_managed" ? "Physical Network (Managed)" :
+                  net.network_kind === "physical_l2"      ? "Physical Network (Layer 2 – Beta)" :
+                                                            "Virtual Network";
+                return (
+                  <div key={idx} style={{ background: "var(--pf9-bg-card)", borderRadius: 8, padding: 16, border: "1px solid var(--pf9-border)", marginBottom: 12 }}>
+                    {/* Header row */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <span style={{ fontWeight: 600, fontSize: 14 }}>
+                        🌐 {kindLabel} {form.networks.length > 1 ? `#${idx + 1}` : ""}
+                      </span>
+                      <button onClick={() => removeNetwork(idx)}
+                        style={{ background: "var(--pf9-danger-bg)", border: "none", borderRadius: 4, padding: "3px 10px", color: "var(--pf9-danger-text)", cursor: "pointer", fontSize: 12 }}>
+                        ✕ Remove
+                      </button>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                      {/* Name — all types */}
+                      <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>Network Name</span>
+                        <input value={net.name}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "name", e.target.value)}
+                          placeholder={
+                            net.network_kind === "virtual" ? "e.g. tenant_vnet" :
+                            net.network_kind === "physical_l2" ? "e.g. tenant_l2net" :
+                            deriveNetworkName(form.project_name || "tenant", net.vlan_id) || "tenant_extnet"
+                          }
+                          style={inputStyle} />
+                      </label>
+
+                      {/* Physical provider fields — physical_managed + physical_l2 only */}
+                      {net.network_kind !== "virtual" && (<>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <span style={{ fontSize: 13, fontWeight: 500 }}>Network Type</span>
+                          <select value={net.network_type}
+                            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateNetwork(idx, "network_type", e.target.value)}
+                            style={inputStyle}>
+                            <option value="vlan">VLAN</option>
+                            <option value="flat">Flat</option>
+                          </select>
+                        </label>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <span style={{ fontSize: 13, fontWeight: 500 }}>Physical Network</span>
+                          {physNetsLoading ? (
+                            <div style={{ ...inputStyle, color: "var(--pf9-text-muted)" }}>Loading...</div>
+                          ) : (
+                            <select value={net.physical_network}
+                              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateNetwork(idx, "physical_network", e.target.value)}
+                              style={inputStyle}>
+                              {physicalNetworks.map((pn) => (
+                                <option key={pn} value={pn}>{pn}</option>
+                              ))}
+                            </select>
+                          )}
+                        </label>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <span style={{ fontSize: 13, fontWeight: 500 }}>VLAN ID <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
+                          <input type="number" value={net.vlan_id}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                              const newVlanId = e.target.value;
+                              // Always auto-derive name from domain + kind + vlan so full number is captured
+                              const derived = deriveNetName(net.network_kind, form.domain_name, newVlanId,
+                                form.networks.filter((n: NetworkEntry) => n.network_kind === "virtual").indexOf(net) + 1);
+                              setForm((p: ProvisionForm) => ({
+                                ...p,
+                                networks: p.networks.map((n: NetworkEntry, i: number) =>
+                                  i === idx ? { ...n, vlan_id: newVlanId, name: derived || n.name } : n
+                                ),
+                              }));
+                            }}
+                            placeholder="e.g. 100" style={inputStyle} />
+                        </label>
+                        <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <span style={{ fontSize: 13, fontWeight: 500 }}>MTU <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
+                          <input type="number" value={net.mtu}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "mtu", e.target.value)}
+                            placeholder="e.g. 1500" style={inputStyle} />
+                        </label>
+                      </>)}
+
+                      {/* Virtual network flags */}
+                      {net.network_kind === "virtual" && (<>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", alignSelf: "end" }}>
+                          <input type="checkbox" checked={net.shared}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "shared", e.target.checked)} />
+                          <span style={{ fontSize: 13 }}>Shared (visible to all tenants)</span>
+                        </label>
+                        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", alignSelf: "end" }}>
+                          <input type="checkbox" checked={net.port_security_enabled}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "port_security_enabled", e.target.checked)} />
+                          <span style={{ fontSize: 13 }}>Port Security Enabled</span>
+                        </label>
+                      </>)}
+
+                      {/* Subnet section — physical_managed + virtual (not physical_l2) */}
+                      {net.network_kind !== "physical_l2" && (
+                        <div style={{ gridColumn: "span 2", marginTop: 8, borderTop: "1px solid var(--pf9-border)", paddingTop: 12 }}>
+                          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: net.create_subnet ? 12 : 0, cursor: "pointer" }}>
+                            <input type="checkbox" checked={net.create_subnet}
+                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "create_subnet", e.target.checked)} />
+                            <span style={{ fontWeight: 600, fontSize: 13 }}>Create Subnet</span>
+                            <span style={{ fontSize: 11, color: "var(--pf9-text-muted)" }}>
+                              {net.network_kind === "virtual" ? "(optional — you can add a subnet later)" : ""}
+                            </span>
+                          </label>
+                          {net.create_subnet && (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <span style={{ fontSize: 13, fontWeight: 500 }}>Subnet CIDR</span>
+                                <input value={net.subnet_cidr}
+                                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "subnet_cidr", e.target.value)}
+                                  placeholder="10.0.0.0/24" style={inputStyle} />
+                              </label>
+                              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                <span style={{ fontSize: 13, fontWeight: 500 }}>Gateway IP <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
+                                <input value={net.gateway_ip}
+                                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "gateway_ip", e.target.value)}
+                                  placeholder="e.g. 10.0.0.1" style={inputStyle} />
+                              </label>
+                              <label style={{ display: "flex", flexDirection: "column", gap: 4, gridColumn: "span 2" }}>
+                                <span style={{ fontSize: 13, fontWeight: 500 }}>DNS Nameservers <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(comma-separated)</span></span>
+                                <input value={net.dns_nameservers}
+                                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "dns_nameservers", e.target.value)}
+                                  placeholder="8.8.8.8, 8.8.4.4" style={inputStyle} />
+                              </label>
+                              <label style={{ display: "flex", alignItems: "center", gap: 8, gridColumn: "span 2", cursor: "pointer" }}>
+                                <input type="checkbox" checked={net.enable_dhcp}
+                                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "enable_dhcp", e.target.checked)} />
+                                <span style={{ fontWeight: 600, fontSize: 13 }}>Enable DHCP</span>
+                                <span style={{ fontSize: 11, color: "var(--pf9-text-muted)" }}>(allocates IPs automatically to instances)</span>
+                              </label>
+                              {net.enable_dhcp && (<>
+                                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                  <span style={{ fontSize: 13, fontWeight: 500 }}>Allocation Pool Start <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
+                                  <input value={net.allocation_pool_start}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "allocation_pool_start", e.target.value)}
+                                    placeholder="e.g. 10.0.0.10" style={inputStyle} />
+                                </label>
+                                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                                  <span style={{ fontSize: 13, fontWeight: 500 }}>Allocation Pool End <span style={{ fontWeight: 400, color: "var(--pf9-text-muted)" }}>(optional)</span></span>
+                                  <input value={net.allocation_pool_end}
+                                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNetwork(idx, "allocation_pool_end", e.target.value)}
+                                    placeholder="e.g. 10.0.0.254" style={inputStyle} />
+                                </label>
+                              </>)}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* L2 info note */}
+                      {net.network_kind === "physical_l2" && (
+                        <div style={{ gridColumn: "span 2", fontSize: 12, color: "var(--pf9-text-muted)", marginTop: 4, padding: "8px 12px", background: "var(--pf9-bg-header)", borderRadius: 6 }}>
+                          ℹ️ Layer 2 networks do not have subnets — VMs configure their own IP addresses directly on the L2 segment.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Security Group */}
@@ -1136,18 +1300,33 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
                 <div style={summaryRow}><span>Password:</span> <strong>{form.user_password ? "Custom" : "Auto-generated"}</strong></div>
               </div>
               <div style={summaryCard}>
-                <h4 style={summaryTitle}>🌐 Network</h4>
-                {form.create_network ? (<>
-                  <div style={summaryRow}><span>Name:</span> <strong>{form.network_name || deriveNetworkName(form.project_name, form.vlan_id) || "(auto)"}</strong></div>
-                  <div style={summaryRow}><span>Type:</span> <strong>{form.network_type.toUpperCase()}</strong></div>
-                  <div style={summaryRow}><span>Physical Net:</span> <strong>{form.physical_network}</strong></div>
-                  <div style={summaryRow}><span>CIDR:</span> <strong>{form.subnet_cidr}</strong></div>
-                  {form.vlan_id && <div style={summaryRow}><span>VLAN ID:</span> <strong>{form.vlan_id}</strong></div>}
-                  <div style={summaryRow}><span>DHCP:</span> <strong>{form.enable_dhcp ? "Enabled" : "Disabled"}</strong></div>
-                  {form.enable_dhcp && form.allocation_pool_start && form.allocation_pool_end && (
-                    <div style={summaryRow}><span>Allocation Pool:</span> <strong>{form.allocation_pool_start} — {form.allocation_pool_end}</strong></div>
-                  )}
-                </>) : <div style={{ fontSize: 13, color: "var(--pf9-text-muted)" }}>Skipped</div>}
+                <h4 style={summaryTitle}>🌐 Networks</h4>
+                {form.networks.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "var(--pf9-text-muted)" }}>None configured</div>
+                ) : form.networks.map((net: NetworkEntry, idx: number) => {
+                  const kindLabel =
+                    net.network_kind === "physical_managed" ? "Managed" :
+                    net.network_kind === "physical_l2"      ? "L2 (Beta)" : "Virtual";
+                  return (
+                    <div key={idx} style={{ marginBottom: 8, paddingBottom: 8, borderBottom: idx < form.networks.length - 1 ? "1px solid var(--pf9-border)" : "none" }}>
+                      <div style={{ fontWeight: 600, fontSize: 12, color: "var(--pf9-text-muted)", marginBottom: 2 }}>
+                        {kindLabel}{form.networks.length > 1 ? ` #${idx + 1}` : ""}
+                      </div>
+                      <div style={summaryRow}><span>Name:</span> <strong>{net.name || "(auto)"}</strong></div>
+                      {net.network_kind !== "virtual" && (<>
+                        <div style={summaryRow}><span>Type:</span> <strong>{net.network_type.toUpperCase()}</strong></div>
+                        {net.vlan_id && <div style={summaryRow}><span>VLAN:</span> <strong>{net.vlan_id}</strong></div>}
+                        <div style={summaryRow}><span>Phys Net:</span> <strong>{net.physical_network}</strong></div>
+                      </>)}
+                      {net.network_kind !== "physical_l2" && net.create_subnet && net.subnet_cidr && (
+                        <div style={summaryRow}><span>CIDR:</span> <strong>{net.subnet_cidr}</strong></div>
+                      )}
+                      {net.network_kind === "physical_l2" && (
+                        <div style={{ fontSize: 11, color: "var(--pf9-text-muted)" }}>L2 only — no subnet</div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

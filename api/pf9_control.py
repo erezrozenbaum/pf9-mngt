@@ -266,7 +266,10 @@ class Pf9Client:
         project_id: Optional[str] = None,
         shared: bool = False,
         external: bool = False,
+        port_security_enabled: bool = True,
+        mtu: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """Create a basic (virtual/tenant) network — no provider fields."""
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/networks"
@@ -275,9 +278,12 @@ class Pf9Client:
             "name": name,
             "shared": shared,
             "router:external": external,
+            "port_security_enabled": port_security_enabled,
         }
         if project_id:
             body["project_id"] = project_id
+        if mtu is not None:
+            body["mtu"] = mtu
 
         payload = {"network": body}
         r = self.session.post(url, headers=self._headers(), json=payload)
@@ -760,8 +766,9 @@ class Pf9Client:
         project_id: Optional[str] = None,
         shared: bool = False,
         external: bool = True,
+        mtu: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Create a provider (VLAN/flat/vxlan) network."""
+        """Create a provider (VLAN/flat) network, with or without a subnet (for L2 use external=False)."""
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/networks"
@@ -776,6 +783,8 @@ class Pf9Client:
             body["provider:segmentation_id"] = segmentation_id
         if project_id:
             body["project_id"] = project_id
+        if mtu is not None:
+            body["mtu"] = mtu
         r = self.session.post(url, headers=self._headers(), json={"network": body})
         r.raise_for_status()
         return r.json().get("network", {})
