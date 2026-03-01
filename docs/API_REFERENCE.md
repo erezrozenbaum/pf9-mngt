@@ -3416,3 +3416,339 @@ The `PATCH /projects/{id}/tenants/{tenant_id}` endpoint accepts two description 
 ### Network Mapping VLAN Edit (v1.31.10+)
 
 `PATCH /network-mappings/{id}` accepts `vlan_id` to allow operators to manually set or correct a VLAN ID that was not auto-parsed from the source network name. Send `null` to clear it.
+
+---
+
+## Phase 4A — Pre-Migration Data Enrichment (v1.35.x)
+
+Phase 4A endpoints enable operators to enrich and validate migration metadata before any provisioning work begins. All endpoints are under `/api/migration/projects/{project_id}/`.
+
+### Subnet Template Export
+
+`GET /projects/{id}/subnet-template`
+
+Download a CSV template pre-populated with all discovered source subnets, ready for operator annotation (CIDR, gateway, DNS, VLAN).
+
+**Response:** `text/csv` file download.
+
+---
+
+### Subnet Template Import
+
+`POST /projects/{id}/subnet-import`
+
+Upload a completed subnet CSV to populate the `migration_subnets` table.
+
+**Request:** `multipart/form-data` with `file` field (CSV).
+
+**Response:**
+```json
+{ "imported": 42, "skipped": 0, "errors": [] }
+```
+
+---
+
+### Flavor Staging
+
+`GET /projects/{id}/flavor-staging`
+
+Return all distinct vApp/VM compute profiles seen in the project mapped to the closest available PCD flavor.
+
+**Response:**
+```json
+[
+  { "source_flavor": "2vCPU-4GB", "vcpus": 2, "ram_mb": 4096, "disk_gb": 50,
+    "matched_flavor_id": "abc123", "matched_flavor_name": "m1.medium", "match_confidence": "exact" }
+]
+```
+
+---
+
+### Image Requirements
+
+`GET /projects/{id}/image-requirements`
+
+List all distinct OS images required by VMs in the project, with availability status in PCD's Glance.
+
+**Response:**
+```json
+[
+  { "os_type": "windows2019", "count": 14, "glance_image_id": "xyz789",
+    "glance_image_name": "win2019-base", "available": true }
+]
+```
+
+---
+
+### Tenant User Roster
+
+`GET /projects/{id}/tenant-users`
+
+Return all vCloud users mapped to their target tenants, used for identity pre-validation before provisioning.
+
+**Response:**
+```json
+[
+  { "tenant_id": "...", "tenant_name": "acme", "users": [
+    { "username": "jdoe@acme.com", "role": "OrgAdmin", "pcd_user_exists": true }
+  ]}
+]
+```
+
+---
+
+## Phase 4B — PCD Auto-Provisioning (v1.36.x)
+
+Phase 4B endpoints orchestrate the ordered creation of PCD resources (domains, projects, quota assignments, network objects, etc.) with a mandatory approval gate, dry-run simulation, and full audit trail.
+
+All endpoints are under `/api/migration/projects/{project_id}/`. `migration:read` is required for GET endpoints; `migration:write` for POST/DELETE; `migration:admin` for approval decisions.
+
+---
+
+### Prep Readiness Check
+
+`GET /projects/{id}/prep-readiness`
+
+Pre-flight check that evaluates all Phase 4A gates before allowing task generation. Returns a per-item pass/fail list.
+
+**Response:**
+```json
+{
+  "ready": false,
+  "checks": [
+    { "item": "tenant_mappings", "status": "pass", "count": 122 },
+    { "item": "network_mappings", "status": "pass", "count": 85 },
+    { "item": "subnet_data", "status": "fail", "message": "0 subnets imported" },
+    { "item": "flavor_staging", "status": "pass", "count": 7 },
+    { "item": "image_requirements", "status": "pass", "available": true }
+  ]
+}
+```
+
+---
+
+### Generate Prep Task Plan (v1.36.0)
+
+`POST /projects/{id}/prepare`
+
+Generates an ordered list of provisioning tasks (domains → projects → quotas → networks → subnets → router interfaces) from the current Phase 4A data. Clears any existing `pending` or `failed` tasks first (idempotent re-run safe). Sets the project's `prep_approval_status` to `pending_approval` and fires a `prep_approval_requested` notification.
+
+**Response:**
+```json
+{ "tasks_generated": 667, "approval_status": "pending_approval" }
+```
+
+---
+
+### List Prep Tasks (v1.36.0)
+
+`GET /projects/{id}/prep-tasks`
+
+Returns all generated tasks with counts by status.
+
+**Response:**
+```json
+{
+  "total": 667,
+  "by_status": { "pending": 650, "done": 17, "failed": 0 },
+  "tasks": [
+    { "id": 4003, "task_type": "create_domain", "tenant_name": "acme",
+      "status": "pending", "detail": null, "executed_at": null }
+  ]
+}
+```
+
+---
+
+### Get Approval Status (v1.36.2)
+
+`GET /projects/{id}/prep-approval`
+
+Returns the current approval status, who requested and approved it, and the full approval history.
+
+**Response:**
+```json
+{
+  "status": "approved",
+  "requested_by": "admin@pf9.io",
+  "approved_by": "ops-lead@pf9.io",
+  "approved_at": "2026-03-01T12:34:56Z",
+  "history": [
+    { "decision": "approved", "approver": "ops-lead@pf9.io",
+      "comment": "Reviewed and approved", "created_at": "2026-03-01T12:34:56Z" }
+  ]
+}
+```
+
+---
+
+### Submit Approval Decision (v1.36.2)
+
+`POST /projects/{id}/prep-approval`
+
+**Required role:** `migration:admin`
+
+Approve or reject the generated task plan. Fires `prep_approval_granted` or `prep_approval_rejected` notification.
+
+**Request body:**
+```json
+{ "decision": "approved", "comment": "Reviewed and approved" }
+```
+
+`decision` must be `"approved"` or `"rejected"`.
+
+**Response (200):**
+```json
+{ "status": "approved" }
+```
+
+**Error (400):**
+```json
+{ "detail": "Invalid decision. Must be 'approved' or 'rejected'." }
+```
+
+---
+
+### Dry-Run Simulation (v1.36.2)
+
+`POST /projects/{id}/prepare/dry-run`
+
+Authenticates with PCD and classifies every pending task as `would_create`, `would_skip_existing`, or `would_execute` — **no resources are written to PCD**. Requires either `pending_approval` or `approved` status (tasks must already be generated).
+
+**Response:**
+```json
+{
+  "status": "dry_run_complete",
+  "summary": {
+    "total": 667,
+    "would_create": 417,
+    "would_skip_existing": 13,
+    "would_execute": 237
+  },
+  "by_type": [
+    { "task_type": "create_domain", "total": 122,
+      "would_create": 110, "would_skip_existing": 12, "would_execute": 0 },
+    { "task_type": "create_project", "total": 122,
+      "would_create": 121, "would_skip_existing": 1, "would_execute": 0 }
+  ]
+}
+```
+
+---
+
+### Execute Single Task (v1.36.0)
+
+`POST /projects/{id}/prep-tasks/{task_id}/execute`
+
+Runs one specific task regardless of approval status (useful for targeted re-runs or testing). Returns the new task status.
+
+**Response:**
+```json
+{ "task_id": 4003, "status": "done", "detail": "domain_id=abc123",
+  "resource_id": "abc123" }
+```
+
+Possible `status` values: `done`, `already_done`, `failed`.
+
+---
+
+### Run All Prep Tasks (v1.36.0 + approval gate v1.36.2)
+
+`POST /projects/{id}/prepare/run`
+
+Executes all `pending` and `failed` tasks in dependency order (domains → projects → quotas → ...). **Requires `prep_approval_status = 'approved'`** — returns HTTP 403 otherwise.
+
+Fires `prep_tasks_completed` notification on success.
+
+**Response (200):**
+```json
+{ "executed": 417, "skipped": 13, "failed": 0 }
+```
+
+**Error (403):**
+```json
+{ "detail": "Plan has not been approved. Current status: pending_approval" }
+```
+
+---
+
+### Rollback Single Task (v1.36.0)
+
+`POST /projects/{id}/prep-tasks/{task_id}/rollback`
+
+Attempts to undo a completed task. Behaviour depends on task type:
+
+| Task Type | Rollback Behaviour |
+|-----------|-------------------|
+| `create_domain` | Deletes the domain from PCD Keystone |
+| `create_project` | Deletes the project from PCD Keystone |
+| `set_quotas` | `rollback_not_supported` (quotas are safe to leave) |
+| `create_network` | Deletes the Neutron network |
+| `create_subnet` | Deletes the Neutron subnet |
+| `create_router_interface` | Removes the router interface |
+
+**Response:**
+```json
+{ "task_id": 4120, "status": "pending", "rollback_result": "project_deleted" }
+```
+
+Possible `rollback_result` values: `domain_deleted`, `project_deleted`, `rollback_not_supported`, `resource_not_found`, `rollback_failed`.
+
+---
+
+### Clear Prep Tasks (v1.36.0)
+
+`DELETE /projects/{id}/prep-tasks`
+
+Removes all tasks in `pending` or `failed` state. Tasks with status `done` are preserved. Resets `prep_approval_status` to `null`.
+
+**Response:**
+```json
+{ "deleted": 650 }
+```
+
+---
+
+### Post-Run Summary (v1.36.1)
+
+`GET /projects/{id}/prep-summary`
+
+Returns per-task-type completion counts and an overall `complete` flag once all tasks have been executed.
+
+**Response:**
+```json
+{
+  "complete": false,
+  "total": { "done": 417, "skipped": 0, "failed": 2, "pending": 248 },
+  "by_type": [
+    { "task_type": "create_domain", "done": 110, "skipped": 12, "failed": 0, "pending": 0 },
+    { "task_type": "create_project", "done": 121, "skipped": 1, "failed": 0, "pending": 0 }
+  ]
+}
+```
+
+---
+
+### Full Audit Log (v1.36.2)
+
+`GET /projects/{id}/prep-audit`
+
+Returns a three-part audit trail: system activity log entries, approval decisions, and individual task executions.
+
+**Response:**
+```json
+{
+  "activity_log": [
+    { "action": "prep_tasks_generated", "performed_by": "admin@pf9.io",
+      "detail": "667 tasks", "created_at": "2026-03-01T11:00:00Z" }
+  ],
+  "approval_history": [
+    { "decision": "approved", "approver": "ops-lead@pf9.io",
+      "comment": "LGTM", "created_at": "2026-03-01T12:34:56Z" }
+  ],
+  "recent_executions": [
+    { "id": 4003, "task_type": "create_domain", "tenant_name": "acme",
+      "status": "done", "executed_by": "admin@pf9.io", "executed_at": "2026-03-01T13:00:00Z" }
+  ]
+}
+```
