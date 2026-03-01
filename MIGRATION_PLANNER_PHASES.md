@@ -764,55 +764,283 @@ The agent slots slider and bandwidth override are **Low effort** and independent
 ## Phase 4: Target Preparation & Auto-Provisioning 🔲 NOT STARTED
 **Status**: NOT STARTED
 
-> **Rationale**: Only after assessment (Phases 1–2) and planning (Phase 3) are complete and approved should target resources be provisioned. This prevents wasted resources and ensures the plan is locked.
-
-### Planned Work
-- [ ] "Prepare" action: auto-create PCD resources to fill gaps (requires approved status)
-- [ ] Use target mapping from Phase 2B to create domains/projects with correct names
-- [ ] Apply quota recommendations from Phase 2C
-- [ ] Prep tasks table — track each resource creation (domain, project, user, flavor, network, secgroup)
-- [ ] Leverage existing provisioning_routes.py patterns
-- [ ] Rollback support for failed preparations
-- [ ] UI: Preparation checklist with status per task
+> **Rationale**: Only after assessment (Phases 1–2) and planning (Phase 3) are complete and approved should target resources be provisioned. This prevents wasted resources and ensures the plan is locked before anything is created on PCD.
+>
+> **Scope boundary**: pf9-mngt plans and provisions. vJailbreak executes. The handoff artifact is the credential bundle generated at the end of Phase 4C. Migration execution, post-migration validation, and VM progress tracking are out of scope — that is vJailbreak's job.
 
 ---
 
-## Phase 5: vJailbreak Integration & Execution 🔲 NOT STARTED
-**Status**: NOT STARTED
+### Phase 4A — Data Enrichment (operator input required before provisioning)
 
-### Planned Work
-- [ ] vJailbreak API client (create migration CR, monitor status)
-- [ ] Execution engine: launch wave, track per-VM progress
-- [ ] Live status polling (pending → migrating → verifying → completed/failed)
-- [ ] Pause/resume/cancel wave
-- [ ] Error handling and retry logic
-- [ ] UI: Execution dashboard with live progress
+> This sub-phase collects the information that cannot be derived from RVTools or the existing plan. All items must be confirmed before Phase 4B can run.
+
+#### 4A.1 — Network Subnet Details
+
+RVTools provides network name and VLAN ID. Neutron needs the full subnet spec to create a network. The operator must supply this per mapped network.
+
+**DB**: Add columns to `migration_network_mappings`:
+```
+network_kind VARCHAR DEFAULT 'physical_managed', -- physical_managed | physical_l2 | virtual
+cidr TEXT,                    -- e.g. 10.10.5.0/24
+gateway_ip TEXT,              -- e.g. 10.10.5.1
+dns_nameservers TEXT[],       -- e.g. ["8.8.8.8", "8.8.4.4"]
+allocation_pool_start TEXT,   -- e.g. 10.10.5.100
+allocation_pool_end TEXT,     -- e.g. 10.10.5.200
+dhcp_enabled BOOLEAN DEFAULT true,
+is_external BOOLEAN DEFAULT false,
+subnet_details_confirmed BOOLEAN DEFAULT false
+```
+
+> **`network_kind` default logic**: rows that have a `vlan_id` default to `physical_managed` (VLAN-tagged provider networks — the common case). Flat/trunk-only L2 networks default to `physical_l2`. Purely internal networks with no external routing should be set to `virtual`. The gap analysis (Phase 2E) can pre-populate the suggested kind based on whether a VLAN ID is present, so operators rarely need to change the default.
+
+**API**: `PATCH /network-mappings/{id}` — extend to accept all subnet fields including `network_kind`. `GET /projects/{id}/network-mappings/readiness` — returns count of networks missing subnet details.
+
+**UI**: Network Map tab — expand each confirmed row to show a "Subnet Details" section with the new fields. The `network_kind` field renders as a small dropdown (`Physical Managed | Physical L2 | Virtual`) and defaults to `Physical Managed` for rows with a VLAN ID. Rows without subnet details show an ⚠️ badge. A "Subnet Details Ready" counter in the toolbar shows X/Y complete. Networks marked `is_external=true` skip subnet creation (they already exist on PCD).
 
 ---
 
-## Phase 6: Post-Migration Validation 🔲 NOT STARTED
-**Status**: NOT STARTED
+#### 4A.2 — Flavor Staging
 
-### Planned Work
-- [ ] Post-migration VM health checks (ping, SSH, service ports)
-- [ ] Resource validation (vCPU, RAM, disk match expectations)
-- [ ] Network connectivity verification
-- [ ] Cutover checklist generation
-- [ ] Source VM power-off recommendation
-- [ ] UI: Validation report per VM/wave
+Gap analysis (Phase 2E) detects distinct VM shapes (vCPU + RAM + disk combinations) that don't exist as PCD flavors. Phase 4A turns those detected shapes into editable draft flavors the operator reviews before anything is created.
+
+**DB**: `migration_flavor_staging` table:
+```sql
+CREATE TABLE migration_flavor_staging (
+    id SERIAL PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES migration_projects(project_id),
+    source_shape TEXT NOT NULL,          -- e.g. "4vCPU-8GB-50GB" (auto-label from detection)
+    vcpus INTEGER NOT NULL,
+    ram_mb INTEGER NOT NULL,
+    disk_gb INTEGER NOT NULL,
+    target_flavor_name TEXT,             -- operator edits this
+    pcd_flavor_id TEXT,                  -- filled after creation in 4B
+    vm_count INTEGER DEFAULT 0,          -- number of VMs using this shape
+    confirmed BOOLEAN DEFAULT false,
+    skip BOOLEAN DEFAULT false,          -- operator marks as "map to existing flavor instead"
+    existing_flavor_id TEXT,             -- if skip=true, which existing PCD flavor to use
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**API**:
+- `GET /projects/{id}/flavor-staging` — list all draft flavors (auto-populated from gap analysis)
+- `POST /projects/{id}/flavor-staging/refresh` — re-run detection from current gaps, add new shapes, keep operator edits
+- `PATCH /flavor-staging/{id}` — update name, skip flag, existing_flavor_id, confirmed
+- `POST /projects/{id}/flavor-staging/bulk-rename` — find-and-replace across `target_flavor_name` column (same pattern as tenant/network F&R): `{ find, replace, case_sensitive, preview }`
+
+**UI**: New **"🧊 Flavor Staging"** section in the PCD Readiness tab (or its own sub-tab):
+- Table: Source Shape | VM Count | Target Name (editable) | Skip (checkbox) | Existing Flavor (picker if skip=true) | Confirmed
+- Toolbar: "🔄 Refresh from Gaps" | "🔍 Find & Replace" | "✓ Confirm All" buttons
+- Unconfirmed flavors show ⚠️; skipped flavors show ↪️
+- "Flavors Ready" counter: X/Y confirmed or skipped
 
 ---
 
-## Phase 7: Reporting & Runbooks 🔲 NOT STARTED
-**Status**: NOT STARTED
+#### 4A.3 — Image Requirements Checklist
 
-### Planned Work
-- [ ] Migration summary report (per project, per tenant) — *Core Excel/PDF export already done in Phase 1.5*
-- [ ] Extended report: wave execution summary, per-VM actual vs estimated times
-- [ ] Migration runbook templates (pre-migration, execution, post-migration)
-- [ ] Integration with existing Runbooks framework
-- [ ] Notification integration (wave start/complete/failed alerts)
-- [ ] Dashboard widgets for migration progress
+pf9-mngt cannot source or upload OS images. It generates a checklist of what is needed based on OS families detected in the inventory, and gates Phase 4B on the operator confirming they are available in Glance.
+
+**DB**: `migration_image_requirements` table:
+```sql
+CREATE TABLE migration_image_requirements (
+    id SERIAL PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES migration_projects(project_id),
+    os_family TEXT NOT NULL,             -- 'windows', 'linux-ubuntu', 'linux-rhel', etc.
+    os_version_hint TEXT,                -- e.g. "Windows Server 2019", "Ubuntu 22.04"
+    vm_count INTEGER DEFAULT 0,          -- VMs needing this image
+    glance_image_id TEXT,                -- operator pastes Glance UUID once uploaded
+    glance_image_name TEXT,
+    confirmed BOOLEAN DEFAULT false,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**API**:
+- `GET /projects/{id}/image-requirements` — list (auto-populated from distinct OS families in `migration_vms`)
+- `PATCH /image-requirements/{id}` — set `glance_image_id`, `glance_image_name`, `confirmed`
+
+**UI**: **"🖼️ Image Requirements"** section in PCD Readiness tab:
+- Table: OS Family | Version Hint | VM Count | Glance Image ID (editable) | Glance Image Name | Confirmed
+- Each row shows instructions: "Upload a QCOW2 image to Glance matching this OS, then paste the image UUID here."
+- Windows rows show a note: "Windows images require a licensed QCOW2. Build using virtio drivers + cloudbase-init."
+- "Images Ready" counter: X/Y confirmed
+
+---
+
+#### 4A.4 — Per-Tenant User Definitions
+
+Every new PCD project needs at least two things before vJailbreak can run: a migration service account (admin role, used by vJailbreak) and a tenant owner account (admin or member role, used by the customer post-migration). The service account is auto-generated; the tenant owner must be defined by the operator.
+
+**DB**: `migration_tenant_users` table:
+```sql
+CREATE TABLE migration_tenant_users (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER NOT NULL REFERENCES migration_tenants(id),
+    user_type VARCHAR NOT NULL,           -- 'service_account' | 'tenant_owner'
+    username TEXT NOT NULL,
+    email TEXT,
+    role VARCHAR NOT NULL DEFAULT 'admin', -- 'admin' | 'member' | 'reader'
+    is_existing_user BOOLEAN DEFAULT false, -- true = user already exists in Keystone/LDAP
+    temp_password TEXT,                   -- encrypted; only set for new users
+    password_must_change BOOLEAN DEFAULT true,
+    pcd_user_id TEXT,                     -- filled after creation in 4B
+    confirmed BOOLEAN DEFAULT false,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Auto-seeding**: When a project is approved (or when the user clicks "Refresh Users"), auto-create one `service_account` row per in-scope tenant with:
+- `username = svc-migration-<project_slug>-<tenant_slug>` (auto-generated, editable)
+- `role = admin`
+- `is_existing_user = false`
+- `temp_password` = auto-generated 20-char random password (stored encrypted in DB, never shown in UI except in the export bundle)
+- `password_must_change = false` (service accounts must not expire during migration window)
+
+**API**:
+- `GET /projects/{id}/tenant-users` — list all user definitions grouped by tenant
+- `POST /projects/{id}/tenant-users` — add a user row (for tenant owner entries)
+- `PATCH /tenant-users/{id}` — edit username, email, role, is_existing_user, notes, confirmed
+- `DELETE /tenant-users/{id}` — remove a tenant owner row (service accounts cannot be deleted)
+- `POST /projects/{id}/tenant-users/seed-service-accounts` — auto-generate service account rows for all in-scope tenants that don't have one yet
+
+**UI**: New **"👤 Users"** sub-tab in SourceAnalysis (between Network Map and Wave Planner):
+- Table grouped by tenant: Type | Username | Email | Role | Existing User | Must Change PW | Confirmed
+- Each tenant section has a `+ Add Tenant Owner` button
+- Service account rows are auto-generated and show 🔒 (locked type, can only edit username/notes)
+- `is_existing_user = true` rows show no password column — existing Keystone users only need a role assignment
+- Unconfirmed rows show ⚠️; a toolbar counter shows "X/Y tenants fully configured"
+- Passwords never shown in plaintext — only "••••••••" with a "Regenerate" button
+
+---
+
+### Phase 4B — PCD Auto-Provisioning
+
+> Requires: project `approved_at IS NOT NULL`, AND all 4A items confirmed (subnet details, flavors, images, users).
+
+> **Implementation note — reuse the provisioning backend**: The network creation step (step 4 below) must NOT write a second Neutron client inside `migration_engine.py`. Instead, it builds a `ProvisionRequest` from migration plan data (`target_domain_name`, `target_project_name` from `migration_tenants`; `List[NetworkConfig]` from confirmed `migration_network_mappings` rows) and calls the existing `POST /provision` API. This keeps all Neutron logic in one place and inherits the naming conventions (`<domain>_tenant_extnet_vlan_<id>`, etc.), error handling, and `networks_created` JSONB audit trail already built in v1.34.2.
+
+**DB**: `migration_prep_tasks` table:
+```sql
+CREATE TABLE migration_prep_tasks (
+    id SERIAL PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES migration_projects(project_id),
+    cohort_id INTEGER REFERENCES migration_cohorts(id),   -- NULL = project-level task
+    task_type VARCHAR NOT NULL,  -- 'domain' | 'project' | 'quota' | 'network' | 'subnet' | 'flavor' | 'user' | 'role_assignment'
+    resource_name TEXT,
+    resource_id TEXT,            -- PCD UUID after creation
+    status VARCHAR DEFAULT 'pending',  -- 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+    error_message TEXT,
+    rollback_data JSONB,         -- enough info to undo the action
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+**Provisioning sequence** (order matters — dependencies are strict):
+1. **Domains** — create each distinct `target_domain_name` not already in Keystone
+2. **Projects** — create each in-scope tenant's `target_project_name` under its domain
+3. **Quotas** — apply Phase 2C quota recommendations per project (Nova + Cinder + Neutron)
+4. **Networks** — build `List[NetworkConfig]` from confirmed `migration_network_mappings` rows (using `network_kind`, `vlan_id`, `cidr`, `gateway_ip`, `dns_nameservers`; skip `is_external=true` rows) and call `POST /provision` per tenant. On task completion, copy the returned `networks_created[].id` UUIDs back into `migration_network_mappings.target_network_id` — this closes the planning→execution loop and ensures Wave Planner pre-flight (`network_mapped`) and the vJailbreak bundle both carry real PCD network IDs
+5. **Flavors** — create confirmed staging flavors; skip rows where `skip=true` (use existing)
+6. **Users** — create new Keystone users for rows where `is_existing_user=false`; skip existing users
+7. **Role assignments** — assign each user their role in their project(s)
+
+**API**:
+- `POST /projects/{id}/prepare` — kick off full provisioning sequence; gated on 4A completeness check; runs cohort by cohort in `cohort_order`; returns a job ID
+- `GET /projects/{id}/prep-tasks` — list all tasks with status (for UI progress table)
+- `POST /projects/{id}/prep-tasks/{task_id}/retry` — retry a single failed task
+- `POST /projects/{id}/prep-tasks/{task_id}/rollback` — undo a single completed task (e.g. delete a project that was created by mistake)
+- `GET /projects/{id}/prep-readiness` — pre-flight check: are all 4A items confirmed? Returns blocking items list.
+
+**UI**: New **"⚙️ Prepare PCD"** sub-tab:
+- **Readiness check panel** (shown before provisioning starts): four status rows — Subnet Details (X/Y), Flavors (X/Y), Images (X/Y), Users (X/Y). "▶️ Start Provisioning" button disabled until all green.
+- **Task progress table**: task type | resource name | status badge | error (expandable) | Retry / Rollback buttons
+- Tasks grouped by cohort, then by task type within each cohort
+- Live refresh every 3s while provisioning is running
+- Summary bar: "X tasks done · Y failed · Z pending"
+
+---
+
+### Phase 4C — vJailbreak Handoff Artifacts
+
+> This is the terminal output of the Migration Planner. After 4C, execution moves entirely to vJailbreak.
+
+#### 4C.1 — vJailbreak Credential Bundle
+
+A downloadable JSON/YAML file per cohort (or for the full project) containing everything vJailbreak needs to connect to each PCD project and start migrating VMs.
+
+**Structure per tenant entry:**
+```json
+{
+  "tenant_name": "Acme Corp",
+  "target_project_name": "acme-prod",
+  "target_domain_name": "acme",
+  "auth_url": "https://pcd.example.com:5000/v3",
+  "project_id": "<pcd-project-uuid>",
+  "service_account": {
+    "username": "svc-migration-proj-acme",
+    "password": "<generated-password>"
+  },
+  "networks": [
+    { "source_network": "VLAN-100", "pcd_network_id": "<uuid>", "vlan_id": 100 }
+  ],
+  "wave_sequence": [
+    { "wave_name": "🧪 Acme Pilot", "vm_count": 3 },
+    { "wave_name": "Wave 1", "vm_count": 12 }
+  ]
+}
+```
+
+**API**: `GET /projects/{id}/export-vjailbreak-bundle` — returns JSON file. `GET /projects/{id}/cohorts/{cid}/export-vjailbreak-bundle` — cohort-scoped version.
+
+**UI**: "📦 Export vJailbreak Bundle" button in Wave Planner tab (enabled once 4B is complete for the cohort). Button per-cohort and one for the full project.
+
+---
+
+#### 4C.2 — Tenant Handoff Sheet
+
+A per-project PDF for the MSP to deliver to each customer — tells them their new PCD credentials and what was created for them.
+
+**Structure per tenant:**
+- Header: project name, domain, PCD region endpoint
+- Table of tenant owner users: username, role, temporary password (plaintext in PDF — this is intentional, it's a sealed handoff document)
+- Note: "You will be prompted to change your password on first login."
+- List of networks created with their CIDRs
+- Contact info / support section (configurable text)
+
+**API**: `GET /projects/{id}/export-handoff-sheet.pdf` — one PDF with one section per in-scope tenant, sorted by cohort order
+
+**UI**: "📄 Export Handoff Sheet" button in Prepare PCD tab (enabled once 4B is complete). Prominent warning: "This document contains plaintext passwords. Distribute securely."
+
+---
+
+### Phase 4 Summary Table
+
+| Sub-phase | Description | Blocker for next? |
+|-----------|-------------|------------------|
+| **4A.1** | Network subnet details (CIDR, gateway, DNS, pools) | **Yes** — 4B cannot create networks without subnet spec |
+| **4A.2** | Flavor staging (name editing, F&R, confirm-before-create) | **Yes** — 4B cannot create flavors without names confirmed |
+| **4A.3** | Image requirements checklist (operator uploads to Glance, confirms) | **Yes** — vJailbreak needs images present before migration |
+| **4A.4** | Per-tenant user definitions (service accounts auto-seeded, owner accounts operator-defined) | **Yes** — 4B creates users and role assignments from this |
+| **4B** | PCD auto-provisioning (domains, projects, quotas, networks, flavors, users, roles) | **Yes** — 4C needs PCD UUIDs filled by 4B |
+| **4C.1** | vJailbreak credential bundle export (JSON/YAML per cohort) | Terminal output |
+| **4C.2** | Tenant handoff sheet (PDF with credentials per customer) | Terminal output |
+
+### Phase 4 File Changes (planned)
+
+| File | Action |
+|------|--------|
+| `db/migrate_phase4_preparation.sql` | NEW — `migration_flavor_staging`, `migration_image_requirements`, `migration_tenant_users`, `migration_prep_tasks` + subnet detail columns on `migration_network_mappings` |
+| `db/migrate_migration_planner.sql` | Modified — add Phase 4 table/column definitions for fresh installs |
+| `api/migration_engine.py` | Modified — `provision_pcd_resources()` sequenced provisioner, `generate_vjailbreak_bundle()`, `generate_handoff_pdf()` |
+| `api/migration_routes.py` | Modified — all Phase 4 endpoints (~15 new routes) |
+| `api/export_reports.py` | Modified — `generate_handoff_pdf()` |
+| `pf9-ui/src/components/migration/SourceAnalysis.tsx` | Modified — Network Map subnet details expansion, Flavor Staging section, Image Requirements section, 👤 Users sub-tab, ⚙️ Prepare PCD sub-tab, export buttons in Wave Planner |
+| `deployment.ps1` | Modified — add `migrate_phase4_preparation.sql` |
+| `CHANGELOG.md` | Modified — v1.35.0 entry |
 
 ---
 
@@ -851,13 +1079,17 @@ The agent slots slider and bandwidth override are **Low effort** and independent
 | 3.0.1 | Cohort-Aligned Schedule, Two-Model What-If, Tenant Expand+Reassign, Execution Plan, Clean Slate | ✅ COMPLETE | v1.33.0 |
 | 3 | Migration Wave Planning (5-strategy auto-builder, wave lifecycle, pre-flight, VM funnel, Wave Planner UI) | ✅ COMPLETE | v1.34.0 |
 | 3.1 | Wave planner bug fixes — cohort-scoped building, naming, column names, Pydantic v2 compat | ✅ COMPLETE | v1.34.1 |
-| 4 | Target Preparation & Auto-Provisioning | 🔲 NOT STARTED | — |
-| 5 | vJailbreak Integration & Execution | 🔲 NOT STARTED | — |
-| 6 | Post-Migration Validation | 🔲 NOT STARTED | — |
-| 7 | Reporting & Runbooks | 🔲 NOT STARTED | — |
+| **4A** | **Data Enrichment — subnet details, flavor staging, image checklist, user definitions** | ✅ COMPLETE | v1.35.0 |
+| **4B** | **PCD Auto-Provisioning — domains, projects, quotas, networks, flavors, users, roles** | 🔲 NOT STARTED | — |
+| **4C** | **vJailbreak Handoff — credential bundle + tenant handoff sheet PDF** | 🔲 NOT STARTED | — |
 
-### Next Up: Phase 4 — Target Preparation & Auto-Provisioning
-> v1.34.1 (patch on v1.34.0) fixed wave planner cohort-scoped building, wave naming, SQL column names, and Pydantic v2 compatibility. Phase 4 will auto-provision PCD resources (domains, projects, quotas, networks) once a wave plan is approved.
+### Next Up: Phase 4B — PCD Auto-Provisioning
+> Phase 4A is complete (v1.35.0). Phase 4B is the PCD provisioning execution phase — creating domains, projects, quotas, networks (using confirmed subnet details), flavors (from flavor staging), users (from tenant user definitions). All Phase 4A items must be confirmed before 4B can run. After Phase 4C the plan is handed to vJailbreak for execution. Phases 5–7 (vJailbreak execution, post-migration validation, extended runbooks) are out of scope — that is vJailbreak's job.
+
+### Scope Boundary
+- **pf9-mngt owns**: source assessment → capacity planning → cohort design → wave sequencing → PCD provisioning → credential handoff
+- **vJailbreak owns**: VM data movement, live migration progress, post-cutover validation
+- **Handoff artifact**: vJailbreak credential bundle (JSON, one entry per PCD project) + tenant handoff sheet (PDF)
 
 ### HA & Utilization Policy
 - **70% utilization cap IS the HA strategy** — no separate spare nodes added on top. Same model as VMware: keep cluster at ≤70% so any single-node failure has headroom.

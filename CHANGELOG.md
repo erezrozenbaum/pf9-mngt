@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.0] - 2026-03-01
+
+### Added — Migration Planner Phase 4A: Data Enrichment
+
+- **4A.1 — Network Subnet Details** — The Network Map tab now supports per-network subnet configuration:
+  - New columns on `migration_network_mappings`: `network_kind` (physical_managed / physical_l2 / virtual), `cidr`, `gateway_ip`, `dns_nameservers TEXT[]`, `allocation_pool_start`, `allocation_pool_end`, `dhcp_enabled`, `is_external`, `subnet_details_confirmed`
+  - New API: `GET /projects/{id}/network-mappings/readiness` — returns confirmed count, missing count, external count, ready status
+  - Network Map table now shows a **Kind** pill (Physical / L2 / Virtual) per row
+  - Confirmed rows show a **⚙️ Subnet** expand button; external rows show "skip (ext)"; confirmed subnets show "✓ subnet ready"
+  - Expandable inline subnet panel per row: network_kind dropdown, CIDR, gateway IP, DNS nameservers, allocation pool start/end, DHCP enabled and Is External checkboxes, Save/Cancel actions
+  - Toolbar now shows **🌐 Subnet Details: X/Y** readiness counter
+- **4A.2 — Flavor Staging** — New `migration_flavor_staging` table and `FlavorStagingView` component in the PCD Readiness tab:
+  - `POST /projects/{id}/flavor-staging/refresh` — queries distinct VM shapes from `migration_vms` and upserts into staging table
+  - `GET /projects/{id}/flavor-staging` — returns flavors with ready_count summary
+  - `PATCH /flavor-staging/{id}` — edit target_flavor_name, confirmed, skip; supports marking existing flavor by ID
+  - `POST /projects/{id}/flavor-staging/bulk-rename` — find-and-replace across `target_flavor_name` with preview mode
+  - UI: shape + VM count table, inline name edit, skip checkbox, per-row confirm button, F&R panel, confirmed/total badge
+- **4A.3 — Image Requirements** — New `migration_image_requirements` table and `ImageRequirementsView` component:
+  - `POST /projects/{id}/image-requirements/refresh` — queries distinct `os_family` from `migration_vms`, upserts with most-common version hint
+  - `GET /projects/{id}/image-requirements` — list
+  - `PATCH /image-requirements/{id}` — set `glance_image_id`, `glance_image_name`, `confirmed`
+  - UI: OS family + version hint + VM count table, inline Glance name and UUID inputs, confirm button, ready badge
+- **4A.4 — Per-Tenant User Definitions** — New `migration_tenant_users` table, `TenantUsersView` component, and "👤 Users" tab:
+  - `POST /projects/{id}/tenant-users/seed-service-accounts` — auto-creates one `service_account` entry per tenant with `svc-mig-{slug}` username and a 20-char random `temp_password`
+  - `GET /projects/{id}/tenant-users` — grouped-by-tenant listing with confirmed_tenant_count
+  - `POST /projects/{id}/tenant-users` — create a `tenant_owner` record
+  - `PATCH /tenant-users/{id}` — edit username / email / role / confirmed
+  - `DELETE /tenant-users/{id}` — remove owner record (service accounts cannot be deleted)
+  - UI: Users tab, tenant-grouped table with type badge (🤖 svc / 👤 owner), inline edit, ✓ confirm button, seed-service-accounts action, confirmed-tenants counter
+
+### Infrastructure
+- **`db/migrate_phase4_preparation.sql`** — Idempotent migration file for all Phase 4A schema additions (subnet columns, flavor_staging, image_requirements, tenant_users tables). Auto-applied on startup; also registered in `deployment.ps1`.
+- **`deployment.ps1`** — Added `migrate_phase4_preparation.sql` to `$provisioningMigrations` array.
+
+---
+
 ## [1.34.2] - 2026-03-01
 
 ### Added

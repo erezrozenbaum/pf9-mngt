@@ -148,7 +148,7 @@ interface Props {
   onProjectUpdated: (p: MigrationProject) => void;
 }
 
-type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "risk" | "plan" | "capacity" | "readiness";
+type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness";
 
 // Phase 3 — Wave Planning types
 interface Wave {
@@ -547,6 +547,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
           { id: "waves" as SubView, label: "🌊 Wave Planner" },
           { id: "networks" as SubView, label: "🌐 Networks" },
           { id: "netmap" as SubView, label: "🔌 Network Map" },
+          { id: "users" as SubView, label: "👤 Users" },
           { id: "capacity" as SubView, label: "⚖️ Capacity" },
           { id: "readiness" as SubView, label: "🎯 PCD Readiness" },
           { id: "plan" as SubView, label: "📋 Migration Plan" },
@@ -952,6 +953,11 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
       {/* ---- Network Map ---- */}
       {subView === "netmap" && (
         <NetworkMappingView projectId={pid} />
+      )}
+
+      {/* ---- Users (Phase 4A.4) ---- */}
+      {subView === "users" && (
+        <TenantUsersView projectId={pid} />
       )}
 
       {/* ---- Capacity Planning ---- */}
@@ -2073,6 +2079,41 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const [frApplied, setFrApplied] = useState(false);
   const [confirmingAll, setConfirmingAll] = useState(false);
 
+  /* ---- Subnet details state (Phase 4A.1) ---- */
+  const [expandedSubnet, setExpandedSubnet] = useState<number | null>(null);
+  const [subnetEdits, setSubnetEdits] = useState<Record<number, any>>({});
+  const [savingSubnet, setSavingSubnet] = useState<number | null>(null);
+  const [subnetReady, setSubnetReady] = useState<{ missing: number; confirmed: number } | null>(null);
+
+  const loadSubnetReadiness = useCallback(async () => {
+    try {
+      const r = await apiFetch<{ missing_subnet_details: number; confirmed_count: number }>(
+        `/api/migration/projects/${projectId}/network-mappings/readiness`
+      );
+      setSubnetReady({ missing: r.missing_subnet_details, confirmed: r.confirmed_count });
+    } catch { /* non-critical */ }
+  }, [projectId]);
+
+  const saveSubnetDetails = async (id: number) => {
+    setSavingSubnet(id);
+    try {
+      const edits = subnetEdits[id] || {};
+      await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ...edits, subnet_details_confirmed: true }),
+      });
+      setExpandedSubnet(null);
+      setSubnetEdits(prev => { const n = { ...prev }; delete n[id]; return n; });
+      load();
+      loadSubnetReadiness();
+    } catch (e: any) { setError(e.message); }
+    finally { setSavingSubnet(null); }
+  };
+
+  const updateSubnetEdit = (id: number, field: string, value: any) => {
+    setSubnetEdits(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }));
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -2085,7 +2126,7 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
     finally { setLoading(false); }
   }, [projectId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); loadSubnetReadiness(); }, [load, loadSubnetReadiness]);
 
   const runNetworkFR = async (applyMode: boolean) => {
     if (!frFind.trim()) return;
@@ -2185,6 +2226,16 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
             {confirmingAll ? "⏳..." : "✓ Confirm All"}
           </button>
           <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
+          {subnetReady !== null && (
+            <span style={{
+              padding: "4px 10px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600,
+              background: subnetReady.missing === 0 ? "#dcfce7" : "#fff7ed",
+              color: subnetReady.missing === 0 ? "#15803d" : "#9a3412",
+              border: `1px solid ${subnetReady.missing === 0 ? "#86efac" : "#fdba74"}`,
+            }}>
+              🌐 Subnet Details: {subnetReady.confirmed}/{subnetReady.confirmed + subnetReady.missing}
+            </span>
+          )}
         </div>
       </div>
       {showFR && (
@@ -2279,8 +2330,10 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
               <th style={{ ...thStyle, width: 70, textAlign: "center" }}>VMs</th>
               <th style={thStyle}>PCD Target Network</th>
               <th style={{ ...thStyle, width: 80 }}>VLAN ID</th>
+              <th style={{ ...thStyle, width: 90 }}>Kind</th>
               <th style={{ ...thStyle, width: 90 }}>Status</th>
               <th style={{ ...thStyle, width: 90 }}>Action</th>
+              <th style={{ ...thStyle, width: 110, textAlign: "center" }}>Subnet Details</th>
             </tr>
           </thead>
           <tbody>
@@ -2290,85 +2343,211 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
               const isEditing = editVal !== undefined;
               const isDirty = isEditing && editVal !== (m.target_network_name || "");
               const isConfirmed = m.confirmed === true;
+              const isSubnetExpanded = expandedSubnet === m.id;
+              const se = subnetEdits[m.id] ?? {};
+              const kindLabel = (k?: string) => {
+                if (k === "physical_l2") return { label: "L2", bg: "#f3e8ff", color: "#7c3aed" };
+                if (k === "virtual") return { label: "Virtual", bg: "#e0f2fe", color: "#0369a1" };
+                return { label: "Physical", bg: "#eff6ff", color: "#1d4ed8" };
+              };
+              const kStyle = kindLabel(m.network_kind);
               return (
-                <tr key={m.id} style={{
-                  borderBottom: "1px solid var(--border, #e5e7eb)",
-                  background: isConfirmed ? undefined : "#fffbeb",
-                }}>
-                  <td style={tdStyle}>
-                    <strong style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{m.source_network_name}</strong>
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>{m.vm_count ?? 0}</td>
-                  <td style={tdStyle}>
-                    <input
-                      value={current}
-                      onChange={e => {
-                        setEditValues(prev => ({ ...prev, [m.id]: e.target.value }));
-                        // Also initialize vlan edit state if not yet set, so VLAN input shows current value
-                        setEditVlanValues(prev => {
-                          if (prev[m.id] !== undefined) return prev;
-                          return { ...prev, [m.id]: m.vlan_id != null ? String(m.vlan_id) : "" };
-                        });
-                      }}
-                      placeholder="PCD network name..."
-                      style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.85rem",
-                        background: isDirty ? "#eff6ff" : undefined }}
-                      onKeyDown={e => { if (e.key === "Enter") saveMapping(m.id); }}
-                    />
-                  </td>
-                  <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.8rem" }}>
-                    {isEditing || !isConfirmed ? (
+                <React.Fragment key={m.id}>
+                  <tr style={{
+                    borderBottom: isSubnetExpanded ? undefined : "1px solid var(--border, #e5e7eb)",
+                    background: isConfirmed ? undefined : "#fffbeb",
+                  }}>
+                    <td style={tdStyle}>
+                      <strong style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{m.source_network_name}</strong>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>{m.vm_count ?? 0}</td>
+                    <td style={tdStyle}>
                       <input
-                        type="number"
-                        value={editVlanValues[m.id] ?? (m.vlan_id != null ? String(m.vlan_id) : "")}
-                        onChange={e => setEditVlanValues(prev => ({ ...prev, [m.id]: e.target.value }))}
-                        placeholder="VLAN"
-                        style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.8rem", width: 72 }}
+                        value={current}
+                        onChange={e => {
+                          setEditValues(prev => ({ ...prev, [m.id]: e.target.value }));
+                          setEditVlanValues(prev => {
+                            if (prev[m.id] !== undefined) return prev;
+                            return { ...prev, [m.id]: m.vlan_id != null ? String(m.vlan_id) : "" };
+                          });
+                        }}
+                        placeholder="PCD network name..."
+                        style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.85rem",
+                          background: isDirty ? "#eff6ff" : undefined }}
                         onKeyDown={e => { if (e.key === "Enter") saveMapping(m.id); }}
                       />
-                    ) : (m.vlan_id ?? "—")}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: "center" }}>
-                    {isConfirmed
-                      ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ confirmed</span>
-                      : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem" }}>⚠ review</span>}
-                  </td>
-                  <td style={tdStyle}>
-                    {isEditing || !isConfirmed ? (
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <button
-                          onClick={() => saveMapping(m.id)}
-                          disabled={saving === m.id}
-                          style={{ ...btnSmall,
-                            background: isDirty ? "#2563eb" : "#f97316",
-                            color: "#fff" }}
-                          title={isDirty ? "Save changes" : "Confirm this mapping"}>
-                          {saving === m.id ? "..." : isDirty ? "Save" : "Confirm"}
-                        </button>
-                        {isEditing && (
+                    </td>
+                    <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.8rem" }}>
+                      {isEditing || !isConfirmed ? (
+                        <input
+                          type="number"
+                          value={editVlanValues[m.id] ?? (m.vlan_id != null ? String(m.vlan_id) : "")}
+                          onChange={e => setEditVlanValues(prev => ({ ...prev, [m.id]: e.target.value }))}
+                          placeholder="VLAN"
+                          style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.8rem", width: 72 }}
+                          onKeyDown={e => { if (e.key === "Enter") saveMapping(m.id); }}
+                        />
+                      ) : (m.vlan_id ?? "—")}
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "center" }}>
+                      <span style={{ ...pillStyle, background: kStyle.bg, color: kStyle.color, fontSize: "0.72rem" }}>
+                        {kStyle.label}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "center" }}>
+                      {isConfirmed
+                        ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ confirmed</span>
+                        : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem" }}>⚠ review</span>}
+                    </td>
+                    <td style={tdStyle}>
+                      {isEditing || !isConfirmed ? (
+                        <div style={{ display: "flex", gap: 4 }}>
                           <button
-                            onClick={() => cancelEditMapping(m.id)}
+                            onClick={() => saveMapping(m.id)}
                             disabled={saving === m.id}
-                            style={{ ...btnSmall, background: "#e5e7eb", color: "#374151" }}
-                            title="Cancel edit">
-                            ✕
+                            style={{ ...btnSmall,
+                              background: isDirty ? "#2563eb" : "#f97316",
+                              color: "#fff" }}
+                            title={isDirty ? "Save changes" : "Confirm this mapping"}>
+                            {saving === m.id ? "..." : isDirty ? "Save" : "Confirm"}
                           </button>
-                        )}
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => startEditMapping(m.id, m.target_network_name || "", m.vlan_id ?? null)}
-                        style={{ ...btnSmall, background: "#f3f4f6", color: "#374151", fontSize: "0.75rem" }}
-                        title="Edit this mapping">
-                        ✏️ Edit
-                      </button>
-                    )}
-                  </td>
-                </tr>
+                          {isEditing && (
+                            <button
+                              onClick={() => cancelEditMapping(m.id)}
+                              disabled={saving === m.id}
+                              style={{ ...btnSmall, background: "#e5e7eb", color: "#374151" }}
+                              title="Cancel edit">
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => startEditMapping(m.id, m.target_network_name || "", m.vlan_id ?? null)}
+                          style={{ ...btnSmall, background: "#f3f4f6", color: "#374151", fontSize: "0.75rem" }}
+                          title="Edit this mapping">
+                          ✏️ Edit
+                        </button>
+                      )}
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: "center" }}>
+                      {m.is_external ? (
+                        <span style={{ ...pillStyle, background: "#f3f4f6", color: "#6b7280", fontSize: "0.72rem" }}>skip (ext)</span>
+                      ) : m.subnet_details_confirmed ? (
+                        <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ subnet ready</span>
+                      ) : isConfirmed ? (
+                        <button
+                          onClick={() => {
+                            if (isSubnetExpanded) {
+                              setExpandedSubnet(null);
+                            } else {
+                              setExpandedSubnet(m.id);
+                              setSubnetEdits(prev => ({
+                                ...prev,
+                                [m.id]: {
+                                  network_kind: m.network_kind ?? "physical_managed",
+                                  cidr: m.cidr ?? "",
+                                  gateway_ip: m.gateway_ip ?? "",
+                                  dns_nameservers: (m.dns_nameservers ?? []).join(", "),
+                                  allocation_pool_start: m.allocation_pool_start ?? "",
+                                  allocation_pool_end: m.allocation_pool_end ?? "",
+                                  dhcp_enabled: m.dhcp_enabled ?? true,
+                                  is_external: m.is_external ?? false,
+                                },
+                              }));
+                            }
+                          }}
+                          style={{ ...btnSmall, background: isSubnetExpanded ? "#eff6ff" : "#f3f4f6",
+                            color: isSubnetExpanded ? "#1d4ed8" : "#374151", fontSize: "0.75rem" }}>
+                          ⚙️ {isSubnetExpanded ? "Close" : "Subnet"}
+                        </button>
+                      ) : (
+                        <span style={{ color: "#9ca3af", fontSize: "0.78rem" }}>—</span>
+                      )}
+                    </td>
+                  </tr>
+                  {isSubnetExpanded && (
+                    <tr style={{ borderBottom: "1px solid var(--border, #e5e7eb)", background: "#f0f9ff" }}>
+                      <td colSpan={8} style={{ padding: "14px 18px" }}>
+                        <div style={{ fontWeight: 600, marginBottom: 10, color: "#0c4a6e", fontSize: "0.88rem" }}>
+                          🌐 Subnet Details — {m.source_network_name}
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginBottom: 12 }}>
+                          <div>
+                            <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>Network Kind</label>
+                            <select
+                              value={se.network_kind ?? "physical_managed"}
+                              onChange={e => updateSubnetEdit(m.id, "network_kind", e.target.value)}
+                              style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }}>
+                              <option value="physical_managed">Physical Managed</option>
+                              <option value="physical_l2">Physical L2</option>
+                              <option value="virtual">Virtual</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>CIDR</label>
+                            <input value={se.cidr ?? ""} onChange={e => updateSubnetEdit(m.id, "cidr", e.target.value)}
+                              placeholder="e.g. 10.0.0.0/24"
+                              style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>Gateway IP</label>
+                            <input value={se.gateway_ip ?? ""} onChange={e => updateSubnetEdit(m.id, "gateway_ip", e.target.value)}
+                              placeholder="e.g. 10.0.0.1"
+                              style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>DNS Nameservers</label>
+                            <input value={se.dns_nameservers ?? ""} onChange={e => updateSubnetEdit(m.id, "dns_nameservers", e.target.value)}
+                              placeholder="8.8.8.8, 8.8.4.4"
+                              style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>Pool Start</label>
+                            <input value={se.allocation_pool_start ?? ""} onChange={e => updateSubnetEdit(m.id, "allocation_pool_start", e.target.value)}
+                              placeholder="e.g. 10.0.0.10"
+                              style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>Pool End</label>
+                            <input value={se.allocation_pool_end ?? ""} onChange={e => updateSubnetEdit(m.id, "allocation_pool_end", e.target.value)}
+                              placeholder="e.g. 10.0.0.254"
+                              style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 20, marginBottom: 12 }}>
+                          <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                            <input type="checkbox" checked={se.dhcp_enabled ?? true}
+                              onChange={e => updateSubnetEdit(m.id, "dhcp_enabled", e.target.checked)} />
+                            DHCP Enabled
+                          </label>
+                          <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                            <input type="checkbox" checked={se.is_external ?? false}
+                              onChange={e => updateSubnetEdit(m.id, "is_external", e.target.checked)} />
+                            Is External Network
+                          </label>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            onClick={() => saveSubnetDetails(m.id)}
+                            disabled={savingSubnet === m.id}
+                            style={{ ...btnSmall, background: "#16a34a", color: "#fff", fontSize: "0.82rem", padding: "6px 14px" }}>
+                            {savingSubnet === m.id ? "⏳ Saving..." : "✓ Save Subnet Details"}
+                          </button>
+                          <button
+                            onClick={() => setExpandedSubnet(null)}
+                            style={{ ...btnSmall, background: "#e5e7eb", color: "#374151", fontSize: "0.82rem", padding: "6px 14px" }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
             {mappings.length === 0 && (
-              <tr><td colSpan={6} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+              <tr><td colSpan={8} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
                 No networks found. Upload RVTools data and run assessment first.
               </td></tr>
             )}
@@ -5726,6 +5905,20 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
           No gaps found yet. Click "Run Gap Analysis" to check PCD readiness.
         </div>
       )}
+
+      {/* Phase 4A Data Enrichment Sections */}
+      <div style={{ marginTop: 24 }}>
+        <h3 style={{ margin: "0 0 6px", fontSize: "1rem", color: "#374151" }}>📋 Phase 4A — Data Enrichment</h3>
+        <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: "0.85rem" }}>
+          Before migration execution, confirm flavor mappings and OS image requirements for this project.
+        </p>
+        <div style={{ ...sectionStyle, marginBottom: 16 }}>
+          <FlavorStagingView projectId={projectId} />
+        </div>
+        <div style={sectionStyle}>
+          <ImageRequirementsView projectId={projectId} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -5772,6 +5965,666 @@ function modePillColor(mode: string): React.CSSProperties {
   if (mode === "warm_eligible") return { background: "#dcfce7", color: "#16a34a" };
   if (mode === "warm_risky") return { background: "#fef9c3", color: "#a16207" };
   return { background: "#fee2e2", color: "#dc2626" };
+}
+
+/* ================================================================== */
+/*  Phase 4A — FlavorStagingView  (4A.2)                             */
+/* ================================================================== */
+
+function FlavorStagingView({ projectId }: { projectId: number }) {
+  const [flavors, setFlavors] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState<number | null>(null);
+  const [showFR, setShowFR] = useState(false);
+  const [frFind, setFrFind] = useState("");
+  const [frReplace, setFrReplace] = useState("");
+  const [frPreview, setFrPreview] = useState<any[] | null>(null);
+  const [frLoading, setFrLoading] = useState(false);
+  const [frApplied, setFrApplied] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await apiFetch<{ flavors: any[] }>(`/api/migration/projects/${projectId}/flavor-staging`);
+      setFlavors(r.flavors ?? []);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [projectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      const r = await apiFetch<{ seeded: number; updated: number }>(`/api/migration/projects/${projectId}/flavor-staging/refresh`, { method: "POST" });
+      await load();
+      alert(`✓ Flavor staging refreshed: ${r.seeded} seeded, ${r.updated} updated.`);
+    } catch (e: any) { setError(e.message); }
+    finally { setRefreshing(false); }
+  };
+
+  const saveFlavor = async (id: number, fields: Record<string, any>) => {
+    setSaving(id);
+    try {
+      await apiFetch(`/api/migration/flavor-staging/${id}`, { method: "PATCH", body: JSON.stringify(fields) });
+      setEditing(prev => { const n = { ...prev }; delete n[id]; return n; });
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(null); }
+  };
+
+  const runFR = async (apply: boolean) => {
+    if (!frFind.trim()) return;
+    setFrLoading(true);
+    setFrApplied(false);
+    try {
+      const r = await apiFetch<{ preview?: any[]; affected_count?: number }>(
+        `/api/migration/projects/${projectId}/flavor-staging/bulk-rename`,
+        { method: "POST", body: JSON.stringify({ find: frFind, replace: frReplace, apply }) }
+      );
+      if (apply) { setFrApplied(true); setFrPreview(null); await load(); }
+      else { setFrPreview(r.preview ?? []); }
+    } catch (e: any) { setError(e.message); }
+    finally { setFrLoading(false); }
+  };
+
+  const readyCount = flavors.filter(f => f.confirmed && !f.skip).length;
+  const totalCount = flavors.filter(f => !f.skip).length;
+
+  if (loading) return <div style={{ color: "#6b7280", padding: 12, fontSize: "0.85rem" }}>Loading flavor staging...</div>;
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div>
+          <h4 style={{ margin: 0, fontSize: "0.95rem" }}>🍦 Flavor Staging</h4>
+          <p style={{ margin: "3px 0 0", color: "#6b7280", fontSize: "0.8rem" }}>
+            Map each VM shape to a PCD flavor. Refresh to sync from VM inventory.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{
+            padding: "4px 10px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600,
+            background: readyCount === totalCount && totalCount > 0 ? "#dcfce7" : "#fff7ed",
+            color: readyCount === totalCount && totalCount > 0 ? "#15803d" : "#9a3412",
+            border: `1px solid ${readyCount === totalCount && totalCount > 0 ? "#86efac" : "#fdba74"}`,
+          }}>
+            {readyCount}/{totalCount} confirmed
+          </span>
+          <button onClick={() => { setShowFR(!showFR); setFrPreview(null); setFrApplied(false); }}
+            style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
+              background: showFR ? "#eff6ff" : undefined }}>
+            🔍 F&amp;R
+          </button>
+          <button onClick={refresh} disabled={refreshing}
+            style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px" }}>
+            {refreshing ? "⏳..." : "🔄 Refresh from VMs"}
+          </button>
+        </div>
+      </div>
+      {showFR && (
+        <div style={{ marginBottom: 12, padding: 12, background: "#eff6ff",
+          border: "1px solid #bfdbfe", borderRadius: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, color: "#1e40af", fontSize: "0.85rem" }}>
+            🔍 Find &amp; Replace — Target Flavor Name
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Find</label>
+              <input value={frFind} onChange={e => { setFrFind(e.target.value); setFrPreview(null); }}
+                placeholder="e.g. m1.small" style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.82rem", width: 160 }} />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Replace with</label>
+              <input value={frReplace} onChange={e => { setFrReplace(e.target.value); setFrPreview(null); }}
+                placeholder="leave empty to strip" style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.82rem", width: 180 }} />
+            </div>
+            <button onClick={() => runFR(false)} disabled={frLoading || !frFind.trim()}
+              style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px" }}>
+              {frLoading && !frApplied ? "⏳..." : "👁 Preview"}
+            </button>
+          </div>
+          {frApplied && <div style={{ color: "#15803d", fontSize: "0.82rem", marginTop: 6, fontWeight: 500 }}>✓ Applied!</div>}
+          {frPreview !== null && frPreview.length === 0 && (
+            <div style={{ color: "#6b7280", fontSize: "0.82rem", marginTop: 6 }}>No matches found.</div>
+          )}
+          {frPreview !== null && frPreview.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: "0.78rem", color: "#374151", marginBottom: 4 }}>
+                {frPreview.length} flavor{frPreview.length !== 1 ? "s" : ""} will be affected.
+              </div>
+              <div style={{ overflowX: "auto", maxHeight: 180, overflowY: "auto", marginBottom: 8 }}>
+                <table style={{ ...tableStyle, fontSize: "0.78rem" }}>
+                  <thead><tr>
+                    <th style={thStyle}>Shape</th>
+                    <th style={thStyle}>Before</th>
+                    <th style={thStyle}>After</th>
+                  </tr></thead>
+                  <tbody>
+                    {frPreview.map((row: any) => (
+                      <tr key={row.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ ...tdStyle, fontFamily: "monospace" }}>{row.source_shape}</td>
+                        <td style={{ ...tdStyle, color: "#dc2626" }}>{row.old_value}</td>
+                        <td style={{ ...tdStyle, color: "#16a34a" }}>{row.new_value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button onClick={() => runFR(true)} disabled={frLoading}
+                style={{ ...btnPrimary, fontSize: "0.82rem", padding: "5px 12px" }}>
+                {frLoading ? "⏳..." : `✅ Apply to ${frPreview.length} flavor${frPreview.length !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {error && <div style={{ ...alertError, fontSize: "0.82rem", marginBottom: 8 }}>{error}</div>}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ ...tableStyle, fontSize: "0.82rem" }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>VM Shape (Source)</th>
+              <th style={{ ...thStyle, width: 55, textAlign: "center" }}>VMs</th>
+              <th style={thStyle}>Target PCD Flavor Name</th>
+              <th style={{ ...thStyle, width: 100 }}>PCD Flavor ID</th>
+              <th style={{ ...thStyle, width: 75, textAlign: "center" }}>Skip</th>
+              <th style={{ ...thStyle, width: 90, textAlign: "center" }}>Status</th>
+              <th style={{ ...thStyle, width: 80 }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {flavors.map(f => {
+              const editName = editing[f.id];
+              const current = editName !== undefined ? editName : (f.target_flavor_name || "");
+              const isDirty = editName !== undefined && editName !== (f.target_flavor_name || "");
+              return (
+                <tr key={f.id} style={{ borderBottom: "1px solid #e5e7eb",
+                  background: f.skip ? "#f9fafb" : f.confirmed ? undefined : "#fffbeb",
+                  opacity: f.skip ? 0.6 : 1 }}>
+                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.78rem" }}>{f.source_shape}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>{f.vm_count ?? 0}</td>
+                  <td style={tdStyle}>
+                    {!f.skip && (
+                      <input value={current}
+                        onChange={e => setEditing(prev => ({ ...prev, [f.id]: e.target.value }))}
+                        placeholder="e.g. m1.medium"
+                        style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: "100%",
+                          background: isDirty ? "#eff6ff" : undefined }}
+                        onKeyDown={e => { if (e.key === "Enter") saveFlavor(f.id, { target_flavor_name: current, confirmed: !isDirty }); }}
+                      />
+                    )}
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: "0.72rem", color: "#6b7280", fontFamily: "monospace" }}>{f.pcd_flavor_id || "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    <input type="checkbox" checked={!!f.skip}
+                      onChange={e => saveFlavor(f.id, { skip: e.target.checked, confirmed: false })} />
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    {f.skip
+                      ? <span style={{ ...pillStyle, background: "#f3f4f6", color: "#6b7280", fontSize: "0.7rem" }}>skip</span>
+                      : f.confirmed
+                        ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.7rem" }}>✓</span>
+                        : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.7rem" }}>pending</span>
+                    }
+                  </td>
+                  <td style={tdStyle}>
+                    {!f.skip && (
+                      <button
+                        onClick={() => saveFlavor(f.id, { target_flavor_name: current, confirmed: true })}
+                        disabled={saving === f.id}
+                        style={{ ...btnSmall, background: isDirty ? "#2563eb" : "#16a34a", color: "#fff", fontSize: "0.72rem" }}>
+                        {saving === f.id ? "..." : isDirty ? "Save" : "✓"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {flavors.length === 0 && (
+              <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+                No flavor staging data. Click "Refresh from VMs" to populate.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/*  Phase 4A — ImageRequirementsView  (4A.3)                         */
+/* ================================================================== */
+
+function ImageRequirementsView({ projectId }: { projectId: number }) {
+  const [images, setImages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState<Record<number, { glance_image_name?: string; glance_image_id?: string; notes?: string }>>({});
+  const [saving, setSaving] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const r = await apiFetch<{ images: any[] }>(`/api/migration/projects/${projectId}/image-requirements`);
+      setImages(r.images ?? []);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [projectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      const r = await apiFetch<{ seeded: number; updated: number }>(`/api/migration/projects/${projectId}/image-requirements/refresh`, { method: "POST" });
+      await load();
+      alert(`✓ Image requirements refreshed: ${r.seeded} seeded, ${r.updated} updated.`);
+    } catch (e: any) { setError(e.message); }
+    finally { setRefreshing(false); }
+  };
+
+  const saveImage = async (id: number, fields: Record<string, any>) => {
+    setSaving(id);
+    try {
+      await apiFetch(`/api/migration/image-requirements/${id}`, { method: "PATCH", body: JSON.stringify(fields) });
+      setEditing(prev => { const n = { ...prev }; delete n[id]; return n; });
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(null); }
+  };
+
+  const readyCount = images.filter(i => i.confirmed).length;
+
+  if (loading) return <div style={{ color: "#6b7280", padding: 12, fontSize: "0.85rem" }}>Loading image requirements...</div>;
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+        <div>
+          <h4 style={{ margin: 0, fontSize: "0.95rem" }}>🖼 Image Requirements</h4>
+          <p style={{ margin: "3px 0 0", color: "#6b7280", fontSize: "0.8rem" }}>
+            Confirm Glance image for each OS family found in the VM inventory.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{
+            padding: "4px 10px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600,
+            background: readyCount === images.length && images.length > 0 ? "#dcfce7" : "#fff7ed",
+            color: readyCount === images.length && images.length > 0 ? "#15803d" : "#9a3412",
+            border: `1px solid ${readyCount === images.length && images.length > 0 ? "#86efac" : "#fdba74"}`,
+          }}>
+            {readyCount}/{images.length} confirmed
+          </span>
+          <button onClick={refresh} disabled={refreshing}
+            style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px" }}>
+            {refreshing ? "⏳..." : "🔄 Refresh from VMs"}
+          </button>
+        </div>
+      </div>
+      {error && <div style={{ ...alertError, fontSize: "0.82rem", marginBottom: 8 }}>{error}</div>}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ ...tableStyle, fontSize: "0.82rem" }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>OS Family</th>
+              <th style={thStyle}>Version Hint</th>
+              <th style={{ ...thStyle, width: 55, textAlign: "center" }}>VMs</th>
+              <th style={thStyle}>Glance Image Name</th>
+              <th style={{ ...thStyle, width: 130 }}>Glance Image ID</th>
+              <th style={{ ...thStyle, width: 90, textAlign: "center" }}>Status</th>
+              <th style={{ ...thStyle, width: 80 }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {images.map(img => {
+              const ed = editing[img.id] ?? {};
+              const nameVal = ed.glance_image_name !== undefined ? ed.glance_image_name : (img.glance_image_name || "");
+              const idVal = ed.glance_image_id !== undefined ? ed.glance_image_id : (img.glance_image_id || "");
+              const isDirty = (ed.glance_image_name !== undefined && ed.glance_image_name !== (img.glance_image_name || ""))
+                           || (ed.glance_image_id !== undefined && ed.glance_image_id !== (img.glance_image_id || ""));
+              return (
+                <tr key={img.id} style={{ borderBottom: "1px solid #e5e7eb",
+                  background: img.confirmed ? undefined : "#fffbeb" }}>
+                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8rem" }}>{img.os_family || "unknown"}</td>
+                  <td style={{ ...tdStyle, color: "#6b7280", fontSize: "0.78rem" }}>{img.os_version_hint || "—"}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>{img.vm_count ?? 0}</td>
+                  <td style={tdStyle}>
+                    <input value={nameVal}
+                      onChange={e => setEditing(prev => ({ ...prev, [img.id]: { ...(prev[img.id] ?? {}), glance_image_name: e.target.value } }))}
+                      placeholder="e.g. ubuntu-22.04-cloud"
+                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: "100%",
+                        background: (ed.glance_image_name !== undefined && ed.glance_image_name !== (img.glance_image_name || "")) ? "#eff6ff" : undefined }}
+                    />
+                  </td>
+                  <td style={tdStyle}>
+                    <input value={idVal}
+                      onChange={e => setEditing(prev => ({ ...prev, [img.id]: { ...(prev[img.id] ?? {}), glance_image_id: e.target.value } }))}
+                      placeholder="UUID or leave blank"
+                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.78rem", width: "100%", fontFamily: "monospace",
+                        background: (ed.glance_image_id !== undefined && ed.glance_image_id !== (img.glance_image_id || "")) ? "#eff6ff" : undefined }}
+                    />
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    {img.confirmed
+                      ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.7rem" }}>✓</span>
+                      : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.7rem" }}>pending</span>}
+                  </td>
+                  <td style={tdStyle}>
+                    <button
+                      onClick={() => saveImage(img.id, { glance_image_name: nameVal, glance_image_id: idVal || null, confirmed: true })}
+                      disabled={saving === img.id}
+                      style={{ ...btnSmall, background: isDirty ? "#2563eb" : "#16a34a", color: "#fff", fontSize: "0.72rem" }}>
+                      {saving === img.id ? "..." : isDirty ? "Save" : "✓"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {images.length === 0 && (
+              <tr><td colSpan={7} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+                No image requirements. Click "Refresh from VMs" to populate.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/*  Phase 4A — TenantUsersView  (4A.4)                               */
+/* ================================================================== */
+
+function TenantUsersView({ projectId }: { projectId: number }) {
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState<number | null>(null);
+  const [editRow, setEditRow] = useState<Record<number, any>>({});
+  const [showAdd, setShowAdd] = useState(false);
+  const [newUser, setNewUser] = useState({ tenant_id: 0, username: "", email: "", role: "member", notes: "" });
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const r = await apiFetch<{ users: any[]; tenant_count: number; confirmed_tenant_count: number }>(
+        `/api/migration/projects/${projectId}/tenant-users`);
+      setUsers(r.users ?? []);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [projectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const seed = async () => {
+    if (!window.confirm("Auto-create service accounts for all tenants in this project?")) return;
+    setSeeding(true);
+    try {
+      const r = await apiFetch<{ created: number; skipped: number }>(
+        `/api/migration/projects/${projectId}/tenant-users/seed-service-accounts`, { method: "POST" });
+      await load();
+      alert(`✓ Seeded ${r.created} service account(s). ${r.skipped} already existed.`);
+    } catch (e: any) { setError(e.message); }
+    finally { setSeeding(false); }
+  };
+
+  const saveEdit = async (id: number) => {
+    setSaving(id);
+    try {
+      await apiFetch(`/api/migration/tenant-users/${id}`, { method: "PATCH", body: JSON.stringify(editRow[id]) });
+      setEditRow(prev => { const n = { ...prev }; delete n[id]; return n; });
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(null); }
+  };
+
+  const deleteUser = async (id: number) => {
+    if (!window.confirm("Delete this user definition?")) return;
+    try {
+      await apiFetch(`/api/migration/tenant-users/${id}`, { method: "DELETE" });
+      await load();
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const addUser = async () => {
+    if (!newUser.tenant_id || !newUser.username.trim()) {
+      alert("Tenant ID and username are required."); return;
+    }
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/tenant-users`, {
+        method: "POST", body: JSON.stringify({ ...newUser, user_type: "tenant_owner" })
+      });
+      setNewUser({ tenant_id: 0, username: "", email: "", role: "member", notes: "" });
+      setShowAdd(false);
+      await load();
+    } catch (e: any) { setError(e.message); }
+  };
+
+  // Group users by tenant_id
+  const grouped = users.reduce((acc: Record<number, any[]>, u) => {
+    const tid = u.tenant_id ?? 0;
+    if (!acc[tid]) acc[tid] = [];
+    acc[tid].push(u);
+    return acc;
+  }, {});
+  const tenantIds = Object.keys(grouped).map(Number).sort((a, b) => a - b);
+
+  const confirmedTenants = tenantIds.filter(tid =>
+    grouped[tid].every((u: any) => u.confirmed)
+  ).length;
+
+  if (loading) return <div style={{ color: "#6b7280", padding: 16 }}>Loading tenant users...</div>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>👤 Per-Tenant User Definitions</h3>
+          <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "0.85rem" }}>
+            Define service accounts and tenant owner accounts to be created in PCD.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {tenantIds.length > 0 && (
+            <span style={{
+              padding: "4px 10px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600,
+              background: confirmedTenants === tenantIds.length ? "#dcfce7" : "#fff7ed",
+              color: confirmedTenants === tenantIds.length ? "#15803d" : "#9a3412",
+              border: `1px solid ${confirmedTenants === tenantIds.length ? "#86efac" : "#fdba74"}`,
+            }}>
+              {confirmedTenants}/{tenantIds.length} tenants confirmed
+            </span>
+          )}
+          <button onClick={seed} disabled={seeding}
+            style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac" }}>
+            {seeding ? "⏳ Seeding..." : "🤖 Seed Service Accounts"}
+          </button>
+          <button onClick={() => setShowAdd(!showAdd)}
+            style={{ ...btnSecondary, background: showAdd ? "#eff6ff" : undefined }}>
+            ➕ Add Owner
+          </button>
+          <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
+        </div>
+      </div>
+
+      {showAdd && (
+        <div style={{ marginBottom: 14, padding: 14, background: "#f0fdf4",
+          border: "1px solid #86efac", borderRadius: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, color: "#15803d", fontSize: "0.88rem" }}>
+            ➕ Add Tenant Owner Account
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8, marginBottom: 10 }}>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Tenant ID *</label>
+              <input type="number" value={newUser.tenant_id || ""} onChange={e => setNewUser(p => ({ ...p, tenant_id: +e.target.value }))}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="numeric tenant ID" />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Username *</label>
+              <input value={newUser.username} onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="e.g. admin@tenant.com" />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Email</label>
+              <input value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="email@example.com" />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Role</label>
+              <select value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }}>
+                <option value="admin">admin</option>
+                <option value="member">member</option>
+                <option value="reader">reader</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Notes</label>
+              <input value={newUser.notes} onChange={e => setNewUser(p => ({ ...p, notes: e.target.value }))}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="optional notes" />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={addUser} style={{ ...btnSmall, background: "#16a34a", color: "#fff", padding: "6px 14px" }}>✓ Add</button>
+            <button onClick={() => setShowAdd(false)} style={{ ...btnSmall, background: "#e5e7eb", color: "#374151", padding: "6px 14px" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {error && <div style={{ ...alertError, marginBottom: 10 }}>{error}</div>}
+
+      {tenantIds.length === 0 ? (
+        <div style={{ color: "#6b7280", textAlign: "center", padding: "24px 0", fontSize: "0.88rem" }}>
+          No user definitions yet. Click "Seed Service Accounts" to auto-create migration service accounts.
+        </div>
+      ) : (
+        tenantIds.map(tid => {
+          const tenantUsers = grouped[tid];
+          const tenantName = tenantUsers[0]?.tenant_name ?? `Tenant #${tid}`;
+          const allConfirmed = tenantUsers.every((u: any) => u.confirmed);
+          return (
+            <div key={tid} style={{ marginBottom: 14, border: "1px solid var(--border, #e5e7eb)",
+              borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ padding: "8px 14px", background: allConfirmed ? "#f0fdf4" : "#f9fafb",
+                borderBottom: "1px solid var(--border, #e5e7eb)",
+                display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong style={{ fontSize: "0.88rem" }}>{tenantName}</strong>
+                  <span style={{ marginLeft: 8, color: "#6b7280", fontSize: "0.78rem" }}>
+                    {tenantUsers.length} user{tenantUsers.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                {allConfirmed
+                  ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ confirmed</span>
+                  : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.72rem" }}>pending</span>
+                }
+              </div>
+              <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...thStyle, fontSize: "0.75rem" }}>Type</th>
+                    <th style={{ ...thStyle, fontSize: "0.75rem" }}>Username</th>
+                    <th style={{ ...thStyle, fontSize: "0.75rem" }}>Email</th>
+                    <th style={{ ...thStyle, fontSize: "0.75rem" }}>Role</th>
+                    <th style={{ ...thStyle, fontSize: "0.75rem" }}>Temp Password</th>
+                    <th style={{ ...thStyle, fontSize: "0.75rem", width: 80, textAlign: "center" }}>Status</th>
+                    <th style={{ ...thStyle, fontSize: "0.75rem", width: 120 }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tenantUsers.map((u: any) => {
+                    const ed = editRow[u.id];
+                    const isEditing = !!ed;
+                    return (
+                      <tr key={u.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={tdStyle}>
+                          <span style={{ ...pillStyle, fontSize: "0.68rem",
+                            background: u.user_type === "service_account" ? "#eff6ff" : "#faf5ff",
+                            color: u.user_type === "service_account" ? "#1d4ed8" : "#7c3aed" }}>
+                            {u.user_type === "service_account" ? "🤖 svc" : "👤 owner"}
+                          </span>
+                        </td>
+                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.78rem" }}>
+                          {isEditing
+                            ? <input value={ed.username ?? u.username} onChange={e => setEditRow(p => ({ ...p, [u.id]: { ...p[u.id], username: e.target.value } }))}
+                                style={{ ...inputStyle, padding: "2px 5px", fontSize: "0.78rem", width: 140 }} />
+                            : u.username}
+                        </td>
+                        <td style={{ ...tdStyle, fontSize: "0.78rem", color: "#374151" }}>
+                          {isEditing
+                            ? <input value={ed.email ?? u.email ?? ""} onChange={e => setEditRow(p => ({ ...p, [u.id]: { ...p[u.id], email: e.target.value } }))}
+                                style={{ ...inputStyle, padding: "2px 5px", fontSize: "0.78rem", width: 160 }} />
+                            : (u.email || "—")}
+                        </td>
+                        <td style={{ ...tdStyle, fontSize: "0.78rem" }}>
+                          {isEditing
+                            ? (
+                              <select value={ed.role ?? u.role ?? "member"} onChange={e => setEditRow(p => ({ ...p, [u.id]: { ...p[u.id], role: e.target.value } }))}
+                                style={{ ...inputStyle, padding: "2px 5px", fontSize: "0.78rem" }}>
+                                <option value="admin">admin</option>
+                                <option value="member">member</option>
+                                <option value="reader">reader</option>
+                              </select>
+                            )
+                            : (u.role || "member")}
+                        </td>
+                        <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.75rem", color: "#6b7280" }}>
+                          {u.temp_password
+                            ? <span title="Generated temp password (store securely)">{u.temp_password}</span>
+                            : "—"}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          {u.confirmed
+                            ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.7rem" }}>✓</span>
+                            : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.7rem" }}>pending</span>}
+                        </td>
+                        <td style={tdStyle}>
+                          {isEditing ? (
+                            <div style={{ display: "flex", gap: 4 }}>
+                              <button onClick={() => saveEdit(u.id)} disabled={saving === u.id}
+                                style={{ ...btnSmall, background: "#2563eb", color: "#fff", fontSize: "0.7rem" }}>
+                                {saving === u.id ? "..." : "Save"}
+                              </button>
+                              <button onClick={() => setEditRow(p => { const n = { ...p }; delete n[u.id]; return n; })}
+                                style={{ ...btnSmall, background: "#e5e7eb", color: "#374151", fontSize: "0.7rem" }}>✕</button>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", gap: 4 }}>
+                              <button onClick={() => setEditRow(p => ({ ...p, [u.id]: { username: u.username, email: u.email ?? "", role: u.role ?? "member" } }))}
+                                style={{ ...btnSmall, background: "#f3f4f6", color: "#374151", fontSize: "0.7rem" }}>✏️</button>
+                              <button
+                                onClick={() => apiFetch(`/api/migration/tenant-users/${u.id}`, { method: "PATCH", body: JSON.stringify({ confirmed: true }) }).then(load)}
+                                style={{ ...btnSmall, background: "#f0fdf4", color: "#16a34a", fontSize: "0.7rem" }}
+                                title="Mark as confirmed">✓</button>
+                              {u.user_type !== "service_account" && (
+                                <button onClick={() => deleteUser(u.id)}
+                                  style={{ ...btnSmall, background: "#fef2f2", color: "#dc2626", fontSize: "0.7rem" }}
+                                  title="Delete">🗑</button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ */
