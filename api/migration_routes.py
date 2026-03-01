@@ -4358,6 +4358,120 @@ async def flavor_staging_bulk_rename(project_id: str, req: FlavorBulkRenameReque
     return {"preview": preview, "affected_count": len(preview)}
 
 
+@router.post("/projects/{project_id}/flavor-staging/match-from-pcd",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def flavor_staging_match_from_pcd(project_id: str, user=Depends(get_current_user)):
+    """Query live PCD Nova API and auto-match staged flavor shapes by (vcpus, ram_mb).
+    For each match sets pcd_flavor_id, target_flavor_name (PCD name), confirmed=true.
+    Unmatched rows are left as-is so the operator can name and create them in Phase 4B."""
+    actor = getattr(user, "username", "system")
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_flavor_staging WHERE project_id = %s", (project_id,))
+            staging_rows = [dict(r) for r in cur.fetchall()]
+
+    if not staging_rows:
+        return {"matched": 0, "unmatched": 0, "pcd_connected": False,
+                "error": "No staged flavors found. Run Refresh from VMs first.",
+                "details": []}
+
+    # ── Connect to PCD ────────────────────────────────────────────────────────
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(__file__))
+        import p9_common  # type: ignore
+
+        pcd_auth_url = project.get("pcd_auth_url") or p9_common.CFG.get("KEYSTONE_URL", "")
+        pcd_username  = project.get("pcd_username") or p9_common.CFG.get("USERNAME", "")
+        pcd_password  = os.getenv("PF9_PASSWORD", p9_common.CFG.get("PASSWORD", ""))
+
+        if not (pcd_auth_url and pcd_username and pcd_password):
+            return {"matched": 0, "unmatched": len(staging_rows), "pcd_connected": False,
+                    "error": "PCD credentials not configured. Set PF9_AUTH_URL / PF9_USERNAME / PF9_PASSWORD.",
+                    "details": []}
+
+        _orig_cfg: dict = {}
+        if project.get("pcd_auth_url"):
+            _orig_cfg["KEYSTONE_URL"] = p9_common.CFG.get("KEYSTONE_URL", "")
+            p9_common.CFG["KEYSTONE_URL"] = pcd_auth_url
+        if project.get("pcd_username"):
+            _orig_cfg["USERNAME"] = p9_common.CFG.get("USERNAME", "")
+            p9_common.CFG["USERNAME"] = pcd_username
+        if project.get("pcd_region"):
+            _orig_cfg["REGION_NAME"] = p9_common.CFG.get("REGION_NAME", "region-one")
+            p9_common.CFG["REGION_NAME"] = project["pcd_region"]
+
+        try:
+            session = p9_common.get_session_best_scope()
+            pcd_flavors = p9_common.nova_flavors(session)
+        finally:
+            for k, v in _orig_cfg.items():
+                p9_common.CFG[k] = v
+
+    except Exception as e:
+        return {"matched": 0, "unmatched": len(staging_rows), "pcd_connected": False,
+                "error": str(e), "details": []}
+
+    # ── Build lookup: (vcpus, ram_mb) → [pcd_flavor, ...] ─────────────────────
+    from collections import defaultdict
+    pcd_by_shape: dict = defaultdict(list)
+    for f in pcd_flavors:
+        key = (int(f.get("vcpus", 0)), int(f.get("ram", 0)))
+        pcd_by_shape[key].append(f)
+
+    # ── Match and update ──────────────────────────────────────────────────────
+    matched = 0
+    unmatched = 0
+    details = []
+
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            for row in staging_rows:
+                key = (int(row["vcpus"] or 0), int(row["ram_mb"] or 0))
+                candidates = pcd_by_shape.get(key, [])
+
+                if not candidates:
+                    unmatched += 1
+                    details.append({"source_shape": row["source_shape"], "matched": False})
+                    continue
+
+                # If multiple PCD flavors share the same cpu+ram, prefer the one whose
+                # name most closely matches the current target_flavor_name.
+                best = candidates[0]
+                if len(candidates) > 1:
+                    current_name = row.get("target_flavor_name") or ""
+                    def _score(f: dict) -> int:
+                        fn = f.get("name", "")
+                        return sum(1 for a, b in zip(current_name, fn) if a == b)
+                    best = max(candidates, key=_score)
+
+                cur.execute("""
+                    UPDATE migration_flavor_staging
+                    SET pcd_flavor_id    = %s,
+                        target_flavor_name = %s,
+                        confirmed         = true,
+                        updated_at        = now()
+                    WHERE id = %s AND project_id = %s
+                """, (best["id"], best["name"], row["id"], project_id))
+
+                matched += 1
+                details.append({
+                    "source_shape": row["source_shape"],
+                    "matched": True,
+                    "pcd_flavor_id": best["id"],
+                    "pcd_flavor_name": best["name"],
+                })
+        conn.commit()
+
+    _log_activity(actor=actor, action="flavor_staging_match_from_pcd",
+                  resource_type="migration_flavor_staging", resource_id=project_id,
+                  details={"matched": matched, "unmatched": unmatched})
+    return {"matched": matched, "unmatched": unmatched, "pcd_connected": True,
+            "details": details}
+
+
 # =====================================================================
 # PHASE 4A — IMAGE REQUIREMENTS
 # =====================================================================
