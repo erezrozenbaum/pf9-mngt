@@ -782,7 +782,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_target_preseeding.sql"; Desc="Migration Planner v1.31.1: target name pre-seeding (source=default) + confirmed flags for network mappings and tenant targets"},
     @{File="db\migrate_cohort_fixes.sql"; Desc="Migration Planner v1.31.2: cohort schedule fields (duration_days, vms_per_day), fix target_project_name to use OrgVDC, backfill VLAN IDs from network names"},
     @{File="db\migrate_descriptions.sql"; Desc="Migration Planner v1.31.7: target_domain_description column on migration_tenants for PCD Domain description field"},
-    @{File="db\migrate_wave_planning.sql"; Desc="Migration Planner Phase 3 v1.34.0: wave status/type/owner/preflight columns, migration_wave_preflights table"}
+    @{File="db\migrate_wave_planning.sql"; Desc="Migration Planner Phase 3 v1.34.0: wave status/type/owner/preflight columns, migration_wave_preflights table"},
+    @{File="db\migrate_phase4_preparation.sql"; Desc="Migration Planner Phase 4A v1.35.0: subnet detail columns on network_mappings, flavor_staging, image_requirements, tenant_users tables"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.2] - 2026-03-01
+
+### Fixed — Flavor Staging: boot-volume flavor model
+
+- **Flavor de-duplication (conceptual fix)** — VCD flavors are boot-volume flavors (disk = 0 GB); the VM's boot disk is handled as a separate volume at migration time, not baked into the flavor definition. `refresh_flavor_staging` previously grouped VMs by `(cpu, ram, disk)`, creating a separate staging row for every unique disk size (e.g., `4vCPU-8GB-300GB` and `4vCPU-8GB-500GB` were treated as two flavors). It now groups by `(cpu, ram)` only, setting `disk_gb = 0`, which correctly collapses all VMs with the same CPU/RAM into a single flavor entry regardless of disk size. This typically reduces the flavor count substantially.
+- **Stale row pruning on refresh** — When re-running Refresh from VMs, any old disk-based rows (from a pre-fix refresh) are now automatically deleted so the table reflects only the correct cpu+ram shapes.
+- **`source_shape` format** — Changed from `"4vCPU-8GB-300GB"` to `"4vCPU-8GB"` to match the boot-volume model.
+
+### Fixed — Image Requirements refresh (GroupingError)
+
+- `POST /projects/{id}/image-requirements/refresh` raised `psycopg2.errors.GroupingError: subquery uses ungrouped column "v.os_family" from outer query`. Rewrote the query to compute `os_family / vm_count` in a derived table `fam`, then the scalar subquery for `os_version_hint` references `fam.os_family` (a proper grouped value) instead of the outer alias.
+
+### Added — Confirm All + F&R for Image Requirements
+
+- **✓ Confirm All** — Both Flavor Staging and Image Requirements now have a "✓ Confirm All" toolbar button that bulk-confirms all pending (non-skipped) rows in a single click.
+- **Find & Replace for Image Requirements** — Image Requirements toolbar now includes a 🔍 F&R panel (matching Flavor Staging's UX). Client-side: filters rows by `glance_image_name`, previews before/after, then PATCHes each matching row.
+
+---
+
+## [1.35.1] - 2026-03-01
+
+### Fixed — Migration Planner Phase 4A Hotfixes
+
+- **Route ordering 405 on `/network-mappings/readiness`** — FastAPI was matching `PATCH /{mapping_id}` before `GET /readiness` because the static segment `/readiness` was registered after the parameterized route. Moved `get_network_mappings_readiness` to before the `PATCH`/`DELETE` handlers so static paths take precedence.
+- **`GROUP BY` error on subnet-enriched network mappings** — `GET /projects/{id}/network-mappings` used an explicit `GROUP BY` column list that omitted the new Phase 4A columns (`network_kind`, `cidr`, `gateway_ip`, etc.), causing a Postgres error. Replaced with `GROUP BY m.id` (valid because `id` is the primary key — covers all columns via functional dependency).
+- **`dns_nameservers` type mismatch on save** — UI state held DNS nameservers as a comma-separated string but the API expects `List[str]`. `saveSubnetDetails` now splits the string into an array before PATCH.
+- **Section heading** — "Phase 4A — Data Enrichment" heading in PCD Readiness tab renamed to "Pre-Migration Data Enrichment" to remove internal phase numbering from the operator-facing UI.
+- **Network Map Kind column** — Replaced read-only pill with an inline `<select>` dropdown. Selecting Physical / L2 / Virtual now immediately PATCHes the mapping and refreshes the row; no need to open the full Subnet Details panel just to set the kind.
+
+---
+
+## [1.35.0] - 2026-03-01
+
+### Added — Migration Planner Phase 4A: Data Enrichment
+
+- **4A.1 — Network Subnet Details** — The Network Map tab now supports per-network subnet configuration:
+  - New columns on `migration_network_mappings`: `network_kind` (physical_managed / physical_l2 / virtual), `cidr`, `gateway_ip`, `dns_nameservers TEXT[]`, `allocation_pool_start`, `allocation_pool_end`, `dhcp_enabled`, `is_external`, `subnet_details_confirmed`
+  - New API: `GET /projects/{id}/network-mappings/readiness` — returns confirmed count, missing count, external count, ready status
+  - Network Map table now shows a **Kind** pill (Physical / L2 / Virtual) per row
+  - Confirmed rows show a **⚙️ Subnet** expand button; external rows show "skip (ext)"; confirmed subnets show "✓ subnet ready"
+  - Expandable inline subnet panel per row: network_kind dropdown, CIDR, gateway IP, DNS nameservers, allocation pool start/end, DHCP enabled and Is External checkboxes, Save/Cancel actions
+  - Toolbar now shows **🌐 Subnet Details: X/Y** readiness counter
+- **4A.2 — Flavor Staging** — New `migration_flavor_staging` table and `FlavorStagingView` component in the PCD Readiness tab:
+  - `POST /projects/{id}/flavor-staging/refresh` — queries distinct VM shapes from `migration_vms` and upserts into staging table
+  - `GET /projects/{id}/flavor-staging` — returns flavors with ready_count summary
+  - `PATCH /flavor-staging/{id}` — edit target_flavor_name, confirmed, skip; supports marking existing flavor by ID
+  - `POST /projects/{id}/flavor-staging/bulk-rename` — find-and-replace across `target_flavor_name` with preview mode
+  - UI: shape + VM count table, inline name edit, skip checkbox, per-row confirm button, F&R panel, confirmed/total badge
+- **4A.3 — Image Requirements** — New `migration_image_requirements` table and `ImageRequirementsView` component:
+  - `POST /projects/{id}/image-requirements/refresh` — queries distinct `os_family` from `migration_vms`, upserts with most-common version hint
+  - `GET /projects/{id}/image-requirements` — list
+  - `PATCH /image-requirements/{id}` — set `glance_image_id`, `glance_image_name`, `confirmed`
+  - UI: OS family + version hint + VM count table, inline Glance name and UUID inputs, confirm button, ready badge
+- **4A.4 — Per-Tenant User Definitions** — New `migration_tenant_users` table, `TenantUsersView` component, and "👤 Users" tab:
+  - `POST /projects/{id}/tenant-users/seed-service-accounts` — auto-creates one `service_account` entry per tenant with `svc-mig-{slug}` username and a 20-char random `temp_password`
+  - `GET /projects/{id}/tenant-users` — grouped-by-tenant listing with confirmed_tenant_count
+  - `POST /projects/{id}/tenant-users` — create a `tenant_owner` record
+  - `PATCH /tenant-users/{id}` — edit username / email / role / confirmed
+  - `DELETE /tenant-users/{id}` — remove owner record (service accounts cannot be deleted)
+  - UI: Users tab, tenant-grouped table with type badge (🤖 svc / 👤 owner), inline edit, ✓ confirm button, seed-service-accounts action, confirmed-tenants counter
+
+### Infrastructure
+- **`db/migrate_phase4_preparation.sql`** — Idempotent migration file for all Phase 4A schema additions (subnet columns, flavor_staging, image_requirements, tenant_users tables). Auto-applied on startup; also registered in `deployment.ps1`.
+- **`deployment.ps1`** — Added `migrate_phase4_preparation.sql` to `$provisioningMigrations` array.
+
+---
+
 ## [1.34.2] - 2026-03-01
 
 ### Added
