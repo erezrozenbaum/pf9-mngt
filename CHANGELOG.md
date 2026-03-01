@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.3] - 2026-03-01
+
+### Improved — Subnet Details: DHCP allocation pool UX
+
+- **DHCP checkbox moved before pool fields** — Operator now sets DHCP intent first; if DHCP is disabled, the pool section is hidden entirely (no unnecessary fields).
+- **Conditional DHCP Allocation Pool section** — Pool Start / Pool End are only shown (in a dedicated blue-tinted panel) when "DHCP Enabled" is checked. This makes it clear the pool is the DHCP-assigned range, and IPs outside the pool but inside the CIDR are available for static assignment.
+- **Auto-clear pool on DHCP disable** — Toggling DHCP off clears the pool fields in the UI and sends `null` allocation pool values to the API on save, so the DB is not left with stale pool data.
+- **Hint text** — Pool panel includes: *"The pool is the DHCP-assigned range. IPs in the subnet outside this pool remain available for static assignment (servers, VIPs, etc.)."*
+
+---
+
 ## [1.35.2] - 2026-03-01
 
 ### Fixed — Flavor Staging: boot-volume flavor model
