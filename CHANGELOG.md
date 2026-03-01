@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.0] - 2026-03-01
+
+### New — Phase 4B: ⚙️ Prepare PCD (Auto-Provisioning)
+
+- **`GET /projects/{id}/prep-readiness`** — pre-flight check returning readiness status for all four 4A gates (subnet details, flavor staging, image requirements, tenant users). Returns per-item totals, completion counts, and current task statistics.
+- **`POST /projects/{id}/prepare`** — generates an ordered provisioning task plan: `create_domain` (1000s) → `create_project` (2000s) → `set_quotas` (3000s) → `create_network` (4000s) → `create_subnet` (5000s) → `create_flavor` (6000s) → `create_user` (7000s) → `assign_role` (8000s). Clears any previous pending/failed tasks before regenerating. Quota values derived from Phase 2C overcommit profile (cpu/ram/disk ratios).
+- **`GET /projects/{id}/prep-tasks`** — lists all tasks ordered by `task_order` with per-status counts.
+- **`POST /projects/{id}/prep-tasks/{task_id}/execute`** — executes a single pending or failed task against the PCD Keystone/Neutron/Nova APIs. Writes back PCD UUIDs to source tables (`target_network_id`, `pcd_flavor_id`, `pcd_user_id`, `temp_password`) on success.
+- **`POST /projects/{id}/prepare/run`** — runs all pending/failed tasks in order; stops on first new failure to prevent cascading.
+- **`POST /projects/{id}/prep-tasks/{task_id}/rollback`** — undoes a completed task by deleting the PCD resource. Supported types: `create_domain` (safety-checked — refuses if domain still contains projects), `create_project`, `create_network`, `create_flavor`, `create_user`. Resets task status back to `pending`.
+- **`DELETE /projects/{id}/prep-tasks`** — clears all pending and failed tasks (for regenerating a fresh plan).
+- **`⚙️ Prepare PCD` UI sub-tab** — Readiness grid (4 cards: subnets/flavors/images/users, green/red), *Generate Plan* and *Run All* buttons, task table with status badges, per-task *Run* / *Rollback* / inline error expansion. Auto-refreshes every 3 s while tasks are running. All colors use CSS variables (dark-mode compliant).
+
+### Fixed
+
+- `migration_overcommit_profiles` JOIN in task generation used wrong column `name` → corrected to `profile_name`.
+- `pf9_control` import inside `_execute_one_task` used relative import syntax → corrected to absolute `from pf9_control import get_client`.
+
+---
+
 ## [1.35.7] - 2026-03-01
 
 ### New — Network Map: Excel Template Export / Import

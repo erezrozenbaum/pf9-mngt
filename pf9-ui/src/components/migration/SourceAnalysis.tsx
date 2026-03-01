@@ -148,7 +148,7 @@ interface Props {
   onProjectUpdated: (p: MigrationProject) => void;
 }
 
-type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness";
+type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness" | "prepare";
 
 // Phase 3 — Wave Planning types
 interface Wave {
@@ -550,6 +550,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
           { id: "users" as SubView, label: "👤 Users" },
           { id: "capacity" as SubView, label: "⚖️ Capacity" },
           { id: "readiness" as SubView, label: "🎯 PCD Readiness" },
+          { id: "prepare" as SubView, label: "⚙️ Prepare PCD" },
           { id: "plan" as SubView, label: "📋 Migration Plan" },
           { id: "risk" as SubView, label: "⚠️ Risk Config" },
         ]).map(t => (
@@ -984,6 +985,11 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
       {/* ---- Migration Plan ---- */}
       {subView === "plan" && (
         <MigrationPlanView projectId={pid} projectName={project.name} />
+      )}
+
+      {/* ---- Prepare PCD (Phase 4B) ---- */}
+      {subView === "prepare" && (
+        <PreparePcdView projectId={pid} />
       )}
     </div>
   );
@@ -6028,6 +6034,232 @@ function modePillColor(mode: string): React.CSSProperties {
   if (mode === "warm_eligible") return { background: "#dcfce7", color: "#16a34a" };
   if (mode === "warm_risky") return { background: "#fef9c3", color: "#a16207" };
   return { background: "#fee2e2", color: "#dc2626" };
+}
+
+/* ================================================================== */
+/*  Phase 4B — PreparePcdView                                        */
+/* ================================================================== */
+
+const TASK_TYPE_LABELS: Record<string, string> = {
+  create_domain:  "🏛 Create Domain",
+  create_project: "📁 Create Project",
+  set_quotas:     "⚖️ Set Quotas",
+  create_network: "🌐 Create Network",
+  create_subnet:  "🔗 Create Subnet",
+  create_flavor:  "🧊 Create Flavor",
+  create_user:    "👤 Create User",
+  assign_role:    "🔑 Assign Role",
+};
+
+function statusBadge(status: string): React.ReactNode {
+  const styles: Record<string, React.CSSProperties> = {
+    pending:  { background: "var(--pf9-bg-muted)",    color: "var(--pf9-text-secondary)", padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 600 },
+    running:  { background: "#dbeafe",                color: "#1d4ed8",                  padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 600 },
+    done:     { background: "var(--pf9-safe-bg)",     color: "var(--pf9-safe-text)",     padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 600 },
+    failed:   { background: "var(--pf9-danger-bg)",   color: "var(--pf9-danger-text)",   padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 600 },
+    skipped:  { background: "var(--pf9-warning-bg)",  color: "var(--pf9-warning-text)",  padding: "2px 8px", borderRadius: 10, fontSize: "0.75rem", fontWeight: 600 },
+  };
+  const icons: Record<string, string> = { pending: "⏳", running: "🔄", done: "✅", failed: "❌", skipped: "⏭" };
+  return <span style={styles[status] || styles.pending}>{icons[status] || "•"} {status}</span>;
+}
+
+function PreparePcdView({ projectId }: { projectId: number }) {
+  const [readiness, setReadiness] = useState<any>(null);
+  const [tasks, setTasks]         = useState<any[]>([]);
+  const [counts, setCounts]       = useState<Record<string, number>>({});
+  const [loading, setLoading]     = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [running, setRunning]     = useState(false);
+  const [expandedError, setExpandedError] = useState<number | null>(null);
+  const [msg, setMsg]             = useState("");
+
+  const loadReadiness = async () => {
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prep-readiness`);
+      setReadiness(r);
+    } catch { /* ignore */ }
+  };
+
+  const loadTasks = async () => {
+    setLoading(true);
+    try {
+      const r = await apiFetch<{ tasks: any[]; counts: Record<string, number> }>(`/api/migration/projects/${projectId}/prep-tasks`);
+      setTasks(r.tasks || []);
+      setCounts(r.counts || {});
+    } finally { setLoading(false); }
+  };
+
+  React.useEffect(() => {
+    loadReadiness();
+    loadTasks();
+  }, [projectId]);
+
+  // Auto-refresh while tasks are running
+  React.useEffect(() => {
+    if (!readiness) return;
+    if ((readiness.tasks_running || 0) === 0) return;
+    const t = setTimeout(() => { loadReadiness(); loadTasks(); }, 3000);
+    return () => clearTimeout(t);
+  }, [readiness]);
+
+  const generatePlan = async () => {
+    setGenerating(true); setMsg("");
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prepare`, { method: "POST" });
+      setMsg(`✅ Generated ${r.tasks_generated} tasks`);
+      loadReadiness(); loadTasks();
+    } catch (e: any) {
+      setMsg(`❌ ${e.message || "Failed to generate"}`);
+    } finally { setGenerating(false); }
+  };
+
+  const runAll = async () => {
+    setRunning(true); setMsg("");
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prepare/run`, { method: "POST" });
+      setMsg(`Done: ${r.done} created · ${r.skipped} skipped · ${r.failed} failed`);
+      loadReadiness(); loadTasks();
+    } catch (e: any) {
+      setMsg(`❌ ${e.message || "Failed"}`);
+    } finally { setRunning(false); }
+  };
+
+  const executeTask = async (taskId: number) => {
+    setMsg("");
+    try {
+      await apiFetch<any>(`/api/migration/projects/${projectId}/prep-tasks/${taskId}/execute`, { method: "POST" });
+      loadReadiness(); loadTasks();
+    } catch (e: any) { setMsg(`❌ Task ${taskId}: ${e.message}`); }
+  };
+
+  const rollbackTask = async (taskId: number) => {
+    if (!confirm("Rollback this task? This will delete the created PCD resource.")) return;
+    setMsg("");
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prep-tasks/${taskId}/rollback`, { method: "POST" });
+      setMsg(`↩ ${r.message}`);
+      loadReadiness(); loadTasks();
+    } catch (e: any) { setMsg(`❌ ${e.message}`); }
+  };
+
+  const hasPending = tasks.some(t => t.status === "pending" || t.status === "failed");
+  const allDone    = tasks.length > 0 && tasks.every(t => t.status === "done");
+
+  return (
+    <div>
+      {/* Readiness panel */}
+      <div style={sectionStyle}>
+        <h3 style={{ marginTop: 0 }}>Phase 4A Readiness Check</h3>
+        {readiness ? (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10, marginBottom: 16 }}>
+              {(readiness.items || []).map((item: any) => (
+                <div key={item.key} style={{
+                  padding: 12, borderRadius: 6,
+                  background: item.ready ? "var(--pf9-safe-bg)"    : "var(--pf9-danger-bg)",
+                  border:     `1px solid ${item.ready ? "var(--pf9-safe-border)" : "var(--pf9-danger-border)"}`,
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4, color: item.ready ? "var(--pf9-safe-text)" : "var(--pf9-danger-text)" }}>
+                    {item.ready ? "✅" : "❌"} {item.label}
+                  </div>
+                  <div style={{ fontSize: "0.8rem", color: "var(--pf9-text-secondary)" }}>{item.message}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={generatePlan} disabled={generating}
+                style={{ ...btnPrimary, opacity: generating ? 0.6 : 1 }}>
+                {generating ? "Generating…" : "🔄 Generate Plan"}
+              </button>
+              {hasPending && (
+                <button onClick={runAll} disabled={running}
+                  style={{ ...btnPrimary, background: running ? "#6b7280" : "#10b981", opacity: running ? 0.7 : 1 }}>
+                  {running ? "Running…" : "▶ Run All"}
+                </button>
+              )}
+              {tasks.length > 0 && (
+                <span style={{ fontSize: "0.85rem", color: "var(--pf9-text-secondary)" }}>
+                  {counts.done || 0} done · {counts.failed || 0} failed · {counts.pending || 0} pending · {counts.running || 0} running
+                </span>
+              )}
+              {allDone && <span style={{ color: "var(--pf9-safe-text)", fontWeight: 600 }}>🎉 All tasks complete — ready for vJailbreak handoff</span>}
+            </div>
+            {msg && <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 6,
+              background: msg.startsWith("❌") ? "var(--pf9-danger-bg)" : "var(--pf9-safe-bg)",
+              color: msg.startsWith("❌") ? "var(--pf9-danger-text)" : "var(--pf9-safe-text)",
+              border: `1px solid ${msg.startsWith("❌") ? "var(--pf9-danger-border)" : "var(--pf9-safe-border)"}`,
+              fontSize: "0.85rem" }}>{msg}</div>}
+          </div>
+        ) : <div style={{ color: "var(--pf9-text-secondary)" }}>Loading…</div>}
+      </div>
+
+      {/* Task table */}
+      {tasks.length > 0 && (
+        <div style={sectionStyle}>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Provisioning Tasks</h3>
+          {loading && <div style={{ color: "var(--pf9-text-secondary)", marginBottom: 8 }}>Refreshing…</div>}
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>#</th>
+                <th style={thStyle}>Type</th>
+                <th style={thStyle}>Task</th>
+                <th style={thStyle}>Tenant</th>
+                <th style={thStyle}>Status</th>
+                <th style={thStyle}>Resource ID</th>
+                <th style={thStyle}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((t, i) => (
+                <React.Fragment key={t.id}>
+                  <tr style={{ borderBottom: "1px solid var(--pf9-border)", background: t.status === "failed" ? "var(--pf9-danger-bg)" : undefined }}>
+                    <td style={tdStyle}><span style={{ color: "var(--pf9-text-secondary)", fontSize: "0.75rem" }}>{i + 1}</span></td>
+                    <td style={tdStyle}><span style={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>{TASK_TYPE_LABELS[t.task_type] || t.task_type}</span></td>
+                    <td style={tdStyle}><span style={{ fontSize: "0.85rem" }}>{t.task_name}</span></td>
+                    <td style={tdStyle}><span style={{ fontSize: "0.8rem", color: "var(--pf9-text-secondary)" }}>{t.tenant_name || "—"}</span></td>
+                    <td style={tdStyle}>{statusBadge(t.status)}</td>
+                    <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.75rem", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {t.resource_id ? <span title={t.resource_id}>{t.resource_id.slice(0, 24)}…</span> : "—"}
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {(t.status === "pending" || t.status === "failed") && (
+                          <button onClick={() => executeTask(t.id)}
+                            style={{ ...btnPrimary, padding: "3px 8px", fontSize: "0.75rem" }}>▶ Run</button>
+                        )}
+                        {t.status === "done" && ["create_domain","create_project","create_network","create_flavor","create_user"].includes(t.task_type) && (
+                          <button onClick={() => rollbackTask(t.id)}
+                            style={{ ...btnSecondary, padding: "3px 8px", fontSize: "0.75rem", color: "var(--pf9-danger-text)" }}>↩</button>
+                        )}
+                        {t.error_message && (
+                          <button onClick={() => setExpandedError(expandedError === t.id ? null : t.id)}
+                            style={{ ...btnSecondary, padding: "3px 8px", fontSize: "0.75rem" }}>ℹ</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedError === t.id && t.error_message && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: "6px 12px", background: "var(--pf9-danger-bg)" }}>
+                        <code style={{ fontSize: "0.8rem", color: "var(--pf9-danger-text)" }}>{t.error_message}</code>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tasks.length === 0 && readiness && (
+        <div style={{ ...sectionStyle, textAlign: "center", color: "var(--pf9-text-secondary)", padding: 40 }}>
+          No tasks yet. Click "🔄 Generate Plan" to build the provisioning task list.
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ================================================================== */

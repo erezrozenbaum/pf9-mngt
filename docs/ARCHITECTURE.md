@@ -711,7 +711,7 @@ api/
 ├── navigation_routes.py  # Department & navigation visibility management (15+ endpoints)
 ├── performance_metrics.py # Thread-safe request tracking with locking
 ├── migration_engine.py   # Migration intelligence: risk scoring, bandwidth model, tenant detection, schedule-aware agent sizing
-├── migration_routes.py   # Migration planner API (70+ endpoints)
+├── migration_routes.py   # Migration planner API (80+ endpoints)
 ├── pf9_control.py       # Platform9 API integration
 ├── requirements.txt     # Python dependencies (incl. gunicorn)
 └── Dockerfile          # Container configuration (gunicorn CMD)
@@ -842,7 +842,7 @@ GET  /api/metering/export/api-usage        # CSV export: API usage
 GET  /api/metering/export/efficiency       # CSV export: efficiency
 GET  /api/metering/export/chargeback       # CSV export: chargeback report (multi-category)
 
-# Migration Planner (api/migration_routes.py - 70+ endpoints)
+# Migration Planner (api/migration_routes.py - 80+ endpoints)
 POST /api/migration/projects                           # Create migration project
 GET  /api/migration/projects                           # List all migration projects
 GET  /api/migration/projects/{id}                      # Get project details
@@ -898,6 +898,32 @@ POST /api/migration/projects/{id}/auto-waves                   # Auto-build coho
 GET  /api/migration/projects/{id}/waves/{wid}/preflights       # List pre-flight checks for wave
 PATCH /api/migration/projects/{id}/waves/{wid}/preflights/{check} # Update check status (pass/fail/skip)
 GET  /api/migration/projects/{id}/migration-funnel             # VM status funnel rollup
+
+# Phase 4A — Data Enrichment
+GET  /api/migration/projects/{id}/network-mappings/export-template   # Download pre-filled Excel template
+POST /api/migration/projects/{id}/network-mappings/import-template   # Import filled Excel template
+POST /api/migration/projects/{id}/network-mappings/confirm-subnets   # Bulk-confirm all rows with CIDR
+GET  /api/migration/projects/{id}/flavor-staging                     # List flavor staging rows
+PATCH /api/migration/projects/{id}/flavor-staging/{id}               # Update flavor row (name, skip, confirm)
+POST /api/migration/projects/{id}/flavor-staging/confirm-all         # Confirm all flavors
+POST /api/migration/projects/{id}/flavor-staging/match-pcd           # Match shapes against live Nova
+GET  /api/migration/projects/{id}/image-requirements                 # List image requirement rows
+PATCH /api/migration/projects/{id}/image-requirements/{id}           # Confirm/update image row
+POST /api/migration/projects/{id}/image-requirements/confirm-all     # Confirm all images
+POST /api/migration/projects/{id}/image-requirements/match-pcd       # Match OS families against Glance
+GET  /api/migration/projects/{id}/tenant-users                       # List tenant user definitions
+POST /api/migration/projects/{id}/tenant-users                       # Add user definition
+PATCH /api/migration/projects/{id}/tenant-users/{id}                 # Update user definition
+DELETE /api/migration/projects/{id}/tenant-users/{id}                # Remove user definition
+
+# Phase 4B — PCD Auto-Provisioning
+GET  /api/migration/projects/{id}/prep-readiness                     # Pre-flight 4A gate check
+POST /api/migration/projects/{id}/prepare                            # Generate ordered task plan
+GET  /api/migration/projects/{id}/prep-tasks                         # List tasks with status counts
+POST /api/migration/projects/{id}/prep-tasks/{task_id}/execute       # Execute single task against PCD
+POST /api/migration/projects/{id}/prepare/run                        # Run all pending/failed tasks
+POST /api/migration/projects/{id}/prep-tasks/{task_id}/rollback      # Roll back completed task
+DELETE /api/migration/projects/{id}/prep-tasks                       # Clear pending/failed tasks
 
 # System Health & Testing
 GET  /health                     # Service health check
