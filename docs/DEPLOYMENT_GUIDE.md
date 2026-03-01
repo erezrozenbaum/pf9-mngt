@@ -1344,7 +1344,12 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_mi
 # 12. Apply migration schedule columns (v1.28.1+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_migration_schedule.sql
 
-# 13. Verify schema
+# 13. Apply multi-network provisioning columns (v1.34.2+)
+# Adds networks_config + networks_created JSONB to provisioning_jobs
+# NOTE: Also auto-applied on pf9_api startup — only needed for manual upgrades
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_provisioning_networks.sql
+
+# 14. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 

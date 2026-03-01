@@ -92,41 +92,69 @@
       </div>
 
       <!-- Network Details -->
-      {% if create_network %}
+      {% if networks_created %}
       <div style="background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 20px 0;">
-        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">🌐 Network Configuration</h3>
-        <table style="width: 100%; border-collapse: collapse;">
-          <tr>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 160px; font-size: 13px;">Network Name</td>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ network_name }}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Network Type</td>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ network_type | upper }}</td>
-          </tr>
-          {% if vlan_id %}
-          <tr>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">VLAN ID</td>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ vlan_id }}</td>
-          </tr>
-          {% endif %}
-          <tr>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Subnet CIDR</td>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ subnet_cidr }}</td>
-          </tr>
-          {% if gateway_ip %}
-          <tr>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Gateway IP</td>
-            <td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ gateway_ip }}</td>
-          </tr>
-          {% endif %}
-          {% if dns_nameservers %}
-          <tr>
-            <td style="padding: 8px 12px; font-weight: 600; color: #4a5568; font-size: 13px;">DNS Nameservers</td>
-            <td style="padding: 8px 12px; font-size: 13px; color: #2d3748;">{{ dns_nameservers | join(', ') }}</td>
-          </tr>
-          {% endif %}
-        </table>
+        <h3 style="margin: 0 0 16px 0; color: #1a365d; font-size: 16px;">🌐 Network Configuration ({{ networks_created | length }} network{{ 's' if networks_created | length != 1 else '' }})</h3>
+        {% for net in networks_created %}
+        <div style="{% if not loop.last %}border-bottom: 1px solid #e2e8f0; margin-bottom: 16px; padding-bottom: 16px;{% endif %}">
+          <p style="margin: 0 0 10px 0; font-weight: 600; color: #2d3748; font-size: 14px;">
+            {% if net.network_kind == 'physical_managed' %}🔌 Physical Managed
+            {% elif net.network_kind == 'physical_l2' %}🔗 Physical L2 (Beta)
+            {% else %}☁️ Virtual Network
+            {% endif %}
+          </p>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; width: 160px; font-size: 13px;">Network Name</td>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ net.name }}</td>
+            </tr>
+            {% if net.network_kind != 'virtual' %}
+            <tr>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Provider Type</td>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ net.network_type | upper if net.network_type else 'VLAN' }}</td>
+            </tr>
+            {% if net.vlan_id %}
+            <tr>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">VLAN ID</td>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ net.vlan_id }}</td>
+            </tr>
+            {% endif %}
+            {% if net.physical_network %}
+            <tr>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Physical Network</td>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ net.physical_network }}</td>
+            </tr>
+            {% endif %}
+            {% endif %}
+            {% if net.subnet_cidr %}
+            <tr>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Subnet CIDR</td>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ net.subnet_cidr }}</td>
+            </tr>
+            {% endif %}
+            {% if net.gateway_ip %}
+            <tr>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #4a5568; font-size: 13px;">Gateway IP</td>
+              <td style="padding: 6px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #2d3748;">{{ net.gateway_ip }}</td>
+            </tr>
+            {% endif %}
+            {% if net.dns_nameservers %}
+            <tr>
+              <td style="padding: 6px 12px; {% if not net.subnet_cidr or not net.gateway_ip %}{% endif %}font-weight: 600; color: #4a5568; font-size: 13px;">DNS Nameservers</td>
+              <td style="padding: 6px 12px; font-size: 13px; color: #2d3748;">
+                {% if net.dns_nameservers is iterable and net.dns_nameservers is not string %}{{ net.dns_nameservers | join(', ') }}{% else %}{{ net.dns_nameservers }}{% endif %}
+              </td>
+            </tr>
+            {% endif %}
+            {% if net.network_kind == 'physical_l2' %}
+            <tr>
+              <td style="padding: 6px 12px; font-weight: 600; color: #4a5568; font-size: 13px;">Note</td>
+              <td style="padding: 6px 12px; font-size: 13px; color: #718096; font-style: italic;">Layer 2 only — no subnet provisioned</td>
+            </tr>
+            {% endif %}
+          </table>
+        </div>
+        {% endfor %}
       </div>
       {% endif %}
 
