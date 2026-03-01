@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.4] - 2026-03-01
+
+### New — Flavor Staging: Match from PCD
+
+- **"🔗 Match PCD" toolbar button** — Queries the live PCD Nova API for all existing flavors and auto-matches staged flavor shapes by `(vcpus, ram_mb)`. On a match the row is updated with `pcd_flavor_id`, `target_flavor_name` (set to the PCD name), and `confirmed = true`. Unmatched rows are left unchanged — they will be created as new flavors in Phase 4B.
+- **Disambiguation scoring** — When PCD has multiple flavors with the same cpu+ram, the best candidate is chosen by longest common-prefix scoring against the current `target_flavor_name`.
+- **Status pill differentiation** — Matched rows show a blue **"✓ exists"** pill (the flavor already exists on PCD); rows confirmed manually without a PCD match show a green **"✓ new"** pill (to be created); unconfirmed rows remain **"pending"**.
+- **`pcd_flavor_id` cell** — Shows a truncated UUID with 🔗 prefix when the flavor is matched to PCD, otherwise "—".
+- **Result banner** — After matching, a dismissible banner reports how many shapes matched and how many are unmatched.
+- New API endpoint: `POST /api/migration/projects/{id}/flavor-staging/match-from-pcd`
+
+### Fixed — Flavor Staging F&R: Apply was a no-op
+
+- The Find & Replace "Apply" action was silently ignored because the UI sent `{ apply: true }` but the API model field is `preview_only: bool = True`. The UI now correctly sends `{ preview_only: false }` when applying, so the rename is actually persisted.
+
+---
+
 ## [1.35.3] - 2026-03-01
 
 ### Improved — Subnet Details: DHCP allocation pool UX
