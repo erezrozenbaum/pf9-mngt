@@ -7118,6 +7118,18 @@ async def run_all_prep_tasks(project_id: str, user=Depends(get_current_user)):
 
     _log_activity(actor=actor, action="run_prep_tasks", resource_type="migration_prep_tasks",
                   resource_id=project_id, details={"done": done_count, "failed": fail_count})
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="prep_tasks_completed",
+            summary=f"PCD prep run finished: {done_count} created, {skipped_count} skipped, {fail_count} failed",
+            severity="critical" if fail_count > 0 else "info",
+            resource_id=project_id,
+            actor=actor,
+            template_vars={"done": done_count, "skipped": skipped_count, "failed": fail_count},
+        )
+    except Exception:
+        pass
     return {"status": "ok", "done": done_count, "failed": fail_count, "skipped": skipped_count}
 
 
@@ -7206,6 +7218,67 @@ async def clear_prep_tasks(project_id: str, user=Depends(get_current_user)):
     _log_activity(actor=actor, action="clear_prep_tasks", resource_type="migration_prep_tasks",
                   resource_id=project_id, details={})
     return {"status": "ok"}
+
+
+@router.get("/projects/{project_id}/prep-summary",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_prep_summary(project_id: str):
+    """Breakdown of prep task results by task type: created / skipped / failed counts."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT task_type,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN status='done'   THEN 1 ELSE 0 END) AS done,
+                       SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN status IN ('pending','running') THEN 1 ELSE 0 END) AS pending,
+                       SUM(CASE WHEN result IS NOT NULL AND (result->>'skipped') = 'true' THEN 1 ELSE 0 END) AS skipped
+                FROM migration_prep_tasks
+                WHERE project_id=%s
+                GROUP BY task_type
+                ORDER BY task_type
+            """, (project_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN status='done'   THEN 1 ELSE 0 END) AS done,
+                       SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN status IN ('pending','running') THEN 1 ELSE 0 END) AS pending
+                FROM migration_prep_tasks WHERE project_id=%s
+            """, (project_id,))
+            totals = dict(cur.fetchone() or {})
+
+    by_type = []
+    for r in rows:
+        done    = int(r.get("done", 0) or 0)
+        skipped = int(r.get("skipped", 0) or 0)
+        by_type.append({
+            "task_type": r["task_type"],
+            "total":   int(r.get("total", 0) or 0),
+            "done":    done,
+            "created": done - skipped,
+            "skipped": skipped,
+            "failed":  int(r.get("failed", 0) or 0),
+            "pending": int(r.get("pending", 0) or 0),
+        })
+
+    total   = int(totals.get("total", 0) or 0)
+    done    = int(totals.get("done", 0) or 0)
+    failed  = int(totals.get("failed", 0) or 0)
+    pending = int(totals.get("pending", 0) or 0)
+    skipped = sum(r["skipped"] for r in by_type)
+
+    return {
+        "total":    total,
+        "done":     done,
+        "created":  done - skipped,
+        "skipped":  skipped,
+        "failed":   failed,
+        "pending":  pending,
+        "complete": total > 0 and failed == 0 and pending == 0,
+        "by_type":  by_type,
+    }
 
 
 def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:

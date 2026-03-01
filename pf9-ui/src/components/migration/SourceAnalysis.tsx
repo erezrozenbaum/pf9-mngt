@@ -6069,9 +6069,11 @@ function PreparePcdView({ projectId }: { projectId: number }) {
   const [counts, setCounts]       = useState<Record<string, number>>({});
   const [loading, setLoading]     = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [running, setRunning]     = useState(false);
+  const [running, setRunning]         = useState(false);
   const [expandedError, setExpandedError] = useState<number | null>(null);
-  const [msg, setMsg]             = useState("");
+  const [msg, setMsg]                 = useState("");
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [summary, setSummary]         = useState<any>(null);
 
   const loadReadiness = async () => {
     try {
@@ -6089,6 +6091,13 @@ function PreparePcdView({ projectId }: { projectId: number }) {
     } finally { setLoading(false); }
   };
 
+  const loadSummary = async () => {
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prep-summary`);
+      setSummary(r);
+    } catch { /* ignore */ }
+  };
+
   React.useEffect(() => {
     loadReadiness();
     loadTasks();
@@ -6102,6 +6111,12 @@ function PreparePcdView({ projectId }: { projectId: number }) {
     return () => clearTimeout(t);
   }, [readiness]);
 
+  // Load summary when all tasks complete
+  React.useEffect(() => {
+    const done = tasks.length > 0 && tasks.every((t: any) => t.status === "done");
+    if (done) loadSummary();
+  }, [tasks]);
+
   const generatePlan = async () => {
     setGenerating(true); setMsg("");
     try {
@@ -6114,11 +6129,12 @@ function PreparePcdView({ projectId }: { projectId: number }) {
   };
 
   const runAll = async () => {
+    setShowConfirm(false);
     setRunning(true); setMsg("");
     try {
       const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prepare/run`, { method: "POST" });
       setMsg(`Done: ${r.done} created · ${r.skipped} skipped · ${r.failed} failed`);
-      loadReadiness(); loadTasks();
+      loadReadiness(); loadTasks(); loadSummary();
     } catch (e: any) {
       setMsg(`❌ ${e.message || "Failed"}`);
     } finally { setRunning(false); }
@@ -6144,6 +6160,14 @@ function PreparePcdView({ projectId }: { projectId: number }) {
 
   const hasPending = tasks.some(t => t.status === "pending" || t.status === "failed");
   const allDone    = tasks.length > 0 && tasks.every(t => t.status === "done");
+  const pendingCount  = tasks.filter(t => t.status === "pending" || t.status === "failed").length;
+  const pendingByType = tasks
+    .filter(t => t.status === "pending" || t.status === "failed")
+    .reduce((acc: Record<string, number>, t) => {
+      const label = TASK_TYPE_LABELS[t.task_type] || t.task_type;
+      acc[label] = (acc[label] || 0) + 1;
+      return acc;
+    }, {});
 
   return (
     <div>
@@ -6172,7 +6196,7 @@ function PreparePcdView({ projectId }: { projectId: number }) {
                 {generating ? "Generating…" : "🔄 Generate Plan"}
               </button>
               {hasPending && (
-                <button onClick={runAll} disabled={running}
+                <button onClick={() => setShowConfirm(true)} disabled={running}
                   style={{ ...btnPrimary, background: running ? "#6b7280" : "#10b981", opacity: running ? 0.7 : 1 }}>
                   {running ? "Running…" : "▶ Run All"}
                 </button>
@@ -6256,6 +6280,66 @@ function PreparePcdView({ projectId }: { projectId: number }) {
       {tasks.length === 0 && readiness && (
         <div style={{ ...sectionStyle, textAlign: "center", color: "var(--pf9-text-secondary)", padding: 40 }}>
           No tasks yet. Click "🔄 Generate Plan" to build the provisioning task list.
+        </div>
+      )}
+
+      {/* Provisioning Summary — shown after all tasks complete */}
+      {allDone && summary && (
+        <div style={sectionStyle}>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>📊 Provisioning Summary</h3>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Task Type</th>
+                <th style={{ ...thStyle, textAlign: "center" }}>Total</th>
+                <th style={{ ...thStyle, textAlign: "center" }}>✅ Created</th>
+                <th style={{ ...thStyle, textAlign: "center" }}>⏭ Skipped</th>
+                <th style={{ ...thStyle, textAlign: "center" }}>❌ Failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(summary.by_type || []).map((row: any) => (
+                <tr key={row.task_type} style={{ borderBottom: "1px solid var(--pf9-border)" }}>
+                  <td style={tdStyle}>{TASK_TYPE_LABELS[row.task_type] || row.task_type}</td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>{row.total}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", color: row.created > 0 ? "var(--pf9-safe-text)" : undefined }}>{row.created}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", color: "var(--pf9-text-secondary)" }}>{row.skipped}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", color: row.failed > 0 ? "var(--pf9-danger-text)" : undefined }}>{row.failed}</td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: "2px solid var(--pf9-border)", fontWeight: 600 }}>
+                <td style={tdStyle}>Total</td>
+                <td style={{ ...tdStyle, textAlign: "center" }}>{summary.total}</td>
+                <td style={{ ...tdStyle, textAlign: "center", color: "var(--pf9-safe-text)" }}>{summary.created}</td>
+                <td style={{ ...tdStyle, textAlign: "center", color: "var(--pf9-text-secondary)" }}>{summary.skipped}</td>
+                <td style={{ ...tdStyle, textAlign: "center", color: summary.failed > 0 ? "var(--pf9-danger-text)" : undefined }}>{summary.failed}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Run All confirmation modal */}
+      {showConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "var(--pf9-bg)", border: "1px solid var(--pf9-border)", borderRadius: 8, padding: 24, maxWidth: 480, width: "100%", boxShadow: "0 8px 32px rgba(0,0,0,0.35)" }}>
+            <h4 style={{ margin: "0 0 12px", color: "var(--pf9-text-primary)" }}>⚠️ Confirm PCD Provisioning</h4>
+            <p style={{ margin: "0 0 12px", fontSize: "0.9rem", color: "var(--pf9-text-secondary)" }}>
+              The following resources will be created on your live PCD environment:
+            </p>
+            <ul style={{ margin: "0 0 16px", paddingLeft: 20, fontSize: "0.9rem", lineHeight: 1.8 }}>
+              {Object.entries(pendingByType).map(([label, count]: [string, any]) => (
+                <li key={label}><strong>{count}</strong> × {label}</li>
+              ))}
+            </ul>
+            <div style={{ fontSize: "0.85rem", color: "var(--pf9-warning-text)", background: "var(--pf9-warning-bg)", border: "1px solid var(--pf9-warning-border)", borderRadius: 4, padding: "8px 12px", marginBottom: 16 }}>
+              ⚠️ {pendingCount} tasks total — this action modifies your live PCD environment and may not be automatically reversible.
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowConfirm(false)} style={btnSecondary}>Cancel</button>
+              <button onClick={runAll} style={{ ...btnPrimary, background: "#10b981" }}>▶ Confirm &amp; Run All</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
