@@ -42,6 +42,35 @@ The Network Configuration section of `customer_welcome.html` now loops over `net
 
 ---
 
+### Migration Planner Phase 4A — Network Map, Flavor Staging, Image Checklist, PCD Readiness (v1.35.0–v1.35.7 ✅ Complete)
+
+#### Network Map — Excel Template Workflow
+The Network Map sub-tab provides a full bulk-editing workflow via Excel:
+
+- **📥 Download Template** — exports a styled XLSX with the full network map pre-filled. Grey columns (read-only): Source Network, VMs. Blue columns (editable): VLAN ID, PCD Target, Subnet/CIDR, Gateway, DNS Servers, IP Range Start/End, Notes. Row 1 is an instruction banner; headers at row 2; freeze pane on columns A–B.
+- **📤 Import Template** — uploads a filled XLSX, auto-detects the header row, updates all editable fields, matches rows by `LOWER(TRIM(source_network_name))`. Formula detection returns HTTP 422 with a fix instruction if cells contain unevaluated external-file formulas. Diagnostic response shows `skipped_empty_patch` vs `skipped_no_db_match` with sample source names to pinpoint mismatches.
+- **✓ Confirm Subnets** — bulk-sets `subnet_details_confirmed = true` for all rows with a CIDR value in one click. Import auto-confirms when CIDR is provided.
+- **Subnet Details column shows CIDR inline** — confirmed rows show `✓ 10.0.0.0/24` (green, clickable); rows with CIDR but not yet confirmed show `⚠ 10.0.0.0/24` (amber).
+- **"none" network filtering** — RVTools literal `"none"` network names are filtered at parse time, excluded from auto-seed, and cleaned from DB on load.
+
+#### Network Gap Auto-Resolution
+Network gaps in the PCD Readiness panel now auto-resolve when the source network has a confirmed mapping. If all mappings are confirmed, all remaining network gaps resolve automatically.
+
+#### Flavor Staging
+- De-duplicated per `(vCPU, RAM)` shape (boot-volume model, disk = 0 GB).
+- **🔗 Match PCD** — queries live PCD Nova API, auto-matches shapes, sets `pcd_flavor_id` + `confirmed = true`. Status pill: **"✓ exists"** (blue) vs **"✓ new"** (green).
+- Find & Replace; Confirm All; individual row skip.
+
+#### Image Requirements
+- One row per OS family. **🔗 Match PCD** auto-links to existing Glance images by substring match.
+- Status pill distinguishes existing vs new images. Gap auto-resolves on confirm.
+
+#### PCD Readiness Score
+- Gaps auto-resolve when mappings/staging/image requirements are confirmed — no manual "Mark Resolved" needed.
+- Readiness score recomputes on next gap analysis run.
+
+---
+
 ### Migration Planner Phase 3 — Wave Planning (v1.34.0–v1.34.1 ✅ Complete)
 - **🌊 Wave Planner sub-tab**: VM migration funnel progress bar, cohort filter (All / individual cohort), auto-build panel, wave cards with type/status/cohort badges, per-wave VM tables, pre-flight checklist, advance-status buttons.
 - **Cohort-scoped auto-building**: When multiple cohorts exist and "All Cohorts" is selected, the engine calls `build_wave_plan()` once per cohort in `cohort_order` sequence. Each wave is tagged with its source cohort — VMs from different cohorts never mix in one wave.

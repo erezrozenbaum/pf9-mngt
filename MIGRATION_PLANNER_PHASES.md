@@ -779,6 +779,13 @@ The agent slots slider and bandwidth override are **Low effort** and independent
 - [x] **GROUP BY failure** — replaced explicit column list with `GROUP BY m.id`
 - [x] **dns_nameservers type mismatch** — UI now splits comma-string → `List[str]` before PATCH
 - [x] **UI heading** — "Phase 4A — Data Enrichment" → "Pre-Migration Data Enrichment"
+- [x] **Network Map Kind column** — Replaced read-only pill with an inline `<select>` dropdown; saves immediately on change
+
+#### Phase 4A Hotfixes (v1.35.2 — 2026-03-01)
+- [x] **Flavor staging — boot-volume model** — VCD flavors define CPU + RAM only (disk = 0 GB); the VM's boot disk is a separate volume handled at migration time. `refresh_flavor_staging` now groups VMs by `(cpu, ram)` only — collapsing all disk-size variants into one flavor entry — and sets `disk_gb = 0`. Stale old rows (with disk in shape name) are pruned on refresh.
+- [x] **Image requirements GroupingError** — `POST /image-requirements/refresh` raised `GroupingError` due to a correlated subquery referencing an ungrouped outer alias. Fixed by wrapping the aggregate in a derived table `fam`.
+- [x] **✓ Confirm All** — Added bulk-confirm button to both Flavor Staging and Image Requirements views.
+- [x] **F&R for Image Requirements** — Added client-side find-and-replace panel to Image Requirements (matching Flavor Staging's UX).
 
 ---
 
@@ -790,16 +797,21 @@ The agent slots slider and bandwidth override are **Low effort** and independent
 
 RVTools provides network name and VLAN ID. Neutron needs the full subnet spec to create a network. The operator must supply this per mapped network.
 
-**DB**: Add columns to `migration_network_mappings`:
+**Implemented features (v1.35.0–v1.35.7):**
+
+- Per-row expandable Subnet Details panel (CIDR, gateway, DNS, DHCP pool, kind, is_external).
+- **Excel Template Export/Import** — `GET /network-mappings/export-template` + `POST /network-mappings/import-template`. Bulk-fill subnet fields via XLSX. Formula detection (external-file VLOOKUP references) returns HTTP 422 with fix instructions. Header row auto-detected. Diagnostic response shows skipped-empty-patch vs skipped-no-db-match with sample names.
+- **✓ Confirm Subnets** — `POST /network-mappings/confirm-subnets` bulk-confirms all rows with CIDR. Import auto-confirms when CIDR is provided.
+- Subnet Details column shows CIDR inline (green ✓ confirmed, amber ⚠ unconfirmed-with-CIDR).
+- **"none" network filtering** — RVTools literal `"none"` networks filtered at parse, excluded from auto-seed, cleaned from DB on load.
+- **Network gap auto-resolve** — `network` gaps auto-resolve when the source network has a confirmed mapping; if all mappings confirmed → all remaining network gaps resolve.
+
+**DB**: Columns on `migration_network_mappings`:
 ```
-network_kind VARCHAR DEFAULT 'physical_managed', -- physical_managed | physical_l2 | virtual
-cidr TEXT,                    -- e.g. 10.10.5.0/24
-gateway_ip TEXT,              -- e.g. 10.10.5.1
-dns_nameservers TEXT[],       -- e.g. ["8.8.8.8", "8.8.4.4"]
-allocation_pool_start TEXT,   -- e.g. 10.10.5.100
-allocation_pool_end TEXT,     -- e.g. 10.10.5.200
-dhcp_enabled BOOLEAN DEFAULT true,
-is_external BOOLEAN DEFAULT false,
+network_kind VARCHAR DEFAULT 'physical_managed',
+cidr TEXT, gateway_ip TEXT, dns_nameservers TEXT[],
+allocation_pool_start TEXT, allocation_pool_end TEXT,
+dhcp_enabled BOOLEAN DEFAULT true, is_external BOOLEAN DEFAULT false,
 subnet_details_confirmed BOOLEAN DEFAULT false
 ```
 
@@ -813,17 +825,19 @@ subnet_details_confirmed BOOLEAN DEFAULT false
 
 #### 4A.2 — Flavor Staging
 
-Gap analysis (Phase 2E) detects distinct VM shapes (vCPU + RAM + disk combinations) that don't exist as PCD flavors. Phase 4A turns those detected shapes into editable draft flavors the operator reviews before anything is created.
+Gap analysis (Phase 2E) detects distinct VM shapes that don't exist as PCD flavors. Phase 4A turns those detected shapes into editable draft flavors the operator reviews before anything is created.
+
+> **Boot-volume model**: VCD flavors define CPU + RAM only (`disk = 0 GB`). The VM's boot disk is handled as a separate volume at migration time and is **not** part of the flavor. Two VMs with the same CPU/RAM but different disk sizes map to the same flavor. `source_shape` therefore only encodes `"4vCPU-8GB"`, not `"4vCPU-8GB-300GB"`.
 
 **DB**: `migration_flavor_staging` table:
 ```sql
 CREATE TABLE migration_flavor_staging (
     id SERIAL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES migration_projects(project_id),
-    source_shape TEXT NOT NULL,          -- e.g. "4vCPU-8GB-50GB" (auto-label from detection)
+    source_shape TEXT NOT NULL,          -- e.g. "4vCPU-8GB" (CPU+RAM only; disk=0 boot-volume model)
     vcpus INTEGER NOT NULL,
     ram_mb INTEGER NOT NULL,
-    disk_gb INTEGER NOT NULL,
+    disk_gb INTEGER NOT NULL DEFAULT 0,  -- always 0: boot-volume flavors carry no disk
     target_flavor_name TEXT,             -- operator edits this
     pcd_flavor_id TEXT,                  -- filled after creation in 4B
     vm_count INTEGER DEFAULT 0,          -- number of VMs using this shape
@@ -1091,7 +1105,7 @@ A per-project PDF for the MSP to deliver to each customer — tells them their n
 | 3.0.1 | Cohort-Aligned Schedule, Two-Model What-If, Tenant Expand+Reassign, Execution Plan, Clean Slate | ✅ COMPLETE | v1.33.0 |
 | 3 | Migration Wave Planning (5-strategy auto-builder, wave lifecycle, pre-flight, VM funnel, Wave Planner UI) | ✅ COMPLETE | v1.34.0 |
 | 3.1 | Wave planner bug fixes — cohort-scoped building, naming, column names, Pydantic v2 compat | ✅ COMPLETE | v1.34.1 |
-| **4A** | **Data Enrichment — subnet details, flavor staging, image checklist, user definitions** | ✅ COMPLETE | v1.35.0 |
+| **4A** | **Data Enrichment — subnet details, flavor staging, image checklist, user definitions** | ✅ COMPLETE | v1.35.0–v1.35.7 |
 | **4B** | **PCD Auto-Provisioning — domains, projects, quotas, networks, flavors, users, roles** | 🔲 NOT STARTED | — |
 | **4C** | **vJailbreak Handoff — credential bundle + tenant handoff sheet PDF** | 🔲 NOT STARTED | — |
 

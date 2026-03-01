@@ -1860,47 +1860,6 @@ function NetworksView({ networks, projectId, onRefresh }: {
   networks: NetworkSummary[]; projectId: number; onRefresh: () => void
 }) {
   const [netSearch, setNetSearch] = useState("");
-  const [editId, setEditId] = useState<number | null>(null);
-  const [editFields, setEditFields] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const startEdit = (n: NetworkSummary) => {
-    setEditId(n.id);
-    setEditFields({
-      subnet: n.subnet || "",
-      gateway: n.gateway || "",
-      dns_servers: n.dns_servers || "",
-      ip_range: n.ip_range || "",
-      pcd_target: n.pcd_target || "",
-      notes: n.notes || "",
-      network_type: n.network_type || "standard",
-      vlan_id: n.vlan_id != null ? String(n.vlan_id) : "",
-    });
-  };
-
-  const cancelEdit = () => { setEditId(null); setEditFields({}); };
-
-  const saveEdit = async () => {
-    if (!editId) return;
-    setSaving(true);
-    setError("");
-    try {
-      await apiFetch(`/api/migration/projects/${projectId}/networks/${editId}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          ...editFields,
-          vlan_id: editFields.vlan_id !== "" ? parseInt(editFields.vlan_id, 10) || null : null,
-        }),
-      });
-      cancelEdit();
-      onRefresh();
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const typeColor = (t: string): React.CSSProperties => {
     if (t === "vlan_based") return { background: "#dbeafe", color: "#1d4ed8" };
@@ -1913,21 +1872,19 @@ function NetworksView({ networks, projectId, onRefresh }: {
     ? networks.filter(n =>
         (n.network_name || "").toLowerCase().includes(netSearch.toLowerCase()) ||
         (n.tenant_names || "").toLowerCase().includes(netSearch.toLowerCase()) ||
-        (n.network_type || "").toLowerCase().includes(netSearch.toLowerCase()) ||
-        (n.subnet || "").includes(netSearch) ||
-        (n.pcd_target || "").toLowerCase().includes(netSearch.toLowerCase())
+        (n.network_type || "").toLowerCase().includes(netSearch.toLowerCase())
       )
     : networks;
 
   return (
     <div>
       <p style={{ color: "#6b7280", fontSize: "0.85rem", marginBottom: 8 }}>
-        Network infrastructure extracted from RVTools. VLAN IDs and types are auto-detected from naming patterns.
-        Click ✏️ to manually add subnet, gateway, DNS, and PCD target mapping.
+        Network inventory discovered from RVTools — read-only reference view. VLAN IDs and types are auto-detected from naming patterns.
+        To map source networks to PCD targets and fill in subnet / gateway / DNS details, use the <strong>Network Map</strong> tab.
       </p>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <input
-          placeholder="Search networks, tenants, type, subnet…"
+          placeholder="Search networks, tenants, type…"
           value={netSearch}
           onChange={e => setNetSearch(e.target.value)}
           style={{ ...inputStyle, maxWidth: 320 }}
@@ -1937,115 +1894,33 @@ function NetworksView({ networks, projectId, onRefresh }: {
         )}
         <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{filteredNetworks.length} / {networks.length} networks</span>
       </div>
-      {error && <div style={alertError}>{error}</div>}
 
       <table style={tableStyle}>
         <thead>
           <tr>
             <th style={thStyle}>Network Name</th>
-            <th style={thStyle}>VLAN ID</th>
-            <th style={thStyle}>Type</th>
-            <th style={thStyle}>VMs</th>
+            <th style={{ ...thStyle, width: 80 }}>VLAN ID</th>
+            <th style={{ ...thStyle, width: 110 }}>Type</th>
+            <th style={{ ...thStyle, width: 60, textAlign: "center" }}>VMs</th>
             <th style={thStyle}>Tenants</th>
-            <th style={thStyle}>Subnet</th>
-            <th style={thStyle}>Gateway</th>
-            <th style={thStyle}>DNS</th>
-            <th style={thStyle}>IP Range</th>
-            <th style={thStyle}>PCD Target</th>
-            <th style={thStyle}>Notes</th>
-            <th style={thStyle}>Actions</th>
           </tr>
         </thead>
         <tbody>
           {filteredNetworks.map(n => (
             <tr key={n.id} style={{ borderBottom: "1px solid var(--border, #e5e7eb)" }}>
-              {editId === n.id ? (
-                <>
-                  <td style={tdStyle}><strong>{n.network_name}</strong></td>
-                  <td style={tdStyle}>
-                    <input
-                      type="number"
-                      value={editFields.vlan_id ?? ""}
-                      onChange={e => setEditFields(f => ({ ...f, vlan_id: e.target.value }))}
-                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 72 }}
-                      placeholder="VLAN"
-                    />
-                  </td>
-                  <td style={tdStyle}>
-                    <select value={editFields.network_type} onChange={e => setEditFields(f => ({ ...f, network_type: e.target.value }))}
-                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem" }}>
-                      <option value="standard">Standard</option>
-                      <option value="vlan_based">VLAN-based</option>
-                      <option value="nsx_t">NSX-T</option>
-                      <option value="isolated">Isolated</option>
-                    </select>
-                  </td>
-                  <td style={tdStyle}>{n.vm_count}</td>
-                  <td style={tdStyle}>{n.tenant_names || "—"}</td>
-                  <td style={tdStyle}>
-                    <input value={editFields.subnet} onChange={e => setEditFields(f => ({ ...f, subnet: e.target.value }))}
-                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 120 }} placeholder="10.0.0.0/24" />
-                  </td>
-                  <td style={tdStyle}>
-                    <input value={editFields.gateway} onChange={e => setEditFields(f => ({ ...f, gateway: e.target.value }))}
-                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 110 }} placeholder="10.0.0.1" />
-                  </td>
-                  <td style={tdStyle}>
-                    <input value={editFields.dns_servers} onChange={e => setEditFields(f => ({ ...f, dns_servers: e.target.value }))}
-                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 140 }} placeholder="8.8.8.8, 8.8.4.4" />
-                  </td>
-                  <td style={tdStyle}>
-                    <input value={editFields.ip_range} onChange={e => setEditFields(f => ({ ...f, ip_range: e.target.value }))}
-                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 150 }} placeholder="10.0.0.10-10.0.0.254" />
-                  </td>
-                  <td style={tdStyle}>
-                    <input value={editFields.pcd_target} onChange={e => setEditFields(f => ({ ...f, pcd_target: e.target.value }))}
-                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 120 }} placeholder="PCD network" />
-                  </td>
-                  <td style={tdStyle}>
-                    <input value={editFields.notes} onChange={e => setEditFields(f => ({ ...f, notes: e.target.value }))}
-                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 120 }} placeholder="Notes" />
-                  </td>
-                  <td style={tdStyle}>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <button onClick={saveEdit} disabled={saving}
-                        style={{ ...btnSmall, background: "#16a34a", color: "#fff" }}>
-                        {saving ? "..." : "✓"}
-                      </button>
-                      <button onClick={cancelEdit} style={{ ...btnSmall, background: "#e5e7eb" }}>✕</button>
-                    </div>
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td style={tdStyle}><strong>{n.network_name}</strong></td>
-                  <td style={{ ...tdStyle, fontFamily: "monospace" }}>{n.vlan_id ?? "—"}</td>
-                  <td style={tdStyle}>
-                    <span style={{ ...pillStyle, ...typeColor(n.network_type) }}>{n.network_type.replace(/_/g, " ")}</span>
-                  </td>
-                  <td style={tdStyle}>{n.vm_count}</td>
-                  <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>
-                    {n.tenant_names ? n.tenant_names.split(', ').map((tenant, i, arr) => (
-                      <span key={tenant}>
-                        {tenant}{i < arr.length - 1 ? ', ' : ''}
-                      </span>
-                    )) : "—"}
-                  </td>
-                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8rem" }}>{n.subnet || "—"}</td>
-                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8rem" }}>{n.gateway || "—"}</td>
-                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8rem" }}>{n.dns_servers || "—"}</td>
-                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8rem" }}>{n.ip_range || "—"}</td>
-                  <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{n.pcd_target || "—"}</td>
-                  <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>{n.notes || "—"}</td>
-                  <td style={tdStyle}>
-                    <button onClick={() => startEdit(n)} style={btnSmall} title="Edit network details">✏️</button>
-                  </td>
-                </>
-              )}
+              <td style={tdStyle}><strong>{n.network_name}</strong></td>
+              <td style={{ ...tdStyle, fontFamily: "monospace" }}>{n.vlan_id ?? "—"}</td>
+              <td style={tdStyle}>
+                <span style={{ ...pillStyle, ...typeColor(n.network_type) }}>{n.network_type.replace(/_/g, " ")}</span>
+              </td>
+              <td style={{ ...tdStyle, textAlign: "center" }}>{n.vm_count}</td>
+              <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>
+                {n.tenant_names || "—"}
+              </td>
             </tr>
           ))}
           {networks.length === 0 && (
-            <tr><td colSpan={12} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+            <tr><td colSpan={5} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
               No networks found. Upload RVTools data first.
             </td></tr>
           )}
@@ -2078,8 +1953,10 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const [frLoading, setFrLoading] = useState(false);
   const [frApplied, setFrApplied] = useState(false);
   const [confirmingAll, setConfirmingAll] = useState(false);
-
-  /* ---- Subnet details state (Phase 4A.1) ---- */
+  const [confirmingSubnets, setConfirmingSubnets] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ updated: number; skipped: number; diagnostics?: any } | null>(null);
+  const importFileRef = React.useRef<HTMLInputElement>(null);
   const [expandedSubnet, setExpandedSubnet] = useState<number | null>(null);
   const [subnetEdits, setSubnetEdits] = useState<Record<number, any>>({});
   const [savingSubnet, setSavingSubnet] = useState<number | null>(null);
@@ -2094,6 +1971,42 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
       setSubnetReady({ missing: r.missing_subnet_details, confirmed: r.confirmed_count });
     } catch { /* non-critical */ }
   }, [projectId]);
+
+  const downloadNetworkTemplate = async () => {
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/migration/projects/${projectId}/network-mappings/export-template`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!res.ok) { setError(`Download failed: ${res.statusText}`); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `network_map_template_${projectId}.xlsx`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) { setError(e.message); }
+  };
+
+  const importNetworkTemplate = async (f: File) => {
+    setImporting(true); setImportResult(null); setError("");
+    try {
+      const token = getToken();
+      const fd = new FormData(); fd.append("file", f);
+      const res = await fetch(`${API_BASE}/api/migration/projects/${projectId}/network-mappings/import-template`, {
+        method: "POST",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Import failed"); return; }
+      setImportResult({ updated: data.updated, skipped: data.skipped, diagnostics: data.diagnostics });
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setImporting(false); if (importFileRef.current) importFileRef.current.value = ""; }
+  };
 
   const saveSubnetDetails = async (id: number) => {
     setSavingSubnet(id);
@@ -2218,6 +2131,22 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
             style={{ ...btnSecondary, background: showFR ? "#eff6ff" : undefined }}>
             🔍 Find &amp; Replace
           </button>
+          <button onClick={downloadNetworkTemplate} style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac" }}>
+            📥 Download Template
+          </button>
+          <button
+            onClick={() => importFileRef.current?.click()}
+            disabled={importing}
+            style={{ ...btnSecondary, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
+            {importing ? "⏳ Importing..." : "📤 Import Template"}
+          </button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".xlsx"
+            style={{ display: "none" }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) importNetworkTemplate(f); }}
+          />
           <button
             disabled={confirmingAll}
             onClick={async () => {
@@ -2237,6 +2166,24 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
             {confirmingAll ? "⏳..." : "✓ Confirm All"}
           </button>
           <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
+          <button
+            disabled={confirmingSubnets}
+            onClick={async () => {
+              setConfirmingSubnets(true);
+              try {
+                const r = await apiFetch<{ affected_count: number }>(
+                  `/api/migration/projects/${projectId}/network-mappings/confirm-subnets`,
+                  { method: "POST" }
+                );
+                await load();
+                await loadSubnetReadiness();
+                if (r.affected_count === 0) alert("No rows with CIDR set were pending — nothing to confirm.");
+              } catch (e: any) { setError(e.message); }
+              finally { setConfirmingSubnets(false); }
+            }}
+            style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac" }}>
+            {confirmingSubnets ? "⏳..." : "✓ Confirm Subnets"}
+          </button>
           {subnetReady !== null && (
             <span style={{
               padding: "4px 10px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600,
@@ -2322,6 +2269,35 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                   </>
                 )}
             </>
+          )}
+        </div>
+      )}
+      {importResult && (
+        <div style={{ marginBottom: 12, padding: "8px 14px",
+          background: importResult.updated > 0 ? "#f0fdf4" : "#fffbeb",
+          borderRadius: 6,
+          border: importResult.updated > 0 ? "1px solid #86efac" : "1px solid #fcd34d",
+          color: importResult.updated > 0 ? "#15803d" : "#92400e",
+          fontSize: "0.85rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <span>{importResult.updated > 0 ? "✅" : "⚠️"} Template imported — <strong>{importResult.updated}</strong> network{importResult.updated !== 1 ? "s" : ""} updated, {importResult.skipped} skipped.</span>
+            <button onClick={() => setImportResult(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1rem", marginLeft: 12 }}>×</button>
+          </div>
+          {importResult.updated === 0 && importResult.diagnostics && (
+            <div style={{ marginTop: 6, fontSize: "0.8rem", lineHeight: 1.6 }}>
+              {importResult.diagnostics.skipped_empty_patch > 0 && (
+                <div>• <strong>{importResult.diagnostics.skipped_empty_patch}</strong> rows had no editable values — cells may be empty or contain formulas referencing external files. In Excel: select all blue columns → Copy → Paste Special → Values Only → Save → re-upload.</div>
+              )}
+              {importResult.diagnostics.skipped_no_db_match > 0 && (
+                <div>• <strong>{importResult.diagnostics.skipped_no_db_match}</strong> rows had no matching network in this project's map.</div>
+              )}
+              {importResult.diagnostics.sample_sources_in_file?.length > 0 && (
+                <div style={{ marginTop: 4 }}>File source names (sample): <code style={{ fontSize: "0.78rem" }}>{importResult.diagnostics.sample_sources_in_file.join(", ")}</code></div>
+              )}
+              {importResult.diagnostics.sample_sources_in_db?.length > 0 && (
+                <div>DB source names (sample): <code style={{ fontSize: "0.78rem" }}>{importResult.diagnostics.sample_sources_in_db.join(", ")}</code></div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -2467,7 +2443,35 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                       {m.is_external ? (
                         <span style={{ ...pillStyle, background: "#f3f4f6", color: "#6b7280", fontSize: "0.72rem" }}>skip (ext)</span>
                       ) : m.subnet_details_confirmed ? (
-                        <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.72rem" }}>✓ subnet ready</span>
+                        <button
+                          onClick={() => {
+                            if (isSubnetExpanded) {
+                              setExpandedSubnet(null);
+                            } else {
+                              setExpandedSubnet(m.id);
+                              setSubnetEdits(prev => ({
+                                ...prev,
+                                [m.id]: {
+                                  network_kind: m.network_kind ?? "physical_managed",
+                                  cidr: m.cidr ?? "",
+                                  gateway_ip: m.gateway_ip ?? "",
+                                  dns_nameservers: (m.dns_nameservers ?? []).join(", "),
+                                  allocation_pool_start: m.allocation_pool_start ?? "",
+                                  allocation_pool_end: m.allocation_pool_end ?? "",
+                                  dhcp_enabled: m.dhcp_enabled ?? true,
+                                  is_external: m.is_external ?? false,
+                                },
+                              }));
+                            }
+                          }}
+                          title={m.cidr ? `CIDR: ${m.cidr}${m.gateway_ip ? " | GW: " + m.gateway_ip : ""}` : "Subnet confirmed"}
+                          style={{ ...btnSmall,
+                            background: isSubnetExpanded ? "#eff6ff" : "#dcfce7",
+                            color: isSubnetExpanded ? "#1d4ed8" : "#15803d",
+                            fontSize: "0.72rem", fontFamily: m.cidr ? "monospace" : undefined,
+                            maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          ✓ {m.cidr || "subnet ready"}
+                        </button>
                       ) : isConfirmed ? (
                         <button
                           onClick={() => {
@@ -2490,9 +2494,13 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                               }));
                             }
                           }}
-                          style={{ ...btnSmall, background: isSubnetExpanded ? "#eff6ff" : "#f3f4f6",
-                            color: isSubnetExpanded ? "#1d4ed8" : "#374151", fontSize: "0.75rem" }}>
-                          ⚙️ {isSubnetExpanded ? "Close" : "Subnet"}
+                          title={m.cidr ? `CIDR: ${m.cidr} — click to review & confirm` : "Enter subnet details"}
+                          style={{ ...btnSmall,
+                            background: isSubnetExpanded ? "#eff6ff" : (m.cidr ? "#fff7ed" : "#f3f4f6"),
+                            color: isSubnetExpanded ? "#1d4ed8" : (m.cidr ? "#c2410c" : "#374151"),
+                            fontSize: "0.72rem", fontFamily: m.cidr ? "monospace" : undefined,
+                            maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {isSubnetExpanded ? "✕ Close" : (m.cidr ? `⚠ ${m.cidr}` : "⚙ Subnet")}
                         </button>
                       ) : (
                         <span style={{ color: "#9ca3af", fontSize: "0.78rem" }}>—</span>
@@ -5582,7 +5590,7 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
 
   const loadGaps = async () => {
     try {
-      const g = await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps`);
+      const g = await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps?resolved=false`);
       setGaps(g.gaps || []);
       if (g.readiness_score != null) setReadinessScore(Number(g.readiness_score));
     } catch { /* silent */ }
@@ -5638,9 +5646,9 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
     setError("");
     try {
       const result = await apiFetch(`/api/migration/projects/${projectId}/pcd-gap-analysis`, { method: "POST" });
-      setGaps(result.gaps || []);
       if (result.readiness_score != null) setReadinessScore(Number(result.readiness_score));
-      setMsg(`Gap analysis complete. Found ${(result.gaps || []).length} gaps.`);
+      await loadGaps();
+      setMsg(`Gap analysis complete. Found ${(result.gap_counts?.total ?? (result.gaps || []).length)} gaps (${result.gap_counts?.critical ?? 0} critical).`);
       setTimeout(() => setMsg(""), 5000);
     } catch (e: any) { setError(e.message); }
     setRunning(false);
@@ -5649,7 +5657,7 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
   const resolveGap = async (gapId: number) => {
     try {
       await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps/${gapId}/resolve`, { method: "PATCH" });
-      setGaps(prev => prev.map(g => g.id === gapId ? { ...g, resolved: true } : g));
+      await loadGaps();
     } catch (e: any) { setError(e.message); }
   };
 
@@ -6040,7 +6048,7 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
   const [frApplied, setFrApplied] = useState(false);
   const [confirmingAll, setConfirmingAll] = useState(false);
   const [matchingPCD, setMatchingPCD] = useState(false);
-  const [matchResult, setMatchResult] = useState<{ matched: number; unmatched: number; error?: string } | null>(null);
+  const [matchResult, setMatchResult] = useState<{ matched: number; unmatched: number; gaps_resolved: number; error?: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -6110,11 +6118,11 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
     setMatchResult(null);
     setError("");
     try {
-      const r = await apiFetch<{ matched: number; unmatched: number; pcd_connected: boolean; error?: string }>(
+      const r = await apiFetch<{ matched: number; unmatched: number; gaps_resolved: number; pcd_connected: boolean; error?: string }>(
         `/api/migration/projects/${projectId}/flavor-staging/match-from-pcd`,
         { method: "POST" }
       );
-      setMatchResult({ matched: r.matched, unmatched: r.unmatched, error: r.error });
+      setMatchResult({ matched: r.matched, unmatched: r.unmatched, gaps_resolved: r.gaps_resolved ?? 0, error: r.error });
       await load();
     } catch (e: any) { setError(e.message); }
     finally { setMatchingPCD(false); }
@@ -6175,7 +6183,7 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
           <span>
             {matchResult.error
               ? `⚠️ PCD match failed: ${matchResult.error}`
-              : `🔗 PCD match complete — ${matchResult.matched} matched (marked ✓ exists), ${matchResult.unmatched} unmatched (will be created in Phase 4B)`
+              : `🔗 PCD match complete — ${matchResult.matched} matched (✓ exists — Phase 4B will reuse), ${matchResult.unmatched} unmatched (✓ new — Phase 4B will create)${matchResult.gaps_resolved > 0 ? ` · ${matchResult.gaps_resolved} flavor gap${matchResult.gaps_resolved !== 1 ? "s" : ""} auto-resolved` : ""}`
             }
           </span>
           <button onClick={() => setMatchResult(null)}
@@ -6337,6 +6345,8 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
   const [frPreview, setFrPreview] = useState<any[] | null>(null);
   const [frApplying, setFrApplying] = useState(false);
   const [frApplied, setFrApplied] = useState(false);
+  const [matchingPCD, setMatchingPCD] = useState(false);
+  const [matchResult, setMatchResult] = useState<{ matched: number; unmatched: number; gaps_resolved: number; error?: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -6417,6 +6427,22 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
     finally { setFrApplying(false); }
   };
 
+  const matchFromPcd = async () => {
+    setMatchingPCD(true);
+    setMatchResult(null);
+    setError("");
+    try {
+      const r = await apiFetch<{ matched: number; unmatched: number; gaps_resolved: number; pcd_connected: boolean; error?: string }>(
+        `/api/migration/projects/${projectId}/image-requirements/match-from-pcd`,
+        { method: "POST" }
+      );
+      if (!r.pcd_connected) { setError(r.error || "Could not connect to PCD"); return; }
+      setMatchResult({ matched: r.matched, unmatched: r.unmatched, gaps_resolved: r.gaps_resolved ?? 0, error: r.error });
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setMatchingPCD(false); }
+  };
+
   const readyCount = images.filter(i => i.confirmed).length;
 
   if (loading) return <div style={{ color: "#6b7280", padding: 12, fontSize: "0.85rem" }}>Loading image requirements...</div>;
@@ -6444,6 +6470,11 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
               background: showFR ? "#eff6ff" : undefined }}>
             🔍 F&amp;R
           </button>
+          <button onClick={matchFromPcd} disabled={matchingPCD}
+            style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
+              background: "#0ea5e9", color: "#fff", opacity: matchingPCD ? 0.7 : 1 }}>
+            {matchingPCD ? "⏳ Matching..." : "🔗 Match PCD"}
+          </button>
           <button
             onClick={confirmAll}
             disabled={confirmingAll || images.filter(i => !i.confirmed).length === 0}
@@ -6457,6 +6488,22 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
           </button>
         </div>
       </div>
+      {matchResult && (
+        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 6, fontSize: "0.82rem",
+          background: matchResult.error ? "#fef2f2" : "#f0fdf4",
+          border: `1px solid ${matchResult.error ? "#fca5a5" : "#86efac"}`,
+          color: matchResult.error ? "#dc2626" : "#15803d",
+          display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>
+            {matchResult.error
+              ? `⚠️ PCD match failed: ${matchResult.error}`
+              : `🔗 PCD match complete — ${matchResult.matched} matched (✓ exists), ${matchResult.unmatched} unmatched (set manually)${matchResult.gaps_resolved > 0 ? ` · ${matchResult.gaps_resolved} image gap${matchResult.gaps_resolved !== 1 ? "s" : ""} auto-resolved` : ""}`
+            }
+          </span>
+          <button onClick={() => setMatchResult(null)}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1rem", lineHeight: 1 }}>×</button>
+        </div>
+      )}
       {showFR && (
         <div style={{ marginBottom: 12, padding: 12, background: "#eff6ff",
           border: "1px solid #bfdbfe", borderRadius: 8 }}>
@@ -6558,9 +6605,11 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
                     />
                   </td>
                   <td style={{ ...tdStyle, textAlign: "center" }}>
-                    {img.confirmed
-                      ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.7rem" }}>✓</span>
-                      : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.7rem" }}>pending</span>}
+                    {img.confirmed && img.glance_image_id
+                      ? <span style={{ ...pillStyle, background: "#e0f2fe", color: "#0369a1", fontSize: "0.7rem" }}>✓ exists</span>
+                      : img.confirmed
+                        ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.7rem" }}>✓ new</span>
+                        : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.7rem" }}>pending</span>}
                   </td>
                   <td style={tdStyle}>
                     <button
