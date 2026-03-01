@@ -6567,6 +6567,647 @@ async def get_migration_funnel(project_id: str):
     return {"funnel": funnel}
 
 
+# =====================================================================
+# PHASE 4B — PCD Auto-Provisioning
+# =====================================================================
+
+@router.get("/projects/{project_id}/prep-readiness",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_prep_readiness(project_id: str):
+    """Phase 4B pre-flight: check all 4A items are confirmed. Returns per-gate status."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE confirmed = true)                                                             AS nets_confirmed,
+                    COUNT(*) FILTER (WHERE confirmed = true AND COALESCE(subnet_details_confirmed, false) = true)        AS subnets_confirmed
+                FROM migration_network_mappings WHERE project_id = %s
+            """, (project_id,))
+            sub_r = cur.fetchone()
+            nets_confirmed   = int(sub_r[0] or 0)
+            subnets_confirmed = int(sub_r[1] or 0)
+
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE confirmed = true OR skip = true) AS done
+                FROM migration_flavor_staging WHERE project_id = %s
+            """, (project_id,))
+            fl_r = cur.fetchone(); flavors_total = int(fl_r[0] or 0); flavors_done = int(fl_r[1] or 0)
+
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE confirmed = true) AS done
+                FROM migration_image_requirements WHERE project_id = %s
+            """, (project_id,))
+            img_r = cur.fetchone(); images_total = int(img_r[0] or 0); images_done = int(img_r[1] or 0)
+
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE confirmed = true) AS done
+                FROM migration_tenant_users WHERE project_id = %s
+            """, (project_id,))
+            usr_r = cur.fetchone(); users_total = int(usr_r[0] or 0); users_done = int(usr_r[1] or 0)
+
+            cur.execute("""
+                SELECT COUNT(*),
+                       COUNT(*) FILTER (WHERE status='done'),
+                       COUNT(*) FILTER (WHERE status='failed'),
+                       COUNT(*) FILTER (WHERE status='running')
+                FROM migration_prep_tasks WHERE project_id = %s
+            """, (project_id,))
+            tsk_r = cur.fetchone()
+            tasks_total   = int(tsk_r[0] or 0)
+            tasks_done    = int(tsk_r[1] or 0)
+            tasks_failed  = int(tsk_r[2] or 0)
+            tasks_running = int(tsk_r[3] or 0)
+
+    subnets_ready = nets_confirmed > 0 and subnets_confirmed >= nets_confirmed
+    flavors_ready = flavors_total == 0 or flavors_done >= flavors_total
+    images_ready  = images_total == 0 or images_done >= images_total
+    users_ready   = users_total == 0 or users_done >= users_total
+    all_ready     = subnets_ready and flavors_ready and images_ready
+
+    return {
+        "all_ready": all_ready,
+        "items": [
+            {"key": "subnets",  "label": "Network Subnet Details",
+             "total": nets_confirmed,  "done": subnets_confirmed, "ready": subnets_ready,
+             "message": (f"{subnets_confirmed}/{nets_confirmed} confirmed networks have subnet details")
+                         if nets_confirmed else "No confirmed network mappings found"},
+            {"key": "flavors",  "label": "Flavor Staging",
+             "total": flavors_total,  "done": flavors_done,      "ready": flavors_ready,
+             "message": (f"{flavors_done}/{flavors_total} flavors confirmed or skipped")
+                         if flavors_total else "No flavor shapes detected — run gap analysis"},
+            {"key": "images",   "label": "OS Image Requirements",
+             "total": images_total,   "done": images_done,       "ready": images_ready,
+             "message": (f"{images_done}/{images_total} images confirmed")
+                         if images_total else "No OS images required"},
+            {"key": "users",    "label": "Tenant Users",
+             "total": users_total,    "done": users_done,        "ready": users_ready,
+             "message": (f"{users_done}/{users_total} users confirmed")
+                         if users_total else "No users defined yet"},
+        ],
+        "tasks_total": tasks_total,
+        "tasks_done":  tasks_done,
+        "tasks_failed": tasks_failed,
+        "tasks_running": tasks_running,
+    }
+
+
+@router.post("/projects/{project_id}/prepare",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def generate_prep_tasks(project_id: str, user=Depends(get_current_user)):
+    """
+    Phase 4B: Generate (or regenerate) the ordered prep task list from the migration plan.
+    Clears pending/failed tasks and rebuilds. Does NOT call PCD — tasks executed separately.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("DELETE FROM migration_prep_tasks WHERE project_id=%s AND status IN ('pending','failed')", (project_id,))
+
+            cur.execute("""
+                SELECT t.*, COALESCE(c.cohort_order, 999) AS _co
+                FROM migration_tenants t LEFT JOIN migration_cohorts c ON t.cohort_id = c.id
+                WHERE t.project_id=%s AND t.include_in_plan=true
+                ORDER BY _co, t.tenant_name
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("SELECT * FROM migration_network_mappings WHERE project_id=%s AND confirmed=true ORDER BY source_network_name", (project_id,))
+            networks = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("SELECT * FROM migration_flavor_staging WHERE project_id=%s AND (confirmed=true OR skip=true) ORDER BY vcpus, ram_mb", (project_id,))
+            flavors = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT mu.*, t.tenant_name, t.target_project_name, t.target_domain_name
+                FROM migration_tenant_users mu
+                JOIN migration_tenants t ON t.id = mu.tenant_id
+                WHERE mu.project_id=%s ORDER BY t.tenant_name, mu.user_type
+            """, (project_id,))
+            mu_users = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT op.* FROM migration_projects mp
+                LEFT JOIN migration_overcommit_profiles op ON op.profile_name = mp.overcommit_profile_name
+                WHERE mp.project_id=%s
+            """, (project_id,))
+            pr = cur.fetchone()
+            profile = dict(pr) if pr else {}
+            cpu_ratio   = float(profile.get("cpu_ratio",  4.0))
+            ram_ratio   = float(profile.get("ram_ratio",  1.5))
+            disk_factor = float(profile.get("disk_snapshot_factor", 1.5))
+
+            inserts = []
+
+            # 1. create_domain
+            seen_domains: set = set()
+            for i, t in enumerate(tenants):
+                dn = (t.get("target_domain_name") or "").strip()
+                if dn and dn not in seen_domains:
+                    seen_domains.add(dn)
+                    inserts.append((project_id, 1000 + i*10, "create_domain",
+                                    f"Create domain: {dn}", None,
+                                    json.dumps({"domain_name": dn, "description": t.get("target_domain_description") or ""})))
+
+            # 2. create_project
+            for i, t in enumerate(tenants):
+                proj = (t.get("target_project_name") or "").strip()
+                dom  = (t.get("target_domain_name") or "").strip()
+                if proj and dom:
+                    inserts.append((project_id, 2000 + i*10, "create_project",
+                                    f"Create project: {proj}", t.get("tenant_name"),
+                                    json.dumps({"project_name": proj, "domain_name": dom,
+                                                "description": t.get("target_display_name") or proj})))
+
+            # 3. set_quotas
+            for i, t in enumerate(tenants):
+                proj = (t.get("target_project_name") or "").strip()
+                dom  = (t.get("target_domain_name") or "").strip()
+                if not proj or not dom:
+                    continue
+                vcpu_rec   = max(1,    round(int(t.get("total_vcpu", 0) or 0) / cpu_ratio))
+                ram_mb_rec = max(1024, round(int(t.get("total_ram_mb", 0) or 0) / ram_ratio))
+                disk_gb_rec = round(float(t.get("total_disk_gb", 0) or 0) * disk_factor)
+                vm_cnt = int(t.get("vm_count", 0) or 0)
+                inserts.append((project_id, 3000 + i*10, "set_quotas",
+                                f"Set quotas: {proj}", t.get("tenant_name"),
+                                json.dumps({
+                                    "project_name": proj, "domain_name": dom,
+                                    "nova":    {"cores": vcpu_rec * 2, "instances": max(10, vm_cnt + 5), "ram": ram_mb_rec},
+                                    "neutron": {"network": 10, "subnet": 20, "port": 100, "router": 5, "floatingip": 20},
+                                    "cinder":  {"volumes": 100, "gigabytes": int(disk_gb_rec) or 500},
+                                })))
+
+            # 4. create_network + 5. create_subnet
+            for i, net in enumerate(networks):
+                nname = (net.get("target_network_name") or net.get("source_network_name") or "").strip()
+                if not nname:
+                    continue
+                vlan = net.get("vlan_id")
+                inserts.append((project_id, 4000 + i*10, "create_network",
+                                f"Create network: {nname}", None,
+                                json.dumps({"network_name": nname,
+                                            "source_network_name": net.get("source_network_name"),
+                                            "vlan_id": int(vlan) if vlan else None,
+                                            "network_kind": net.get("network_kind") or "physical_managed",
+                                            "is_external": bool(net.get("is_external")),
+                                            "mapping_id": net.get("id")})))
+                cidr = (net.get("cidr") or "").strip()
+                if cidr:
+                    pools = []
+                    if net.get("allocation_pool_start") and net.get("allocation_pool_end"):
+                        pools = [{"start": net["allocation_pool_start"], "end": net["allocation_pool_end"]}]
+                    dns_raw = net.get("dns_nameservers") or []
+                    inserts.append((project_id, 5000 + i*10, "create_subnet",
+                                    f"Create subnet: {nname}-subnet ({cidr})", None,
+                                    json.dumps({"subnet_name": f"{nname}-subnet",
+                                                "network_name": nname, "cidr": cidr,
+                                                "gateway_ip": net.get("gateway_ip"),
+                                                "dns_nameservers": dns_raw if isinstance(dns_raw, list) else [],
+                                                "enable_dhcp": bool(net.get("dhcp_enabled", True)),
+                                                "allocation_pools": pools,
+                                                "mapping_id": net.get("id")})))
+
+            # 6. create_flavor
+            for i, fl in enumerate(flavors):
+                if fl.get("skip"):
+                    continue
+                fname = (fl.get("target_flavor_name") or fl.get("source_shape") or "").strip()
+                if fname:
+                    inserts.append((project_id, 6000 + i*10, "create_flavor",
+                                    f"Create flavor: {fname}", None,
+                                    json.dumps({"flavor_name": fname,
+                                                "vcpus": int(fl.get("vcpus", 1)),
+                                                "ram_mb": int(fl.get("ram_mb", 1024)),
+                                                "disk_gb": 0,
+                                                "staging_id": fl.get("id")})))
+
+            # 7. create_user
+            for i, u in enumerate(mu_users):
+                if u.get("is_existing_user"):
+                    continue
+                uname = (u.get("username") or "").strip()
+                if uname:
+                    inserts.append((project_id, 7000 + i*10, "create_user",
+                                    f"Create user: {uname}", u.get("tenant_name"),
+                                    json.dumps({"username": uname,
+                                                "email": u.get("email") or "",
+                                                "domain_name": (u.get("target_domain_name") or "").strip(),
+                                                "user_record_id": u.get("id")})))
+
+            # 8. assign_role
+            for i, u in enumerate(mu_users):
+                uname = (u.get("username") or "").strip()
+                proj  = (u.get("target_project_name") or "").strip()
+                if uname and proj:
+                    inserts.append((project_id, 8000 + i*10, "assign_role",
+                                    f"Assign {u.get('role','member')}: {uname} → {proj}",
+                                    u.get("tenant_name"),
+                                    json.dumps({"username": uname, "project_name": proj,
+                                                "domain_name": (u.get("target_domain_name") or "").strip(),
+                                                "role": u.get("role") or "member"})))
+
+            for row in inserts:
+                cur.execute("""
+                    INSERT INTO migration_prep_tasks
+                        (project_id, task_order, task_type, task_name, tenant_name, detail, status)
+                    VALUES (%s,%s,%s,%s,%s,%s,'pending')
+                """, row)
+            conn.commit()
+
+    _log_activity(actor=actor, action="generate_prep_tasks", resource_type="migration_prep_tasks",
+                  resource_id=project_id, details={"task_count": len(inserts)})
+    return {"status": "ok", "tasks_generated": len(inserts)}
+
+
+@router.get("/projects/{project_id}/prep-tasks",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_prep_tasks(project_id: str):
+    """List all prep tasks for the project, ordered for execution."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_prep_tasks WHERE project_id=%s ORDER BY task_order, id", (project_id,))
+            tasks = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    counts: Dict[str, int] = {}
+    for t in tasks:
+        s = t.get("status", "pending")
+        counts[s] = counts.get(s, 0) + 1
+    return {"status": "ok", "tasks": tasks, "counts": counts}
+
+
+def _execute_one_task(task: Dict[str, Any], project_id: str, conn, actor: str) -> Dict[str, Any]:
+    """
+    Execute a single prep task against PCD. Returns {resource_id, result} on success.
+    Raises on failure. Caller handles status updates.
+    """
+    from pf9_control import get_client
+    client = get_client()
+    client.authenticate()
+
+    ttype  = task["task_type"]
+    detail = task.get("detail") or {}
+    if isinstance(detail, str):
+        detail = json.loads(detail)
+
+    # Helper: find PCD resource_id from a previously completed task
+    def _find_task_resource(task_type: str, name_key: str, name_val: str) -> Optional[str]:
+        with conn.cursor() as c2:
+            c2.execute("""
+                SELECT resource_id FROM migration_prep_tasks
+                WHERE project_id=%s AND task_type=%s AND status='done'
+                  AND detail::json->%s = to_json(%s::text)
+                LIMIT 1
+            """, (project_id, task_type, name_key, name_val))
+            row = c2.fetchone()
+            return row[0] if row else None
+
+    if ttype == "create_domain":
+        dn = detail["domain_name"]
+        existing = {d["name"]: d["id"] for d in client.list_domains()}
+        if dn in existing:
+            return {"resource_id": existing[dn], "result": {"skipped": True, "reason": "already_exists"}}
+        dom = client.create_domain(dn, description=detail.get("description") or "")
+        return {"resource_id": dom["id"], "result": dom}
+
+    elif ttype == "create_project":
+        pname = detail["project_name"]
+        dname = detail["domain_name"]
+        domain_id = _find_task_resource("create_domain", "domain_name", dname)
+        if not domain_id:
+            existing_domains = {d["name"]: d["id"] for d in client.list_domains()}
+            domain_id = existing_domains.get(dname)
+        if not domain_id:
+            raise ValueError(f"Domain '{dname}' not found in PCD — run create_domain first")
+        existing_projects = {p["name"]: p["id"] for p in client.list_projects(domain_id=domain_id)}
+        if pname in existing_projects:
+            return {"resource_id": existing_projects[pname], "result": {"skipped": True, "reason": "already_exists"}}
+        proj = client.create_project(pname, domain_id=domain_id, description=detail.get("description") or "")
+        return {"resource_id": proj["id"], "result": proj}
+
+    elif ttype == "set_quotas":
+        pname = detail["project_name"]
+        dname = detail["domain_name"]
+        pcd_proj_id = _find_task_resource("create_project", "project_name", pname)
+        if not pcd_proj_id:
+            dexisting = {d["name"]: d["id"] for d in client.list_domains()}
+            did = dexisting.get(dname)
+            if did:
+                pexisting = {p["name"]: p["id"] for p in client.list_projects(domain_id=did)}
+                pcd_proj_id = pexisting.get(pname)
+        if not pcd_proj_id:
+            raise ValueError(f"PCD project '{pname}' not found — run create_project first")
+        if detail.get("nova"):
+            client.update_compute_quotas(pcd_proj_id, detail["nova"])
+        if detail.get("neutron"):
+            client.update_network_quotas(pcd_proj_id, detail["neutron"])
+        if detail.get("cinder"):
+            try:
+                client.update_storage_quotas(pcd_proj_id, detail["cinder"])
+            except Exception:
+                pass  # Cinder may not be available
+        return {"resource_id": pcd_proj_id, "result": {"nova": detail.get("nova"), "neutron": detail.get("neutron"), "cinder": detail.get("cinder")}}
+
+    elif ttype == "create_network":
+        nname = detail["network_name"]
+        vlan  = detail.get("vlan_id")
+        kind  = detail.get("network_kind", "physical_managed")
+        is_ext= bool(detail.get("is_external"))
+        existing_nets = {n["name"]: n["id"] for n in client.list_networks()}
+        if nname in existing_nets:
+            net_id = existing_nets[nname]
+            # Write back mapping_id
+            if detail.get("mapping_id"):
+                with conn.cursor() as c2:
+                    c2.execute("UPDATE migration_network_mappings SET target_network_id=%s WHERE id=%s",
+                               (net_id, detail["mapping_id"]))
+            return {"resource_id": net_id, "result": {"skipped": True, "reason": "already_exists"}}
+        if kind in ("physical_managed", "physical_l2") and vlan:
+            physnets = client.list_physical_networks()
+            physnet  = physnets[0] if physnets else "physnet1"
+            net = client.create_provider_network(nname, network_type="vlan", physical_network=physnet,
+                                                  segmentation_id=vlan, external=is_ext)
+        else:
+            net = client.create_network(nname, external=is_ext)
+        net_id = net["id"]
+        if detail.get("mapping_id"):
+            with conn.cursor() as c2:
+                c2.execute("UPDATE migration_network_mappings SET target_network_id=%s WHERE id=%s",
+                           (net_id, detail["mapping_id"]))
+        return {"resource_id": net_id, "result": net}
+
+    elif ttype == "create_subnet":
+        nname = detail["network_name"]
+        cidr  = detail["cidr"]
+        net_id = _find_task_resource("create_network", "network_name", nname)
+        if not net_id:
+            for n in client.list_networks():
+                if n["name"] == nname:
+                    net_id = n["id"]
+                    break
+        if not net_id:
+            raise ValueError(f"Network '{nname}' not found — run create_network first")
+        existing_subnets = [s for s in client.list_subnets(network_id=net_id)]
+        if existing_subnets:
+            return {"resource_id": existing_subnets[0]["id"], "result": {"skipped": True, "reason": "subnet_exists"}}
+        pools = detail.get("allocation_pools") or []
+        sub = client.create_subnet(net_id, cidr=cidr,
+                                    name=detail.get("subnet_name") or f"{nname}-subnet",
+                                    gateway_ip=detail.get("gateway_ip"),
+                                    dns_nameservers=detail.get("dns_nameservers") or [],
+                                    enable_dhcp=bool(detail.get("enable_dhcp", True)),
+                                    allocation_pools=pools if pools else None)
+        return {"resource_id": sub["id"], "result": sub}
+
+    elif ttype == "create_flavor":
+        fname = detail["flavor_name"]
+        existing_flavors = {f["name"]: f["id"] for f in client.list_flavors()}
+        if fname in existing_flavors:
+            fid = existing_flavors[fname]
+            if detail.get("staging_id"):
+                with conn.cursor() as c2:
+                    c2.execute("UPDATE migration_flavor_staging SET pcd_flavor_id=%s WHERE id=%s",
+                               (fid, detail["staging_id"]))
+            return {"resource_id": fid, "result": {"skipped": True, "reason": "already_exists"}}
+        fl = client.create_flavor(fname, vcpus=int(detail.get("vcpus",1)),
+                                   ram_mb=int(detail.get("ram_mb",1024)), disk_gb=0)
+        fid = fl.get("flavor", fl).get("id", "")
+        if detail.get("staging_id"):
+            with conn.cursor() as c2:
+                c2.execute("UPDATE migration_flavor_staging SET pcd_flavor_id=%s WHERE id=%s",
+                           (fid, detail["staging_id"]))
+        return {"resource_id": fid, "result": fl}
+
+    elif ttype == "create_user":
+        uname  = detail["username"]
+        dname  = detail.get("domain_name", "Default")
+        domain_id = _find_task_resource("create_domain", "domain_name", dname)
+        if not domain_id:
+            existing_domains = {d["name"]: d["id"] for d in client.list_domains()}
+            domain_id = existing_domains.get(dname)
+        if not domain_id:
+            raise ValueError(f"Domain '{dname}' not found")
+        existing_users = {u["name"]: u["id"] for u in client.list_users(domain_id=domain_id)}
+        if uname in existing_users:
+            uid = existing_users[uname]
+            if detail.get("user_record_id"):
+                with conn.cursor() as c2:
+                    c2.execute("UPDATE migration_tenant_users SET pcd_user_id=%s WHERE id=%s",
+                               (uid, detail["user_record_id"]))
+            return {"resource_id": uid, "result": {"skipped": True, "reason": "already_exists"}}
+        import secrets
+        tmp_pw = secrets.token_urlsafe(16)
+        u_obj = client.create_user(uname, password=tmp_pw,
+                                    domain_id=domain_id, email=detail.get("email") or "")
+        uid = u_obj.get("id", "")
+        if detail.get("user_record_id"):
+            with conn.cursor() as c2:
+                c2.execute("UPDATE migration_tenant_users SET pcd_user_id=%s, temp_password=%s WHERE id=%s",
+                           (uid, tmp_pw, detail["user_record_id"]))
+        return {"resource_id": uid, "result": {"id": uid, "name": uname, "temp_password": tmp_pw}}
+
+    elif ttype == "assign_role":
+        uname = detail["username"]
+        pname = detail["project_name"]
+        dname = detail.get("domain_name", "Default")
+        role_name = detail.get("role", "member")
+        pcd_user_id = _find_task_resource("create_user", "username", uname)
+        if not pcd_user_id:
+            domain_id = next((d["id"] for d in client.list_domains() if d["name"] == dname), None)
+            if domain_id:
+                pcd_user_id = next((u["id"] for u in client.list_users(domain_id=domain_id) if u["name"] == uname), None)
+        if not pcd_user_id:
+            raise ValueError(f"User '{uname}' not found in PCD")
+        pcd_proj_id = _find_task_resource("create_project", "project_name", pname)
+        if not pcd_proj_id:
+            domain_id = next((d["id"] for d in client.list_domains() if d["name"] == dname), None)
+            if domain_id:
+                pcd_proj_id = next((p["id"] for p in client.list_projects(domain_id=domain_id) if p["name"] == pname), None)
+        if not pcd_proj_id:
+            raise ValueError(f"Project '{pname}' not found in PCD")
+        roles = {r["name"]: r["id"] for r in client.list_roles()}
+        role_id = roles.get(role_name) or roles.get("member")
+        if not role_id:
+            raise ValueError(f"Role '{role_name}' not found in PCD")
+        client.assign_role_to_user_on_project(pcd_proj_id, pcd_user_id, role_id)
+        return {"resource_id": pcd_proj_id, "result": {"user_id": pcd_user_id, "role_id": role_id}}
+
+    else:
+        raise ValueError(f"Unknown task_type: {ttype}")
+
+
+@router.post("/projects/{project_id}/prep-tasks/{task_id}/execute",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def execute_prep_task(project_id: str, task_id: int, user=Depends(get_current_user)):
+    """Execute a single prep task against PCD."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_prep_tasks WHERE id=%s AND project_id=%s", (task_id, project_id))
+            task = cur.fetchone()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            task = dict(task)
+            if task["status"] == "done":
+                return {"status": "ok", "message": "already_done", "task": _serialize_row(task)}
+            cur.execute("UPDATE migration_prep_tasks SET status='running', executed_by=%s, executed_at=now() WHERE id=%s",
+                        (actor, task_id))
+            conn.commit()
+
+        try:
+            res = _execute_one_task(task, project_id, conn, actor)
+            with conn.cursor() as cur:
+                cur.execute("""UPDATE migration_prep_tasks
+                               SET status='done', resource_id=%s, result=%s, error_message=NULL
+                               WHERE id=%s""",
+                            (res["resource_id"], json.dumps(res["result"]), task_id))
+                conn.commit()
+            _log_activity(actor=actor, action="execute_prep_task", resource_type="migration_prep_tasks",
+                          resource_id=str(task_id), details={"task_type": task["task_type"], "task_name": task["task_name"]})
+            return {"status": "ok", "resource_id": res["resource_id"], "result": res["result"]}
+        except Exception as exc:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE migration_prep_tasks SET status='failed', error_message=%s WHERE id=%s",
+                            (str(exc), task_id))
+                conn.commit()
+            raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/projects/{project_id}/prepare/run",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def run_all_prep_tasks(project_id: str, user=Depends(get_current_user)):
+    """Execute all pending (and failed) tasks in order. Stops on first new failure."""
+    actor = user.username if user else "system"
+    done_count = 0; fail_count = 0; skipped_count = 0
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""SELECT * FROM migration_prep_tasks
+                           WHERE project_id=%s AND status IN ('pending','failed')
+                           ORDER BY task_order, id""", (project_id,))
+            pending = [dict(r) for r in cur.fetchall()]
+
+        for task in pending:
+            tid = task["id"]
+            with conn.cursor() as cur:
+                cur.execute("UPDATE migration_prep_tasks SET status='running', executed_by=%s, executed_at=now() WHERE id=%s",
+                            (actor, tid))
+                conn.commit()
+            try:
+                res = _execute_one_task(task, project_id, conn, actor)
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE migration_prep_tasks SET status='done', resource_id=%s, result=%s, error_message=NULL WHERE id=%s",
+                                (res["resource_id"], json.dumps(res["result"]), tid))
+                    conn.commit()
+                if res.get("result", {}).get("skipped"):
+                    skipped_count += 1
+                else:
+                    done_count += 1
+            except Exception as exc:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE migration_prep_tasks SET status='failed', error_message=%s WHERE id=%s",
+                                (str(exc), tid))
+                    conn.commit()
+                fail_count += 1
+                break  # stop on first failure
+
+    _log_activity(actor=actor, action="run_prep_tasks", resource_type="migration_prep_tasks",
+                  resource_id=project_id, details={"done": done_count, "failed": fail_count})
+    return {"status": "ok", "done": done_count, "failed": fail_count, "skipped": skipped_count}
+
+
+@router.post("/projects/{project_id}/prep-tasks/{task_id}/rollback",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def rollback_prep_task(project_id: str, task_id: int, user=Depends(get_current_user)):
+    """
+    Rollback (undo) a completed prep task — deletes the created PCD resource.
+    Supported: create_domain, create_project, create_network, create_flavor, create_user.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_prep_tasks WHERE id=%s AND project_id=%s", (task_id, project_id))
+            task = cur.fetchone()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            task = dict(task)
+
+        from pf9_control import get_client
+        client = get_client(); client.authenticate()
+        ttype   = task["task_type"]
+        res_id  = task.get("resource_id") or ""
+        detail  = task.get("detail") or {}
+        if isinstance(detail, str):
+            detail = json.loads(detail)
+        msg = "rollback_not_supported"
+
+        try:
+            if ttype == "create_domain" and res_id:
+                counts = client.count_domain_resources(res_id)
+                if counts["projects"] > 0 or counts["users"] > 0:
+                    raise HTTPException(status_code=409, detail=f"Domain still has {counts['projects']} projects / {counts['users']} users")
+                client.update_domain(res_id, enabled=False)
+                client.delete_domain(res_id)
+                msg = "domain_deleted"
+            elif ttype == "create_project" and res_id:
+                client.delete_project(res_id)
+                with conn.cursor() as c2:
+                    c2.execute("UPDATE migration_tenants SET pcd_project_id=NULL WHERE project_id=%s AND target_project_name=%s",
+                               (project_id, detail.get("project_name")))
+                msg = "project_deleted"
+            elif ttype == "create_network" and res_id:
+                client.delete_network(res_id)
+                if detail.get("mapping_id"):
+                    with conn.cursor() as c2:
+                        c2.execute("UPDATE migration_network_mappings SET target_network_id=NULL WHERE id=%s", (detail["mapping_id"],))
+                msg = "network_deleted"
+            elif ttype == "create_flavor" and res_id:
+                client.delete_flavor(res_id)
+                if detail.get("staging_id"):
+                    with conn.cursor() as c2:
+                        c2.execute("UPDATE migration_flavor_staging SET pcd_flavor_id=NULL WHERE id=%s", (detail["staging_id"],))
+                msg = "flavor_deleted"
+            elif ttype == "create_user" and res_id:
+                client.delete_user(res_id)
+                if detail.get("user_record_id"):
+                    with conn.cursor() as c2:
+                        c2.execute("UPDATE migration_tenant_users SET pcd_user_id=NULL WHERE id=%s", (detail["user_record_id"],))
+                msg = "user_deleted"
+
+            with conn.cursor() as cur:
+                cur.execute("UPDATE migration_prep_tasks SET status='pending', resource_id=NULL, result='{}', error_message=NULL WHERE id=%s", (task_id,))
+                conn.commit()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    _log_activity(actor=actor, action="rollback_prep_task", resource_type="migration_prep_tasks",
+                  resource_id=str(task_id), details={"task_type": ttype, "result": msg})
+    return {"status": "ok", "message": msg}
+
+
+@router.delete("/projects/{project_id}/prep-tasks",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def clear_prep_tasks(project_id: str, user=Depends(get_current_user)):
+    """Clear all pending/failed tasks so prepare can regenerate."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_prep_tasks WHERE project_id=%s AND status IN ('pending','failed')", (project_id,))
+            conn.commit()
+    _log_activity(actor=actor, action="clear_prep_tasks", resource_type="migration_prep_tasks",
+                  resource_id=project_id, details={})
+    return {"status": "ok"}
+
+
 def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a single DB row dict to JSON-safe format."""
     result = {}

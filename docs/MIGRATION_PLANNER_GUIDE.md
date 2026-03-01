@@ -1,6 +1,6 @@
 # Migration Planner — Operator Guide
 
-> **Version**: v1.34.0 | **Last Updated**: 2026-02-28
+> **Version**: v1.36.0 | **Last Updated**: 2026-03-01
 > Complete reference for the pf9-mngt Migration Planner — from RVTools ingestion through wave execution.
 
 ---
@@ -14,10 +14,12 @@
 5. [Phase 2.10 — Pre-Wave Foundations](#phase-210--pre-wave-foundations)
 6. [Phase 3.0 — Cohort Planning](#phase-30--cohort-planning)
 7. [Phase 3 — Wave Planning](#phase-3--wave-planning)
-8. [End-to-End Workflow](#end-to-end-workflow)
-9. [API Reference](#api-reference)
-10. [Database Schema](#database-schema)
-11. [Troubleshooting](#troubleshooting)
+8. [Phase 4A — PCD Data Enrichment](#phase-4a--pcd-data-enrichment)
+9. [Phase 4B — PCD Auto-Provisioning](#phase-4b--pcd-auto-provisioning)
+10. [End-to-End Workflow](#end-to-end-workflow)
+11. [API Reference](#api-reference)
+12. [Database Schema](#database-schema)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -33,7 +35,9 @@ The **Migration Planner** is an integrated module within pf9-mngt that guides op
 | 3.0 | Smart cohort planning — ease scores, auto-assign strategies, ramp profiles, What-If estimator | ✅ Complete |
 | 3.0.1 | Cohort-aligned scheduling, two-model What-If, cohort execution plan, tenant reassignment | ✅ Complete |
 | 3 | Wave planning — auto-build, lifecycle management, pre-flight checklists, VM funnel tracking | ✅ Complete |
-| 4 | Target preparation & auto-provisioning | 🔲 Planned |
+| 4A | PCD Data Enrichment — subnet details, flavor staging, image checklist, user definitions | ✅ Complete |
+| 4B | PCD Auto-Provisioning — domains, projects, quotas, networks, flavors, users, roles | ✅ Complete |
+| 4C | vJailbreak Handoff — credential bundle + tenant handoff sheet | 🔲 Planned |
 | 5 | vJailbreak integration & live execution | 🔲 Planned |
 | 6 | Post-migration validation | 🔲 Planned |
 
@@ -473,6 +477,65 @@ Displayed as a colour-coded progress bar at the top of the Wave Planner tab.
 
 ---
 
+## Phase 4A — PCD Data Enrichment
+
+> Prerequisite: Wave plan built and reviewed (Phase 3 complete).
+
+Phase 4A collects the information that cannot be derived from RVTools — the actual PCD target configuration. All four items must be confirmed before Phase 4B can run.
+
+| Sub-phase | What you configure | API |
+|-----------|-------------------|-----|
+| **4A.1 Subnet Details** | CIDR, gateway, DNS, DHCP pool start/end per confirmed network mapping | `PATCH /network-mappings/{id}`, `POST /network-mappings/confirm-all` |
+| **4A.2 Flavor Staging** | Review de-duplicated (vCPU, RAM) shapes; rename, Find & Replace, confirm or skip | `GET/PATCH /flavor-staging`, `POST /flavor-staging/confirm-all` |
+| **4A.3 Image Requirements** | One row per OS family; confirm after uploading to PCD Glance | `GET/PATCH /image-requirements`, `POST /image-requirements/confirm-all` |
+| **4A.4 Tenant Users** | Define service accounts and owner accounts per tenant | `GET/POST/PATCH/DELETE /tenant-users` |
+
+The **⚙️ Prepare PCD** tab gate (`GET /prep-readiness`) will show red ✗ for any unfinished item.
+
+---
+
+## Phase 4B — PCD Auto-Provisioning
+
+> Prerequisite: All Phase 4A items confirmed.
+
+### Workflow
+
+1. Open the **⚙️ Prepare PCD** sub-tab in the Migration Planner.
+2. Verify the Readiness grid shows all four cards green.
+3. Click **🔄 Generate Plan** — calls `POST /prepare`, creates an ordered task list (~667 tasks for a typical 120-tenant project).
+4. Review the task table. Tasks are ordered: `create_domain` → `create_project` → `set_quotas` → `create_network` → `create_subnet` → `create_flavor` → `create_user` → `assign_role`.
+5. Click **▶ Run All** to execute all pending tasks in order, or use the per-row **▶** button to execute individually.
+6. Failed tasks show an inline error — fix the root cause and re-run the individual task.
+7. Use **↩ Rollback** on any `done` task to delete the PCD resource and reset to `pending`.
+8. When all tasks are `done` or `skipped`, Phase 4B is complete — PCD UUIDs are written back to all source tables.
+
+### Task Types
+
+| Task Type | What it does | Writes back |
+|-----------|-------------|-------------|
+| `create_domain` | Creates a Keystone domain; skips if already exists | — |
+| `create_project` | Creates a Keystone project under its domain | — |
+| `set_quotas` | Applies Nova + Neutron + Cinder quotas (from overcommit profile) | — |
+| `create_network` | Creates provider network (VLAN type) or tenant network | `migration_network_mappings.target_network_id` |
+| `create_subnet` | Creates subnet with CIDR, gateway, DNS, DHCP pool | — |
+| `create_flavor` | Creates Nova flavor; skips if already exists | `migration_flavor_staging.pcd_flavor_id` |
+| `create_user` | Creates Keystone user with auto-generated temp password | `migration_tenant_users.pcd_user_id`, `.temp_password` |
+| `assign_role` | Assigns role to user in project | — |
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/migration/projects/{id}/prep-readiness` | Pre-flight check — returns 4A gate status per item |
+| `POST` | `/api/migration/projects/{id}/prepare` | Generate ordered task plan (clears previous pending/failed) |
+| `GET` | `/api/migration/projects/{id}/prep-tasks` | List all tasks with status counts |
+| `POST` | `/api/migration/projects/{id}/prep-tasks/{task_id}/execute` | Execute a single task |
+| `POST` | `/api/migration/projects/{id}/prepare/run` | Run all pending/failed tasks in order |
+| `POST` | `/api/migration/projects/{id}/prep-tasks/{task_id}/rollback` | Undo a completed task |
+| `DELETE` | `/api/migration/projects/{id}/prep-tasks` | Clear all pending/failed tasks |
+
+---
+
 ## End-to-End Workflow
 
 ```
@@ -515,12 +578,24 @@ Displayed as a colour-coded progress bar at the top of the Wave Planner tab.
    └── Verify + mark each check pass/fail/skip
    └── All blockers must pass before advancing
 
-9. EXECUTE WAVES (Phase 3 → future Phase 5)
-   └── Advance Wave 0 to executing (pilot)
-   └── Validate pilot → advance to complete
-   └── Proceed wave by wave through the plan
+9. PHASE 4A — PCD DATA ENRICHMENT
+   └── Network Map tab → fill CIDR/gateway/DNS per row → Confirm Subnets
+   └── Flavor Staging tab → review shapes → confirm or skip each
+   └── Image Requirements tab → confirm after uploading to Glance
+   └── Users tab → define service accounts + owner accounts per tenant
 
-10. EXPORT REPORTS
+10. PHASE 4B — PCD AUTO-PROVISIONING
+    └── Prepare PCD tab → verify readiness grid (all green)
+    └── Generate Plan → review task list
+    └── Run All → monitor progress, fix failures, re-run
+    └── All tasks done/skipped → PCD is fully provisioned
+
+11. EXECUTE WAVES (future Phase 5 — vJailbreak)
+    └── Advance Wave 0 to executing (pilot)
+    └── Validate pilot → advance to complete
+    └── Proceed wave by wave through the plan
+
+12. EXPORT REPORTS
     └── GET /projects/{id}/export-plan  (XLSX / PDF)
     └── GET /projects/{id}/gap-report   (XLSX / PDF)
 ```
@@ -598,6 +673,37 @@ Displayed as a colour-coded progress bar at the top of the Wave Planner tab.
 | `PATCH` | `/api/migration/projects/{id}/waves/{wid}/preflights/{check_name}` | Update a pre-flight check |
 | `GET` | `/api/migration/projects/{id}/migration-funnel` | VM status rollup funnel |
 
+### Phase 4A — Data Enrichment
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/migration/projects/{id}/network-mappings/export-template` | Download pre-filled XLSX template |
+| `POST` | `/api/migration/projects/{id}/network-mappings/import-template` | Import filled template |
+| `POST` | `/api/migration/projects/{id}/network-mappings/confirm-subnets` | Bulk-confirm all rows with CIDR |
+| `GET` | `/api/migration/projects/{id}/flavor-staging` | List flavor staging rows |
+| `PATCH` | `/api/migration/projects/{id}/flavor-staging/{id}` | Update flavor row |
+| `POST` | `/api/migration/projects/{id}/flavor-staging/confirm-all` | Confirm all flavors |
+| `POST` | `/api/migration/projects/{id}/flavor-staging/match-pcd` | Match shapes against live Nova |
+| `GET` | `/api/migration/projects/{id}/image-requirements` | List image requirement rows |
+| `PATCH` | `/api/migration/projects/{id}/image-requirements/{id}` | Confirm/update image row |
+| `POST` | `/api/migration/projects/{id}/image-requirements/confirm-all` | Confirm all images |
+| `GET` | `/api/migration/projects/{id}/tenant-users` | List tenant user definitions |
+| `POST` | `/api/migration/projects/{id}/tenant-users` | Add user definition |
+| `PATCH` | `/api/migration/projects/{id}/tenant-users/{id}` | Update user |
+| `DELETE` | `/api/migration/projects/{id}/tenant-users/{id}` | Remove user |
+
+### Phase 4B — PCD Auto-Provisioning
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/migration/projects/{id}/prep-readiness` | Pre-flight 4A gate check |
+| `POST` | `/api/migration/projects/{id}/prepare` | Generate ordered task plan |
+| `GET` | `/api/migration/projects/{id}/prep-tasks` | List tasks with status counts |
+| `POST` | `/api/migration/projects/{id}/prep-tasks/{task_id}/execute` | Execute single task |
+| `POST` | `/api/migration/projects/{id}/prepare/run` | Run all pending/failed tasks |
+| `POST` | `/api/migration/projects/{id}/prep-tasks/{task_id}/rollback` | Roll back completed task |
+| `DELETE` | `/api/migration/projects/{id}/prep-tasks` | Clear pending/failed tasks |
+
 ### Plan & Export
 
 | Method | Endpoint | Description |
@@ -623,6 +729,10 @@ migration_cohorts        -- ordered workstreams within a project
 migration_waves          -- execution batches; status lifecycle
 migration_wave_vms       -- VM ↔ wave assignment
 migration_wave_preflights -- per-wave gate checks
+migration_flavor_staging  -- de-duped (vCPU, RAM) shapes; confirm/skip before 4B
+migration_image_requirements -- one row per OS family; Glance confirm gate
+migration_tenant_users   -- service + owner accounts per tenant
+migration_prep_tasks     -- Phase 4B task plan: ordered create/assign tasks with status & PCD resource IDs
 ```
 
 ### `migration_waves` columns (v1.34.0)
