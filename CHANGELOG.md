@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.1] - 2026-03-01
+
+### Fixed — Migration Planner Phase 4A Hotfixes
+
+- **Route ordering 405 on `/network-mappings/readiness`** — FastAPI was matching `PATCH /{mapping_id}` before `GET /readiness` because the static segment `/readiness` was registered after the parameterized route. Moved `get_network_mappings_readiness` to before the `PATCH`/`DELETE` handlers so static paths take precedence.
+- **`GROUP BY` error on subnet-enriched network mappings** — `GET /projects/{id}/network-mappings` used an explicit `GROUP BY` column list that omitted the new Phase 4A columns (`network_kind`, `cidr`, `gateway_ip`, etc.), causing a Postgres error. Replaced with `GROUP BY m.id` (valid because `id` is the primary key — covers all columns via functional dependency).
+- **`dns_nameservers` type mismatch on save** — UI state held DNS nameservers as a comma-separated string but the API expects `List[str]`. `saveSubnetDetails` now splits the string into an array before PATCH.
+- **Section heading** — "Phase 4A — Data Enrichment" heading in PCD Readiness tab renamed to "Pre-Migration Data Enrichment" to remove internal phase numbering from the operator-facing UI.
+
+---
+
 ## [1.35.0] - 2026-03-01
 
 ### Added — Migration Planner Phase 4A: Data Enrichment
