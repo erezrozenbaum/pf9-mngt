@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.5] - 2026-03-01
+
+### Fixed — p9_common not found in API container
+
+- **Root cause**: Docker build context for `pf9_api` was `./api/`, so `p9_common.py` (in the project root) was never copied into the image. Any endpoint that called `import p9_common` — including `GET /pcd-live-inventory`, `POST /pcd-gap-analysis`, and the new `POST /flavor-staging/match-from-pcd` — silently failed with `ModuleNotFoundError`.
+- **Fix**: Changed `docker-compose.yml` build context from `./api` to `.` (project root) with `dockerfile: api/Dockerfile`. Updated `api/Dockerfile` to `COPY api/ ./` + `COPY p9_common.py ./`. `p9_common.py` is now available at `/app/p9_common.py` inside the container.
+
+### Fixed — React key warning in PcdReadinessView gaps detail panel
+
+- `detailKeys.map(k => <div key={k}>…)` used the detail-key string as the React key. If two detail entries happened to share a name (e.g. both named `"value"`), or a key was an empty string, React would emit a "unique key" warning attributed to `PcdReadinessView`. Changed to `detailKeys.map((k, ki) => <div key={\`${k}-${ki}\`}>…)` so keys are always unique.
+
+---
+
 ## [1.35.4] - 2026-03-01
 
 ### New — Flavor Staging: Match from PCD

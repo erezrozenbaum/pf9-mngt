@@ -5908,8 +5908,8 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
                     <td style={{ ...tdStyle, maxWidth: 260 }}>
                       {detailKeys.length > 0 ? (
                         <div style={{ fontSize: "0.78rem" }}>
-                          {detailKeys.map(k => (
-                            <div key={k} style={{ display: "flex", gap: 4, marginBottom: 2 }}>
+                          {detailKeys.map((k, ki) => (
+                            <div key={`${k}-${ki}`} style={{ display: "flex", gap: 4, marginBottom: 2 }}>
                               <span style={{ color: "#9ca3af", minWidth: 80, flexShrink: 0 }}>{k.replace(/_/g, " ")}:</span>
                               <span style={{ fontWeight: 600, color: "#374151", wordBreak: "break-all" }}>
                                 {k === "ram_mb"
