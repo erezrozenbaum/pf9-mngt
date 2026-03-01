@@ -2104,6 +2104,11 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
         rawEdits.dns_nameservers = rawEdits.dns_nameservers
           .split(",").map((s: string) => s.trim()).filter(Boolean);
       }
+      // When DHCP is disabled, clear the allocation pool — no pool needed for static-only subnets
+      if (rawEdits.dhcp_enabled === false) {
+        rawEdits.allocation_pool_start = null;
+        rawEdits.allocation_pool_end = null;
+      }
       await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
         method: "PATCH",
         body: JSON.stringify({ ...rawEdits, subnet_details_confirmed: true }),
@@ -2530,23 +2535,19 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                               placeholder="8.8.8.8, 8.8.4.4"
                               style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
                           </div>
-                          <div>
-                            <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>Pool Start</label>
-                            <input value={se.allocation_pool_start ?? ""} onChange={e => updateSubnetEdit(m.id, "allocation_pool_start", e.target.value)}
-                              placeholder="e.g. 10.0.0.10"
-                              style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>Pool End</label>
-                            <input value={se.allocation_pool_end ?? ""} onChange={e => updateSubnetEdit(m.id, "allocation_pool_end", e.target.value)}
-                              placeholder="e.g. 10.0.0.254"
-                              style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
-                          </div>
                         </div>
-                        <div style={{ display: "flex", gap: 20, marginBottom: 12 }}>
+                        {/* DHCP + Is External checkboxes — before pool so operator sets intent first */}
+                        <div style={{ display: "flex", gap: 20, marginBottom: 10 }}>
                           <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                             <input type="checkbox" checked={se.dhcp_enabled ?? true}
-                              onChange={e => updateSubnetEdit(m.id, "dhcp_enabled", e.target.checked)} />
+                              onChange={e => {
+                                updateSubnetEdit(m.id, "dhcp_enabled", e.target.checked);
+                                // Clear pool when DHCP is disabled — no pool needed for static-only subnets
+                                if (!e.target.checked) {
+                                  updateSubnetEdit(m.id, "allocation_pool_start", "");
+                                  updateSubnetEdit(m.id, "allocation_pool_end", "");
+                                }
+                              }} />
                             DHCP Enabled
                           </label>
                           <label style={{ fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
@@ -2555,6 +2556,31 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                             Is External Network
                           </label>
                         </div>
+                        {/* DHCP Allocation Pool — only shown when DHCP is enabled */}
+                        {(se.dhcp_enabled ?? true) && (
+                          <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 6, padding: "10px 12px", marginBottom: 12 }}>
+                            <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "#0369a1", marginBottom: 6 }}>
+                              DHCP Allocation Pool
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 6 }}>
+                              <div>
+                                <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>Pool Start</label>
+                                <input value={se.allocation_pool_start ?? ""} onChange={e => updateSubnetEdit(m.id, "allocation_pool_start", e.target.value)}
+                                  placeholder="e.g. 10.0.0.10"
+                                  style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
+                              </div>
+                              <div>
+                                <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 3 }}>Pool End</label>
+                                <input value={se.allocation_pool_end ?? ""} onChange={e => updateSubnetEdit(m.id, "allocation_pool_end", e.target.value)}
+                                  placeholder="e.g. 10.0.0.200"
+                                  style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} />
+                              </div>
+                            </div>
+                            <div style={{ fontSize: "0.72rem", color: "#0369a1" }}>
+                              💡 The pool is the DHCP-assigned range. IPs in the subnet <strong>outside</strong> this pool remain available for static assignment (servers, VIPs, etc.).
+                            </div>
+                          </div>
+                        )}
                         <div style={{ display: "flex", gap: 8 }}>
                           <button
                             onClick={() => saveSubnetDetails(m.id)}
