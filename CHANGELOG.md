@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.1] - 2026-03-01
+
+### New — Phase 4B Polish: Confirmation Modal, Execution Summary & Notifications
+
+- **`GET /projects/{id}/prep-summary`** — returns a per-task-type breakdown of provisioning results: `created`, `skipped`, `failed`, `pending` counts plus overall totals and a `complete` boolean flag.
+- **Run All confirmation modal** — clicking *▶ Run All* now opens an inline overlay listing the exact resource counts per type (e.g. "122 × 🏛 Create Domain, 122 × 📁 Create Project, …") with a destructive-action warning before firing the API call.
+- **Provisioning Summary panel** — once all tasks reach `done` status the UI automatically loads and displays a full summary table (task type × created / skipped / failed) sourced from the new `prep-summary` endpoint.
+- **Notification on run completion** — `POST /prepare/run` now fires a `prep_tasks_completed` notification event (severity `critical` if any tasks failed, `info` otherwise) via the existing `_fire_notification` infrastructure so subscribers can receive email/in-app alerts.
+- **`prep_tasks_completed` event type** — registered in `VALID_EVENT_TYPES` in notification routes so administrators can subscribe to it from the Notifications preferences UI.
+
+---
+
 ## [1.36.0] - 2026-03-01
 
 ### New — Phase 4B: ⚙️ Prepare PCD (Auto-Provisioning)
