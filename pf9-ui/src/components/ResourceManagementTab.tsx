@@ -100,6 +100,10 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   const [newNetExternal, setNewNetExternal] = useState(false);
   const [newNetSubnetCidr, setNewNetSubnetCidr] = useState("");
   const [newNetEnableDhcp, setNewNetEnableDhcp] = useState(true);
+  const [newNetKind, setNewNetKind] = useState<"virtual" | "physical_managed" | "physical_l2">("virtual");
+  const [newNetType, setNewNetType] = useState("vlan");   // vlan | flat
+  const [newNetPhysNet, setNewNetPhysNet] = useState("physnet1");
+  const [newNetVlanId, setNewNetVlanId] = useState("");
 
   // Router form
   const [newRouterName, setNewRouterName] = useState("");
@@ -281,21 +285,28 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
           setNewFlavorName("");
           break;
 
-        case "networks":
-          await apiFetch("/api/resources/networks", {
-            method: "POST",
-            body: JSON.stringify({
-              name: newNetName,
-              project_id: newNetProject,
-              shared: newNetShared,
-              external: newNetExternal,
-              subnet_cidr: newNetSubnetCidr || undefined,
-              enable_dhcp: newNetEnableDhcp,
-            }),
-          });
+        case "networks": {
+          const isPhysical = newNetKind !== "virtual";
+          const body: Record<string, unknown> = {
+            name: newNetName,
+            project_id: newNetProject,
+            shared: newNetShared,
+            external: newNetKind === "physical_managed",
+            enable_dhcp: newNetEnableDhcp,
+          };
+          if (isPhysical) {
+            body.network_type = newNetType;
+            body.physical_network = newNetPhysNet;
+            if (newNetVlanId) body.segmentation_id = parseInt(newNetVlanId);
+          }
+          // Physical L2 doesn't get a subnet; others respect the CIDR field
+          if (newNetKind !== "physical_l2" && newNetSubnetCidr)
+            body.subnet_cidr = newNetSubnetCidr;
+          await apiFetch("/api/resources/networks", { method: "POST", body: JSON.stringify(body) });
           setSuccess(`Network '${newNetName}' created successfully`);
-          setNewNetName(""); setNewNetSubnetCidr("");
+          setNewNetName(""); setNewNetSubnetCidr(""); setNewNetVlanId("");
           break;
+        }
 
         case "routers":
           await apiFetch("/api/resources/routers", {
@@ -583,6 +594,18 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
         return (
           <div style={formPanelStyle}>
             <h4 style={{ margin: "0 0 12px", fontSize: "14px" }}>➕ Create Network</h4>
+            {/* Kind selector */}
+            <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+              {(["virtual", "physical_managed", "physical_l2"] as const).map((k) => (
+                <button key={k} onClick={() => setNewNetKind(k)}
+                  style={{
+                    ...btnStyle(newNetKind === k ? "primary" : "outline"),
+                    fontSize: "12px", padding: "5px 10px",
+                  }}>
+                  {k === "virtual" ? "☁️ Virtual" : k === "physical_managed" ? "🔌 Physical Managed" : "🔗 Physical L2 (Beta)"}
+                </button>
+              ))}
+            </div>
             <div style={formRowStyle}>
               <div style={formGroupStyle}>
                 <span style={labelStyle}>Tenant *</span>
@@ -595,25 +618,55 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
                 <span style={labelStyle}>Name *</span>
                 <input value={newNetName} onChange={(e) => setNewNetName(e.target.value)} style={inputStyle} placeholder="e.g. internal-net" />
               </div>
-              <div style={formGroupStyle}>
-                <span style={labelStyle}>Subnet CIDR</span>
-                <input value={newNetSubnetCidr} onChange={(e) => setNewNetSubnetCidr(e.target.value)} style={inputStyle} placeholder="e.g. 10.0.0.0/24" />
-              </div>
+              {/* Provider fields — only for physical kinds */}
+              {newNetKind !== "virtual" && (
+                <>
+                  <div style={formGroupStyle}>
+                    <span style={labelStyle}>Physical Network</span>
+                    <input value={newNetPhysNet} onChange={(e) => setNewNetPhysNet(e.target.value)} style={inputStyle} placeholder="physnet1" />
+                  </div>
+                  <div style={formGroupStyle}>
+                    <span style={labelStyle}>Provider Type</span>
+                    <select value={newNetType} onChange={(e) => setNewNetType(e.target.value)} style={selectStyle}>
+                      <option value="vlan">VLAN</option>
+                      <option value="flat">Flat</option>
+                    </select>
+                  </div>
+                  {newNetType === "vlan" && (
+                    <div style={formGroupStyle}>
+                      <span style={labelStyle}>VLAN ID</span>
+                      <input type="number" value={newNetVlanId} onChange={(e) => setNewNetVlanId(e.target.value)} style={inputStyle} placeholder="e.g. 100" />
+                    </div>
+                  )}
+                </>
+              )}
+              {/* Subnet CIDR — not for L2 */}
+              {newNetKind !== "physical_l2" && (
+                <div style={formGroupStyle}>
+                  <span style={labelStyle}>Subnet CIDR</span>
+                  <input value={newNetSubnetCidr} onChange={(e) => setNewNetSubnetCidr(e.target.value)} style={inputStyle} placeholder="e.g. 10.0.0.0/24" />
+                </div>
+              )}
               <div style={formGroupStyle}>
                 <span style={labelStyle}>Options</span>
                 <div style={{ display: "flex", gap: "12px", fontSize: "13px" }}>
                   <label style={{ display: "flex", alignItems: "center", gap: "4px" }}>
                     <input type="checkbox" checked={newNetShared} onChange={(e) => setNewNetShared(e.target.checked)} /> Shared
                   </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                    <input type="checkbox" checked={newNetExternal} onChange={(e) => setNewNetExternal(e.target.checked)} /> External
-                  </label>
-                  <label style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                    <input type="checkbox" checked={newNetEnableDhcp} onChange={(e) => setNewNetEnableDhcp(e.target.checked)} /> DHCP
-                  </label>
+                  {newNetKind !== "physical_l2" && (
+                    <label style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                      <input type="checkbox" checked={newNetEnableDhcp} onChange={(e) => setNewNetEnableDhcp(e.target.checked)} /> DHCP
+                    </label>
+                  )}
                 </div>
               </div>
             </div>
+            {newNetKind === "physical_managed" && (
+              <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#718096" }}>⚠️ Physical Managed network will be marked external and shared with the tenant project.</p>
+            )}
+            {newNetKind === "physical_l2" && (
+              <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#718096" }}>ℹ️ Layer 2 network — no subnet or DHCP will be provisioned.</p>
+            )}
             <div style={{ display: "flex", gap: "8px" }}>
               <button style={btnStyle("primary")} onClick={handleCreate} disabled={creating || !newNetName || !newNetProject}>
                 {creating ? "Creating..." : "Create Network"}

@@ -2247,22 +2247,29 @@ CREATE TABLE IF NOT EXISTS provisioning_jobs (
     username        TEXT      NOT NULL,
     user_email      TEXT,
     user_role       TEXT      NOT NULL DEFAULT 'member',
+    -- Legacy single-network columns (kept for backward compat; use networks_config for new rows)
     network_name    TEXT,
     network_type    TEXT      DEFAULT 'vlan',
     vlan_id         INTEGER,
     subnet_cidr     TEXT,
     gateway_ip      TEXT,
     dns_nameservers TEXT[]    DEFAULT ARRAY['8.8.8.8', '8.8.4.4'],
+    -- Multi-network support
+    networks_config   JSONB   DEFAULT '[]',   -- requested network list from ProvisionRequest
+    networks_created  JSONB   DEFAULT '[]',   -- actual created networks (ids, kind, cidr, etc.)
+    -- Quotas
     quota_compute   JSONB     DEFAULT '{}',
     quota_network   JSONB     DEFAULT '{}',
     quota_storage   JSONB     DEFAULT '{}',
+    -- Status & results
     status          TEXT      NOT NULL DEFAULT 'pending',
     domain_id       TEXT,
     project_id      TEXT,
     user_id         TEXT,
-    network_id      TEXT,
-    subnet_id       TEXT,
+    network_id      TEXT,      -- legacy: id of first network created
+    subnet_id       TEXT,      -- legacy: id of first subnet created
     security_group_id TEXT,
+    -- Tracking
     created_by      TEXT      NOT NULL DEFAULT 'system',
     started_at      TIMESTAMPTZ,
     completed_at    TIMESTAMPTZ,

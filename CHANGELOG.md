@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.2] - 2026-03-01
+
+### Added
+- **Multi-network provisioning DB persistence** — `provisioning_jobs` now stores the full network configuration and results:
+  - New `networks_config JSONB` column: the complete list of `NetworkConfig` objects as submitted in the provision request (kind, vlan_id, subnet_cidr, physical_network, etc.)
+  - New `networks_created JSONB` column: ordered list of networks actually created with their OpenStack IDs, kind, VLAN, subnet, and gateway — persisted on `completed` update for full audit trail
+  - `db/migrate_provisioning_networks.sql` migration applied automatically on startup via `_ensure_tables()` column check
+  - `db/init.sql` and `db/migrate_provisioning.sql` updated with both columns; legacy single-network columns retained for backward compatibility
+- **Provisioning Tools → Networks: Physical Managed & Physical L2 create** — The Provisioning Tools Networks create form now supports three network kinds:
+  - **☁️ Virtual** (existing behaviour — standard tenant network)
+  - **🔌 Physical Managed** — provider network with `external=True`; requires Physical Network name and Provider Type (VLAN/Flat); optional VLAN ID; optional subnet
+  - **🔗 Physical L2 (Beta)** — provider network with `external=False`; no subnet provisioned; note shown in UI
+  - Kind selector toggles additional fields (physical network, provider type, VLAN ID) and removes subnet field for L2
+  - Sends `network_type`, `physical_network`, `segmentation_id` to the existing `POST /api/resources/networks` endpoint (backend already supported these via `CreateNetworkRequest`)
+
+### Fixed
+- **VLAN ID naming bug** — Typing a multi-digit VLAN ID (e.g. "559") in Customer Provisioning now correctly derives the full name. Root cause: the `if (!net.name)` guard in the VLAN `onChange` handler blocked name updates after the first keypress because the name became non-empty. Fix: replaced two sequential `updateNetwork` calls with a single atomic `setForm` update that always derives the name from the current VLAN value
+- **Network naming conventions** — All three provisioned network kinds now use `domain_name` as prefix and follow the correct convention:
+  - Physical Managed → `<domain_name>_tenant_extnet_vlan_<id>` / `<domain_name>_tenant_extnet`
+  - Physical L2 → `<domain_name>_tenant_L2net_vlan_<id>` / `<domain_name>_tenant_L2net`
+  - Virtual → `<domain_name>_tenant_virtnet` / `<domain_name>_tenant_virtnet_<N>` (N = count for 2nd+)
+  - `addNetwork()` now auto-names on creation; `makeNetworkEntry()` receives `domain_name` and current network list at call time
+- **Welcome email: multi-network template** — The `customer_welcome.html` Network Configuration section now loops over `networks_created` list (replaces single-network variables):
+  - Shows all networks with kind badge (Physical Managed / Physical L2 / Virtual), provider type, VLAN ID, physical network, subnet CIDR, gateway IP, DNS nameservers
+  - Layer 2 networks display a "no subnet provisioned" note
+  - Section header shows total network count with correct singular/plural
+  - Password field was already correct; no change needed
+
+### Changed
+- `provisioning_routes.py` INSERT: saves `networks_config` (full request list as JSONB); populates legacy `network_name`/`vlan_id`/etc. columns from the first network entry for backward compatibility
+- `provisioning_routes.py` UPDATE on complete: persists `networks_created` JSONB; legacy `network_id`/`subnet_id` populated from first created network
+- `deriveNetworkName()` kept as legacy alias for backward-compat references; new `deriveNetName(kind, domainName, vlanId, virtIdx)` handles all three kinds
+
 ## [1.34.1] - 2026-02-28
 
 ### Fixed

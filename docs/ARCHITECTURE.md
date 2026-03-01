@@ -455,7 +455,7 @@ Every infrastructure resource follows a **dual-table pattern**:
 | `user_nav_overrides` | Per-user grant/deny overrides on nav items |
 | `app_settings` | Key-value branding/config (company_name, logo, colors, login hero) |
 | `user_preferences` | Per-user preferences (tab ordering, etc.) |
-| `provisioning_jobs` | Customer provisioning pipeline (domain → project → user → quotas → network) |
+| `provisioning_jobs` | Customer provisioning pipeline (domain → project → user → quotas → multi-network). `networks_config JSONB` stores full requested network list; `networks_created JSONB` stores created network summaries (IDs, kind, VLAN, subnet). Legacy single-network columns kept for backward compat. |
 | `provisioning_steps` | Per-step tracking within provisioning (FK CASCADE) |
 | `activity_log` | Central audit trail for provisioning/domain operations |
 | `backup_config` | Single-row backup configuration (schedule, retention) |
