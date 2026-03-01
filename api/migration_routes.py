@@ -4223,50 +4223,66 @@ async def refresh_flavor_staging(project_id: str, user=Depends(get_current_user)
     with _get_conn() as conn:
         _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Collect distinct (vcpus, ram_mb, disk_gb) shapes from in-scope, non-excluded VMs
+            # Collect distinct (vcpus, ram_mb) shapes from in-scope, non-excluded VMs.
+            # NOTE: disk is intentionally excluded — VCD flavors are boot-volume flavors
+            # (disk=0 on the flavor; the VM's boot disk is handled as a separate volume at
+            # migration time).  Two VMs with the same CPU/RAM but different disk sizes map
+            # to the SAME flavor.
             cur.execute("""
                 SELECT
-                    COALESCE(cpu_count, 0)                          AS vcpus,
-                    COALESCE(ram_mb, 0)                             AS ram_mb,
-                    COALESCE(total_disk_gb::INTEGER, 0)             AS disk_gb,
-                    COUNT(*)                                        AS vm_count
+                    COALESCE(cpu_count, 0)   AS vcpus,
+                    COALESCE(ram_mb, 0)      AS ram_mb,
+                    COUNT(*)                 AS vm_count
                 FROM migration_vms
                 WHERE project_id = %s
                   AND NOT COALESCE(exclude_from_migration, false)
                   AND COALESCE(power_state, '') != 'poweredOff'
-                GROUP BY 1, 2, 3
+                GROUP BY 1, 2
                 ORDER BY vm_count DESC
             """, (project_id,))
             shapes = cur.fetchall()
 
             inserted = 0
             updated = 0
+            new_shapes: set[str] = set()
+
             for s in shapes:
-                vcpus   = s["vcpus"]
-                ram_mb  = s["ram_mb"]
-                disk_gb = s["disk_gb"]
+                vcpus  = s["vcpus"]
+                ram_mb = s["ram_mb"]
                 if vcpus == 0 and ram_mb == 0:
                     continue
                 ram_gb = ram_mb // 1024
-                source_shape = f"{vcpus}vCPU-{ram_gb}GB-{disk_gb}GB"
+                # source_shape no longer includes disk — reflects VCD boot-volume model
+                source_shape = f"{vcpus}vCPU-{ram_gb}GB"
                 default_name = f"m1.custom-{vcpus}cpu-{ram_gb}gb"
+                new_shapes.add(source_shape)
                 cur.execute("""
                     INSERT INTO migration_flavor_staging
                         (project_id, source_shape, vcpus, ram_mb, disk_gb, target_flavor_name, vm_count)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, 0, %s, %s)
                     ON CONFLICT (project_id, source_shape) DO UPDATE
-                        SET vm_count  = EXCLUDED.vm_count,
-                            vcpus     = EXCLUDED.vcpus,
-                            ram_mb    = EXCLUDED.ram_mb,
-                            disk_gb   = EXCLUDED.disk_gb,
+                        SET vm_count   = EXCLUDED.vm_count,
+                            vcpus      = EXCLUDED.vcpus,
+                            ram_mb     = EXCLUDED.ram_mb,
+                            disk_gb    = 0,
                             updated_at = now()
                     RETURNING (xmax = 0) AS is_insert
-                """, (project_id, source_shape, vcpus, ram_mb, disk_gb, default_name, s["vm_count"]))
+                """, (project_id, source_shape, vcpus, ram_mb, default_name, s["vm_count"]))
                 row = cur.fetchone()
                 if row and row["is_insert"]:
                     inserted += 1
                 else:
                     updated += 1
+
+            # Prune any stale rows that used the old disk-in-shape naming (e.g. "4vCPU-8GB-300GB").
+            # This covers both fresh projects and projects that were refreshed before this fix.
+            if new_shapes:
+                cur.execute("""
+                    DELETE FROM migration_flavor_staging
+                    WHERE project_id = %s
+                      AND source_shape NOT IN %s
+                """, (project_id, tuple(new_shapes)))
+
             conn.commit()
     _log_activity(actor=actor, action="refresh_flavor_staging", resource_type="migration_flavor_staging",
                   resource_id=project_id, details={"inserted": inserted, "updated": updated})
@@ -4374,20 +4390,25 @@ async def refresh_image_requirements(project_id: str, user=Depends(get_current_u
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT
-                    COALESCE(os_family, 'other')  AS os_family,
-                    -- Best version hint: most common os_version string for this family
-                    (SELECT os_version FROM migration_vms v2
-                     WHERE v2.project_id = %s
-                       AND COALESCE(v2.os_family, 'other') = COALESCE(v.os_family, 'other')
-                       AND v2.os_version IS NOT NULL
-                     GROUP BY os_version ORDER BY COUNT(*) DESC LIMIT 1) AS os_version_hint,
-                    COUNT(*) AS vm_count
-                FROM migration_vms v
-                WHERE project_id = %s
-                  AND NOT COALESCE(exclude_from_migration, false)
-                  AND COALESCE(os_family, 'other') != 'other'
-                GROUP BY 1
-                ORDER BY vm_count DESC
+                    fam.os_family,
+                    fam.vm_count,
+                    (SELECT os_version
+                     FROM migration_vms
+                     WHERE project_id = %s
+                       AND COALESCE(os_family, 'other') = fam.os_family
+                       AND os_version IS NOT NULL
+                     GROUP BY os_version ORDER BY COUNT(*) DESC LIMIT 1) AS os_version_hint
+                FROM (
+                    SELECT
+                        COALESCE(os_family, 'other') AS os_family,
+                        COUNT(*) AS vm_count
+                    FROM migration_vms
+                    WHERE project_id = %s
+                      AND NOT COALESCE(exclude_from_migration, false)
+                      AND COALESCE(os_family, 'other') != 'other'
+                    GROUP BY 1
+                ) fam
+                ORDER BY fam.vm_count DESC
             """, (project_id, project_id))
             families = cur.fetchall()
 

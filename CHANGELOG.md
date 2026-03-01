@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.2] - 2026-03-01
+
+### Fixed — Flavor Staging: boot-volume flavor model
+
+- **Flavor de-duplication (conceptual fix)** — VCD flavors are boot-volume flavors (disk = 0 GB); the VM's boot disk is handled as a separate volume at migration time, not baked into the flavor definition. `refresh_flavor_staging` previously grouped VMs by `(cpu, ram, disk)`, creating a separate staging row for every unique disk size (e.g., `4vCPU-8GB-300GB` and `4vCPU-8GB-500GB` were treated as two flavors). It now groups by `(cpu, ram)` only, setting `disk_gb = 0`, which correctly collapses all VMs with the same CPU/RAM into a single flavor entry regardless of disk size. This typically reduces the flavor count substantially.
+- **Stale row pruning on refresh** — When re-running Refresh from VMs, any old disk-based rows (from a pre-fix refresh) are now automatically deleted so the table reflects only the correct cpu+ram shapes.
+- **`source_shape` format** — Changed from `"4vCPU-8GB-300GB"` to `"4vCPU-8GB"` to match the boot-volume model.
+
+### Fixed — Image Requirements refresh (GroupingError)
+
+- `POST /projects/{id}/image-requirements/refresh` raised `psycopg2.errors.GroupingError: subquery uses ungrouped column "v.os_family" from outer query`. Rewrote the query to compute `os_family / vm_count` in a derived table `fam`, then the scalar subquery for `os_version_hint` references `fam.os_family` (a proper grouped value) instead of the outer alias.
+
+### Added — Confirm All + F&R for Image Requirements
+
+- **✓ Confirm All** — Both Flavor Staging and Image Requirements now have a "✓ Confirm All" toolbar button that bulk-confirms all pending (non-skipped) rows in a single click.
+- **Find & Replace for Image Requirements** — Image Requirements toolbar now includes a 🔍 F&R panel (matching Flavor Staging's UX). Client-side: filters rows by `glance_image_name`, previews before/after, then PATCHes each matching row.
+
+---
+
 ## [1.35.1] - 2026-03-01
 
 ### Fixed — Migration Planner Phase 4A Hotfixes
