@@ -2,6 +2,46 @@
 
 ## Recent Major Enhancements
 
+### Customer Provisioning — Multi-Network Support (v1.34.2 ✅ Complete)
+
+#### Network Types
+The Customer Provisioning wizard (Admin → Provisioning Tools → Customer Provisioning) now supports three distinct network kinds per provisioning run. Multiple networks of any combination can be added:
+
+| Kind | Label | External | Subnet | Naming Convention |
+|---|---|---|---|---|
+| `physical_managed` | 🔌 Physical Managed | ✅ Yes | Optional | `<domain>_tenant_extnet_vlan_<id>` |
+| `physical_l2` | 🔗 Physical L2 (Beta) | ❌ No | None | `<domain>_tenant_L2net_vlan_<id>` |
+| `virtual` | ☁️ Virtual Network | ❌ No | Optional | `<domain>_tenant_virtnet[_N]` |
+
+- Names are auto-derived from `domain_name` as soon as a VLAN ID is typed (full multi-digit value, no partial-capture bug)
+- `addNetwork()` immediately sets the correct name on card creation
+- Second+ virtual networks get a numeric suffix: `_virtnet_2`, `_virtnet_3`, etc.
+
+#### Provisioning Tools → Networks
+The Admin → Provisioning Tools → Networks create panel now supports Physical Managed and Physical L2 in addition to Virtual networks. A kind selector at the top of the form toggles:
+- **Physical fields** (Physical Network label e.g. `physnet1`, Provider Type VLAN/Flat, VLAN ID)
+- **Subnet field** hidden for L2 networks
+- `external` flag set automatically based on kind (Managed = true, others = false)
+
+Sends `network_type`, `physical_network`, `segmentation_id` to `POST /api/resources/networks`.
+
+#### DB: `provisioning_jobs` table
+Two new JSONB columns store the full network lifecycle:
+
+| Column | Description |
+|---|---|
+| `networks_config` | Full `NetworkConfig` list from the provision request (input snapshot) |
+| `networks_created` | Ordered list of networks actually created: `{network_kind, name, network_id, subnet_id, vlan_id, subnet_cidr, gateway_ip}` |
+
+Legacy single-network columns (`network_name`, `vlan_id`, `subnet_cidr`, `network_id`, `subnet_id`) are populated from the first network entry for backward compatibility.
+
+**Migration**: `db/migrate_provisioning_networks.sql` — run automatically on API startup (column existence check).
+
+#### Welcome Email
+The Network Configuration section of `customer_welcome.html` now loops over `networks_created` and renders a card per network showing: kind badge, provider type, VLAN ID, physical network label, subnet CIDR, gateway, DNS. Layer 2 networks show a "no subnet provisioned" note.
+
+---
+
 ### Migration Planner Phase 3 — Wave Planning (v1.34.0–v1.34.1 ✅ Complete)
 - **🌊 Wave Planner sub-tab**: VM migration funnel progress bar, cohort filter (All / individual cohort), auto-build panel, wave cards with type/status/cohort badges, per-wave VM tables, pre-flight checklist, advance-status buttons.
 - **Cohort-scoped auto-building**: When multiple cohorts exist and "All Cohorts" is selected, the engine calls `build_wave_plan()` once per cohort in `cohort_order` sequence. Each wave is tagged with its source cohort — VMs from different cohorts never mix in one wave.

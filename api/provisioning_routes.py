@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, validator, root_validator
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -66,7 +66,7 @@ def _get_conn():
 
 
 def _ensure_tables():
-    """Run migration if tables don't exist yet."""
+    """Run migration if tables don't exist yet, and apply column additions."""
     from db_pool import get_connection
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -85,6 +85,23 @@ def _ensure_tables():
                         cur.execute(f.read())
                     conn.commit()
                     logger.info("Provisioning tables created")
+            # Ensure multi-network columns exist (idempotent via migrate_provisioning_networks.sql)
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.columns
+                    WHERE table_name = 'provisioning_jobs'
+                      AND column_name = 'networks_config'
+                )
+            """)
+            if not cur.fetchone()[0]:
+                net_migration = os.path.join(
+                    os.path.dirname(__file__), "..", "db", "migrate_provisioning_networks.sql"
+                )
+                if os.path.exists(net_migration):
+                    with open(net_migration) as f:
+                        cur.execute(f.read())
+                    conn.commit()
+                    logger.info("Multi-network columns added to provisioning_jobs")
 
 
 def _ensure_activity_log_table():
@@ -331,6 +348,51 @@ class SecurityGroupRule(BaseModel):
     description: str = ""
 
 
+class NetworkConfig(BaseModel):
+    """Describes a single network to create during customer onboarding.
+
+    network_kind values:
+      "physical_managed" – Provider (VLAN/flat) network with optional subnet.
+                           Maps to PCD "Physical Network – Managed".
+      "physical_l2"      – Provider (VLAN/flat) network, NO subnet.
+                           Maps to PCD "Physical Network – Layer 2 (Beta)".
+      "virtual"          – Tenant network, no provider fields, optional subnet.
+                           Maps to PCD "Virtual Network".
+    """
+    network_kind: str = "physical_managed"   # physical_managed | physical_l2 | virtual
+    name: str = ""
+    # ── Provider fields (physical_managed + physical_l2 only) ─────────────
+    physical_network: str = "physnet1"
+    network_type: str = "vlan"               # vlan | flat
+    vlan_id: Optional[int] = None
+    mtu: Optional[int] = None
+    # ── Shared flags ──────────────────────────────────────────────────────
+    is_external: bool = True                 # physical_managed default; False for l2/virtual
+    shared: bool = False
+    port_security_enabled: bool = True       # virtual networks only
+    # ── Subnet (physical_managed + virtual only; skipped for physical_l2) ─
+    create_subnet: bool = True
+    subnet_name: str = ""
+    subnet_cidr: str = ""
+    gateway_ip: str = ""
+    enable_dhcp: bool = True
+    dns_nameservers: List[str] = ["8.8.8.8", "8.8.4.4"]
+    allocation_pool_start: str = ""
+    allocation_pool_end: str = ""
+
+    @validator("network_kind")
+    def validate_kind(cls, v):
+        if v not in ("physical_managed", "physical_l2", "virtual"):
+            raise ValueError("network_kind must be physical_managed, physical_l2, or virtual")
+        return v
+
+    @validator("network_type")
+    def validate_net_type(cls, v):
+        if v not in ("vlan", "flat"):
+            raise ValueError("network_type must be vlan or flat")
+        return v
+
+
 class ProvisionRequest(BaseModel):
     # Domain
     domain_name: str
@@ -345,7 +407,10 @@ class ProvisionRequest(BaseModel):
     user_email: str = ""
     user_password: Optional[str] = None  # auto-generated if empty
     user_role: str = "member"            # actual Keystone role name
-    # Network
+    # Network — new multi-network list (preferred)
+    networks: List[NetworkConfig] = []
+    # Network — legacy single-network fields (deprecated; kept for backward compat)
+    # Omit or leave empty when using `networks` above.
     create_network: bool = True
     network_name: str = ""
     network_type: str = "vlan"           # vlan | flat | vxlan
@@ -378,11 +443,29 @@ class ProvisionRequest(BaseModel):
             raise ValueError("user_role is required")
         return v.strip()
 
-    @validator("network_type")
-    def validate_net_type(cls, v):
-        if v not in ("vlan", "flat", "vxlan"):
-            raise ValueError("network_type must be vlan, flat, or vxlan")
-        return v
+    @root_validator(pre=True)
+    def backfill_networks_from_legacy(cls, values):
+        """If `networks` is absent/empty but legacy create_network=True, convert to NetworkConfig."""
+        nets = values.get("networks") or []
+        if not nets and values.get("create_network", True):
+            legacy = NetworkConfig(
+                network_kind="physical_managed",
+                name=values.get("network_name", ""),
+                physical_network=values.get("physical_network", "physnet1"),
+                network_type=values.get("network_type", "vlan") if values.get("network_type", "vlan") != "vxlan" else "flat",
+                vlan_id=values.get("vlan_id"),
+                is_external=True,
+                shared=False,
+                create_subnet=bool(values.get("subnet_cidr", "")),
+                subnet_cidr=values.get("subnet_cidr", ""),
+                gateway_ip=values.get("gateway_ip", ""),
+                enable_dhcp=values.get("enable_dhcp", True),
+                dns_nameservers=values.get("dns_nameservers", ["8.8.8.8", "8.8.4.4"]),
+                allocation_pool_start=values.get("allocation_pool_start", ""),
+                allocation_pool_end=values.get("allocation_pool_end", ""),
+            )
+            values["networks"] = [legacy.dict()]
+        return values
 
 
 # ---------------------------------------------------------------------------
@@ -603,63 +686,112 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
         )
         results["storage_quotas"] = storage_q
 
-        # ── Step 8: Create External Network + Subnet ───────
-        network_id = None
-        subnet_id = None
-        if req.create_network:
-            if req.network_name:
-                net_name = req.network_name
-            else:
-                # Convention: {tenant_base}_extnet_vlan_{vlanid}
-                # tenant_base = project_name without _subid_{id} suffix
-                tenant_base = (
-                    req.project_name.rsplit("_subid_", 1)[0]
-                    if "_subid_" in req.project_name
-                    else req.project_name
-                )
-                if req.vlan_id:
-                    net_name = f"{tenant_base}_extnet_vlan_{req.vlan_id}"
-                else:
-                    net_name = f"{tenant_base}_extnet"
-            network = run_step(
-                "create_network",
-                f"Create {req.network_type.upper()} external network: {net_name}",
-                lambda: client.create_provider_network(
-                    name=net_name,
-                    network_type=req.network_type,
-                    physical_network=req.physical_network,
-                    segmentation_id=req.vlan_id,
-                    project_id=project_id,
-                    shared=False,
-                    external=True,
-                ),
-            )
-            network_id = network["id"]
-            results["network_id"] = network_id
-            results["network_name"] = net_name
+        # ── Step 8: Create Networks ─────────────────────────
+        # networks_created holds summary dicts for email / audit
+        networks_created: List[Dict[str, Any]] = []
+        network_id = None   # first created network ID (legacy compat)
+        subnet_id = None    # first created subnet ID (legacy compat)
+        net_name = ""       # first network name (legacy compat)
 
-            # Create subnet
-            sub_name = f"{net_name}-subnet"
-            # Build allocation pools if specified
-            alloc_pools = None
-            if req.allocation_pool_start and req.allocation_pool_end:
-                alloc_pools = [{"start": req.allocation_pool_start, "end": req.allocation_pool_end}]
-            subnet = run_step(
-                "create_subnet",
-                f"Create subnet {req.subnet_cidr} on {net_name}",
-                lambda: client.create_subnet(
-                    network_id=network_id,
-                    cidr=req.subnet_cidr,
-                    name=sub_name,
-                    gateway_ip=req.gateway_ip or None,
-                    dns_nameservers=req.dns_nameservers,
-                    enable_dhcp=req.enable_dhcp,
-                    allocation_pools=alloc_pools,
-                    project_id=project_id,
-                ),
+        def _derive_net_name(nc: NetworkConfig, idx: int) -> str:
+            if nc.name:
+                return nc.name
+            tenant_base = (
+                req.project_name.rsplit("_subid_", 1)[0]
+                if "_subid_" in req.project_name
+                else req.project_name
             )
-            subnet_id = subnet["id"]
-            results["subnet_id"] = subnet_id
+            suffix = f"_{idx + 1}" if idx > 0 else ""
+            if nc.network_kind == "virtual":
+                return f"{tenant_base}_vnet{suffix}"
+            elif nc.network_kind == "physical_l2":
+                if nc.vlan_id:
+                    return f"{tenant_base}_l2net_vlan_{nc.vlan_id}{suffix}"
+                return f"{tenant_base}_l2net{suffix}"
+            else:  # physical_managed
+                if nc.vlan_id:
+                    return f"{tenant_base}_extnet_vlan_{nc.vlan_id}{suffix}"
+                return f"{tenant_base}_extnet{suffix}"
+
+        for idx, nc in enumerate(req.networks):
+            _net_name = _derive_net_name(nc, idx)
+            _step_sfx = f"_{idx + 1}" if len(req.networks) > 1 else ""
+
+            if nc.network_kind == "virtual":
+                created_net = run_step(
+                    f"create_network{_step_sfx}",
+                    f"Create Virtual Network: {_net_name}",
+                    lambda n=_net_name, _nc=nc: client.create_network(
+                        name=n,
+                        project_id=project_id,
+                        shared=_nc.shared,
+                        external=False,
+                        port_security_enabled=_nc.port_security_enabled,
+                        mtu=_nc.mtu,
+                    ),
+                )
+            else:
+                # physical_managed or physical_l2 — uses provider fields
+                created_net = run_step(
+                    f"create_network{_step_sfx}",
+                    f"Create {'Physical Managed' if nc.network_kind == 'physical_managed' else 'Physical L2'} Network: {_net_name}",
+                    lambda n=_net_name, _nc=nc: client.create_provider_network(
+                        name=n,
+                        network_type=_nc.network_type,
+                        physical_network=_nc.physical_network,
+                        segmentation_id=_nc.vlan_id,
+                        project_id=project_id,
+                        shared=_nc.shared,
+                        external=_nc.is_external,
+                        mtu=_nc.mtu,
+                    ),
+                )
+
+            _net_id = created_net.get("id")
+            if network_id is None:
+                network_id = _net_id
+                net_name = _net_name
+
+            net_summary: Dict[str, Any] = {
+                "id": _net_id,
+                "name": _net_name,
+                "kind": nc.network_kind,
+                "network_type": nc.network_type if nc.network_kind != "virtual" else "virtual",
+            }
+
+            # Create subnet — skip for physical_l2; honour create_subnet flag for others
+            if nc.network_kind != "physical_l2" and nc.create_subnet and nc.subnet_cidr:
+                _sub_name = nc.subnet_name or f"{_net_name}-subnet"
+                _alloc_pools = None
+                if nc.allocation_pool_start and nc.allocation_pool_end:
+                    _alloc_pools = [{"start": nc.allocation_pool_start,
+                                     "end": nc.allocation_pool_end}]
+                created_sub = run_step(
+                    f"create_subnet{_step_sfx}",
+                    f"Create subnet {nc.subnet_cidr} on {_net_name}",
+                    lambda nid=_net_id, _nc=nc, sn=_sub_name, ap=_alloc_pools: client.create_subnet(
+                        network_id=nid,
+                        cidr=_nc.subnet_cidr,
+                        name=sn,
+                        gateway_ip=_nc.gateway_ip or None,
+                        dns_nameservers=_nc.dns_nameservers,
+                        enable_dhcp=_nc.enable_dhcp,
+                        allocation_pools=ap,
+                        project_id=project_id,
+                    ),
+                )
+                _sub_id = created_sub.get("id")
+                if subnet_id is None:
+                    subnet_id = _sub_id
+                net_summary["subnet_id"] = _sub_id
+                net_summary["subnet_cidr"] = nc.subnet_cidr
+
+            networks_created.append(net_summary)
+
+        results["network_id"] = network_id
+        results["subnet_id"] = subnet_id
+        results["network_name"] = net_name
+        results["networks_created"] = networks_created
 
         # ── Step 9: Create Default Security Group ──────────
         sg_id = None
@@ -764,18 +896,21 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                     project_name=req.project_name,
                     user_role=req.user_role,
                     subscription_id=req.subscription_id or "",
-                    network_name=net_name if req.create_network else "",
-                    network_type=req.network_type,
-                    vlan_id=req.vlan_id,
-                    subnet_cidr=req.subnet_cidr,
-                    gateway_ip=req.gateway_ip,
-                    dns_nameservers=req.dns_nameservers,
+                    # Multi-network list (new)
+                    networks_created=networks_created,
+                    # Legacy single-network fields kept for template backward-compat
+                    network_name=net_name,
+                    network_type=req.networks[0].network_type if req.networks else req.network_type,
+                    vlan_id=req.networks[0].vlan_id if req.networks else req.vlan_id,
+                    subnet_cidr=req.networks[0].subnet_cidr if req.networks else req.subnet_cidr,
+                    gateway_ip=req.networks[0].gateway_ip if req.networks else req.gateway_ip,
+                    dns_nameservers=req.networks[0].dns_nameservers if req.networks else req.dns_nameservers,
                     security_group_name=req.security_group_name if req.create_security_group else None,
                     sg_rules=sg_rules_display,
                     compute_quotas=compute_q,
                     network_quotas=network_q,
                     storage_quotas=storage_q,
-                    create_network=req.create_network,
+                    create_network=bool(networks_created),
                     domain_description=req.domain_description,
                     project_description=req.project_description,
                 )
@@ -794,18 +929,23 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
 
         # ── Mark job completed ─────────────────────────────
         with conn.cursor() as cur:
+            # Persist multi-network results; also populate legacy columns from first network
+            _created_nets = results.get("networks_created", [])
+            _first_created = _created_nets[0] if _created_nets else {}
             cur.execute("""
                 UPDATE provisioning_jobs
                 SET status = 'completed', completed_at = now(),
                     domain_id = %s, project_id = %s, user_id = %s,
-                    network_id = %s, subnet_id = %s, security_group_id = %s
+                    network_id = %s, subnet_id = %s, security_group_id = %s,
+                    networks_created = %s
                 WHERE job_id = %s
             """, (results.get("domain_id"),
                   results.get("project_id"),
                   results.get("user_id"),
-                  results.get("network_id"),
-                  results.get("subnet_id"),
+                  _first_created.get("network_id") or results.get("network_id"),
+                  _first_created.get("subnet_id")  or results.get("subnet_id"),
                   results.get("security_group_id"),
+                  Json(_created_nets),
                   job_id))
             conn.commit()
 
@@ -831,6 +971,7 @@ def _render_welcome_email(username: str, password: str, login_url: str,
                           domain_name: str, project_name: str,
                           user_role: str,
                           subscription_id: str = "",
+                          networks_created: list = None,   # multi-network list (new)
                           network_name: str = "",
                           network_type: str = "",
                           vlan_id: int = None,
@@ -855,6 +996,7 @@ def _render_welcome_email(username: str, password: str, login_url: str,
         username=username, password=password, login_url=login_url,
         domain_name=domain_name, project_name=project_name,
         user_role=user_role, subscription_id=subscription_id,
+        networks_created=networks_created or [],
         network_name=network_name, network_type=network_type,
         vlan_id=vlan_id, subnet_cidr=subnet_cidr,
         gateway_ip=gateway_ip, dns_nameservers=dns_nameservers or [],
@@ -959,20 +1101,28 @@ async def provision_customer(
     with get_connection() as conn:
         # Create the job record
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Build legacy single-net fields from first network entry (backward compat)
+            first_net = req.networks[0] if req.networks else None
+            _leg_net_name = (first_net.name if first_net else None) or req.network_name or f"{req.domain_name}-ext-net"
+            _leg_net_type = (first_net.network_type if first_net else None) or req.network_type
+            _leg_vlan_id  = int(first_net.vlan_id) if (first_net and first_net.vlan_id) else req.vlan_id
+            _leg_cidr     = (first_net.subnet_cidr if first_net else None) or req.subnet_cidr
+            _leg_gw       = (first_net.gateway_ip if first_net else None) or req.gateway_ip
+            _leg_dns      = (first_net.dns_nameservers.split(",") if (first_net and first_net.dns_nameservers) else None) or req.dns_nameservers
             cur.execute("""
                 INSERT INTO provisioning_jobs
                     (domain_name, project_name, username, user_email, user_role,
                      network_name, network_type, vlan_id, subnet_cidr, gateway_ip,
-                     dns_nameservers, quota_compute, quota_network, quota_storage,
+                     dns_nameservers, networks_config,
+                     quota_compute, quota_network, quota_storage,
                      created_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING job_id, id
             """, (
                 req.domain_name, req.project_name, req.username,
                 req.user_email, req.user_role,
-                req.network_name or f"{req.domain_name}-ext-net",
-                req.network_type, req.vlan_id, req.subnet_cidr, req.gateway_ip,
-                req.dns_nameservers,
+                _leg_net_name, _leg_net_type, _leg_vlan_id, _leg_cidr, _leg_gw, _leg_dns,
+                Json([n.dict() for n in req.networks]),
                 Json(req.compute_quotas.dict()),
                 Json(req.network_quotas.dict()),
                 Json(req.storage_quotas.dict()),

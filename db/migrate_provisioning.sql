@@ -12,13 +12,16 @@ CREATE TABLE IF NOT EXISTS provisioning_jobs (
     username        TEXT      NOT NULL,
     user_email      TEXT,
     user_role       TEXT      NOT NULL DEFAULT 'member',   -- member | admin | service
-    -- Network configuration
+    -- Legacy single-network columns (kept for backward compat; prefer networks_config)
     network_name    TEXT,
     network_type    TEXT      DEFAULT 'vlan',              -- vlan | flat | vxlan
     vlan_id         INTEGER,
     subnet_cidr     TEXT,
     gateway_ip      TEXT,
     dns_nameservers TEXT[]    DEFAULT ARRAY['8.8.8.8', '8.8.4.4'],
+    -- Multi-network support
+    networks_config   JSONB   DEFAULT '[]',  -- full network list from ProvisionRequest
+    networks_created  JSONB   DEFAULT '[]',  -- summary of networks actually created
     -- Quota snapshot (JSONB for flexibility)
     quota_compute   JSONB     DEFAULT '{}',
     quota_network   JSONB     DEFAULT '{}',
@@ -28,8 +31,8 @@ CREATE TABLE IF NOT EXISTS provisioning_jobs (
     domain_id       TEXT,
     project_id      TEXT,
     user_id         TEXT,
-    network_id      TEXT,
-    subnet_id       TEXT,
+    network_id      TEXT,      -- legacy: first network created
+    subnet_id       TEXT,      -- legacy: first subnet created
     security_group_id TEXT,
     -- Tracking
     created_by      TEXT      NOT NULL DEFAULT 'system',
