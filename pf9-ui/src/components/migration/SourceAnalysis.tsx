@@ -2083,6 +2083,7 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const [expandedSubnet, setExpandedSubnet] = useState<number | null>(null);
   const [subnetEdits, setSubnetEdits] = useState<Record<number, any>>({});
   const [savingSubnet, setSavingSubnet] = useState<number | null>(null);
+  const [savingKind, setSavingKind] = useState<number | null>(null);
   const [subnetReady, setSubnetReady] = useState<{ missing: number; confirmed: number } | null>(null);
 
   const loadSubnetReadiness = useCallback(async () => {
@@ -2395,9 +2396,31 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
                       ) : (m.vlan_id ?? "—")}
                     </td>
                     <td style={{ ...tdStyle, textAlign: "center" }}>
-                      <span style={{ ...pillStyle, background: kStyle.bg, color: kStyle.color, fontSize: "0.72rem" }}>
-                        {kStyle.label}
-                      </span>
+                      <select
+                        value={m.network_kind ?? "physical_managed"}
+                        disabled={savingKind === m.id}
+                        onChange={async e => {
+                          const newKind = e.target.value;
+                          setSavingKind(m.id);
+                          try {
+                            await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${m.id}`, {
+                              method: "PATCH",
+                              body: JSON.stringify({ network_kind: newKind }),
+                            });
+                            await load();
+                          } catch (err: any) { setError(err.message); }
+                          finally { setSavingKind(null); }
+                        }}
+                        style={{
+                          fontSize: "0.75rem", padding: "2px 6px", borderRadius: 4,
+                          border: `1px solid ${kStyle.color}40`,
+                          background: kStyle.bg, color: kStyle.color,
+                          cursor: "pointer", fontWeight: 500,
+                        }}>
+                        <option value="physical_managed">Physical</option>
+                        <option value="physical_l2">L2</option>
+                        <option value="virtual">Virtual</option>
+                      </select>
                     </td>
                     <td style={{ ...tdStyle, textAlign: "center" }}>
                       {isConfirmed
