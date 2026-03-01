@@ -1344,12 +1344,42 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_mi
 # 12. Apply migration schedule columns (v1.28.1+)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_migration_schedule.sql
 
-# 13. Apply multi-network provisioning columns (v1.34.2+)
+# 13. Apply migration planner usage metrics (v1.29+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_migration_usage.sql
+
+# 14. Apply migration network infrastructure summary (v1.30+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_migration_networks.sql
+
+# 15. Apply vCPU/memory usage percentages (v1.30+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_vm_usage_metrics.sql
+
+# 16. Apply Phase 2 scoping, target mapping, overcommit profiles, gap analysis (v1.31+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_phase2_scoping.sql
+
+# 17. Apply Phase 2.10 cohorts, VM status/mode, tenant priority, dependencies, network mappings (v1.31+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_cohorts_and_foundations.sql
+
+# 18. Apply target name pre-seeding + confirmed flags (v1.31.1+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_target_preseeding.sql
+
+# 19. Apply cohort schedule fields + VLAN backfill (v1.31.2+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_cohort_fixes.sql
+
+# 20. Apply target domain description column (v1.31.7+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_descriptions.sql
+
+# 21. Apply Phase 3 wave planning tables (v1.34.0+)
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_wave_planning.sql
+
+# 22. Apply multi-network provisioning columns (v1.34.2+)
 # Adds networks_config + networks_created JSONB to provisioning_jobs
-# NOTE: Also auto-applied on pf9_api startup — only needed for manual upgrades
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_provisioning_networks.sql
 
-# 14. Verify schema
+# 23. Apply Phase 4A data enrichment (v1.35.0+)
+# Subnet detail columns, flavor_staging, image_requirements, tenant_users tables
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_phase4_preparation.sql
+
+# 24. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 

@@ -42,6 +42,44 @@ The Network Configuration section of `customer_welcome.html` now loops over `net
 
 ---
 
+### Migration Planner Phase 4B — PCD Auto-Provisioning (v1.36.0 ✅ Complete)
+
+#### ⚙️ Prepare PCD Sub-Tab
+A new sub-tab in the Migration Planner that drives the full PCD provisioning sequence.
+
+**Readiness Grid** (top of tab): Four cards showing gate status before any tasks are run:
+- **Network Subnet Details** — X/Y confirmed networks have subnet details (CIDR required)
+- **Flavor Staging** — X/Y flavors confirmed or skipped
+- **OS Image Requirements** — X/Y images confirmed
+- **Tenant Users** — X/Y users defined (passes if none defined)
+
+All four must be green before **🔄 Generate Plan** is enabled.
+
+**Task Plan Generation** (`POST /prepare`):
+- Clears previous pending/failed tasks and rebuilds the full ordered list
+- Task ordering: `create_domain` (1000s) → `create_project` (2000s) → `set_quotas` (3000s) → `create_network` (4000s) → `create_subnet` (5000s) → `create_flavor` (6000s) → `create_user` (7000s) → `assign_role` (8000s)
+- Quotas are derived from the project’s overcommit profile (cpu_ratio, ram_ratio, disk_snapshot_factor)
+- Domains are de-duplicated; `create_domain` skips if domain already exists in Keystone
+- `create_user` skips rows where `is_existing_user = true`; generates a `secrets.token_urlsafe(16)` temp password for new users
+
+**Task Table**: Columns: `#` | `Type` | `Task Name` | `Tenant` | `Status` | `Resource ID` | `Actions`
+- Status badges: `pending` (grey) / `running` (blue) / `done` (green) / `failed` (red) / `skipped` (muted)
+- **▶ Run** button on pending/failed tasks
+- **↩ Rollback** button on `done` tasks for reversible types (domain, project, network, flavor, user)
+- Inline error expansion on failed tasks
+- Auto-refreshes every 3 s while any task is `running`
+
+**Run All** (`POST /prepare/run`): Executes all pending/failed tasks in order. Stops on the first new failure.
+
+**PCD Write-backs on success**:
+- `create_network` → writes `target_network_id` back to `migration_network_mappings`
+- `create_flavor` → writes `pcd_flavor_id` + `pcd_flavor_name` back to `migration_flavor_staging`
+- `create_user` → writes `pcd_user_id` + `temp_password` back to `migration_tenant_users`
+
+**Rollback safety**: `domain` rollback checks that the domain contains no projects before deletion (refuses if it does).
+
+---
+
 ### Migration Planner Phase 4A — Network Map, Flavor Staging, Image Checklist, PCD Readiness (v1.35.0–v1.35.7 ✅ Complete)
 
 #### Network Map — Excel Template Workflow
