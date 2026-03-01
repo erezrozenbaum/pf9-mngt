@@ -176,6 +176,28 @@ def _ensure_activity_log_table():
                     conn.commit()
 
 
+def _ensure_phase4_tables():
+    """Run Phase 4A migration if tables don't exist yet (idempotent)."""
+    from db_pool import get_connection
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'migration_flavor_staging'
+                )
+            """)
+            if not cur.fetchone()[0]:
+                migration = os.path.join(
+                    os.path.dirname(__file__), "..", "db", "migrate_phase4_preparation.sql"
+                )
+                if os.path.exists(migration):
+                    with open(migration) as f:
+                        cur.execute(f.read())
+                    conn.commit()
+                    logger.info("Phase 4A tables created")
+
+
 # Run on import
 try:
     _ensure_tables()
@@ -186,6 +208,11 @@ try:
     _ensure_activity_log_table()
 except Exception as e:
     logger.warning(f"Could not ensure activity_log table: {e}")
+
+try:
+    _ensure_phase4_tables()
+except Exception as e:
+    logger.warning(f"Could not ensure phase4 tables on startup: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +377,7 @@ class NetworkMappingCreateRequest(BaseModel):
     target_network_name: Optional[str] = None
     target_network_id: Optional[str] = None
     vlan_id: Optional[int] = None
+    network_kind: Optional[str] = "physical_managed"  # physical_managed | physical_l2 | virtual
     notes: Optional[str] = None
 
 
@@ -357,8 +385,61 @@ class NetworkMappingUpdateRequest(BaseModel):
     target_network_name: Optional[str] = None
     target_network_id: Optional[str] = None
     vlan_id: Optional[int] = None
+    network_kind: Optional[str] = None
+    # Phase 4A.1 — subnet detail fields
+    cidr: Optional[str] = None
+    gateway_ip: Optional[str] = None
+    dns_nameservers: Optional[List[str]] = None
+    allocation_pool_start: Optional[str] = None
+    allocation_pool_end: Optional[str] = None
+    dhcp_enabled: Optional[bool] = None
+    is_external: Optional[bool] = None
+    subnet_details_confirmed: Optional[bool] = None
     notes: Optional[str] = None
     confirmed: Optional[bool] = None
+
+
+# ── Phase 4A Pydantic models ─────────────────────────────────────────────────
+
+class FlavorStagingUpdateRequest(BaseModel):
+    target_flavor_name: Optional[str] = None
+    skip: Optional[bool] = None
+    existing_flavor_id: Optional[str] = None
+    confirmed: Optional[bool] = None
+
+
+class FlavorBulkRenameRequest(BaseModel):
+    find: str
+    replace: str = ""
+    case_sensitive: bool = False
+    preview_only: bool = True
+
+
+class ImageRequirementUpdateRequest(BaseModel):
+    glance_image_id: Optional[str] = None
+    glance_image_name: Optional[str] = None
+    confirmed: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class TenantUserCreateRequest(BaseModel):
+    tenant_id: int
+    user_type: str          # 'service_account' | 'tenant_owner'
+    username: str
+    email: Optional[str] = None
+    role: str = "admin"     # 'admin' | 'member' | 'reader'
+    is_existing_user: bool = False
+    notes: Optional[str] = None
+
+
+class TenantUserUpdateRequest(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    is_existing_user: Optional[bool] = None
+    password_must_change: Optional[bool] = None
+    confirmed: Optional[bool] = None
+    notes: Optional[str] = None
 
 
 class CreateCohortRequest(BaseModel):
@@ -4085,6 +4166,460 @@ async def delete_network_mapping(project_id: str, mapping_id: int,
             conn.commit()
     _log_activity(actor=actor, action="delete_network_mapping", resource_type="migration_network_mapping",
                   resource_id=str(mapping_id), details={})
+    return {"status": "ok"}
+
+
+@router.get("/projects/{project_id}/network-mappings/readiness",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_network_mappings_readiness(project_id: str):
+    """Count of networks that have confirmed mappings but missing subnet details for Phase 4B."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE confirmed = true)                              AS confirmed_count,
+                    COUNT(*) FILTER (WHERE confirmed = true AND NOT COALESCE(is_external, false)
+                                    AND NOT COALESCE(subnet_details_confirmed, false))    AS missing_subnet_details,
+                    COUNT(*) FILTER (WHERE confirmed = true AND COALESCE(is_external, false)) AS external_count
+                FROM migration_network_mappings
+                WHERE project_id = %s
+            """, (project_id,))
+            row = cur.fetchone()
+    return {
+        "confirmed_count":       row[0],
+        "missing_subnet_details": row[1],
+        "external_count":        row[2],
+        "ready":                 row[1] == 0 and row[0] > 0,
+    }
+
+
+# =====================================================================
+# PHASE 4A — FLAVOR STAGING
+# =====================================================================
+
+@router.get("/projects/{project_id}/flavor-staging",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_flavor_staging(project_id: str):
+    """List draft flavor shapes for the project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_flavor_staging
+                WHERE project_id = %s
+                ORDER BY vm_count DESC, source_shape
+            """, (project_id,))
+            rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    confirmed = sum(1 for r in rows if r["confirmed"] or r["skip"])
+    return {"flavors": rows, "total": len(rows), "ready_count": confirmed}
+
+
+@router.post("/projects/{project_id}/flavor-staging/refresh",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def refresh_flavor_staging(project_id: str, user=Depends(get_current_user)):
+    """Re-detect distinct VM shapes from migration_vms and upsert into flavor staging.
+    Preserves any operator edits (target_flavor_name, confirmed, skip) on existing rows."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Collect distinct (vcpus, ram_mb, disk_gb) shapes from in-scope, non-excluded VMs
+            cur.execute("""
+                SELECT
+                    COALESCE(cpu_count, 0)                          AS vcpus,
+                    COALESCE(ram_mb, 0)                             AS ram_mb,
+                    COALESCE(total_disk_gb::INTEGER, 0)             AS disk_gb,
+                    COUNT(*)                                        AS vm_count
+                FROM migration_vms
+                WHERE project_id = %s
+                  AND NOT COALESCE(exclude_from_migration, false)
+                  AND COALESCE(power_state, '') != 'poweredOff'
+                GROUP BY 1, 2, 3
+                ORDER BY vm_count DESC
+            """, (project_id,))
+            shapes = cur.fetchall()
+
+            inserted = 0
+            updated = 0
+            for s in shapes:
+                vcpus   = s["vcpus"]
+                ram_mb  = s["ram_mb"]
+                disk_gb = s["disk_gb"]
+                if vcpus == 0 and ram_mb == 0:
+                    continue
+                ram_gb = ram_mb // 1024
+                source_shape = f"{vcpus}vCPU-{ram_gb}GB-{disk_gb}GB"
+                default_name = f"m1.custom-{vcpus}cpu-{ram_gb}gb"
+                cur.execute("""
+                    INSERT INTO migration_flavor_staging
+                        (project_id, source_shape, vcpus, ram_mb, disk_gb, target_flavor_name, vm_count)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (project_id, source_shape) DO UPDATE
+                        SET vm_count  = EXCLUDED.vm_count,
+                            vcpus     = EXCLUDED.vcpus,
+                            ram_mb    = EXCLUDED.ram_mb,
+                            disk_gb   = EXCLUDED.disk_gb,
+                            updated_at = now()
+                    RETURNING (xmax = 0) AS is_insert
+                """, (project_id, source_shape, vcpus, ram_mb, disk_gb, default_name, s["vm_count"]))
+                row = cur.fetchone()
+                if row and row["is_insert"]:
+                    inserted += 1
+                else:
+                    updated += 1
+            conn.commit()
+    _log_activity(actor=actor, action="refresh_flavor_staging", resource_type="migration_flavor_staging",
+                  resource_id=project_id, details={"inserted": inserted, "updated": updated})
+    return {"status": "ok", "inserted": inserted, "updated": updated}
+
+
+@router.patch("/flavor-staging/{staging_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_flavor_staging(staging_id: int, req: FlavorStagingUpdateRequest,
+                                user=Depends(get_current_user)):
+    """Update target name, skip flag, or confirmed status of a flavor staging row."""
+    actor = getattr(user, "username", "system")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_flavor_staging
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+                RETURNING *
+            """, params + [staging_id])
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Flavor staging row not found")
+            conn.commit()
+    _log_activity(actor=actor, action="update_flavor_staging", resource_type="migration_flavor_staging",
+                  resource_id=str(staging_id), details=updates)
+    return {"status": "ok", "flavor": _serialize_row(dict(row))}
+
+
+@router.post("/projects/{project_id}/flavor-staging/bulk-rename",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def flavor_staging_bulk_rename(project_id: str, req: FlavorBulkRenameRequest,
+                                     user=Depends(get_current_user)):
+    """Find & Replace across target_flavor_name column. Returns preview or applies."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, source_shape, target_flavor_name
+                FROM migration_flavor_staging
+                WHERE project_id = %s AND target_flavor_name IS NOT NULL
+            """, (project_id,))
+            rows = cur.fetchall()
+
+        flags = 0 if req.case_sensitive else re.IGNORECASE
+        preview = []
+        for r in rows:
+            old_val = r["target_flavor_name"] or ""
+            new_val = re.sub(re.escape(req.find), req.replace, old_val, flags=flags)
+            if new_val != old_val:
+                preview.append({"id": r["id"], "source_shape": r["source_shape"],
+                                 "old_value": old_val, "new_value": new_val})
+
+        if not req.preview_only and preview:
+            with conn.cursor() as cur:
+                for p in preview:
+                    cur.execute("""
+                        UPDATE migration_flavor_staging
+                        SET target_flavor_name = %s, confirmed = false, updated_at = now()
+                        WHERE id = %s AND project_id = %s
+                    """, (p["new_value"], p["id"], project_id))
+            conn.commit()
+            _log_activity(actor=actor, action="flavor_staging_bulk_rename",
+                          resource_type="migration_flavor_staging",
+                          resource_id=project_id, details={"affected": len(preview)})
+
+    return {"preview": preview, "affected_count": len(preview)}
+
+
+# =====================================================================
+# PHASE 4A — IMAGE REQUIREMENTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/image-requirements",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_image_requirements(project_id: str):
+    """List image requirements for the project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_image_requirements
+                WHERE project_id = %s
+                ORDER BY vm_count DESC, os_family
+            """, (project_id,))
+            rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    confirmed = sum(1 for r in rows if r["confirmed"])
+    return {"images": rows, "total": len(rows), "confirmed_count": confirmed}
+
+
+@router.post("/projects/{project_id}/image-requirements/refresh",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def refresh_image_requirements(project_id: str, user=Depends(get_current_user)):
+    """Re-detect distinct OS families from migration_vms and upsert image requirement rows.
+    Preserves operator edits (glance_image_id, confirmed, notes)."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    COALESCE(os_family, 'other')  AS os_family,
+                    -- Best version hint: most common os_version string for this family
+                    (SELECT os_version FROM migration_vms v2
+                     WHERE v2.project_id = %s
+                       AND COALESCE(v2.os_family, 'other') = COALESCE(v.os_family, 'other')
+                       AND v2.os_version IS NOT NULL
+                     GROUP BY os_version ORDER BY COUNT(*) DESC LIMIT 1) AS os_version_hint,
+                    COUNT(*) AS vm_count
+                FROM migration_vms v
+                WHERE project_id = %s
+                  AND NOT COALESCE(exclude_from_migration, false)
+                  AND COALESCE(os_family, 'other') != 'other'
+                GROUP BY 1
+                ORDER BY vm_count DESC
+            """, (project_id, project_id))
+            families = cur.fetchall()
+
+            inserted = 0
+            updated = 0
+            for f in families:
+                cur.execute("""
+                    INSERT INTO migration_image_requirements
+                        (project_id, os_family, os_version_hint, vm_count)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (project_id, os_family) DO UPDATE
+                        SET vm_count        = EXCLUDED.vm_count,
+                            os_version_hint = EXCLUDED.os_version_hint,
+                            updated_at      = now()
+                    RETURNING (xmax = 0) AS is_insert
+                """, (project_id, f["os_family"], f["os_version_hint"], f["vm_count"]))
+                row = cur.fetchone()
+                if row and row["is_insert"]:
+                    inserted += 1
+                else:
+                    updated += 1
+            conn.commit()
+    _log_activity(actor=actor, action="refresh_image_requirements", resource_type="migration_image_requirements",
+                  resource_id=project_id, details={"inserted": inserted, "updated": updated})
+    return {"status": "ok", "inserted": inserted, "updated": updated}
+
+
+@router.patch("/image-requirements/{req_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_image_requirement(req_id: int, req: ImageRequirementUpdateRequest,
+                                   user=Depends(get_current_user)):
+    """Update Glance image ID/name and confirmed status for an image requirement row."""
+    actor = getattr(user, "username", "system")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_image_requirements
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+                RETURNING *
+            """, params + [req_id])
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Image requirement not found")
+            conn.commit()
+    _log_activity(actor=actor, action="update_image_requirement", resource_type="migration_image_requirements",
+                  resource_id=str(req_id), details=updates)
+    return {"status": "ok", "image_req": _serialize_row(dict(row))}
+
+
+# =====================================================================
+# PHASE 4A — TENANT USERS
+# =====================================================================
+
+import hashlib
+import secrets as _secrets
+
+def _generate_temp_password() -> str:
+    """Generate a 20-character cryptographically random password."""
+    alphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$"
+    return "".join(_secrets.choice(alphabet) for _ in range(20))
+
+
+def _hash_password(pw: str) -> str:
+    """Simple one-way hash for storing temp passwords (not plaintext in DB)."""
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+
+@router.get("/projects/{project_id}/tenant-users",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_tenant_users(project_id: str):
+    """List all user definitions for the project, grouped by tenant."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT mu.*, mt.tenant_name
+                FROM migration_tenant_users mu
+                JOIN migration_tenants mt ON mt.id = mu.tenant_id
+                WHERE mu.project_id = %s
+                ORDER BY mt.tenant_name, mu.user_type, mu.username
+            """, (project_id,))
+            rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    # Group by tenant
+    groups: Dict[str, List] = {}
+    for r in rows:
+        tn = r["tenant_name"]
+        groups.setdefault(tn, []).append(r)
+    confirmed_tenants = sum(
+        1 for grp in groups.values()
+        if all(u["confirmed"] for u in grp)
+    )
+    return {
+        "users": rows,
+        "tenant_count": len(groups),
+        "confirmed_tenant_count": confirmed_tenants,
+    }
+
+
+@router.post("/projects/{project_id}/tenant-users/seed-service-accounts",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def seed_service_accounts(project_id: str, user=Depends(get_current_user)):
+    """Auto-create one service_account row per in-scope tenant that doesn't have one yet."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch project slug for username prefix
+            cur.execute("SELECT project_id FROM migration_projects WHERE project_id = %s", (project_id,))
+            proj = cur.fetchone()
+            proj_slug = re.sub(r"[^a-z0-9]+", "-", (project_id or "").lower()).strip("-")[:12]
+
+            # Get in-scope tenants that don't yet have a service account
+            cur.execute("""
+                SELECT mt.id, mt.tenant_name
+                FROM migration_tenants mt
+                WHERE mt.project_id = %s
+                  AND COALESCE(mt.include_in_plan, true) = true
+                  AND NOT EXISTS (
+                      SELECT 1 FROM migration_tenant_users u
+                      WHERE u.tenant_id = mt.id AND u.user_type = 'service_account'
+                  )
+                ORDER BY mt.tenant_name
+            """, (project_id,))
+            tenants = cur.fetchall()
+
+            created = 0
+            for t in tenants:
+                tenant_slug = re.sub(r"[^a-z0-9]+", "-", t["tenant_name"].lower()).strip("-")[:16]
+                username = f"svc-mig-{proj_slug}-{tenant_slug}"[:50]
+                temp_pw  = _generate_temp_password()
+                cur.execute("""
+                    INSERT INTO migration_tenant_users
+                        (tenant_id, project_id, user_type, username, role,
+                         is_existing_user, temp_password, password_must_change)
+                    VALUES (%s, %s, 'service_account', %s, 'admin', false, %s, false)
+                    ON CONFLICT (tenant_id, username) DO NOTHING
+                    RETURNING id
+                """, (t["id"], project_id, username, temp_pw))
+                if cur.fetchone():
+                    created += 1
+            conn.commit()
+    _log_activity(actor=actor, action="seed_service_accounts", resource_type="migration_tenant_users",
+                  resource_id=project_id, details={"created": created})
+    return {"status": "ok", "created": created}
+
+
+@router.post("/projects/{project_id}/tenant-users",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_tenant_user(project_id: str, req: TenantUserCreateRequest,
+                             user=Depends(get_current_user)):
+    """Add a user definition (typically a tenant_owner) for a specific tenant."""
+    actor = getattr(user, "username", "system")
+    if req.user_type not in ("service_account", "tenant_owner"):
+        raise HTTPException(status_code=400, detail="user_type must be 'service_account' or 'tenant_owner'")
+    if req.role not in ("admin", "member", "reader"):
+        raise HTTPException(status_code=400, detail="role must be 'admin', 'member', or 'reader'")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Verify tenant belongs to this project
+            cur.execute("SELECT id FROM migration_tenants WHERE id = %s AND project_id = %s",
+                        (req.tenant_id, project_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Tenant not found in this project")
+            cur.execute("""
+                INSERT INTO migration_tenant_users
+                    (tenant_id, project_id, user_type, username, email, role,
+                     is_existing_user, password_must_change, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (req.tenant_id, project_id, req.user_type, req.username, req.email,
+                  req.role, req.is_existing_user, not req.is_existing_user, req.notes))
+            row = cur.fetchone()
+            conn.commit()
+    _log_activity(actor=actor, action="create_tenant_user", resource_type="migration_tenant_users",
+                  resource_id=str(row["id"]), details={"username": req.username, "type": req.user_type})
+    return {"status": "ok", "user": _serialize_row(dict(row))}
+
+
+@router.patch("/tenant-users/{user_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_tenant_user(user_id: int, req: TenantUserUpdateRequest,
+                             user=Depends(get_current_user)):
+    """Edit a tenant user definition (username, email, role, confirmed, etc.)."""
+    actor = getattr(user, "username", "system")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_tenant_users
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+                RETURNING *
+            """, params + [user_id])
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Tenant user not found")
+            conn.commit()
+    _log_activity(actor=actor, action="update_tenant_user", resource_type="migration_tenant_users",
+                  resource_id=str(user_id), details=updates)
+    return {"status": "ok", "user": _serialize_row(dict(row))}
+
+
+@router.delete("/tenant-users/{user_id}",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_tenant_user(user_id: int, user=Depends(get_current_user)):
+    """Delete a tenant user definition. Service accounts cannot be deleted."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_type FROM migration_tenant_users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Tenant user not found")
+            if row[0] == "service_account":
+                raise HTTPException(status_code=400,
+                                    detail="Service accounts cannot be deleted — regenerate password or edit username instead")
+            cur.execute("DELETE FROM migration_tenant_users WHERE id = %s", (user_id,))
+            conn.commit()
+    _log_activity(actor=actor, action="delete_tenant_user", resource_type="migration_tenant_users",
+                  resource_id=str(user_id), details={})
     return {"status": "ok"}
 
 
