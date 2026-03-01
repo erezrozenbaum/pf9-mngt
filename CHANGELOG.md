@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.36.2] - 2026-03-01
+
+### New — Phase 4B: Approval Workflow, Dry Run & Audit Log
+
+- **2-step approval gate** — `POST /projects/{id}/prepare` sets `prep_approval_status='pending_approval'` and fires a `prep_approval_requested` notification; `POST /prepare/run` now raises HTTP 403 if the plan has not been explicitly approved.
+- **`GET /projects/{id}/prep-approval`** — returns current approval status (`pending_approval`, `approved`, `rejected`), who requested it, who approved/rejected, when, and full history list.
+- **`POST /projects/{id}/prep-approval`** *(requires `migration:admin`)* — approves or rejects the pending plan; logs an activity entry; fires `prep_approval_granted` / `prep_approval_rejected` notification events.
+- **`POST /projects/{id}/prepare/dry-run`** — simulates execution against live PCD without writing anything; classifies each pending task as `would_create`, `would_skip_existing`, or `would_execute` (for always-apply types like quotas/subnets), returning per-type and summary counts.
+- **`GET /projects/{id}/prep-audit`** — returns the full audit trail for Phase 4B actions: approval history from `migration_prep_approvals`, activity log entries for `migration_prep_tasks` resource type, and execution history (all tasks with `executed_by` set).
+- **`migration_prep_approvals` table** — new table storing each approval/rejection decision with `approver`, `decision`, `comment`, `created_at`; indexed on `(project_id, created_at DESC)`.
+- **Four new notification event types** — `prep_approval_requested`, `prep_approval_granted`, `prep_approval_rejected`, `prep_tasks_completed` registered in `VALID_EVENT_TYPES`.
+- **Bug fixes** — `_find_task_resource` now uses `->>` text extraction operator (PostgreSQL `json = json` comparison unsupported); rollback handler adds `conn.rollback()` before error-status update to recover from aborted transactions; `rollback_prep_task` for `create_project` wraps the optional `migration_tenants` update in try/except.
+- **UI: approval banner** — `PreparePcdView` shows a contextual banner driven by `GET /prep-approval`: yellow (pending, with Approve/Reject inline), green (approved with approver + timestamp), red (rejected with comment + re-generate note), grey (no plan yet).
+- **UI: gated Run All** — *▶ Run All* button only renders when `approval?.status === "approved"`; replaced by a disabled *🔒 Run All* otherwise.
+- **UI: dry run panel** — *🧪 Dry Run* button fires `POST /prepare/dry-run` and shows a per-type breakdown table (total / would create / would skip / would execute). 
+- **UI: audit log toggle** — *📋 Audit Log* button reveals three inline tables: Approval History, Activity Log, Execution History drawn from `GET /prep-audit`.
+
+---
+
 ## [1.36.1] - 2026-03-01
 
 ### New — Phase 4B Polish: Confirmation Modal, Execution Summary & Notifications
