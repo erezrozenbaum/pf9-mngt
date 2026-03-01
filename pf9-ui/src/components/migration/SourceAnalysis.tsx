@@ -6012,6 +6012,7 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
   const [frPreview, setFrPreview] = useState<any[] | null>(null);
   const [frLoading, setFrLoading] = useState(false);
   const [frApplied, setFrApplied] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -6028,9 +6029,9 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      const r = await apiFetch<{ seeded: number; updated: number }>(`/api/migration/projects/${projectId}/flavor-staging/refresh`, { method: "POST" });
+      const r = await apiFetch<{ inserted: number; updated: number }>(`/api/migration/projects/${projectId}/flavor-staging/refresh`, { method: "POST" });
       await load();
-      alert(`✓ Flavor staging refreshed: ${r.seeded} seeded, ${r.updated} updated.`);
+      alert(`✓ Flavor staging refreshed: ${r.inserted} inserted, ${r.updated} updated.`);
     } catch (e: any) { setError(e.message); }
     finally { setRefreshing(false); }
   };
@@ -6060,6 +6061,22 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
     finally { setFrLoading(false); }
   };
 
+  const confirmAll = async () => {
+    const targets = flavors.filter(f => !f.skip && !f.confirmed);
+    if (!targets.length) return;
+    setConfirmingAll(true);
+    setError("");
+    try {
+      await Promise.all(targets.map(f =>
+        apiFetch(`/api/migration/flavor-staging/${f.id}`, {
+          method: "PATCH", body: JSON.stringify({ confirmed: true })
+        })
+      ));
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setConfirmingAll(false); }
+  };
+
   const readyCount = flavors.filter(f => f.confirmed && !f.skip).length;
   const totalCount = flavors.filter(f => !f.skip).length;
 
@@ -6087,6 +6104,13 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
             style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
               background: showFR ? "#eff6ff" : undefined }}>
             🔍 F&amp;R
+          </button>
+          <button
+            onClick={confirmAll}
+            disabled={confirmingAll || flavors.filter(f => !f.skip && !f.confirmed).length === 0}
+            style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
+              background: "#16a34a", color: "#fff", opacity: confirmingAll ? 0.7 : 1 }}>
+            {confirmingAll ? "⏳ Confirming..." : "✓ Confirm All"}
           </button>
           <button onClick={refresh} disabled={refreshing}
             style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px" }}>
@@ -6269,6 +6293,53 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
     finally { setSaving(null); }
   };
 
+  const confirmAll = async () => {
+    const targets = images.filter(i => !i.confirmed);
+    if (!targets.length) return;
+    setConfirmingAll(true);
+    setError("");
+    try {
+      await Promise.all(targets.map(img =>
+        apiFetch(`/api/migration/image-requirements/${img.id}`, {
+          method: "PATCH", body: JSON.stringify({ confirmed: true })
+        })
+      ));
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setConfirmingAll(false); }
+  };
+
+  const previewFR = () => {
+    if (!frFind.trim()) return;
+    const result = images
+      .filter(i => (i.glance_image_name || "").includes(frFind))
+      .map(i => ({
+        id: i.id,
+        os_family: i.os_family,
+        old_value: i.glance_image_name || "",
+        new_value: (i.glance_image_name || "").split(frFind).join(frReplace),
+      }));
+    setFrPreview(result);
+    setFrApplied(false);
+  };
+
+  const applyFR = async () => {
+    if (!frPreview || !frPreview.length) return;
+    setFrApplying(true);
+    setError("");
+    try {
+      await Promise.all(frPreview.map(row =>
+        apiFetch(`/api/migration/image-requirements/${row.id}`, {
+          method: "PATCH", body: JSON.stringify({ glance_image_name: row.new_value })
+        })
+      ));
+      setFrApplied(true);
+      setFrPreview(null);
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setFrApplying(false); }
+  };
+
   const readyCount = images.filter(i => i.confirmed).length;
 
   if (loading) return <div style={{ color: "#6b7280", padding: 12, fontSize: "0.85rem" }}>Loading image requirements...</div>;
@@ -6291,12 +6362,81 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
           }}>
             {readyCount}/{images.length} confirmed
           </span>
+          <button onClick={() => { setShowFR(!showFR); setFrPreview(null); setFrApplied(false); }}
+            style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
+              background: showFR ? "#eff6ff" : undefined }}>
+            🔍 F&amp;R
+          </button>
+          <button
+            onClick={confirmAll}
+            disabled={confirmingAll || images.filter(i => !i.confirmed).length === 0}
+            style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
+              background: "#16a34a", color: "#fff", opacity: confirmingAll ? 0.7 : 1 }}>
+            {confirmingAll ? "⏳ Confirming..." : "✓ Confirm All"}
+          </button>
           <button onClick={refresh} disabled={refreshing}
             style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px" }}>
             {refreshing ? "⏳..." : "🔄 Refresh from VMs"}
           </button>
         </div>
       </div>
+      {showFR && (
+        <div style={{ marginBottom: 12, padding: 12, background: "#eff6ff",
+          border: "1px solid #bfdbfe", borderRadius: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, color: "#1e40af", fontSize: "0.85rem" }}>
+            🔍 Find &amp; Replace — Glance Image Name
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Find</label>
+              <input value={frFind} onChange={e => { setFrFind(e.target.value); setFrPreview(null); setFrApplied(false); }}
+                placeholder="e.g. ubuntu" style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.82rem", width: 160 }} />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Replace with</label>
+              <input value={frReplace} onChange={e => { setFrReplace(e.target.value); setFrPreview(null); }}
+                placeholder="leave empty to strip" style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.82rem", width: 180 }} />
+            </div>
+            <button onClick={previewFR} disabled={!frFind.trim()}
+              style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px" }}>
+              👁 Preview
+            </button>
+          </div>
+          {frApplied && <div style={{ color: "#15803d", fontSize: "0.82rem", marginTop: 6, fontWeight: 500 }}>✓ Applied!</div>}
+          {frPreview !== null && frPreview.length === 0 && (
+            <div style={{ color: "#6b7280", fontSize: "0.82rem", marginTop: 6 }}>No matches found.</div>
+          )}
+          {frPreview !== null && frPreview.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: "0.78rem", color: "#374151", marginBottom: 4 }}>
+                {frPreview.length} image name{frPreview.length !== 1 ? "s" : ""} will be affected.
+              </div>
+              <div style={{ overflowX: "auto", maxHeight: 180, overflowY: "auto", marginBottom: 8 }}>
+                <table style={{ ...tableStyle, fontSize: "0.78rem" }}>
+                  <thead><tr>
+                    <th style={thStyle}>OS Family</th>
+                    <th style={thStyle}>Before</th>
+                    <th style={thStyle}>After</th>
+                  </tr></thead>
+                  <tbody>
+                    {frPreview.map(row => (
+                      <tr key={row.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ ...tdStyle, fontFamily: "monospace" }}>{row.os_family}</td>
+                        <td style={{ ...tdStyle, color: "#dc2626" }}>{row.old_value}</td>
+                        <td style={{ ...tdStyle, color: "#16a34a" }}>{row.new_value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button onClick={applyFR} disabled={frApplying}
+                style={{ ...btnPrimary, fontSize: "0.82rem", padding: "5px 12px" }}>
+                {frApplying ? "⏳..." : `✅ Apply to ${frPreview.length} image${frPreview.length !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {error && <div style={{ ...alertError, fontSize: "0.82rem", marginBottom: 8 }}>{error}</div>}
       <div style={{ overflowX: "auto" }}>
         <table style={{ ...tableStyle, fontSize: "0.82rem" }}>

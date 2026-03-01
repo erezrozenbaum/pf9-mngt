@@ -36,7 +36,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS migration_flavor_staging (
     id                  SERIAL PRIMARY KEY,
     project_id          TEXT    NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
-    source_shape        TEXT    NOT NULL,          -- e.g. "4vCPU-8GB-50GB" (auto-label)
+    source_shape        TEXT    NOT NULL,          -- e.g. "4vCPU-8GB" (CPU+RAM only; disk=0, boot-volume model)
     vcpus               INTEGER NOT NULL,
     ram_mb              INTEGER NOT NULL,
     disk_gb             INTEGER NOT NULL,
