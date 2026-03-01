@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`GROUP BY` error on subnet-enriched network mappings** — `GET /projects/{id}/network-mappings` used an explicit `GROUP BY` column list that omitted the new Phase 4A columns (`network_kind`, `cidr`, `gateway_ip`, etc.), causing a Postgres error. Replaced with `GROUP BY m.id` (valid because `id` is the primary key — covers all columns via functional dependency).
 - **`dns_nameservers` type mismatch on save** — UI state held DNS nameservers as a comma-separated string but the API expects `List[str]`. `saveSubnetDetails` now splits the string into an array before PATCH.
 - **Section heading** — "Phase 4A — Data Enrichment" heading in PCD Readiness tab renamed to "Pre-Migration Data Enrichment" to remove internal phase numbering from the operator-facing UI.
+- **Network Map Kind column** — Replaced read-only pill with an inline `<select>` dropdown. Selecting Physical / L2 / Virtual now immediately PATCHes the mapping and refreshes the row; no need to open the full Subnet Details panel just to set the kind.
 
 ---
 
