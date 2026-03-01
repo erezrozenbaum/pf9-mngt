@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.6] - 2026-03-01
+
+### Fixed — `'tuple' object has no attribute 'get'` in Match PCD + Gap Analysis
+
+- `p9_common.get_session_best_scope()` returns a 5-tuple `(session, token, body, scope_mode, None)`. Both `run_pcd_gap_analysis` and `flavor_staging_match_from_pcd` assigned the whole tuple to `session`, which was then passed to `nova_flavors(session)` → `paginate(session, ...)` → `session.get(url)` → crash.
+- Fixed by unpacking: `session, *_ = p9_common.get_session_best_scope()` in both endpoints.
+
+### Fixed — React key warning in PcdReadinessView gaps table
+
+- `gaps.map(g => <tr key={g.id}>…)` — if a gap row has no `id` (e.g. freshly created before DB round-trip), `key=undefined` triggers a React duplicate-key warning. Changed to `gaps.map((g, gi) => <tr key={g.id ?? \`gap-${gi}\`}>…)` so every row always has a unique key.
+
+---
+
 ## [1.35.5] - 2026-03-01
 
 ### Fixed — p9_common not found in API container

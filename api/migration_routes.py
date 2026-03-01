@@ -3572,7 +3572,7 @@ async def run_pcd_gap_analysis(project_id: str, user=Depends(get_current_user)):
                 p9_common.CFG["REGION_NAME"] = project["pcd_region"]
 
             try:
-                session = p9_common.get_session_best_scope()
+                session, *_ = p9_common.get_session_best_scope()
                 pcd_flavors  = p9_common.nova_flavors(session)
                 pcd_networks = p9_common.neutron_list(session, "networks")
                 pcd_images   = p9_common.glance_images(session)
@@ -4404,7 +4404,7 @@ async def flavor_staging_match_from_pcd(project_id: str, user=Depends(get_curren
             p9_common.CFG["REGION_NAME"] = project["pcd_region"]
 
         try:
-            session = p9_common.get_session_best_scope()
+            session, *_ = p9_common.get_session_best_scope()
             pcd_flavors = p9_common.nova_flavors(session)
         finally:
             for k, v in _orig_cfg.items():
