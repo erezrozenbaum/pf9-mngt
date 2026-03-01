@@ -4080,8 +4080,7 @@ async def list_network_mappings(project_id: str):
                     AND v.network_name = m.source_network_name
                     AND v.power_state = 'poweredOn'
                 WHERE m.project_id = %s
-                GROUP BY m.id, m.project_id, m.source_network_name, m.target_network_name,
-                         m.target_network_id, m.vlan_id, m.notes, m.created_at, m.updated_at
+                GROUP BY m.id
                 ORDER BY vm_count DESC, m.source_network_name
             """, (project_id,))
             mappings = [_serialize_row(dict(r)) for r in cur.fetchall()]
@@ -4120,6 +4119,31 @@ async def create_network_mapping(project_id: str, req: NetworkMappingCreateReque
     _log_activity(actor=actor, action="create_network_mapping", resource_type="migration_network_mapping",
                   resource_id=str(mapping["id"]), details={"source": req.source_network_name})
     return {"status": "ok", "mapping": _serialize_row(dict(mapping))}
+
+
+@router.get("/projects/{project_id}/network-mappings/readiness",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_network_mappings_readiness(project_id: str):
+    """Count of networks that have confirmed mappings but missing subnet details for Phase 4B."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE confirmed = true)                              AS confirmed_count,
+                    COUNT(*) FILTER (WHERE confirmed = true AND NOT COALESCE(is_external, false)
+                                    AND NOT COALESCE(subnet_details_confirmed, false))    AS missing_subnet_details,
+                    COUNT(*) FILTER (WHERE confirmed = true AND COALESCE(is_external, false)) AS external_count
+                FROM migration_network_mappings
+                WHERE project_id = %s
+            """, (project_id,))
+            row = cur.fetchone()
+    return {
+        "confirmed_count":       row[0],
+        "missing_subnet_details": row[1],
+        "external_count":        row[2],
+        "ready":                 row[1] == 0 and row[0] > 0,
+    }
 
 
 @router.patch("/projects/{project_id}/network-mappings/{mapping_id}",
@@ -4167,31 +4191,6 @@ async def delete_network_mapping(project_id: str, mapping_id: int,
     _log_activity(actor=actor, action="delete_network_mapping", resource_type="migration_network_mapping",
                   resource_id=str(mapping_id), details={})
     return {"status": "ok"}
-
-
-@router.get("/projects/{project_id}/network-mappings/readiness",
-            dependencies=[Depends(require_permission("migration", "read"))])
-async def get_network_mappings_readiness(project_id: str):
-    """Count of networks that have confirmed mappings but missing subnet details for Phase 4B."""
-    with _get_conn() as conn:
-        _get_project(project_id, conn)
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    COUNT(*) FILTER (WHERE confirmed = true)                              AS confirmed_count,
-                    COUNT(*) FILTER (WHERE confirmed = true AND NOT COALESCE(is_external, false)
-                                    AND NOT COALESCE(subnet_details_confirmed, false))    AS missing_subnet_details,
-                    COUNT(*) FILTER (WHERE confirmed = true AND COALESCE(is_external, false)) AS external_count
-                FROM migration_network_mappings
-                WHERE project_id = %s
-            """, (project_id,))
-            row = cur.fetchone()
-    return {
-        "confirmed_count":       row[0],
-        "missing_subnet_details": row[1],
-        "external_count":        row[2],
-        "ready":                 row[1] == 0 and row[0] > 0,
-    }
 
 
 # =====================================================================

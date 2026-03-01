@@ -2097,10 +2097,15 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const saveSubnetDetails = async (id: number) => {
     setSavingSubnet(id);
     try {
-      const edits = subnetEdits[id] || {};
+      const rawEdits = { ...subnetEdits[id] || {} };
+      // Convert dns_nameservers from comma-string to array before sending to API
+      if (typeof rawEdits.dns_nameservers === "string") {
+        rawEdits.dns_nameservers = rawEdits.dns_nameservers
+          .split(",").map((s: string) => s.trim()).filter(Boolean);
+      }
       await apiFetch(`/api/migration/projects/${projectId}/network-mappings/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...edits, subnet_details_confirmed: true }),
+        body: JSON.stringify({ ...rawEdits, subnet_details_confirmed: true }),
       });
       setExpandedSubnet(null);
       setSubnetEdits(prev => { const n = { ...prev }; delete n[id]; return n; });
@@ -5906,11 +5911,11 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
         </div>
       )}
 
-      {/* Phase 4A Data Enrichment Sections */}
+      {/* Data Enrichment Sections */}
       <div style={{ marginTop: 24 }}>
-        <h3 style={{ margin: "0 0 6px", fontSize: "1rem", color: "#374151" }}>📋 Phase 4A — Data Enrichment</h3>
+        <h3 style={{ margin: "0 0 6px", fontSize: "1rem", color: "#374151" }}>📋 Pre-Migration Data Enrichment</h3>
         <p style={{ margin: "0 0 16px", color: "#6b7280", fontSize: "0.85rem" }}>
-          Before migration execution, confirm flavor mappings and OS image requirements for this project.
+          Confirm flavor mappings and OS image requirements before migration execution.
         </p>
         <div style={{ ...sectionStyle, marginBottom: 16 }}>
           <FlavorStagingView projectId={projectId} />
