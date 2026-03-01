@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.35.7] - 2026-03-01
+
+### New — Network Map: Excel Template Export / Import
+
+- **📥 Download Template** button — exports a styled XLSX with the full network map pre-filled: 2 grey read-only columns (Source Network, VMs) + 8 blue editable columns (VLAN ID, PCD Target, Subnet/CIDR, Gateway, DNS Servers, IP Range Start/End, Notes). Row 1 is an instruction banner; headers and data start at row 2. Freeze pane locks columns A–B while scrolling.
+- **📤 Import Template** button — uploads a filled template and bulk-updates all editable fields. Flexible column detection (case-insensitive header matching). Match uses `LOWER(TRIM(...))` on both sides to tolerate whitespace/case drift. VLAN values are accepted as integer or float (e.g. `100.0` → `100`).
+- **Formula detection** — if the uploaded file contains unevaluated formulas referencing external files (e.g. `=VLOOKUP(A3,vcd_networks.csv!...)`) openpyxl returns `None` for those cells. The importer now loads the workbook twice (once `data_only=True`, once raw) to detect formula strings and returns HTTP 422 with a clear fix instruction: *"select all blue columns → Copy → Paste Special → Values Only → Save → re-upload."*
+- **Header row detection fix** — robustly locates the header row by scoring the first 5 rows: a row qualifies as the header only when it contains both a "source" cell AND at least one of "vlan/subnet/gateway/pcd/target/dns/note". This prevents the instruction banner row (which may mention "source") from being mistaken as the header.
+- **Diagnostic response** — when all rows are skipped, the API response now includes a `diagnostics` object with breakdown: `skipped_empty_patch` vs `skipped_no_db_match`, sample source names from the file, and sample source names from the DB, so mismatches are immediately visible in the UI error banner.
+- New API endpoints: `GET /network-mappings/export-template`, `POST /network-mappings/import-template`
+
+### New — Network Map: Confirm Subnets button
+
+- **✓ Confirm Subnets** toolbar button — bulk-sets `subnet_details_confirmed = true` for all rows that have a CIDR value, updating the `Subnet Details: X/Y` readiness counter in a single click.
+- **Import auto-confirm** — when a template import provides a CIDR for a row, `subnet_details_confirmed` is automatically set to `true` at import time — no extra step needed.
+- New API endpoint: `POST /network-mappings/confirm-subnets`
+
+### Improved — Network Map: Subnet Details column shows CIDR inline
+
+- **Confirmed rows** now show a green `✓ 10.0.0.0/24` clickable button instead of a generic "✓ subnet ready" pill — the actual CIDR is visible at a glance in the table.
+- **Rows with CIDR but not yet confirmed** show an amber `⚠ 10.0.0.0/24` button — visible reminder to click confirm.
+- **Hover tooltip** on both states shows full `CIDR | GW: x.x.x.x` details.
+
+### Improved — Networks tab simplified to read-only discovery view
+
+- Removed all subnet/gateway/DNS/PCD-target editing columns from the Networks tab — those fields belong in the Network Map tab which has the full subnet workflow.
+- Networks tab now shows: Network Name, VLAN ID, Type, VMs, Tenants — pure discovery/inventory view.
+- Added a note pointing users to the Network Map tab for all editing.
+
+### Fixed — "none" network row in Network Map
+
+- RVTools writes the literal string `"none"` when a VM NIC has no network assigned. These were being imported into the network map as a source network named `"none"` and generating spurious gaps.
+- Fixed in three places: `_parse_vnic_sheet` now stores an empty string for `raw_net.lower() == "none"`; the auto-seed query filters `AND LOWER(vm.network_name) != 'none'`; and a DB cleanup statement deletes any existing `"none"` rows on list load.
+
+### Fixed — Network gaps not auto-resolving when mappings are confirmed
+
+- The gap analysis engine compared raw VMware source network names against PCD network names — they never match since PCD uses the mapped target names. Confirming a network mapping had no effect on gap status.
+- Added network gap auto-resolve in both `run_pcd_gap_analysis` (post-insert) and `get_pcd_gaps` (on every panel load):
+  - Resolves any `network` gap whose `resource_name` matches a confirmed row in `migration_network_mappings`.
+  - If **all** network mappings are confirmed → resolves all remaining network gaps (catches edge cases / stale rows).
+
+---
+
 ## [1.35.6] - 2026-03-01
 
 ### Fixed — `'tuple' object has no attribute 'get'` in Match PCD + Gap Analysis
