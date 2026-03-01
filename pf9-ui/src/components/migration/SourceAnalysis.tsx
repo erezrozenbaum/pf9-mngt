@@ -1055,13 +1055,13 @@ function DashboardView({ stats, hosts, clusters, tenants }: {
             {Object.entries(stats.mode_distribution).map(([mode, count]) => (
               <div key={mode} style={{
                 padding: 12, borderRadius: 6, textAlign: "center",
-                background: mode === "warm_eligible" ? "#f0fdf4" :
-                             mode === "warm_risky" ? "#fffbeb" : "#fef2f2",
-                border: `1px solid ${mode === "warm_eligible" ? "#bbf7d0" :
-                                    mode === "warm_risky" ? "#fcd34d" : "#fecaca"}`,
+                background: mode === "warm_eligible" ? "var(--pf9-safe-bg)" :
+                             mode === "warm_risky" ? "var(--pf9-warning-bg)" : "var(--pf9-danger-bg)",
+                border: `1px solid ${mode === "warm_eligible" ? "var(--pf9-safe-border)" :
+                                    mode === "warm_risky" ? "var(--pf9-warning-border)" : "var(--pf9-danger-border)"}`,
               }}>
-                <div style={{ fontSize: "1.4rem", fontWeight: 700 }}>{count as number}</div>
-                <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>{(mode as string).replace(/_/g, " ")}</div>
+                <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--color-text-primary)" }}>{count as number}</div>
+                <div style={{ fontSize: "0.85rem", color: mode === "warm_eligible" ? "var(--pf9-safe-text)" : mode === "warm_risky" ? "var(--pf9-warning-text)" : "var(--pf9-danger-text)" }}>{(mode as string).replace(/_/g, " ")}</div>
               </div>
             ))}
           </div>
@@ -1092,10 +1092,11 @@ function DashboardView({ stats, hosts, clusters, tenants }: {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
             {tenants.map((t, idx) => (
               <div key={t.id ?? t.tenant_id ?? `${t.tenant_name}-${idx}`} style={{
-                padding: 10, borderRadius: 6, border: "1px solid var(--border, #e5e7eb)",
+                padding: 10, borderRadius: 6, border: "1px solid var(--pf9-border)",
+                background: "var(--card-bg, #fff)",
               }}>
                 <div style={{ fontWeight: 600 }}>{t.tenant_name}</div>
-                <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+                <div style={{ fontSize: "0.8rem", color: "var(--pf9-text-secondary)" }}>
                   {t.vm_count} VMs · {t.total_vcpu || 0} vCPU · {t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : 0} GB RAM
                   {t.total_disk_gb ? <> · {Number(t.total_disk_gb).toFixed(0)} GB alloc</> : null}
                   {t.total_in_use_gb ? <> · {Number(t.total_in_use_gb).toFixed(0)} GB used</> : null}
@@ -5996,10 +5997,10 @@ function StatCard({ label, value }: { label: string; value: any }) {
   return (
     <div style={{
       padding: 14, borderRadius: 8, textAlign: "center",
-      background: "var(--card-bg, #f9fafb)", border: "1px solid var(--border, #e5e7eb)",
+      background: "var(--card-bg, #f9fafb)", border: "1px solid var(--pf9-border)",
     }}>
-      <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>{display}</div>
-      <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>{label}</div>
+      <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--color-text-primary)" }}>{display}</div>
+      <div style={{ fontSize: "0.8rem", color: "var(--pf9-text-secondary)" }}>{label}</div>
     </div>
   );
 }
