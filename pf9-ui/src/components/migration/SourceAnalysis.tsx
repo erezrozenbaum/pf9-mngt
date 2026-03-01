@@ -6039,6 +6039,8 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
   const [frLoading, setFrLoading] = useState(false);
   const [frApplied, setFrApplied] = useState(false);
   const [confirmingAll, setConfirmingAll] = useState(false);
+  const [matchingPCD, setMatchingPCD] = useState(false);
+  const [matchResult, setMatchResult] = useState<{ matched: number; unmatched: number; error?: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -6079,7 +6081,7 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
     try {
       const r = await apiFetch<{ preview?: any[]; affected_count?: number }>(
         `/api/migration/projects/${projectId}/flavor-staging/bulk-rename`,
-        { method: "POST", body: JSON.stringify({ find: frFind, replace: frReplace, apply }) }
+        { method: "POST", body: JSON.stringify({ find: frFind, replace: frReplace, preview_only: !apply }) }
       );
       if (apply) { setFrApplied(true); setFrPreview(null); await load(); }
       else { setFrPreview(r.preview ?? []); }
@@ -6101,6 +6103,21 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
       await load();
     } catch (e: any) { setError(e.message); }
     finally { setConfirmingAll(false); }
+  };
+
+  const matchFromPcd = async () => {
+    setMatchingPCD(true);
+    setMatchResult(null);
+    setError("");
+    try {
+      const r = await apiFetch<{ matched: number; unmatched: number; pcd_connected: boolean; error?: string }>(
+        `/api/migration/projects/${projectId}/flavor-staging/match-from-pcd`,
+        { method: "POST" }
+      );
+      setMatchResult({ matched: r.matched, unmatched: r.unmatched, error: r.error });
+      await load();
+    } catch (e: any) { setError(e.message); }
+    finally { setMatchingPCD(false); }
   };
 
   const readyCount = flavors.filter(f => f.confirmed && !f.skip).length;
@@ -6131,6 +6148,11 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
               background: showFR ? "#eff6ff" : undefined }}>
             🔍 F&amp;R
           </button>
+          <button onClick={matchFromPcd} disabled={matchingPCD}
+            style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
+              background: "#0ea5e9", color: "#fff", opacity: matchingPCD ? 0.7 : 1 }}>
+            {matchingPCD ? "⏳ Matching..." : "🔗 Match PCD"}
+          </button>
           <button
             onClick={confirmAll}
             disabled={confirmingAll || flavors.filter(f => !f.skip && !f.confirmed).length === 0}
@@ -6144,6 +6166,22 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
           </button>
         </div>
       </div>
+      {matchResult && (
+        <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 6, fontSize: "0.82rem",
+          background: matchResult.error ? "#fef2f2" : "#f0fdf4",
+          border: `1px solid ${matchResult.error ? "#fca5a5" : "#86efac"}`,
+          color: matchResult.error ? "#dc2626" : "#15803d",
+          display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>
+            {matchResult.error
+              ? `⚠️ PCD match failed: ${matchResult.error}`
+              : `🔗 PCD match complete — ${matchResult.matched} matched (marked ✓ exists), ${matchResult.unmatched} unmatched (will be created in Phase 4B)`
+            }
+          </span>
+          <button onClick={() => setMatchResult(null)}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1rem", lineHeight: 1 }}>×</button>
+        </div>
+      )}
       {showFR && (
         <div style={{ marginBottom: 12, padding: 12, background: "#eff6ff",
           border: "1px solid #bfdbfe", borderRadius: 8 }}>
@@ -6237,7 +6275,11 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
                       />
                     )}
                   </td>
-                  <td style={{ ...tdStyle, fontSize: "0.72rem", color: "#6b7280", fontFamily: "monospace" }}>{f.pcd_flavor_id || "—"}</td>
+                  <td style={{ ...tdStyle, fontSize: "0.72rem", color: f.pcd_flavor_id ? "#0369a1" : "#6b7280", fontFamily: "monospace" }}>
+                    {f.pcd_flavor_id
+                      ? <span title={f.pcd_flavor_id}>🔗 {f.pcd_flavor_id.slice(0, 8)}…</span>
+                      : "—"}
+                  </td>
                   <td style={{ ...tdStyle, textAlign: "center" }}>
                     <input type="checkbox" checked={!!f.skip}
                       onChange={e => saveFlavor(f.id, { skip: e.target.checked, confirmed: false })} />
@@ -6245,9 +6287,11 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
                   <td style={{ ...tdStyle, textAlign: "center" }}>
                     {f.skip
                       ? <span style={{ ...pillStyle, background: "#f3f4f6", color: "#6b7280", fontSize: "0.7rem" }}>skip</span>
-                      : f.confirmed
-                        ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.7rem" }}>✓</span>
-                        : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.7rem" }}>pending</span>
+                      : f.pcd_flavor_id && f.confirmed
+                        ? <span style={{ ...pillStyle, background: "#e0f2fe", color: "#0369a1", fontSize: "0.7rem" }}>✓ exists</span>
+                        : f.confirmed
+                          ? <span style={{ ...pillStyle, background: "#dcfce7", color: "#15803d", fontSize: "0.7rem" }}>✓ new</span>
+                          : <span style={{ ...pillStyle, background: "#fff7ed", color: "#ea580c", fontSize: "0.7rem" }}>pending</span>
                     }
                   </td>
                   <td style={tdStyle}>
