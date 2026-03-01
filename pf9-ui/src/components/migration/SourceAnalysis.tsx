@@ -6074,6 +6074,13 @@ function PreparePcdView({ projectId }: { projectId: number }) {
   const [msg, setMsg]                 = useState("");
   const [showConfirm, setShowConfirm] = useState(false);
   const [summary, setSummary]         = useState<any>(null);
+  const [approval, setApproval]           = useState<any>(null);
+  const [approvingFor, setApprovingFor]   = useState<string | null>(null);
+  const [approveComment, setApproveComment] = useState("");
+  const [dryRunResult, setDryRunResult]   = useState<any>(null);
+  const [dryRunning, setDryRunning]       = useState(false);
+  const [auditData, setAuditData]         = useState<any>(null);
+  const [showAudit, setShowAudit]         = useState(false);
 
   const loadReadiness = async () => {
     try {
@@ -6098,9 +6105,47 @@ function PreparePcdView({ projectId }: { projectId: number }) {
     } catch { /* ignore */ }
   };
 
+  const loadApproval = async () => {
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prep-approval`);
+      setApproval(r);
+    } catch { /* ignore */ }
+  };
+
+  const submitApproval = async (decision: string) => {
+    setApprovingFor(decision);
+    try {
+      await apiFetch<any>(`/api/migration/projects/${projectId}/prep-approval`, {
+        method: "POST",
+        body: JSON.stringify({ decision, comment: approveComment }),
+      });
+      setMsg(`${decision === "approved" ? "✅" : "❌"} Plan ${decision}`);
+      setApproveComment("");
+      loadApproval(); loadReadiness();
+    } catch (e: any) { setMsg(`❌ ${e.message}`); }
+    finally { setApprovingFor(null); }
+  };
+
+  const runDryRun = async () => {
+    setDryRunning(true); setDryRunResult(null); setMsg("");
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prepare/dry-run`, { method: "POST" });
+      setDryRunResult(r);
+    } catch (e: any) { setMsg(`❌ Dry run failed: ${e.message}`); }
+    finally { setDryRunning(false); }
+  };
+
+  const loadAudit = async () => {
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prep-audit`);
+      setAuditData(r);
+    } catch { /* ignore */ }
+  };
+
   React.useEffect(() => {
     loadReadiness();
     loadTasks();
+    loadApproval();
   }, [projectId]);
 
   // Auto-refresh while tasks are running
@@ -6114,15 +6159,15 @@ function PreparePcdView({ projectId }: { projectId: number }) {
   // Load summary when all tasks complete
   React.useEffect(() => {
     const done = tasks.length > 0 && tasks.every((t: any) => t.status === "done");
-    if (done) loadSummary();
+    if (done) { loadSummary(); loadApproval(); }
   }, [tasks]);
 
   const generatePlan = async () => {
     setGenerating(true); setMsg("");
     try {
       const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prepare`, { method: "POST" });
-      setMsg(`✅ Generated ${r.tasks_generated} tasks`);
-      loadReadiness(); loadTasks();
+      setMsg(`✅ Generated ${r.tasks_generated} tasks — awaiting admin approval`);
+      loadReadiness(); loadTasks(); loadApproval();
     } catch (e: any) {
       setMsg(`❌ ${e.message || "Failed to generate"}`);
     } finally { setGenerating(false); }
@@ -6134,7 +6179,7 @@ function PreparePcdView({ projectId }: { projectId: number }) {
     try {
       const r = await apiFetch<any>(`/api/migration/projects/${projectId}/prepare/run`, { method: "POST" });
       setMsg(`Done: ${r.done} created · ${r.skipped} skipped · ${r.failed} failed`);
-      loadReadiness(); loadTasks(); loadSummary();
+      loadReadiness(); loadTasks(); loadSummary(); loadApproval();
     } catch (e: any) {
       setMsg(`❌ ${e.message || "Failed"}`);
     } finally { setRunning(false); }
@@ -6190,15 +6235,97 @@ function PreparePcdView({ projectId }: { projectId: number }) {
                 </div>
               ))}
             </div>
+            {/* Approval banner */}
+            {tasks.length > 0 && (
+              <div style={{
+                marginBottom: 12, padding: "10px 14px", borderRadius: 6,
+                background: approval?.status === "approved" ? "var(--pf9-safe-bg)"
+                          : approval?.status === "rejected"  ? "var(--pf9-danger-bg)"
+                          : approval?.status === "pending_approval" ? "var(--pf9-warning-bg)"
+                          : "var(--pf9-bg-muted)",
+                border: `1px solid ${approval?.status === "approved" ? "var(--pf9-safe-border)"
+                       : approval?.status === "rejected"  ? "var(--pf9-danger-border)"
+                       : approval?.status === "pending_approval" ? "var(--pf9-warning-border)"
+                       : "var(--pf9-border)"}`,
+              }}>
+                {(!approval?.status) && (
+                  <span style={{ fontSize: "0.85rem", color: "var(--pf9-text-secondary)" }}>
+                    ⏳ Generate a plan to submit for admin approval before Run All is enabled.
+                  </span>
+                )}
+                {approval?.status === "pending_approval" && (
+                  <div>
+                    <div style={{ fontWeight: 600, color: "var(--pf9-warning-text)", marginBottom: 8 }}>
+                      ⏳ Awaiting Admin Approval — requested by <strong>{approval.requested_by}</strong>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <input
+                        type="text" placeholder="Optional comment…" value={approveComment}
+                        onChange={e => setApproveComment(e.target.value)}
+                        style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid var(--pf9-border)",
+                          background: "var(--pf9-bg)", color: "var(--pf9-text-primary)",
+                          fontSize: "0.85rem", flex: 1, minWidth: 160 }}
+                      />
+                      <button onClick={() => submitApproval("approved")} disabled={!!approvingFor}
+                        style={{ ...btnPrimary, padding: "4px 12px", fontSize: "0.8rem", background: "#10b981" }}>
+                        {approvingFor === "approved" ? "Approving…" : "✅ Approve"}
+                      </button>
+                      <button onClick={() => submitApproval("rejected")} disabled={!!approvingFor}
+                        style={{ ...btnSecondary, padding: "4px 12px", fontSize: "0.8rem", color: "var(--pf9-danger-text)" }}>
+                        {approvingFor === "rejected" ? "Rejecting…" : "❌ Reject"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {approval?.status === "approved" && (
+                  <span style={{ color: "var(--pf9-safe-text)", fontWeight: 600 }}>
+                    ✅ Approved by <strong>{approval.approved_by}</strong>
+                    {approval.approved_at && ` on ${new Date(approval.approved_at).toLocaleString()}`}
+                    {approval.history?.[0]?.comment && ` — “${approval.history[0].comment}”`}
+                  </span>
+                )}
+                {approval?.status === "rejected" && (
+                  <div>
+                    <span style={{ color: "var(--pf9-danger-text)", fontWeight: 600 }}>
+                      ❌ Rejected by <strong>{approval.approved_by}</strong>
+                      {approval.history?.[0]?.comment && `: “${approval.history[0].comment}”`}
+                    </span>
+                    <div style={{ fontSize: "0.8rem", color: "var(--pf9-text-secondary)", marginTop: 4 }}>
+                      Re-generate the plan to resubmit for approval.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <button onClick={generatePlan} disabled={generating}
                 style={{ ...btnPrimary, opacity: generating ? 0.6 : 1 }}>
                 {generating ? "Generating…" : "🔄 Generate Plan"}
               </button>
-              {hasPending && (
+              {tasks.length > 0 && (
+                <button onClick={runDryRun} disabled={dryRunning}
+                  style={{ ...btnSecondary, opacity: dryRunning ? 0.6 : 1 }}>
+                  {dryRunning ? "Checking PCD…" : "🧪 Dry Run"}
+                </button>
+              )}
+              {hasPending && approval?.status === "approved" && (
                 <button onClick={() => setShowConfirm(true)} disabled={running}
                   style={{ ...btnPrimary, background: running ? "#6b7280" : "#10b981", opacity: running ? 0.7 : 1 }}>
                   {running ? "Running…" : "▶ Run All"}
+                </button>
+              )}
+              {hasPending && approval?.status !== "approved" && (
+                <button disabled
+                  title={`Run All requires approval (status: ${approval?.status || "not submitted"})`}
+                  style={{ ...btnPrimary, background: "#6b7280", opacity: 0.45, cursor: "not-allowed" }}>
+                  🔒 Run All
+                </button>
+              )}
+              {tasks.length > 0 && (
+                <button onClick={() => { setShowAudit(!showAudit); if (!showAudit && !auditData) loadAudit(); }}
+                  style={btnSecondary}>
+                  📋 {showAudit ? "Hide Audit" : "Audit Log"}
                 </button>
               )}
               {tasks.length > 0 && (
@@ -6213,6 +6340,42 @@ function PreparePcdView({ projectId }: { projectId: number }) {
               color: msg.startsWith("❌") ? "var(--pf9-danger-text)" : "var(--pf9-safe-text)",
               border: `1px solid ${msg.startsWith("❌") ? "var(--pf9-danger-border)" : "var(--pf9-safe-border)"}`,
               fontSize: "0.85rem" }}>{msg}</div>}
+
+            {/* Dry Run Results */}
+            {dryRunResult && (
+              <div style={{ marginTop: 12, padding: 12, background: "var(--pf9-bg-muted)", borderRadius: 6, border: "1px solid var(--pf9-border)" }}>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>
+                  🧪 Dry Run — {dryRunResult.summary.total} pending tasks checked against live PCD
+                </div>
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: "0.9rem", marginBottom: 10 }}>
+                  <span style={{ color: "var(--pf9-safe-text)" }}>New on PCD: <strong>{dryRunResult.summary.would_create}</strong></span>
+                  <span style={{ color: "var(--pf9-text-secondary)" }}>Already exists (skip): <strong>{dryRunResult.summary.would_skip_existing}</strong></span>
+                  <span>Always executes: <strong>{dryRunResult.summary.would_execute}</strong></span>
+                </div>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>Task Type</th>
+                      <th style={{ ...thStyle, textAlign: "center" }}>Total</th>
+                      <th style={{ ...thStyle, textAlign: "center" }}>Would Create</th>
+                      <th style={{ ...thStyle, textAlign: "center" }}>Would Skip</th>
+                      <th style={{ ...thStyle, textAlign: "center" }}>Always Run</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dryRunResult.by_type || []).map((row: any) => (
+                      <tr key={row.task_type} style={{ borderBottom: "1px solid var(--pf9-border)" }}>
+                        <td style={tdStyle}>{TASK_TYPE_LABELS[row.task_type] || row.task_type}</td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>{row.total}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", color: row.would_create > 0 ? "var(--pf9-safe-text)" : undefined }}>{row.would_create}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", color: "var(--pf9-text-secondary)" }}>{row.would_skip_existing}</td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>{row.would_execute}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         ) : <div style={{ color: "var(--pf9-text-secondary)" }}>Loading…</div>}
       </div>
@@ -6316,6 +6479,104 @@ function PreparePcdView({ projectId }: { projectId: number }) {
               </tr>
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Audit Log */}
+      {showAudit && (
+        <div style={sectionStyle}>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>📋 Audit Log</h3>
+          {!auditData && <div style={{ color: "var(--pf9-text-secondary)", fontSize: "0.85rem" }}>Loading…</div>}
+          {auditData && (
+            <div>
+              {/* Approval History */}
+              {auditData.approval_history?.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <h4 style={{ marginTop: 0, marginBottom: 8, fontSize: "0.95rem" }}>Approval History</h4>
+                  <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>Approver</th>
+                        <th style={thStyle}>Decision</th>
+                        <th style={thStyle}>Comment</th>
+                        <th style={thStyle}>When</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditData.approval_history.map((r: any, i: number) => (
+                        <tr key={i} style={{ borderBottom: "1px solid var(--pf9-border)" }}>
+                          <td style={tdStyle}>{r.approver}</td>
+                          <td style={{ ...tdStyle, color: r.decision === "approved" ? "var(--pf9-safe-text)" : "var(--pf9-danger-text)", fontWeight: 600 }}>
+                            {r.decision === "approved" ? "✅ Approved" : "❌ Rejected"}
+                          </td>
+                          <td style={{ ...tdStyle, color: "var(--pf9-text-secondary)" }}>{r.comment || "—"}</td>
+                          <td style={{ ...tdStyle, fontSize: "0.75rem" }}>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Activity Log */}
+              {auditData.activity_log?.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <h4 style={{ marginTop: 0, marginBottom: 8, fontSize: "0.95rem" }}>Activity Log</h4>
+                  <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>Actor</th>
+                        <th style={thStyle}>Action</th>
+                        <th style={thStyle}>When</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditData.activity_log.map((r: any, i: number) => (
+                        <tr key={i} style={{ borderBottom: "1px solid var(--pf9-border)" }}>
+                          <td style={tdStyle}>{r.actor}</td>
+                          <td style={tdStyle}><code style={{ fontSize: "0.75rem" }}>{r.action}</code></td>
+                          <td style={{ ...tdStyle, fontSize: "0.75rem" }}>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Execution History */}
+              {auditData.recent_executions?.length > 0 && (
+                <div>
+                  <h4 style={{ marginTop: 0, marginBottom: 8, fontSize: "0.95rem" }}>Execution History</h4>
+                  <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>Type</th>
+                        <th style={thStyle}>Task</th>
+                        <th style={thStyle}>Status</th>
+                        <th style={thStyle}>Executed By</th>
+                        <th style={thStyle}>When</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditData.recent_executions.map((r: any, i: number) => (
+                        <tr key={i} style={{ borderBottom: "1px solid var(--pf9-border)" }}>
+                          <td style={tdStyle}><span style={{ fontSize: "0.75rem" }}>{TASK_TYPE_LABELS[r.task_type] || r.task_type}</span></td>
+                          <td style={tdStyle}>{r.task_name}</td>
+                          <td style={tdStyle}>{statusBadge(r.status)}</td>
+                          <td style={tdStyle}>{r.executed_by || "—"}</td>
+                          <td style={{ ...tdStyle, fontSize: "0.75rem" }}>{r.executed_at ? new Date(r.executed_at).toLocaleString() : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {!auditData.approval_history?.length && !auditData.activity_log?.length && !auditData.recent_executions?.length && (
+                <p style={{ color: "var(--pf9-text-secondary)", textAlign: "center", padding: 16 }}>No audit records yet for this project.</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

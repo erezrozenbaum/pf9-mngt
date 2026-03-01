@@ -51,6 +51,7 @@ VALID_EVENT_TYPES = [
     "runbook_approval_requested", "runbook_completed", "runbook_failed",
     "runbook_approval_granted", "runbook_approval_rejected",
     "prep_tasks_completed",
+    "prep_approval_requested", "prep_approval_granted", "prep_approval_rejected",
 ]
 
 VALID_SEVERITIES = ["info", "warning", "critical"]
