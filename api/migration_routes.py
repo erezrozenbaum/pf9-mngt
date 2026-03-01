@@ -1254,6 +1254,10 @@ def _parse_vnic_sheet(sheet, project_id: str, cur) -> int:
         if not vm_name:
             continue
 
+        # Filter out literal "none" / "None" — RVTools writes this when a NIC has no network
+        raw_net = _safe_str(d.get("network_name"))
+        net_name = "" if raw_net.lower() == "none" else raw_net
+
         cur.execute("""
             INSERT INTO migration_vm_nics (
                 project_id, vm_name, nic_label, adapter_type,
@@ -1264,7 +1268,7 @@ def _parse_vnic_sheet(sheet, project_id: str, cur) -> int:
             project_id, vm_name,
             _safe_str(d.get("nic_label")),
             _safe_str(d.get("adapter_type")),
-            _safe_str(d.get("network_name")),
+            net_name,
             _safe_bool(d.get("nic_connected")),
             _safe_str(d.get("mac_address")),
             _safe_str(d.get("ip_address")),
@@ -2970,6 +2974,314 @@ async def confirm_all_networks(project_id: str, user=Depends(get_current_user)):
     return {"status": "ok", "affected_count": affected}
 
 
+@router.post("/projects/{project_id}/network-mappings/confirm-subnets",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def confirm_all_subnets(project_id: str, user=Depends(get_current_user)):
+    """Mark subnet_details_confirmed=true for all network mappings that have a CIDR set."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_network_mappings
+                SET subnet_details_confirmed = true, updated_at = now()
+                WHERE project_id = %s
+                  AND cidr IS NOT NULL AND TRIM(cidr) != ''
+                  AND NOT COALESCE(subnet_details_confirmed, false)
+            """, (project_id,))
+            affected = cur.rowcount
+        conn.commit()
+    _log_activity(actor=actor, action="confirm_all_subnets", resource_type="migration_project",
+                  resource_id=project_id, details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.get("/projects/{project_id}/network-mappings/export-template",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_network_mapping_template(project_id: str):
+    """Download an Excel template pre-filled with current network mappings for bulk editing."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from fastapi.responses import StreamingResponse as _Stream
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT m.source_network_name, m.vlan_id, m.target_network_name,
+                       m.cidr, m.gateway_ip, m.dns_nameservers,
+                       m.allocation_pool_start, m.allocation_pool_end, m.notes,
+                       COUNT(DISTINCT v.id) AS vm_count
+                FROM migration_network_mappings m
+                LEFT JOIN migration_vms v
+                    ON v.project_id = m.project_id AND v.network_name = m.source_network_name
+                    AND v.power_state = 'poweredOn'
+                WHERE m.project_id = %s
+                GROUP BY m.id
+                ORDER BY vm_count DESC, m.source_network_name
+            """, (project_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Network Map"
+
+    HEADERS = [
+        "Source Network (VMware)", "VMs", "VLAN ID",
+        "PCD Target Network", "Subnet / CIDR", "Gateway",
+        "DNS (comma-separated)", "IP Range Start", "IP Range End", "Notes"
+    ]
+    EDITABLE_COLS = {3, 4, 5, 6, 7, 8, 9, 10}   # 1-based; cols 1+2 = reference only
+
+    hdr_fill_ref  = PatternFill("solid", fgColor="4B5563")   # dark grey for read-only
+    hdr_fill_edit = PatternFill("solid", fgColor="1D4ED8")   # blue for editable
+    hdr_font      = Font(bold=True, color="FFFFFF")
+    edit_fill     = PatternFill("solid", fgColor="EFF6FF")   # light blue data cells
+    thin          = Side(border_style="thin", color="D1D5DB")
+    border        = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for ci, h in enumerate(HEADERS, start=1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.font  = hdr_font
+        cell.fill  = hdr_fill_edit if ci in EDITABLE_COLS else hdr_fill_ref
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+
+    ws.row_dimensions[1].height = 30
+    ws.freeze_panes = "A2"
+
+    COL_WIDTHS = [45, 6, 10, 35, 20, 18, 30, 18, 18, 30]
+    for ci, w in enumerate(COL_WIDTHS, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(ci)].width = w
+
+    for ri, r in enumerate(rows, start=2):
+        dns_str = ", ".join(r["dns_nameservers"]) if r.get("dns_nameservers") else ""
+        vals = [
+            r["source_network_name"], r["vm_count"] or 0, r["vlan_id"],
+            r["target_network_name"] or "", r["cidr"] or "", r["gateway_ip"] or "",
+            dns_str, r["allocation_pool_start"] or "", r["allocation_pool_end"] or "",
+            r["notes"] or ""
+        ]
+        for ci, val in enumerate(vals, start=1):
+            cell = ws.cell(row=ri, column=ci, value=val)
+            cell.border = border
+            if ci in EDITABLE_COLS:
+                cell.fill = edit_fill
+
+    # Add instruction row at top (insert before headers)
+    ws.insert_rows(1)
+    inst = ws.cell(row=1, column=1,
+                   value="✏️  Fill in the blue columns. Do not change column order or the Source Network column. Save and re-upload.")
+    inst.font = Font(italic=True, color="1D4ED8")
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(HEADERS))
+    ws.row_dimensions[1].height = 20
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"network_map_template_{project_id}.xlsx"
+    return _Stream(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/projects/{project_id}/network-mappings/import-template",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def import_network_mapping_template(
+    project_id: str,
+    file: UploadFile = File(...),
+    user=Depends(get_current_user)
+):
+    """Upload a filled-in network mapping template to bulk-update target/subnet fields."""
+    import io
+    import openpyxl
+
+    actor = getattr(user, "username", "system")
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        wb_fmla = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid Excel file: {e}")
+
+    ws = wb.active
+    ws_fmla = wb_fmla.active
+
+    # Load all rows from both workbooks so we can cross-reference
+    all_rows_vals = list(ws.iter_rows(values_only=True))
+    all_rows_fmla = list(ws_fmla.iter_rows(values_only=True))
+
+    # Robustly locate the header row: scan up to first 5 rows for the one where
+    # at least one cell contains "source" AND at least one cell contains "vlan" or "subnet" or "gateway" or "pcd".
+    # This avoids misidentifying an instruction row that happens to mention "source".
+    def _is_header_row(row) -> bool:
+        cells = [str(c).lower().strip() for c in row if c is not None]
+        has_source = any("source" in c for c in cells)
+        has_other = any(kw in c for c in cells for kw in ("vlan", "subnet", "gateway", "pcd", "target", "dns", "note"))
+        return has_source and has_other
+
+    header_row_idx = None
+    for i, row in enumerate(all_rows_vals[:5]):
+        if _is_header_row(row):
+            header_row_idx = i
+            break
+
+    if header_row_idx is None:
+        raise HTTPException(status_code=400, detail="Could not find header row (expected columns: Source Network, VLAN ID, Subnet/CIDR, etc.).")
+
+    header_row = all_rows_vals[header_row_idx]
+    data_rows_vals = all_rows_vals[header_row_idx + 1:]
+    data_rows_fmla = all_rows_fmla[header_row_idx + 1:] if header_row_idx + 1 < len(all_rows_fmla) else []
+
+    # Map column names → indices (flexible; case-insensitive)
+    col_idx: dict = {}
+    for ci, h in enumerate(header_row):
+        if h is None: continue
+        key = str(h).lower().strip()
+        if "source" in key: col_idx["source"]     = ci
+        elif "vlan"  in key: col_idx["vlan"]       = ci
+        elif "pcd" in key or "target" in key: col_idx["target"] = ci
+        elif "subnet" in key or "cidr" in key: col_idx["cidr"]  = ci
+        elif "gateway" in key: col_idx["gateway"]  = ci
+        elif "dns" in key:    col_idx["dns"]        = ci
+        elif "start" in key:  col_idx["pool_start"] = ci
+        elif "end" in key:    col_idx["pool_end"]   = ci
+        elif "note" in key:   col_idx["notes"]      = ci
+
+    if "source" not in col_idx:
+        raise HTTPException(status_code=400, detail="Could not find 'Source Network' column.")
+
+    # Detect formula cells with external file references (openpyxl data_only=True returns None for these)
+    formula_cols_found: set = set()
+    editable_keys = ["target", "vlan", "cidr", "gateway", "dns", "pool_start", "pool_end", "notes"]
+    editable_indices = {col_idx[k] for k in editable_keys if k in col_idx}
+    for rv, rf in zip(data_rows_vals, data_rows_fmla):
+        for ci in editable_indices:
+            val_v = rv[ci] if ci < len(rv) else None
+            val_f = rf[ci] if ci < len(rf) else None
+            if val_v is None and val_f is not None and str(val_f).startswith("="):
+                # Formula in non-data_only but None in data_only → unevaluated external reference
+                col_name = str(header_row[ci]) if ci < len(header_row) else str(ci)
+                formula_cols_found.add(col_name)
+    if formula_cols_found:
+        col_list = ", ".join(sorted(formula_cols_found))
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"The uploaded file contains formulas referencing external files in columns: {col_list}. "
+                "Excel cannot cache external-file formula results in the .xlsx, so they cannot be read. "
+                "Fix: In Excel, select all blue columns → Copy → Paste Special → Values Only → Save → re-upload."
+            )
+        )
+
+    def _cell(row_vals, key):
+        idx = col_idx.get(key)
+        if idx is None or idx >= len(row_vals): return None
+        v = row_vals[idx]
+        return str(v).strip() if v is not None else None
+
+    updated = 0
+    skipped_empty_patch = 0
+    skipped_no_db_match = 0
+    sample_sources_in_file: list = []
+    sample_no_match: list = []
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        # Fetch all source_network_names in DB for this project (for diagnostics)
+        with conn.cursor() as dcur:
+            dcur.execute(
+                "SELECT source_network_name FROM migration_network_mappings WHERE project_id = %s",
+                (project_id,)
+            )
+            db_sources = {r[0] for r in dcur.fetchall()}
+
+        with conn.cursor() as cur:
+            for row_vals in data_rows_vals:
+                src = _cell(row_vals, "source")
+                if not src:
+                    continue
+                if len(sample_sources_in_file) < 5:
+                    sample_sources_in_file.append(src)
+
+                patch: dict = {}
+                if col_idx.get("target") is not None:
+                    v = _cell(row_vals, "target")
+                    if v: patch["target_network_name"] = v
+                if col_idx.get("vlan") is not None:
+                    v = _cell(row_vals, "vlan")
+                    if v:
+                        # Accept int/float VLAN values from formula results
+                        vlan_str = v.split(".")[0] if "." in v else v
+                        if vlan_str.lstrip("-").isdigit():
+                            patch["vlan_id"] = int(vlan_str)
+                if col_idx.get("cidr") is not None:
+                    v = _cell(row_vals, "cidr")
+                    if v: patch["cidr"] = v
+                if col_idx.get("gateway") is not None:
+                    v = _cell(row_vals, "gateway")
+                    if v: patch["gateway_ip"] = v
+                if col_idx.get("dns") is not None:
+                    v = _cell(row_vals, "dns")
+                    if v: patch["dns_nameservers"] = [x.strip() for x in v.split(",") if x.strip()]
+                if col_idx.get("pool_start") is not None:
+                    v = _cell(row_vals, "pool_start")
+                    if v: patch["allocation_pool_start"] = v
+                if col_idx.get("pool_end") is not None:
+                    v = _cell(row_vals, "pool_end")
+                    if v: patch["allocation_pool_end"] = v
+                if col_idx.get("notes") is not None:
+                    v = _cell(row_vals, "notes")
+                    if v is not None: patch["notes"] = v
+                # Auto-confirm subnet details when cidr is provided in the import
+                if "cidr" in patch:
+                    patch["subnet_details_confirmed"] = True
+
+                if not patch:
+                    skipped_empty_patch += 1
+                    continue
+
+                set_clauses = [f"{k} = %s" for k in patch] + ["updated_at = now()"]
+                params = list(patch.values())
+                # Use TRIM + case-insensitive match to guard against whitespace/case drift
+                cur.execute(f"""
+                    UPDATE migration_network_mappings
+                    SET {', '.join(set_clauses)}
+                    WHERE project_id = %s AND LOWER(TRIM(source_network_name)) = LOWER(TRIM(%s))
+                """, params + [project_id, src])
+                if cur.rowcount > 0:
+                    updated += 1
+                else:
+                    skipped_no_db_match += 1
+                    if len(sample_no_match) < 5:
+                        sample_no_match.append(src)
+        conn.commit()
+
+    skipped = skipped_empty_patch + skipped_no_db_match
+    diag: dict = {}
+    if updated == 0 and skipped > 0:
+        db_sample = sorted(db_sources)[:5]
+        diag = {
+            "skipped_empty_patch": skipped_empty_patch,
+            "skipped_no_db_match": skipped_no_db_match,
+            "sample_sources_in_file": sample_sources_in_file,
+            "sample_sources_in_db": db_sample,
+            "sample_no_match_sources": sample_no_match,
+            "hint": (
+                "empty_patch means no editable fields had values; "
+                "no_db_match means source_network_name not found in DB for this project"
+            ),
+        }
+
+    _log_activity(actor=actor, action="import_network_mapping_template",
+                  resource_type="migration_network_mappings", resource_id=project_id,
+                  details={"updated": updated, "skipped": skipped})
+    return {"status": "ok", "updated": updated, "skipped": skipped, "diagnostics": diag}
+
+
 # ── Auto-exclude filter patterns ─────────────────────────────────────────────
 
 class TenantFilterRequest(BaseModel):
@@ -3616,6 +3928,54 @@ async def run_pcd_gap_analysis(project_id: str, user=Depends(get_current_user)):
                 WHERE project_id = %s
             """, (score, project_id))
 
+            # Auto-resolve gaps whose resources are already confirmed
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s
+                  AND gap_type = 'flavor'
+                  AND resolved = false
+                  AND resource_name IN (
+                      SELECT source_shape FROM migration_flavor_staging
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s
+                  AND gap_type = 'image'
+                  AND resolved = false
+                  AND resource_name IN (
+                      SELECT os_family FROM migration_image_requirements
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # Auto-resolve network gaps where the source network has a confirmed mapping
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'network' AND resolved = false
+                  AND resource_name IN (
+                      SELECT source_network_name FROM migration_network_mappings
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # If ALL network mappings are confirmed, resolve any remaining network gaps
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'network' AND resolved = false
+                  AND (
+                      SELECT COUNT(*) FROM migration_network_mappings
+                      WHERE project_id = %s AND confirmed = false
+                  ) = 0
+                  AND (
+                      SELECT COUNT(*) FROM migration_network_mappings
+                      WHERE project_id = %s
+                  ) > 0
+            """, (project_id, project_id, project_id))
+
         conn.commit()
 
     _log_activity(actor=actor, action="pcd_gap_analysis", resource_type="migration_project",
@@ -3647,6 +4007,66 @@ async def get_pcd_gaps(
     with _get_conn() as conn:
         project = _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Always reconcile resolved state from staging/image-requirements before returning
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'flavor' AND resolved = false
+                  AND resource_name IN (
+                      SELECT source_shape FROM migration_flavor_staging
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # If ALL staging rows are confirmed (nothing pending), resolve any remaining
+            # flavor gaps too — they are stale or belong to VMs outside the current plan
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'flavor' AND resolved = false
+                  AND (
+                      SELECT COUNT(*) FROM migration_flavor_staging
+                      WHERE project_id = %s AND confirmed = false AND skip = false
+                  ) = 0
+                  AND (
+                      SELECT COUNT(*) FROM migration_flavor_staging
+                      WHERE project_id = %s
+                  ) > 0
+            """, (project_id, project_id, project_id))
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'image' AND resolved = false
+                  AND resource_name IN (
+                      SELECT os_family FROM migration_image_requirements
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # Auto-resolve network gaps where source network has a confirmed mapping
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'network' AND resolved = false
+                  AND resource_name IN (
+                      SELECT source_network_name FROM migration_network_mappings
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # If ALL network mappings are confirmed, resolve any remaining network gaps
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'network' AND resolved = false
+                  AND (
+                      SELECT COUNT(*) FROM migration_network_mappings
+                      WHERE project_id = %s AND confirmed = false
+                  ) = 0
+                  AND (
+                      SELECT COUNT(*) FROM migration_network_mappings
+                      WHERE project_id = %s
+                  ) > 0
+            """, (project_id, project_id, project_id))
+            conn.commit()
+
             conditions = ["project_id = %s"]
             params: List[Any] = [project_id]
             if resolved is not None:
@@ -4050,6 +4470,7 @@ async def list_network_mappings(project_id: str):
                 WHERE vm.project_id = %s
                   AND vm.network_name IS NOT NULL
                   AND vm.network_name != ''
+                  AND LOWER(vm.network_name) != 'none'
                   AND vm.power_state = 'poweredOn'
                   AND NOT EXISTS (
                       SELECT 1 FROM migration_network_mappings m
@@ -4311,10 +4732,21 @@ async def update_flavor_staging(staging_id: int, req: FlavorStagingUpdateRequest
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Flavor staging row not found")
+            row = dict(row)
+            # Auto-resolve the corresponding flavor gap when a row is confirmed
+            if updates.get("confirmed") is True and row.get("source_shape"):
+                cur.execute("""
+                    UPDATE migration_pcd_gaps
+                    SET resolved = true
+                    WHERE project_id = %s
+                      AND gap_type  = 'flavor'
+                      AND resolved  = false
+                      AND resource_name = %s
+                """, (row["project_id"], row["source_shape"]))
             conn.commit()
     _log_activity(actor=actor, action="update_flavor_staging", resource_type="migration_flavor_staging",
                   resource_id=str(staging_id), details=updates)
-    return {"status": "ok", "flavor": _serialize_row(dict(row))}
+    return {"status": "ok", "flavor": _serialize_row(row)}
 
 
 @router.post("/projects/{project_id}/flavor-staging/bulk-rename",
@@ -4465,11 +4897,28 @@ async def flavor_staging_match_from_pcd(project_id: str, user=Depends(get_curren
                 })
         conn.commit()
 
+    # ── Auto-resolve flavor gaps for matched shapes ───────────────────────────
+    gaps_resolved = 0
+    if matched > 0:
+        matched_shapes = [d["source_shape"] for d in details if d.get("matched")]
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE migration_pcd_gaps
+                    SET resolved = true
+                    WHERE project_id = %s
+                      AND gap_type   = 'flavor'
+                      AND resolved   = false
+                      AND resource_name = ANY(%s)
+                """, (project_id, matched_shapes))
+                gaps_resolved = cur.rowcount
+            conn.commit()
+
     _log_activity(actor=actor, action="flavor_staging_match_from_pcd",
                   resource_type="migration_flavor_staging", resource_id=project_id,
-                  details={"matched": matched, "unmatched": unmatched})
-    return {"matched": matched, "unmatched": unmatched, "pcd_connected": True,
-            "details": details}
+                  details={"matched": matched, "unmatched": unmatched, "gaps_resolved": gaps_resolved})
+    return {"matched": matched, "unmatched": unmatched, "gaps_resolved": gaps_resolved,
+            "pcd_connected": True, "details": details}
 
 
 # =====================================================================
@@ -4550,6 +4999,133 @@ async def refresh_image_requirements(project_id: str, user=Depends(get_current_u
     return {"status": "ok", "inserted": inserted, "updated": updated}
 
 
+@router.post("/projects/{project_id}/image-requirements/match-from-pcd",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def image_requirements_match_from_pcd(project_id: str, user=Depends(get_current_user)):
+    """Query PCD Glance for existing images and auto-match image requirement rows by os_family.
+    Sets glance_image_id, glance_image_name, confirmed=true for matched rows."""
+    actor = getattr(user, "username", "system")
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_image_requirements WHERE project_id = %s", (project_id,))
+            req_rows = [dict(r) for r in cur.fetchall()]
+
+    if not req_rows:
+        return {"matched": 0, "unmatched": 0, "pcd_connected": False,
+                "error": "No image requirements found. Run Refresh from VMs first.", "details": []}
+
+    # ── Connect to PCD ──────────────────────────────────────────────────────
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(__file__))
+        import p9_common  # type: ignore
+
+        pcd_auth_url = project.get("pcd_auth_url") or p9_common.CFG.get("KEYSTONE_URL", "")
+        pcd_username  = project.get("pcd_username") or p9_common.CFG.get("USERNAME", "")
+        pcd_password  = os.getenv("PF9_PASSWORD", p9_common.CFG.get("PASSWORD", ""))
+
+        if not (pcd_auth_url and pcd_username and pcd_password):
+            return {"matched": 0, "unmatched": len(req_rows), "pcd_connected": False,
+                    "error": "PCD credentials not configured.", "details": []}
+
+        _orig_cfg: dict = {}
+        if project.get("pcd_auth_url"):
+            _orig_cfg["KEYSTONE_URL"] = p9_common.CFG.get("KEYSTONE_URL", "")
+            p9_common.CFG["KEYSTONE_URL"] = pcd_auth_url
+        if project.get("pcd_username"):
+            _orig_cfg["USERNAME"] = p9_common.CFG.get("USERNAME", "")
+            p9_common.CFG["USERNAME"] = pcd_username
+        if project.get("pcd_region"):
+            _orig_cfg["REGION_NAME"] = p9_common.CFG.get("REGION_NAME", "region-one")
+            p9_common.CFG["REGION_NAME"] = project["pcd_region"]
+
+        try:
+            session, *_ = p9_common.get_session_best_scope()
+            glance_imgs = p9_common.glance_images(session)
+        finally:
+            for k, v in _orig_cfg.items():
+                p9_common.CFG[k] = v
+
+    except Exception as e:
+        return {"matched": 0, "unmatched": len(req_rows), "pcd_connected": False,
+                "error": str(e), "details": []}
+
+    # ── Match: os_family substring against Glance image name (case-insensitive) ──
+    matched = 0
+    unmatched = 0
+    details = []
+
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            for row in req_rows:
+                family = (row.get("os_family") or "").lower().strip()
+                if not family:
+                    unmatched += 1
+                    details.append({"os_family": row.get("os_family"), "matched": False, "reason": "empty os_family"})
+                    continue
+
+                # Candidates: Glance images whose name contains os_family
+                candidates = [img for img in glance_imgs
+                              if family in (img.get("name") or "").lower()]
+
+                if not candidates:
+                    unmatched += 1
+                    details.append({"os_family": row.get("os_family"), "matched": False})
+                    continue
+
+                # Prefer shortest name (most specific/generic) unless current name already set
+                current = (row.get("glance_image_name") or "").lower()
+                if current:
+                    # Prefer the one whose name most closely matches the current value
+                    def _img_score(img: dict) -> int:
+                        n = (img.get("name") or "").lower()
+                        return sum(1 for a, b in zip(current, n) if a == b)
+                    best = max(candidates, key=_img_score)
+                else:
+                    # Pick shortest active image (active = no status or status=active)
+                    active = [img for img in candidates if img.get("status", "active") == "active"] or candidates
+                    best = min(active, key=lambda img: len(img.get("name") or ""))
+
+                cur.execute("""
+                    UPDATE migration_image_requirements
+                    SET glance_image_id   = %s,
+                        glance_image_name = %s,
+                        confirmed         = true,
+                        updated_at        = now()
+                    WHERE id = %s AND project_id = %s
+                """, (best["id"], best["name"], row["id"], project_id))
+
+                matched += 1
+                details.append({"os_family": row.get("os_family"), "matched": True,
+                                "glance_image_id": best["id"], "glance_image_name": best["name"]})
+        conn.commit()
+
+    # ── Auto-resolve image gaps for matched families ──────────────────────────
+    gaps_resolved = 0
+    if matched > 0:
+        matched_families = [d["os_family"] for d in details if d.get("matched")]
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE migration_pcd_gaps
+                    SET resolved = true
+                    WHERE project_id = %s
+                      AND gap_type   = 'image'
+                      AND resolved   = false
+                      AND resource_name = ANY(%s)
+                """, (project_id, matched_families))
+                gaps_resolved = cur.rowcount
+            conn.commit()
+
+    _log_activity(actor=actor, action="image_requirements_match_from_pcd",
+                  resource_type="migration_image_requirements", resource_id=project_id,
+                  details={"matched": matched, "unmatched": unmatched, "gaps_resolved": gaps_resolved})
+    return {"matched": matched, "unmatched": unmatched, "gaps_resolved": gaps_resolved,
+            "pcd_connected": True, "details": details}
+
+
 @router.patch("/image-requirements/{req_id}",
               dependencies=[Depends(require_permission("migration", "write"))])
 async def update_image_requirement(req_id: int, req: ImageRequirementUpdateRequest,
@@ -4572,10 +5148,21 @@ async def update_image_requirement(req_id: int, req: ImageRequirementUpdateReque
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Image requirement not found")
+            row = dict(row)
+            # Auto-resolve image gap when confirmed
+            if updates.get("confirmed") is True and row.get("os_family"):
+                cur.execute("""
+                    UPDATE migration_pcd_gaps
+                    SET resolved = true
+                    WHERE project_id = %s
+                      AND gap_type  = 'image'
+                      AND resolved  = false
+                      AND resource_name = %s
+                """, (row["project_id"], row["os_family"]))
             conn.commit()
     _log_activity(actor=actor, action="update_image_requirement", resource_type="migration_image_requirements",
                   resource_id=str(req_id), details=updates)
-    return {"status": "ok", "image_req": _serialize_row(dict(row))}
+    return {"status": "ok", "image_req": _serialize_row(row)}
 
 
 # =====================================================================
