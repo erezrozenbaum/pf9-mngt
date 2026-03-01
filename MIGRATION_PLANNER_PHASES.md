@@ -770,7 +770,19 @@ The agent slots slider and bandwidth override are **Low effort** and independent
 
 ---
 
-### Phase 4A — Data Enrichment (operator input required before provisioning)
+### Phase 4A — Data Enrichment ✅ COMPLETE
+
+> **Status**: DONE (2026-03-01, v1.35.0). All four items shipped: subnet details, flavor staging, image requirements, tenant users.
+
+#### Phase 4A Hotfixes (v1.35.1 — 2026-03-01)
+- [x] **Route ordering 405** — moved `GET /readiness` before `PATCH /{mapping_id}` in `migration_routes.py`
+- [x] **GROUP BY failure** — replaced explicit column list with `GROUP BY m.id`
+- [x] **dns_nameservers type mismatch** — UI now splits comma-string → `List[str]` before PATCH
+- [x] **UI heading** — "Phase 4A — Data Enrichment" → "Pre-Migration Data Enrichment"
+
+---
+
+#### 4A Detail — Data Enrichment (operator input required before provisioning)
 
 > This sub-phase collects the information that cannot be derived from RVTools or the existing plan. All items must be confirmed before Phase 4B can run.
 
