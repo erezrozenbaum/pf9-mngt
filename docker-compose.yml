@@ -29,7 +29,8 @@ services:
 
   pf9_api:
     build:
-      context: ./api
+      context: .
+      dockerfile: api/Dockerfile
     container_name: pf9_api
     environment:
       PF9_DB_HOST: db
