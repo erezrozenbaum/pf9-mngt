@@ -2328,6 +2328,132 @@ Response:
 
 ---
 
+## Bulk Onboarding Endpoints
+
+All onboarding endpoints require authentication via `Authorization: Bearer <token>`.
+Router prefix: `/api/onboarding`
+
+### Download Excel Template
+**GET** `/api/onboarding/template`
+*Requires: authenticated*
+
+Streams a styled four-sheet Excel workbook (`customers`, `projects`, `networks`, `users`) as `onboarding_template.xlsx`.
+
+---
+
+### Upload & Validate Batch
+**POST** `/api/onboarding/upload`
+*Requires: `onboarding:create`*
+
+Accepts a multipart file upload (`file`) and optional `batch_name` query parameter. Parses and validates all four sheets. Returns HTTP 201 with the new batch record.
+
+Response:
+```json
+{
+  "batch_id": "uuid",
+  "batch_name": "Q2-2025 Onboarding",
+  "status": "validated",
+  "total_customers": 5,
+  "total_projects": 12,
+  "total_networks": 18,
+  "total_users": 30,
+  "validation_errors": []
+}
+```
+
+`status` is `"invalid"` if `validation_errors` is non-empty. Each error: `{sheet, row, field, message}`.
+
+---
+
+### List Batches
+**GET** `/api/onboarding/batches`
+*Requires: `onboarding:read`*
+
+Returns all onboarding batches ordered by `created_at DESC`.
+
+---
+
+### Get Batch Detail
+**GET** `/api/onboarding/batches/{batch_id}`
+*Requires: `onboarding:read`*
+
+Returns full batch with nested arrays: `customers`, `projects`, `networks`, `users` — each with per-item `status` and `error_msg`.
+
+---
+
+### Run Dry-Run
+**POST** `/api/onboarding/batches/{batch_id}/dry-run`
+*Requires: `onboarding:create`*
+
+Connects to PCD and checks existing resources. Sets batch `status` to `dry_run_passed` (zero conflicts) or `dry_run_failed`. **Execution is hard-locked until `dry_run_passed`.**
+
+Response:
+```json
+{
+  "status": "dry_run_passed",
+  "summary": {
+    "total_would_create": 48,
+    "total_would_skip": 0,
+    "conflicts": []
+  },
+  "items": [
+    {"resource_type": "domain", "name": "acme-corp", "action": "create", "reason": ""}
+  ]
+}
+```
+
+---
+
+### Submit for Approval
+**POST** `/api/onboarding/batches/{batch_id}/submit`
+*Requires: `onboarding:create`*
+
+Sets `approval_status='pending_approval'` and fires `onboarding_submitted` notification.
+
+---
+
+### Approve or Reject
+**POST** `/api/onboarding/batches/{batch_id}/decision`
+*Requires: `onboarding:approve`*
+
+Request:
+```json
+{ "decision": "approve", "comment": "Reviewed and confirmed" }
+```
+
+`decision` must be `"approve"` or `"reject"`. Fires `onboarding_approved` / `onboarding_rejected` notification.
+
+---
+
+### Execute Batch
+**POST** `/api/onboarding/batches/{batch_id}/execute`
+*Requires: `onboarding:execute`*
+
+**Pre-conditions (both required):**
+- `approval_status == 'approved'`
+- `status == 'dry_run_passed'`
+
+If either condition fails, returns HTTP 400. Execution runs in a background thread. Poll `GET /api/onboarding/batches/{id}` for status (`executing` → `complete` | `partially_failed`).
+
+Response:
+```json
+{
+  "status": "executing",
+  "batch_id": "uuid",
+  "message": "Execution started. Poll GET /api/onboarding/batches/{batch_id} for status."
+}
+```
+
+---
+
+### Delete Batch
+**DELETE** `/api/onboarding/batches/{batch_id}`
+*Requires: `onboarding:create`*
+
+Deletes batch and all child rows (cascade). Returns HTTP 400 if `status == 'executing'`.
+
+---
+
 ## Runbook Endpoints
 
 All runbook endpoints require authentication via `Authorization: Bearer <token>`.

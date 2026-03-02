@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.37.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.38.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -735,6 +735,15 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.38.0 — Runbook 1: Bulk Customer Onboarding via Excel
+- ✅ **`POST /api/onboarding/upload`** — upload a filled Excel workbook; structural validation with per-row error reporting across all four sheets (customers / projects / networks / users)
+- ✅ **`POST /api/onboarding/batches/{id}/dry-run`** — hard gate before execution: checks live PCD for existing domains, projects, and networks; blocks Execute until zero conflicts
+- ✅ **`POST /api/onboarding/batches/{id}/execute`** — creates domains → projects (with quotas) → networks + subnets → users + role assignments; continue-and-report per item; locked until `approved + dry_run_passed`
+- ✅ **Approval workflow** — submitter → admin approve/reject with comment; fires `onboarding_approved` / `onboarding_rejected` notifications
+- ✅ **5 new DB tables** — `onboarding_batches`, `onboarding_customers`, `onboarding_projects`, `onboarding_networks`, `onboarding_users`; auto-migrated on startup
+- ✅ **UI: `BulkOnboardingTab`** — step-indicator workflow, drag-and-drop upload, dry-run conflict table, inline approval modal, live-polling execution view with per-item status
+- ✅ **`GET /api/onboarding/template`** — download styled Excel template with 4 sheets and sample rows
 
 ### v1.37.0 — vJailbreak Credential Bundle & Tenant Handoff Sheet
 - ✅ **`GET /export-vjailbreak-bundle`** — exports a JSON credential bundle for all in-scope tenants with PCD project IDs, service-account credentials, temporary user passwords, network UUIDs, and wave sequence
