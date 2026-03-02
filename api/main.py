@@ -77,6 +77,9 @@ from runbook_routes import router as runbook_router
 # Copilot (Ops AI assistant) endpoints
 from copilot import router as copilot_router
 
+# Bulk Customer Onboarding endpoints
+from onboarding_routes import router as onboarding_router
+
 # Migration Planner endpoints
 from migration_routes import router as migration_router
 
@@ -305,6 +308,7 @@ app.include_router(navigation_router)
 app.include_router(search_router)
 app.include_router(runbook_router)
 app.include_router(copilot_router)
+app.include_router(onboarding_router)
 app.include_router(migration_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode

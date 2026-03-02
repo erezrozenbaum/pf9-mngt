@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../config";
 import "../styles/RunbooksTab.css";
+import BulkOnboardingTab from "./BulkOnboardingTab";
 
 /* ===================================================================
    RunbooksTab  – Catalogue & Trigger (operator-facing)
@@ -79,6 +80,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   quota: "📊",
   diagnostics: "🔍",
   general: "📋",
+  onboarding: "📦",
 };
 
 function formatDate(iso: string | null | undefined): string {
@@ -104,6 +106,9 @@ export default function RunbooksTab() {
   const [triggerDryRun, setTriggerDryRun] = useState(true);
   const [triggerParams, setTriggerParams] = useState<Record<string, any>>({});
   const [triggering, setTriggering] = useState(false);
+
+  // Bulk Onboarding
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // My Executions state
   const [myExecs, setMyExecs] = useState<Execution[]>([]);
@@ -964,6 +969,10 @@ export default function RunbooksTab() {
   // -----------------------------------------------------------------------
   // Render
   // -----------------------------------------------------------------------
+  if (showOnboarding) {
+    return <BulkOnboardingTab onBack={() => setShowOnboarding(false)} />;
+  }
+
   if (loading) {
     return (
       <div className="rb-container">
@@ -988,6 +997,28 @@ export default function RunbooksTab() {
       {/* ────── CATALOGUE ────── */}
       <div className="rb-section">
         <div className="rb-grid">
+          {/* Bulk Customer Onboarding — special card */}
+          <div className="rb-card" style={{ borderColor: "rgba(34,197,94,.3)" }}>
+            <div className="rb-card-header">
+              <h4 className="rb-card-title">📦 Bulk Customer Onboarding</h4>
+              <span className="rb-risk low">low</span>
+            </div>
+            <p className="rb-card-desc">
+              Upload an Excel template to mass-create customer domains, projects,
+              networks, and users through a validated dry-run → approval → execute workflow.
+            </p>
+            <div className="rb-card-meta">
+              <span>📁 onboarding</span>
+              <span>🧪 Dry-run gate</span>
+              <span>✅ Approval required</span>
+            </div>
+            <div className="rb-card-actions">
+              <button className="rb-btn primary" onClick={() => setShowOnboarding(true)}>
+                ▶ Open
+              </button>
+            </div>
+          </div>
+
           {runbooks.map((rb) => {
             const st = getStatsFor(rb.name);
             return (
