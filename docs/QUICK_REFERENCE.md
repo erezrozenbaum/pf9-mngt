@@ -83,15 +83,22 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
 - **Runbooks Tab** (v1.21 → v1.25 - NEW ✨):
   - "📋 Runbooks" tab with policy-as-code catalogue and one-click execution
-  - 12 built-in engines across 4 categories:
+  - 13 built-in engines across 4 categories:
     - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
     - **Security**: Security Group Audit, Security & Compliance Audit
-    - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector
+    - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast
     - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
   - Schema-driven parameter forms with dry-run toggle and risk-level badges
   - Approval workflow: per-runbook policies with role-based trigger→approver mappings (high-risk runbooks require admin approval)
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
+- **Bulk Customer Onboarding** (v1.38.0 - NEW ✨):
+  - "📦 Bulk Customer Onboarding" card in Runbooks tab opens a dedicated multi-step workflow
+  - Upload a four-sheet Excel workbook (`customers`, `projects`, `networks`, `users`) → validate → dry-run → approve → execute against PCD
+  - Dry-run gate: execution hard-locked until dry-run reports zero conflicts
+  - Live-polling execution view with per-item status (domain / project / network / user rows)
+  - 9 API endpoints at `/api/onboarding/*`; 5 new DB tables; 5 new notification event types
+  - RBAC: `onboarding:create`, `onboarding:read`, `onboarding:approve`, `onboarding:execute`
 
 #### Advanced Snapshot Management
 - **Cross-Tenant Snapshots**: Snapshots created in correct tenant projects via dedicated service user
@@ -135,7 +142,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **RVTools Compatibility**: Excel/CSV exports with delta tracking and customer data masking
 - **Modern React UI**: TypeScript-based with Vite build system and theme support
 - **REST API**: FastAPI with OpenAPI docs + dedicated monitoring service
-- **Database Integration**: PostgreSQL 16 with 48+ tables for historical tracking + metering + departments/navigation + runbooks
+- **Database Integration**: PostgreSQL 16 with 53+ tables for historical tracking + metering + departments/navigation + runbooks + onboarding
 - **Drift Detection**: Automated field-level change monitoring with 24 rules across 8 resource types
 - **Administrative Operations**: Create/delete flavors and networks directly from UI
 
