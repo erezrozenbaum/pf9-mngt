@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.2] - 2026-03-02
+
+### Fixed — Bulk Customer Onboarding: networks, email notifications, UX
+
+- **Networks created as external/shared** — `is_external` defaulted to `True` in four places (`_ensure_tables()` schema, ALTER, parse-time default, execution call). Fixed to `False` everywhere. Existing bad DB rows reset. Tenant networks are now private to the project.
+- **Excel template `is_external` default** — sample row changed from `true` to `false`; README sheet updated with a warning explaining that only admin-managed provider networks should be `true`.
+- **`send-notifications` endpoint 500 + apparent CORS error** — `send_notifications()` was querying a non-existent table (`onboarding_domains`). Corrected to `onboarding_customers`. The 500 crash prevented CORS headers from being written, making it look like a CORS problem; CORS configuration was never the issue.
+- **Select None not working in notifications panel** — `selectedNotifIds` used `Set<number>` where an empty `Set` and "uninitialized" were indistinguishable. Changed to `Set<number> | null` (`null` = all pre-checked, empty `Set` = explicitly none). Select None now correctly deselects all checkboxes.
+- **Approval comment textarea invisible text** — `.ob-textarea` used `--bg-tertiary` (near-black `#0f172a`) instead of `--bg-secondary`. Fixed to `var(--input-bg, var(--bg-secondary, #1e293b))`; added `:focus` border rule and `::placeholder` colour.
+- **Enhanced welcome email templates** — Personal emails now include a polished gradient header, a credentials table (username + amber-highlighted temp password), a per-project networks table, and a login-domain tip box. Admin summary emails now have per-domain → per-project sections listing networks and users (with temp passwords), plus an all-users summary table at the bottom.
+- **Resend button for notifications** — After the first send, the Send button is replaced by a ✅ "Emails sent" indicator and a 🔁 Resend button. Clicking Resend re-enables the send flow.
+- `api/pf9_control.py` — `create_provider_network()` `external` parameter default changed to `False`.
+
+---
+
+## [1.38.1] - 2026-03-02
+
+### Fixed — Bulk Customer Onboarding polish & permissions
+
+- **CORS / HTTP 500 on upload** — `require_permission()` was returning `True` (bool) instead of the user dict, causing the middleware to propagate a 500 before CORS headers were emitted. Fixed to return `user.model_dump()`.
+- **Operator role blocked from all onboarding endpoints** — zero `role_permissions` rows existed for `resource='onboarding'`. Added: `admin/onboarding/admin`, `operator/onboarding/read+create+execute`, `technical/onboarding/read`, `viewer/onboarding/read`. Permissions added to both migration SQL files and seeded into the running DB.
+- **Excel template network sheet** — `physical_l2` networks no longer list CIDR / gateway / DHCP / allocation-pool columns as required; `virtual` network kind sample row added; per-kind field-applicability matrix added to the README sheet.
+- **Approve / Reject buttons shown to non-admin users** — buttons now gated by `isAdminUser()` (checks `localStorage` role); non-admins see a ⏳ "Waiting for admin approval…" amber indicator. Polling extended to cover `pending_approval` state (every 5 s) so the Execute button appears automatically once approved.
+- **Onboarding table readability** — dark header (`#1a2840`), alternating row stripes, corrected cell text colour (`--text-primary` / `#cbd5e1`), all 12 quota columns now shown for projects, network table shows Kind / CIDR / VLAN columns, `pcd_*` columns renamed to human-readable "OS … ID" labels.
+- **Copilot FAB overlap** — FAB (`position: fixed`) was obscuring page content beneath it. Increased `.pf9-root` bottom padding to 96 px; reduced FAB `z-index` to 9000 and set resting opacity to 0.82 (full opacity on hover).
+
+---
+
 ## [1.38.0] - 2026-03-02
 
 ### New — Runbook 1: Bulk Customer Onboarding via Excel

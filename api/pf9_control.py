@@ -537,6 +537,13 @@ class Pf9Client:
         r.raise_for_status()
         return r.json().get("roles", [])
 
+    def get_role_id(self, role_name: str) -> str:
+        """Return the UUID of a Keystone role by name. Raises ValueError if not found."""
+        for role in self.list_roles():
+            if role.get("name") == role_name:
+                return role["id"]
+        raise ValueError(f"Role '{role_name}' not found in PCD Keystone")
+
     def list_role_assignments(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """List Keystone role assignments, optionally filtered by user."""
         self.authenticate()
@@ -765,7 +772,7 @@ class Pf9Client:
         segmentation_id: Optional[int] = None,
         project_id: Optional[str] = None,
         shared: bool = False,
-        external: bool = True,
+        external: bool = False,
         mtu: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a provider (VLAN/flat) network, with or without a subnet (for L2 use external=False)."""

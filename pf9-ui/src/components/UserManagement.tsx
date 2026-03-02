@@ -344,6 +344,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [rbExecTotal, setRbExecTotal] = useState(0);
   const [rbPending, setRbPending] = useState<RbExecution[]>([]);
   const [rbRunbooks, setRbRunbooks] = useState<RbRunbook[]>([]);
+  // Onboarding batch pending approvals
+  const [obPending, setObPending] = useState<any[]>([]);
   const [rbPolicies, setRbPolicies] = useState<Record<string, RbApprovalPolicy[]>>({});
   const [rbHistRunbook, setRbHistRunbook] = useState('');
   const [rbHistStatus, setRbHistStatus] = useState('');
@@ -391,6 +393,28 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       if (res.ok) { const d = await res.json(); setRbPending(d); }
     } catch {}
   }, [rbAuthHeaders]);
+
+  const loadObPending = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/onboarding/batches`, { headers: rbAuthHeaders() });
+      if (res.ok) {
+        const d = await res.json();
+        setObPending(d.filter((b: any) => b.approval_status === 'pending_approval'));
+      }
+    } catch {}
+  }, [rbAuthHeaders]);
+
+  const obDecide = useCallback(async (batchId: string, decision: 'approve' | 'reject', comment = '') => {
+    try {
+      const res = await fetch(`${API_BASE}/api/onboarding/batches/${batchId}/decision`, {
+        method: 'POST', headers: rbAuthHeaders(),
+        body: JSON.stringify({ decision, comment }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      rbShowToast(decision === 'approve' ? '✅ Batch approved' : '❌ Batch rejected', decision === 'approve' ? 'success' : 'info');
+      loadObPending();
+    } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
+  }, [rbAuthHeaders, rbShowToast, loadObPending]);
 
   const loadRbPolicies = useCallback(async () => {
     try {
@@ -474,6 +498,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     }
     if (activeTab === 'rb_approvals') {
       loadRbPending();
+      loadObPending();
     }
     if (activeTab === 'rb_policies') {
       loadRbRunbooks();
@@ -2497,9 +2522,48 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
         <div>
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm text-gray-600">Pending runbook executions awaiting admin approval.</p>
-            <button className="px-3 py-2 border rounded text-sm hover:bg-gray-50" onClick={() => loadRbPending()}>🔄 Refresh</button>
+            <button className="px-3 py-2 border rounded text-sm hover:bg-gray-50" onClick={() => { loadRbPending(); loadObPending(); }}>🔄 Refresh</button>
           </div>
-          {rbPending.length === 0 ? (
+
+          {/* ── Onboarding batch pending approvals ── */}
+          {obPending.length > 0 && (
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold text-gray-700 mb-2">📦 Pending Bulk Onboarding Approvals</h4>
+              <div className="bg-white rounded-lg border">
+                <table className="w-full">
+                  <thead className="bg-amber-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Batch Name</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Uploaded By</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Customers</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Projects</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Created</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {obPending.map((b: any) => (
+                      <tr key={b.batch_id} className="hover:bg-amber-50/40">
+                        <td className="px-4 py-2 text-sm font-medium">{b.batch_name}</td>
+                        <td className="px-4 py-2 text-sm">{b.uploaded_by}</td>
+                        <td className="px-4 py-2 text-sm">{b.total_customers}</td>
+                        <td className="px-4 py-2 text-sm">{b.total_projects}</td>
+                        <td className="px-4 py-2 text-sm">{new Date(b.created_at).toLocaleString()}</td>
+                        <td className="px-4 py-2 text-sm">
+                          <div className="flex gap-2">
+                            <button className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700" onClick={() => obDecide(b.batch_id, 'approve')}>✓ Approve</button>
+                            <button className="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700" onClick={() => obDecide(b.batch_id, 'reject')}>✗ Reject</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {rbPending.length === 0 && obPending.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
               <div className="text-4xl mb-2">✅</div>
               <p>No pending approvals</p>

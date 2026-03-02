@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.38.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.38.1-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -736,6 +736,22 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.38.2 — Onboarding Fixes: Networks, Emails, UX
+- ✅ **`is_external` default False** — tenant networks are no longer created as admin-visible external/shared networks; fixed in code, migration SQL, and Excel template
+- ✅ **Welcome email notifications** — `POST /api/onboarding/batches/{id}/send-notifications` sends per-user HTML emails with credentials (temp password highlighted), network details, and a login tip; admin summary email groups users by domain → project with full credentials table
+- ✅ **Resend button** — after first send, a 🔁 Resend button re-enables the notification flow
+- ✅ **Select None fixed** — notifications panel now correctly deselects all users when Select None is clicked
+- ✅ **Approval comment textarea** — text is now visible (background was near-black `--bg-tertiary`; fixed to `--bg-secondary`)
+- ✅ **CORS / 500 on send-notifications** — incorrect table name (`onboarding_domains` → `onboarding_customers`) caused a 500 which appeared as a CORS failure
+
+### v1.38.1 — Onboarding Bug Fixes & Permissions
+- ✅ **CORS / 500 fix** — `require_permission()` now returns a user dict; CORS headers emitted correctly on all onboarding endpoints
+- ✅ **Operator permissions** — seeded `role_permissions` rows for `admin/operator/technical/viewer` on the `onboarding` resource; operators can now upload, dry-run, and execute
+- ✅ **Excel template** — `physical_l2` networks no longer marked with required CIDR/gateway fields; `virtual` sample row added; per-kind field matrix in README sheet
+- ✅ **Approve/Reject role gate** — only admin users see the Approve/Reject buttons; operators see a ⏳ waiting indicator with auto-polling
+- ✅ **Table UI** — dark headers, correct text colour, all quota columns, human-readable `pcd_*` labels
+- ✅ **Copilot FAB** — no longer overlaps page content (z-index 9000, bottom padding 96 px, resting opacity 0.82)
+
 ### v1.38.0 — Runbook 1: Bulk Customer Onboarding via Excel
 - ✅ **`POST /api/onboarding/upload`** — upload a filled Excel workbook; structural validation with per-row error reporting across all four sheets (customers / projects / networks / users)
 - ✅ **`POST /api/onboarding/batches/{id}/dry-run`** — hard gate before execution: checks live PCD for existing domains, projects, and networks; blocks Execute until zero conflicts
@@ -976,4 +992,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.37.0 | **Last Updated**: March 2026
+**Project Status**: Active Development | **Version**: 1.38.1 | **Last Updated**: March 2026
