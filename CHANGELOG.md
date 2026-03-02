@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **UI: dry run panel** — *🧪 Dry Run* button fires `POST /prepare/dry-run` and shows a per-type breakdown table (total / would create / would skip / would execute). 
 - **UI: audit log toggle** — *📋 Audit Log* button reveals three inline tables: Approval History, Activity Log, Execution History drawn from `GET /prep-audit`.
 
+### Documentation
+- **README** — version/date bumped to 1.36.2 / March 2026; architecture table worker count corrected to 2; Recent Updates section extended with full v1.35.0–v1.36.2 feature summaries (PCD Data Enrichment, Auto-Provisioning, Approval Workflow)
+- **ARCHITECTURE.md** — worker count corrected in three places (2 default, 4 recommended for production); DB connection pool math updated accordingly
+- **DEPLOYMENT_GUIDE.md** — version bumped to 2.2 / March 2026; migration steps added for `migrate_phase4_preparation.sql` and `migrate_prep_approval.sql`; Production Hardening section rewritten with concrete guidance: disable dev-only services (pgAdmin, phpLDAPadmin), remove exposed DB/LDAP ports, production nginx build, worker tuning, healthchecks, and HTTPS reverse proxy
+- **SECURITY.md** — date updated; RBAC tier count corrected from 4 to 5 tiers
+- **ADMIN_GUIDE.md / CONTRIBUTING.md** — dates and worker count updated
+
 ---
 
 ## [1.36.1] - 2026-03-01
