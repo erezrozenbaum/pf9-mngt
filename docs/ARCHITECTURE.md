@@ -689,7 +689,7 @@ src/
 ### Backend API Service
 **Technology**: FastAPI + Gunicorn + Python 3.11+
 **Port**: 8000
-**Workers**: 4 uvicorn workers via Gunicorn (configurable)
+**Workers**: 2 uvicorn workers via Gunicorn (configurable; set `-w 4` for production with higher concurrency)
 **Responsibilities**:
 - RESTful API endpoints (150+ routes across infrastructure, analytics, tenant health, notifications, restore, metering, and migration planning)
 - Database operations via connection pool (psycopg2 ThreadedConnectionPool)
@@ -1408,7 +1408,7 @@ graph TD
 **1. Database Connection Pooling**:
 - `ThreadedConnectionPool` (psycopg2) with min=2, max=10 connections per worker
 - Context manager pattern (`with get_connection() as conn:`) for auto-commit/rollback/return
-- 4 Gunicorn workers × 10 max connections = 40 max DB connections (within PostgreSQL default of 100)
+- 2 Gunicorn workers × 10 max connections = 20 max DB connections (within PostgreSQL default of 100). Increase to 4 workers in production: 40 connections.
 - Configurable via `DB_POOL_MIN_CONN` and `DB_POOL_MAX_CONN` environment variables
 
 **2. Database Query Optimization**:
@@ -1427,7 +1427,7 @@ graph TD
 
 ### Scalability Considerations
 **Horizontal Scaling**:
-- API service: 4 Gunicorn workers per container, multiple containers behind load balancer
+- API service: 2 Gunicorn workers per container (4 recommended for production), multiple containers behind load balancer
 - Database: Read replicas for query scaling
 - Monitoring: Distributed collection with aggregation
 

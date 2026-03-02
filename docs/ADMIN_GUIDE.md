@@ -257,7 +257,7 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **Env Vars**: `NFS_BACKUP_PATH`, `BACKUP_VOLUME`, `BACKUP_POLL_INTERVAL`
 
 ### Multi-User Concurrency (v1.12 - NEW ✨)
-- **Gunicorn + 4 Workers**: API now runs 4 parallel uvicorn worker processes via Gunicorn for 10+ concurrent users
+- **Gunicorn + 2 Workers**: API runs 2 parallel uvicorn worker processes via Gunicorn by default (increase to 4 for production with `-w 4`)
 - **Database Connection Pool**: Centralized `ThreadedConnectionPool` (db_pool.py) replaces per-request connections — min 2, max 10 per worker
 - **Thread-Safe Metrics**: `PerformanceMetrics` class now uses `threading.Lock` for safe concurrent access
 - **97 Connection Leaks Fixed**: All endpoint handlers converted to `with get_connection() as conn:` context manager

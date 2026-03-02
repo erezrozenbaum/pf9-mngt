@@ -2,13 +2,13 @@
 
 ## 🛡️ Security Status Overview
 
-**Last Updated**: February 4, 2026  
+**Last Updated**: March 2026
 **Security Level**: 🟡 **MEDIUM** - RBAC implemented, additional hardening recommended
 
 ### ✅ **Implemented Security Features**
 
 1. **LDAP Authentication**: Enterprise OpenLDAP integration with configurable directory structure
-2. **Role-Based Access Control (RBAC)**: 4-tier permission system with middleware enforcement
+2. **Role-Based Access Control (RBAC)**: 5-tier permission system (Viewer, Operator, Admin, Superadmin, Technical) with middleware enforcement
 3. **JWT Token Management**: Secure Bearer token authentication with 480-minute sessions
 4. **Permission Enforcement**: Automatic resource-level permission checks on all endpoints
 5. **Audit Logging**: Complete authentication and authorization event tracking (90-day retention)
