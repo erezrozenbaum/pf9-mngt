@@ -54,6 +54,11 @@ VALID_EVENT_TYPES = [
     "prep_approval_requested", "prep_approval_granted", "prep_approval_rejected",
     "vjailbreak_bundle_exported",
     "handoff_sheet_exported",
+    "onboarding_submitted",
+    "onboarding_approved",
+    "onboarding_rejected",
+    "onboarding_completed",
+    "onboarding_failed",
 ]
 
 VALID_SEVERITIES = ["info", "warning", "critical"]
