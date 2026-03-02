@@ -202,6 +202,17 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
 - **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`). `db/migrate_new_runbooks.sql` for adding the 7 new runbooks (v1.25+).
 
+### Bulk Customer Onboarding — Runbook 1 (v1.38.0 - NEW ✨)
+- **📦 Bulk Customer Onboarding Tab**: Multi-step Excel-driven workflow to onboard multiple customers (domains), projects, networks, and users to PCD in a single operator action. Accessible from the Runbooks tab via a dedicated card.
+- **Workflow States**: `UPLOAD → VALIDATING → VALIDATED | INVALID → PENDING_APPROVAL → APPROVED | REJECTED → DRY_RUN_PENDING → DRY_RUN_PASSED | DRY_RUN_FAILED → EXECUTING → COMPLETE | PARTIALLY_FAILED`
+- **Excel Template**: 4-sheet workbook (`customers`, `projects`, `networks`, `users`) downloaded via `GET /api/onboarding/template`. Each sheet has required/optional column definitions with sample rows.
+- **Dry-Run Gate**: Execution is hard-blocked until `status == dry_run_passed`. Dry-run connects to PCD, reports `would_create` vs `would_skip` per resource, and sets the gate accordingly.
+- **Execute Semantics**: Background thread execution with continue-and-report (not rollback). Creates domains → projects (with Nova/Cinder/Neutron quota) → networks + subnets → users + role assignments. Per-item status written to DB in real time; live-polling UI updates every 3 s.
+- **5 Notification Event Types**: `onboarding_submitted`, `onboarding_approved`, `onboarding_rejected`, `onboarding_completed`, `onboarding_failed`.
+- **9 API Endpoints** at `/api/onboarding/*`: `GET /template`, `POST /upload`, `GET /batches`, `GET /batches/{id}`, `POST /batches/{id}/dry-run`, `POST /batches/{id}/submit`, `POST /batches/{id}/decision`, `POST /batches/{id}/execute`, `DELETE /batches/{id}`.
+- **RBAC**: `onboarding:create` (upload/dry-run/submit/delete), `onboarding:read` (list/detail), `onboarding:approve` (decision), `onboarding:execute` (execute).
+- **5 DB Tables**: `onboarding_batches`, `onboarding_customers`, `onboarding_projects`, `onboarding_networks`, `onboarding_users`; auto-migrated on API startup (no manual SQL step required).
+
 ### Ops Assistant — Search & Similarity (v1.20 - NEW ✨)
 - **🔍 Ops Search Tab**: Full-text search across all 29 resource types using PostgreSQL `tsvector` + `websearch_to_tsquery`. Relevance-ranked results with keyword-highlighted snippets, type/tenant/domain/date filtering, pagination.
 - **Trigram Similarity (v2)**: "Show Similar" button on every search result uses `pg_trgm` extension to find related documents by title (60% weight) and body text (40% weight) similarity scoring.
