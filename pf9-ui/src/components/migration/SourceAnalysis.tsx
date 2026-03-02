@@ -6081,6 +6081,29 @@ function PreparePcdView({ projectId }: { projectId: number }) {
   const [dryRunning, setDryRunning]       = useState(false);
   const [auditData, setAuditData]         = useState<any>(null);
   const [showAudit, setShowAudit]         = useState(false);
+  const [exportingBundle, setExportingBundle] = useState(false);
+  const [exportingPdf, setExportingPdf]       = useState(false);
+
+  const downloadExportBlob = async (apiPath: string, filename: string) => {
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}${apiPath}`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!res.ok) {
+        const err = await res.text().catch(() => res.statusText);
+        alert(`Export failed: ${err}`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) { alert(`Export error: ${e.message}`); }
+  };
 
   const loadReadiness = async () => {
     try {
@@ -6479,6 +6502,81 @@ function PreparePcdView({ projectId }: { projectId: number }) {
               </tr>
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Handoff Exports (shown once all tasks are done/skipped) ── */}
+      {allDone && (
+        <div style={{
+          ...sectionStyle,
+          background: "linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%)",
+          border: "1px solid #93c5fd",
+        }}>
+          <h3 style={{ margin: "0 0 6px", color: "#1e40af" }}>
+            🚀 Provisioning Complete — Export Handoff Artifacts
+          </h3>
+          <p style={{ margin: "0 0 14px", fontSize: "0.85rem", color: "#374151" }}>
+            PCD resources are provisioned. Export the files below to hand off to the migration
+            execution team and tenant owners.
+          </p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {/* vJailbreak Bundle */}
+            <div style={{ flex: "1 1 280px", padding: 14, background: "#fff", borderRadius: 8,
+              border: "1px solid #bfdbfe" }}>
+              <div style={{ fontWeight: 700, marginBottom: 4, color: "#1e40af" }}>
+                📦 vJailbreak Credential Bundle
+              </div>
+              <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: "0 0 10px", lineHeight: 1.5 }}>
+                JSON file per project with PCD project IDs, service-account credentials,
+                network UUIDs and wave sequence. Feed this directly to vJailbreak.
+              </p>
+              <button
+                onClick={async () => {
+                  setExportingBundle(true);
+                  await downloadExportBlob(
+                    `/api/migration/projects/${projectId}/export-vjailbreak-bundle`,
+                    `vjailbreak-bundle-${projectId}.json`,
+                  );
+                  setExportingBundle(false);
+                }}
+                disabled={exportingBundle}
+                style={{ ...btnPrimary, background: exportingBundle ? "#6b7280" : "#1d4ed8",
+                  opacity: exportingBundle ? 0.7 : 1 }}>
+                {exportingBundle ? "⏳ Exporting…" : "📥 Download Bundle (JSON)"}
+              </button>
+            </div>
+
+            {/* Tenant Handoff Sheet */}
+            <div style={{ flex: "1 1 280px", padding: 14, background: "#fff", borderRadius: 8,
+              border: "1px solid #a7f3d0" }}>
+              <div style={{ fontWeight: 700, marginBottom: 4, color: "#065f46" }}>
+                📄 Tenant Handoff Sheet
+              </div>
+              <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: "0 0 10px", lineHeight: 1.5 }}>
+                PDF with one section per tenant: domain, project, networks (CIDR), user
+                accounts and <strong>plaintext temporary passwords</strong>. Deliver securely.
+              </p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  onClick={async () => {
+                    setExportingPdf(true);
+                    await downloadExportBlob(
+                      `/api/migration/projects/${projectId}/export-handoff-sheet.pdf`,
+                      `migration-handoff-${projectId}.pdf`,
+                    );
+                    setExportingPdf(false);
+                  }}
+                  disabled={exportingPdf}
+                  style={{ ...btnPrimary, background: exportingPdf ? "#6b7280" : "#059669",
+                    opacity: exportingPdf ? 0.7 : 1 }}>
+                  {exportingPdf ? "⏳ Generating…" : "📥 Download Handoff Sheet (PDF)"}
+                </button>
+                <span style={{ fontSize: "0.75rem", color: "#dc2626" }}>
+                  ⚠️ Contains passwords — handle securely
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
