@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.1  
-**Last Updated**: February 2026  
+**Version**: 2.2
+**Last Updated**: March 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative**: See [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) for Kubernetes deployment
@@ -1375,11 +1375,15 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_wa
 # Adds networks_config + networks_created JSONB to provisioning_jobs
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_provisioning_networks.sql
 
-# 23. Apply Phase 4A data enrichment (v1.35.0+)
+# 23. Apply Phase 4 data enrichment (v1.35.0+)
 # Subnet detail columns, flavor_staging, image_requirements, tenant_users tables
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_phase4_preparation.sql
 
-# 24. Verify schema
+# 24. Apply PCD Approval Workflow tables (v1.36.2+)
+# prep_approval_status/by/at columns on migration_projects + migration_prep_approvals table
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_prep_approval.sql
+
+# 25. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 
@@ -1471,46 +1475,185 @@ The setting is stored in the database (`copilot_config` table) and takes effect 
 ### Pre-Production Checklist
 
 - [ ] All default passwords changed
-- [ ] JWT secret regenerated (min 64 chars)
+- [ ] JWT secret regenerated (min 64 chars) and set as `JWT_SECRET_KEY` in `.env`
 - [ ] LDAP admin password secured
-- [ ] SSL/TLS certificates installed
-- [ ] Firewall rules configured
-- [ ] Network isolation verified
+- [ ] SSL/TLS certificates installed (nginx reverse proxy)
+- [ ] Firewall rules configured — only ports 80/443 exposed externally
+- [ ] PostgreSQL port 5432 NOT exposed to host
+- [ ] OpenLDAP port 389 NOT exposed to host
+- [ ] pgAdmin and phpLDAPadmin disabled or restricted to localhost
+- [ ] UI running production nginx build (not Vite dev server)
+- [ ] API Gunicorn workers set to 4 for production load
+- [ ] Healthchecks verified (pf9_api, pf9_ui, pf9_monitoring, ldap)
 - [ ] Backups automated and tested
+- [ ] Debug endpoints removed or gated
 - [ ] Monitoring & alerting configured
 - [ ] Access control policies documented
 - [ ] Incident response plan created
 
-### Security Hardening
+---
 
-See [SECURITY.md](SECURITY.md) for detailed recommendations.
+### Critical: Dev vs Production Docker Differences
 
-**Quick hardening checklist**:
+The default `docker-compose.yml` is optimized for developer convenience. Before running in production, the following changes **must** be made:
+
+#### 1. Disable dev-only services
+
+pgAdmin and phpLDAPadmin are development tools. They should not be exposed in production:
+
+```yaml
+# In docker-compose.prod.yml (override file)
+services:
+  pgadmin:
+    profiles: ["dev"]        # Only starts when: docker-compose --profile dev up
+
+  phpldapadmin:
+    profiles: ["dev"]
+```
+
+Or simply do not start them: `docker-compose up -d` without those services listed.
+
+#### 2. Remove exposed database and LDAP ports
+
+PostgreSQL and OpenLDAP ports are bound to the host in the default compose file. In production, these services are only needed by containers on the internal Docker network:
+
+```yaml
+# docker-compose.prod.yml
+services:
+  db:
+    ports: []               # Remove "5432:5432" — internal only
+
+  ldap:
+    ports: []               # Remove "389:389" and "636:636" — internal only
+```
+
+#### 3. Use a production nginx build for the UI
+
+For production deployments, build the UI as optimized static assets served by nginx rather than using the development server. Create `pf9-ui/Dockerfile.prod`:
+
+```dockerfile
+# pf9-ui/Dockerfile.prod — production build
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:1.27-alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+And a minimal `pf9-ui/nginx.conf`:
+```nginx
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+    location /api/ {
+        proxy_pass http://pf9_api:8000/;
+    }
+}
+```
+
+#### 4. Increase API workers for production
+
+The current Gunicorn configuration uses 2 workers (reduced from 4 to resolve stuck-query issues at the time). For production with concurrent users, 4 workers is appropriate:
+
+```yaml
+# docker-compose.prod.yml
+services:
+  pf9_api:
+    command: >
+      gunicorn main:app
+      -w 4
+      -k uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:8000
+      --timeout 300
+      --graceful-timeout 60
+      --max-requests 1000
+      --max-requests-jitter 50
+```
+
+`--max-requests 1000` recycles each worker after 1000 requests, preventing memory creep from long-running processes.
+
+#### 5. Add healthchecks to pf9_api and pf9_ui
+
+The API and UI containers currently have no healthchecks. Add them:
+
+```yaml
+# docker-compose.prod.yml
+services:
+  pf9_api:
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  pf9_ui:
+    # Only works after switching to nginx (step 3 above)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+#### 6. Add an nginx reverse proxy for HTTPS
+
+Both the UI (port 5173) and API (port 8000) run over plain HTTP. In production, all traffic must go through HTTPS:
+
+```yaml
+# docker-compose.prod.yml
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - pf9_api
+      - pf9_ui
+    restart: unless-stopped
+```
+
+See [SECURITY.md](SECURITY.md) for the nginx TLS configuration.
+
+#### 7. Use a production override file
+
+Combine all changes into a single `docker-compose.prod.yml` and deploy with:
 
 ```bash
-# 1. Enable HTTPS
-# Install reverse proxy (nginx)
-# Configure SSL certificates
-# Update CORS_ORIGINS
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
 
-# 2. Restrict LDAP access
-# Firewall port 389 to internal only
-# Disable anonymous binds
+This keeps the base compose file intact for development while applying all production overrides cleanly.
 
-# 3. Database security
-# Restrict port 5432 to internal only
-# Enable SSL connections
-# Regular backups to offline storage
+---
 
-# 4. API security
-# Implement rate limiting
-# Add request logging
-# Enable audit trail
+### Security Hardening
 
-# 5. Monitoring
-# Set up Prometheus/Grafana
-# Configure alerts for failures
-# Log centralization (ELK/Loki)
+See [SECURITY.md](SECURITY.md) and [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) for full recommendations.
+
+```bash
+# Key actions:
+# 1. Enforce JWT_SECRET_KEY (must be set — app warns but does not enforce on startup)
+# 2. Enable LDAP over TLS (LDAPS port 636) or use stunnel
+# 3. Rate-limit /auth/login endpoint (slowapi is already imported)
+# 4. Remove or gate debug endpoints in api/main.py (/simple-test, /test-users-db)
+# 5. Set file permissions: chmod 600 .env
+# 6. Ensure backups volume is encrypted at rest
 ```
 
 ---
