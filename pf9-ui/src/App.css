@@ -820,7 +820,7 @@ body,
   /* main shell around the whole app */
   max-width: 1400px;      /* was effectively much narrower */
   margin: 0 auto;
-  padding: 24px 32px 40px;
+  padding: 24px 32px 96px;  /* bottom pad ensures content clears the Copilot FAB (48px tall + 24px offset + buffer) */
 }
 
 .pf9-main {

@@ -34,8 +34,8 @@ function authHeaders(): Record<string, string> {
     : { "Content-Type": "application/json" };
 }
 
-const ACTIONS = ["provision", "delete", "disable", "enable"];
-const RESOURCE_TYPES = ["domain", "tenant", "server", "volume", "network", "router", "floating_ip", "security_group", "user", "project"];
+const ACTIONS = ["provision", "delete", "disable", "enable", "send_welcome_notifications", "execute_onboarding", "approve_onboarding", "reject_onboarding"];
+const RESOURCE_TYPES = ["domain", "tenant", "server", "volume", "network", "router", "floating_ip", "security_group", "user", "project", "onboarding_notification", "onboarding_batch"];
 const RESULTS = ["success", "failure"];
 
 const ActivityLogTab: React.FC = () => {

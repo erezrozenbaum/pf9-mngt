@@ -23,8 +23,9 @@
   padding: 0 20px;
   font-size: 14px;
   font-weight: 600;
-  z-index: 10000;
-  transition: transform 0.2s, box-shadow 0.2s, padding 0.2s;
+  z-index: 9000;
+  opacity: 0.82;
+  transition: transform 0.2s, box-shadow 0.2s, padding 0.2s, opacity 0.2s;
   white-space: nowrap;
 }
 .copilot-fab-icon {
@@ -39,6 +40,7 @@
 .copilot-fab:hover {
   transform: scale(1.04);
   box-shadow: 0 6px 20px rgba(37, 99, 235, 0.55);
+  opacity: 1;
 }
 .copilot-fab.open {
   background: linear-gradient(135deg, #dc2626, #b91c1c);

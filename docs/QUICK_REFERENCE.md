@@ -92,7 +92,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Approval workflow: per-runbook policies with role-based trigger→approver mappings (high-risk runbooks require admin approval)
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
-- **Bulk Customer Onboarding** (v1.38.0 - NEW ✨):
+- **Bulk Customer Onboarding** (v1.38.0, patched v1.38.1):
   - "📦 Bulk Customer Onboarding" card in Runbooks tab opens a dedicated multi-step workflow
   - Upload a four-sheet Excel workbook (`customers`, `projects`, `networks`, `users`) → validate → dry-run → approve → execute against PCD
   - Dry-run gate: execution hard-locked until dry-run reports zero conflicts

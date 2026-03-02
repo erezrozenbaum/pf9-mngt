@@ -30,6 +30,8 @@ interface OnboardingBatch {
   validation_errors: ValidationError[];
   dry_run_result: DryRunResult | null;
   execution_result: Record<string, any> | null;
+  execution_log: Array<{ ts: string; level: string; msg: string }>;
+  rerun_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -79,6 +81,18 @@ function getToken(): string | null {
   return localStorage.getItem("auth_token");
 }
 
+function getCurrentUser(): { username: string; role: string } | null {
+  try {
+    const raw = localStorage.getItem("auth_user");
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function isAdminUser(): boolean {
+  const u = getCurrentUser();
+  return u?.role === "admin" || u?.role === "superadmin";
+}
+
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -126,7 +140,7 @@ const STEPS = ["Upload", "Validate", "Dry Run", "Approve", "Execute", "Done"];
 function currentStep(batch: OnboardingBatch): number {
   const s = batch.status;
   const a = batch.approval_status;
-  if (s === "complete") return 5;
+  if (s === "complete") return 6;   // past last index → all steps green
   if (s === "executing" || s === "partially_failed") return 4;
   if (s === "dry_run_passed" && a === "approved") return 4;
   if (a === "approved" || a === "rejected") return 3;
@@ -167,6 +181,10 @@ interface Props {
 export default function BulkOnboardingTab({ onBack }: Props) {
   const [batches, setBatches] = useState<OnboardingBatch[]>([]);
   const [selected, setSelected] = useState<BatchDetail | null>(null);
+  const [notifSending, setNotifSending] = useState(false);
+  const [notifSent, setNotifSent] = useState(false);
+  const [selectedNotifIds, setSelectedNotifIds] = useState<Set<number> | null>(null);
+  const [extraRecipients, setExtraRecipients] = useState("");
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
   const [view, setView] = useState<"list" | "detail" | "upload">("list");
@@ -214,15 +232,58 @@ export default function BulkOnboardingTab({ onBack }: Props) {
     fetchBatches();
   }, [fetchBatches]);
 
-  // Poll active batch
+  // Poll active batch — also poll during pending_approval so Execute appears automatically when admin approves
   useEffect(() => {
-    if (selected && (selected.status === "executing" || selected.status === "dry_run_pending")) {
-      pollRef.current = setInterval(() => fetchDetail(selected.batch_id, true), 3000);
+    const needsPoll = selected && (
+      selected.status === "executing" ||
+      selected.status === "dry_run_pending" ||
+      selected.approval_status === "pending_approval"
+    );
+    if (needsPoll) {
+      pollRef.current = setInterval(() => fetchDetail(selected!.batch_id, true), 5000);
     } else {
       if (pollRef.current) clearInterval(pollRef.current);
     }
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [selected, fetchDetail]);
+
+  // ── Send welcome notifications ────────────────────────────────────────
+  const handleSendNotifications = async (
+    batchId: string,
+    userIds: number[],
+    extras: string,
+  ) => {
+    const extraList = extras.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+    const total = userIds.length + extraList.length;
+    if (total === 0) { showToast("Select at least one recipient.", "error"); return; }
+    if (!window.confirm(`Send welcome emails to ${total} recipient(s)?`)) return;
+    setNotifSending(true);
+    try {
+      const body = JSON.stringify({ user_ids: userIds, extra_recipients: extraList });
+      const res: any = await apiFetch(`/api/onboarding/batches/${batchId}/send-notifications`, { method: "POST", body });
+      const sent = res.sent ?? 0;
+      const skipped = res.skipped ?? 0;
+      showToast(`✅ Welcome emails sent: ${sent} delivered, ${skipped} skipped.`, "success");
+      setNotifSent(true);
+    } catch (err: any) {
+      showToast(`Failed to send notifications: ${err.message}`, "error");
+    } finally {
+      setNotifSending(false);
+    }
+  };
+
+  // ── Rerun failed items ───────────────────────────────────────────────
+  const handleRerun = async (batchId: string) => {
+    if (!window.confirm("This will reset all failed items and rerun execution. Already-created items are skipped. Continue?")) return;
+    try {
+      await apiFetch(`/api/onboarding/batches/${batchId}/rerun`, { method: "POST", body: "{}" });
+      showToast("🔄 Rerun started — polling for status…", "info");
+      await fetchDetail(batchId, true);
+      await fetchBatches();
+    } catch (err: any) {
+      showToast(`Rerun failed: ${err.message}`, "error");
+    }
+  };
 
   // ── Template download ──────────────────────────────────────────────────
   const downloadTemplate = async () => {
@@ -436,31 +497,35 @@ export default function BulkOnboardingTab({ onBack }: Props) {
     rows: ResourceRow[],
     keyField: string,
     extraFields: string[],
+    fieldLabels: Record<string, string> = {},
   ) => {
     if (!rows || rows.length === 0) return null;
+    const label = (f: string) => fieldLabels[f] ?? f.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     return (
-      <details>
+      <details open>
         <summary className="ob-detail-summary">{title} ({rows.length})</summary>
-        <table className="ob-table small">
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>{keyField}</th>
-              {extraFields.map((f) => <th key={f}>{f}</th>)}
-              <th>Error</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td>{statusBadge(row.status)}</td>
-                <td>{row[keyField]}</td>
-                {extraFields.map((f) => <td key={f}>{String(row[f] ?? "—")}</td>)}
-                <td className="ob-text-muted">{row.error_msg || ""}</td>
+        <div className="ob-table-wrap">
+          <table className="ob-table small">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>{label(keyField)}</th>
+                {extraFields.map((f) => <th key={f}>{label(f)}</th>)}
+                <th>Error</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr className="ob-table-row" key={row.id}>
+                  <td>{statusBadge(row.status)}</td>
+                  <td>{row[keyField]}</td>
+                  {extraFields.map((f) => <td key={f}>{String(row[f] ?? "—")}</td>)}
+                  <td className="ob-text-muted">{row.error_msg || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </details>
     );
   };
@@ -570,17 +635,219 @@ export default function BulkOnboardingTab({ onBack }: Props) {
               {b.execution_result.completed_by && <span>By: <strong>{b.execution_result.completed_by}</strong></span>}
               {b.execution_result.completed_at && <span>At: {fmtDate(b.execution_result.completed_at)}</span>}
               {b.execution_result.error && <span className="ob-text-red">Error: {b.execution_result.error}</span>}
+              {b.rerun_count > 0 && <span className="ob-badge yellow">Rerun #{b.rerun_count}</span>}
             </div>
           </div>
         )}
 
+        {/* Completion summary */}
+        {b.execution_result && !executing && (b.status === "complete" || b.status === "partially_failed") && (
+          <div className="ob-section">
+            <h4>🎉 Completion Summary</h4>
+            <div className="ob-summary-cards">
+              {([
+                { label: "Domains",  rows: b.customers ?? [] },
+                { label: "Projects", rows: b.projects ?? [] },
+                { label: "Networks", rows: b.networks ?? [] },
+                { label: "Users",    rows: b.users ?? [] },
+              ] as { label: string; rows: ResourceRow[] }[]).map(({ label, rows }) => {
+                const created = rows.filter(r => r.status === "created").length;
+                const failed  = rows.filter(r => r.status === "failed").length;
+                return (
+                  <div key={label} className={`ob-summary-card ${failed > 0 ? "partial" : "success"}`}>
+                    <div className="ob-summary-card-count">{created}</div>
+                    <div className="ob-summary-card-label">{label} Created</div>
+                    {failed > 0 && <div className="ob-summary-card-failed">⚠ {failed} failed</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Execution log */}
+        {b.execution_log && b.execution_log.length > 0 && (
+          <details className="ob-section ob-log-details" open={b.status === "complete" || b.status === "partially_failed"}>
+            <summary className="ob-log-summary">📋 Execution Log ({b.execution_log.length} entries)</summary>
+            <div className="ob-log-body">
+              {b.execution_log.map((entry, i) => (
+                <div key={i} className={`ob-log-line ob-log-${entry.level}`}>
+                  <span className="ob-log-ts">{new Date(entry.ts).toLocaleTimeString()}</span>
+                  <span className="ob-log-msg">{entry.msg}</span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {/* Welcome notifications panel */}
+        {(b.status === "complete" || b.status === "partially_failed") && selected && (() => {
+          const allNotifUsers = selected.users.filter(u => u.status === "created");
+          const usersWithEmail = allNotifUsers.filter(u => u.email);
+          if (allNotifUsers.length === 0) return null;
+
+          // Initialise selection on first render for this batch
+          const initIds = new Set(usersWithEmail.map((u: ResourceRow) => u.id as number));
+          const currentSelected: Set<number> = selectedNotifIds === null
+            ? initIds
+            : selectedNotifIds;
+
+          const toggleUser = (id: number) => {
+            setNotifSent(false);
+            setSelectedNotifIds(prev => {
+              const base = prev === null ? initIds : prev;
+              const next = new Set(base);
+              next.has(id) ? next.delete(id) : next.add(id);
+              return next;
+            });
+          };
+          const selectAll  = () => { setNotifSent(false); setSelectedNotifIds(new Set(initIds)); };
+          const selectNone = () => { setNotifSent(false); setSelectedNotifIds(new Set()); };
+          const selectedList = usersWithEmail.filter(u => currentSelected.has(u.id as number));
+          const extraList = extraRecipients.split(/[,\n]/).map((s: string) => s.trim()).filter(Boolean);
+          const totalRecipients = selectedList.length + extraList.length;
+
+          return (
+            <div className="ob-section">
+              <h4>📧 Welcome Notifications</h4>
+              <p className="ob-text-muted" style={{marginBottom:'0.6rem'}}>
+                Select which users receive a welcome email with their credentials, and optionally add extra recipients (e.g. managers or CC addresses).
+              </p>
+
+              <details className="ob-notif-preview">
+                <summary className="ob-detail-summary">📄 Email Template Preview</summary>
+                <div className="ob-notif-preview-body">
+                  <div className="ob-notif-meta"><strong>Subject:</strong> Welcome to Platform9 — Your Account is Ready</div>
+                  <div className="ob-notif-meta"><strong>From:</strong> Platform9 Management &lt;noreply@platform9.com&gt;</div>
+                  <div className="ob-notif-meta"><strong>To:</strong> Selected users / extra recipients</div>
+                  <hr className="ob-divider" />
+                  <p>Dear <em>[Username]</em>,</p>
+                  <p>Your Platform9 cloud account has been created and is ready to use. Please find your credentials below:</p>
+                  <table className="ob-notif-creds">
+                    <tbody>
+                      <tr><td>Username</td><td><strong>[username]</strong></td></tr>
+                      <tr><td>Temporary Password</td><td><strong>[temp_password]</strong> — please change on first login</td></tr>
+                      <tr><td>Domain</td><td>[domain_name]</td></tr>
+                      <tr><td>Project</td><td>[project_name]</td></tr>
+                      <tr><td>Role</td><td>[role]</td></tr>
+                    </tbody>
+                  </table>
+                  <p style={{marginTop:'1rem',fontSize:'0.85rem',color:'#94a3b8'}}>
+                    Extra recipients not linked to a specific user receive a general onboarding summary instead of individual credentials.
+                  </p>
+                </div>
+              </details>
+
+              {/* User selection table */}
+              <div className="ob-notif-select-header">
+                <span className="ob-text-muted" style={{fontSize:'0.82rem'}}>
+                  {currentSelected.size} of {usersWithEmail.length} user(s) selected
+                </span>
+                <button className="ob-btn-link" onClick={selectAll}>Select All</button>
+                <button className="ob-btn-link" onClick={selectNone}>Select None</button>
+              </div>
+              <div className="ob-table-wrap">
+                <table className="ob-table small">
+                  <thead>
+                    <tr>
+                      <th style={{width:32}}></th>
+                      <th>Username</th><th>Email</th><th>Domain</th><th>Project</th><th>Role</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allNotifUsers.map((u: ResourceRow) => {
+                      const hasEmail = Boolean(u.email);
+                      const checked = hasEmail && currentSelected.has(u.id as number);
+                      return (
+                        <tr key={u.id} className={checked ? "" : "ob-row-dim"}>
+                          <td>
+                            {hasEmail
+                              ? <input type="checkbox" checked={checked} onChange={() => toggleUser(u.id as number)} />
+                              : <span title="No email address" style={{color:'#475569',fontSize:'0.75rem'}}>—</span>}
+                          </td>
+                          <td>{u.username}</td>
+                          <td>{u.email || <span className="ob-text-muted">no email</span>}</td>
+                          <td>{u.domain_name}</td>
+                          <td>{u.project_name}</td>
+                          <td>{u.role}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Extra recipients */}
+              <div className="ob-notif-extra">
+                <label className="ob-label">Additional Recipients (optional)</label>
+                <textarea
+                  className="ob-input ob-notif-extra-input"
+                  rows={3}
+                  placeholder={"manager@example.com, cto@company.org\n(one per line or comma-separated)"}
+                  value={extraRecipients}
+                  onChange={e => { setExtraRecipients(e.target.value); setNotifSent(false); }}
+                />
+                {extraList.length > 0 && (
+                  <p className="ob-text-muted" style={{fontSize:'0.8rem',marginTop:'0.3rem'}}>
+                    {extraList.length} extra recipient(s) — will receive a general onboarding summary (not individual credentials)
+                  </p>
+                )}
+              </div>
+
+              <div className="ob-notif-send-row">
+                {notifSent ? (
+                  <>
+                    <span style={{color:'#16a34a', fontWeight:600, fontSize:'0.9rem'}}>✅ Emails sent</span>
+                    <button
+                      className="ob-btn secondary"
+                      disabled={notifSending || totalRecipients === 0}
+                      onClick={() => { setNotifSent(false); }}
+                    >
+                      🔁 Resend
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="ob-btn primary"
+                    disabled={notifSending || totalRecipients === 0}
+                    onClick={() => handleSendNotifications(
+                      b.batch_id,
+                      selectedList.map((u: ResourceRow) => u.id as number),
+                      extraRecipients,
+                    )}
+                  >
+                    {notifSending ? "⏳ Sending…" : `📤 Send Welcome Emails (${totalRecipients} recipient${totalRecipients !== 1 ? "s" : ""})`}
+                  </button>
+                )}
+                <span className="ob-text-muted" style={{fontSize:'0.8rem'}}>
+                  Actions are logged in Admin Tools → System Logs → Activity
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Item tables */}
         <div className="ob-section">
           <h4>📦 Resource Details</h4>
-          {renderItemsTable("Customers / Domains", selected.customers, "domain_name", ["display_name", "contact_email", "pcd_domain_id"])}
-          {renderItemsTable("Projects", selected.projects, "project_name", ["domain_name", "quota_vcpu", "pcd_project_id"])}
-          {renderItemsTable("Networks", selected.networks, "network_name", ["domain_name", "project_name", "cidr", "pcd_network_id"])}
-          {renderItemsTable("Users", selected.users, "username", ["domain_name", "project_name", "role", "email", "pcd_user_id"])}
+          {renderItemsTable("Customers / Domains", selected.customers, "domain_name",
+            ["display_name", "contact_email", "pcd_domain_id"],
+            { domain_name: "Domain", display_name: "Display Name", contact_email: "Contact Email", pcd_domain_id: "OS Domain ID" })}
+          {renderItemsTable("Projects", selected.projects, "project_name",
+            ["domain_name", "subscription_id", "quota_vcpu", "quota_ram_mb", "quota_instances", "quota_disk_gb",
+             "quota_networks", "quota_subnets", "quota_routers", "quota_volumes", "quota_snapshots", "pcd_project_id"],
+            { project_name: "Project", domain_name: "Domain", subscription_id: "Sub ID",
+              quota_vcpu: "vCPU", quota_ram_mb: "RAM (MB)", quota_instances: "Instances", quota_disk_gb: "Disk GB",
+              quota_networks: "Networks", quota_subnets: "Subnets", quota_routers: "Routers",
+              quota_volumes: "Volumes", quota_snapshots: "Snapshots", pcd_project_id: "OS Project ID" })}
+          {renderItemsTable("Networks", selected.networks, "network_name",
+            ["domain_name", "project_name", "network_kind", "cidr", "vlan_id", "pcd_network_id"],
+            { network_name: "Network", domain_name: "Domain", project_name: "Project",
+              network_kind: "Kind", cidr: "CIDR", vlan_id: "VLAN", pcd_network_id: "OS Network ID" })}
+          {renderItemsTable("Users", selected.users, "username",
+            ["domain_name", "project_name", "role", "email", "pcd_user_id"],
+            { username: "Username", domain_name: "Domain", project_name: "Project",
+              role: "Role", email: "Email", pcd_user_id: "OS User ID" })}
         </div>
 
         {/* Action bar */}
@@ -595,17 +862,27 @@ export default function BulkOnboardingTab({ onBack }: Props) {
               📨 Submit for Approval
             </button>
           )}
-          {b.approval_status === "pending_approval" && (
+          {b.approval_status === "pending_approval" && isAdminUser() && (
             <button className="ob-btn primary" onClick={() => { setDecisionBatch(b); setDecision("approve"); }}>
               ⚖ Approve / Reject
             </button>
+          )}
+          {b.approval_status === "pending_approval" && !isAdminUser() && (
+            <span className="ob-lock-hint ob-waiting">
+              <span className="ob-spinner-inline" /> Waiting for admin approval…
+            </span>
           )}
           {canExecute(b) && (
             <button className="ob-btn execute" disabled={executing} onClick={() => handleExecute(b.batch_id)}>
               🚀 Execute Onboarding
             </button>
           )}
-          {!canExecute(b) && b.approval_status !== "pending_approval" && b.status !== "executing" && (
+          {b.status === "partially_failed" && b.approval_status === "approved" && (
+            <button className="ob-btn secondary" disabled={executing} onClick={() => handleRerun(b.batch_id)}>
+              🔄 Rerun Failed Items
+            </button>
+          )}
+          {!canExecute(b) && b.approval_status !== "pending_approval" && b.status !== "executing" && b.status !== "partially_failed" && (
             <span className="ob-lock-hint">
               {b.approval_status !== "approved" ? "🔒 Execution locked — approval required" :
                b.status !== "dry_run_passed" ? "🔒 Execution locked — dry-run must pass first" : ""}
@@ -637,7 +914,7 @@ export default function BulkOnboardingTab({ onBack }: Props) {
         <div className="ob-hint-step">4. Review validation, run dry-run, get approval, execute</div>
       </div>
       <button className="ob-btn secondary" onClick={downloadTemplate}>
-        ⬇ Download Excel Template
+        ↓ Download Excel Template
       </button>
       <hr className="ob-divider" />
       <form className="ob-upload-form" onSubmit={handleUpload}>
@@ -689,7 +966,7 @@ export default function BulkOnboardingTab({ onBack }: Props) {
           <p className="ob-subtitle">Bulk-create customers, projects, networks and users from a filled Excel template.</p>
         </div>
         <div className="ob-list-actions">
-          <button className="ob-btn secondary" onClick={downloadTemplate}>⬇ Template</button>
+          <button className="ob-btn secondary" onClick={downloadTemplate}>↓ Template</button>
           <button className="ob-btn primary" onClick={() => setView("upload")}>+ New Batch</button>
         </div>
       </div>
@@ -735,9 +1012,9 @@ export default function BulkOnboardingTab({ onBack }: Props) {
                 <td>
                   <div className="ob-row-actions">
                     <button className="ob-btn-icon" title="View" onClick={() => fetchDetail(b.batch_id)}>🔍</button>
-                    {b.approval_status === "pending_approval" && (
-                      <button className="ob-btn-icon" title="Approve/Reject"
-                        onClick={() => { setDecisionBatch(b); setDecision("approve"); }}>⚖</button>
+                    {b.approval_status === "pending_approval" && isAdminUser() && (
+                      <button className="ob-btn primary small"
+                        onClick={() => { setDecisionBatch(b); setDecision("approve"); }}>⚖ Approve</button>
                     )}
                     <button className="ob-btn-icon danger" title="Delete"
                       disabled={b.status === "executing"}
