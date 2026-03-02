@@ -929,6 +929,9 @@ GET  /api/migration/projects/{id}/prep-approval                      # Get appro
 POST /api/migration/projects/{id}/prep-approval                      # Approve or reject plan — migration:admin (v1.36.2)
 POST /api/migration/projects/{id}/prepare/dry-run                    # Dry-run simulation — no PCD writes (v1.36.2)
 GET  /api/migration/projects/{id}/prep-audit                         # Full audit trail: approvals + activity + executions (v1.36.2)
+GET  /api/migration/projects/{id}/export-vjailbreak-bundle           # vJailbreak credential bundle JSON (v1.37.0)
+GET  /api/migration/projects/{id}/cohorts/{cid}/export-vjailbreak-bundle  # Cohort-scoped bundle (v1.37.0)
+GET  /api/migration/projects/{id}/export-handoff-sheet.pdf           # Tenant handoff sheet PDF (v1.37.0)
 
 # System Health & Testing
 GET  /health                     # Service health check

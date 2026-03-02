@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.36.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.37.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -736,6 +736,14 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.37.0 — vJailbreak Credential Bundle & Tenant Handoff Sheet
+- ✅ **`GET /export-vjailbreak-bundle`** — exports a JSON credential bundle for all in-scope tenants with PCD project IDs, service-account credentials, temporary user passwords, network UUIDs, and wave sequence
+- ✅ **Cohort-scoped variant** — `GET /cohorts/{id}/export-vjailbreak-bundle` restricts the bundle to a single cohort
+- ✅ **`GET /export-handoff-sheet.pdf`** — generates a CONFIDENTIAL A4 PDF handoff document: one section per tenant with domain/project identity, network mappings, and users/credentials; service accounts highlighted in blue
+- ✅ **Partial-bundle warnings** — structured `warnings[]` in response if any tenants are missing service accounts or PCD project IDs
+- ✅ **Notification events** — `vjailbreak_bundle_exported` and `handoff_sheet_exported` registered; audit activity logged on every export
+- ✅ **UI: Export panel** — two-click export cards appear in *Prepare PCD* tab once all provisioning tasks complete
+
 ### v1.36.2 — Approval Workflow, Dry Run & Audit Log
 - ✅ **2-step approval gate** — `POST /prepare` sets plan to `pending_approval`; `POST /prepare/run` is blocked with HTTP 403 until explicitly approved
 - ✅ **`GET /prep-approval`** — returns approval status, requester, approver, timestamp, and full approval history
@@ -959,4 +967,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.36.2 | **Last Updated**: March 2026
+**Project Status**: Active Development | **Version**: 1.37.0 | **Last Updated**: March 2026

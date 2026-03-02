@@ -1,6 +1,6 @@
 # Migration Planner — Operator Guide
 
-> **Version**: v1.36.2 | **Last Updated**: 2026-03-01
+> **Version**: v1.37.0 | **Last Updated**: 2026-03-02
 > Complete reference for the pf9-mngt Migration Planner — from RVTools ingestion through wave execution.
 
 ---
@@ -16,10 +16,11 @@
 7. [Phase 3 — Wave Planning](#phase-3--wave-planning)
 8. [Phase 4A — PCD Data Enrichment](#phase-4a--pcd-data-enrichment)
 9. [Phase 4B — PCD Auto-Provisioning](#phase-4b--pcd-auto-provisioning)
-10. [End-to-End Workflow](#end-to-end-workflow)
-11. [API Reference](#api-reference)
-12. [Database Schema](#database-schema)
-13. [Troubleshooting](#troubleshooting)
+10. [vJailbreak Handoff Exports](#vjailbreak-handoff-exports)
+11. [End-to-End Workflow](#end-to-end-workflow)
+12. [API Reference](#api-reference)
+13. [Database Schema](#database-schema)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -39,7 +40,7 @@ The **Migration Planner** is an integrated module within pf9-mngt that guides op
 | 4B | PCD Auto-Provisioning — domains, projects, quotas, networks, flavors, users, roles | ✅ Complete |
 | 4B.1 | Phase 4B Polish — run confirmation modal, execution summary panel, completion notification | ✅ Complete |
 | 4B.2 | Phase 4B Approval Workflow (2-step gate), Dry Run simulation, Audit Log | ✅ Complete |
-| 4C | vJailbreak Handoff — credential bundle + tenant handoff sheet | 🔲 Planned |
+| 4C | vJailbreak Handoff — credential bundle + tenant handoff sheet | ✅ Complete | v1.37.0 |
 | 5 | vJailbreak integration & live execution | 🔲 Planned |
 | 6 | Post-migration validation | 🔲 Planned |
 
@@ -530,7 +531,7 @@ The **⚙️ Prepare PCD** tab gate (`GET /prep-readiness`) will show red ✗ fo
 ### API Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
+|--------|----------|--------------|
 | `GET` | `/api/migration/projects/{id}/prep-readiness` | Pre-flight check — returns 4A gate status per item |
 | `POST` | `/api/migration/projects/{id}/prepare` | Generate ordered task plan (sets `pending_approval`, fires notification) |
 | `GET` | `/api/migration/projects/{id}/prep-tasks` | List all tasks with status counts |
@@ -543,6 +544,41 @@ The **⚙️ Prepare PCD** tab gate (`GET /prep-readiness`) will show red ✗ fo
 | `POST` | `/api/migration/projects/{id}/prep-approval` | Approve or reject the plan — requires `migration:admin` (v1.36.2) |
 | `POST` | `/api/migration/projects/{id}/prepare/dry-run` | Dry-run simulation — classifies tasks without executing (v1.36.2) |
 | `GET` | `/api/migration/projects/{id}/prep-audit` | Full audit trail: approvals, activity log, execution history (v1.36.2) |
+
+---
+
+## vJailbreak Handoff Exports
+
+> Prerequisite: Phase 4B complete (all provisioning tasks `done` or `skipped`).
+
+Once PCD resources are provisioned the Migration Planner can produce two handoff artifacts for the execution phase:
+
+### vJailbreak Credential Bundle (JSON)
+
+A JSON document containing everything vJailbreak needs to connect to each PCD project and start migrating VMs: PCD project UUID, service-account credentials, all user temporary passwords, network UUIDs with CIDR/gateway/VLAN, and cohort/wave sequence.
+
+- **Full project** — `GET /api/migration/projects/{id}/export-vjailbreak-bundle`
+- **Single cohort** — `GET /api/migration/projects/{id}/cohorts/{cid}/export-vjailbreak-bundle`
+
+If any tenants are missing service accounts or PCD project IDs (provisioning incomplete) the response includes a `warnings[]` array but still returns the partial bundle.
+
+### Tenant Handoff Sheet (PDF)
+
+A CONFIDENTIAL A4 PDF document — one section per in-scope tenant — containing:
+- Domain/project identity and PCD auth URL
+- Network mappings: source name, target UUID, CIDR, gateway, VLAN
+- User roster with temporary passwords (service accounts highlighted)
+- Confidentiality notice on every page
+
+`GET /api/migration/projects/{id}/export-handoff-sheet.pdf`
+
+> ⚠️ This document contains plaintext temporary passwords. Distribute to tenants through a secure channel (encrypted email, password manager share, in-person handoff).
+
+### UI
+
+Both export buttons appear automatically in the **⚙️ Prepare PCD** tab once all provisioning tasks reach `done` or `skipped`. Click:
+- **📦 vJailbreak Credential Bundle** to download the JSON file
+- **📄 Tenant Handoff Sheet** to download the PDF
 
 ---
 
@@ -600,12 +636,17 @@ The **⚙️ Prepare PCD** tab gate (`GET /prep-readiness`) will show red ✗ fo
     └── Run All → monitor progress, fix failures, re-run
     └── All tasks done/skipped → PCD is fully provisioned
 
-11. EXECUTE WAVES (future Phase 5 — vJailbreak)
+11. EXPORT HANDOFF ARTIFACTS
+    └── Prepare PCD tab → export panel appears once all tasks complete
+    └── Download vJailbreak Credential Bundle (JSON) → hand to vJailbreak operator
+    └── Download Tenant Handoff Sheet (PDF) → distribute credentials to tenant owners
+
+12. EXECUTE WAVES (future Phase 5 — vJailbreak)
     └── Advance Wave 0 to executing (pilot)
     └── Validate pilot → advance to complete
     └── Proceed wave by wave through the plan
 
-12. EXPORT REPORTS
+13. EXPORT REPORTS
     └── GET /projects/{id}/export-plan  (XLSX / PDF)
     └── GET /projects/{id}/gap-report   (XLSX / PDF)
 ```
@@ -720,6 +761,15 @@ The **⚙️ Prepare PCD** tab gate (`GET /prep-readiness`) will show red ✗ fo
 |--------|----------|-------------|
 | `GET` | `/api/migration/projects/{id}/export-plan` | Export full migration plan (XLSX/PDF) |
 | `GET` | `/api/migration/projects/{id}/export-plan?format=pdf` | PDF variant |
+
+### Handoff Exports (v1.37.0)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/migration/projects/{id}/export-vjailbreak-bundle` | Full-project vJailbreak credential bundle (JSON) |
+| `GET` | `/api/migration/projects/{id}/export-vjailbreak-bundle?cohort_id={cid}` | Cohort-scoped variant |
+| `GET` | `/api/migration/projects/{id}/cohorts/{cid}/export-vjailbreak-bundle` | Cohort-scoped (path-param) |
+| `GET` | `/api/migration/projects/{id}/export-handoff-sheet.pdf` | Tenant handoff sheet (PDF) |
 
 ---
 
