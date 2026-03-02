@@ -784,7 +784,9 @@ $provisioningMigrations = @(
     @{File="db\migrate_descriptions.sql"; Desc="Migration Planner v1.31.7: target_domain_description column on migration_tenants for PCD Domain description field"},
     @{File="db\migrate_wave_planning.sql"; Desc="Migration Planner Phase 3 v1.34.0: wave status/type/owner/preflight columns, migration_wave_preflights table"},
     @{File="db\migrate_phase4_preparation.sql"; Desc="Migration Planner Phase 4A v1.35.0: subnet detail columns on network_mappings, flavor_staging, image_requirements, tenant_users tables"},
-    @{File="db\migrate_prep_approval.sql"; Desc="Migration Planner Phase 4B v1.36.2: prep_approval_status/by/at columns on migration_projects + migration_prep_approvals approval history table"}
+    @{File="db\migrate_prep_approval.sql"; Desc="Migration Planner Phase 4B v1.36.2: prep_approval_status/by/at columns on migration_projects + migration_prep_approvals approval history table"},
+    @{File="db\migrate_onboarding_runbook.sql"; Desc="Bulk Customer Onboarding v1.38.0: onboarding_batches, onboarding_customers, onboarding_projects, onboarding_networks, onboarding_users tables"},
+    @{File="db\migrate_onboarding_v1381.sql"; Desc="Bulk Customer Onboarding v1.38.1: drop department_tag; add subscription_id + full quota columns; add network_kind/type/physical/pool fields; add user_password"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

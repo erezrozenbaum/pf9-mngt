@@ -168,3 +168,13 @@ DO $$ BEGIN
             FOR EACH ROW EXECUTE FUNCTION onboarding_set_updated_at();
     END IF;
 END $$;
+
+-- Role permissions for onboarding feature
+INSERT INTO role_permissions (role, resource, action) VALUES
+    ('admin',     'onboarding', 'admin'),
+    ('operator',  'onboarding', 'read'),
+    ('operator',  'onboarding', 'create'),
+    ('operator',  'onboarding', 'execute'),
+    ('technical', 'onboarding', 'read'),
+    ('viewer',    'onboarding', 'read')
+ON CONFLICT (role, resource, action) DO NOTHING;

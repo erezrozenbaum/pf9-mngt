@@ -483,7 +483,7 @@ def require_permission(resource: str, permission: str):
     async def dependency(
         current_user: User = Depends(get_current_user),
         request: Request = None
-    ) -> bool:
+    ) -> dict:
         user = current_user
 
         if not user:
@@ -504,7 +504,7 @@ def require_permission(resource: str, permission: str):
                 detail=f"Insufficient permissions for {resource}:{permission}"
             )
 
-        return True
+        return user.model_dump()
 
     return dependency
 

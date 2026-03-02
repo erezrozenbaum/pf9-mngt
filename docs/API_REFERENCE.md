@@ -2446,6 +2446,36 @@ Response:
 
 ---
 
+### Send Welcome Email Notifications
+**POST** `/api/onboarding/batches/{batch_id}/send-notifications`
+*Requires: `onboarding:execute`*
+
+Sends welcome emails to selected users from a completed batch. Extra recipients (e.g. admins) receive a full HTML summary organised by domain and project.
+
+Request body:
+```json
+{
+  "user_ids": [1, 2, 3],
+  "extra_recipients": ["admin@example.com"]
+}
+```
+
+- `user_ids` — IDs from `onboarding_users`; each receives a personalised email with username, temp password, project networks, and login domain tip
+- `extra_recipients` — optional list of additional addresses that receive the full admin summary (all users across all projects with temp passwords)
+
+Activity is logged to `activity_log` with `resource_type='onboarding_notification'`.
+
+Response:
+```json
+{
+  "sent": 5,
+  "failed": 0,
+  "details": "Notifications sent successfully"
+}
+```
+
+---
+
 ### Delete Batch
 **DELETE** `/api/onboarding/batches/{batch_id}`
 *Requires: `onboarding:create`*
