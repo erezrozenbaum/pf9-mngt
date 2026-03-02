@@ -3752,3 +3752,87 @@ Returns a three-part audit trail: system activity log entries, approval decision
   ]
 }
 ```
+---
+
+## vJailbreak Handoff Exports (v1.37.0)
+
+### Export vJailbreak Credential Bundle (v1.37.0)
+
+`GET /projects/{id}/export-vjailbreak-bundle`
+
+Exports a JSON credential bundle containing everything vJailbreak needs to connect to each PCD project and begin VM migration. Accepts an optional `?cohort_id=` query parameter to restrict to a single cohort.
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cohort_id` | integer (optional) | Restrict bundle to tenants in this cohort |
+
+**Response:**
+```json
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-02T07:10:00Z",
+  "project_name": "vCloud-Old-Cluster",
+  "project_id": "9440b8cb-...",
+  "auth_url": "https://pcd.example.com:5000/v3",
+  "cohort_filter": null,
+  "tenant_count": 122,
+  "warnings": [
+    "15 tenant(s) have no service account — run 'Seed Service Accounts' in the Users tab."
+  ],
+  "tenants": [
+    {
+      "tenant_name": "acme_corp",
+      "target_domain_name": "acme",
+      "target_project_name": "acme-prod",
+      "cohort_name": "🧪 Pilot",
+      "pcd_project_id": "proj-uuid-here",
+      "service_account": {
+        "username": "svc-migration-acme",
+        "password": "gen-temp-pass",
+        "pcd_user_id": "user-uuid"
+      },
+      "users": [
+        { "username": "owner@acme.com", "role": "member", "temp_password": "tmpXXX",
+          "is_existing_user": false, "user_type": "owner" }
+      ],
+      "networks": [
+        { "source_network_name": "VLAN-100", "target_network_id": "net-uuid",
+          "vlan_id": 100, "cidr": "10.0.1.0/24", "gateway_ip": "10.0.1.1" }
+      ],
+      "wave_sequence": [
+        { "wave_number": 0, "wave_name": "Pilot", "vm_count": 3 }
+      ]
+    }
+  ]
+}
+```
+
+If `warnings` is non-empty the bundle is partial — some tenants may be missing `service_account` or `pcd_project_id`. The response status is still `200`; callers should check the `warnings` array before submitting to vJailbreak.
+
+---
+
+### Export Cohort Credential Bundle (v1.37.0)
+
+`GET /projects/{id}/cohorts/{cohort_id}/export-vjailbreak-bundle`
+
+Path-parameter variant of the above. Identical response schema with `cohort_filter` set to the requested cohort ID.
+
+---
+
+### Export Tenant Handoff Sheet (v1.37.0)
+
+`GET /projects/{id}/export-handoff-sheet.pdf`
+
+Streams a CONFIDENTIAL PDF document with one section per in-scope tenant, sorted by cohort order. Contains domain/project identity, network mappings, and user roster with temporary passwords.
+
+**Response Headers:**
+```
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="migration-handoff-{project-name}.pdf"
+```
+
+**Response Body:** Raw PDF bytes (binary).
+
+> ⚠️ This document contains plaintext temporary passwords. The `handoff_sheet_exported` notification event is always fired at `warning` severity when this endpoint is called.

@@ -7554,6 +7554,304 @@ async def get_prep_summary(project_id: str):
     }
 
 
+# =====================================================================
+# Phase 4C — vJailbreak Handoff Artifacts
+# =====================================================================
+
+def _serialize_tenant_for_bundle(t: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a DB-enriched tenant dict to a clean JSON-safe bundle entry."""
+    def _net(n: Dict) -> Dict:
+        return {
+            "source_network": n.get("source_network_name"),
+            "target_network_name": n.get("target_network_name"),
+            "pcd_network_id": n.get("target_network_id"),
+            "vlan_id": n.get("vlan_id"),
+            "cidr": n.get("cidr"),
+            "gateway_ip": n.get("gateway_ip"),
+        }
+
+    def _wave(w: Dict) -> Dict:
+        return {
+            "wave_number": w.get("wave_number"),
+            "wave_name": w.get("wave_name"),
+            "vm_count": int(w.get("vm_count") or 0),
+        }
+
+    return {
+        "tenant_name":          t.get("tenant_name"),
+        "target_project_name": t.get("target_project_name"),
+        "target_domain_name":  t.get("target_domain_name"),
+        "target_display_name": t.get("target_display_name"),
+        "pcd_project_id":      t.get("pcd_project_id"),
+        "cohort_name":         t.get("cohort_name"),
+        "service_account":     t.get("service_account"),
+        "networks":            [_net(n) for n in t.get("networks", [])],
+        "wave_sequence":       [_wave(w) for w in t.get("wave_sequence", [])],
+    }
+
+
+def _build_bundle_tenants(
+    project_id: str, conn, cohort_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Fetch and enrich all in-scope tenants for a vJailbreak bundle."""
+    where_extra = "AND t.cohort_id = %(cohort_id)s" if cohort_id else ""
+    params: Dict = {"project_id": project_id, "cohort_id": cohort_id}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(f"""
+            SELECT t.id, t.tenant_name, t.target_project_name, t.target_domain_name,
+                   t.target_display_name, t.cohort_id,
+                   c.name  AS cohort_name,
+                   c.cohort_order,
+                   pt.resource_id AS pcd_project_id
+            FROM migration_tenants t
+            LEFT JOIN migration_cohorts c ON c.id = t.cohort_id
+            LEFT JOIN migration_prep_tasks pt
+                   ON pt.project_id  = t.project_id
+                  AND pt.task_type   = 'create_project'
+                  AND pt.tenant_name = t.tenant_name
+                  AND pt.status      = 'done'
+            WHERE t.project_id = %(project_id)s
+              {where_extra}
+            ORDER BY c.cohort_order NULLS LAST, t.tenant_name
+        """, params)
+        tenants = [dict(r) for r in cur.fetchall()]
+
+        for t in tenants:
+            tid, tname = t["id"], t["tenant_name"]
+            # Service account
+            cur.execute("""
+                SELECT username, temp_password, role, pcd_user_id
+                FROM   migration_tenant_users
+                WHERE  tenant_id = %s AND user_type = 'service_account'
+                ORDER BY id LIMIT 1
+            """, (tid,))
+            svc = cur.fetchone()
+            t["service_account"] = (
+                {"username": svc["username"], "password": svc["temp_password"],
+                 "pcd_user_id": svc["pcd_user_id"]}
+                if svc else None
+            )
+            # All users for handoff sheet
+            cur.execute("""
+                SELECT username, email, role, temp_password, is_existing_user, user_type
+                FROM   migration_tenant_users
+                WHERE  tenant_id = %s
+                ORDER BY user_type, username
+            """, (tid,))
+            t["users"] = [dict(r) for r in cur.fetchall()]
+            # Networks for this tenant's powered-on VMs
+            cur.execute("""
+                SELECT DISTINCT nm.source_network_name, nm.target_network_name,
+                                nm.target_network_id, nm.vlan_id, nm.cidr, nm.gateway_ip
+                FROM   migration_network_mappings nm
+                WHERE  nm.project_id = %s
+                  AND  nm.source_network_name IN (
+                           SELECT DISTINCT v.network_name
+                           FROM   migration_vms v
+                           WHERE  v.project_id  = %s
+                             AND  v.tenant_name = %s
+                             AND  v.power_state = 'poweredOn'
+                       )
+                ORDER BY nm.source_network_name
+            """, (project_id, project_id, tname))
+            t["networks"] = [dict(r) for r in cur.fetchall()]
+            # Wave sequence
+            cur.execute("""
+                SELECT w.wave_number, w.name AS wave_name, COUNT(wv.id) AS vm_count
+                FROM   migration_waves w
+                JOIN   migration_wave_vms wv ON wv.project_id = w.project_id
+                                            AND wv.wave_number = w.wave_number
+                                            AND wv.vm_id IS NOT NULL
+                JOIN   migration_vms v        ON v.id = wv.vm_id
+                WHERE  v.project_id  = %s AND v.tenant_name = %s
+                GROUP  BY w.id, w.wave_number, w.name
+                ORDER  BY w.wave_number
+            """, (project_id, tname))
+            t["wave_sequence"] = [dict(r) for r in cur.fetchall()]
+            t.pop("cohort_order", None)
+
+    return tenants
+
+
+@router.get("/projects/{project_id}/export-vjailbreak-bundle",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_vjailbreak_bundle(
+    project_id: str,
+    cohort_id: Optional[int] = Query(default=None, description="Restrict bundle to a single cohort"),
+    user=Depends(get_current_user),
+):
+    """
+    Export a JSON vJailbreak credential bundle for the full project
+    (or restricted to one cohort with ?cohort_id=).  Contains PCD project IDs,
+    service-account credentials, network UUIDs, and wave sequence.
+    Partial bundles (provisioning still running) are exported with warnings.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        try:
+            import p9_common as _p9c  # type: ignore
+            _cfg = _p9c.CFG
+        except Exception:
+            _cfg = {}
+        pcd_auth_url = project.get("pcd_auth_url") or _cfg.get("KEYSTONE_URL", "")
+        tenants = _build_bundle_tenants(project_id, conn, cohort_id)
+
+    if not tenants:
+        raise HTTPException(
+            status_code=404,
+            detail="No in-scope tenants found" + (f" in cohort {cohort_id}" if cohort_id else ""),
+        )
+
+    warnings_list: List[str] = []
+    no_svc = [t["tenant_name"] for t in tenants if not t.get("service_account")]
+    if no_svc:
+        warnings_list.append(
+            f"{len(no_svc)} tenant(s) have no service account — "
+            "run 'Seed Service Accounts' in the Users tab."
+        )
+    no_pcd_id = [t["tenant_name"] for t in tenants if not t.get("pcd_project_id")]
+    if no_pcd_id:
+        warnings_list.append(
+            f"{len(no_pcd_id)} tenant(s) have no PCD project ID "
+            "(provisioning not yet complete or tasks pending)."
+        )
+
+    bundle = {
+        "schema_version": "1.0",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "project_name": project.get("name", project_id),
+        "project_id": project_id,
+        "auth_url": pcd_auth_url,
+        "cohort_filter": cohort_id,
+        "tenant_count": len(tenants),
+        "warnings": warnings_list,
+        "tenants": [_serialize_tenant_for_bundle(t) for t in tenants],
+    }
+    json_bytes = json.dumps(bundle, indent=2, ensure_ascii=False).encode("utf-8")
+
+    _log_activity(
+        actor=actor, action="export_vjailbreak_bundle",
+        resource_type="migration_project", resource_id=project_id,
+        details={"tenant_count": len(tenants), "cohort_id": cohort_id,
+                 "warnings": len(warnings_list)},
+    )
+    logger.info(
+        "vjailbreak_bundle_exported project=%s tenants=%d cohort=%s warnings=%d by=%s",
+        project_id, len(tenants), cohort_id, len(warnings_list), actor,
+    )
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="vjailbreak_bundle_exported",
+            summary=(
+                f"vJailbreak bundle exported: {project.get('name', project_id)} — "
+                f"{len(tenants)} tenant(s) by {actor}"
+                + (f" — {len(warnings_list)} warning(s)" if warnings_list else "")
+            ),
+            severity="warning" if warnings_list else "info",
+            resource_id=project_id,
+            actor=actor,
+            template_vars={"project_name": project.get("name", project_id),
+                           "tenant_count": len(tenants), "exported_by": actor},
+        )
+    except Exception:
+        pass
+
+    suffix = f"-cohort-{cohort_id}" if cohort_id else ""
+    filename = f"vjailbreak-bundle-{project_id}{suffix}.json"
+    return StreamingResponse(
+        io.BytesIO(json_bytes),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/projects/{project_id}/cohorts/{cohort_id}/export-vjailbreak-bundle",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_vjailbreak_bundle_cohort(
+    project_id: str,
+    cohort_id: int,
+    user=Depends(get_current_user),
+):
+    """Cohort-scoped vJailbreak credential bundle (path-param variant)."""
+    return await export_vjailbreak_bundle(
+        project_id=project_id, cohort_id=cohort_id, user=user
+    )
+
+
+@router.get("/projects/{project_id}/export-handoff-sheet.pdf",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_handoff_sheet_pdf(
+    project_id: str,
+    cohort_id: Optional[int] = Query(default=None),
+    user=Depends(get_current_user),
+):
+    """
+    Export a per-tenant credential handoff PDF — one section per in-scope tenant
+    with domain/project info, networks (CIDR), and plaintext temporary passwords.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        try:
+            import p9_common as _p9c  # type: ignore
+            _cfg = _p9c.CFG
+        except Exception:
+            _cfg = {}
+        pcd_auth_url = project.get("pcd_auth_url") or _cfg.get("KEYSTONE_URL", "")
+        tenants = _build_bundle_tenants(project_id, conn, cohort_id)
+
+    if not tenants:
+        raise HTTPException(
+            status_code=404,
+            detail="No in-scope tenants found" + (f" in cohort {cohort_id}" if cohort_id else ""),
+        )
+
+    from export_reports import generate_handoff_pdf
+    pdf_bytes = generate_handoff_pdf(
+        project_name=project.get("name", project_id),
+        auth_url=pcd_auth_url,
+        tenants=tenants,
+    )
+
+    _log_activity(
+        actor=actor, action="export_handoff_sheet",
+        resource_type="migration_project", resource_id=project_id,
+        details={"tenant_count": len(tenants), "cohort_id": cohort_id},
+    )
+    logger.info(
+        "handoff_sheet_exported project=%s tenants=%d cohort=%s by=%s",
+        project_id, len(tenants), cohort_id, actor,
+    )
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="handoff_sheet_exported",
+            summary=(
+                f"Handoff sheet exported: {project.get('name', project_id)} — "
+                f"{len(tenants)} tenant(s) by {actor}. "
+                "Contains plaintext passwords — distribute securely."
+            ),
+            severity="warning",
+            resource_id=project_id,
+            actor=actor,
+            template_vars={"project_name": project.get("name", project_id),
+                           "tenant_count": len(tenants), "exported_by": actor},
+        )
+    except Exception:
+        pass
+
+    safe_name = (project.get("name") or project_id).replace(" ", "_")
+    suffix = f"-cohort-{cohort_id}" if cohort_id else ""
+    filename = f"migration-handoff-{safe_name}{suffix}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """Convert a single DB row dict to JSON-safe format."""
     result = {}
