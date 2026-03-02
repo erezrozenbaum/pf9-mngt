@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.36.2] - 2026-03-01
 
-### New — Phase 4B: Approval Workflow, Dry Run & Audit Log
+### New — Approval Workflow, Dry Run & Audit Log
 
 - **2-step approval gate** — `POST /projects/{id}/prepare` sets `prep_approval_status='pending_approval'` and fires a `prep_approval_requested` notification; `POST /prepare/run` now raises HTTP 403 if the plan has not been explicitly approved.
 - **`GET /projects/{id}/prep-approval`** — returns current approval status (`pending_approval`, `approved`, `rejected`), who requested it, who approved/rejected, when, and full history list.
 - **`POST /projects/{id}/prep-approval`** *(requires `migration:admin`)* — approves or rejects the pending plan; logs an activity entry; fires `prep_approval_granted` / `prep_approval_rejected` notification events.
 - **`POST /projects/{id}/prepare/dry-run`** — simulates execution against live PCD without writing anything; classifies each pending task as `would_create`, `would_skip_existing`, or `would_execute` (for always-apply types like quotas/subnets), returning per-type and summary counts.
-- **`GET /projects/{id}/prep-audit`** — returns the full audit trail for Phase 4B actions: approval history from `migration_prep_approvals`, activity log entries for `migration_prep_tasks` resource type, and execution history (all tasks with `executed_by` set).
+- **`GET /projects/{id}/prep-audit`** — returns the full audit trail for provisioning actions: approval history from `migration_prep_approvals`, activity log entries for `migration_prep_tasks` resource type, and execution history (all tasks with `executed_by` set).
 - **`migration_prep_approvals` table** — new table storing each approval/rejection decision with `approver`, `decision`, `comment`, `created_at`; indexed on `(project_id, created_at DESC)`.
 - **Four new notification event types** — `prep_approval_requested`, `prep_approval_granted`, `prep_approval_rejected`, `prep_tasks_completed` registered in `VALID_EVENT_TYPES`.
 - **Bug fixes** — `_find_task_resource` now uses `->>` text extraction operator (PostgreSQL `json = json` comparison unsupported); rollback handler adds `conn.rollback()` before error-status update to recover from aborted transactions; `rollback_prep_task` for `create_project` wraps the optional `migration_tenants` update in try/except.
@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.36.1] - 2026-03-01
 
-### New — Phase 4B Polish: Confirmation Modal, Execution Summary & Notifications
+### New — Provisioning Polish: Confirmation Modal, Execution Summary & Notifications
 
 - **`GET /projects/{id}/prep-summary`** — returns a per-task-type breakdown of provisioning results: `created`, `skipped`, `failed`, `pending` counts plus overall totals and a `complete` boolean flag.
 - **Run All confirmation modal** — clicking *▶ Run All* now opens an inline overlay listing the exact resource counts per type (e.g. "122 × 🏛 Create Domain, 122 × 📁 Create Project, …") with a destructive-action warning before firing the API call.
@@ -38,9 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.36.0] - 2026-03-01
 
-### New — Phase 4B: ⚙️ Prepare PCD (Auto-Provisioning)
+### New — ⚙️ Prepare PCD (Auto-Provisioning)
 
-- **`GET /projects/{id}/prep-readiness`** — pre-flight check returning readiness status for all four 4A gates (subnet details, flavor staging, image requirements, tenant users). Returns per-item totals, completion counts, and current task statistics.
+- **`GET /projects/{id}/prep-readiness`** — pre-flight check returning readiness status for all four pre-migration data enrichment items (subnet details, flavor staging, image requirements, tenant users). Returns per-item totals, completion counts, and current task statistics.
 - **`POST /projects/{id}/prepare`** — generates an ordered provisioning task plan: `create_domain` (1000s) → `create_project` (2000s) → `set_quotas` (3000s) → `create_network` (4000s) → `create_subnet` (5000s) → `create_flavor` (6000s) → `create_user` (7000s) → `assign_role` (8000s). Clears any previous pending/failed tasks before regenerating. Quota values derived from Phase 2C overcommit profile (cpu/ram/disk ratios).
 - **`GET /projects/{id}/prep-tasks`** — lists all tasks ordered by `task_order` with per-status counts.
 - **`POST /projects/{id}/prep-tasks/{task_id}/execute`** — executes a single pending or failed task against the PCD Keystone/Neutron/Nova APIs. Writes back PCD UUIDs to source tables (`target_network_id`, `pcd_flavor_id`, `pcd_user_id`, `temp_password`) on success.
@@ -129,7 +129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### New — Flavor Staging: Match from PCD
 
-- **"🔗 Match PCD" toolbar button** — Queries the live PCD Nova API for all existing flavors and auto-matches staged flavor shapes by `(vcpus, ram_mb)`. On a match the row is updated with `pcd_flavor_id`, `target_flavor_name` (set to the PCD name), and `confirmed = true`. Unmatched rows are left unchanged — they will be created as new flavors in Phase 4B.
+- **"🔗 Match PCD" toolbar button** — Queries the live PCD Nova API for all existing flavors and auto-matches staged flavor shapes by `(vcpus, ram_mb)`. On a match the row is updated with `pcd_flavor_id`, `target_flavor_name` (set to the PCD name), and `confirmed = true`. Unmatched rows are left unchanged — they will be created as new flavors during PCD provisioning.
 - **Disambiguation scoring** — When PCD has multiple flavors with the same cpu+ram, the best candidate is chosen by longest common-prefix scoring against the current `target_flavor_name`.
 - **Status pill differentiation** — Matched rows show a blue **"✓ exists"** pill (the flavor already exists on PCD); rows confirmed manually without a PCD match show a green **"✓ new"** pill (to be created); unconfirmed rows remain **"pending"**.
 - **`pcd_flavor_id` cell** — Shows a truncated UUID with 🔗 prefix when the flavor is matched to PCD, otherwise "—".
@@ -174,39 +174,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.35.1] - 2026-03-01
 
-### Fixed — Migration Planner Phase 4A Hotfixes
+### Fixed — Pre-Migration Data Enrichment: Hotfixes
 
 - **Route ordering 405 on `/network-mappings/readiness`** — FastAPI was matching `PATCH /{mapping_id}` before `GET /readiness` because the static segment `/readiness` was registered after the parameterized route. Moved `get_network_mappings_readiness` to before the `PATCH`/`DELETE` handlers so static paths take precedence.
-- **`GROUP BY` error on subnet-enriched network mappings** — `GET /projects/{id}/network-mappings` used an explicit `GROUP BY` column list that omitted the new Phase 4A columns (`network_kind`, `cidr`, `gateway_ip`, etc.), causing a Postgres error. Replaced with `GROUP BY m.id` (valid because `id` is the primary key — covers all columns via functional dependency).
+- **`GROUP BY` error on subnet-enriched network mappings** — `GET /projects/{id}/network-mappings` used an explicit `GROUP BY` column list that omitted the new subnet enrichment columns (`network_kind`, `cidr`, `gateway_ip`, etc.), causing a Postgres error. Replaced with `GROUP BY m.id` (valid because `id` is the primary key — covers all columns via functional dependency).
 - **`dns_nameservers` type mismatch on save** — UI state held DNS nameservers as a comma-separated string but the API expects `List[str]`. `saveSubnetDetails` now splits the string into an array before PATCH.
-- **Section heading** — "Phase 4A — Data Enrichment" heading in PCD Readiness tab renamed to "Pre-Migration Data Enrichment" to remove internal phase numbering from the operator-facing UI.
+- **Section heading** — "PCD Data Enrichment" section heading in PCD Readiness tab is now labelled "Pre-Migration Data Enrichment".
 - **Network Map Kind column** — Replaced read-only pill with an inline `<select>` dropdown. Selecting Physical / L2 / Virtual now immediately PATCHes the mapping and refreshes the row; no need to open the full Subnet Details panel just to set the kind.
 
 ---
 
 ## [1.35.0] - 2026-03-01
 
-### Added — Migration Planner Phase 4A: Data Enrichment
+### Added — Pre-Migration Data Enrichment
 
-- **4A.1 — Network Subnet Details** — The Network Map tab now supports per-network subnet configuration:
+- **Network Subnet Details** — The Network Map tab now supports per-network subnet configuration:
   - New columns on `migration_network_mappings`: `network_kind` (physical_managed / physical_l2 / virtual), `cidr`, `gateway_ip`, `dns_nameservers TEXT[]`, `allocation_pool_start`, `allocation_pool_end`, `dhcp_enabled`, `is_external`, `subnet_details_confirmed`
   - New API: `GET /projects/{id}/network-mappings/readiness` — returns confirmed count, missing count, external count, ready status
   - Network Map table now shows a **Kind** pill (Physical / L2 / Virtual) per row
   - Confirmed rows show a **⚙️ Subnet** expand button; external rows show "skip (ext)"; confirmed subnets show "✓ subnet ready"
   - Expandable inline subnet panel per row: network_kind dropdown, CIDR, gateway IP, DNS nameservers, allocation pool start/end, DHCP enabled and Is External checkboxes, Save/Cancel actions
   - Toolbar now shows **🌐 Subnet Details: X/Y** readiness counter
-- **4A.2 — Flavor Staging** — New `migration_flavor_staging` table and `FlavorStagingView` component in the PCD Readiness tab:
+- **Flavor Staging** — New `migration_flavor_staging` table and `FlavorStagingView` component in the PCD Readiness tab:
   - `POST /projects/{id}/flavor-staging/refresh` — queries distinct VM shapes from `migration_vms` and upserts into staging table
   - `GET /projects/{id}/flavor-staging` — returns flavors with ready_count summary
   - `PATCH /flavor-staging/{id}` — edit target_flavor_name, confirmed, skip; supports marking existing flavor by ID
   - `POST /projects/{id}/flavor-staging/bulk-rename` — find-and-replace across `target_flavor_name` with preview mode
   - UI: shape + VM count table, inline name edit, skip checkbox, per-row confirm button, F&R panel, confirmed/total badge
-- **4A.3 — Image Requirements** — New `migration_image_requirements` table and `ImageRequirementsView` component:
+- **Image Requirements** — New `migration_image_requirements` table and `ImageRequirementsView` component:
   - `POST /projects/{id}/image-requirements/refresh` — queries distinct `os_family` from `migration_vms`, upserts with most-common version hint
   - `GET /projects/{id}/image-requirements` — list
   - `PATCH /image-requirements/{id}` — set `glance_image_id`, `glance_image_name`, `confirmed`
   - UI: OS family + version hint + VM count table, inline Glance name and UUID inputs, confirm button, ready badge
-- **4A.4 — Per-Tenant User Definitions** — New `migration_tenant_users` table, `TenantUsersView` component, and "👤 Users" tab:
+- **Per-Tenant User Definitions** — New `migration_tenant_users` table, `TenantUsersView` component, and "👤 Users" tab:
   - `POST /projects/{id}/tenant-users/seed-service-accounts` — auto-creates one `service_account` entry per tenant with `svc-mig-{slug}` username and a 20-char random `temp_password`
   - `GET /projects/{id}/tenant-users` — grouped-by-tenant listing with confirmed_tenant_count
   - `POST /projects/{id}/tenant-users` — create a `tenant_owner` record
@@ -215,7 +215,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - UI: Users tab, tenant-grouped table with type badge (🤖 svc / 👤 owner), inline edit, ✓ confirm button, seed-service-accounts action, confirmed-tenants counter
 
 ### Infrastructure
-- **`db/migrate_phase4_preparation.sql`** — Idempotent migration file for all Phase 4A schema additions (subnet columns, flavor_staging, image_requirements, tenant_users tables). Auto-applied on startup; also registered in `deployment.ps1`.
+- **`db/migrate_phase4_preparation.sql`** — Idempotent migration file for all pre-migration data enrichment schema additions (subnet columns, flavor_staging, image_requirements, tenant_users tables). Auto-applied on startup; also registered in `deployment.ps1`.
 - **`deployment.ps1`** — Added `migrate_phase4_preparation.sql` to `$provisioningMigrations` array.
 
 ---

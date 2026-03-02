@@ -99,7 +99,7 @@ Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You n
 - Per-wave pre-flight checklists — network mapped, target project set, VMs assessed, no critical gaps, agent reachable, snapshot baseline
 - Wave Planner UI — VM migration funnel, per-cohort wave cards, VM assignment tables, preflight status panel, dry-run preview before committing
 
-**⚙️ Phase 4A — PCD Data Enrichment (Network Map, Flavor Staging, Image Checklist)**
+**⚙️ PCD Data Enrichment (Network Map, Flavor Staging, Image Checklist)**
 - Source → PCD network mapping with VLAN IDs, confirmed status, Find & Replace, Confirm All; subnet details panel per row (CIDR, gateway, DNS, DHCP pool)
 - **Excel template export/import** — download a pre-filled XLSX for bulk subnet entry; import back to update all rows at once; formula detection catches VLOOKUP external-reference issues with a clear fix instruction; diagnostic response pinpoints any row-matching failures
 - **Confirm Subnets** one-click bulk action marks all rows with CIDR as subnet-confirmed; inline CIDR display in the Subnet Details column; import auto-confirms on CIDR presence
@@ -107,8 +107,8 @@ Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You n
 - Image Requirements checklist — one row per OS family; confirm after uploading to PCD Glance; Match PCD auto-links to existing Glance images; status pill differentiates existing vs new images
 - PCD Readiness Score — live readiness counter per resource type; gaps auto-resolve when mappings/staging/image requirements are confirmed; network gaps resolve when all confirmed mappings cover the gap list
 
-**⚙️ Phase 4B — PCD Auto-Provisioning (Prepare PCD)**
-- **Readiness gate** — pre-flight check (`GET /prep-readiness`) verifies all four 4A items are confirmed (subnets, flavors, images, users) before allowing task generation
+**⚙️ PCD Auto-Provisioning (Prepare PCD)**
+- **Readiness gate** — pre-flight check (`GET /prep-readiness`) verifies all four data enrichment items are confirmed (subnets, flavors, images, users) before allowing task generation
 - **Ordered task plan generation** (`POST /prepare`) — builds 667+ provisioning tasks in strict dependency order: create domains → create projects → set quotas → create networks → create subnets → create flavors → create users → assign roles
 - **Per-task execution** (`POST /prep-tasks/{id}/execute`) — each task executes against the live PCD Keystone / Neutron / Nova API; writes back PCD UUIDs to source tables (`target_network_id`, `pcd_flavor_id`, `pcd_user_id`, `temp_password`)
 - **Run All** (`POST /prepare/run`) — executes all pending/failed tasks in order; stops on first new failure to prevent cascade
