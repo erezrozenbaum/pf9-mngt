@@ -182,7 +182,7 @@ A 15-minute explainer video walking through the UI and key features:
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
 | **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 28+ management tabs + admin panel |
-| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 150+ REST endpoints, RBAC middleware, 4 workers |
+| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 150+ REST endpoints, RBAC middleware, 2 workers |
 | **LDAP Server** | OpenLDAP | 389 | Enterprise authentication directory |
 | **LDAP Admin** | phpLDAPadmin | 8081 | Web-based LDAP management |
 | **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
@@ -736,6 +736,45 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.36.2 — Approval Workflow, Dry Run & Audit Log
+- ✅ **2-step approval gate** — `POST /prepare` sets plan to `pending_approval`; `POST /prepare/run` is blocked with HTTP 403 until explicitly approved
+- ✅ **`GET /prep-approval`** — returns approval status, requester, approver, timestamp, and full approval history
+- ✅ **`POST /prep-approval`** *(migration:admin)* — approve or reject with a comment; fires `prep_approval_granted` / `prep_approval_rejected` notifications
+- ✅ **Dry Run** — `POST /prepare/dry-run` simulates provisioning against live PCD without writing anything; returns per-type `would_create` / `would_skip` / `would_execute` breakdown
+- ✅ **Audit Log** — `GET /prep-audit` returns approval history, activity log, and full execution history in one call
+- ✅ **`migration_prep_approvals` table** — stores every approval/rejection decision with approver, decision, comment, and timestamp
+- ✅ **UI: approval banner** — yellow (pending), green (approved), red (rejected), grey (no plan) — with inline Approve/Reject actions
+- ✅ **UI: gated Run All** — disabled (🔒) until plan is approved; dry-run panel shows per-type breakdown table
+
+### v1.36.1 — Provisioning Confirmation Modal, Execution Summary & Notifications
+- ✅ **Run All confirmation modal** — shows exact resource counts per type before firing the API call
+- ✅ **`GET /prep-summary`** — per-task-type breakdown: created / skipped / failed / pending + overall totals
+- ✅ **Provisioning Summary panel** — auto-loads and displays full summary table once all tasks reach `done`
+- ✅ **Notification on run completion** — fires `prep_tasks_completed` event (severity `critical` if any tasks failed)
+
+### v1.36.0 — PCD Auto-Provisioning (Prepare PCD)
+- ✅ **Readiness gate** — `GET /prep-readiness` verifies subnets, flavors, images, and users are all confirmed before allowing plan generation
+- ✅ **Ordered task plan** — `POST /prepare` builds 667+ tasks in strict dependency order: domains → projects → quotas → networks → subnets → flavors → users → roles
+- ✅ **Per-task execution** — each task executes against live PCD Keystone / Neutron / Nova and writes back PCD UUIDs to source tables
+- ✅ **Run All** — executes all pending/failed tasks in order; stops on first new failure to prevent cascade
+- ✅ **Per-task rollback** — deletes the PCD resource and resets the task; domain rollback is safety-checked
+- ✅ **Prepare PCD UI tab** — readiness grid (4 cards), Generate Plan + Run All buttons, task table with status badges, auto-refresh every 3 s
+
+### v1.35.7 — Network Map: Excel Template Export / Import
+- ✅ **Download Template** — exports a styled XLSX with the full network map pre-filled (grey read-only columns + blue editable columns)
+- ✅ **Import Template** — uploads filled template and bulk-updates all editable fields; formula detection catches external VLOOKUP references with a clear fix instruction
+- ✅ **Confirm Subnets button** — bulk-sets `subnet_details_confirmed = true` for all rows that have a CIDR in one click
+- ✅ **Import auto-confirm** — importing a template with CIDR values auto-confirms subnet details on the row
+- ✅ **CIDR inline display** — confirmed rows show `✓ 10.0.0.0/24`; unconfirmed-with-CIDR show `⚠ 10.0.0.0/24`
+
+### v1.35.0–v1.35.6 — Pre-Migration Data Enrichment
+- ✅ **Network Subnet Details** — per-network subnet configuration (CIDR, gateway, DNS, DHCP pool, network kind) with inline editing panel and `Subnet Details: X/Y` readiness counter
+- ✅ **Flavor Staging** — de-duplicated per (vCPU, RAM) shape; match against live PCD Nova API; confirmed rows show "✓ exists" vs "✓ new"; Find & Replace, Confirm All
+- ✅ **Image Requirements** — one row per OS family; confirm after uploading to PCD Glance; Match PCD auto-links to existing Glance images
+- ✅ **Per-Tenant User Definitions** — auto-seeded service accounts per tenant; owner records; confirmed-tenants counter
+- ✅ **PCD Readiness Score** — live readiness counter per resource type; gaps auto-resolve when confirmed
+- ✅ **`migrate_phase4_preparation.sql`** — idempotent migration for all data enrichment schema additions; auto-applied on startup
+
 ### v1.34.2 — Multi-Network Customer Provisioning
 - ✅ **3 network kinds** — Physical Managed (external VLAN), Physical L2 (no subnet), Virtual; any combination per provisioning run
 - ✅ **Naming conventions** — Auto-derived from `domain_name`: `extnet_vlan_<id>` / `L2net_vlan_<id>` / `virtnet[_N]`
@@ -920,4 +959,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.34.1 | **Last Updated**: February 2026
+**Project Status**: Active Development | **Version**: 1.36.2 | **Last Updated**: March 2026
