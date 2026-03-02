@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0] - 2026-03-02
+
+### New — vJailbreak Credential Bundle & Tenant Handoff Sheet
+
+- **`GET /projects/{id}/export-vjailbreak-bundle`** — exports a project-wide JSON credential bundle formatted for vJailbreak consumption. Contains PCD auth URL, schema version, per-tenant mapping of: PCD project ID, service-account credentials (`username` / `password` / `pcd_user_id`), full user list with temporary passwords, network UUIDs (CIDR, gateway, VLAN), and wave sequence. Accepts optional `?cohort_id=` query parameter to restrict to a single cohort.
+- **`GET /projects/{id}/cohorts/{cid}/export-vjailbreak-bundle`** — path-parameter cohort variant of the above; identical payload scoped to the specified cohort.
+- **`GET /projects/{id}/export-handoff-sheet.pdf`** — generates and streams a CONFIDENTIAL A4 portrait PDF handoff document. One section per tenant: domain/project identity table, network mappings table (source name, target UUID, CIDR, gateway, VLAN), and users/credentials table highlighting service accounts. Confidentiality notice and footer ("CONFIDENTIAL · Platform9 Migration Handoff · {project name} · Page N") on every page.
+- **Partial-bundle warnings** — both export endpoints emit structured `warnings[]` in the response if any tenants are missing service-account credentials or PCD project IDs, so callers know the bundle is incomplete before submitting to vJailbreak.
+- **Activity logging** — all three endpoints write activity log entries (`export_vjailbreak_bundle` / `export_handoff_sheet`) for audit trail.
+- **Notification events** — `vjailbreak_bundle_exported` and `handoff_sheet_exported` registered in `VALID_EVENT_TYPES`; both fire on successful export (bundle severity `warning` when warnings present, otherwise `info`; PDF always `warning` due to plaintext passwords).
+- **UI: Export panel in Prepare PCD** — once all provisioning tasks are complete (`allDone === true`) a two-card export panel appears in the *Prepare PCD* tab: "📦 vJailbreak Credential Bundle" (downloads JSON) and "📄 Tenant Handoff Sheet" (downloads PDF with password warning), giving operators a single click to produce all migration handoff artifacts.
+
+---
+
 ## [1.36.2] - 2026-03-01
 
 ### New — Approval Workflow, Dry Run & Audit Log

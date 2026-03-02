@@ -912,3 +912,225 @@ def generate_gaps_pdf_report(
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buf.getvalue()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tenant Handoff Sheet PDF
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_handoff_pdf(
+    project_name: str,
+    auth_url: str,
+    tenants: List[Dict[str, Any]],
+    support_text: str = "",
+) -> bytes:
+    """
+    Generate a per-tenant migration handoff PDF (sealed delivery document).
+
+    Each tenant section shows: PCD domain / project, auth endpoint, networks
+    (with CIDR / VLAN), and user accounts with plaintext temporary passwords.
+
+    ``tenants`` is a list of dicts; each dict contains:
+        tenant_name, target_domain_name, target_project_name, target_display_name,
+        pcd_project_id, cohort_name,
+        networks: [{source_network, pcd_network_id, vlan_id, cidr, gateway_ip}]
+        users:    [{username, email, role, temp_password, is_existing_user, user_type}]
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2 * cm, rightMargin=2 * cm,
+        topMargin=2 * cm, bottomMargin=2.2 * cm,
+    )
+    styles = getSampleStyleSheet()
+    _HDR = colors.HexColor("#1D4ED8")
+    _GREY_LT = colors.HexColor("#F9FAFB")
+    _BLUE_LT2 = colors.HexColor("#EFF6FF")
+
+    def _h2(text: str):
+        return Paragraph(
+            f"<b>{text}</b>",
+            ParagraphStyle("h2hd", parent=styles["Heading2"], fontSize=9,
+                           spaceAfter=3, spaceBefore=6, textColor=colors.HexColor("#1E40AF")),
+        )
+
+    def _body(text: str, small: bool = False):
+        return Paragraph(
+            text,
+            ParagraphStyle("bodyh", parent=styles["Normal"],
+                           fontSize=7 if small else 8, leading=11),
+        )
+
+    story: list = []
+
+    # ── Cover title ───────────────────────────────────────────────────────────
+    story.append(Paragraph(
+        "<font size='18' color='#1D4ED8'><b>Migration Handoff Sheet</b></font>",
+        ParagraphStyle("title", parent=styles["Title"], alignment=TA_CENTER, spaceAfter=4),
+    ))
+    story.append(Paragraph(
+        f"Project: <b>{project_name}</b>  ·  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        ParagraphStyle("sub", parent=styles["Normal"], alignment=TA_CENTER, fontSize=9,
+                       textColor=colors.HexColor("#6B7280"), spaceAfter=4),
+    ))
+    story.append(Paragraph(
+        f"PCD Endpoint: <font face='Courier' size='8'>{auth_url or 'Not configured'}</font>",
+        ParagraphStyle("sub2", parent=styles["Normal"], alignment=TA_CENTER, fontSize=8,
+                       textColor=colors.HexColor("#374151"), spaceAfter=6),
+    ))
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#E5E7EB")))
+    story.append(Spacer(1, 0.2 * cm))
+
+    # Confidentiality notice
+    notice_data = [[Paragraph(
+        "⚠️  <b>CONFIDENTIAL — CONTAINS PLAINTEXT PASSWORDS.</b>  "
+        "This document is a sealed handoff packet. Distribute securely and only to the named "
+        "tenant owner. Service account passwords are for the migration engine only — do not share.",
+        ParagraphStyle("notice", parent=styles["Normal"], fontSize=8, leading=11),
+    )]]
+    notice_t = Table(notice_data, colWidths=[17 * cm])
+    notice_t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FEF9C3")),
+        ("BOX",        (0, 0), (-1, -1), 0.75, colors.HexColor("#D97706")),
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+    ]))
+    story.append(notice_t)
+    story.append(Spacer(1, 0.3 * cm))
+
+    if support_text:
+        story.append(_body(support_text))
+        story.append(Spacer(1, 0.25 * cm))
+
+    # ── Per-tenant sections ───────────────────────────────────────────────────
+    for tenant in tenants:
+        story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#1D4ED8")))
+        story.append(Spacer(1, 0.1 * cm))
+
+        tenant_name   = tenant.get("tenant_name", "—")
+        domain        = tenant.get("target_domain_name", "—")
+        project       = tenant.get("target_project_name", "—")
+        display       = tenant.get("target_display_name") or project
+        pcd_id        = tenant.get("pcd_project_id") or "⚠️ Not provisioned"
+        cohort        = tenant.get("cohort_name", "")
+
+        header_text = f"<b><font color='#1D4ED8' size='11'>{tenant_name}</font></b>"
+        if cohort:
+            header_text += f"  <font color='#6B7280' size='8'>  {cohort}</font>"
+        story.append(Paragraph(header_text,
+                               ParagraphStyle("th2", parent=styles["Normal"], spaceAfter=4)))
+
+        # Project identity table
+        proj_data = [
+            ["Source Tenant", tenant_name],
+            ["PCD Domain",    domain],
+            ["PCD Project",   project],
+            ["Display Name",  display],
+            ["PCD Project ID", pcd_id],
+            ["Auth URL",      auth_url or "—"],
+        ]
+        pt = Table(proj_data, colWidths=[3.8 * cm, 13.2 * cm])
+        pt.setStyle(TableStyle([
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("FONTNAME",      (0, 0), (0, -1), "Helvetica-Bold"),
+            ("TEXTCOLOR",     (0, 0), (0, -1), colors.HexColor("#374151")),
+            ("TEXTCOLOR",     (1, 0), (1, -1), colors.HexColor("#111827")),
+            ("BACKGROUND",    (0, 0), (-1, -1), _GREY_LT),
+            ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#E5E7EB")),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ]))
+        story.append(pt)
+        story.append(Spacer(1, 0.15 * cm))
+
+        # Networks
+        networks = tenant.get("networks", [])
+        if networks:
+            story.append(_h2("Networks"))
+            net_hdr = [["Source Network", "PCD Network ID", "VLAN", "CIDR", "Gateway"]]
+            net_rows = [[
+                Paragraph(n.get("source_network_name", "—"),
+                          ParagraphStyle("nc", fontSize=7)),
+                Paragraph(n.get("target_network_id") or "⚠️ not provisioned",
+                          ParagraphStyle("nc", fontSize=7, fontName="Courier")),
+                str(n.get("vlan_id", "—")) if n.get("vlan_id") else "—",
+                n.get("cidr", "—") or "—",
+                n.get("gateway_ip", "—") or "—",
+            ] for n in networks]
+            nt = Table(net_hdr + net_rows,
+                       colWidths=[3.8 * cm, 4.5 * cm, 1.4 * cm, 3.0 * cm, 2.8 * cm])
+            nt.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
+                ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+                ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE",      (0, 0), (-1, -1), 8),
+                ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                 [colors.white, colors.HexColor("#F3F4F6")]),
+                ("TOPPADDING",    (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ]))
+            story.append(nt)
+            story.append(Spacer(1, 0.15 * cm))
+
+        # Users / Credentials
+        users = tenant.get("users", [])
+        if users:
+            story.append(_h2("User Accounts"))
+            u_hdr = [["Username", "Email", "Role", "Type", "Temp Password", "Notes"]]
+            u_rows: list = []
+            u_svc_rows: List[int] = []
+            for idx, u in enumerate(users, 1):
+                is_svc = u.get("user_type") == "service_account"
+                if is_svc:
+                    u_svc_rows.append(idx)
+                    notes = "Migration engine only — do not share with tenant"
+                else:
+                    notes = "Tenant owner — change password on first login"
+                pw = (u.get("temp_password") or
+                      ("(existing Keystone user)" if u.get("is_existing_user") else "—"))
+                u_rows.append([
+                    Paragraph(u.get("username", "—"),
+                              ParagraphStyle("uc", fontSize=7, fontName="Courier")),
+                    Paragraph(u.get("email") or "—", ParagraphStyle("uc", fontSize=7)),
+                    u.get("role", "admin"),
+                    "svc-acct" if is_svc else "owner",
+                    Paragraph(pw, ParagraphStyle("uc", fontSize=7, fontName="Courier")),
+                    Paragraph(notes, ParagraphStyle("uc", fontSize=7)),
+                ])
+            ut = Table(u_hdr + u_rows,
+                       colWidths=[3.5 * cm, 3.3 * cm, 1.4 * cm, 1.6 * cm, 3.4 * cm, 3.8 * cm])
+            u_style: list = [
+                ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
+                ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+                ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE",      (0, 0), (-1, -1), 8),
+                ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                 [colors.white, colors.HexColor("#F3F4F6")]),
+                ("TOPPADDING",    (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ]
+            for row_i in u_svc_rows:
+                u_style.append(("BACKGROUND", (0, row_i), (-1, row_i), _BLUE_LT2))
+            ut.setStyle(TableStyle(u_style))
+            story.append(ut)
+
+        story.append(Spacer(1, 0.35 * cm))
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    def _footer_h(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.grey)
+        txt = (f"CONFIDENTIAL  ·  Platform9 Migration Handoff  ·  {project_name}"
+               f"  ·  Page {doc.page}")
+        canvas.drawCentredString(A4[0] / 2, 0.7 * cm, txt)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_footer_h, onLaterPages=_footer_h)
+    return buf.getvalue()
