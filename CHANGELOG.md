@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.0] - 2026-03-02
+
+### New — Runbook 1: Bulk Customer Onboarding via Excel
+
+- **`GET /api/onboarding/template`** — streams a styled four-sheet Excel workbook (`customers`, `projects`, `networks`, `users`) with sample rows and header formatting as the downloadable template operators fill in before uploading.
+- **`POST /api/onboarding/upload`** — accepts a multipart Excel file upload, parses all four sheets, validates every row (required fields, FK integrity, CIDR format, email format, role values), persists a batch record with all child rows, and returns a validation summary. Sets `status='invalid'` if any errors are found; `status='validated'` otherwise.
+- **`GET /api/onboarding/batches`** — lists all onboarding batches in reverse chronological order.
+- **`GET /api/onboarding/batches/{id}`** — returns full batch detail including all customer, project, network, and user rows with per-item status.
+- **`POST /api/onboarding/batches/{id}/dry-run`** — connects to PCD and checks which resources already exist (`would_create` vs `would_skip`). Sets `status='dry_run_passed'` if zero conflicts; `status='dry_run_failed'` otherwise. **Execution is hard-locked until dry_run_passed.**
+- **`POST /api/onboarding/batches/{id}/submit`** — submits the batch for approval; sets `approval_status='pending_approval'` and fires `onboarding_submitted` notification.
+- **`POST /api/onboarding/batches/{id}/decision`** *(requires `onboarding:approve`)* — approves or rejects the batch with an optional comment; fires `onboarding_approved` / `onboarding_rejected` notification.
+- **`POST /api/onboarding/batches/{id}/execute`** — executes the batch against PCD. Requires `approval_status=='approved'` AND `status=='dry_run_passed'`; returns HTTP 400 otherwise (enforce gate). Runs in a background thread; creates domains → projects (with quota) → networks + subnets → users + role assignments sequentially with continue-and-report semantics. Per-item status written back to DB in real time. Sets batch to `complete` or `partially_failed` on finish; fires `onboarding_completed` / `onboarding_failed` notification.
+- **`DELETE /api/onboarding/batches/{id}`** — deletes batch and all child rows (cascade); blocked if status is `executing`.
+- **5 new notification event types** — `onboarding_submitted`, `onboarding_approved`, `onboarding_rejected`, `onboarding_completed`, `onboarding_failed` registered in `VALID_EVENT_TYPES`.
+- **5 new DB tables** — `onboarding_batches`, `onboarding_customers`, `onboarding_projects`, `onboarding_networks`, `onboarding_users`; auto-migrated on API startup.
+- **UI: `BulkOnboardingTab`** — full step-indicator workflow UI (Upload → Validate → Dry Run → Approve → Execute → Done). Accessible via a special card in the Runbooks tab. Features: drag-and-drop upload panel, template download, validation error table, dry-run result table (would-create / conflict breakdown), approval banner with inline Approve/Reject modal, live-polling execution view with per-item status tables, and final result summary.
+- **Runbooks tab** — new ≪📦 Bulk Customer Onboarding≫ card navigates to `BulkOnboardingTab`.
+
+---
+
 ## [1.37.0] - 2026-03-02
 
 ### New — vJailbreak Credential Bundle & Tenant Handoff Sheet
