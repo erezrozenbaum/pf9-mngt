@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.38.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.39.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -597,6 +597,7 @@ pf9-mngt/
 | [Restore Guide](docs/RESTORE_GUIDE.md) | Snapshot restore feature documentation |
 | [Snapshot Automation](docs/SNAPSHOT_AUTOMATION.md) | Snapshot system design and configuration |
 | [Snapshot Service User](docs/SNAPSHOT_SERVICE_USER.md) | Service user setup and troubleshooting |
+| [VM Provisioning Setup](docs/DEPLOYMENT_GUIDE.md) | Includes `provisionsrv` service user setup (Runbook 2) |
 | [Quick Reference](docs/QUICK_REFERENCE.md) | Common commands and URLs cheat sheet |
 | [Kubernetes Migration](docs/KUBERNETES_MIGRATION_GUIDE.md) | K8s migration planning guide |
 | [Linux Deployment](docs/LINUX_DEPLOYMENT_GUIDE.md) | Running pf9-mngt on Linux instead of Windows |
@@ -701,6 +702,9 @@ A: The snapshot scheduler evaluates policy rules, matches volumes by tenant/nami
 **Q: What is the Snapshot Service User?**
 A: A dedicated Platform9 user automatically granted admin roles in each tenant project for cross-tenant snapshot creation. See [docs/SNAPSHOT_SERVICE_USER.md](docs/SNAPSHOT_SERVICE_USER.md).
 
+**Q: What is the VM Provisioning Service User (`provisionsrv`)?**
+A: A native Keystone service account (NOT in LDAP — invisible to tenant UIs) used by Runbook 2 (VM Provisioning) to create volumes and VMs with a properly project-scoped token. Without it, Nova/Cinder/Neutron resources would be created in the `service` project instead of the target tenant. Configure via `PROVISION_SERVICE_USER_EMAIL` and `PROVISION_USER_PASSWORD_ENCRYPTED`. Run `docker exec pf9_api python3 /app/setup_provision_user.py` once after initial deployment.
+
 **Q: Is restore destructive?**
 A: No. Side-by-side restore creates a new VM and a new volume. The original is untouched. Replace mode (superadmin-only) does delete the original and requires typed confirmation.
 
@@ -735,6 +739,14 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.39.0 — VM Provisioning (Runbook 2): Tenant-Scoped Auth + Windows Cloud-Init + Admin History + Rich Email
+- ✅ **`provisionsrv` service account** — dedicated Keystone user (not in LDAP) authenticates with a real project-scoped token for each execution batch, ensuring Nova/Cinder/Neutron resources land in the correct tenant project
+- ✅ **Windows cloud-init fixed** — `net user Administrator /active:yes` (no `/add`) + `adminPass` injected into Nova body for cloudbase-init `SetUserPasswordPlugin`; custom user path uses `/add` + Administrators group
+- ✅ **Dry-run Windows warnings** — preflight now emits `windows_cloudinit` and `windows_glance_property` warnings for Windows VMs
+- ✅ **Cloud-init preview fixed** — `VmProvisioningTab` now renders `#ps1_sysnative` preview for Windows and `#cloud-config` for Linux correctly in the step-3 credentials panel
+- ✅ **Admin Tools → VM Provisioning tab** — new "🖥️ VM Provisioning" sub-tab in Admin Tools shows all batch history with status badges, expandable per-VM table (name, status, IP, image, flavor, OS, GB, error), and a dark-terminal activity timeline
+- ✅ **Rich completion email** — body now includes image name, flavor, OS type, volume GB, error column per VM, plus a full execution timeline section rendered from `activity_log`
 
 ### v1.38.2 — Onboarding Fixes: Networks, Emails, UX
 - ✅ **`is_external` default False** — tenant networks are no longer created as admin-visible external/shared networks; fixed in code, migration SQL, and Excel template
@@ -992,4 +1004,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.38.1 | **Last Updated**: March 2026
+**Project Status**: Active Development | **Version**: 1.39.0 | **Last Updated**: March 2026

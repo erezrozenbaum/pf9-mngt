@@ -628,6 +628,38 @@ SNAPSHOT_SERVICE_USER_DISABLED=false
 
 See [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md) for full setup details.
 
+#### VM Provisioning Service User (`provisionsrv`)
+
+The VM provisioning service user enables creating volumes and virtual machines in the correct tenant project with a properly-scoped OpenStack token. Unlike `snapshotsrv`, this user is a **native Keystone user (NOT in LDAP)** — it is completely invisible to tenant customers in the management UI.
+
+**One-time setup:**
+
+```bash
+# Step 1 — Add the user credentials to .env
+PROVISION_SERVICE_USER_EMAIL=provisionsrv@yourdomain.com
+PROVISION_SERVICE_USER_DOMAIN=Default
+
+# Generate Fernet encryption key
+PROVISION_PASSWORD_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+
+# Encrypt the user's password
+PROVISION_USER_PASSWORD_ENCRYPTED=$(python3 -c "
+from cryptography.fernet import Fernet
+print(Fernet(b'<YOUR_KEY>').encrypt(b'<PROVISIONSRV_PASSWORD>').decode())
+")
+
+# Step 2 — Create the user in Platform9 Keystone (run after deploying containers)
+docker exec pf9_api python3 /app/setup_provision_user.py
+```
+
+**How It Works:**
+1. Before every provisioning execution, `ensure_provisioner_in_project()` idempotently grants `member` role to `provisionsrv` in the target tenant project
+2. `get_provisioner_client()` authenticates as `provisionsrv` scoped to that project → Keystone returns a project-scoped token
+3. All Nova/Neutron/Cinder API calls use this scoped token → resources are created in (and visible within) the correct tenant project
+4. Role assignments are cached in-process — no repeated Keystone calls per VM within a batch
+
+> **Note**: The `provisionsrv` user must **not** be an LDAP-managed user (do not add it in OpenLDAP). Keeping it Keystone-native ensures it never appears in tenant-facing user lists or is accidentally included in exports.
+
 ### Environment File Security
 
 **⚠️ CRITICAL SECURITY NOTICE**:
