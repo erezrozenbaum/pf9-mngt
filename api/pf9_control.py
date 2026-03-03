@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -18,20 +19,34 @@ class Pf9Client:
         # Derived endpoints
         self.session = requests.Session()
         self.token: Optional[str] = None
+        self._token_expires_at: Optional[datetime] = None
         self.project_id: Optional[str] = None
         self.nova_endpoint: Optional[str] = None
         self.neutron_endpoint: Optional[str] = None
         self.cinder_endpoint: Optional[str] = None
         self.keystone_endpoint: Optional[str] = None
+        self.glance_endpoint: Optional[str] = None
 
     # ---------------------------
     # Keystone auth + catalog
     # ---------------------------
+    def _token_valid(self) -> bool:
+        """Return True if we have a token that won't expire in the next 5 minutes."""
+        if self.token is None or self._token_expires_at is None:
+            return False
+        return self._token_expires_at > datetime.now(timezone.utc) + timedelta(minutes=5)
+
+    def invalidate(self) -> None:
+        """Force re-authentication on the next API call."""
+        self.token = None
+        self._token_expires_at = None
+
     def authenticate(self) -> None:
         """
         Get a project-scoped token & service endpoints for Nova/Neutron.
+        Re-authenticates automatically when the token is expired or near expiry.
         """
-        if self.token is not None:
+        if self._token_valid():
             return
 
         payload = {
@@ -64,6 +79,19 @@ class Pf9Client:
 
         # Extract project_id from token scope
         token_data = body.get("token", {})
+
+        # Store expiry so we can detect when the token is about to expire
+        expires_at_str = token_data.get("expires_at")
+        if expires_at_str:
+            try:
+                # Keystone returns ISO 8601, e.g. "2026-03-02T14:00:00.000000Z"
+                self._token_expires_at = datetime.fromisoformat(
+                    expires_at_str.replace("Z", "+00:00")
+                )
+            except ValueError:
+                self._token_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        else:
+            self._token_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
         self.project_id = token_data.get("project", {}).get("id")
 
         # Extract endpoints from catalog
@@ -74,6 +102,10 @@ class Pf9Client:
             self.cinder_endpoint = self._find_endpoint(catalog, "volumev3")
         except RuntimeError:
             self.cinder_endpoint = None
+        try:
+            self.glance_endpoint = self._find_endpoint(catalog, "image")
+        except RuntimeError:
+            self.glance_endpoint = None
         # Keystone endpoint = auth_url base (identity service)
         self.keystone_endpoint = self.auth_url
 
@@ -467,6 +499,36 @@ class Pf9Client:
         r.raise_for_status()
         return r.json().get("projects", [])
 
+    def resolve_project_id(self, project_name: str, domain_name: str) -> str:
+        """
+        Look up the project UUID for a given project name + domain name.
+        Uses the admin Keystone API — no rescoping needed.
+        Raises ValueError if domain or project is not found.
+        """
+        self.authenticate()
+        # Resolve domain_id
+        r = self.session.get(
+            f"{self.keystone_endpoint}/domains",
+            headers=self._headers(),
+            params={"name": domain_name},
+        )
+        r.raise_for_status()
+        domains = r.json().get("domains", [])
+        if not domains:
+            raise ValueError(f"Domain '{domain_name}' not found")
+        domain_id = domains[0]["id"]
+        # Resolve project_id within that domain
+        r = self.session.get(
+            f"{self.keystone_endpoint}/projects",
+            headers=self._headers(),
+            params={"domain_id": domain_id, "name": project_name},
+        )
+        r.raise_for_status()
+        projects = r.json().get("projects", [])
+        if not projects:
+            raise ValueError(f"Project '{project_name}' not found in domain '{domain_name}'")
+        return projects[0]["id"]
+
     def delete_project(self, project_id: str) -> None:
         self.authenticate()
         url = f"{self.keystone_endpoint}/projects/{project_id}"
@@ -830,6 +892,289 @@ class Pf9Client:
         }
 
 
+    # ---------------------------
+    # Glance – Images
+    # ---------------------------
+    def list_images(self, visibility: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List Glance images (v2 API). Returns all pages."""
+        self.authenticate()
+        if not self.glance_endpoint:
+            return []
+        url = f"{self.glance_endpoint}/v2/images"
+        params: Dict[str, Any] = {"limit": 100}
+        if visibility:
+            params["visibility"] = visibility
+        images: List[Dict[str, Any]] = []
+        while url:
+            r = self.session.get(url, headers=self._headers(), params=params)
+            r.raise_for_status()
+            body = r.json()
+            images.extend(body.get("images", []))
+            url = body.get("next", None)
+            if url and not url.startswith("http"):
+                base = self.glance_endpoint
+                url = f"{base}{url}"
+            params = {}  # next URL already includes params
+        return images
+
+    def get_image(self, image_id: str) -> Dict[str, Any]:
+        """Get a single Glance image by ID."""
+        self.authenticate()
+        if not self.glance_endpoint:
+            raise RuntimeError("Glance endpoint not available")
+        url = f"{self.glance_endpoint}/v2/images/{image_id}"
+        r = self.session.get(url, headers=self._headers())
+        r.raise_for_status()
+        return r.json()
+
+    # ---------------------------
+    # Nova – Diskless flavors
+    # ---------------------------
+    def list_diskless_flavors(self) -> List[Dict[str, Any]]:
+        """Return only flavors where disk == 0 (boot-from-volume flavors)."""
+        return [f for f in self.list_flavors() if f.get("disk", -1) == 0]
+
+    # ---------------------------
+    # Nova / Cinder – Quota usage
+    # ---------------------------
+    def get_quota_usage(self, project_id: str) -> Dict[str, Any]:
+        """Return compute + storage quota with in_use counters."""
+        self.authenticate()
+        assert self.nova_endpoint
+        # Nova — use /detail endpoint which returns {in_use, limit, reserved} for admin cross-project queries
+        compute_url = f"{self.nova_endpoint}/os-quota-sets/{project_id}/detail"
+        cr = self.session.get(compute_url, headers=self._headers())
+        if cr.status_code == 404:
+            # Fallback: some older Nova versions use ?usage=True instead of /detail
+            compute_url = f"{self.nova_endpoint}/os-quota-sets/{project_id}?usage=True"
+            cr = self.session.get(compute_url, headers=self._headers())
+        cr.raise_for_status()
+        compute = cr.json().get("quota_set", {})
+        # Cinder
+        storage: Dict[str, Any] = {}
+        if self.cinder_endpoint:
+            storage_url = f"{self.cinder_endpoint}/os-quota-sets/{project_id}?usage=True"
+            sr = self.session.get(storage_url, headers=self._headers())
+            if sr.status_code == 200:
+                storage = sr.json().get("quota_set", {})
+        return {"compute": compute, "storage": storage}
+
+    # ---------------------------
+    # Neutron – Available IPs
+    # ---------------------------
+    def list_available_ips(self, network_id: str, project_id: Optional[str] = None) -> List[str]:
+        """
+        Return the list of IP addresses in the network's subnet allocation pools
+        that are not currently allocated to any port.
+        """
+        import ipaddress
+        self.authenticate()
+        assert self.neutron_endpoint
+        # Get subnets for the network
+        subnets = self.list_subnets(network_id=network_id)
+        if not subnets:
+            return []
+        # Get all allocated fixed IPs on this network
+        ports_url = f"{self.neutron_endpoint}/v2.0/ports"
+        pr = self.session.get(ports_url, headers=self._headers(), params={"network_id": network_id})
+        pr.raise_for_status()
+        allocated: set = set()
+        for port in pr.json().get("ports", []):
+            for fip in port.get("fixed_ips", []):
+                allocated.add(fip.get("ip_address"))
+        # Compute free IPs across all allocation pools
+        free: List[str] = []
+        for subnet in subnets:
+            gw = subnet.get("gateway_ip")
+            for pool in subnet.get("allocation_pools", []):
+                start = ipaddress.ip_address(pool["start"])
+                end = ipaddress.ip_address(pool["end"])
+                current = start
+                while current <= end:
+                    ip_str = str(current)
+                    if ip_str not in allocated and ip_str != gw:
+                        free.append(ip_str)
+                    current += 1
+                    if len(free) >= 200:  # cap to avoid huge responses
+                        return free
+        return free
+
+    # ---------------------------
+    # Cinder – Boot volumes
+    # ---------------------------
+    def create_boot_volume(
+        self,
+        name: str,
+        image_id: str,
+        size_gb: int,
+        volume_type: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a Cinder boot volume from a Glance image.
+
+        This must be called on a project-scoped client (i.e. one returned by
+        scoped_for_project).  The token's project scope determines where the
+        volume is created — no cross-project body injection needed.
+        """
+        self.authenticate()
+        if not self.cinder_endpoint:
+            raise RuntimeError("Cinder endpoint not available")
+        url = f"{self.cinder_endpoint}/volumes"
+        body: Dict[str, Any] = {
+            "volume": {
+                "name": name,
+                "size": size_gb,
+                "imageRef": image_id,  # imageRef auto-makes volume bootable
+            }
+        }
+        if volume_type:
+            body["volume"]["volume_type"] = volume_type
+        r = self.session.post(url, headers=self._headers(), json=body)
+        if not r.ok:
+            raise RuntimeError(f"{r.status_code} {r.reason} — {r.text[:400]}")
+        return r.json().get("volume", {})
+
+    def get_volume(self, volume_id: str) -> Dict[str, Any]:
+        """Get a Cinder volume by ID.
+
+        Called on a project-scoped provisionsrv client, so the token already
+        has access to the volume — no all_tenants flag needed.
+        """
+        self.authenticate()
+        if not self.cinder_endpoint:
+            return {}
+        url = f"{self.cinder_endpoint}/volumes/{volume_id}"
+        r = self.session.get(url, headers=self._headers())
+        if r.status_code == 404:
+            return {}
+        r.raise_for_status()
+        return r.json().get("volume", {})
+
+    # ---------------------------
+    # Nova – Boot from volume
+    # ---------------------------
+    def create_server_bfv(
+        self,
+        name: str,
+        volume_id: str,
+        flavor_id: str,
+        network_id: str,
+        security_group_names: Optional[List[str]] = None,
+        user_data_b64: Optional[str] = None,
+        fixed_ip: Optional[str] = None,
+        hostname: Optional[str] = None,
+        availability_zone: Optional[str] = None,
+        project_id: Optional[str] = None,
+        admin_pass: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Boot a VM from an existing Cinder volume."""
+        self.authenticate()
+        assert self.nova_endpoint
+        url = f"{self.nova_endpoint}/servers"
+
+        network_spec: Dict[str, Any] = {"uuid": network_id}
+        if fixed_ip:
+            network_spec["fixed_ip"] = fixed_ip
+
+        block_device: Dict[str, Any] = {
+            "boot_index": 0,
+            "uuid": volume_id,
+            "source_type": "volume",
+            "destination_type": "volume",
+            "delete_on_termination": True,
+        }
+
+        sgs: List[Dict[str, str]] = []
+        if security_group_names:
+            sgs = [{"name": sg} for sg in security_group_names]
+
+        body: Dict[str, Any] = {
+            "server": {
+                "name": name,
+                "flavorRef": flavor_id,
+                "networks": [network_spec],
+                "block_device_mapping_v2": [block_device],
+            }
+        }
+        # Only include security_groups if there are any (empty list causes 400 on some Nova versions)
+        if sgs:
+            body["server"]["security_groups"] = sgs
+        if user_data_b64:
+            body["server"]["user_data"] = user_data_b64
+        # adminPass: Nova metadata service passes this to cloudbase-init/nova-agent on Windows
+        if admin_pass:
+            body["server"]["adminPass"] = admin_pass
+        # NOTE: OS-EXT-SRV-ATTR:hostname is read-only; hostname is injected via cloud-init/userdata
+        if availability_zone:
+            body["server"]["availability_zone"] = availability_zone
+
+        # Use X-Project-Id header so admin token creates VM in the target project
+        hdrs = {**self._headers(), "X-Project-Id": project_id} if project_id else self._headers()
+        r = self.session.post(url, headers=hdrs, json=body)
+        if not r.ok:
+            raise RuntimeError(f"{r.status_code} {r.reason} — {r.text[:600]}")
+        return r.json().get("server", {})
+
+    def get_server(self, server_id: str) -> Dict[str, Any]:
+        """Get a Nova server by ID."""
+        self.authenticate()
+        assert self.nova_endpoint
+        url = f"{self.nova_endpoint}/servers/{server_id}"
+        r = self.session.get(url, headers=self._headers())
+        if r.status_code == 404:
+            return {}
+        r.raise_for_status()
+        return r.json().get("server", {})
+
+    def get_console_log(self, server_id: str, length: int = 80) -> str:
+        """Fetch the Nova console log for a server (first `length` lines)."""
+        self.authenticate()
+        assert self.nova_endpoint
+        url = f"{self.nova_endpoint}/servers/{server_id}/action"
+        r = self.session.post(
+            url,
+            headers=self._headers(),
+            json={"os-getConsoleOutput": {"length": length}},
+        )
+        if r.status_code in (400, 404, 409):
+            return ""
+        r.raise_for_status()
+        return r.json().get("output", "")
+
+    # ---------------------------
+    # Scoped client factory
+    # ---------------------------
+    def scoped_for_project(
+        self,
+        project_name: str,
+        domain_name: str,
+    ) -> "Pf9Client":
+        """
+        Return a Pf9Client authenticated as the `provisionsrv` service account,
+        scoped to the target project.
+
+        This gives a genuine Keystone token whose project scope matches the target
+        project, so all Nova / Neutron / Cinder resource lookups (Security Groups,
+        networks, volumes) resolve correctly within that project context.
+
+        The provisionsrv user is a native Keystone user (not in LDAP, not visible in
+        the tenant customer UI).  The `ensure_provisioner_in_project` call in the
+        dry-run phase guarantees the user already has _member_ role before this is
+        called during execution.
+        """
+        from vm_provisioning_service_user import get_provisioner_client
+
+        # Resolve target project UUID using admin credentials
+        self.authenticate()
+        target_project_id = self.resolve_project_id(project_name, domain_name)
+
+        return get_provisioner_client(
+            project_id=target_project_id,
+            project_name=project_name,
+            project_domain=domain_name,
+            auth_url=self.auth_url,
+        )
+
+
 # A single global client for the FastAPI app
 _client: Optional[Pf9Client] = None
 
@@ -837,5 +1182,15 @@ _client: Optional[Pf9Client] = None
 def get_client() -> Pf9Client:
     global _client
     if _client is None:
+        _client = Pf9Client()
+    return _client
+
+
+def get_client_fresh() -> Pf9Client:
+    """Force-discard any cached token and return a freshly authenticated client."""
+    global _client
+    if _client is not None:
+        _client.invalidate()
+    else:
         _client = Pf9Client()
     return _client

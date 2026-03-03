@@ -1,0 +1,507 @@
+/* =========================================================
+   VM Provisioning Tab — Runbook 2 (v1.39.0)
+   Uses app CSS variables — works in both light & dark mode.
+   ========================================================= */
+
+/* ── Container ─────────────────────────────────────────────── */
+.vmp-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 0 0 40px;
+  max-width: 1200px;
+  margin: 0 auto;
+  color: var(--text-primary, #212121);
+}
+
+/* ── Back bar ───────────────────────────────────────────────── */
+.vmp-back-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  margin-bottom: 4px;
+}
+.vmp-back-btn {
+  background: none;
+  border: 1px solid var(--border-color, #e0e0e0);
+  color: var(--text-secondary, #666);
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: background 0.15s, color 0.15s;
+}
+.vmp-back-btn:hover { background: rgba(0,0,0,.05); color: var(--text-primary, #212121); }
+.vmp-back-title { color: var(--text-primary, #212121); font-size: 1.05rem; font-weight: 600; }
+.vmp-back-sub { color: var(--text-secondary, #666); font-size: 0.8rem; margin-left: auto; }
+
+/* ── Tabs (batch list | new batch) ─────────────────────────── */
+.vmp-mode-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(0,0,0,.04);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  padding: 4px;
+  width: fit-content;
+}
+.vmp-mode-tab {
+  padding: 7px 20px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary, #666);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.15s;
+}
+.vmp-mode-tab.active {
+  background: rgba(59,130,246,.15);
+  color: #2563eb;
+  font-weight: 600;
+}
+.vmp-mode-tab:hover:not(.active) { color: var(--text-primary, #212121); background: rgba(0,0,0,.04); }
+
+/* ── Stepper ────────────────────────────────────────────────── */
+.vmp-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 10px;
+  padding: 14px 20px;
+  overflow-x: auto;
+}
+.vmp-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 120px;
+}
+.vmp-step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border: 2px solid var(--border-color, #e0e0e0);
+  color: var(--text-secondary, #666);
+  background: transparent;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.vmp-step.done .vmp-step-num { border-color: #22c55e; color: #16a34a; }
+.vmp-step.active .vmp-step-num { border-color: #3b82f6; color: #fff; background: #3b82f6; }
+.vmp-step-label { font-size: 0.8rem; color: var(--text-secondary, #666); white-space: nowrap; }
+.vmp-step.active .vmp-step-label { color: #2563eb; font-weight: 600; }
+.vmp-step.done .vmp-step-label { color: #16a34a; }
+.vmp-step-sep { flex: 1; height: 1px; background: var(--border-color, #e0e0e0); margin: 0 8px; min-width: 20px; }
+
+/* ── Card / panel ───────────────────────────────────────────── */
+.vmp-card {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 12px;
+  padding: 20px 24px;
+}
+.vmp-card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary, #212121);
+  margin: 0 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.vmp-card-title span { color: var(--text-secondary, #666); font-weight: 400; font-size: 0.82rem; margin-left: 8px; }
+
+/* ── Form grid ──────────────────────────────────────────────── */
+.vmp-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.vmp-form-grid.wide { grid-template-columns: 1fr 1fr 1fr; }
+@media (max-width: 760px) {
+  .vmp-form-grid, .vmp-form-grid.wide { grid-template-columns: 1fr; }
+}
+.vmp-field { display: flex; flex-direction: column; gap: 5px; }
+.vmp-field.span2 { grid-column: 1 / -1; }
+.vmp-label {
+  font-size: 0.78rem;
+  color: var(--text-secondary, #555);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vmp-label .req { color: #ef4444; }
+.vmp-input, .vmp-select, .vmp-textarea {
+  background: var(--bg-secondary, #f5f7fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 7px;
+  color: var(--text-primary, #212121);
+  font-size: 0.85rem;
+  padding: 8px 11px;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+  box-sizing: border-box;
+}
+.vmp-input:focus, .vmp-select:focus, .vmp-textarea:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59,130,246,.12);
+}
+.vmp-input::placeholder { color: rgba(0,0,0,.3); }
+.vmp-textarea { resize: vertical; min-height: 70px; font-family: monospace; font-size: 0.78rem; }
+.vmp-select option { background: var(--card-bg, #fff); }
+.vmp-name-preview { font-size: 0.75rem; color: #2563eb; margin-top: 2px; font-family: monospace; }
+
+/* ── Quota bar ──────────────────────────────────────────────── */
+.vmp-quota-panel { display: flex; gap: 14px; flex-wrap: wrap; }
+.vmp-quota-item {
+  flex: 1; min-width: 110px;
+  background: var(--bg-secondary, #f5f7fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.vmp-quota-label { font-size: 0.72rem; color: var(--text-secondary, #666); margin-bottom: 4px; }
+.vmp-quota-bar-wrap { background: rgba(0,0,0,.08); border-radius: 4px; height: 6px; margin: 4px 0; overflow: hidden; }
+.vmp-quota-bar { height: 6px; border-radius: 4px; background: #3b82f6; transition: width 0.3s; }
+.vmp-quota-bar.warn { background: #f59e0b; }
+.vmp-quota-bar.crit { background: #ef4444; }
+.vmp-quota-nums { font-size: 0.72rem; color: var(--text-secondary, #666); }
+
+/* ── Image grid ─────────────────────────────────────────────── */
+.vmp-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(135px, 1fr));
+  gap: 9px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.vmp-image-card {
+  background: var(--bg-secondary, #f5f7fa);
+  border: 1.5px solid var(--border-color, #e0e0e0);
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s;
+  font-size: 0.75rem;
+}
+.vmp-image-card:hover { border-color: #93c5fd; }
+.vmp-image-card.selected { border-color: #3b82f6; background: rgba(59,130,246,.07); }
+.vmp-image-card .img-icon { font-size: 1.4rem; margin-bottom: 5px; }
+.vmp-image-card .img-name { color: var(--text-primary, #212121); word-break: break-all; line-height: 1.3; }
+.vmp-image-card .img-meta { color: var(--text-secondary, #666); margin-top: 3px; }
+
+/* ── Flavor table ───────────────────────────────────────────── */
+.vmp-flavor-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.vmp-flavor-table th {
+  text-align: left; padding: 6px 10px;
+  color: var(--text-secondary, #666);
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  font-weight: 500;
+}
+.vmp-flavor-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-color, #e0e0e0); color: var(--text-primary, #212121); }
+.vmp-flavor-table tr.selected td { background: rgba(59,130,246,.07); }
+.vmp-flavor-table tr { cursor: pointer; transition: background 0.1s; }
+.vmp-flavor-table tr:hover td { background: rgba(0,0,0,.03); }
+.vmp-flavor-wrap { max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color, #e0e0e0); border-radius: 7px; }
+
+/* ── SG chips ───────────────────────────────────────────────── */
+.vmp-sg-wrap {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  background: var(--bg-secondary, #f5f7fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 7px; padding: 8px; min-height: 38px; cursor: pointer;
+}
+.vmp-sg-chip {
+  background: rgba(59,130,246,.1);
+  border: 1px solid rgba(59,130,246,.3);
+  color: #2563eb;
+  border-radius: 4px; padding: 2px 8px; font-size: 0.75rem;
+  display: flex; align-items: center; gap: 4px; user-select: none;
+}
+.vmp-sg-chip .del { cursor: pointer; color: #3b82f6; font-size: 0.9rem; line-height: 1; }
+.vmp-sg-chip .del:hover { color: #ef4444; }
+.vmp-sg-dropdown {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 7px; padding: 6px 0; margin-top: 4px;
+  max-height: 150px; overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,.1);
+}
+.vmp-sg-option { padding: 7px 14px; cursor: pointer; font-size: 0.82rem; color: var(--text-primary, #212121); transition: background 0.1s; }
+.vmp-sg-option:hover { background: rgba(0,0,0,.04); }
+.vmp-sg-option.selected { color: #2563eb; }
+
+/* ── VM row ─────────────────────────────────────────────────── */
+.vmp-vm-row {
+  background: var(--bg-secondary, #f5f7fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 10px; margin-bottom: 12px; overflow: hidden;
+}
+.vmp-vm-row-header {
+  display: flex; align-items: center; padding: 10px 16px;
+  cursor: pointer; user-select: none; gap: 10px; background: rgba(0,0,0,.02);
+}
+.vmp-vm-row-header:hover { background: rgba(0,0,0,.04); }
+.vmp-vm-row-title { font-size: 0.88rem; font-weight: 600; color: var(--text-secondary, #555); flex: 1; }
+.vmp-vm-row-preview { font-family: monospace; font-size: 0.8rem; color: #2563eb; }
+.vmp-vm-row-body { padding: 16px; border-top: 1px solid var(--border-color, #e0e0e0); }
+.vmp-remove-btn {
+  background: none; border: 1px solid rgba(239,68,68,.3); color: #ef4444;
+  border-radius: 5px; padding: 3px 8px; cursor: pointer; font-size: 0.75rem; transition: background 0.15s;
+}
+.vmp-remove-btn:hover { background: rgba(239,68,68,.07); }
+
+/* ── cloudinit preview ──────────────────────────────────────── */
+.vmp-cloudinit-preview {
+  background: #1e293b; border: 1px solid #334155; border-radius: 7px; padding: 12px;
+  font-family: monospace; font-size: 0.76rem; color: #a3e635;
+  max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+}
+
+/* ── Action buttons ─────────────────────────────────────────── */
+.vmp-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.vmp-btn {
+  padding: 9px 20px; border: none; border-radius: 8px;
+  font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.vmp-btn:hover:not(:disabled) { opacity: 0.85; }
+.vmp-btn:active:not(:disabled) { transform: scale(0.97); }
+.vmp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.vmp-btn.primary { background: #3b82f6; color: #fff; }
+.vmp-btn.success { background: #22c55e; color: #fff; }
+.vmp-btn.danger  { background: #ef4444; color: #fff; }
+.vmp-btn.ghost   { background: transparent; color: var(--text-secondary, #555); border: 1px solid var(--border-color, #e0e0e0); }
+.vmp-btn.sm { padding: 6px 14px; font-size: 0.78rem; }
+.vmp-btn.add {
+  background: rgba(59,130,246,.07); color: #2563eb;
+  border: 1px dashed rgba(59,130,246,.35); border-radius: 8px;
+  padding: 8px 16px; font-size: 0.82rem; cursor: pointer; transition: background 0.15s;
+}
+.vmp-btn.add:hover { background: rgba(59,130,246,.14); }
+
+/* ── Badge / status ─────────────────────────────────────────── */
+.vmp-badge { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+.vmp-badge.complete         { background: rgba(34,197,94,.1);  color: #16a34a; }
+.vmp-badge.executing        { background: rgba(59,130,246,.1); color: #2563eb; }
+.vmp-badge.failed           { background: rgba(239,68,68,.1);  color: #dc2626; }
+.vmp-badge.pending_approval { background: rgba(245,158,11,.1); color: #d97706; }
+.vmp-badge.approved         { background: rgba(34,197,94,.08); color: #16a34a; }
+.vmp-badge.rejected         { background: rgba(239,68,68,.08); color: #dc2626; }
+.vmp-badge.validated        { background: rgba(100,116,139,.1); color: #475569; }
+.vmp-badge.dry_run_passed   { background: rgba(34,197,94,.1);  color: #16a34a; }
+.vmp-badge.dry_run_failed   { background: rgba(239,68,68,.1);  color: #dc2626; }
+.vmp-badge.partially_failed { background: rgba(245,158,11,.1); color: #d97706; }
+
+/* ── Batch list table ───────────────────────────────────────── */
+.vmp-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border-color, #e0e0e0); }
+.vmp-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.vmp-table th { padding: 10px 14px; background: var(--bg-secondary, #f5f7fa); color: var(--text-secondary, #666); font-weight: 500; text-align: left; white-space: nowrap; }
+.vmp-table td { padding: 10px 14px; border-top: 1px solid var(--border-color, #e0e0e0); color: var(--text-primary, #212121); vertical-align: middle; }
+.vmp-table tr:hover td { background: rgba(0,0,0,.02); }
+.vmp-table td.mono { font-family: monospace; font-size: 0.75rem; color: var(--text-secondary, #666); }
+
+/* ── Dry-run results ────────────────────────────────────────── */
+.vmp-dryrun-section { margin-top: 12px; }
+.vmp-dryrun-title { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary, #555); margin-bottom: 8px; }
+.vmp-check-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 0.8rem; border-bottom: 1px solid var(--border-color, #e0e0e0); }
+.vmp-check-icon { font-size: 0.9rem; width: 18px; text-align: center; }
+.vmp-check-name { color: var(--text-secondary, #666); min-width: 110px; }
+.vmp-check-detail { color: var(--text-primary, #212121); flex: 1; }
+.vmp-check-detail.err { color: #dc2626; }
+.vmp-check-detail.warn { color: #d97706; }
+
+/* ── empty state ────────────────────────────────────────────── */
+.vmp-empty { text-align: center; padding: 40px 20px; color: var(--text-secondary, #666); font-size: 0.85rem; }
+
+/* ── detail modal overlay ───────────────────────────────────── */
+.vmp-modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 20px;
+}
+.vmp-modal {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 14px; padding: 24px; width: 100%;
+  max-width: 700px; max-height: 85vh; overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,.18);
+}
+.vmp-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.vmp-modal-title { font-size: 1rem; font-weight: 600; color: var(--text-primary, #212121); }
+.vmp-modal-close { background: none; border: none; color: var(--text-secondary, #666); font-size: 1.3rem; cursor: pointer; }
+.vmp-modal-close:hover { color: var(--text-primary, #212121); }
+
+/* ── toggle ─────────────────────────────────────────────────── */
+.vmp-toggle-row { display: flex; align-items: center; gap: 10px; }
+.vmp-toggle-switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+.vmp-toggle-switch input { opacity: 0; width: 0; height: 0; }
+.vmp-toggle-slider {
+  position: absolute; inset: 0; background: rgba(0,0,0,.15); border-radius: 22px; cursor: pointer; transition: background 0.2s;
+}
+.vmp-toggle-slider::before {
+  content: ''; position: absolute; width: 16px; height: 16px; background: #fff; border-radius: 50%;
+  bottom: 3px; left: 3px; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.vmp-toggle-switch input:checked + .vmp-toggle-slider { background: #3b82f6; }
+.vmp-toggle-switch input:checked + .vmp-toggle-slider::before { transform: translateX(18px); }
+.vmp-toggle-label { font-size: 0.82rem; color: var(--text-secondary, #555); }
+
+/* ── alerts ─────────────────────────────────────────────────── */
+.vmp-alert { padding: 10px 14px; border-radius: 8px; font-size: 0.82rem; }
+.vmp-alert.success { background: rgba(34,197,94,.08);  border: 1px solid rgba(34,197,94,.25);  color: #16a34a; }
+.vmp-alert.error   { background: rgba(239,68,68,.08);  border: 1px solid rgba(239,68,68,.25);  color: #dc2626; }
+.vmp-alert.info    { background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.25); color: #2563eb; }
+.vmp-alert.warn    { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.25); color: #d97706; }
+
+/* ── spinner ────────────────────────────────────────────────── */
+.vmp-spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid rgba(0,0,0,.1); border-top-color: #3b82f6;
+  border-radius: 50%; animation: vmp-spin 0.7s linear infinite; vertical-align: middle;
+}
+@keyframes vmp-spin { to { transform: rotate(360deg); } }
+
+/* ── IP picker list ──────────────────────────────────────────── */
+.vmp-ip-list {
+  max-height: 120px; overflow-y: auto;
+  background: var(--bg-secondary, #f5f7fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 7px; margin-top: 4px;
+}
+.vmp-ip-option { padding: 5px 11px; font-size: 0.8rem; font-family: monospace; color: var(--text-primary, #212121); cursor: pointer; transition: background 0.1s; }
+.vmp-ip-option:hover { background: rgba(59,130,246,.07); }
+.vmp-ip-option.selected { background: rgba(59,130,246,.1); color: #2563eb; }
+
+/* ── collapsible ─────────────────────────────────────────────── */
+.vmp-collapsible-btn {
+  background: none; border: none; color: var(--text-secondary, #666);
+  font-size: 0.78rem; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 0; margin-top: 4px;
+}
+.vmp-collapsible-btn:hover { color: var(--text-primary, #212121); }
+
+/* ── Searchable dropdown ─────────────────────────────────────── */
+.vmp-search-drop { position: relative; }
+.vmp-search-drop-trigger {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-secondary, #f5f7fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 7px; color: var(--text-primary, #212121);
+  font-size: 0.85rem; padding: 8px 11px;
+  cursor: pointer; user-select: none;
+  transition: border-color 0.15s; width: 100%; box-sizing: border-box;
+}
+.vmp-search-drop-trigger:hover { border-color: #93c5fd; }
+.vmp-search-drop-trigger.open { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,.1); }
+.vmp-search-drop-trigger .placeholder { color: rgba(0,0,0,.3); }
+.vmp-search-drop-trigger .arrow { color: var(--text-secondary, #666); font-size: 0.7rem; transition: transform 0.15s; }
+.vmp-search-drop-trigger.open .arrow { transform: rotate(180deg); }
+
+.vmp-search-drop-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 9px; z-index: 200; box-shadow: 0 8px 24px rgba(0,0,0,.1); overflow: hidden;
+}
+.vmp-search-drop-search {
+  padding: 8px 10px; border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+.vmp-search-drop-search input {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-secondary, #f5f7fa);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 6px; color: var(--text-primary, #212121); font-size: 0.82rem; padding: 6px 10px; outline: none;
+}
+.vmp-search-drop-search input::placeholder { color: rgba(0,0,0,.3); }
+.vmp-search-drop-search input:focus { border-color: #3b82f6; }
+.vmp-search-drop-list { max-height: 200px; overflow-y: auto; }
+.vmp-search-drop-option {
+  padding: 8px 14px; cursor: pointer; font-size: 0.84rem; color: var(--text-primary, #212121);
+  transition: background 0.1s; display: flex; align-items: center; gap: 8px;
+}
+.vmp-search-drop-option:hover { background: rgba(0,0,0,.04); }
+.vmp-search-drop-option.selected { color: #2563eb; background: rgba(59,130,246,.06); }
+.vmp-search-drop-option .opt-check { color: #2563eb; font-size: 0.8rem; }
+.vmp-search-drop-empty { padding: 12px 14px; color: var(--text-secondary, #666); font-size: 0.82rem; font-style: italic; }
+.vmp-search-drop-loading { padding: 12px 14px; color: var(--text-secondary, #666); font-size: 0.82rem; display: flex; align-items: center; gap: 8px; }
+
+/* ── Dark mode overrides ─────────────────────────────────────── */
+:root[data-theme="dark"] .vmp-input::placeholder,
+:root[data-theme="dark"] .vmp-search-drop-trigger .placeholder,
+:root[data-theme="dark"] .vmp-search-drop-search input::placeholder { color: rgba(255,255,255,.3); }
+:root[data-theme="dark"] .vmp-spinner {
+  border-color: rgba(255,255,255,.1);
+  border-top-color: #60a5fa;
+}
+
+/* ── Batch list cards ───────────────────────────────────────── */
+.vmp-batch-list { display: flex; flex-direction: column; gap: 10px; }
+
+.vmp-batch-card {
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 12px; overflow: hidden;
+}
+.vmp-batch-card.executing        { border-color: rgba(59,130,246,.4); }
+.vmp-batch-card.failed           { border-color: rgba(239,68,68,.35); }
+.vmp-batch-card.partially_failed { border-color: rgba(245,158,11,.35); }
+.vmp-batch-card.complete         { border-color: rgba(34,197,94,.3); }
+
+.vmp-batch-card-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; flex-wrap: wrap;
+}
+.vmp-batch-id    { font-family: monospace; font-size: 0.78rem; color: var(--text-secondary, #666); flex-shrink: 0; }
+.vmp-batch-name  { font-weight: 600; font-size: 0.9rem; color: var(--text-primary, #212121); flex: 1; min-width: 120px; }
+.vmp-batch-badges { display: flex; gap: 5px; flex-shrink: 0; }
+.vmp-batch-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; flex-wrap: wrap; margin-left: auto; }
+
+.vmp-batch-detail {
+  border-top: 1px solid var(--border-color, #e0e0e0);
+  padding: 14px 16px;
+  background: var(--bg-secondary, #f9fafb);
+}
+.vmp-batch-detail-meta {
+  display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.78rem;
+  color: var(--text-secondary, #666); margin-bottom: 12px;
+}
+.vmp-batch-detail-section {
+  font-size: 0.78rem; font-weight: 600; color: var(--text-secondary, #666);
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px;
+}
+
+.vmp-batch-vm-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.vmp-batch-vm-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 10px; border-radius: 7px; font-size: 0.8rem;
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-left: 3px solid transparent;
+}
+.vmp-batch-vm-row.complete          { border-left-color: #16a34a; }
+.vmp-batch-vm-row.failed            { border-left-color: #dc2626; background: rgba(239,68,68,.04); }
+.vmp-batch-vm-row.executing,
+.vmp-batch-vm-row.pending           { border-left-color: #2563eb; }
+.vmp-batch-vm-icon  { font-size: 1rem; flex-shrink: 0; }
+.vmp-batch-vm-name  { font-family: monospace; font-weight: 600; color: var(--text-primary, #212121); }
+.vmp-batch-vm-count { color: var(--text-secondary, #666); font-size: 0.75rem; }
+.vmp-batch-vm-ips   { font-family: monospace; font-size: 0.75rem; color: #2563eb; margin-left: auto; }
+.vmp-batch-vm-err   { width: 100%; font-size: 0.75rem; color: #dc2626; padding-left: 26px; margin-top: 2px; }
+
+/* ── Warn button (Re-run) ───────────────────────────────────── */
+.vmp-btn.warn { background: rgba(245,158,11,.1); color: #d97706; border: 1px solid rgba(245,158,11,.3); }
+.vmp-btn.warn:hover:not(:disabled) { background: rgba(245,158,11,.2); }

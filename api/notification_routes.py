@@ -59,6 +59,11 @@ VALID_EVENT_TYPES = [
     "onboarding_rejected",
     "onboarding_completed",
     "onboarding_failed",
+    "vm_provisioning_submitted",
+    "vm_provisioning_approved",
+    "vm_provisioning_rejected",
+    "vm_provisioning_completed",
+    "vm_provisioning_failed",
 ]
 
 VALID_SEVERITIES = ["info", "warning", "critical"]

@@ -343,6 +343,11 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [rbExecutions, setRbExecutions] = useState<RbExecution[]>([]);
   const [rbExecTotal, setRbExecTotal] = useState(0);
   const [rbPending, setRbPending] = useState<RbExecution[]>([]);
+  const [vmpPending, setVmpPending] = useState<any[]>([]);
+  const [vmpHistory, setVmpHistory] = useState<any[]>([]);
+  const [vmpHistDetail, setVmpHistDetail] = useState<Record<number, any>>({});
+  const [vmpHistLogs, setVmpHistLogs] = useState<Record<number, any[]>>({});
+  const [vmpHistLoading, setVmpHistLoading] = useState(false);
   const [rbRunbooks, setRbRunbooks] = useState<RbRunbook[]>([]);
   // Onboarding batch pending approvals
   const [obPending, setObPending] = useState<any[]>([]);
@@ -403,6 +408,52 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       }
     } catch {}
   }, [rbAuthHeaders]);
+
+  const loadVmpPending = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/vm-provisioning/batches`, { headers: rbAuthHeaders() });
+      if (res.ok) {
+        const d = await res.json();
+        setVmpPending(d.filter((b: any) => b.require_approval && b.approval_status === 'pending_approval'
+          && !['executing','complete','failed','partially_failed'].includes(b.status)));
+      }
+    } catch {}
+  }, [rbAuthHeaders]);
+
+  const loadVmpHistory = useCallback(async () => {
+    setVmpHistLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/vm-provisioning/batches`, { headers: rbAuthHeaders() });
+      if (res.ok) { const d = await res.json(); setVmpHistory(d); }
+    } catch {} finally { setVmpHistLoading(false); }
+  }, [rbAuthHeaders]);
+
+  const toggleVmpDetail = useCallback(async (batchId: number) => {
+    if (vmpHistDetail[batchId]) {
+      setVmpHistDetail(prev => { const n = { ...prev }; delete n[batchId]; return n; });
+      return;
+    }
+    try {
+      const [detRes, logRes] = await Promise.all([
+        fetch(`${API_BASE}/api/vm-provisioning/batches/${batchId}`, { headers: rbAuthHeaders() }),
+        fetch(`${API_BASE}/api/vm-provisioning/batches/${batchId}/logs`, { headers: rbAuthHeaders() }),
+      ]);
+      if (detRes.ok) { const d = await detRes.json(); setVmpHistDetail(prev => ({ ...prev, [batchId]: d })); }
+      if (logRes.ok) { const d = await logRes.json(); setVmpHistLogs(prev => ({ ...prev, [batchId]: d })); }
+    } catch {}
+  }, [rbAuthHeaders, vmpHistDetail]);
+
+  const vmpDecide = useCallback(async (batchId: number, decision: 'approve' | 'reject') => {
+    try {
+      const res = await fetch(`${API_BASE}/api/vm-provisioning/batches/${batchId}/decision`, {
+        method: 'POST', headers: rbAuthHeaders(),
+        body: JSON.stringify({ decision, comment: '' }),
+      });
+      if (!res.ok) throw new Error('Failed');
+      rbShowToast(decision === 'approve' ? '✅ VM batch approved' : '❌ VM batch rejected', decision === 'approve' ? 'success' : 'info');
+      loadVmpPending();
+    } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
+  }, [rbAuthHeaders, rbShowToast, loadVmpPending]);
 
   const obDecide = useCallback(async (batchId: string, decision: 'approve' | 'reject', comment = '') => {
     try {
@@ -499,6 +550,10 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     if (activeTab === 'rb_approvals') {
       loadRbPending();
       loadObPending();
+      loadVmpPending();
+    }
+    if (activeTab === 'vmp_history') {
+      loadVmpHistory();
     }
     if (activeTab === 'rb_policies') {
       loadRbRunbooks();
@@ -1522,6 +1577,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 'audit', label: 'System Audit', icon: '📋', adminOnly: false },
           { id: 'branding', label: 'Branding', icon: '🎨', adminOnly: true },
           { id: 'rb_executions', label: 'Runbook Executions', icon: '📜', adminOnly: true },
+          { id: 'vmp_history', label: 'VM Provisioning', icon: '🖥️', adminOnly: true },
           { id: 'rb_approvals', label: 'Runbook Approvals', icon: '✅', adminOnly: true },
           { id: 'rb_policies', label: 'Runbook Policies', icon: '📐', adminOnly: true },
           { id: 'data_reset', label: 'Data Reset', icon: '⚠️', adminOnly: true }
@@ -2517,13 +2573,190 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
         </div>
       )}
 
+      {/* ────── VM PROVISIONING HISTORY ────── */}
+      {activeTab === 'vmp_history' && (
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <h3 className="text-base font-semibold">VM Provisioning Batch History</h3>
+            <button className="px-3 py-1 border rounded text-sm hover:bg-gray-50" onClick={loadVmpHistory}>🔄 Refresh</button>
+            {vmpHistLoading && <span className="text-xs text-gray-400">Loading…</span>}
+            <span className="text-xs text-gray-500 ml-auto">{vmpHistory.length} batches</span>
+          </div>
+          <div className="bg-white rounded-lg border">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-600">#</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-600">Batch Name</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-600">Domain / Project</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-600">Status</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-600">Approval</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-600">Created By</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-600">Date</th>
+                    <th className="px-3 py-3 text-left text-xs font-medium text-gray-600">Detail</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {vmpHistory.map((b: any) => {
+                    const statusColor = b.status === 'complete' ? 'bg-green-100 text-green-800'
+                      : b.status === 'failed' || b.status === 'partially_failed' ? 'bg-red-100 text-red-800'
+                      : b.status === 'executing' ? 'bg-blue-100 text-blue-800'
+                      : 'bg-gray-100 text-gray-700';
+                    const isOpen = !!vmpHistDetail[b.id];
+                    const detail = vmpHistDetail[b.id];
+                    const logs = vmpHistLogs[b.id] || [];
+                    return (
+                      <>
+                        <tr key={b.id} className={`hover:bg-gray-50 ${isOpen ? 'bg-blue-50/30' : ''}`}>
+                          <td className="px-3 py-3 text-xs font-mono text-gray-500">#{b.id}</td>
+                          <td className="px-3 py-3 text-sm font-medium">{b.name || `Batch #${b.id}`}</td>
+                          <td className="px-3 py-3 text-sm text-gray-600">{b.domain_name} / {b.project_name}</td>
+                          <td className="px-3 py-3">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusColor}`}>
+                              {b.status?.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-xs text-gray-500">{b.approval_status?.replace(/_/g, ' ') || '—'}</td>
+                          <td className="px-3 py-3 text-sm">{b.created_by}</td>
+                          <td className="px-3 py-3 text-xs text-gray-500">{new Date(b.created_at).toLocaleString()}</td>
+                          <td className="px-3 py-3">
+                            <button
+                              className="text-blue-600 hover:underline text-xs"
+                              onClick={() => toggleVmpDetail(b.id)}
+                            >{isOpen ? '▲ Hide' : '▼ View'}</button>
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr key={`${b.id}-detail`}>
+                            <td colSpan={8} className="px-4 py-4 bg-slate-50 border-t">
+                              {/* VM rows table */}
+                              {detail?.vms?.length > 0 && (
+                                <div className="mb-4">
+                                  <div className="text-xs font-semibold text-gray-600 mb-2">Virtual Machines</div>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs border rounded">
+                                      <thead className="bg-gray-100">
+                                        <tr>
+                                          <th className="px-2 py-1 text-left">VM Name</th>
+                                          <th className="px-2 py-1 text-left">Status</th>
+                                          <th className="px-2 py-1 text-left">IP(s)</th>
+                                          <th className="px-2 py-1 text-left">Image</th>
+                                          <th className="px-2 py-1 text-left">Flavor</th>
+                                          <th className="px-2 py-1 text-left">OS</th>
+                                          <th className="px-2 py-1 text-left">GB</th>
+                                          <th className="px-2 py-1 text-left">Error</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-100">
+                                        {detail.vms.map((vm: any) => {
+                                          const ips = Array.isArray(vm.assigned_ips) ? vm.assigned_ips.join(', ') : (vm.assigned_ips || '—');
+                                          const vmSt = vm.status === 'complete' ? 'text-green-700' : vm.status === 'failed' ? 'text-red-600' : 'text-gray-600';
+                                          const count = vm.count || 1;
+                                          const actualName = b.domain_name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6)
+                                            + '_vm_' + vm.vm_name_suffix;
+                                          return (
+                                            <tr key={vm.id}>
+                                              <td className="px-2 py-1 font-mono">{actualName}{count > 1 ? ` ×${count}` : ''}</td>
+                                              <td className={`px-2 py-1 font-medium ${vmSt}`}>{vm.status}</td>
+                                              <td className="px-2 py-1">{ips}</td>
+                                              <td className="px-2 py-1 truncate max-w-[120px]" title={vm.image_name}>{vm.image_name || '—'}</td>
+                                              <td className="px-2 py-1">{vm.flavor_name || '—'}</td>
+                                              <td className="px-2 py-1 uppercase">{vm.os_type || 'linux'}</td>
+                                              <td className="px-2 py-1">{vm.volume_gb}</td>
+                                              <td className="px-2 py-1 text-red-600 max-w-[200px] truncate" title={vm.error_msg}>{vm.error_msg || ''}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
+                              {/* Execution timeline */}
+                              {logs.length > 0 && (
+                                <div>
+                                  <div className="text-xs font-semibold text-gray-600 mb-2">Execution Timeline</div>
+                                  <div className="bg-slate-900 rounded p-3 max-h-48 overflow-y-auto font-mono text-xs">
+                                    {logs.map((l: any, i: number) => (
+                                      <div key={i} className="mb-1">
+                                        <span className="text-slate-500 mr-2">{new Date(l.created_at || l.timestamp).toLocaleTimeString()}</span>
+                                        <span className={`mr-2 ${
+                                          l.action?.includes('fail') || l.action?.includes('error') ? 'text-red-400'
+                                          : l.action?.includes('complete') || l.action?.includes('active') || l.action?.includes('ready') || l.action?.includes('created') ? 'text-green-400'
+                                          : 'text-blue-300'
+                                        }`}>[{l.action}]</span>
+                                        <span className="text-slate-300">
+                                          {typeof l.details === 'object' ? (l.details?.message ?? JSON.stringify(l.details)) : String(l.details ?? '')}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
+                  })}
+                  {vmpHistory.length === 0 && (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">No VM provisioning batches found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ────── RUNBOOK APPROVALS ────── */}
       {activeTab === 'rb_approvals' && (
         <div>
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm text-gray-600">Pending runbook executions awaiting admin approval.</p>
-            <button className="px-3 py-2 border rounded text-sm hover:bg-gray-50" onClick={() => { loadRbPending(); loadObPending(); }}>🔄 Refresh</button>
+            <button className="px-3 py-2 border rounded text-sm hover:bg-gray-50" onClick={() => { loadRbPending(); loadObPending(); loadVmpPending(); }}>🔄 Refresh</button>
           </div>
+
+          {/* ── VM Provisioning pending approvals ── */}
+          {vmpPending.length > 0 && (
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold text-gray-700 mb-2">🖥️ Pending VM Provisioning Approvals</h4>
+              <div className="bg-white rounded-lg border">
+                <table className="w-full">
+                  <thead className="bg-blue-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">#</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Batch Name</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Domain / Project</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Created By</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Created</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Status</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-700">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {vmpPending.map((b: any) => (
+                      <tr key={b.id} className="hover:bg-blue-50/40">
+                        <td className="px-4 py-2 text-sm font-mono text-gray-500">#{b.id}</td>
+                        <td className="px-4 py-2 text-sm font-medium">{b.name || `VM Provision — ${b.domain_name}/${b.project_name}`}</td>
+                        <td className="px-4 py-2 text-sm">{b.domain_name} / {b.project_name}</td>
+                        <td className="px-4 py-2 text-sm">{b.created_by}</td>
+                        <td className="px-4 py-2 text-sm">{new Date(b.created_at).toLocaleString()}</td>
+                        <td className="px-4 py-2 text-sm capitalize">{b.status.replace(/_/g,' ')}</td>
+                        <td className="px-4 py-2 text-sm">
+                          <div className="flex gap-2">
+                            <button className="px-2 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700" onClick={() => vmpDecide(b.id, 'approve')}>✓ Approve</button>
+                            <button className="px-2 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700" onClick={() => vmpDecide(b.id, 'reject')}>✗ Reject</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* ── Onboarding batch pending approvals ── */}
           {obPending.length > 0 && (
@@ -2563,7 +2796,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
             </div>
           )}
 
-          {rbPending.length === 0 && obPending.length === 0 ? (
+          {rbPending.length === 0 && obPending.length === 0 && vmpPending.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
               <div className="text-4xl mb-2">✅</div>
               <p>No pending approvals</p>

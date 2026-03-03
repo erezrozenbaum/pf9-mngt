@@ -1,0 +1,49 @@
+import requests, json
+
+r = requests.post('http://localhost:8000/auth/login', json={'username':'admin@ccc.co.il', 'password':'r#1kajun'})
+token = r.json()['access_token']
+hdrs = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}
+
+res = requests.get('http://localhost:8000/api/vm-provisioning/resources',
+    params={'domain_name': 'Default', 'project_name': 'service'}, headers=hdrs, timeout=30).json()
+img = res['images'][0]
+fl = res['flavors'][0]
+net = res['networks'][0]
+print('image:', img['name'], '| flavor:', fl['name'], '| net:', net['name'])
+
+batch = {
+    'name': 'Dry-run Test',
+    'domain_name': 'Default',
+    'project_name': 'service',
+    'require_approval': True,
+    'vms': [{
+        'vm_name_suffix': 'web',
+        'count': 1,
+        'image_id': img['id'], 'image_name': img['name'],
+        'flavor_id': fl['id'],  'flavor_name': fl['name'],
+        'volume_gb': 20,
+        'network_id': net['id'], 'network_name': net['name'],
+        'security_groups': ['default'],
+        'os_username': 'ubuntu',
+        'os_password': 'Ch@ngeMe123!'
+    }]
+}
+r2 = requests.post('http://localhost:8000/api/vm-provisioning/batches', headers=hdrs, json=batch)
+bid = r2.json().get('batch_id')
+print('Batch ID:', bid)
+
+r3 = requests.post('http://localhost:8000/api/vm-provisioning/batches/' + str(bid) + '/dry-run', headers=hdrs, timeout=60)
+print('Dry-run HTTP:', r3.status_code)
+dr = r3.json()
+print('Dry-run result:', dr.get('status'))
+for vm in dr.get('results', {}).get('per_vm', []):
+    print('  VM', vm['vm_name_suffix'])
+    for ck in vm['checks']:
+        sym = 'OK' if ck['status'] == 'ok' else ('WARN' if ck['status'] == 'warning' else 'ERR')
+        print('   ', sym, ck['check'], ':', ck['detail'])
+for q in dr.get('results', {}).get('quota', []):
+    print('  Quota', q['resource'], ': need', q['needed'], 'free', q['free'], '->', q['status'])
+
+# clean up
+requests.delete('http://localhost:8000/api/vm-provisioning/batches/' + str(bid), headers=hdrs)
+print('Cleaned up batch', bid)

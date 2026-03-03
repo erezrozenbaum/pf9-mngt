@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../config";
 import "../styles/RunbooksTab.css";
 import BulkOnboardingTab from "./BulkOnboardingTab";
+import VmProvisioningTab from "./VmProvisioningTab";
 
 /* ===================================================================
    RunbooksTab  – Catalogue & Trigger (operator-facing)
@@ -109,6 +110,7 @@ export default function RunbooksTab() {
 
   // Bulk Onboarding
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showProvisioning, setShowProvisioning] = useState(false);
 
   // My Executions state
   const [myExecs, setMyExecs] = useState<Execution[]>([]);
@@ -973,6 +975,10 @@ export default function RunbooksTab() {
     return <BulkOnboardingTab onBack={() => setShowOnboarding(false)} />;
   }
 
+  if (showProvisioning) {
+    return <VmProvisioningTab onBack={() => setShowProvisioning(false)} />;
+  }
+
   if (loading) {
     return (
       <div className="rb-container">
@@ -1014,6 +1020,29 @@ export default function RunbooksTab() {
             </div>
             <div className="rb-card-actions">
               <button className="rb-btn primary" onClick={() => setShowOnboarding(true)}>
+                ▶ Open
+              </button>
+            </div>
+          </div>
+
+          {/* VM Provisioning — Runbook 2 */}
+          <div className="rb-card" style={{ borderColor: "rgba(59,130,246,.3)" }}>
+            <div className="rb-card-header">
+              <h4 className="rb-card-title">☁️ VM Provisioning</h4>
+              <span className="rb-risk low">low</span>
+            </div>
+            <p className="rb-card-desc">
+              Provision VMs into customer projects via a guided form or Excel upload.
+              Boot-from-volume only (disk=0 flavors) · auto cloud-init · quota check ·
+              dry-run → approval → execute workflow.
+            </p>
+            <div className="rb-card-meta">
+              <span>📁 provisioning</span>
+              <span>🧪 Dry-run gate</span>
+              <span>✅ Approval required</span>
+            </div>
+            <div className="rb-card-actions">
+              <button className="rb-btn primary" onClick={() => setShowProvisioning(true)}>
                 ▶ Open
               </button>
             </div>
