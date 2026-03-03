@@ -207,6 +207,21 @@ for f in db/migrate_*.sql; do
 done
 ```
 
+### 11. Initialize Service Accounts
+
+If you are using the Snapshot or VM Provisioning features, create the hidden Keystone service accounts after the API container is running:
+
+```bash
+# Create the VM provisioning service user in Platform9 Keystone
+# (requires PROVISION_* env vars to be set in .env first)
+docker exec pf9_api python3 /app/setup_provision_user.py
+
+# Verify (check logs for success message)
+docker logs pf9_api --tail 20 | grep provision
+```
+
+> **Note**: The `provisionsrv` user is a native Keystone user (NOT in LDAP). It will not appear in the management UI user lists. Only run this script once — subsequent runs will fail if the user already exists, which is harmless.
+
 ---
 
 ## Scheduled Tasks (cron)
