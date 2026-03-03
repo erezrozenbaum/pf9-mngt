@@ -92,6 +92,14 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Approval workflow: per-runbook policies with role-based trigger→approver mappings (high-risk runbooks require admin approval)
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
+- **VM Provisioning — Runbook 2** (v1.39.0):
+  - "☁️ VM Provisioning" card in Runbooks tab — 4-step form: domain/project → VM rows → OS credentials + cloud-init preview → review + submit
+  - Tenant-scoped auth via `provisionsrv` Keystone service account (not in LDAP); run `setup_provision_user.py` once after deploy
+  - Windows: cloudbase-init `#ps1_sysnative` + Nova `adminPass`; dry-run emits `windows_cloudinit` + `windows_glance_property` warnings
+  - Admin Tools → "🖥️ VM Provisioning" sub-tab: full batch history + expandable per-VM table + dark-terminal activity timeline
+  - Rich completion email: VM table with image/flavor/OS/GB/error columns + execution timeline section
+  - 15 API endpoints at `/api/vm-provisioning/*`; 2 auto-migrated DB tables; 5 notification event types
+  - RBAC: inherited from runbook framework; approve/reject admin-only
 - **Bulk Customer Onboarding** (v1.38.0, patched v1.38.1):
   - "📦 Bulk Customer Onboarding" card in Runbooks tab opens a dedicated multi-step workflow
   - Upload a four-sheet Excel workbook (`customers`, `projects`, `networks`, `users`) → validate → dry-run → approve → execute against PCD

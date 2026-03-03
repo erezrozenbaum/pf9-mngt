@@ -202,6 +202,18 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
 - **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`). `db/migrate_new_runbooks.sql` for adding the 7 new runbooks (v1.25+).
 
+### VM Provisioning — Runbook 2 (v1.39.0)
+- **☁️ VM Provisioning Tab**: Boot-from-volume VM provisioning workflow accessible from the Runbooks tab → ☁️ VM Provisioning card. 4-step form: domain/project + quota overview → VM rows (image, flavor, network, SG, static IP) → OS credentials + cloud-init preview → review + submit.
+- **Tenant-Scoped Auth (`provisionsrv`)**: Dedicated native Keystone service account (NOT in LDAP — invisible to tenants). Authenticates with a real project-scoped token per execution so Nova/Cinder/Neutron resources are created inside the correct tenant project. Configure via `PROVISION_SERVICE_USER_EMAIL` + `PROVISION_USER_PASSWORD_ENCRYPTED`. Run `docker exec pf9_api python3 /app/setup_provision_user.py` once after deployment.
+- **Windows Support**: cloud-init via cloudbase-init `#ps1_sysnative` — built-in `Administrator` activated + password set (no `/add`); custom users created and added to Administrators group. `adminPass` also sent via Nova metadata for `SetUserPasswordPlugin`. Dry-run emits `windows_cloudinit` + `windows_glance_property` warnings.
+- **Admin Tools → VM Provisioning sub-tab**: Full batch history with status badges, per-VM expandable detail (image, flavor, OS, GB, error), and dark-terminal activity timeline drawn from `activity_log`.
+- **Rich completion email**: VM table includes image, flavor, OS type, volume GB, error columns; execution timeline section lists every `activity_log` step with timestamps and colour-coded action labels.
+- **Approval Gate**: Request → approve/reject by admin; execution only runs after approval (unless `require_approval=false`).
+- **15 API Endpoints** at `/api/vm-provisioning/*`: `GET /resources`, `GET /quota`, `GET /available-ips`, `GET /template`, `POST /upload`, `POST /batches`, `GET /batches`, `GET /batches/{id}`, `GET /batches/{id}/logs`, `POST /batches/{id}/dry-run`, `POST /batches/{id}/submit`, `POST /batches/{id}/decision`, `POST /batches/{id}/execute`, `POST /batches/{id}/re-execute`, `DELETE /batches/{id}`.
+- **2 DB Tables**: `vm_provisioning_batches`, `vm_provisioning_vms` — auto-migrated on API startup.
+- **5 Notification Event Types**: `vm_provisioning_submitted`, `vm_provisioning_approved`, `vm_provisioning_rejected`, `vm_provisioning_completed`, `vm_provisioning_failed`.
+- **Naming Convention**: `{tenant_slug}_vm_{suffix}`, hostname uses hyphen (RFC 1123).
+
 ### Bulk Customer Onboarding — Runbook 1 (v1.38.0, patched v1.38.1)
 - **📦 Bulk Customer Onboarding Tab**: Multi-step Excel-driven workflow to onboard multiple customers (domains), projects, networks, and users to PCD in a single operator action. Accessible from the Runbooks tab via a dedicated card.
 - **Workflow States**: `UPLOAD → VALIDATING → VALIDATED | INVALID → PENDING_APPROVAL → APPROVED | REJECTED → DRY_RUN_PENDING → DRY_RUN_PASSED | DRY_RUN_FAILED → EXECUTING → COMPLETE | PARTIALLY_FAILED`
@@ -584,6 +596,19 @@ Manual LDAP or database admin setup is no longer required for initial deployment
 2. **Operator**: Read + limited write (networks, flavors)
 3. **Admin**: Full operational access except user management
 4. **Superadmin**: Complete system access including user management
+
+### Hidden Service Accounts (Keystone-Native)
+
+Two dedicated service accounts exist in Platform9 Keystone that are **not** LDAP users and are therefore invisible to all tenant-facing views:
+
+| Account | Purpose | Env vars |
+|---|---|---|
+| `snapshotsrv` | Cross-tenant snapshot creation | `SNAPSHOT_SERVICE_USER_EMAIL`, `SNAPSHOT_USER_PASSWORD_ENCRYPTED` |
+| `provisionsrv` | Tenant-scoped VM provisioning (Runbook 2) | `PROVISION_SERVICE_USER_EMAIL`, `PROVISION_USER_PASSWORD_ENCRYPTED` |
+
+Both accounts use Fernet-encrypted passwords stored in `.env`. Role assignments are idempotent — the system grants the `member` role on demand before each operation and caches the grant in-process.
+
+> **Do NOT add these accounts to OpenLDAP.** They must remain Keystone-native to stay invisible to tenant customer UIs and export tools. Use `docker exec pf9_api python3 /app/setup_provision_user.py` to create `provisionsrv` during initial deployment.
 
 ### Permission Enforcement
 - **Middleware-Based**: RBAC middleware checks permissions before processing requests

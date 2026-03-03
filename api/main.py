@@ -59,6 +59,9 @@ from metering_routes import router as metering_router
 # Provisioning & domain management endpoints
 from provisioning_routes import router as provisioning_router
 
+# VM Provisioning Runbook (Runbook 2)
+from vm_provisioning_routes import router as vm_provisioning_router
+
 # Reports endpoints
 from reports import router as reports_router
 
@@ -309,6 +312,7 @@ app.include_router(search_router)
 app.include_router(runbook_router)
 app.include_router(copilot_router)
 app.include_router(onboarding_router)
+app.include_router(vm_provisioning_router)
 app.include_router(migration_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode

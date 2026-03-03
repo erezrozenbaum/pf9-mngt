@@ -240,3 +240,4 @@ Using service user session for project <name>
 - [Security Checklist](SECURITY_CHECKLIST.md) — Security hardening recommendations
 - [Deployment Guide](DEPLOYMENT_GUIDE.md) — Deployment configuration
 - [Fernet Encryption](https://cryptography.io/en/latest/fernet/) — Cryptography library docs
+- [VM Provisioning Service User](DEPLOYMENT_GUIDE.md) — `provisionsrv` follows the same pattern for Runbook 2 (VM Provisioning); see the "VM Provisioning Service User" section in the Deployment Guide

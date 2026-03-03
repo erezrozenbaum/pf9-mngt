@@ -5,6 +5,105 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.0] - 2026-03-03
+
+### Added — Runbook 2: VM Provisioning (Boot-from-Volume)
+
+Full guided VM provisioning workflow as Runbook 2: multi-step UI form with live PCD dropdowns,
+Excel bulk upload, quota pre-check, dry-run gate, approval gate, background execution,
+audit trail, and email notification on completion.
+
+#### Backend (`api/`)
+- **`vm_provisioning_routes.py`** (new) — FastAPI router at `/api/vm-provisioning`:
+  - `GET /resources` — returns Glance images, disk=0 flavors, networks, SGs scoped to domain+project
+  - `GET /quota` — Nova + Cinder quota with usage for the target project
+  - `GET /available-ips` — computes free IPs from subnet allocation pools (cap 200)
+  - `GET /template` — download Excel bulk provisioning template (openpyxl)
+  - `POST /upload` — parse + validate Excel workbook, return structured row data
+  - `POST /batches` — create provisioning batch (form or Excel-derived)
+  - `GET /batches` — list all batches (latest 100)
+  - `GET /batches/{id}` — batch detail with VM rows
+  - `POST /batches/{id}/dry-run` — pre-flight: image/flavor/network/SG/name/cloud-init/quota checks
+  - `POST /batches/{id}/submit` — submit for approval
+  - `POST /batches/{id}/decision` — approve or reject
+  - `POST /batches/{id}/execute` — background execution per VM row
+  - `DELETE /batches/{id}` — delete batch (not while executing)
+  - Background thread: Cinder volume create → poll `available` → Nova BFV boot → poll `ACTIVE` → console log → completion email
+  - DB tables: `vm_provisioning_batches`, `vm_provisioning_vms` (inline SQL, no file dependency)
+  - cloud-init auto-generated: Linux (`#cloud-config`, SHA-512 password hash) or Windows (cloudbase-init `#ps1_sysnative`)
+  - Naming convention: `{tenant_slug}_vm_{suffix}`, hostname uses hyphen instead of underscore (RFC 1123)
+- **`pf9_control.py`** — new methods: `list_images()`, `get_image()`, `list_diskless_flavors()`, `get_quota_usage()`, `list_available_ips()`, `create_boot_volume()`, `get_volume()`, `create_server_bfv()`, `get_server()`, `get_console_log()`, `scoped_for_project()`; Glance endpoint discovery added to `authenticate()`
+- **`main.py`** — registered `vm_provisioning_router`
+- **`notification_routes.py`** — added 5 new event types: `vm_provisioning_submitted`, `vm_provisioning_approved`, `vm_provisioning_rejected`, `vm_provisioning_completed`, `vm_provisioning_failed`
+
+#### Frontend (`pf9-ui/`)
+- **`VmProvisioningTab.tsx`** (new) — 4-step form:
+  - Step 1: domain + project selection, resource loading, live quota overview panel
+  - Step 2: VM rows — image card grid, disk=0 flavor table, volume GB, network dropdown, SG chip picker with dropdown, static IP toggle + available IP list
+  - Step 3: per-row OS credentials (username + password) + collapsible cloud-init YAML override + preview
+  - Step 4: review table + batch name + submit
+  - Batch list view with dry-run / submit / approve / reject / execute / refresh / delete actions
+  - Batch detail modal with dry-run check results and VM status table
+  - Auto-poll for executing batches (6 s interval)
+- **`VmProvisioningTab.css`** (new) — dark theme matching BulkOnboardingTab
+- **`RunbooksTab.tsx`** — added ☁️ VM Provisioning card (blue border) + `showProvisioning` state + conditional render
+
+### Fixed — VM Provisioning: Tenant-Scoped Auth (`provisionsrv`)
+
+Root cause: the admin token was scoped to the `service` project; Nova/Neutron/Cinder resource lookups (SGs, networks, volumes) resolved against that scope instead of the target tenant, causing "not found" errors during execution.
+
+Fix: introduced a dedicated `provisionsrv` Keystone service account (native Keystone user, NOT in LDAP — invisible to tenant UI) that authenticates with a real project-scoped token for each execution. Mirrors the `snapshotsrv` pattern.
+
+#### New Files
+- **`api/vm_provisioning_service_user.py`** — provisionsrv credential management + role assignment + scoped client factory:
+  - `get_provision_user_password()` — Fernet-decrypts password from env
+  - `ensure_provisioner_in_project(admin_client, project_id)` — idempotent `member` role grant (cached per process run)
+  - `get_provisioner_client(project_id, …)` — returns a `Pf9Client` authenticated and scoped to the target project
+- **`api/setup_provision_user.py`** — one-time Keystone user creation script: `docker exec pf9_api python3 /app/setup_provision_user.py`
+
+#### Updated Files
+- **`api/pf9_control.py`** `scoped_for_project()` — now calls `get_provisioner_client()` for real project-scoped Keystone auth instead of copying admin token
+- **`api/pf9_control.py`** `create_boot_volume()` — removed `project_id` body injection (provisionsrv token scope ensures correct placement automatically)
+- **`api/pf9_control.py`** `get_volume()` — removed `all_tenants=1` (provisionsrv token is already project-scoped)
+- **`api/vm_provisioning_routes.py`** `_execute_batch_thread()` — `ensure_provisioner_in_project()` called before every execution (critical: Re-run bypasses dry-run, so this must run in the execute path)
+- **`api/vm_provisioning_routes.py`** `dry_run()` — also calls `ensure_provisioner_in_project()` for early validation
+- **`docker-compose.yml`** — added `PROVISION_SERVICE_USER_EMAIL`, `PROVISION_SERVICE_USER_DOMAIN`, `PROVISION_PASSWORD_KEY`, `PROVISION_USER_PASSWORD_ENCRYPTED` to `pf9_api` environment
+
+#### New Environment Variables
+| Variable | Description |
+|---|---|
+| `PROVISION_SERVICE_USER_EMAIL` | Keystone username for provisionsrv (e.g. `provisionsrv@domain.com`) |
+| `PROVISION_SERVICE_USER_DOMAIN` | Keystone domain (default `Default`) |
+| `PROVISION_PASSWORD_KEY` | Fernet key for password decryption |
+| `PROVISION_USER_PASSWORD_ENCRYPTED` | Fernet-encrypted provisionsrv password |
+
+### Fixed — VM Provisioning: Windows Cloud-Init, Admin History, Rich Email (v1.39.0 patch)
+
+#### Windows Cloud-Init (`api/vm_provisioning_routes.py`)
+- **`_build_cloudinit_windows()`** rewritten: built-in `Administrator` account handled without `/add` (which silently fails on built-in accounts) — now uses `net user Administrator "{pwd}"` + `/active:yes` + PasswordExpires=False; custom user path unchanged (`/add` + Administrators group)
+- **`create_server_bfv()` `admin_pass` parameter** (`api/pf9_control.py`): sets `body["server"]["adminPass"]` for cloudbase-init `SetUserPasswordPlugin` as belt-and-suspenders alongside user_data
+- **Call site updated** in `_execute_batch_thread` to pass `admin_pass=vm["os_password"]` for Windows VMs
+- **Dry-run** emits `windows_cloudinit` (warning) if image lacks `os_type=windows` Glance property and `windows_glance_property` (warning) for missing Glance property
+- **`VmProvisioningTab.tsx` `buildVmInitPreview()`**: consolidated Windows detection into a single branch; now shows correct `#ps1_sysnative` script for Windows (built-in Admin vs custom user) and unchanged `#cloud-config` for Linux
+
+#### Admin Tools — VM Provisioning History Tab (`pf9-ui/src/components/UserManagement.tsx`)
+- New **"🖥️ VM Provisioning"** sub-tab in Admin Tools (between Runbook Executions and Runbook Approvals)
+- Lists all batches: `#`, Batch Name, Domain/Project, Status badge (colour-coded), Approval Status, Created By, Date, ▼ View
+- ▼ View toggle fetches `GET /api/vm-provisioning/batches/{id}` + `GET /api/vm-provisioning/batches/{id}/logs` and shows:
+  - Per-VM table: Name, Status, IP(s), Image, Flavor, OS, GB, Error
+  - Execution timeline: dark terminal panel with timestamps, action labels (green/red/blue), and message from `activity_log`
+- Refresh button; loading indicator; row count badge
+
+#### Completion Email Enhancement (`api/vm_provisioning_routes.py`)
+- **`_build_completion_email(batch, vm_rows, activity_steps=None)`**: added `activity_steps` parameter
+  - VM table gains columns: Image (truncated, `title` tooltip), Flavor, OS Type, Volume GB, Error (red, truncated)
+  - Status cells use coloured badge spans (green/red/blue bg + text)
+  - New **"Execution Timeline"** section below the VM table: dark `#0f172a` panel, monospaced font, timestamp + action label (colour-coded) + message per entry
+  - Header sub-line now shows submitter + status in addition to VM count / domain / project
+- **Call site in `_execute_batch_thread`**: now queries `activity_log` for both `vm_provisioning` and `vm_provisioning_vm` entries ordered by `created_at` and passes result as `activity_steps`
+
+---
+
 ## [1.38.2] - 2026-03-02
 
 ### Fixed — Bulk Customer Onboarding: networks, email notifications, UX

@@ -128,7 +128,7 @@ This document covers:
 | **pf9_ui** | pf9_api (:8000) | HTTP + JWT Bearer | All data & admin ops | JWT only |
 | **pf9_api** | pf9_db (:5432) | TCP/PostgreSQL | Read/write all tables | `POSTGRES_USER/PASSWORD` |
 | **pf9_api** | pf9_ldap (:389) | LDAP bind | Authentication | `LDAP_BIND_DN/PASSWORD` |
-| **pf9_api** | Platform9 Keystone/Nova/Neutron/Cinder | HTTPS | Proxy operations + provisioning | `PF9_USERNAME/PASSWORD` |
+| **pf9_api** | Platform9 Keystone/Nova/Neutron/Cinder | HTTPS | Proxy operations + provisioning | `PF9_USERNAME/PASSWORD` + `PROVISION_SERVICE_USER` |
 | **pf9_api** | pf9_monitoring (:8001) | HTTP | Fetch cached metrics | — |
 | **snapshot_worker** | Platform9 Cinder/Nova/Keystone | HTTPS | Cross-tenant snapshot CRUD | `PF9_USERNAME` + `SNAPSHOT_SERVICE_USER` |
 | **snapshot_worker** | pf9_db | TCP/PostgreSQL | Store snapshot/compliance records | `POSTGRES_USER/PASSWORD` |
@@ -143,6 +143,8 @@ This document covers:
 ### Key Security Boundary
 
 > **The API container (`pf9_api`) is the sole gateway** between the management system and Platform9/OpenStack APIs. All PF9 credentials are confined to the API container and the snapshot_worker container. No other service holds Platform9 credentials; the UI, workers, and admin tools communicate only through the API or directly with the local PostgreSQL/LDAP services.
+
+> **Dual-session pattern**: For tenant-scoped operations (snapshots, VM provisioning), `pf9_api` maintains two simultaneous Keystone sessions — (1) an **admin session** (`PF9_USERNAME`) for cross-tenant metadata queries, and (2) a **project-scoped service-user session** (`snapshotsrv` or `provisionsrv`) for resource creation in the correct tenant project. The service users are native Keystone users (not in LDAP) and are invisible to tenant-facing UIs.
 
 ## 🎯 Core Design Principles
 
