@@ -3135,6 +3135,8 @@ Response:
 
 Generates a full migration plan with per-VM time estimates based on the project's bandwidth model. Includes per-tenant breakdowns and a daily migration schedule.
 
+**Scope**: Only includes tenants where `include_in_plan = true` **and** VMs where `exclude_from_migration = false`. Templates are excluded. The `project_summary.excluded_tenants` field reports how many tenants were omitted.
+
 Response:
 ```json
 {
@@ -3146,7 +3148,9 @@ Response:
     "total_disk_tb": 48.2,
     "bottleneck_mbps": 500,
     "estimated_total_hours": 1240.5,
-    "estimated_days": 21
+    "estimated_days": 21,
+    "effective_gbph": 990.0,
+    "max_gb_per_day": 7920.0
   },
   "tenant_plans": [
     {
@@ -3178,7 +3182,10 @@ Response:
   "daily_schedule": [
     {
       "day": 1,
-      "vms": ["fin-db-01", "fin-app-01", "fin-web-01", "hr-db-01", "hr-app-01"]
+      "vms": ["fin-db-01", "fin-app-01", "fin-web-01", "hr-db-01", "hr-app-01"],
+      "transfer_gb": 1840.5,
+      "wall_clock_hours": 7.4,
+      "over_capacity": false
     }
   ]
 }
@@ -3468,9 +3475,19 @@ Request:
 Update cohort fields (name, dates, order, owner, status, notes, depends_on_cohort_id).
 
 **DELETE** `/api/migration/projects/{project_id}/cohorts/{cohort_id}`  
-*Requires: migration:write*
+*Requires: migration:admin*
 
 Delete a cohort. All assigned tenants are unassigned (cohort_id set to NULL) before deletion.
+
+**DELETE** `/api/migration/projects/{project_id}/cohorts`  
+*Requires: migration:admin*
+
+Delete **all** cohorts for the project in one call. Every tenant's `cohort_id` is set to NULL (including tenants that were excluded from the plan but had a stale cohort assignment from a previous run). Returns:
+```json
+{ "cohorts_deleted": 4, "tenants_unassigned": 27 }
+```
+
+Use this before re-running `auto-assign` whenever project exclusions have changed, to ensure a clean rebuild with no stale assignments.
 
 **POST** `/api/migration/projects/{project_id}/cohorts/{cohort_id}/assign-tenants`  
 *Requires: migration:write*
@@ -3521,6 +3538,73 @@ Response:
 *Requires: migration:read*
 
 Run readiness checks for every tenant in the cohort and return a summary table plus cohort-level overall status (`all_pass`, `partial`, `blocked`).
+
+### Waves
+
+**GET** `/api/migration/projects/{project_id}/waves`  
+*Requires: migration:read*
+
+List all waves with VM count, status, cohort name, schedule dates, and owner.
+
+**POST** `/api/migration/projects/{project_id}/waves`  
+*Requires: migration:write*
+
+Create a wave manually.
+
+Request:
+```json
+{
+  "wave_number": 1,
+  "name": "Wave 1 — Finance",
+  "wave_type": "regular",
+  "cohort_id": 3,
+  "scheduled_start": "2026-03-15",
+  "scheduled_end": "2026-03-17",
+  "owner_name": "ops-team",
+  "agent_slots_override": 4
+}
+```
+
+**POST** `/api/migration/projects/{project_id}/auto-waves`  
+*Requires: migration:write*
+
+Auto-build wave plan from current VM/cohort state. Query params: `?strategy=pilot_first` (default) | `by_tenant` | `by_risk` | `by_priority` | `balanced`. Preview mode: `&preview=true`.
+
+**DELETE** `/api/migration/projects/{project_id}/waves/{wave_id}`  
+*Requires: migration:write*
+
+Delete a single wave. Wave must be in `planned` status.
+
+**DELETE** `/api/migration/projects/{project_id}/waves`  
+*Requires: migration:admin*
+
+Delete **all** waves for the project. Removes all wave-VM assignments and resets `migration_status` back to `not_started` for any VM previously in `assigned` state. Returns:
+```json
+{ "waves_deleted": 8, "vms_reset": 143 }
+```
+
+Use before re-running `auto-waves` after cohort changes or exclusion updates.
+
+**POST** `/api/migration/projects/{project_id}/waves/{wave_id}/assign-vms`  
+*Requires: migration:write*
+
+Assign VM IDs to a wave. `replace: true` clears existing assignments first. Assigned VMs have `migration_status` set to `assigned`.
+
+Request: `{ "vm_ids": [101, 102, 103], "replace": false }`
+
+**DELETE** `/api/migration/projects/{project_id}/waves/{wave_id}/vms/{vm_id}`  
+*Requires: migration:write*
+
+Remove a single VM from a wave. Reverts VM `migration_status` to `not_started` if it is not assigned to any other wave.
+
+**POST** `/api/migration/projects/{project_id}/waves/{wave_id}/advance`  
+*Requires: migration:write*
+
+Advance a wave to its next allowed status. Enforced transition table:
+```
+planned → pre_checks_passed → executing → validating → complete
+any → cancelled  |  failed → planned
+```
 
 ### Tenant Target Bulk Operations (v1.31.3+)
 
@@ -3983,12 +4067,282 @@ Path-parameter variant of the above. Identical response schema with `cohort_filt
 
 Streams a CONFIDENTIAL PDF document with one section per in-scope tenant, sorted by cohort order. Contains domain/project identity, network mappings, and user roster with temporary passwords.
 
-**Response Headers:**
-```
-Content-Type: application/pdf
-Content-Disposition: attachment; filename="migration-handoff-{project-name}.pdf"
+---
+
+## Phase 5.0 — Tech Fix Time & Migration Summary (v1.42.0)
+
+> **Version**: v1.42.0  
+> **RBAC**: `migration:read` for GET endpoints; `migration:write` for PATCH endpoints.  
+> **DB objects**: `migration_fix_settings` table (per-project); `migration_vms.tech_fix_minutes_override INTEGER` column.
+
+### Get Fix Settings
+
+**GET** `/api/migration/projects/{project_id}/fix-settings`  
+*Requires: migration:read*
+
+Returns the fix time model configuration for the project. If no row exists yet, one is automatically created with default values.
+
+Response:
+```json
+{
+  "project_id": "a1b2c3d4-...",
+  "base_minutes_per_gb": 2.0,
+  "red_risk_multiplier": 2.0,
+  "yellow_risk_multiplier": 1.5,
+  "snapshot_penalty_minutes": 5.0,
+  "large_disk_threshold_gb": 500,
+  "large_disk_penalty_minutes": 15.0,
+  "multi_nic_penalty_minutes": 8.0,
+  "windows_rate_per_gb": 3.0,
+  "linux_rate_per_gb": 1.5,
+  "other_os_rate_per_gb": 2.0,
+  "global_override_minutes": null,
+  "updated_at": "2026-03-05T10:00:00Z"
+}
 ```
 
-**Response Body:** Raw PDF bytes (binary).
+---
 
-> ⚠️ This document contains plaintext temporary passwords. The `handoff_sheet_exported` notification event is always fired at `warning` severity when this endpoint is called.
+### Update Fix Settings
+
+**PATCH** `/api/migration/projects/{project_id}/fix-settings`  
+*Requires: migration:write*
+
+Update one or more fix setting fields. All fields are optional — only send what you want to change.
+
+Request body (all fields optional):
+```json
+{
+  "base_minutes_per_gb": 2.5,
+  "red_risk_multiplier": 2.5,
+  "yellow_risk_multiplier": 1.75,
+  "snapshot_penalty_minutes": 7.0,
+  "large_disk_threshold_gb": 400,
+  "large_disk_penalty_minutes": 20.0,
+  "multi_nic_penalty_minutes": 10.0,
+  "windows_rate_per_gb": 3.5,
+  "linux_rate_per_gb": 2.0,
+  "other_os_rate_per_gb": 2.5,
+  "global_override_minutes": null
+}
+```
+
+To apply a global override (bypasses the model for **all** VMs), set `global_override_minutes` to a positive integer. Send `null` to revert to model-computed values.
+
+Response: Updated fix settings object (same schema as GET).
+
+---
+
+### Set or Clear Per-VM Fix Override
+
+**PATCH** `/api/migration/projects/{project_id}/vms/{vm_id}/fix-override`  
+*Requires: migration:write*
+
+Lock a specific VM to a fixed tech fix time in minutes, bypassing the model entirely. Send `null` for `override_minutes` to clear the override and revert to model-computed time.
+
+Path Parameters:
+- `project_id` — Project UUID
+- `vm_id` — VM integer ID (`migration_vms.id`)
+
+Request body:
+```json
+{
+  "override_minutes": 120
+}
+```
+
+To clear the override:
+```json
+{
+  "override_minutes": null
+}
+```
+
+Response:
+```json
+{
+  "vm_id": 42,
+  "vm_name": "fin-db-01",
+  "tech_fix_minutes_override": 120
+}
+```
+
+---
+
+### Get Migration Summary
+
+**GET** `/api/migration/projects/{project_id}/migration-summary`  
+*Requires: migration:read* — *Updated: v1.44.0*
+
+Computes a full executive and operational summary of the project's migration workload. Runs the same `generate_migration_plan()` engine as `export-plan`, ensuring that KPIs, per-day schedule, and fix-time estimates are always aligned with the exportable plan. Fix times are computed dynamically via `compute_project_fix_summary()`, respecting per-VM overrides, global overrides, and fix-settings weights.
+
+**Scope**: In-scope tenants (`include_in_plan = true`) and non-excluded, non-template VMs only.
+
+Response:
+```json
+{
+  "project_id": "a1b2c3d4-...",
+  "project_name": "Acme Corp VMware Migration",
+  "total_vms": 245,
+  "total_in_use_gb": 45230.5,
+  "total_provisioned_gb": 88472.0,
+  "total_data_tb": 44.17,
+  "total_fix_hours": 312.5,
+  "total_copy_hours": 980.2,
+  "total_downtime_hours": 1292.7,
+  "migration_days": 21,
+  "bandwidth_mbps": 500,
+  "per_day": [
+    {
+      "day": 1,
+      "cohort_name": "🧪 Pilot",
+      "tenant_count": 3,
+      "vm_count": 18,
+      "total_gb": 1840.5,
+      "wall_clock_hours": 7.4,
+      "total_agent_hours": 29.2,
+      "cold_count": 2,
+      "warm_count": 16,
+      "risk_green": 12,
+      "risk_yellow": 5,
+      "risk_red": 1,
+      "over_capacity": false
+    },
+    {
+      "day": 5,
+      "cohort_name": "Wave Alpha — Low Risk",
+      "tenant_count": 6,
+      "vm_count": 42,
+      "total_gb": 8920.0,
+      "wall_clock_hours": 10.2,
+      "total_agent_hours": 81.5,
+      "cold_count": 8,
+      "warm_count": 34,
+      "risk_green": 30,
+      "risk_yellow": 10,
+      "risk_red": 2,
+      "over_capacity": true
+    }
+  ],
+  "by_os": [
+    {
+      "os_family": "windows",
+      "vm_count": 120,
+      "total_disk_gb": 24000.0,
+      "avg_fix_minutes": 87.4,
+      "total_fix_hours": 174.8
+    },
+    {
+      "os_family": "linux",
+      "vm_count": 105,
+      "total_disk_gb": 18500.0,
+      "avg_fix_minutes": 54.2,
+      "total_fix_hours": 94.9
+    },
+    {
+      "os_family": "other",
+      "vm_count": 20,
+      "total_disk_gb": 3200.0,
+      "avg_fix_minutes": 63.0,
+      "total_fix_hours": 21.0
+    }
+  ],
+  "per_cohort": [
+    {
+      "cohort_name": "🧪 Pilot",
+      "vm_count": 15,
+      "total_disk_gb": 2400.0,
+      "total_fix_hours": 22.5,
+      "avg_risk_score": 28.4
+    },
+    {
+      "cohort_name": "Wave Alpha — Low Risk",
+      "vm_count": 80,
+      "total_disk_gb": 14000.0,
+      "total_fix_hours": 108.3,
+      "avg_risk_score": 35.1
+    },
+    {
+      "cohort_name": "Unassigned",
+      "vm_count": 150,
+      "total_disk_gb": 29300.0,
+      "total_fix_hours": 181.7,
+      "avg_risk_score": 42.8
+    }
+  ],
+  "methodology": {
+    "data_copy_explanation": "...",
+    "fix_time_explanation": "...",
+    "downtime_explanation": "..."
+  }
+}
+```
+
+**`per_day[]` fields** (v1.44.0+):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `day` | int | Calendar day number (1-based) |
+| `cohort_name` | string | Cohort/wave label for this day's VMs |
+| `tenant_count` | int | Distinct tenants scheduled on this day |
+| `vm_count` | int | VMs scheduled on this day |
+| `total_gb` | float | In-use GB for warm VMs; provisioned GB for cold VMs |
+| `wall_clock_hours` | float | `total_gb / effective_gbph` — actual time to drain through the bottleneck pipe |
+| `total_agent_hours` | float | Sum of per-VM agent time estimates (warm phase-1 + cutover, or cold total) |
+| `cold_count` / `warm_count` | int | Migration mode breakdown |
+| `risk_green/yellow/red` | int | Risk tier breakdown |
+| `over_capacity` | bool | `true` when `wall_clock_hours > working_hours_per_day` — indicates the day's data payload exceeds what the pipe can deliver in a single shift |
+
+**Fix time computation logic** (per VM):
+1. If `tech_fix_minutes_override` is set → use it directly
+2. If `global_override_minutes` is set in fix settings → use it
+3. Otherwise, compute from weighted model:
+   - Base = `in_use_gb × os_rate_per_gb`
+   - Risk multiplier applied for RED / YELLOW VMs
+   - Snapshot penalty × snapshot count
+   - Large disk penalty if `total_disk_gb ≥ large_disk_threshold_gb`
+   - Multi-NIC penalty × (nic_count − 1)
+
+**Key top-level fields**:
+
+| Field | Description |
+|-------|-------------|
+| `total_vms` | In-scope VMs (`include_in_plan = true`, `exclude_from_migration = false`, `template = false`) |
+| `total_in_use_gb` | Sum of `in_use_gb` across all in-scope VMs |
+| `total_provisioned_gb` | Sum of `total_disk_gb` (raw provisioned allocation) across all in-scope VMs |
+| `migration_days` | Number of scheduled days in the generated plan |
+| `bandwidth_mbps` | Bottleneck bandwidth resolved by `compute_bandwidth_model()` |
+| `per_day[].over_capacity` | Day's data payload exceeds `max_gb_per_day` throughput ceiling |
+
+---
+
+### Download Migration Summary — Excel
+
+**GET** `/api/migration/projects/{project_id}/export-summary.xlsx`  
+*Requires: migration:read* — *Added: v1.44.0*
+
+Downloads the current migration summary as a 4-sheet Excel workbook. The endpoint internally calls `get_migration_summary()` — no separate caching layer is required.
+
+**Response**: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`  
+`Content-Disposition: attachment; filename="migration-summary-{project_name}.xlsx"`
+
+**Sheets:**
+
+| Sheet | Contents |
+|-------|----------|
+| Summary KPIs | Total VMs, in-use GB, provisioned GB, migration days, copy/fix/downtime hours, bandwidth |
+| Daily Schedule | One row per day — all `per_day[]` fields; over-capacity rows highlighted red |
+| OS Breakdown | Per-OS family: VM count, fix rate, total fix hours |
+| Cohort Breakdown | Per-cohort: VMs, data GB, data-copy hours, fix hours, downtime hours |
+
+---
+
+### Download Migration Summary — PDF
+
+**GET** `/api/migration/projects/{project_id}/export-summary.pdf`  
+*Requires: migration:read* — *Added: v1.44.0*
+
+Downloads the current migration summary as an A4 portrait PDF. Layout: project header, KPI overview table, daily schedule table (repeated header, red over-capacity rows), OS breakdown, cohort breakdown, and a calculation methodology section.
+
+**Response**: `application/pdf`  
+`Content-Disposition: attachment; filename="migration-summary-{project_name}.pdf"`

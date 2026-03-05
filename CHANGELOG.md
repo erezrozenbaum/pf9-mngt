@@ -5,6 +5,173 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.0] - 2026-03-07
+
+### Added — Migration Summary per-day breakdown + engine throughput cap fix (`api/migration_engine.py`, `api/migration_routes.py`, `pf9-ui`)
+
+#### Engine — Real Throughput Model (`api/migration_engine.py`)
+- **Replaced time-slot packing with a GB/day throughput cap** — the previous scheduling loop used `Σ(per-VM hours) / agent_slots` against `working_hours_per_day * total_concurrent` as the daily limit. This allowed 15 VMs to each "consume" the full 4 000 Mbps bottleneck independently, yielding days that would have required 10× the available bandwidth. The new model treats the shared pipe correctly:
+  - `AVG_BW_EFFICIENCY = 0.55` — realistic utilisation factor accounting for TCP overhead, I/O burst gaps, and agent coordination.
+  - `effective_gbph = (bottleneck_mbps / 8) × 3600 / 1024 × AVG_BW_EFFICIENCY` — effective GB per agent-hour for the entire pipe.
+  - `max_gb_per_day = effective_gbph × working_hours_per_day` — hard daily data-transfer ceiling (e.g. ~7 742 GB/day at 4 000 Mbps, 8-hour shift).
+  - Day packing now breaks when `day_transfer_gb + vm_transfer_gb > max_gb_per_day`.
+- **Corrected `wall_clock_hours`** — was `day_hours_used / total_concurrent` (under-counted); now `day_transfer_gb / effective_gbph` (actual time to drain the day's data through the bottleneck pipe).
+- **New `over_capacity` flag** — set to `true` on any daily schedule entry where `wall_clock_hours > working_hours_per_day`. UI highlights these rows in red with a ⚠️ indicator.
+- **New `transfer_gb` field** on each daily schedule entry — total data-copy payload for that day (in-use GB for warm, provisioned GB for cold).
+- **Exposed `effective_gbph` and `max_gb_per_day` in `project_summary`** — visible in the Migration Plan project summary card and the Migration Summary daily table footer.
+
+#### API — `GET /projects/{id}/migration-summary` rewrite (`api/migration_routes.py`)
+- **Full rewrite** of `get_migration_summary()` to match the export-plan endpoint's data model exactly:
+  - Calls `_get_project()` and `compute_bandwidth_model()` for consistent settings resolution.
+  - **Tenant query now includes cohort JOIN**: `SELECT t.*, c.name AS cohort_name, c.cohort_order FROM migration_tenants t LEFT JOIN migration_cohorts c ON c.id = t.cohort_id` — fixes the alignment bug where all days showed "Uncohorted" in the summary.
+  - **VM query uses `SELECT v.*`** instead of a specific column list, preventing missing-column crashes when new VM fields are added.
+- **New `per_day[]` array** in the response — one row per schedule day, including: `day`, `cohort_name`, `tenant_count`, `vm_count`, `total_gb` (in-use), `wall_clock_hours`, `total_agent_hours`, `cold_count`, `warm_count`, `risk_green`, `risk_yellow`, `risk_red`, `over_capacity`.
+- **New `total_provisioned_gb`** KPI field — total provisioned (raw-disk) GB across all in-scope VMs, shown alongside `total_in_use_gb` so engineers understand thin-provisioning headroom.
+
+#### UI — Migration Summary tab (`pf9-ui/src/components/migration/SourceAnalysis.tsx`)
+- **New "Migration Days" KPI card** (blue) in the executive KPI strip.
+- **"Total Data" card** relabelled to **"In-Use Data (TB)"** with a subtitle showing the provisioned total (`X GB used / Y.YY TB provisioned`).
+- **Per-day schedule table** between the KPI strip and OS breakdown: columns Day, Cohort/Wave, Tenants, VMs, Storage GB (in-use), Wall-clock (h), Agent Total (h), ❄️ Cold, 🔥 Warm, 🟢/🟡/🔴 risk counts; totals row at bottom. Over-capacity days highlighted in red with ⚠️ prefixed to the wall-clock value.
+- **Migration Plan — project summary footer** now shows *"Daily throughput cap: X.X TB/day (N GB)"* derived from `project_summary.max_gb_per_day`.
+- **Migration Plan — daily schedule rows** show wall-clock time in red with *"⚠️ exceeds Xh"* sub-label when `day.over_capacity = true`.
+- **📊 Export Excel / 📑 Export PDF buttons** added to the Migration Summary tab header — download a pre-formatted workbook (4 sheets: KPI, Daily Schedule, OS Breakdown, Cohort Breakdown) or a portrait PDF with KPI table, daily schedule, OS/cohort breakdowns, and methodology notes.
+
+#### Backend — Migration Summary Export (`api/export_reports.py`, `api/migration_routes.py`)
+- **`generate_summary_excel_report(summary, project_name)`** — 4-sheet `.xlsx`: Summary KPIs, Daily Schedule (with red over-capacity row fill), OS Breakdown, Cohort Breakdown.
+- **`generate_summary_pdf_report(summary, project_name)`** — A4 portrait PDF: KPI table, daily schedule table (repeated header), OS and cohort breakdowns, methodology section.
+- **`GET /api/migration/projects/{id}/export-summary.xlsx`** — streams the Excel file as `migration-summary-{project}.xlsx`.
+- **`GET /api/migration/projects/{id}/export-summary.pdf`** — streams the PDF as `migration-summary-{project}.pdf`.
+
+---
+
+## [1.43.0] - 2026-03-06
+
+### Fixed — Wave Planner crash + risk column + wave capacity warning (`pf9-ui/src/components/migration/SourceAnalysis.tsx`)
+
+#### Bug Fixes
+- **Crash: `v.in_use_gb?.toFixed is not a function`** — PostgreSQL `NUMERIC` columns returned by the API serialize as JSON strings; `?.toFixed()` is not available on strings. Fixed by wrapping with `Number(v.in_use_gb).toFixed(1)` so the conversion happens before calling `.toFixed()`. Eliminates the uncaught `TypeError` that crashed the entire Wave Planner view when a wave was expanded.
+- **Wrong risk colour / always amber** — VM rows in the expanded wave table were reading `v.risk_classification` but the field is named `risk_category` (matching the DB column and API response). Renamed all three references; risk dots (🟢/🟡/🔴) and colours now reflect actual risk tier.
+
+#### Feature
+- **Wave daily-capacity warning** (`WavePlannerView`) — each wave card now shows:
+  - `💾 X.X GB` — total used-disk across all VMs in the wave (summed from the pre-loaded `wave.vms[]` array, always available in the list response).
+  - `⚠️ Exceeds 1-day capacity (Y.Y GB/day)` in red — displayed when the wave's disk total exceeds the project's effective daily transfer capacity. The capacity is derived from the same bandwidth model used by the migration engine: bottleneck of source NIC, WAN link, agent ingest, and PCD storage write throughput (all converted to Mbps), then translated to GB/working-day using `project.working_hours_per_day`. Hovering the badge shows the exact capacity figure.
+
+---
+
+## [1.42.0] - 2026-03-05
+
+### Added — Migration Planner Phase 5.0: Tech Fix Time & Migration Summary (`api/migration_engine.py`, `api/migration_routes.py`, `pf9-ui`)
+
+#### Fix Time Estimation Engine
+- **`compute_vm_fix_time()`** (`migration_engine.py`) — per-VM post-migration fix time model: sums weighted risk-factor scores (Windows OS, extra volumes, extra NICs, cold migration, risk tier, snapshots, cross-tenant dependencies, unknown OS) plus a base cutover window (default 30 min); multiplied by OS-family fix rate (Windows 50%, Linux 20%, Other 40%) to produce expected intervention time in minutes.
+- **`compute_project_fix_summary()`** — project-level rollup: sums per-VM fix time across all in-scope VMs; groups by OS family and by cohort; computes data-copy time from bottleneck bandwidth; builds a methodology block explaining all three calculations.
+- **`DEFAULT_FIX_WEIGHTS`** — 10 configurable weight factors (all in minutes); exposed via the Fix Settings API.
+- **`migration_fix_settings` table** — per-project row storing 10 weight factors + 3 OS fix rates + optional global rate override; auto-created with defaults on first `GET /fix-settings` access.
+- **`migration_vms.tech_fix_minutes_override INTEGER DEFAULT NULL`** — operator can lock any individual VM to a specific fix time, bypassing the model entirely.
+
+#### Fix Settings & Summary API (`api/migration_routes.py`)
+- **`GET /projects/{id}/fix-settings`** — returns current weights + rates (auto-creates defaults on first call).
+- **`PATCH /projects/{id}/fix-settings`** — partial updates to any weight or fix rate; `null` resets a field to its default.
+- **`PATCH /projects/{id}/vms/{vm_id}/fix-override`** — set or clear `tech_fix_minutes_override`; `null` clears the override and re-enables model calculation.
+- **`GET /projects/{id}/migration-summary`** — full executive summary: KPI totals (VM count, data TB, data-copy hours, fix hours, total downtime hours); OS-family breakdown; per-cohort breakdown (vm_count, data_gb, copy_h, fix_h, downtime_h); bandwidth model parameters; methodology accordion text.
+- All 4 routes use the shared `_get_fix_settings()` helper and the `with _get_conn() as conn:` pattern.
+
+#### Migration Summary Tab (UI)
+- **`MigrationSummaryView`** component added to `SourceAnalysis.tsx` — accessible as the **"📊 Summary"** sub-tab.
+- **Executive KPI strip**: Total VMs in scope, Total Data (TB), Estimated Data-Copy Time, Estimated Fix Time, Total Downtime.
+- **OS-family breakdown table**: per-OS row with VM count, fix rate %, data (GB), estimated fix time.
+- **Per-cohort breakdown table**: one row per cohort with VM count, data (GB), copy time (h), fix time (h), and total downtime exposure.
+- **Methodology accordion**: expandable section explaining data-copy time, per-VM fix score, expected fix time, and total downtime — suitable for management presentation.
+- **Settings editor**: 10 weight sliders + 3 fix-rate percentage inputs + optional global override; **"💾 Save & Recalculate"** button writes to `PATCH /fix-settings` then re-fetches the summary.
+
+#### VM Fix Time Override (UI)
+- **VM table Fix column**: each row shows a `🔒 Xm` amber pill when an override is set, or `auto` in grey when the model is active; `fixOverrideLocal` React state updates the badge immediately after a save without a full reload.
+- **"⏱ Fix Time Override" card** in the expanded VM row (alongside Mode Override and Migration Status panels): number input (blank = auto/model), **Save** button, **Clear** button (only when override is active). Uses `fixOverrideInput`, `fixOverrideSaving`, `fixOverrideLocal` state; calls `PATCH /vms/{id}/fix-override`.
+
+#### Tenant Tab Filter Dropdowns (UI)
+- Four new filter dropdowns in the Tenants sub-tab toolbar: **Scope** (All / In Scope / Out of Scope), **Ease** (All / Easy / Medium / Hard), **Cohort** (All / Unassigned / per-cohort name), **Network Type** (All / NSX-T / VLAN / Standard / Isolated).
+- **Clear Filters** button appears when any filter is active.
+
+#### DB Migration
+- **`db/migrate_tech_fix.sql`** — `ALTER TABLE migration_vms ADD COLUMN IF NOT EXISTS tech_fix_minutes_override INTEGER DEFAULT NULL`; `CREATE TABLE IF NOT EXISTS migration_fix_settings (...)` with 10 weight columns, 3 OS-rate columns, and a global rate override. Applied to live DB.
+
+### Added — Migration Planner: Reset Cohorts & Waves (`api/migration_routes.py`)
+- **`DELETE /projects/{id}/cohorts`** — deletes ALL cohorts for a project in one call; NULLs `cohort_id` on every tenant row (even tenants that were previously excluded and therefore had stale assignments). Returns `cohorts_deleted` and `tenants_unassigned` counts. Requires `admin` permission.
+- **`DELETE /projects/{id}/waves`** — deletes ALL waves for a project; removes all `migration_wave_vms` rows; resets `migration_status` back to `not_started` for any VM that was in `assigned` state. Returns `waves_deleted` and `vms_reset` counts. Requires `admin` permission.
+- **🗑️ Reset All Cohorts button** added to the Cohorts tab toolbar (visible when cohorts exist). Calls `DELETE /cohorts`, confirms before executing, then reloads.
+- **🗑️ Reset All Waves button** added to the Wave Planner toolbar (visible when waves exist). Calls `DELETE /waves`, confirms before executing, then reloads.
+- Use these before re-running `auto-assign` / `auto-waves` whenever exclusions have changed, to guarantee a clean rebuild with no stale assignments from previous runs.
+
+### Fixed — Migration Planner: Auto-Assign Cohort Preview Showing Wrong Disk Value (`api/migration_routes.py`, `api/migration_engine.py`, `pf9-ui`)
+- **SQL fallback bug** — the `total_used_gb` tenant query used `ROUND(t.total_disk_gb / 1024.0, 2)` as the fallback when `in_use_gb` was not available. Since `total_disk_gb` is already in GB, dividing by 1024 produced TB-scale tiny numbers. Fixed: fallback chain is now `NULLIF(SUM(v.in_use_gb), 0)` → `t.total_in_use_gb` → `t.total_disk_gb` (provisioned, last resort). Both preview and apply queries updated. `t.total_in_use_gb` added to GROUP BY.
+- **Misleading field name** — `_format_auto_assign_result` returned `total_disk_gb` in cohort summaries but the value was actually disk usage. Renamed to `total_used_gb` to match the source data.
+- **Ambiguous UI label** — preview table column header "Disk (GB)" renamed to "Used (GB)" to make clear the value is actual disk usage from vPartition (`in_use_gb`), not provisioned allocation.
+
+### Fixed — Migration Planner: Exclusion Filters Not Honoured in Capacity & Summary Endpoints (`api/migration_routes.py`)
+- **`GET /projects/{id}/node-sizing`** (Capacity tab hardware sizing) — VM stats query had **no exclusion filters at all**: it aggregated vCPU, RAM, and disk across every VM in the project regardless of whether the org was excluded from the plan or whether individual VMs were marked `exclude_from_migration`. Fixed: query now joins `migration_tenants` and enforces `include_in_plan = true`, `exclude_from_migration = false`, and `template = false`.
+- **`GET /projects/{id}/export-plan`** — correctly filtered tenant-level exclusions via `include_in_plan = true` but did **not** filter individual VMs excluded via the VM table checkbox. Fixed: added `AND NOT COALESCE(v.exclude_from_migration, false)` to the VM query.
+- **`GET /projects/{id}/migration-summary`** — same gap: org-level exclusion was respected but individual VM exclusions were silently included in KPIs and breakdowns. Fixed: added `AND NOT COALESCE(vm.exclude_from_migration, false)` and `AND NOT COALESCE(vm.template, false)` to the VM query.
+- No re-assessment required — these were all query-time filters; stored risk scores and time estimates are unaffected.
+
+### Fixed — Migration Planner: Excluded Tenants Leaking Into Cohort & Readiness Endpoints (`api/migration_routes.py`)
+- **`GET /projects/{id}/cohorts`** — cohort aggregate columns (`vm_count`, `total_vcpu`, `total_ram_gb`, `total_disk_gb`) were computed from ALL tenants assigned to each cohort including those with `include_in_plan = false`. Fixed: the `LEFT JOIN migration_tenants` now includes `AND COALESCE(t.include_in_plan, true) = true` so excluded tenants do not inflate cohort capacity totals.
+- **`GET /projects/{id}/cohorts/{cohort_id}/summary`** — tenant list and VM status breakdown both included excluded tenants. Fixed: tenant query adds `AND COALESCE(include_in_plan, true) = true`; VM breakdown adds `AND NOT COALESCE(exclude_from_migration, false)` and `AND NOT COALESCE(template, false)`.
+- **`GET /projects/{id}/cohorts/{cohort_id}/readiness-summary`** — readiness checks were run and counted for excluded tenants, inflating the "not ready" count and potentially blocking cohort proceed decisions. Fixed: query adds `AND COALESCE(include_in_plan, true) = true` so only in-scope tenants are evaluated.
+- `auto_assign_cohorts` and `list_waves` were already correct.
+
+### Fixed — Migration Planner: Excluded Tenants/VMs Leaking Into Networks & PCD Gap Analysis (`api/migration_routes.py`)
+- **`GET /projects/{id}/networks`** — `tenant_names` and `tenant_count` fields aggregated tenant names from ALL VMs (including excluded tenants and individually excluded VMs). Fixed: added a `LEFT JOIN migration_tenants` with `COALESCE(t.include_in_plan, true) = true` and filters for `exclude_from_migration` and `template` on the VM join so only in-scope VMs contribute to the per-network tenant summary.
+- **`GET /projects/{id}/network-mappings`** — `vm_count` per source network counted ALL powered-on VMs, including excluded ones. Fixed: the VM join now adds `NOT COALESCE(v.exclude_from_migration, false)`, `NOT COALESCE(v.template, false)`, and an `EXISTS` sub-check against `migration_tenants.include_in_plan` so only in-scope VMs are counted per mapping row.
+- **`POST /projects/{id}/pcd-gap-analysis`** — the tenants query already filtered by `include_in_plan = true`, but the VMs query fetched ALL project VMs (no tenant-scope or individual-VM exclusion checks). Flavor/image/network gap analysis was therefore run against excluded VMs, producing phantom gaps. Fixed: VMs query now joins `migration_tenants` with `include_in_plan = true` and adds `NOT COALESCE(v.exclude_from_migration, false)` and `NOT COALESCE(v.template, false)`.
+- `network-mappings/readiness`, `pcd-gaps`, and `pcd-gap-analysis` scoring were already correct (they operate on stored mapping/gap records).
+
+## [1.41.0] - 2026-03-05
+
+### Fixed — Migration Planner: Routed Network Type Classification (`api/migration_engine.py`)
+- **`Routed_Net` now correctly classified as `nsx_t`** instead of `standard`. In VMware NSX-T, "Routed" networks are Tier-1 GENEVE overlay segments — they require NSX-T handling and cannot be directly mapped to standard vSwitch portgroups on PCD.
+- Added `"routed"` and `"routed_net"` to `_NSXT_PATTERNS` so any network whose name contains "routed" is tagged as `nsx_t`.
+- Added `"dlr-"` and `"esg-"` to `_NSXT_PATTERNS` for NSX-V Distributed/Edge Logical Router uplinks (also GENEVE-encapsulated, same migration implications).
+- **`POST /projects/{project_id}/networks/reclassify`** — new endpoint that re-runs `_build_network_summary()` for a project, re-applying updated classification rules to all existing `migration_networks` rows without requiring a full RVTools re-upload.
+- **"🔄 Reclassify Types" button** added to the Networks tab toolbar in the Migration Planner UI — calls the above endpoint and refreshes the network list.
+
+### Added — Migration Planner: Tenants Page Decision Data (`api/migration_routes.py`, `pf9-ui`)
+- **`GET /projects/{project_id}/tenants`** now returns 5 new fields per tenant alongside all existing allocation data:
+  - `used_vcpu` — actual vCPU consumption (cpu_count × cpu_usage_percent / 100, summed over all tenant VMs)
+  - `used_ram_gb` — actual RAM usage in GB (from `memory_usage_mb` column, or fallback to ram_mb × memory_usage_percent)
+  - `used_disk_gb` — actual used disk in GB (from `in_use_gb`, sourced from RVTools vPartition)
+  - `est_migration_hours` — estimated migration duration at 100 GB/h effective throughput (NULL if no usage data)
+  - `network_type_counts` — JSON object `{nsx_t: N, vlan_based: M, standard: P, isolated: Q}` counting distinct networks reachable from this tenant's VMs
+- **Tenants table** gains 5 new sortable/visible columns: **vCPU (used)**, **RAM GB (used)**, **Disk GB (used)**, **Est. Time**, and **Networks** (colored type pills with counts).
+- **Ease score badge** now shows the label inline — e.g. `42 Medium` in amber — so the migration difficulty is readable at a glance without clicking into the breakdown popover.
+- Existing allocated-resource columns renamed `vCPU (alloc)`, `RAM GB (alloc)`, `Disk GB (alloc)` to distinguish them from actual usage.
+
+
+
+### Added — Image & Flavor Reports + LDAP Password Reset
+
+#### Reports (`api/reports.py`, `api/search.py`)
+- **`GET /reports/image-usage`** — *Image Usage by Tenant*: lists every Glance image with total/active/shutoff VM counts, owner tenant, size, visibility, disk format, and a comma-separated list of all tenants consuming the image. Boot-from-Volume instances are resolved via Cinder `volume_image_metadata` so BFV VMs are counted correctly. Sorted by usage descending. Supports `?format=csv`.
+- **`GET /reports/flavor-by-tenant`** — *Flavor Usage by Tenant (Detail)*: one row per (flavor, tenant) pair showing instance count, active/shutoff split, vCPUs, RAM (MB), disk (GB), total vCPU footprint, and total RAM footprint. BFV servers are handled via a dual name+ID flavor lookup. `list_flavors()` uses `?is_public=None` to return all flavors (public, private, access-restricted). Flavors with zero VMs are included as their own rows so the full catalog is always visible. Optional `?domain_id=` filter. Supports `?format=csv`.
+- Both reports added to `REPORT_CATALOG` and `_INTENT_PATTERNS` in `search.py` — natural-language queries such as *"image usage"* or *"flavor by tenant"* auto-surface the new reports from the search bar.
+- Report catalog grows from 18 → 20 entries.
+
+#### Admin Tools — LDAP Password Reset
+- **`LDAPAuthenticator.change_password()`** (`api/auth.py`) — new admin method: binds as LDAP admin, computes SSHA hash (`hashlib.sha1` + 4-byte `secrets` salt), applies `MOD_REPLACE` on `userPassword`.
+- **`POST /auth/users/{username}/password`** (`api/main.py`) — superadmin-only endpoint; validates minimum 8-character length, calls `change_password()`, writes a `password_reset` audit event to `activity_log`.
+- **UserManagement.tsx** — 🔑 button added to every row in the Users table (between ✏️ and 🗑️). Clicking it expands an inline reset form (no modal) with a password input, error/success feedback, and Save / Cancel controls.
+
+#### VM Provisioning — Smarter Windows Dry-Run Checks (`api/vm_provisioning_routes.py`)
+- **`windows_glance_property` warning** now suppressed when Windows is already identifiable from the image name (e.g. `Win2019-cloudbase-qcow2-image`) — the warning only fires for ambiguous images that lack both a `os_type=windows` Glance property and a recognisable name.
+- **`windows_cloudinit` warning** is no longer emitted unconditionally for all Windows VMs. It is now suppressed when the image name contains `"cloudbase"` or a `cloudbase_init` / `cloud_init_tool=cloudbase` Glance property is present — confirming cloudbase-init is already baked in. The warning still fires for generic Windows images with no cloudbase evidence.
+
+#### VM Provisioning — Reliable Windows Boot-from-Volume (`api/vm_provisioning_routes.py`)
+- **Volume wait extended from 5 → 20 minutes** (240 × 5 s polls). Large Windows images (e.g. 9.4 GB `Win2019-cloudbase-qcow2-image`) require significantly more time to copy from Glance into a Cinder volume than the previous 60 × 5 s timeout allowed. VMs that previously failed with a blank "No bootable device" disk now wait long enough for the copy to finish.
+- **`bootable == "true"` check added** — Cinder sets `status: available` before the image-copy step fully completes; the `bootable` flag is only set to `"true"` once the volume is actually ready to boot. The provisioner now waits for *both* conditions before creating the Nova server, eliminating the race condition that caused SeaBIOS to report "No bootable device".
+- **Windows volume size floor raised to 40 GB** — a fallback value of 10 GB is too small for Windows Server. When `virtual_size` is not populated in Glance the effective size is now clamped to a minimum of 40 GB for Windows OS type, preventing `ERROR creating volume: requested size too small`.
+- **`imageRef` passed to Nova server create** — when using a pre-created Cinder volume (`source_type=volume`), Nova does not read Glance image properties for hardware configuration unless `imageRef` is also provided in the request. Adding `imageRef` allows Nova to pick up `hw_firmware_type`, `hw_machine_type`, and `hw_disk_bus` from the Glance image, enabling UEFI firmware for Windows Server 2019+ GPT images.
+- **Auto-set UEFI on Windows images** — before creating the boot volume, if the selected image `os_type=windows` but is missing the `hw_firmware_type` Glance property, the provisioner automatically patches the image with `hw_firmware_type=uefi` and `hw_machine_type=q35` via the new `update_image_properties()` Glance v2 JSON-Patch method. The patch is logged as an `image_patched` activity event. A new `windows_uefi` warning is also shown in the dry-run report when this property is absent.
+
 ## [1.39.0] - 2026-03-03
 
 ### Added — Runbook 2: VM Provisioning (Boot-from-Volume)
