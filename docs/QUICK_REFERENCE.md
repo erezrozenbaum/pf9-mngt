@@ -92,6 +92,22 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Approval workflow: per-runbook policies with role-based trigger→approver mappings (high-risk runbooks require admin approval)
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
+- **Migration Planner — Per-Day Schedule Breakdown + Throughput Cap Fix** (v1.44.0):
+  - **Engine rewrite** (`migration_engine.py`): replaced per-slot hour packing with a real GB/day throughput ceiling — `effective_gbph = (bottleneck_mbps/8) × 3600/1024 × 0.55`; `max_gb_per_day = effective_gbph × working_hours`
+  - `wall_clock_hours` now `day_transfer_gb / effective_gbph` (was `day_hours_used / total_concurrent` — badly under-counted)
+  - `over_capacity: true` flag on any day where `wall_clock_hours > working_hours_per_day`
+  - New `transfer_gb` field per daily schedule entry; `effective_gbph` and `max_gb_per_day` exposed in `project_summary`
+  - **`GET /migration-summary` rewrite** (`migration_routes.py`): runs same engine as export-plan; tenant query includes cohort JOIN (fixes alignment where all days showed "Uncohorted"); VM query uses `SELECT v.*`
+  - New `per_day[]` array in summary response: day, cohort_name, tenant_count, vm_count, total_gb, wall_clock_hours, total_agent_hours, cold_count, warm_count, risk_green/yellow/red, over_capacity
+  - New `total_provisioned_gb` KPI field in summary response
+  - **UI**: "Migration Days" KPI card; "In-Use Data (TB)" with provisioned subtitle; per-day table between KPI strip and OS breakdown; over-capacity rows in red + ⚠️; Migration Plan daily schedule shows ⚠️ indicator on over-capacity days; project summary footer shows daily throughput cap
+- **Migration Planner Phase 5.0 — Tech Fix Time & Migration Summary** (v1.42.0):
+  - New **Migration Summary** tab: executive KPIs (total VMs, total fix hours, migrated count, at-risk count), OS breakdown, cohort breakdown
+  - **Tech Fix Time model**: weighted per-VM fix time engine (`compute_vm_fix_time`) using base rate, risk multipliers, snapshot/NIC/disk penalties, and OS-specific rates
+  - **Fix Settings card**: per-project tunable weights and OS rates stored in `migration_fix_settings` table; global override option
+  - **Per-VM Fix Override**: expandable ⏱ card in VM expanded row — lock any VM to a custom fix time (bypasses model)
+  - 4 API endpoints: `GET/PATCH /fix-settings`, `PATCH /vms/{id}/fix-override`, `GET /migration-summary`
+  - DB migrations: `migration_vms.tech_fix_minutes_override INTEGER`; new `migration_fix_settings` table
 - **VM Provisioning — Runbook 2** (v1.39.0):
   - "☁️ VM Provisioning" card in Runbooks tab — 4-step form: domain/project → VM rows → OS credentials + cloud-init preview → review + submit
   - Tenant-scoped auth via `provisionsrv` Keystone service account (not in LDAP); run `setup_provision_user.py` once after deploy

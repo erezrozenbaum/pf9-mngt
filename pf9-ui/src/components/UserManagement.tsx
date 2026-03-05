@@ -304,6 +304,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [mfaLoading, setMfaLoading] = useState(false);
   const [mfaMsg, setMfaMsg] = useState('');
 
+  // Reset password state
+  const [resetPwUser, setResetPwUser] = useState<string | null>(null);
+  const [resetPwValue, setResetPwValue] = useState('');
+  const [resetPwLoading, setResetPwLoading] = useState(false);
+  const [resetPwMsg, setResetPwMsg] = useState('');
+
   // --- Department + Navigation state ---
   const [departments, setDepartments] = useState<any[]>([]);
   const [navGroups, setNavGroups] = useState<any[]>([]);
@@ -1093,7 +1099,40 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       setError('Failed to delete user');
     }
   };
-  
+
+  const handleResetPassword = async (username: string) => {
+    if (resetPwValue.length < 8) {
+      setResetPwMsg('Password must be at least 8 characters.');
+      return;
+    }
+    setResetPwLoading(true);
+    setResetPwMsg('');
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${API_BASE}/auth/users/${username}/password`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ new_password: resetPwValue }),
+      });
+      if (response.ok) {
+        setResetPwMsg('Password reset successfully.');
+        setResetPwValue('');
+        setTimeout(() => { setResetPwUser(null); setResetPwMsg(''); }, 2000);
+      } else {
+        const errorData = await response.json();
+        setResetPwMsg(errorData.detail || 'Failed to reset password.');
+      }
+    } catch (err) {
+      console.error('Error resetting password:', err);
+      setResetPwMsg('Network error – please try again.');
+    } finally {
+      setResetPwLoading(false);
+    }
+  };
+
   const loadAuditLogs = async () => {
     try {
       const token = localStorage.getItem('auth_token');
@@ -1664,12 +1703,55 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                           <span>✏️</span>
                         </button>
                         <button
+                          onClick={() => {
+                            setResetPwUser(resetPwUser === user.username ? null : user.username);
+                            setResetPwValue('');
+                            setResetPwMsg('');
+                          }}
+                          className="text-yellow-600 hover:text-yellow-900"
+                          title="Reset Password"
+                        >
+                          <span>🔑</span>
+                        </button>
+                        <button
                           onClick={() => handleDeleteUser(user.username)}
                           className="text-red-600 hover:text-red-900"
                         >
                           <span>🗑️</span>
                         </button>
                       </div>
+                      {resetPwUser === user.username && (
+                        <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs space-y-1">
+                          <div className="font-medium text-gray-700">Reset password for <span className="font-bold">{user.username}</span></div>
+                          <input
+                            type="password"
+                            value={resetPwValue}
+                            onChange={e => setResetPwValue(e.target.value)}
+                            placeholder="New password (min 8 chars)"
+                            className="w-full border border-gray-300 rounded px-2 py-1 text-xs"
+                          />
+                          {resetPwMsg && (
+                            <div className={`text-xs ${resetPwMsg.includes('success') ? 'text-green-600' : 'text-red-600'}`}>
+                              {resetPwMsg}
+                            </div>
+                          )}
+                          <div className="flex space-x-1">
+                            <button
+                              onClick={() => handleResetPassword(user.username)}
+                              disabled={resetPwLoading}
+                              className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600 disabled:opacity-50"
+                            >
+                              {resetPwLoading ? 'Saving…' : 'Save'}
+                            </button>
+                            <button
+                              onClick={() => { setResetPwUser(null); setResetPwValue(''); setResetPwMsg(''); }}
+                              className="px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs hover:bg-gray-300"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

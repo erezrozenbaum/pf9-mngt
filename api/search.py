@@ -291,6 +291,16 @@ _INTENT_PATTERNS = [
     (re.compile(r"\b(vm.?report|virtual.?machine.?report|server.?report|all.?vms)\b", re.I),
      "vm-report", "Virtual Machine Report",
      "Detailed listing of all VMs with status, hypervisor, and resources"),
+
+    # Image usage by tenant
+    (re.compile(r"\b(image.?usage|images?.+tenant|which.+images?|who.+uses?.+image|image.+vm.?count)\b", re.I),
+     "image-usage", "Image Usage by Tenant",
+     "Which tenants use each image and how many VMs are running from it"),
+
+    # Flavor usage by tenant (detail)
+    (re.compile(r"\b(flavor.+tenant|flavor.+breakdown|per.?tenant.+flavor|flavor.+detail)\b", re.I),
+     "flavor-by-tenant", "Flavor Usage by Tenant (Detail)",
+     "Per-flavor per-tenant instance breakdown with resource footprint"),
 ]
 
 

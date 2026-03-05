@@ -935,6 +935,12 @@ GET  /api/migration/projects/{id}/export-vjailbreak-bundle           # vJailbrea
 GET  /api/migration/projects/{id}/cohorts/{cid}/export-vjailbreak-bundle  # Cohort-scoped bundle (v1.37.0)
 GET  /api/migration/projects/{id}/export-handoff-sheet.pdf           # Tenant handoff sheet PDF (v1.37.0)
 
+# Phase 5.0 — Tech Fix Time & Migration Summary (v1.42.0)
+GET  /api/migration/projects/{id}/fix-settings                       # Fix time weights + OS rates (auto-created on first access)
+PATCH /api/migration/projects/{id}/fix-settings                      # Update weight or fix rate fields
+PATCH /api/migration/projects/{id}/vms/{vm_id}/fix-override          # Set or clear per-VM tech fix time override (minutes)
+GET  /api/migration/projects/{id}/migration-summary                  # Executive summary: KPI totals, OS breakdown, cohort breakdown
+
 # System Health & Testing
 GET  /health                     # Service health check
 GET  /simple-test                # Basic functionality test

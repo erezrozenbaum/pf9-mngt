@@ -271,6 +271,26 @@ class LDAPAuthenticator:
             print(f"Error deleting user {username}: {e}")
             return False
 
+    def change_password(self, username: str, new_password: str) -> bool:
+        """Reset a user's LDAP password (admin operation using SSHA hash)."""
+        import base64
+        try:
+            conn = ldap.initialize(self.server)
+            conn.protocol_version = ldap.VERSION3
+            admin_dn = f"cn=admin,{self.base_dn}"
+            conn.simple_bind_s(admin_dn, os.getenv('LDAP_ADMIN_PASSWORD', ''))
+            salt = secrets.token_bytes(4)
+            h = hashlib.sha1(new_password.encode('utf-8') + salt)
+            hashed = '{SSHA}' + base64.b64encode(h.digest() + salt).decode()
+            user_dn = f"cn={username},{self.user_dn}"
+            conn.modify_s(user_dn, [(ldap.MOD_REPLACE, 'userPassword', [hashed.encode('utf-8')])])
+            conn.unbind_s()
+            print(f"Password changed for {username}")
+            return True
+        except Exception as e:
+            print(f"Error changing password for {username}: {e}")
+            return False
+
 # JWT Token Management
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Create JWT access token"""

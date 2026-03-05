@@ -215,6 +215,20 @@ REPORT_CATALOG = [
         "category": "inventory",
         "parameters": ["domain_id", "project_id"],
     },
+    {
+        "id": "image-usage",
+        "name": "Image Usage by Tenant",
+        "description": "All Glance images with VM count and per-tenant breakdown. Shows which images are actively used and by which tenants.",
+        "category": "inventory",
+        "parameters": [],
+    },
+    {
+        "id": "flavor-by-tenant",
+        "name": "Flavor Usage by Tenant (Detail)",
+        "description": "One row per flavor+tenant pair showing instance count, active/shutoff split, and resource footprint for chargeback analysis.",
+        "category": "capacity",
+        "parameters": ["domain_id"],
+    },
 ]
 
 
@@ -1864,4 +1878,221 @@ async def report_vm_report(
         raise
     except Exception as e:
         logger.error(f"Report vm-report failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# 19. Image Usage by Tenant
+# ---------------------------------------------------------------------------
+
+@router.get("/image-usage")
+async def report_image_usage(
+    format: str = "json",
+    user: User = Depends(require_permission("reports", "read")),
+):
+    """All Glance images with VM count and per-tenant breakdown."""
+    try:
+        client = get_client()
+
+        images = client.list_images()
+        servers = client.list_servers(all_tenants=True)
+        projects = client.list_projects()
+
+        project_map: dict = {p["id"]: p.get("name", p["id"]) for p in projects}
+
+        # index images by id
+        image_map: dict = {img["id"]: img for img in images}
+
+        # For BFV (Boot-from-Volume) instances the server's image field is "".
+        # The original image ID lives in the boot volume's volume_image_metadata.
+        # Build: volume_id → image_id from Cinder volume list.
+        try:
+            volumes = client.list_volumes(all_tenants=True)
+            vol_to_img: dict = {}
+            for v in volumes:
+                meta = v.get("volume_image_metadata") or {}
+                img_id_in_vol = meta.get("image_id", "")
+                if img_id_in_vol:
+                    vol_to_img[v["id"]] = img_id_in_vol
+        except Exception:
+            vol_to_img = {}
+
+        def _resolve_image_id(server: dict) -> str:
+            """Return Glance image ID for a server, handling BFV via volume metadata."""
+            img_info = server.get("image")
+            if img_info and isinstance(img_info, dict):
+                iid = img_info.get("id", "")
+                if iid:
+                    return iid
+            # BFV: image field is "" — look up boot volume
+            for va in server.get("os-extended-volumes:volumes_attached", []):
+                vid = va.get("id", "")
+                if vid and vid in vol_to_img:
+                    return vol_to_img[vid]
+            return ""
+
+        # build per-image stats: { image_id: { total, active, shutoff, tenants: {tid: count} } }
+        stats: dict = {}
+        for s in servers:
+            img_id = _resolve_image_id(s)
+            if not img_id:
+                continue
+
+            if img_id not in stats:
+                stats[img_id] = {"total": 0, "active": 0, "shutoff": 0, "tenants": {}}
+
+            stats[img_id]["total"] += 1
+            pwr = (s.get("OS-EXT-STS:power_state") or 0)
+            vm_state = (s.get("OS-EXT-STS:vm_state") or "").lower()
+            if pwr == 1 or vm_state == "active":
+                stats[img_id]["active"] += 1
+            elif vm_state == "stopped":
+                stats[img_id]["shutoff"] += 1
+
+            tid = s.get("tenant_id") or s.get("OS-EXT-NS:project_id", "")
+            if tid:
+                stats[img_id]["tenants"][tid] = stats[img_id]["tenants"].get(tid, 0) + 1
+
+        rows = []
+        for img in images:
+            img_id = img.get("id", "")
+            st = stats.get(img_id, {"total": 0, "active": 0, "shutoff": 0, "tenants": {}})
+            tenant_names = ", ".join(
+                project_map.get(tid, tid) for tid in st["tenants"]
+            )
+            size_mb = round((img.get("size") or 0) / 1024 / 1024, 1)
+            owner_name = project_map.get(img.get("owner", ""), img.get("owner", ""))
+            rows.append({
+                "Image Name": img.get("name", ""),
+                "Image ID": img_id,
+                "Visibility": img.get("visibility", ""),
+                "Disk Format": img.get("disk_format", ""),
+                "Size (MB)": size_mb,
+                "Owner Tenant": owner_name,
+                "Total Instances": st["total"],
+                "Active Instances": st["active"],
+                "Shutoff Instances": st["shutoff"],
+                "Tenant Count": len(st["tenants"]),
+                "Tenants": tenant_names,
+            })
+
+        # sort: images in use first, then alphabetically
+        rows.sort(key=lambda r: (-r["Total Instances"], r["Image Name"].lower()))
+
+        return _maybe_csv(rows, format, "image_usage")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Report image-usage failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# 20. Flavor Usage by Tenant (Detail)
+# ---------------------------------------------------------------------------
+
+@router.get("/flavor-by-tenant")
+async def report_flavor_by_tenant(
+    format: str = "json",
+    domain_id: Optional[str] = None,
+    user: User = Depends(require_permission("reports", "read")),
+):
+    """Per-flavor, per-tenant breakdown for chargeback analysis."""
+    try:
+        client = get_client()
+
+        flavors = client.list_flavors()
+        servers = client.list_servers(all_tenants=True)
+        projects = client.list_projects()
+
+        project_map: dict = {p["id"]: p.get("name", p["id"]) for p in projects}
+        domain_map: dict = {p["id"]: p.get("domain_id", "") for p in projects}
+
+        # resolve domain names if we have them
+        try:
+            domains_list = client.list_domains()
+            domain_name_map: dict = {d["id"]: d.get("name", d["id"]) for d in domains_list}
+        except Exception:
+            domain_name_map = {}
+
+        flavor_detail_by_name: dict = {f["name"]: f for f in flavors}
+        flavor_detail_by_id:   dict = {f["id"]: f   for f in flavors}
+
+        def _resolve_flavor(flv: dict) -> tuple:
+            """Return (display_name, flavor_dict) from a server's flavor field."""
+            orig = flv.get("original_name", "")
+            fid  = flv.get("id", "")
+            if orig and orig in flavor_detail_by_name:
+                return orig, flavor_detail_by_name[orig]
+            if fid and fid in flavor_detail_by_id:
+                fd = flavor_detail_by_id[fid]
+                return fd.get("name", fid), fd
+            # inline flavor specs (Nova embeds vcpus/ram/disk for some BFV servers)
+            if flv.get("vcpus") or flv.get("ram"):
+                synthetic_name = orig or fid or "unknown"
+                return synthetic_name, flv
+            return orig or fid or "unknown", {}
+
+        # build { (flavor_display_name, project_id): {total, active, shutoff} }
+        pair_stats: dict = {}
+        for s in servers:
+            flv = s.get("flavor", {})
+            flv_name, _fd = _resolve_flavor(flv)
+            tid = s.get("tenant_id") or s.get("OS-EXT-NS:project_id", "")
+
+            if domain_id:
+                proj_domain = domain_map.get(tid, "")
+                if proj_domain != domain_id:
+                    continue
+
+            key = (flv_name, tid)
+            if key not in pair_stats:
+                pair_stats[key] = {"total": 0, "active": 0, "shutoff": 0}
+
+            pair_stats[key]["total"] += 1
+            pwr = (s.get("OS-EXT-STS:power_state") or 0)
+            vm_state = (s.get("OS-EXT-STS:vm_state") or "").lower()
+            if pwr == 1 or vm_state == "active":
+                pair_stats[key]["active"] += 1
+            elif vm_state == "stopped":
+                pair_stats[key]["shutoff"] += 1
+
+        # Add zero-usage rows for flavors not referenced by any server
+        used_flavor_names = {flv_name for (flv_name, _) in pair_stats}
+        for f in flavors:
+            fname = f.get("name", "")
+            if fname and fname not in used_flavor_names:
+                if domain_id:
+                    continue  # skip zero-use rows when filtering by domain
+                pair_stats[(fname, "")] = {"total": 0, "active": 0, "shutoff": 0}
+
+        rows = []
+        for (flv_name, tid), st in pair_stats.items():
+            fd = flavor_detail_by_name.get(flv_name) or \
+                 next((v for v in flavor_detail_by_id.values() if v.get("name") == flv_name), {})
+            vcpus = fd.get("vcpus", 0)
+            ram = fd.get("ram", 0)
+            disk = fd.get("disk", 0)
+            proj_domain_id = domain_map.get(tid, "")
+            rows.append({
+                "Flavor": flv_name,
+                "Tenant": project_map.get(tid, tid),
+                "Domain": domain_name_map.get(proj_domain_id, proj_domain_id),
+                "Instance Count": st["total"],
+                "Active": st["active"],
+                "Shutoff": st["shutoff"],
+                "vCPUs": vcpus,
+                "RAM (MB)": ram,
+                "Disk (GB)": disk,
+                "Total vCPU Footprint": vcpus * st["total"],
+                "Total RAM Footprint (MB)": ram * st["total"],
+            })
+
+        rows.sort(key=lambda r: (-r["Instance Count"], r["Flavor"].lower(), r["Tenant"].lower()))
+
+        return _maybe_csv(rows, format, "flavor_by_tenant")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Report flavor-by-tenant failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -680,6 +680,9 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                     img_min_disk = int(img_obj.get("min_disk") or 0)
                     img_virtual_gb = int((img_obj.get("virtual_size") or 0) / 1073741824 + 0.999) if img_obj.get("virtual_size") else 0
                     effective_size_gb = max(int(vm["volume_gb"]), img_min_disk, img_virtual_gb, 10)
+                    # Windows images need at least 40 GB — guard against un-set virtual_size in Glance
+                    if os_type == "windows" and effective_size_gb < 40:
+                        effective_size_gb = 40
                     _log_activity(conn, "vm_provisioning_vm", str(vm_id),
                                    "volume_creating",
                                    f"{instance_name}: creating {effective_size_gb}GB boot volume from image {image_id}",
@@ -695,21 +698,25 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                     vm_failed = True
                     break
 
-                # Wait for volume available (max 5 min)
+                # Wait for volume available + bootable (max 20 min — large Windows images need time)
                 vol_ready = False
-                for _ in range(60):
+                for _ in range(240):
                     time.sleep(5)
                     try:
                         v = project_client.get_volume(volume_id)
-                        if v.get("status") == "available":
-                            vol_ready = True
+                        vol_status = v.get("status")
+                        if vol_status == "error":
                             break
-                        if v.get("status") == "error":
-                            break
+                        if vol_status == "available":
+                            # Also verify bootable flag — Cinder sets this after image copy finishes
+                            if v.get("bootable") in ("true", True):
+                                vol_ready = True
+                                break
+                            # Still waiting for image copy to complete
                     except Exception:
                         pass
                 if not vol_ready:
-                    _update_vm_status(conn, vm_id, "failed", "Volume did not reach 'available' in 5 min")
+                    _update_vm_status(conn, vm_id, "failed", "Volume did not become bootable in 20 min — image copy may have failed or timed out")
                     vm_failed = True
                     break
 
@@ -738,6 +745,9 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                         project_id=project_id,  # X-Project-Id so Nova puts VM in target project
                         # adminPass: seeds password via Nova metadata (picked up by cloudbase-init OpenStackService plugin)
                         admin_pass=vm["os_password"] if os_type == "windows" else None,
+                        # Pass image_id so Nova reads hw_firmware_type / hw_machine_type from Glance
+                        # This ensures UEFI firmware for Windows Server 2019+ GPT images
+                        image_id=image_id,
                     )
                     server_id = server.get("id")
                 except Exception as e:
@@ -1349,21 +1359,43 @@ async def dry_run(batch_id: int, user=Depends(get_current_user)):
                 hostname_check = _vm_hostname(_vm_nova_name(batch["domain_name"], suffix))
                 os_type_check = vm.get("os_type", "linux")
                 glance_os_type = ""
+                img_name_lower = (img_obj.get("name", "") if img_obj else "").lower()
                 if img_obj:
                     raw = (img_obj.get("os_type", "") + img_obj.get("os_distro", "")).lower()
                     glance_os_type = img_obj.get("os_type", "")
-                    if "windows" in raw or "win" in raw:
+                    if "windows" in raw or "win" in raw or "windows" in img_name_lower or "win" in img_name_lower:
                         os_type_check = "windows"
                 if os_type_check == "windows":
                     payload = _build_cloudinit_windows(vm["os_username"], vm["os_password"], vm.get("extra_cloudinit"))
-                    # Warn: cloudbase-init must be present in the image
-                    if img_obj and not glance_os_type:
+                    # Warn about missing os_type Glance property only if we also can't detect
+                    # Windows from the image name — if the name includes "win" we already know.
+                    if img_obj and not glance_os_type and "win" not in img_name_lower:
                         checks.append({"check": "windows_glance_property", "status": "warning",
                                         "detail": "Image has no os_type=windows property set in Glance — confirm this is a proper OpenStack Windows image"})
-                    checks.append({"check": "windows_cloudinit", "status": "warning",
-                                    "detail": "Windows VM requires cloudbase-init installed + sysprep'd in image. "
-                                               "Credentials injected via #ps1_sysnative userdata. "
-                                               "Vagrant/VirtualBox images will NOT work — use an image built with cloudbase-init."})
+                    # Only warn about cloudbase-init if there is no evidence the image includes it.
+                    # Evidence: "cloudbase" in image name, or cloudbase_init Glance property present.
+                    has_cloudbase = (
+                        "cloudbase" in img_name_lower
+                        or bool((img_obj or {}).get("cloudbase_init"))
+                        or bool((img_obj or {}).get("cloud_init_tool", "").lower() == "cloudbase")
+                    )
+                    if not has_cloudbase:
+                        checks.append({"check": "windows_cloudinit", "status": "warning",
+                                        "detail": "Windows VM requires cloudbase-init installed + sysprep'd in image. "
+                                                   "Credentials injected via #ps1_sysnative userdata. "
+                                                   "Vagrant/VirtualBox images will NOT work — use an image built with cloudbase-init."})
+                    # UEFI boot check — Windows 2019+ images with GPT partition table
+                    # require hw_firmware_type=uefi set on the Glance image AND OVMF installed
+                    # on all compute nodes (nova.conf [libvirt] nvram). Without both, Nova
+                    # will either boot with SeaBIOS (GPT not bootable) or fail scheduling.
+                    if img_obj and not img_obj.get("hw_firmware_type"):
+                        checks.append({"check": "windows_uefi", "status": "warning",
+                                        "detail": "Image is missing hw_firmware_type=uefi in Glance. "
+                                                   "Windows Server 2019+ uses a GPT partition table which SeaBIOS cannot boot. "
+                                                   "Set hw_firmware_type=uefi + hw_machine_type=q35 on this image in Glance — "
+                                                   "but only if your compute nodes have OVMF/TianoCore installed and nvram configured in nova.conf. "
+                                                   "If UEFI is not supported on your cluster, use an image built with an MBR/hybrid partition table."
+                                        })
                 else:
                     payload = _build_cloudinit_linux(vm["os_username"], vm["os_password"], hostname_check, vm.get("extra_cloudinit"))
                 _encode_userdata(payload)

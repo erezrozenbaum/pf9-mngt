@@ -2,6 +2,133 @@
 
 ## Recent Major Enhancements
 
+### Migration Planner Phase 5.0 — Tech Fix Time & Migration Summary (v1.42.0 ✅ Complete)
+
+#### 📊 Migration Summary Tab
+A new **Migration Summary** tab in the Migration Planner provides an executive-level view of the project's readiness and workload, computed on demand from the current assessment data.
+
+**Key Metrics (top bar):**
+- **Total VMs** — in-scope VM count for the project
+- **Total Tech Fix Hours** — sum of all per-VM fix times (hours), factoring in complexity weights and OS-specific rates
+- **Migrated** — VMs with `migration_status = 'migrated'`
+- **At Risk** — VMs with `risk_level = 'RED'`
+
+**OS Breakdown table:** rows per OS family (Windows, Linux, Other) — VM count, total disk GB, average fix time (minutes), total fix hours.
+
+**Cohort Breakdown table:** one row per cohort — cohort name, VM count, total disk GB, total fix hours, average risk score.
+
+---
+
+#### ⏱ Tech Fix Time Model
+Each VM's fix time is computed by `compute_vm_fix_time()` in `migration_engine.py` using a weighted factor model. Results feed the executive summary (`compute_project_fix_summary()`).
+
+**Fix Settings** are stored per-project in `migration_fix_settings` (auto-created on first access). Admins can tune them under **Fix Settings** in the Migration Planner UI:
+
+| Factor | Default | Effect |
+|--------|---------|--------|
+| Base rate (min/GB transferred) | 2.0 | Foundation fix time per GB |
+| RED risk multiplier | 2.0× | Scales fix time for RED-risk VMs |
+| YELLOW risk multiplier | 1.5× | Scales fix time for YELLOW-risk VMs |
+| Snapshot penalty | 5 min/snapshot | Added per source snapshot |
+| Large disk threshold + penalty | 500 GB / +15 min | Additional time for large-disk VMs |
+| Multi-NIC penalty | 8 min/NIC | Added per NIC beyond the first |
+| Windows OS rate (min/GB) | 3.0 | OS-specific GB rate for Windows VMs |
+| Linux OS rate (min/GB) | 1.5 | OS-specific GB rate for Linux VMs |
+| Other OS rate (min/GB) | 2.0 | OS-specific GB rate for unclassified VMs |
+| Global override (min) | NULL | When set, overrides the model for **all** VMs |
+
+**Per-VM Override:** In the VM table's expanded row, an expandable **⏱ Fix Time Override** card lets operators lock a specific VM to a fixed number of minutes, bypassing the model entirely. Values are stored in `migration_vms.tech_fix_minutes_override`.
+
+---
+
+#### API Endpoints (Phase 5.0)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/migration/projects/{id}/fix-settings` | Get fix settings for project (auto-created if missing) |
+| `PATCH` | `/api/migration/projects/{id}/fix-settings` | Update one or more fix setting fields |
+| `PATCH` | `/api/migration/projects/{id}/vms/{vm_id}/fix-override` | Set or clear per-VM override (send `null` to clear) |
+| `GET` | `/api/migration/projects/{id}/migration-summary` | Compute and return full executive summary |
+
+---
+
+### Migration Planner Phase 5.1 — Per-Day Breakdown, Throughput Cap Fix & Summary Export (v1.44.0 ✅ Complete)
+
+#### 📅 Daily Schedule Breakdown in Migration Summary Tab
+
+The **Migration Summary** tab now includes a full **Day-by-Day Wave Schedule** table, driven by the same `generate_migration_plan()` engine that powers the Migration Plan view. Each row represents one calendar day:
+
+| Column | Description |
+|--------|-------------|
+| Day | Calendar day number (1 = first migration day) |
+| Cohort | Cohort/wave this day's VMs belong to |
+| Tenants | Number of distinct tenants touching this day |
+| VMs | VM count scheduled |
+| Total GB | In-use data to be transferred |
+| Wall-Clock (h) | Elapsed time from day-start to last VM completing |
+| Total Agent (h) | Sum of individual VM estimated hours (parallel work unit) |
+| Cold / Warm | Breakdown of migration modes |
+| Risk 🟢🟡🔴 | VM count by risk category |
+| ⚠ Over Capacity | Red-highlighted row when daily GB exceeds the throughput cap |
+
+**Over-capacity flag:** A day is flagged `over_capacity = true` when `total_gb > max_gb_per_day`, where `max_gb_per_day = effective_gbph × working_hours_per_day`. Rows are highlighted in red both in the API response and in the UI table.
+
+---
+
+#### ⚡ Throughput Cap Fix
+
+The engine now correctly enforces a maximum GB that can be transferred per calendar day:
+
+```
+effective_gbph   = bottleneck_mbps × 0.125 × 3600 / 1024   (Mbps → GB/h)
+max_gb_per_day   = effective_gbph × working_hours_per_day
+wall_clock_hours = total_in_use_gb / effective_gbph          (capped to working_hours)
+```
+
+Previously `wall_clock_hours` was computed directly from agent hours without accounting for the bandwidth bottleneck, which could produce unrealistically low wall-clock estimates.  The `over_capacity` flag and red highlighting allow operators to spot days where the schedule is too aggressive for the available bandwidth window.
+
+---
+
+#### 📊 Migration Summary Export (Excel & PDF)
+
+A **📊 Export Excel** and **📑 Export PDF** button have been added to the Migration Summary tab header. Clicking either downloads a pre-formatted document based on the current summary calculation.
+
+**Excel workbook (4 sheets):**
+1. **Summary KPIs** — key totals: VMs, data GB, provisioned GB, migration days, copy/fix/downtime hours, bandwidth
+2. **Daily Schedule** — the full per-day table with over-capacity highlighting in red
+3. **OS Breakdown** — per-OS VM count, fix rate, and total fix hours
+4. **Cohort Breakdown** — per-cohort VMs, data GB, copy hours, fix hours, downtime hours
+
+**PDF (A4 portrait, multi-page):**
+- KPI overview table
+- Daily schedule table (repeated header, red over-capacity rows)
+- OS breakdown
+- Cohort breakdown
+- Calculation methodology notes
+
+#### API Endpoints (Phase 5.1)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/migration/projects/{id}/export-summary.xlsx` | Download migration summary as Excel (4 sheets) |
+| `GET` | `/api/migration/projects/{id}/export-summary.pdf` | Download migration summary as PDF |
+
+Both endpoints re-execute the same `get_migration_summary()` logic internally — no additional caching layer is required.
+
+#### New field: `total_provisioned_gb`
+
+The `/api/migration/projects/{id}/migration-summary` response now includes:
+
+```json
+{
+  "total_provisioned_gb": 12800.0
+}
+```
+
+This is the sum of `total_disk_gb` across all in-scope VMs (the allocated disk size), as opposed to `total_data_gb` which is the sum of `in_use_gb` (actual used space). The UI shows it as a subtitle under the In-Use Data KPI card: `/ X.XX TB provisioned`.
+
+---
+
 ### Customer Provisioning — Multi-Network Support (v1.34.2 ✅ Complete)
 
 #### Network Types

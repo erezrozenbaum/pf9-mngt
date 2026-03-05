@@ -1,6 +1,6 @@
 # Migration Planner — Operator Guide
 
-> **Version**: v1.37.0 | **Last Updated**: 2026-03-02
+> **Version**: v1.42.0 | **Last Updated**: 2026-03-05
 > Complete reference for the pf9-mngt Migration Planner — from RVTools ingestion through wave execution.
 
 ---
@@ -17,10 +17,11 @@
 8. [Phase 4A — PCD Data Enrichment](#phase-4a--pcd-data-enrichment)
 9. [Phase 4B — PCD Auto-Provisioning](#phase-4b--pcd-auto-provisioning)
 10. [vJailbreak Handoff Exports](#vjailbreak-handoff-exports)
-11. [End-to-End Workflow](#end-to-end-workflow)
-12. [API Reference](#api-reference)
-13. [Database Schema](#database-schema)
-14. [Troubleshooting](#troubleshooting)
+11. [Phase 5.0 — Migration Summary & Fix Time](#phase-50--migration-summary--fix-time)
+12. [End-to-End Workflow](#end-to-end-workflow)
+13. [API Reference](#api-reference)
+14. [Database Schema](#database-schema)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -41,7 +42,8 @@ The **Migration Planner** is an integrated module within pf9-mngt that guides op
 | 4B.1 | Phase 4B Polish — run confirmation modal, execution summary panel, completion notification | ✅ Complete |
 | 4B.2 | Phase 4B Approval Workflow (2-step gate), Dry Run simulation, Audit Log | ✅ Complete |
 | 4C | vJailbreak Handoff — credential bundle + tenant handoff sheet | ✅ Complete | v1.37.0 |
-| 5 | vJailbreak integration & live execution | 🔲 Planned |
+| 5.0 | Tech Fix Time — per-VM fix model, Migration Summary tab, fix override UI | ✅ Complete | v1.42.0 |
+| 5+ | vJailbreak integration & live execution | 🔲 Planned |
 | 6 | Post-migration validation | 🔲 Planned |
 
 ---
@@ -124,19 +126,50 @@ Operators can **force-override** the mode on any VM using the 🔒 mode override
 
 ### Daily Wave Schedule
 
-The engine calculates a day-by-day schedule from project parameters:
+The engine calculates a day-by-day schedule from project parameters using a **shared-pipe throughput model** (v1.44.0+):
 
-- `migration_duration_days` — total calendar days available
-- `working_hours_per_day` — e.g. 8 (shift hours)
-- `target_vms_per_day` — throughput cap
-- `migration_agent_slots` — parallel agent connections
+#### Throughput model
 
-Formula:
 ```
-warm_hours = (vm.in_use_gb × 1024 × 8) / (bandwidth_mbps × 3600) × 1.14 + (cutover_mins / 60)
-cold_hours = vm.total_disk_gb × cold_multiplier
-day_capacity = working_hours_per_day × migration_agent_slots
+effective_gbph  = (bottleneck_mbps / 8) × 3600 / 1024 × AVG_BW_EFFICIENCY
+max_gb_per_day  = effective_gbph × working_hours_per_day
 ```
+
+Where:
+- `bottleneck_mbps` — resolved by `compute_bandwidth_model()` as the minimum of source NIC, WAN link, agent ingest, and PCD storage write speeds.
+- `AVG_BW_EFFICIENCY = 0.55` — realistic utilisation factor accounting for TCP slow-start, I/O burst gaps, and multi-agent coordination overhead.
+- At 4 000 Mbps bottleneck and an 8-hour working day, `max_gb_per_day ≈ 7 742 GB` (~7.6 TB/day).
+
+#### Day packing
+
+VMs are added to the current day until `day_transfer_gb + vm_transfer_gb > max_gb_per_day`, then the day is closed and a new one opens.
+
+`vm_transfer_gb` is:
+- **warm migration** → `vm.in_use_gb` (only used blocks are transferred)
+- **cold migration** → `vm.total_disk_gb` (full provisioned disk)
+
+#### Wall-clock time
+
+```
+wall_clock_hours = day_transfer_gb / effective_gbph
+```
+
+This is the calendar time required to drain the day's entire data payload through the bottleneck pipe at the modelled efficiency. When `wall_clock_hours > working_hours_per_day` the day entry is flagged `over_capacity: true` and highlighted in the UI with a ⚠️ indicator. This can occur when a single VM's data payload exceeds one day's throughput capacity (the VM is never split across days).
+
+#### Agent time vs wall-clock time
+
+| Metric | Formula | Meaning |
+|--------|---------|---------|
+| `total_agent_hours` | Σ per-VM agent time | Total agent-slot hours across all VMs (parallelism increases throughput) |
+| `wall_clock_hours` | `day_transfer_gb / effective_gbph` | Actual elapsed time for the day (pipe is the constraint) |
+
+#### Legacy parameters (still configurable, no longer the primary constraint)
+
+- `migration_duration_days` — maximum calendar days; plan stops after this
+- `working_hours_per_day` — shift length used in throughput and wall-clock calculations
+- `target_vms_per_day` — optional VM-count soft cap per day
+- `migration_agent_slots` — parallel agent connections (affects per-VM time, not the GB/day ceiling)
+
 
 ### Export
 
@@ -251,6 +284,12 @@ Always run **Preview** before **Apply** to review the diff table.
 **Ramp Profile mode** — instead of a fixed number of cohorts, define named cohort "slots" each with their own VM cap:
 - Presets: Pilot+Bulk, 3-Wave, 4-Wave, 5-Wave
 - Custom cohort rows with editable names and VM caps
+
+> **Rebuilding cohorts from scratch?** If you ran auto-assign before finalising your exclusion list, stale assignments from excluded tenants exist in the database. Use:
+> ```
+> DELETE /api/migration/projects/{id}/cohorts
+> ```
+> This wipes all cohort groups and clears every tenant's `cohort_id` (including stale excluded-tenant rows). Then re-run auto-assign — results will reflect only in-scope tenants.
 
 ### VM Dependency Annotation
 
@@ -422,6 +461,16 @@ Once satisfied, click **✅ Apply & Create Waves**.
 
 Remove a single VM: `DELETE /projects/{id}/waves/{wave_id}/vms/{vm_id}` — reverts VM status to `not_started` if not in any other wave.
 
+> **Rebuilding waves from scratch?** If cohorts or exclusions changed after waves were built, reset with:
+> ```
+> DELETE /api/migration/projects/{id}/waves
+> ```
+> This deletes all waves, removes all wave-VM assignments, and resets `migration_status` back to `not_started` for assigned VMs. Then re-run auto-build. Recommended sequence after changing exclusions:
+> 1. `DELETE /cohorts` — wipe all cohort groups
+> 2. `DELETE /waves` — wipe all wave groups
+> 3. `POST /cohorts/auto-assign` — rebuild cohorts
+> 4. `POST /auto-waves` — rebuild waves
+
 ### Pre-Flight Checklists
 
 Each wave has 6 pre-flight checks seeded automatically on creation:
@@ -582,6 +631,55 @@ Both export buttons appear automatically in the **⚙️ Prepare PCD** tab once 
 
 ---
 
+## Phase 5.0 — Migration Summary & Fix Time
+
+> Accessible via the **📊 Summary** sub-tab in Source Analysis.
+
+Phase 5.0 adds a post-migration effort model and an executive-level Migration Summary view. After VMs land on PCD there is always a "fix window" — time spent renaming NICs, fixing UUIDs, re-verifying routes, etc. Phase 5.0 quantifies this upfront so planners can present a realistic total project timeline.
+
+### Fix Time Model
+
+| Factor | Default (min) | Rationale |
+|--------|---------------|-----------|
+| Windows OS | 20 | NIC rename, drive letter reassignment |
+| Extra data volume | 15 / disk | fstab / UUID changes |
+| Extra NIC | 10 / NIC | Multi-IP, routes, DNS re-verify |
+| Cold migration | 15 | Higher stale-driver risk at first boot |
+| Elevated risk (Yellow, >50) | 15 | Flagged by risk scorer |
+| High risk (Red, >75) | 25 | Complex VM |
+| Has snapshots | 10 | Disk-chain consolidation |
+| Cross-tenant dependency | 15 | Coordinated cutover |
+| Unknown / other OS | 20 | Unpredictable boot behaviour |
+| Cutover window (always) | 30 | Final sync + first boot |
+
+**OS-family fix rates** (% of VMs expected to need any intervention): Windows 50%, Linux 20%, Other / Unknown 40%. All rates and all 10 weights are configurable per project via the Settings editor in the Summary tab.
+
+### Per-VM Fix Override
+
+Any VM can have `tech_fix_minutes_override` set, locking it to an operator-supplied value and bypassing the model. The ⏱ Fix Time Override card in the expanded VM row provides a number input, Save, and Clear button. The `🔒 Xm` amber pill in the VM table reflects the override immediately.
+
+### Migration Summary Tab  *(v1.44.0 — per-day breakdown)*
+
+- **Executive KPI strip** — Migration Days (blue), In-Use Data (TB) with provisioned subtitle (`X GB used / Y TB provisioned`), Estimated Data-Copy Time (h), Estimated Fix Time (h), Total Downtime (h)
+- **Per-day schedule table** — one row per calendar day with: Cohort/Wave, Tenants, VMs, Storage GB (in-use), Wall-clock (h), Agent Total (h), ❄️ Cold, 🔥 Warm, 🟢/🟡/🔴 risk counts. Over-capacity days (`wall_clock_hours > working_hours_per_day`) are highlighted in red with a ⚠️ prefix.
+- **OS-family table** — VM count + fix rate + data + fix time per OS family
+- **Per-cohort table** — VM count, data (GB), copy time, fix time, downtime exposure per cohort
+- **Methodology accordion** — expands to explain all three calculations in plain language
+- **Settings editor** — 10 weight sliders + 3 fix-rate fields; **💾 Save & Recalculate** applies changes and refreshes
+
+> **Alignment guarantee**: the Summary tab runs the same `generate_migration_plan()` engine as the Export Plan endpoint — day counts, cohort assignments, and GB totals are always identical.
+
+### API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/migration/projects/{id}/fix-settings` | Current weights + rates (auto-created with defaults) |
+| `PATCH` | `/api/migration/projects/{id}/fix-settings` | Update any weight or fix rate (`null` resets to default) |
+| `PATCH` | `/api/migration/projects/{id}/vms/{vm_id}/fix-override` | Set or clear per-VM fix override (`null` = clear) |
+| `GET` | `/api/migration/projects/{id}/migration-summary` | Full summary: KPIs, per-day schedule, OS breakdown, cohort breakdown, methodology |
+
+---
+
 ## End-to-End Workflow
 
 ```
@@ -641,12 +739,19 @@ Both export buttons appear automatically in the **⚙️ Prepare PCD** tab once 
     └── Download vJailbreak Credential Bundle (JSON) → hand to vJailbreak operator
     └── Download Tenant Handoff Sheet (PDF) → distribute credentials to tenant owners
 
-12. EXECUTE WAVES (future Phase 5 — vJailbreak)
+12. VIEW MIGRATION SUMMARY (Phase 5.0)
+    └── Source Analysis → 📊 Summary tab
+    └── Review KPI strip: total VMs, total data, data-copy time, fix time, total downtime
+    └── Check per-cohort breakdown → spot any cohort with outsized fix exposure
+    └── Adjust settings (weight sliders + fix rates) if defaults don't fit the environment
+    └── Set per-VM overrides for known complex VMs via expanded row ⏱ Fix Time Override card
+
+13. EXECUTE WAVES (future Phase 5+ — vJailbreak)
     └── Advance Wave 0 to executing (pilot)
     └── Validate pilot → advance to complete
     └── Proceed wave by wave through the plan
 
-13. EXPORT REPORTS
+14. EXPORT REPORTS
     └── GET /projects/{id}/export-plan  (XLSX / PDF)
     └── GET /projects/{id}/gap-report   (XLSX / PDF)
 ```
