@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.1] - 2026-03-05
+
+### Fixed — Migration Summary Excel/PDF export errors (`api/export_reports.py`, `pf9-ui`)
+
+#### Bug Fix — `AttributeError: 'str' object has no attribute 'get'` in export generators (`api/export_reports.py`)
+- `per_os_breakdown` returned by `compute_project_fix_summary()` is a **dict** keyed by OS family name (e.g. `{"windows": {...}, "linux": {...}}`), not a list. The `generate_summary_excel_report()` and `generate_summary_pdf_report()` functions were iterating it as a list, which yielded the string keys instead of the value dicts, causing an `AttributeError` and a 500 on every export request.
+- Fixed both generators to use `.items()` (with a fallback for any future list-format callers).
+
+#### Bug Fix — "Failed to fetch" / 401 on export buttons (`pf9-ui/src/components/migration/SourceAnalysis.tsx`)
+- Export Excel and Export PDF buttons were implemented as `<a href download>` anchor tags, which perform a plain browser GET with no `Authorization` header, resulting in a 401 from the API.
+- Replaced both anchors with `<button onClick>` handlers that call a new `downloadSummaryBlob()` helper — uses `fetch()` with `Authorization: Bearer <token>` (same pattern as `downloadAuthBlob` used by the Migration Plan export buttons), then triggers the file download via a blob URL.
+
+---
+
 ## [1.44.0] - 2026-03-07
 
 ### Added — Migration Summary per-day breakdown + engine throughput cap fix (`api/migration_engine.py`, `api/migration_routes.py`, `pf9-ui`)

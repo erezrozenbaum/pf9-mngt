@@ -8266,6 +8266,26 @@ function MigrationSummaryView({ projectId }: { projectId: number }) {
     finally { setSaving(false); }
   };
 
+  const downloadSummaryBlob = async (ext: "xlsx" | "pdf") => {
+    const mime = ext === "xlsx"
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : "application/pdf";
+    const filename = `migration-summary-${projectId}.${ext}`;
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/migration/projects/${projectId}/export-summary.${ext}`, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!res.ok) { alert(`Download failed: ${res.status} ${res.statusText}`); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e: any) { alert(`Download error: ${e.message}`); }
+  };
+
   const cardStyle: React.CSSProperties = {
     background: "var(--card-bg, #fff)", border: "1px solid var(--border, #e5e7eb)",
     borderRadius: 8, padding: "16px 20px", flex: 1, minWidth: 160,
@@ -8286,16 +8306,12 @@ function MigrationSummaryView({ projectId }: { projectId: number }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h3 style={{ margin: 0 }}>📈 Migration Summary — Executive View</h3>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <a
-            href={`/api/migration/projects/${projectId}/export-summary.xlsx`}
-            download
-            style={{ ...btnSecondary, textDecoration: "none", background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", fontSize: "0.82rem" }}
-          >📊 Export Excel</a>
-          <a
-            href={`/api/migration/projects/${projectId}/export-summary.pdf`}
-            download
-            style={{ ...btnSecondary, textDecoration: "none", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontSize: "0.82rem" }}
-          >📑 Export PDF</a>
+          <button onClick={() => downloadSummaryBlob("xlsx")}
+            style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", fontSize: "0.82rem" }}
+          >📊 Export Excel</button>
+          <button onClick={() => downloadSummaryBlob("pdf")}
+            style={{ ...btnSecondary, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontSize: "0.82rem" }}
+          >📑 Export PDF</button>
           <button onClick={load} style={btnSmall}>↻ Refresh</button>
         </div>
       </div>
