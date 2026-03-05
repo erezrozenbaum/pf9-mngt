@@ -83,6 +83,8 @@ interface MigrationVM {
   migration_status?: string;
   migration_status_note?: string;
   migration_mode_override?: string | null;
+  // Phase 5.0
+  tech_fix_minutes_override?: number | null;
 }
 
 interface Tenant {
@@ -109,6 +111,12 @@ interface Tenant {
   migration_priority?: number;
   cohort_id?: number | null;
   cohort_name?: string | null;
+  // Phase 3.1 — actual usage + network breakdown
+  used_vcpu?: number | null;
+  used_ram_gb?: number | null;
+  used_disk_gb?: number | null;
+  est_migration_hours?: number | null;
+  network_type_counts?: Record<string, number> | null;
 }
 
 // Phase 3.0 — Tenant Ease Score
@@ -148,7 +156,7 @@ interface Props {
   onProjectUpdated: (p: MigrationProject) => void;
 }
 
-type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness" | "prepare";
+type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness" | "prepare" | "summary";
 
 // Phase 3 — Wave Planning types
 interface Wave {
@@ -250,6 +258,10 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
   const [modeOverrideUpdating, setModeOverrideUpdating] = useState(false);
   const [vmStatusLocal, setVmStatusLocal] = useState<Record<string, string>>({});
   const [vmModeOverrideLocal, setVmModeOverrideLocal] = useState<Record<string, string | null>>({});
+  /* Phase 5.0 — Fix Override ---- */
+  const [fixOverrideInput, setFixOverrideInput] = useState<Record<number, string>>({});
+  const [fixOverrideSaving, setFixOverrideSaving] = useState<Record<number, boolean>>({});
+  const [fixOverrideLocal, setFixOverrideLocal] = useState<Record<number, number | null>>({});;
 
   /* ---- Networks ---- */
   const [networks, setNetworks] = useState<NetworkSummary[]>([]);
@@ -345,6 +357,21 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
       loadVMs();
     } catch (e: any) { alert(e.message); }
     finally { setModeOverrideUpdating(false); }
+  };
+
+  const saveFixOverride = async (vmId: number, minutesStr: string) => {
+    const minutes = minutesStr.trim() === "" ? null : parseInt(minutesStr, 10);
+    if (minutesStr.trim() !== "" && isNaN(minutes!)) return;
+    setFixOverrideSaving(prev => ({ ...prev, [vmId]: true }));
+    try {
+      await apiFetch(`/api/migration/projects/${pid}/vms/${vmId}/fix-override`, {
+        method: "PATCH",
+        body: JSON.stringify({ minutes }),
+      });
+      setFixOverrideLocal(prev => ({ ...prev, [vmId]: minutes }));
+      loadVMs();
+    } catch (e: any) { alert(e.message); }
+    finally { setFixOverrideSaving(prev => ({ ...prev, [vmId]: false })); }
   };
 
   const loadTenants = useCallback(async () => {
@@ -552,6 +579,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
           { id: "readiness" as SubView, label: "🎯 PCD Readiness" },
           { id: "prepare" as SubView, label: "⚙️ Prepare PCD" },
           { id: "plan" as SubView, label: "📋 Migration Plan" },
+          { id: "summary" as SubView, label: "📈 Migration Summary" },
           { id: "risk" as SubView, label: "⚠️ Risk Config" },
         ]).map(t => (
           <button key={t.id} onClick={() => setSubView(t.id)}
@@ -640,17 +668,19 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                     { key: "risk_category", label: "Risk" },
                     { key: "migration_mode", label: "Mode" },
                     { key: "migration_status", label: "Status" },
+                    { key: "tech_fix_minutes_override", label: "Fix Override", noSort: true },
                     { key: "primary_ip", label: "IP" },
                   ].map(col => (
                     <th key={col.key}
-                      style={{ ...thStyle, cursor: "pointer", userSelect: "none",
+                      style={{ ...thStyle, cursor: (col as any).noSort ? undefined : "pointer", userSelect: "none",
                         background: vmSort === col.key ? "#1e40af" : undefined }}
                       title={`Sort by ${col.label}`}
                       onClick={() => {
+                        if ((col as any).noSort) return;
                         if (vmSort === col.key) setVmOrder(o => o === "asc" ? "desc" : "asc");
                         else { setVmSort(col.key); setVmOrder("asc"); }
                       }}>
-                      {col.label} {vmSort === col.key ? (vmOrder === "asc" ? " ▲" : " ▼") : " ⇅"}
+                      {col.label} {!(col as any).noSort && (vmSort === col.key ? (vmOrder === "asc" ? " ▲" : " ▼") : " ⇅")}
                     </th>
                   ))}
                 </tr>
@@ -758,13 +788,26 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                         })()}
                       </td>
                       <td style={tdStyle}>
+                        {(() => {
+                          const ov = vm.id !== undefined && fixOverrideLocal[vm.id] !== undefined
+                            ? fixOverrideLocal[vm.id]
+                            : vm.tech_fix_minutes_override;
+                          return ov != null ? (
+                            <span style={{ ...pillStyle, background: "#fef3c7", color: "#92400e", fontSize: "0.72rem" }}
+                              title="Manual fix-time override (min)">
+                              🔒 {ov}m
+                            </span>
+                          ) : <span style={{ color: "#d1d5db", fontSize: "0.72rem" }}>auto</span>;
+                        })()}
+                      </td>
+                      <td style={tdStyle}>
                         <span style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{vm.primary_ip || "—"}</span>
                       </td>
                     </tr>
                     {/* ── Expanded detail row ── */}
                     {expandedVm === vm.vm_name && (
                       <tr>
-                        <td colSpan={20} style={{ padding: "8px 16px 12px 40px", background: "var(--card-bg, #f9fafb)" }}>
+                        <td colSpan={21} style={{ padding: "8px 16px 12px 40px", background: "var(--card-bg, #f9fafb)" }}>
                           {detailLoading ? (
                             <span style={{ color: "#6b7280" }}>Loading details...</span>
                           ) : (
@@ -891,6 +934,48 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
                                   </div>
                                 </div>
                               )}
+                              {/* Fix Time Override */}
+                              {vm.id && (() => {
+                                const currentOverride = fixOverrideLocal[vm.id] !== undefined
+                                  ? fixOverrideLocal[vm.id]
+                                  : vm.tech_fix_minutes_override;
+                                const inputVal = fixOverrideInput[vm.id] !== undefined
+                                  ? fixOverrideInput[vm.id]
+                                  : (currentOverride != null ? String(currentOverride) : "");
+                                return (
+                                  <div style={{ padding: "8px 14px", background: "#fffbeb", borderRadius: 6, border: "1px solid #fde68a", minWidth: 220 }}>
+                                    <h4 style={{ margin: "0 0 6px", fontSize: "0.85rem", color: "#92400e" }}>⏱ Fix Time Override</h4>
+                                    <div style={{ fontSize: "0.75rem", color: "#6b7280", marginBottom: 6 }}>
+                                      {currentOverride != null
+                                        ? <span style={{ color: "#92400e", fontWeight: 600 }}>🔒 Manual: {currentOverride} min</span>
+                                        : <span>Auto-calculated by score model</span>}
+                                    </div>
+                                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                                      <input
+                                        type="number" min={0} max={999} placeholder="min (blank = auto)"
+                                        value={inputVal}
+                                        onChange={e => setFixOverrideInput(prev => ({ ...prev, [vm.id!]: e.target.value }))}
+                                        style={{ fontSize: "0.8rem", padding: "2px 6px", borderRadius: 4, border: "1px solid #fcd34d", width: 110 }}
+                                      />
+                                      <button
+                                        disabled={fixOverrideSaving[vm.id]}
+                                        onClick={() => saveFixOverride(vm.id!, inputVal)}
+                                        style={{ ...btnSmall, background: "#f59e0b", color: "#fff", fontSize: "0.75rem" }}>
+                                        {fixOverrideSaving[vm.id] ? "⏳" : "Save"}
+                                      </button>
+                                      {currentOverride != null && (
+                                        <button
+                                          onClick={() => {
+                                            setFixOverrideInput(prev => ({ ...prev, [vm.id!]: "" }));
+                                            saveFixOverride(vm.id!, "");
+                                          }}
+                                          style={{ ...btnSmall, fontSize: "0.75rem" }}
+                                          title="Clear override — revert to auto">✕ Clear</button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                             </div>
                             {/* VM Dependencies */}
                             {vm.id && (
@@ -990,6 +1075,11 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
       {/* ---- Prepare PCD (Phase 4B) ---- */}
       {subView === "prepare" && (
         <PreparePcdView projectId={pid} />
+      )}
+
+      {/* ---- Migration Summary (Phase 5.0) ---- */}
+      {subView === "summary" && (
+        <MigrationSummaryView projectId={pid} />
       )}
     </div>
   );
@@ -1232,6 +1322,10 @@ function TenantsView({ tenants, projectId, onRefresh }: {
   const [tenantSearch, setTenantSearch] = useState("");
   const [tenantSort, setTenantSort] = useState("tenant_name");
   const [tenantSortDir, setTenantSortDir] = useState<"asc" | "desc">("asc");
+  const [tenantFilterScope, setTenantFilterScope] = useState<"all" | "in" | "out">("all");
+  const [tenantFilterEase, setTenantFilterEase] = useState<"all" | "Easy" | "Medium" | "Hard">("all");
+  const [tenantFilterCohort, setTenantFilterCohort] = useState<string>("all");
+  const [tenantFilterNetType, setTenantFilterNetType] = useState<string>("all");
 
   /* ---- Bulk-scope state ---- */
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -1385,16 +1479,50 @@ function TenantsView({ tenants, projectId, onRefresh }: {
         (t.target_project_name || "").toLowerCase().includes(q)
       );
     }
+    if (tenantFilterScope !== "all") {
+      list = list.filter(t =>
+        tenantFilterScope === "in" ? t.include_in_plan !== false : t.include_in_plan === false
+      );
+    }
+    if (tenantFilterEase !== "all") {
+      list = list.filter(t => {
+        const es = easeScores[t.id];
+        if (!es) return false;
+        const score = es.ease_score ?? 999;
+        if (tenantFilterEase === "Easy")   return score <= 33;
+        if (tenantFilterEase === "Medium") return score > 33 && score <= 66;
+        if (tenantFilterEase === "Hard")   return score > 66;
+        return true;
+      });
+    }
+    if (tenantFilterCohort !== "all") {
+      list = list.filter(t =>
+        tenantFilterCohort === "unassigned"
+          ? !t.cohort_name
+          : t.cohort_name === tenantFilterCohort
+      );
+    }
+    if (tenantFilterNetType !== "all") {
+      list = list.filter(t => {
+        const counts = (t as any).network_type_counts as Record<string, number> | null;
+        if (!counts) return false;
+        return (counts[tenantFilterNetType] ?? 0) > 0;
+      });
+    }
             list.sort((a: any, b: any) => {
       let av: any, bv: any;
       switch (tenantSort) {
-        case "vm_count":           av = a.vm_count || 0;               bv = b.vm_count || 0;               break;
-        case "total_vcpu":         av = a.total_vcpu || 0;             bv = b.total_vcpu || 0;             break;
-        case "total_ram_gb":       av = a.total_ram_mb || 0;           bv = b.total_ram_mb || 0;           break;
-        case "total_disk_gb":      av = a.total_disk_gb || 0;          bv = b.total_disk_gb || 0;          break;
-        case "migration_priority": av = a.migration_priority ?? 999;   bv = b.migration_priority ?? 999;  break;
-        case "ease_score":          av = easeScores[a.id]?.ease_score ?? 999; bv = easeScores[b.id]?.ease_score ?? 999; break;
-        default:                   av = (a.tenant_name || "").toLowerCase(); bv = (b.tenant_name || "").toLowerCase();
+        case "vm_count":              av = a.vm_count || 0;               bv = b.vm_count || 0;               break;
+        case "total_vcpu":            av = a.total_vcpu || 0;             bv = b.total_vcpu || 0;             break;
+        case "total_ram_gb":          av = a.total_ram_mb || 0;           bv = b.total_ram_mb || 0;           break;
+        case "total_disk_gb":         av = a.total_disk_gb || 0;          bv = b.total_disk_gb || 0;          break;
+        case "used_vcpu":             av = a.used_vcpu ?? 0;              bv = b.used_vcpu ?? 0;              break;
+        case "used_ram_gb":           av = a.used_ram_gb ?? 0;            bv = b.used_ram_gb ?? 0;            break;
+        case "used_disk_gb":          av = a.used_disk_gb ?? 0;           bv = b.used_disk_gb ?? 0;           break;
+        case "est_migration_hours":   av = a.est_migration_hours ?? 0;    bv = b.est_migration_hours ?? 0;    break;
+        case "migration_priority":    av = a.migration_priority ?? 999;   bv = b.migration_priority ?? 999;   break;
+        case "ease_score":            av = easeScores[a.id]?.ease_score ?? 999; bv = easeScores[b.id]?.ease_score ?? 999; break;
+        default:                      av = (a.tenant_name || "").toLowerCase(); bv = (b.tenant_name || "").toLowerCase();
       }
       const cmp = typeof av === "string" ? av.localeCompare(bv) : (av - bv);
       return tenantSortDir === "asc" ? cmp : -cmp;
@@ -1453,13 +1581,47 @@ function TenantsView({ tenants, projectId, onRefresh }: {
           placeholder="Search tenants..."
           value={tenantSearch}
           onChange={e => setTenantSearch(e.target.value)}
-          style={{ ...inputStyle, width: 200, padding: "4px 8px" }}
+          style={{ ...inputStyle, width: 180, padding: "4px 8px" }}
         />
         {tenantSearch && (
           <button onClick={() => setTenantSearch("")} style={btnSmall}>✕ Clear</button>
         )}
+        {/* ---- Filter dropdowns ---- */}
+        <select value={tenantFilterScope} onChange={e => setTenantFilterScope(e.target.value as any)}
+          style={{ ...inputStyle, maxWidth: 130 }}>
+          <option value="all">All Scope</option>
+          <option value="in">✓ In Scope</option>
+          <option value="out">✗ Out of Scope</option>
+        </select>
+        <select value={tenantFilterEase} onChange={e => setTenantFilterEase(e.target.value as any)}
+          style={{ ...inputStyle, maxWidth: 130 }}>
+          <option value="all">All Ease</option>
+          <option value="Easy">🟢 Easy (≤33)</option>
+          <option value="Medium">🟡 Medium (34–66)</option>
+          <option value="Hard">🔴 Hard (&gt;66)</option>
+        </select>
+        <select value={tenantFilterCohort} onChange={e => setTenantFilterCohort(e.target.value)}
+          style={{ ...inputStyle, maxWidth: 150 }}>
+          <option value="all">All Cohorts</option>
+          <option value="unassigned">— Unassigned —</option>
+          {[...new Set(tenants.map(t => t.cohort_name).filter(Boolean))].sort().map(c => (
+            <option key={c!} value={c!}>{c}</option>
+          ))}
+        </select>
+        <select value={tenantFilterNetType} onChange={e => setTenantFilterNetType(e.target.value)}
+          style={{ ...inputStyle, maxWidth: 140 }}>
+          <option value="all">All Net Types</option>
+          <option value="nsx_t">NSX-T</option>
+          <option value="vlan_based">VLAN-based</option>
+          <option value="standard">Standard</option>
+          <option value="isolated">Isolated</option>
+        </select>
+        {(tenantFilterScope !== "all" || tenantFilterEase !== "all" || tenantFilterCohort !== "all" || tenantFilterNetType !== "all") && (
+          <button onClick={() => { setTenantFilterScope("all"); setTenantFilterEase("all"); setTenantFilterCohort("all"); setTenantFilterNetType("all"); }}
+            style={btnSmall}>✕ Clear Filters</button>
+        )}
         <span style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#6b7280" }}>
-          {tenantSearch
+          {displayTenants.length !== tenants.length
             ? `${displayTenants.length} / ${tenants.length} tenants`
             : `${scopedCount} / ${tenants.length} tenants in scope`
           }
@@ -1594,16 +1756,21 @@ function TenantsView({ tenants, projectId, onRefresh }: {
               </th>
               <th style={{ ...thStyle, width: 24, textAlign: "center" }} title="In scope">📋</th>
               {([
-                { key: "tenant_name",        label: "Tenant"    },
-                { key: "org_vdc",            label: "OrgVDC",   noSort: true },
-                { key: "vm_count",           label: "VMs"       },
-                { key: "total_vcpu",         label: "vCPU"      },
-                { key: "total_ram_gb",       label: "RAM GB"    },
-                { key: "total_disk_gb",      label: "Disk GB"   },
+                { key: "tenant_name",        label: "Tenant"        },
+                { key: "org_vdc",            label: "OrgVDC",       noSort: true },
+                { key: "vm_count",           label: "VMs"           },
+                { key: "total_vcpu",         label: "vCPU (alloc)"  },
+                { key: "total_ram_gb",       label: "RAM GB (alloc)"},
+                { key: "total_disk_gb",      label: "Disk GB (alloc)"},
+                { key: "used_vcpu",          label: "vCPU (used)",   title: "Actual vCPU demand = Σ(cpu_count × cpu_usage%) across all tenant VMs. Shows — when RVTools vCPU sheet not in export." },
+                { key: "used_ram_gb",        label: "RAM GB (used)",  title: "Actual RAM demand in GB from RVTools vMemory sheet. Shows — when sheet not in export." },
+                { key: "used_disk_gb",       label: "Disk GB (used)", title: "Actual used disk in GB from RVTools vPartition (per-tenant aggregate from import)" },
+                { key: "est_migration_hours",label: "Est. Time",     title: "Estimated data-copy time at 100 GB/h effective throughput (based on used disk)" },
                 { key: "migration_priority", label: "Priority"  },
                 { key: "ease_score",         label: "Ease ↓"     },
-              ] as {key:string;label:string;noSort?:boolean}[]).map(col => (
+              ] as {key:string;label:string;noSort?:boolean;title?:string}[]).map(col => (
                 <th key={col.key}
+                  title={col.title}
                   style={{ ...thStyle,
                     cursor: col.noSort ? undefined : "pointer",
                     userSelect: "none",
@@ -1618,6 +1785,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                     : " ⇍")}
                 </th>
               ))}
+              <th style={thStyle} title="Network types used by tenant VMs">Networks</th>
               <th style={thStyle}>Target Domain</th>
               <th style={{ ...thStyle, color: "#6b7280", fontStyle: "italic", fontSize: "0.78rem" }} title="Optional description for the PCD Domain">Domain Desc.</th>
               <th style={thStyle}>Target Project</th>
@@ -1663,6 +1831,10 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                       <td style={tdStyle}>{t.total_vcpu || 0}</td>
                       <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
                       <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(0) : "0"}</td>
+                      <td style={{ ...tdStyle, color: "#9ca3af" }}>{t.used_vcpu != null ? Number(t.used_vcpu).toFixed(1) : "—"}</td>
+                      <td style={{ ...tdStyle, color: "#9ca3af" }}>{t.used_ram_gb != null ? Number(t.used_ram_gb).toFixed(1) : "—"}</td>
+                      <td style={{ ...tdStyle, color: "#9ca3af" }}>{t.used_disk_gb != null ? Number(t.used_disk_gb).toFixed(1) : "—"}</td>
+                      <td style={{ ...tdStyle, color: "#9ca3af" }}>{t.est_migration_hours != null ? `${Number(t.est_migration_hours).toFixed(1)} h` : "—"}</td>
                       <td style={tdStyle}>
                         <input type="number" value={editPriority}
                           onChange={e => setEditPriority(Number(e.target.value) || 999)}
@@ -1670,6 +1842,8 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                           min={1} max={9999}
                           onKeyDown={e => { if (e.key === "Escape") cancelEdit(); }} />
                       </td>
+                      <td style={{ ...tdStyle, color: "#9ca3af" }}>—</td>
+                      <td style={{ ...tdStyle, color: "#9ca3af" }}>—</td>
                       <td style={tdStyle}>
                         <input value={editDomain} onChange={e => setEditDomain(e.target.value)}
                           style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.85rem" }}
@@ -1711,7 +1885,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                     {!editInclude && (
                       <tr key={`${rowKey}-reason`} style={{ background: "#fff7ed" }}>
                         <td colSpan={2} />
-                        <td colSpan={14} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
+                        <td colSpan={19} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
                           <label style={{ ...labelStyle, display: "inline", marginRight: 8 }}>Exclude reason:</label>
                           <input value={editExcludeReason}
                             onChange={e => setEditExcludeReason(e.target.value)}
@@ -1743,6 +1917,26 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                   <td style={tdStyle}>{t.total_vcpu || 0}</td>
                   <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
                   <td style={tdStyle}>{t.total_disk_gb ? Number(t.total_disk_gb).toFixed(0) : "0"}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: t.used_vcpu ? "#1d4ed8" : "#9ca3af" }}
+                    title={t.used_vcpu ? `${Number(t.used_vcpu).toFixed(1)} vCPUs in active use` : "No RVTools vCPU usage data (sheet not in export)"}>
+                    {t.used_vcpu ? Number(t.used_vcpu).toFixed(1) : <span style={{ color: "#d1d5db" }}>—</span>}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: t.used_ram_gb ? "#1d4ed8" : "#9ca3af" }}
+                    title={t.used_ram_gb ? `${Number(t.used_ram_gb).toFixed(1)} GB RAM in active use` : "No RVTools vMemory usage data (sheet not in export)"}>
+                    {t.used_ram_gb ? Number(t.used_ram_gb).toFixed(1) : <span style={{ color: "#d1d5db" }}>—</span>}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "right", color: t.used_disk_gb ? "#1d4ed8" : "#9ca3af" }} title="Actual used disk from RVTools vPartition">
+                    {t.used_disk_gb != null ? Number(t.used_disk_gb).toFixed(1) : "—"}
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontSize: "0.8rem" }} title="Estimated migration time at 100 GB/h">
+                    {t.est_migration_hours != null
+                      ? (() => {
+                          const h = Math.floor(Number(t.est_migration_hours));
+                          const m = Math.round((Number(t.est_migration_hours) - h) * 60);
+                          return h > 0 ? `${h}h ${m > 0 ? m + "m" : ""}`.trim() : `${m}m`;
+                        })()
+                      : "—"}
+                  </td>
                   <td style={{ ...tdStyle, textAlign: "center", color: (t.migration_priority ?? 999) < 999 ? "#1d4ed8" : "#9ca3af" }}>
                     {(t.migration_priority ?? 999) < 999 ? t.migration_priority : "—"}
                   </td>
@@ -1754,10 +1948,10 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                       const col = es.ease_score < 30 ? "#15803d" : es.ease_score < 60 ? "#854d0e" : "#dc2626";
                       return (
                         <span
-                          title="Click for breakdown"
+                          title="Click for dimension breakdown (lower = easier)"
                           onClick={() => setEasePopover(easePopover === t.id ? null : t.id)}
-                          style={{ ...pillStyle, background: bg, color: col, cursor: "pointer", fontSize: "0.72rem", fontWeight: 700 }}>
-                          {es.ease_score.toFixed(0)}
+                          style={{ ...pillStyle, background: bg, color: col, cursor: "pointer", fontSize: "0.72rem", fontWeight: 700, whiteSpace: "nowrap" }}>
+                          {es.ease_score.toFixed(0)} {es.ease_label}
                         </span>
                       );
                     })()}
@@ -1794,6 +1988,31 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                             {es.vm_count} VMs · {es.total_used_gb.toFixed(1)} GB used · Risk {es.avg_risk_score.toFixed(0)}
                           </div>
                           <button onClick={() => setEasePopover(null)} style={{ ...btnSmall, marginTop: 6, width: "100%" }}>Close</button>
+                        </div>
+                      );
+                    })()}
+                  </td>
+                  <td style={{ ...tdStyle, fontSize: "0.75rem" }}>
+                    {(() => {
+                      const ntc = t.network_type_counts;
+                      if (!ntc || Object.keys(ntc).length === 0) return <span style={{ color: "#d1d5db" }}>—</span>;
+                      const colors: Record<string, { bg: string; col: string; label: string }> = {
+                        nsx_t:      { bg: "#ede9fe", col: "#6d28d9", label: "NSX-T" },
+                        vlan_based: { bg: "#dbeafe", col: "#1d4ed8", label: "VLAN" },
+                        isolated:   { bg: "#fef9c3", col: "#854d0e", label: "Isolated" },
+                        standard:   { bg: "#f3f4f6", col: "#374151", label: "Standard" },
+                      };
+                      return (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+                          {Object.entries(ntc).sort().map(([nt, cnt]) => {
+                            const c = colors[nt] ?? { bg: "#f3f4f6", col: "#374151", label: nt };
+                            return (
+                              <span key={nt} style={{ ...pillStyle, background: c.bg, color: c.col, fontSize: "0.68rem" }}
+                                title={`${c.label}: ${cnt} network${cnt !== 1 ? "s" : ""}`}>
+                                {c.label}×{cnt}
+                              </span>
+                            );
+                          })}
                         </div>
                       );
                     })()}
@@ -1846,7 +2065,7 @@ function TenantsView({ tenants, projectId, onRefresh }: {
               );
             })}
             {displayTenants.length === 0 && (
-              <tr><td colSpan={16} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+              <tr><td colSpan={22} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
                 {tenants.length === 0
                   ? "No tenants detected. Add rules above or run assessment."
                   : `No tenants match "${tenantSearch}".`}
@@ -1867,6 +2086,7 @@ function NetworksView({ networks, projectId, onRefresh }: {
   networks: NetworkSummary[]; projectId: number; onRefresh: () => void
 }) {
   const [netSearch, setNetSearch] = useState("");
+  const [reclassifying, setReclassifying] = useState(false);
 
   const typeColor = (t: string): React.CSSProperties => {
     if (t === "vlan_based") return { background: "#dbeafe", color: "#1d4ed8" };
@@ -1900,6 +2120,21 @@ function NetworksView({ networks, projectId, onRefresh }: {
           <button onClick={() => setNetSearch("")} style={btnSmall}>✕ Clear</button>
         )}
         <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{filteredNetworks.length} / {networks.length} networks</span>
+        <button
+          onClick={async () => {
+            setReclassifying(true);
+            try {
+              await apiFetch(`/api/migration/projects/${projectId}/networks/reclassify`, { method: "POST" });
+              onRefresh();
+            } finally {
+              setReclassifying(false);
+            }
+          }}
+          disabled={reclassifying}
+          style={{ ...btnSmall, marginLeft: "auto" }}
+          title="Re-apply naming-pattern rules to all networks (e.g. after pattern updates)">
+          {reclassifying ? "Reclassifying…" : "🔄 Reclassify Types"}
+        </button>
       </div>
 
       <table style={tableStyle}>
@@ -2695,6 +2930,27 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
     { name: "🚀 Wave 2", max_vms: null },
   ]);
 
+  const [resettingCohorts, setResettingCohorts] = useState(false);
+
+  // Daily transfer capacity from project bandwidth settings (mirrors compute_bandwidth_model in engine)
+  const dailyCapacityGb = (() => {
+    const srcNicMbps = project.source_nic_speed_gbps * (project.source_usable_pct / 100) * 1000;
+    let linkMbps = Infinity;
+    if (project.topology_type === "cross_site_dedicated" && project.link_speed_gbps) {
+      linkMbps = project.link_speed_gbps * (project.link_usable_pct / 100) * 1000;
+    } else if (project.topology_type === "cross_site_internet") {
+      const rawLink = Math.min(project.source_upload_mbps ?? Infinity, project.dest_download_mbps ?? Infinity);
+      linkMbps = rawLink * (project.link_usable_pct / 100);
+    }
+    const agentMbps = project.agent_count * project.agent_nic_speed_gbps * (project.agent_nic_usable_pct / 100) * 1000;
+    const storageMbps = project.pcd_storage_write_mbps * 8;
+    const bottleneckMbps = Math.min(srcNicMbps, linkMbps, agentMbps, storageMbps);
+    if (!isFinite(bottleneckMbps) || bottleneckMbps <= 0) return 0;
+    const workingHours = project.working_hours_per_day ?? 8;
+    return (bottleneckMbps / 8) * 3600 * workingHours / 1024; // GB/day
+  })();
+  const dailyCapacityTb = dailyCapacityGb > 0 ? dailyCapacityGb / 1024 : 0;
+
   const loadCohorts = useCallback(async () => {
     setLoading(true);
     try {
@@ -2708,6 +2964,21 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
   }, [projectId]);
 
   useEffect(() => { loadCohorts(); }, [loadCohorts]);
+
+  const resetAllCohorts = async () => {
+    if (!confirm(`Delete ALL ${cohorts.length} cohort(s) and unassign all tenants? This cannot be undone.`)) return;
+    setResettingCohorts(true);
+    setError("");
+    try {
+      const res = await apiFetch<{ cohorts_deleted: number; tenants_unassigned: number }>(
+        `/api/migration/projects/${projectId}/cohorts`, { method: "DELETE" }
+      );
+      await loadCohorts();
+      onRefreshTenants();
+      alert(`Reset complete: ${res.cohorts_deleted} cohort(s) deleted, ${res.tenants_unassigned} tenant(s) unassigned.`);
+    } catch (e: any) { setError(e.message); }
+    finally { setResettingCohorts(false); }
+  };
 
   const createCohort = async () => {
     if (!newName.trim()) return;
@@ -2840,6 +3111,15 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
             title="Smart auto-assign tenants to cohorts">
             ⚡ Smart Auto-Assign {showAutoPanel ? "▲" : "▼"}
           </button>
+          {cohorts.length > 0 && (
+            <button
+              onClick={resetAllCohorts}
+              disabled={resettingCohorts}
+              style={{ ...btnSecondary, color: "#dc2626", borderColor: "#fca5a5" }}
+              title="Delete all cohorts and unassign all tenants — use before rebuilding from scratch">
+              {resettingCohorts ? "Resetting…" : "🗑️ Reset All Cohorts"}
+            </button>
+          )}
           <button onClick={() => setShowCreate(!showCreate)} style={btnPrimary}>+ New Cohort</button>
         </div>
       </div>
@@ -2992,9 +3272,19 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
                         onChange={e => { setMaxVms(e.target.value ? Number(e.target.value) : 9999); setAutoPreview(null); }} style={inputStyle} />
                     </div>
                     <div>
-                      <label style={labelStyle}>Max Disk TB / Wave <span title="Hard cap on used-disk per wave (TB)." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                      <label style={labelStyle}>Max Disk TB / Wave <span title="Waves exceeding this will be auto-split. Set to your daily transfer capacity so each wave fits in one working day." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
                       <input type="number" min={0.1} step={0.1} value={maxDiskTb === 9999 ? "" : maxDiskTb} placeholder="unlimited"
                         onChange={e => { setMaxDiskTb(e.target.value ? Number(e.target.value) : 9999); setAutoPreview(null); }} style={inputStyle} />
+                      {dailyCapacityTb > 0 && (
+                        <div style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                          💡 {dailyCapacityTb.toFixed(2)} TB/day
+                          {maxDiskTb === 9999 && (
+                            <button onClick={() => { setMaxDiskTb(+dailyCapacityTb.toFixed(2)); setAutoPreview(null); }}
+                              style={{ fontSize: "0.68rem", padding: "1px 5px", borderRadius: 4, border: "1px solid #7dd3fc",
+                                background: "#e0f2fe", color: "#0369a1", cursor: "pointer" }}>Use</button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3012,9 +3302,19 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
                       onChange={e => { setMaxVms(e.target.value ? Number(e.target.value) : 9999); setAutoPreview(null); }} style={inputStyle} />
                   </div>
                   <div>
-                    <label style={labelStyle}>Max Disk TB / Cohort <span title="Hard cap on total used-disk (TB) per cohort. 1 TB = 1024 GB." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
+                    <label style={labelStyle}>Max Disk TB / Cohort <span title="Cohorts exceeding this will overflow to the next cohort. Tip: set to your daily capacity × days you want per cohort." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
                     <input type="number" min={0.1} step={0.1} value={maxDiskTb === 9999 ? "" : maxDiskTb} placeholder="unlimited"
                       onChange={e => { setMaxDiskTb(e.target.value ? Number(e.target.value) : 9999); setAutoPreview(null); }} style={inputStyle} />
+                    {dailyCapacityTb > 0 && (
+                      <div style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                        💡 {dailyCapacityTb.toFixed(2)} TB/day
+                        {maxDiskTb === 9999 && (
+                          <button onClick={() => { setMaxDiskTb(+dailyCapacityTb.toFixed(2)); setAutoPreview(null); }}
+                            style={{ fontSize: "0.68rem", padding: "1px 5px", borderRadius: 4, border: "1px solid #7dd3fc",
+                              background: "#e0f2fe", color: "#0369a1", cursor: "pointer" }}>Use</button>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label style={labelStyle}>Max Avg Risk % <span title="If a cohort's running average risk score would exceed this %, the overflowing tenant is pushed to the next cohort." style={{ cursor: "help", color: "#9ca3af", fontSize: "0.75rem" }}>ⓘ</span></label>
@@ -3123,7 +3423,7 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
                 <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse", background: "#fff", borderRadius: 6 }}>
                   <thead>
                     <tr style={{ background: "#f0f9ff" }}>
-                      {["Cohort", "Tenants", "VMs", "Disk (GB)", "Avg Risk", "Avg Ease"].map(h => (
+                      {["Cohort", "Tenants", "VMs", "Used (GB)", "Est. Days", "Avg Risk", "Avg Ease"].map(h => (
                         <th key={h} style={{ padding: "5px 8px", textAlign: h === "Cohort" ? "left" : "right",
                           fontWeight: 600, color: "#374151", borderBottom: "1px solid #bae6fd" }}>{h}</th>
                       ))}
@@ -3135,7 +3435,19 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
                         <td style={{ padding: "4px 8px", fontWeight: 600 }}>{row.name ?? `Cohort ${i+1}`}</td>
                         <td style={{ padding: "4px 8px", textAlign: "right" }}>{row.tenant_count ?? "—"}</td>
                         <td style={{ padding: "4px 8px", textAlign: "right" }}>{row.vm_count ?? "—"}</td>
-                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{typeof row.total_disk_gb === "number" ? row.total_disk_gb.toFixed(0) : "—"}</td>
+                        <td style={{ padding: "4px 8px", textAlign: "right" }}>{typeof (row.total_used_gb ?? row.total_disk_gb) === "number" ? (row.total_used_gb ?? row.total_disk_gb).toFixed(0) : "—"}</td>
+                        {(() => {
+                          const gb = row.total_used_gb ?? row.total_disk_gb ?? 0;
+                          const days = dailyCapacityGb > 0 ? Math.ceil(gb / dailyCapacityGb) : null;
+                          return (
+                            <td style={{ padding: "4px 8px", textAlign: "right",
+                              color: days != null && days > 1 ? "#dc2626" : "#15803d",
+                              fontWeight: days != null && days > 1 ? 700 : 400 }}
+                              title={days != null ? `${gb.toFixed(0)} GB ÷ ${dailyCapacityGb.toFixed(0)} GB/day = ${days} day(s)` : "Set bandwidth in project settings to see estimate"}>
+                              {days != null ? (days > 1 ? `⚠️ ${days}d` : `✅ ${days}d`) : "—"}
+                            </td>
+                          );
+                        })()}
                         <td style={{ padding: "4px 8px", textAlign: "right",
                           color: (row.avg_risk ?? row.avg_risk_score ?? 0) > 70 ? "#dc2626" : "#15803d" }}>
                           {typeof (row.avg_risk ?? row.avg_risk_score) === "number" ? (row.avg_risk ?? row.avg_risk_score).toFixed(0) : "—"}
@@ -3713,6 +4025,7 @@ function WavePlannerView({ projectId, project, tenants }: {
   const [showAutoPanel, setShowAutoPanel] = useState(false);
   const [autoStrategy, setAutoStrategy] = useState("pilot_first");
   const [autoMaxVms, setAutoMaxVms] = useState(30);
+  const [autoMaxDiskTb, setAutoMaxDiskTb] = useState<number | null>(null);
   const [autoPilotCount, setAutoPilotCount] = useState(5);
   const [autoPrefix, setAutoPrefix] = useState("Wave");
   const [autoDryRun, setAutoDryRun] = useState(true);
@@ -3720,6 +4033,34 @@ function WavePlannerView({ projectId, project, tenants }: {
   const [loadingAuto, setLoadingAuto] = useState(false);
   const [advancingWave, setAdvancingWave] = useState<number | null>(null);
   const [deletingWave, setDeletingWave] = useState<number | null>(null);
+  const [resettingWaves, setResettingWaves] = useState(false);
+
+  // Compute effective daily transfer capacity (GB/working-day) from project bandwidth settings
+  // Mirrors compute_bandwidth_model() in migration_engine.py — all speeds normalised to Mbps first
+  const dailyCapacityGb = (() => {
+    const srcNicMbps = project.source_nic_speed_gbps * (project.source_usable_pct / 100) * 1000;
+    let linkMbps = Infinity;
+    if (project.topology_type === "cross_site_dedicated" && project.link_speed_gbps) {
+      linkMbps = project.link_speed_gbps * (project.link_usable_pct / 100) * 1000;
+    } else if (project.topology_type === "cross_site_internet") {
+      const rawLink = Math.min(project.source_upload_mbps ?? Infinity, project.dest_download_mbps ?? Infinity);
+      linkMbps = rawLink * (project.link_usable_pct / 100);
+    }
+    const agentMbps = project.agent_count * project.agent_nic_speed_gbps * (project.agent_nic_usable_pct / 100) * 1000;
+    const storageMbps = project.pcd_storage_write_mbps * 8; // MB/s → Mbps
+    const bottleneckMbps = Math.min(srcNicMbps, linkMbps, agentMbps, storageMbps);
+    if (!isFinite(bottleneckMbps) || bottleneckMbps <= 0) return 0;
+    const workingHours = project.working_hours_per_day ?? 8;
+    return (bottleneckMbps / 8) * 3600 * workingHours / 1024; // GB/day
+  })();
+  const dailyCapacityTb = dailyCapacityGb > 0 ? dailyCapacityGb / 1024 : 0;
+
+  // Seed disk cap to daily capacity on first load so waves never default to "unlimited"
+  useEffect(() => {
+    if (dailyCapacityTb > 0 && autoMaxDiskTb === null) {
+      setAutoMaxDiskTb(+dailyCapacityTb.toFixed(2));
+    }
+  }, [dailyCapacityTb]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -3796,6 +4137,7 @@ function WavePlannerView({ projectId, project, tenants }: {
           strategy: autoStrategy,
           cohort_id: selectedCohortId ?? null,
           max_vms_per_wave: autoMaxVms,
+          max_disk_gb_per_wave: autoMaxDiskTb != null ? +(autoMaxDiskTb * 1024).toFixed(1) : undefined,
           pilot_vm_count: autoPilotCount,
           wave_name_prefix: autoPrefix,
           dry_run: dryRun,
@@ -3873,6 +4215,26 @@ function WavePlannerView({ projectId, project, tenants }: {
         <button onClick={() => setShowAutoPanel(!showAutoPanel)} style={btnSecondary}>
           🤖 {showAutoPanel ? "Hide Auto-Build" : "Auto-Build Waves"}
         </button>
+        {waves.length > 0 && (
+          <button
+            onClick={async () => {
+              if (!confirm(`Delete ALL ${waves.length} wave(s) and reset assigned VM statuses? This cannot be undone.`)) return;
+              setResettingWaves(true);
+              try {
+                const res = await apiFetch<{ waves_deleted: number; vms_reset: number }>(
+                  `/api/migration/projects/${projectId}/waves`, { method: "DELETE" }
+                );
+                await loadData();
+                alert(`Reset complete: ${res.waves_deleted} wave(s) deleted, ${res.vms_reset} VM(s) reset to not_started.`);
+              } catch (e: any) { setError(e.message); }
+              finally { setResettingWaves(false); }
+            }}
+            disabled={resettingWaves}
+            style={{ ...btnSecondary, color: "#dc2626", borderColor: "#fca5a5" }}
+            title="Delete all waves and reset VM statuses — use before rebuilding from scratch">
+            {resettingWaves ? "Resetting…" : "🗑️ Reset All Waves"}
+          </button>
+        )}
         <button onClick={loadData} disabled={loading} style={btnSecondary}>
           🔄 Refresh
         </button>
@@ -3913,6 +4275,25 @@ function WavePlannerView({ projectId, project, tenants }: {
               <input type="range" min={5} max={100} value={autoMaxVms}
                 onChange={e => { setAutoMaxVms(Number(e.target.value)); setAutoPreview(null); }}
                 style={{ width: "100%" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, marginBottom: 4 }}>
+                Max Disk TB / Wave
+              </label>
+              <input type="number" min={0.1} step={0.1} value={autoMaxDiskTb ?? ""}
+                placeholder={dailyCapacityGb > 0 ? `≈ ${dailyCapacityTb.toFixed(2)} TB/day` : "unlimited"}
+                onChange={e => { setAutoMaxDiskTb(e.target.value ? Number(e.target.value) : null); setAutoPreview(null); }}
+                style={inputStyle} />
+              {dailyCapacityTb > 0 && (
+                <div style={{ fontSize: "0.7rem", color: "#6b7280", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                  💡 {dailyCapacityTb.toFixed(2)} TB/day at current settings
+                  {autoMaxDiskTb == null && (
+                    <button onClick={() => { setAutoMaxDiskTb(+dailyCapacityTb.toFixed(2)); setAutoPreview(null); }}
+                      style={{ fontSize: "0.68rem", padding: "1px 5px", borderRadius: 4, border: "1px solid #7dd3fc",
+                        background: "#e0f2fe", color: "#0369a1", cursor: "pointer" }}>Use</button>
+                  )}
+                </div>
+              )}
             </div>
             {autoStrategy === "pilot_first" && (
               <div>
@@ -3960,7 +4341,8 @@ function WavePlannerView({ projectId, project, tenants }: {
                     {(autoPreview.cohort_count ?? 0) > 1 && <th style={thStyleSm}>Cohort</th>}
                     <th style={thStyleSm}>Type</th>
                     <th style={thStyleSm}>VMs</th>
-                    <th style={thStyleSm}>Disk (GB)</th>
+                    <th style={thStyleSm}>Used (GB)</th>
+                    <th style={thStyleSm}>Est. Day</th>
                     <th style={thStyleSm}>Risk</th>
                     <th style={thStyleSm}>Tenants</th>
                   </tr>
@@ -4044,6 +4426,8 @@ function WavePlannerView({ projectId, project, tenants }: {
           const nextStatuses = WAVE_STATUS_NEXT[wave.status] ?? [];
           const passedChecks = wavePreflights.filter(c => c.check_status === "pass").length;
           const blockerFails = wavePreflights.filter(c => c.severity === "blocker" && c.check_status === "fail").length;
+          const waveTotalGb = (wave.vms ?? []).reduce((s, v) => s + Number(v.in_use_gb ?? 0), 0);
+          const overCapacity = dailyCapacityGb > 0 && waveTotalGb > dailyCapacityGb;
 
           return (
             <div key={wave.id} style={{
@@ -4098,6 +4482,16 @@ function WavePlannerView({ projectId, project, tenants }: {
                     {wavePreflights.length > 0 && (
                       <span style={{ color: blockerFails > 0 ? "#dc2626" : passedChecks === wavePreflights.length ? "#16a34a" : "#6b7280" }}>
                         {blockerFails > 0 ? `❌ ${blockerFails} blocker` : passedChecks === wavePreflights.length ? "✅ All checks passed" : `⏳ ${passedChecks}/${wavePreflights.length} checks`}
+                      </span>
+                    )}
+                    {waveTotalGb > 0 && (
+                      <span>💾 {waveTotalGb.toFixed(1)} GB</span>
+                    )}
+                    {overCapacity && (
+                      <span
+                        title={`Transfer capacity: ~${dailyCapacityGb.toFixed(1)} GB/working-day — this wave exceeds what can be moved in a single day`}
+                        style={{ color: "#dc2626", fontWeight: 600 }}>
+                        ⚠️ Exceeds 1-day capacity ({dailyCapacityGb.toFixed(1)} GB/day)
                       </span>
                     )}
                   </div>
@@ -4239,13 +4633,13 @@ function WavePlannerView({ projectId, project, tenants }: {
                               </span>
                             </td>
                             <td style={tdStyleSm}>
-                              <span style={{ color: v.risk_classification === "GREEN" ? "#16a34a" :
-                                v.risk_classification === "RED" ? "#dc2626" : "#d97706" }}>
-                                {v.risk_classification === "GREEN" ? "🟢" : v.risk_classification === "RED" ? "🔴" : "🟡"}
-                                {v.risk_classification ?? "—"}
+                              <span style={{ color: v.risk_category === "GREEN" ? "#16a34a" :
+                                v.risk_category === "RED" ? "#dc2626" : "#d97706" }}>
+                                {v.risk_category === "GREEN" ? "🟢" : v.risk_category === "RED" ? "🔴" : "🟡"}
+                                {v.risk_category ?? "—"}
                               </span>
                             </td>
-                            <td style={tdStyleSm}>{v.in_use_gb?.toFixed(1) ?? "—"}</td>
+                            <td style={tdStyleSm}>{v.in_use_gb != null ? Number(v.in_use_gb).toFixed(1) : "—"}</td>
                             <td style={tdStyleSm}>
                               <span style={{ fontSize: "0.72rem", padding: "1px 5px", borderRadius: 4,
                                 background: v.wave_vm_status === "complete" ? "#dcfce7" :
@@ -4280,6 +4674,10 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [expandedTenant, setExpandedTenant] = useState<string | null>(null);
+  const [execSummary, setExecSummary] = useState("");
+  const [techNotes, setTechNotes] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [saveNotesMsg, setSaveNotesMsg] = useState("");
 
   const loadPlan = useCallback(async () => {
     setLoading(true);
@@ -4287,6 +4685,8 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
     try {
       const data = await apiFetch<any>(`/api/migration/projects/${projectId}/export-plan`);
       setPlan(data);
+      setExecSummary(data?.project_summary?.executive_summary || "");
+      setTechNotes(data?.project_summary?.technical_notes || "");
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -4295,6 +4695,23 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
   }, [projectId]);
 
   useEffect(() => { loadPlan(); }, [loadPlan]);
+
+  const saveNotes = async () => {
+    setSavingNotes(true);
+    setSaveNotesMsg("");
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ executive_summary: execSummary, technical_notes: techNotes }),
+      });
+      setSaveNotesMsg("Saved ✓");
+      setTimeout(() => setSaveNotesMsg(""), 3000);
+    } catch (e: any) {
+      setSaveNotesMsg(`Error: ${e.message}`);
+    } finally {
+      setSavingNotes(false);
+    }
+  };
 
   const downloadJson = () => {
     if (!plan) return;
@@ -4380,10 +4797,53 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
         <button onClick={downloadPdf} style={{ ...btnPrimary, background: "#7c3aed" }}>📑 Export PDF</button>
       </div>
 
+      {/* Narrative sections: Executive Summary + Technical Notes */}
+      <div style={sectionStyle}>
+        <h3 style={{ marginTop: 0, marginBottom: 12 }}>📝 Plan Narrative</h3>
+        <p style={{ marginTop: 0, marginBottom: 12, fontSize: "0.85rem", color: "#6b7280" }}>
+          These sections appear in the exported PDF. Changes are saved directly to the project.
+        </p>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "block", fontWeight: 600, marginBottom: 4, fontSize: "0.9rem" }}>
+            Executive Summary
+          </label>
+          <textarea
+            value={execSummary}
+            onChange={e => setExecSummary(e.target.value)}
+            rows={4}
+            placeholder="Describe the migration business objectives, stakeholders, timeline, and high-level approach..."
+            style={{ width: "100%", padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 6,
+              fontSize: "0.88rem", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+          />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "block", fontWeight: 600, marginBottom: 4, fontSize: "0.9rem" }}>
+            Technical Notes
+          </label>
+          <textarea
+            value={techNotes}
+            onChange={e => setTechNotes(e.target.value)}
+            rows={5}
+            placeholder="Architecture details, prerequisites, network topology, rollback procedures, known risks, tool versions..."
+            style={{ width: "100%", padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 6,
+              fontSize: "0.88rem", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={saveNotes} disabled={savingNotes} style={btnPrimary}>
+            {savingNotes ? "Saving…" : "💾 Save Notes"}
+          </button>
+          {saveNotesMsg && (
+            <span style={{ fontSize: "0.85rem", color: saveNotesMsg.startsWith("Error") ? "#dc2626" : "#16a34a", fontWeight: 600 }}>
+              {saveNotesMsg}
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* Project summary */}
       <div style={sectionStyle}>
-        <h3 style={{ marginTop: 0 }}>Project Summary</h3>
-        {ps.excluded_tenants > 0 && (
+        <h3 style={{ marginTop: 0 }}>Project Summary</h3>        {ps.excluded_tenants > 0 && (
           <div style={{ marginBottom: 10, padding: "6px 12px", background: "#fef3c7", borderRadius: 6,
             border: "1px solid #fbbf24", fontSize: "0.85rem", color: "#92400e" }}>
             ⚠️ <strong>{ps.excluded_tenants} tenant{ps.excluded_tenants > 1 ? "s" : ""} excluded</strong> from this plan. Totals reflect included tenants only.
@@ -4403,7 +4863,13 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
           <StatCard label="Total Downtime (h)" value={ps.total_downtime_hours} />
         </div>
         <div style={{ marginTop: 8, fontSize: "0.85rem", color: "#6b7280" }}>
-          Bottleneck: <strong>{ps.bottleneck_mbps} Mbps</strong> · 
+          Bottleneck: <strong>{ps.bottleneck_mbps} Mbps</strong>
+          {ps.max_gb_per_day != null && (
+            <span title="Maximum in-use data transferable per working day at the shared bottleneck bandwidth (55% efficiency)">
+              {" "}· Daily throughput cap: <strong>{(ps.max_gb_per_day / 1024).toFixed(1)} TB/day</strong>
+              {" "}({ps.max_gb_per_day.toFixed(0)} GB)
+            </span>
+          )}{" "}·{" "}
           Project duration: <strong>{ps.project_duration_days} days</strong> ({ps.effective_working_days} effective)
         </div>
       </div>
@@ -4660,7 +5126,7 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
                   <th style={thStyleSm}>Cohort(s)</th>
                   <th style={thStyleSm}>VMs</th>
                   <th style={thStyleSm}>Tenant / VM Detail</th>
-                  <th style={thStyleSm}>Est. Hours</th>
+                  <th style={thStyleSm} title="Wall-clock hours = total agent-hours ÷ concurrent slots">Wall-clock (h)</th>
                 </tr>
               </thead>
               <tbody>
@@ -4715,7 +5181,18 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
                               ))}
                             </div>
                           </td>
-                          <td style={tdStyleSm}>{day.total_estimated_hours.toFixed(1)}h</td>
+                          <td style={tdStyleSm} title={`Total agent-hours: ${day.total_estimated_hours?.toFixed(1)}h across ${ps.total_concurrent_slots} concurrent slots`}>
+                            <strong style={{ color: day.over_capacity ? "#dc2626" : undefined }}>
+                              {(day.wall_clock_hours ?? day.total_estimated_hours)?.toFixed(1)}h
+                            </strong>
+                            {day.over_capacity && (
+                              <div style={{ fontSize: "0.6rem", color: "#dc2626", fontWeight: 600 }}
+                                title="Data volume exceeds daily pipe capacity — this day needs to be split">
+                                ⚠️ exceeds 8h
+                              </div>
+                            )}
+                            <div style={{ fontSize: "0.65rem", color: "#9ca3af" }}>{day.vm_count} VMs</div>
+                          </td>
                         </tr>
                       </React.Fragment>
                     );
@@ -6775,16 +7252,17 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
 
   const confirmAll = async () => {
     const targets = flavors.filter(f => !f.skip && !f.confirmed);
-    if (!targets.length) return;
+    if (!targets.length) { alert("All flavors are already confirmed."); return; }
+    if (!window.confirm(`Confirm all ${targets.length} pending flavor staging row${targets.length !== 1 ? "s" : ""}?`)) return;
     setConfirmingAll(true);
     setError("");
     try {
-      await Promise.all(targets.map(f =>
-        apiFetch(`/api/migration/flavor-staging/${f.id}`, {
-          method: "PATCH", body: JSON.stringify({ confirmed: true })
-        })
-      ));
+      const r = await apiFetch<{ affected_count: number }>(
+        `/api/migration/projects/${projectId}/flavor-staging/confirm-all`,
+        { method: "POST" }
+      );
       await load();
+      alert(`✓ ${r.affected_count} flavor${r.affected_count !== 1 ? "s" : ""} confirmed.`);
     } catch (e: any) { setError(e.message); }
     finally { setConfirmingAll(false); }
   };
@@ -6839,7 +7317,7 @@ function FlavorStagingView({ projectId }: { projectId: number }) {
           </button>
           <button
             onClick={confirmAll}
-            disabled={confirmingAll || flavors.filter(f => !f.skip && !f.confirmed).length === 0}
+            disabled={confirmingAll}
             style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
               background: "#16a34a", color: "#fff", opacity: confirmingAll ? 0.7 : 1 }}>
             {confirmingAll ? "⏳ Confirming..." : "✓ Confirm All"}
@@ -7058,16 +7536,17 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
 
   const confirmAll = async () => {
     const targets = images.filter(i => !i.confirmed);
-    if (!targets.length) return;
+    if (!targets.length) { alert("All image requirements are already confirmed."); return; }
+    if (!window.confirm(`Confirm all ${targets.length} pending image requirement${targets.length !== 1 ? "s" : ""}?`)) return;
     setConfirmingAll(true);
     setError("");
     try {
-      await Promise.all(targets.map(img =>
-        apiFetch(`/api/migration/image-requirements/${img.id}`, {
-          method: "PATCH", body: JSON.stringify({ confirmed: true })
-        })
-      ));
+      const r = await apiFetch<{ affected_count: number }>(
+        `/api/migration/projects/${projectId}/image-requirements/confirm-all`,
+        { method: "POST" }
+      );
       await load();
+      alert(`✓ ${r.affected_count} image requirement${r.affected_count !== 1 ? "s" : ""} confirmed.`);
     } catch (e: any) { setError(e.message); }
     finally { setConfirmingAll(false); }
   };
@@ -7153,7 +7632,7 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
           </button>
           <button
             onClick={confirmAll}
-            disabled={confirmingAll || images.filter(i => !i.confirmed).length === 0}
+            disabled={confirmingAll}
             style={{ ...btnSecondary, fontSize: "0.8rem", padding: "4px 10px",
               background: "#16a34a", color: "#fff", opacity: confirmingAll ? 0.7 : 1 }}>
             {confirmingAll ? "⏳ Confirming..." : "✓ Confirm All"}
@@ -7688,3 +8167,432 @@ const thStyleSm: React.CSSProperties = {
 const tdStyleSm: React.CSSProperties = {
   padding: "3px 8px", verticalAlign: "top", fontSize: "0.8rem",
 };
+
+/* ================================================================== */
+/*  Phase 5.0 — Migration Summary View                                */
+/* ================================================================== */
+
+interface FixSettings {
+  project_id: string;
+  weight_windows: number;
+  weight_extra_volume: number;
+  weight_extra_nic: number;
+  weight_cold_mode: number;
+  weight_risk_yellow: number;
+  weight_risk_red: number;
+  weight_has_snapshots: number;
+  weight_cross_tenant_dep: number;
+  weight_unknown_os: number;
+  fix_rate_windows: number;
+  fix_rate_linux: number;
+  fix_rate_other: number;
+  fix_rate_global: number | null;
+  cutover_minutes: number;
+}
+
+interface MigrationSummaryDayRow {
+  day: number;
+  cohort_name: string;
+  tenant_count: number;
+  vm_count: number;
+  total_gb: number;
+  wall_clock_hours: number;
+  total_agent_hours: number;
+  cold_count: number;
+  warm_count: number;
+  risk_green: number;
+  risk_yellow: number;
+  risk_red: number;
+  over_capacity?: boolean;
+}
+
+interface MigrationSummaryData {
+  total_vms: number;
+  total_data_gb: number;
+  total_provisioned_gb: number;
+  data_copy_hours: number;
+  total_fix_hours: number;
+  total_cutover_hours: number;
+  total_downtime_hours: number;
+  bandwidth_mbps: number;
+  per_os_breakdown: Record<string, { vm_count: number; fix_hours: number; fix_rate: number }>;
+  per_cohort: { cohort_name: string; vm_count: number; data_gb: number; data_copy_hours: number; fix_hours: number; downtime_hours: number }[];
+  per_day: MigrationSummaryDayRow[];
+  methodology: { data_copy: string; fix_time: string; downtime: string; fix_rates: string };
+  settings_used: FixSettings;
+}
+
+function MigrationSummaryView({ projectId }: { projectId: number }) {
+  const [summary, setSummary] = React.useState<MigrationSummaryData | null>(null);
+  const [settings, setSettings] = React.useState<FixSettings | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [settingsLoading, setSettingsLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [editSettings, setEditSettings] = React.useState<Partial<FixSettings>>({});
+  const [saving, setSaving] = React.useState(false);
+  const [savedMsg, setSavedMsg] = React.useState("");
+  const [showMethodology, setShowMethodology] = React.useState(false);
+  const [showWeights, setShowWeights] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const [sumData, setData] = await Promise.all([
+        apiFetch<MigrationSummaryData>(`/api/migration/projects/${projectId}/migration-summary`),
+        apiFetch<{ settings: FixSettings }>(`/api/migration/projects/${projectId}/fix-settings`),
+      ]);
+      setSummary(sumData);
+      setSettings(setData.settings);
+      setEditSettings(setData.settings);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  }, [projectId]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  const saveSettings = async () => {
+    setSaving(true); setSavedMsg("");
+    try {
+      const result = await apiFetch<{ settings: FixSettings }>(
+        `/api/migration/projects/${projectId}/fix-settings`,
+        { method: "PATCH", body: JSON.stringify(editSettings) }
+      );
+      setSettings(result.settings);
+      setEditSettings(result.settings);
+      setSavedMsg("Settings saved. Refreshing summary…");
+      await load();
+      setSavedMsg("✓ Saved and recalculated.");
+    } catch (e: any) { setError(e.message); }
+    finally { setSaving(false); }
+  };
+
+  const cardStyle: React.CSSProperties = {
+    background: "var(--card-bg, #fff)", border: "1px solid var(--border, #e5e7eb)",
+    borderRadius: 8, padding: "16px 20px", flex: 1, minWidth: 160,
+  };
+  const cardNum: React.CSSProperties = { fontSize: "1.8rem", fontWeight: 700, margin: "4px 0 0" };
+  const cardLabel: React.CSSProperties = { fontSize: "0.78rem", color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" };
+
+  if (loading) return <p style={{ color: "#6b7280", padding: 24 }}>⏳ Calculating migration summary…</p>;
+  if (error)   return <div style={alertError}>{error} <button onClick={load} style={btnSmall}>Retry</button></div>;
+  if (!summary) return null;
+
+  const totalH = summary.total_downtime_hours;
+  const totalDays = (totalH / 8).toFixed(1);
+  const migrationDays = (summary.per_day || []).length;
+
+  return (
+    <div style={{ padding: "0 4px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h3 style={{ margin: 0 }}>📈 Migration Summary — Executive View</h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <a
+            href={`/api/migration/projects/${projectId}/export-summary.xlsx`}
+            download
+            style={{ ...btnSecondary, textDecoration: "none", background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", fontSize: "0.82rem" }}
+          >📊 Export Excel</a>
+          <a
+            href={`/api/migration/projects/${projectId}/export-summary.pdf`}
+            download
+            style={{ ...btnSecondary, textDecoration: "none", background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", fontSize: "0.82rem" }}
+          >📑 Export PDF</a>
+          <button onClick={load} style={btnSmall}>↻ Refresh</button>
+        </div>
+      </div>
+
+      {/* KPI strip */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+        <div style={cardStyle}>
+          <div style={cardLabel}>Total VMs in Scope</div>
+          <div style={cardNum}>{summary.total_vms.toLocaleString()}</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={cardLabel}>In-Use Data (TB)</div>
+          <div style={cardNum}>{(summary.total_data_gb / 1024).toFixed(2)}</div>
+          <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+            {summary.total_data_gb.toFixed(0)} GB used
+            {summary.total_provisioned_gb > 0 && (
+              <span title="Total provisioned disk allocation across all VMs — matches Migration Plan 'Total Disk'"
+                style={{ marginLeft: 6, color: "#d1d5db" }}>
+                / {(summary.total_provisioned_gb / 1024).toFixed(2)} TB provisioned
+              </span>
+            )}
+          </div>
+        </div>
+        {migrationDays > 0 && (
+          <div style={cardStyle}>
+            <div style={cardLabel}>Migration Days</div>
+            <div style={{ ...cardNum, color: "#2563eb" }}>{migrationDays}</div>
+            <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>calendar days planned</div>
+          </div>
+        )}
+        <div style={cardStyle}>
+          <div style={cardLabel}>Est. Data-Copy Time</div>
+          <div style={cardNum}>{summary.data_copy_hours.toFixed(1)} h</div>
+          <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>@ {summary.bandwidth_mbps} Mbps effective</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={cardLabel}>Est. Tech Fix Time</div>
+          <div style={cardNum}>{summary.total_fix_hours.toFixed(1)} h</div>
+          <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>Weighted by OS fix rates</div>
+        </div>
+        <div style={cardStyle}>
+          <div style={cardLabel}>Est. Total Downtime</div>
+          <div style={{ ...cardNum, color: totalH > 100 ? "#dc2626" : totalH > 40 ? "#f59e0b" : "#16a34a" }}>
+            {summary.total_downtime_hours.toFixed(1)} h
+          </div>
+          <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>≈ {totalDays} engineer-days @ 8h</div>
+        </div>
+      </div>
+
+      {/* Per-day daily schedule */}
+      {(summary.per_day || []).length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h4 style={{ margin: "0 0 8px" }}>📅 Daily Migration Schedule</h4>
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Day</th>
+                  <th style={thStyle}>Cohort / Wave</th>
+                  <th style={thStyle}>Tenants</th>
+                  <th style={thStyle}>VMs</th>
+                  <th style={thStyle} title="In-use data (GB) — same basis as bandwidth calculation. Provisioned disk is higher.">Storage GB (in-use)</th>
+                  <th style={thStyle}>Wall-clock (h)</th>
+                  <th style={thStyle}>Agent Total (h)</th>
+                  <th style={thStyle}>❄️ Cold</th>
+                  <th style={thStyle}>🔥 Warm</th>
+                  <th style={thStyle}>🟢 Green</th>
+                  <th style={thStyle}>🟡 Yellow</th>
+                  <th style={thStyle}>🔴 Red</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.per_day.map(d => {
+                  const hasRed = d.risk_red > 0;
+                  const hasYellow = d.risk_yellow > 0;
+                  const rowBg = d.over_capacity
+                    ? "rgba(220,38,38,0.07)"
+                    : hasRed
+                    ? "rgba(220,38,38,0.04)"
+                    : hasYellow
+                    ? "rgba(245,158,11,0.04)"
+                    : undefined;
+                  return (
+                    <tr key={d.day} style={{ background: rowBg }}>
+                      <td style={{ ...tdStyle, fontWeight: 700, textAlign: "center" }}>Day {d.day}</td>
+                      <td style={tdStyle}>{d.cohort_name || "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>{d.tenant_count}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600 }}>{d.vm_count}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{d.total_gb.toFixed(0)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600,
+                          color: d.over_capacity ? "#dc2626" : undefined }}>
+                        {d.wall_clock_hours.toFixed(1)}
+                        {d.over_capacity && (
+                          <span title="Data volume exceeds daily pipe capacity — split this day or reduce concurrent VMs"
+                            style={{ marginLeft: 4, fontSize: "0.7rem" }}>⚠️</span>
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{d.total_agent_hours.toFixed(1)}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: d.cold_count > 0 ? "#2563eb" : "#9ca3af" }}>{d.cold_count}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: d.warm_count > 0 ? "#d97706" : "#9ca3af" }}>{d.warm_count}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: "#16a34a" }}>{d.risk_green}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: "#d97706" }}>{d.risk_yellow}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: "#dc2626", fontWeight: d.risk_red > 0 ? 700 : 400 }}>{d.risk_red}</td>
+                    </tr>
+                  );
+                })}
+                {/* Totals row */}
+                {(() => {
+                  const totals = summary.per_day.reduce(
+                    (acc, d) => ({
+                      vms: acc.vms + d.vm_count,
+                      gb: acc.gb + d.total_gb,
+                      wch: acc.wch + d.wall_clock_hours,
+                      ah: acc.ah + d.total_agent_hours,
+                      cold: acc.cold + d.cold_count,
+                      warm: acc.warm + d.warm_count,
+                      green: acc.green + d.risk_green,
+                      yellow: acc.yellow + d.risk_yellow,
+                      red: acc.red + d.risk_red,
+                    }),
+                    { vms: 0, gb: 0, wch: 0, ah: 0, cold: 0, warm: 0, green: 0, yellow: 0, red: 0 }
+                  );
+                  return (
+                    <tr style={{ background: "var(--card-bg, #f0f4ff)", fontWeight: 700 }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>Totals</td>
+                      <td style={tdStyle}></td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>—</td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>{totals.vms}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{totals.gb.toFixed(0)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{totals.wch.toFixed(1)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "#6b7280" }}>{totals.ah.toFixed(1)}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: "#2563eb" }}>{totals.cold}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: "#d97706" }}>{totals.warm}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: "#16a34a" }}>{totals.green}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: "#d97706" }}>{totals.yellow}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", color: "#dc2626" }}>{totals.red}</td>
+                    </tr>
+                  );
+                })()}
+              </tbody>
+            </table>
+          </div>
+          <p style={{ margin: "6px 0 0", fontSize: "0.78rem", color: "#9ca3af" }}>
+            Wall-clock hours = agent-total ÷ concurrent migration slots. Storage = in-use GB per day.
+          </p>
+        </div>
+      )}
+
+      {/* Per-OS breakdown */}
+      {Object.keys(summary.per_os_breakdown).length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <h4 style={{ margin: "0 0 8px" }}>OS Family Breakdown</h4>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={thStyle}>OS Family</th>
+                <th style={thStyle}>VMs</th>
+                <th style={thStyle}>Fix Rate</th>
+                <th style={thStyle}>Est. Fix Hours</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(summary.per_os_breakdown).map(([fam, row]) => (
+                <tr key={fam}>
+                  <td style={tdStyle}>{fam === "windows" ? "🪟 Windows" : fam === "linux" ? "🐧 Linux" : `💻 ${fam}`}</td>
+                  <td style={tdStyle}>{row.vm_count}</td>
+                  <td style={tdStyle}>{(row.fix_rate * 100).toFixed(0)}%</td>
+                  <td style={tdStyle}>{row.fix_hours.toFixed(1)} h</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Per-cohort breakdown */}
+      {summary.per_cohort.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <h4 style={{ margin: "0 0 8px" }}>Per-Cohort Breakdown</h4>
+          <div style={{ overflowX: "auto" }}>
+            <table style={tableStyle}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Cohort</th>
+                  <th style={thStyle}>VMs</th>
+                  <th style={thStyle}>Data (GB)</th>
+                  <th style={thStyle}>Data Copy (h)</th>
+                  <th style={thStyle}>Fix Time (h)</th>
+                  <th style={thStyle}>Downtime (h)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.per_cohort.map(c => (
+                  <tr key={c.cohort_name}>
+                    <td style={tdStyle}>{c.cohort_name}</td>
+                    <td style={tdStyle}>{c.vm_count}</td>
+                    <td style={tdStyle}>{c.data_gb.toFixed(0)}</td>
+                    <td style={tdStyle}>{c.data_copy_hours.toFixed(1)}</td>
+                    <td style={tdStyle}>{c.fix_hours.toFixed(1)}</td>
+                    <td style={{ ...tdStyle, fontWeight: 600 }}>{c.downtime_hours.toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Methodology accordion */}
+      <div style={{ marginBottom: 20, border: "1px solid var(--border, #e5e7eb)", borderRadius: 8 }}>
+        <button
+          onClick={() => setShowMethodology(m => !m)}
+          style={{ width: "100%", textAlign: "left", padding: "10px 16px", fontWeight: 600,
+            background: "var(--card-bg, #f9fafb)", border: "none", cursor: "pointer", borderRadius: 8,
+            display: "flex", justifyContent: "space-between" }}>
+          📖 Calculation Methodology
+          <span>{showMethodology ? "▲" : "▼"}</span>
+        </button>
+        {showMethodology && summary.methodology && (
+          <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+            {Object.entries(summary.methodology).map(([k, v]) => (
+              <div key={k}>
+                <strong style={{ textTransform: "capitalize", color: "#374151" }}>{k.replace(/_/g, " ")}:</strong>
+                <p style={{ margin: "4px 0 0", color: "#6b7280", lineHeight: 1.5, fontSize: "0.88rem" }}>{v as string}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Fix settings editor */}
+      <div style={{ border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, marginBottom: 20 }}>
+        <button
+          onClick={() => setShowWeights(w => !w)}
+          style={{ width: "100%", textAlign: "left", padding: "10px 16px", fontWeight: 600,
+            background: "var(--card-bg, #f9fafb)", border: "none", cursor: "pointer", borderRadius: 8,
+            display: "flex", justifyContent: "space-between" }}>
+          ⚙️ Fix Score Weights &amp; Fix Rates
+          <span>{showWeights ? "▲" : "▼"}</span>
+        </button>
+        {showWeights && settings && (
+          <div style={{ padding: 16 }}>
+            <p style={{ color: "#6b7280", fontSize: "0.83rem", margin: "0 0 12px" }}>
+              Weights are added to a VM's raw fix score when the factor is present.
+              Fix rates multiply the raw score per OS family to get the expected value.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10, marginBottom: 16 }}>
+              {([
+                ["weight_windows",          "Windows OS (min)"],
+                ["weight_extra_volume",     "Extra data volume (min/disk)"],
+                ["weight_extra_nic",        "Extra NIC (min/NIC)"],
+                ["weight_cold_mode",        "Cold migration (min)"],
+                ["weight_risk_yellow",      "Elevated risk / Yellow (min)"],
+                ["weight_risk_red",         "High risk / Red (min)"],
+                ["weight_has_snapshots",    "Has snapshots (min)"],
+                ["weight_cross_tenant_dep", "Cross-tenant dep (min)"],
+                ["weight_unknown_os",       "Unknown OS (min)"],
+                ["cutover_minutes",         "Cutover window (min)"],
+              ] as [keyof FixSettings, string][]).map(([field, label]) => (
+                <label key={field} style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: "0.83rem" }}>
+                  <span style={{ color: "#374151" }}>{label}</span>
+                  <input type="number" min={0} max={480}
+                    value={(editSettings as any)[field] ?? (settings as any)[field]}
+                    onChange={e => setEditSettings(prev => ({ ...prev, [field]: Number(e.target.value) }))}
+                    style={{ ...inputStyle, width: "100%" }} />
+                </label>
+              ))}
+              {([
+                ["fix_rate_windows", "Fix rate: Windows (0–1)"],
+                ["fix_rate_linux",   "Fix rate: Linux (0–1)"],
+                ["fix_rate_other",   "Fix rate: Other OS (0–1)"],
+                ["fix_rate_global",  "Fix rate: Global override (blank=per-OS)"],
+              ] as [keyof FixSettings, string][]).map(([field, label]) => (
+                <label key={field} style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: "0.83rem" }}>
+                  <span style={{ color: "#374151" }}>{label}</span>
+                  <input type="number" min={0} max={1} step={0.05}
+                    value={(editSettings as any)[field] ?? ""}
+                    placeholder={field === "fix_rate_global" ? "per-OS (not set)" : undefined}
+                    onChange={e => setEditSettings(prev => ({
+                      ...prev,
+                      [field]: e.target.value === "" ? null : Number(e.target.value)
+                    }))}
+                    style={{ ...inputStyle, width: "100%" }} />
+                </label>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={saveSettings} disabled={saving}
+                style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>
+                {saving ? "⏳ Saving…" : "💾 Save & Recalculate"}
+              </button>
+              <button onClick={() => setEditSettings(settings)} style={btnSmall}>Reset</button>
+              {savedMsg && <span style={{ color: "#16a34a", fontSize: "0.85rem" }}>{savedMsg}</span>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

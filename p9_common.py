@@ -1,11 +1,3 @@
-def cinder_list_snapshots_for_volume(session: requests.Session, project_id: str, volume_id: str):
-    """
-    List all snapshots for a specific volume in a given project.
-    Uses cinder_snapshots_all and filters by volume_id.
-    Ensures all_tenants=1 is only used for admin sessions.
-    """
-    all_snaps = cinder_snapshots_all(session, project_id)
-    return [s for s in all_snaps if s.get("volume_id") == volume_id]
 #!/usr/bin/env python3
 """
 Common helpers for Platform9/OpenStack tools
@@ -773,6 +765,16 @@ def cinder_snapshots_all(session: requests.Session, project_id: str):
     # Only use all_tenants=1 if session is admin
     extra_params = {"all_tenants": "1"} if getattr(session, "is_admin", False) else {}
     return paginate(session, url, "snapshots", extra_params=extra_params)
+
+
+def cinder_list_snapshots_for_volume(session: requests.Session, project_id: str, volume_id: str):
+    """
+    List all snapshots for a specific volume in a given project.
+    Uses cinder_snapshots_all and filters by volume_id.
+    Ensures all_tenants=1 is only used for admin sessions.
+    """
+    all_snaps = cinder_snapshots_all(session, project_id)
+    return [s for s in all_snaps if s.get("volume_id") == volume_id]
 
 
 def cinder_create_snapshot(

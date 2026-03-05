@@ -153,11 +153,13 @@ class Pf9Client:
             r.raise_for_status()
 
     def list_flavors(self) -> List[Dict[str, Any]]:
-        """List all Nova flavors with details."""
+        """List all Nova flavors with details (public + private, admin scope)."""
         self.authenticate()
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/flavors/detail"
-        r = self.session.get(url, headers=self._headers())
+        # is_public=None (send as empty string) tells Nova to return ALL flavors
+        # regardless of public/private status — requires admin token
+        r = self.session.get(url, headers=self._headers(), params={"is_public": "None"})
         r.raise_for_status()
         return r.json().get("flavors", [])
 
@@ -927,6 +929,30 @@ class Pf9Client:
         r.raise_for_status()
         return r.json()
 
+    def update_image_properties(self, image_id: str, properties: Dict[str, str]) -> None:
+        """Patch Glance image properties using JSON-Patch (Glance v2).
+
+        Adds or replaces the given key/value pairs on the image.  Requires an
+        admin token (or the image owner's token).  Uses the Glance v2
+        application/openstack-images-v2.1-json-patch content-type.
+
+        Example:
+            client.update_image_properties(img_id, {
+                "hw_firmware_type": "uefi",
+                "hw_machine_type": "q35",
+            })
+        """
+        self.authenticate()
+        if not self.glance_endpoint:
+            raise RuntimeError("Glance endpoint not available")
+        url = f"{self.glance_endpoint}/v2/images/{image_id}"
+        # Glance v2 PATCH uses a JSON-Patch array; "add" works for both new and existing props
+        patch = [{"op": "add", "path": f"/{k}", "value": v} for k, v in properties.items()]
+        hdrs = {**self._headers(), "Content-Type": "application/openstack-images-v2.1-json-patch"}
+        r = self.session.patch(url, headers=hdrs, json=patch)
+        if not r.ok:
+            raise RuntimeError(f"Glance PATCH {image_id} failed: {r.status_code} {r.text[:300]}")
+
     # ---------------------------
     # Nova – Diskless flavors
     # ---------------------------
@@ -1065,8 +1091,16 @@ class Pf9Client:
         availability_zone: Optional[str] = None,
         project_id: Optional[str] = None,
         admin_pass: Optional[str] = None,
+        image_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Boot a VM from an existing Cinder volume."""
+        """Boot a VM from an existing Cinder volume.
+
+        Pass image_id so Nova reads Glance image properties (hw_firmware_type,
+        hw_machine_type, etc.) and creates the VM with the correct hardware
+        configuration — e.g. UEFI firmware for Windows Server 2019+ images.
+        Without imageRef Nova uses SeaBIOS (BIOS mode) regardless of the image,
+        which breaks GPT-only Windows images with 'No bootable device'.
+        """
         self.authenticate()
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/servers"
@@ -1095,6 +1129,12 @@ class Pf9Client:
                 "block_device_mapping_v2": [block_device],
             }
         }
+        # imageRef alongside BDM tells Nova to read Glance image properties
+        # (hw_firmware_type, hw_machine_type, hw_disk_bus, etc.) so the VM
+        # gets the correct firmware (UEFI for Windows 2019+) even though we
+        # are booting from a pre-created Cinder volume.
+        if image_id:
+            body["server"]["imageRef"] = image_id
         # Only include security_groups if there are any (empty list causes 400 on some Nova versions)
         if sgs:
             body["server"]["security_groups"] = sgs

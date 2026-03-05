@@ -40,6 +40,8 @@ Phase 1 Routes:
   GET    /api/migration/projects/{id}/export-plan   JSON migration plan
   GET    /api/migration/projects/{id}/export-report.xlsx  Excel report
   GET    /api/migration/projects/{id}/export-report.pdf   PDF report
+  GET    /api/migration/projects/{id}/export-summary.xlsx Migration summary Excel (4 sheets)
+  GET    /api/migration/projects/{id}/export-summary.pdf  Migration summary PDF
 
 Phase 2A — Tenant Scoping:
   PATCH  /api/migration/projects/{id}/tenants/bulk-scope   Bulk include/exclude
@@ -116,10 +118,15 @@ from migration_engine import (
     # Phase 3 — Wave Planning
     build_wave_plan,
     PREFLIGHT_CHECKS,
+    # Phase 5.0 — Tech Fix Time
+    compute_vm_fix_time,
+    compute_project_fix_summary,
+    DEFAULT_FIX_WEIGHTS,
 )
 from export_reports import (
     generate_excel_report, generate_pdf_report,
     generate_gaps_excel_report, generate_gaps_pdf_report,
+    generate_summary_excel_report, generate_summary_pdf_report,
 )
 
 logger = logging.getLogger("migration_planner")
@@ -266,6 +273,29 @@ except Exception as e:
     logger.warning(f"Could not ensure prep approval tables on startup: {e}")
 
 
+def _ensure_narrative_columns():
+    """Ensure executive_summary and technical_notes columns exist on migration_projects."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE migration_projects ADD COLUMN executive_summary TEXT;
+                EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+            """)
+            cur.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE migration_projects ADD COLUMN technical_notes TEXT;
+                EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+            """)
+            conn.commit()
+
+
+try:
+    _ensure_narrative_columns()
+except Exception as e:
+    logger.warning(f"Could not ensure narrative columns on startup: {e}")
+
+
 # ---------------------------------------------------------------------------
 # Activity log helper
 # ---------------------------------------------------------------------------
@@ -364,6 +394,8 @@ class UpdateProjectRequest(BaseModel):
     working_hours_per_day: Optional[float] = None
     working_days_per_week: Optional[int] = None
     target_vms_per_day: Optional[int] = None
+    executive_summary: Optional[str] = None
+    technical_notes: Optional[str] = None
 
 
 class UpdateVMRequest(BaseModel):
@@ -2100,9 +2132,64 @@ async def list_tenants(project_id: str):
         _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT * FROM migration_tenants
-                WHERE project_id = %s ORDER BY vm_count DESC
-            """, (project_id,))
+                WITH vm_agg AS (
+                    -- Aggregate actual CPU/RAM usage from per-VM RVTools data.
+                    -- Disk is taken directly from migration_tenants.total_in_use_gb
+                    -- (set per-row at import time) to avoid double-counting when
+                    -- multiple tenant rows share the same tenant_name.
+                    SELECT
+                        project_id,
+                        tenant_name,
+                        ROUND(SUM(cpu_count * COALESCE(cpu_usage_percent, 0) / 100.0)::numeric, 1)
+                            AS used_vcpu,
+                        ROUND((
+                            SUM(COALESCE(
+                                memory_usage_mb,
+                                ram_mb * COALESCE(memory_usage_percent, 0) / 100.0,
+                                0
+                            )) / 1024.0
+                        )::numeric, 1) AS used_ram_gb
+                    FROM migration_vms
+                    WHERE project_id = %s
+                    GROUP BY project_id, tenant_name
+                )
+                SELECT
+                    t.*,
+                    COALESCE(a.used_vcpu,    0) AS used_vcpu,
+                    COALESCE(a.used_ram_gb,  0) AS used_ram_gb,
+                    -- Disk: use the per-row total_in_use_gb from the tenant table
+                    -- (populated at RVTools import, correct even with duplicate tenant_names)
+                    COALESCE(t.total_in_use_gb, 0) AS used_disk_gb,
+                    CASE
+                        WHEN COALESCE(t.total_in_use_gb, 0) > 0
+                        THEN ROUND(t.total_in_use_gb::numeric / 100.0, 1)
+                        ELSE NULL
+                    END AS est_migration_hours,
+                    (
+                        SELECT json_object_agg(nt, cnt)
+                        FROM (
+                            SELECT mn.network_type AS nt,
+                                   COUNT(DISTINCT mn.network_name) AS cnt
+                            FROM migration_vm_nics nic2
+                            JOIN migration_networks mn
+                                ON mn.project_id = nic2.project_id
+                               AND mn.network_name = nic2.network_name
+                            JOIN migration_vms v2
+                                ON v2.project_id = nic2.project_id
+                               AND v2.vm_name = nic2.vm_name
+                            WHERE v2.tenant_name = t.tenant_name
+                              AND v2.project_id  = t.project_id
+                              AND mn.network_type IS NOT NULL
+                            GROUP BY mn.network_type
+                        ) _nt
+                    ) AS network_type_counts
+                FROM migration_tenants t
+                LEFT JOIN vm_agg a
+                    ON a.tenant_name = t.tenant_name
+                   AND a.project_id  = t.project_id
+                WHERE t.project_id = %s
+                ORDER BY t.vm_count DESC
+            """, (project_id, project_id))
             tenants = [_serialize_row(dict(r)) for r in cur.fetchall()]
     return {"status": "ok", "tenants": tenants}
 
@@ -2165,21 +2252,45 @@ async def list_networks(project_id: str):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT mn.*,
-                       string_agg(DISTINCT vm.tenant_name, ', ' ORDER BY vm.tenant_name) as tenant_names,
-                       count(DISTINCT vm.tenant_name) as tenant_count
+                       string_agg(DISTINCT t.tenant_name, ', ' ORDER BY t.tenant_name) as tenant_names,
+                       count(DISTINCT t.tenant_name) as tenant_count
                 FROM migration_networks mn
                 LEFT JOIN migration_vm_nics nic ON mn.project_id = nic.project_id 
                     AND mn.network_name = nic.network_name
                 LEFT JOIN migration_vms vm ON nic.project_id = vm.project_id 
                     AND nic.vm_name = vm.vm_name
+                    AND NOT COALESCE(vm.exclude_from_migration, false)
+                    AND NOT COALESCE(vm.template, false)
+                LEFT JOIN migration_tenants t ON t.project_id = vm.project_id
+                    AND t.tenant_name = vm.tenant_name
+                    AND COALESCE(t.include_in_plan, true) = true
                 WHERE mn.project_id = %s
                 GROUP BY mn.id, mn.project_id, mn.network_name, mn.vlan_id, mn.network_type, 
                          mn.vm_count, mn.subnet, mn.gateway, mn.dns_servers, mn.ip_range, 
                          mn.pcd_target, mn.notes, mn.created_at, mn.updated_at
-                ORDER BY mn.vm_count DESC
+                HAVING COUNT(DISTINCT vm.id) > 0
+                ORDER BY COUNT(DISTINCT vm.id) DESC
             """, (project_id,))
             networks = [_serialize_row(dict(r)) for r in cur.fetchall()]
     return {"status": "ok", "networks": networks}
+
+
+@router.post("/projects/{project_id}/networks/reclassify",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def reclassify_networks(project_id: str, user=Depends(get_current_user)):
+    """
+    Re-apply classify_network_type() to all existing networks in this project.
+    Useful after updating classification patterns (e.g. adding 'routed' to NSX-T patterns).
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            _build_network_summary(project_id, cur)
+            conn.commit()
+    _log_activity(actor=actor, action="reclassify_networks", resource_type="migration_network",
+                  resource_id=project_id, details={"reason": "manual reclassify"})
+    return {"status": "ok", "message": "Network types refreshed from current classification rules"}
 
 
 @router.patch("/projects/{project_id}/networks/{network_id}",
@@ -2674,13 +2785,14 @@ async def export_migration_plan(project_id: str):
             """, (project_id,))
             excluded_count = cur.fetchone()["count"]
 
-            # Only VMs belonging to included tenants
+            # Only VMs belonging to included tenants, and not individually excluded
             cur.execute("""
                 SELECT v.* FROM migration_vms v
                 JOIN migration_tenants t ON t.project_id = v.project_id
                     AND t.tenant_name = v.tenant_name
                 WHERE v.project_id = %s
-                  AND NOT coalesce(v.template, false)
+                  AND NOT COALESCE(v.template, false)
+                  AND NOT COALESCE(v.exclude_from_migration, false)
                   AND t.include_in_plan = true
                 ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
             """, (project_id,))
@@ -2694,6 +2806,8 @@ async def export_migration_plan(project_id: str):
         bottleneck_mbps=bw_model.bottleneck_mbps,
     )
     plan["project_summary"]["excluded_tenants"] = int(excluded_count)
+    plan["project_summary"]["executive_summary"] = project.get("executive_summary", "") or ""
+    plan["project_summary"]["technical_notes"] = project.get("technical_notes", "") or ""
 
     return {
         "status": "ok",
@@ -2716,11 +2830,11 @@ async def export_report_excel(project_id: str):
                 ORDER BY vm_count DESC
             """, (project_id,))
             tenants = [dict(r) for r in cur.fetchall()]
-            cur.execute("""
-                SELECT v.* FROM migration_vms v
+            cur.execute("""SELECT v.* FROM migration_vms v
                 JOIN migration_tenants t ON t.project_id = v.project_id
                     AND t.tenant_name = v.tenant_name
                 WHERE v.project_id = %s AND NOT coalesce(v.template, false)
+                  AND NOT COALESCE(v.exclude_from_migration, false)
                   AND t.include_in_plan = true
                 ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
             """, (project_id,))
@@ -2766,6 +2880,7 @@ async def export_report_pdf(project_id: str):
                 JOIN migration_tenants t ON t.project_id = v.project_id
                     AND t.tenant_name = v.tenant_name
                 WHERE v.project_id = %s AND NOT coalesce(v.template, false)
+                  AND NOT COALESCE(v.exclude_from_migration, false)
                   AND t.include_in_plan = true
                 ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
             """, (project_id,))
@@ -2784,12 +2899,54 @@ async def export_report_pdf(project_id: str):
         "storage_effective_mbps": round(bw_model.storage_effective_mbps, 1),
     }
 
+    plan["executive_summary"] = project.get("executive_summary", "") or ""
+    plan["technical_notes"] = project.get("technical_notes", "") or ""
     pdf_bytes = generate_pdf_report(plan, project["name"])
     safe_name = project["name"].replace(" ", "_")
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="migration-plan-{safe_name}.pdf"'},
+    )
+
+
+# =====================================================================
+# Phase 5.1 — Migration Summary Export (Excel + PDF)
+# =====================================================================
+
+@router.get("/projects/{project_id}/export-summary.xlsx",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_summary_excel(project_id: str):
+    """Download the migration summary as an Excel workbook (4 sheets)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+
+    summary = await get_migration_summary(project_id)
+
+    xlsx_bytes = generate_summary_excel_report(summary, project["name"])
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="migration-summary-{safe_name}.xlsx"'},
+    )
+
+
+@router.get("/projects/{project_id}/export-summary.pdf",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_summary_pdf(project_id: str):
+    """Download the migration summary as a PDF report (A4 portrait)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+
+    summary = await get_migration_summary(project_id)
+
+    pdf_bytes = generate_summary_pdf_report(summary, project["name"])
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="migration-summary-{safe_name}.pdf"'},
     )
 
 
@@ -3726,29 +3883,36 @@ async def get_node_sizing(
             # SUM(cpu_count * cpu_usage_percent/100) = actual physical vCPU demand:
             # no overcommit division needed because utilisation already represents
             # real scheduler pressure on the host (not theoretical peak).
+            # Only counts VMs that are in-scope: tenant include_in_plan = true AND
+            # individual exclude_from_migration = false.
             cur.execute("""
                 SELECT
-                    COUNT(*) FILTER (WHERE power_state = 'poweredOn')                            AS powered_on_count,
+                    COUNT(*) FILTER (WHERE v.power_state = 'poweredOn')                            AS powered_on_count,
                     -- Performance-based actual demand
-                    COUNT(*) FILTER (WHERE power_state = 'poweredOn'
-                                     AND cpu_usage_percent IS NOT NULL)                          AS vms_with_cpu_perf,
-                    COUNT(*) FILTER (WHERE power_state = 'poweredOn'
-                                     AND memory_usage_percent IS NOT NULL)                       AS vms_with_ram_perf,
-                    COALESCE(SUM(cpu_count * cpu_usage_percent / 100.0)
-                             FILTER (WHERE power_state = 'poweredOn'
-                                      AND cpu_usage_percent IS NOT NULL), 0)                    AS actual_vcpu_used,
-                    COALESCE(SUM(ram_mb * memory_usage_percent / 100.0)
-                             FILTER (WHERE power_state = 'poweredOn'
-                                      AND memory_usage_percent IS NOT NULL), 0) / 1024.0        AS actual_ram_gb,
+                    COUNT(*) FILTER (WHERE v.power_state = 'poweredOn'
+                                     AND v.cpu_usage_percent IS NOT NULL)                          AS vms_with_cpu_perf,
+                    COUNT(*) FILTER (WHERE v.power_state = 'poweredOn'
+                                     AND v.memory_usage_percent IS NOT NULL)                       AS vms_with_ram_perf,
+                    COALESCE(SUM(v.cpu_count * v.cpu_usage_percent / 100.0)
+                             FILTER (WHERE v.power_state = 'poweredOn'
+                                      AND v.cpu_usage_percent IS NOT NULL), 0)                    AS actual_vcpu_used,
+                    COALESCE(SUM(v.ram_mb * v.memory_usage_percent / 100.0)
+                             FILTER (WHERE v.power_state = 'poweredOn'
+                                      AND v.memory_usage_percent IS NOT NULL), 0) / 1024.0        AS actual_ram_gb,
                     -- Allocation-based fallback
-                    COALESCE(SUM(cpu_count)    FILTER (WHERE power_state = 'poweredOn'), 0)     AS vm_vcpu_alloc,
-                    COALESCE(SUM(ram_mb)       FILTER (WHERE power_state = 'poweredOn'), 0)
-                        / 1024.0                                                                AS vm_ram_gb_alloc,
-                    COALESCE(SUM(total_disk_gb)FILTER (WHERE power_state = 'poweredOn'), 0)
-                        / 1024.0                                                                AS vm_disk_tb,
-                    COUNT(DISTINCT host_name)                                                    AS source_node_count
-                FROM migration_vms
-                WHERE project_id = %s
+                    COALESCE(SUM(v.cpu_count)    FILTER (WHERE v.power_state = 'poweredOn'), 0)   AS vm_vcpu_alloc,
+                    COALESCE(SUM(v.ram_mb)       FILTER (WHERE v.power_state = 'poweredOn'), 0)
+                        / 1024.0                                                                  AS vm_ram_gb_alloc,
+                    COALESCE(SUM(v.total_disk_gb) FILTER (WHERE v.power_state = 'poweredOn'), 0)
+                        / 1024.0                                                                  AS vm_disk_tb,
+                    COUNT(DISTINCT v.host_name)                                                    AS source_node_count
+                FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                WHERE v.project_id = %s
+                  AND t.include_in_plan = true
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND NOT COALESCE(v.template, false)
             """, (project_id,))
             vm_row = dict(cur.fetchone() or {})
 
@@ -3899,8 +4063,14 @@ async def run_pcd_gap_analysis(project_id: str, user=Depends(get_current_user)):
             tenants = [dict(r) for r in cur.fetchall()]
 
             cur.execute("""
-                SELECT vm_name, cpu_count, ram_mb, os_family, network_name, tenant_name
-                FROM migration_vms WHERE project_id = %s
+                SELECT v.vm_name, v.cpu_count, v.ram_mb, v.os_family, v.network_name, v.tenant_name
+                FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                    AND COALESCE(t.include_in_plan, true) = true
+                WHERE v.project_id = %s
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND NOT COALESCE(v.template, false)
             """, (project_id,))
             vms = [dict(r) for r in cur.fetchall()]
 
@@ -4518,11 +4688,17 @@ async def list_network_mappings(project_id: str):
                     (project_id, source_network_name, target_network_name, confirmed)
                 SELECT DISTINCT %s, vm.network_name, vm.network_name, false
                 FROM migration_vms vm
+                JOIN migration_tenants t
+                    ON t.project_id = vm.project_id
+                    AND t.tenant_name = vm.tenant_name
+                    AND COALESCE(t.include_in_plan, true) = true
                 WHERE vm.project_id = %s
                   AND vm.network_name IS NOT NULL
                   AND vm.network_name != ''
                   AND LOWER(vm.network_name) != 'none'
                   AND vm.power_state = 'poweredOn'
+                  AND NOT COALESCE(vm.exclude_from_migration, false)
+                  AND NOT COALESCE(vm.template, false)
                   AND NOT EXISTS (
                       SELECT 1 FROM migration_network_mappings m
                       WHERE m.project_id = %s AND m.source_network_name = vm.network_name
@@ -4542,7 +4718,7 @@ async def list_network_mappings(project_id: str):
             """, (project_id,))
             conn.commit()
 
-            # Fetch all mappings with VM count per source network
+            # Fetch all mappings with VM count per source network (in-scope VMs only)
             cur.execute("""
                 SELECT m.*,
                        COUNT(DISTINCT v.id) AS vm_count
@@ -4551,9 +4727,18 @@ async def list_network_mappings(project_id: str):
                     ON v.project_id = m.project_id
                     AND v.network_name = m.source_network_name
                     AND v.power_state = 'poweredOn'
+                    AND NOT COALESCE(v.exclude_from_migration, false)
+                    AND NOT COALESCE(v.template, false)
+                    AND EXISTS (
+                        SELECT 1 FROM migration_tenants t
+                        WHERE t.project_id = v.project_id
+                          AND t.tenant_name = v.tenant_name
+                          AND COALESCE(t.include_in_plan, true) = true
+                    )
                 WHERE m.project_id = %s
                 GROUP BY m.id
-                ORDER BY vm_count DESC, m.source_network_name
+                HAVING COUNT(DISTINCT v.id) > 0
+                ORDER BY COUNT(DISTINCT v.id) DESC, m.source_network_name
             """, (project_id,))
             mappings = [_serialize_row(dict(r)) for r in cur.fetchall()]
 
@@ -4702,13 +4887,17 @@ async def refresh_flavor_staging(project_id: str, user=Depends(get_current_user)
             # to the SAME flavor.
             cur.execute("""
                 SELECT
-                    COALESCE(cpu_count, 0)   AS vcpus,
-                    COALESCE(ram_mb, 0)      AS ram_mb,
-                    COUNT(*)                 AS vm_count
-                FROM migration_vms
-                WHERE project_id = %s
-                  AND NOT COALESCE(exclude_from_migration, false)
-                  AND COALESCE(power_state, '') != 'poweredOff'
+                    COALESCE(v.cpu_count, 0)   AS vcpus,
+                    COALESCE(v.ram_mb, 0)      AS ram_mb,
+                    COUNT(*)                   AS vm_count
+                FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                    AND COALESCE(t.include_in_plan, true) = true
+                WHERE v.project_id = %s
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND NOT COALESCE(v.template, false)
+                  AND COALESCE(v.power_state, '') != 'poweredOff'
                 GROUP BY 1, 2
                 ORDER BY vm_count DESC
             """, (project_id,))
@@ -4839,6 +5028,27 @@ async def flavor_staging_bulk_rename(project_id: str, req: FlavorBulkRenameReque
                           resource_id=project_id, details={"affected": len(preview)})
 
     return {"preview": preview, "affected_count": len(preview)}
+
+
+@router.post("/projects/{project_id}/flavor-staging/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def flavor_staging_confirm_all(project_id: str, user=Depends(get_current_user)):
+    """Mark all non-skipped, unconfirmed flavor staging rows as confirmed."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_flavor_staging
+                SET confirmed = true, updated_at = now()
+                WHERE project_id = %s AND skip IS NOT TRUE AND confirmed IS NOT TRUE
+            """, (project_id,))
+            affected = cur.rowcount
+        conn.commit()
+    _log_activity(actor=actor, action="flavor_staging_confirm_all",
+                  resource_type="migration_flavor_staging", resource_id=project_id,
+                  details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
 
 
 @router.post("/projects/{project_id}/flavor-staging/match-from-pcd",
@@ -5006,20 +5216,29 @@ async def refresh_image_requirements(project_id: str, user=Depends(get_current_u
                 SELECT
                     fam.os_family,
                     fam.vm_count,
-                    (SELECT os_version
-                     FROM migration_vms
-                     WHERE project_id = %s
-                       AND COALESCE(os_family, 'other') = fam.os_family
-                       AND os_version IS NOT NULL
-                     GROUP BY os_version ORDER BY COUNT(*) DESC LIMIT 1) AS os_version_hint
+                    (SELECT v2.os_version
+                     FROM migration_vms v2
+                     JOIN migration_tenants t2 ON t2.project_id = v2.project_id
+                         AND t2.tenant_name = v2.tenant_name
+                         AND COALESCE(t2.include_in_plan, true) = true
+                     WHERE v2.project_id = %s
+                       AND NOT COALESCE(v2.exclude_from_migration, false)
+                       AND NOT COALESCE(v2.template, false)
+                       AND COALESCE(v2.os_family, 'other') = fam.os_family
+                       AND v2.os_version IS NOT NULL
+                     GROUP BY v2.os_version ORDER BY COUNT(*) DESC LIMIT 1) AS os_version_hint
                 FROM (
                     SELECT
-                        COALESCE(os_family, 'other') AS os_family,
+                        COALESCE(v.os_family, 'other') AS os_family,
                         COUNT(*) AS vm_count
-                    FROM migration_vms
-                    WHERE project_id = %s
-                      AND NOT COALESCE(exclude_from_migration, false)
-                      AND COALESCE(os_family, 'other') != 'other'
+                    FROM migration_vms v
+                    JOIN migration_tenants t ON t.project_id = v.project_id
+                        AND t.tenant_name = v.tenant_name
+                        AND COALESCE(t.include_in_plan, true) = true
+                    WHERE v.project_id = %s
+                      AND NOT COALESCE(v.exclude_from_migration, false)
+                      AND NOT COALESCE(v.template, false)
+                      AND COALESCE(v.os_family, 'other') != 'other'
                     GROUP BY 1
                 ) fam
                 ORDER BY fam.vm_count DESC
@@ -5177,6 +5396,27 @@ async def image_requirements_match_from_pcd(project_id: str, user=Depends(get_cu
             "pcd_connected": True, "details": details}
 
 
+@router.post("/projects/{project_id}/image-requirements/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def image_requirements_confirm_all(project_id: str, user=Depends(get_current_user)):
+    """Mark all unconfirmed image requirement rows as confirmed."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_image_requirements
+                SET confirmed = true, updated_at = now()
+                WHERE project_id = %s AND confirmed IS NOT TRUE
+            """, (project_id,))
+            affected = cur.rowcount
+        conn.commit()
+    _log_activity(actor=actor, action="image_requirements_confirm_all",
+                  resource_type="migration_image_requirements", resource_id=project_id,
+                  details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
 @router.patch("/image-requirements/{req_id}",
               dependencies=[Depends(require_permission("migration", "write"))])
 async def update_image_requirement(req_id: int, req: ImageRequirementUpdateRequest,
@@ -5246,6 +5486,7 @@ async def list_tenant_users(project_id: str):
                 FROM migration_tenant_users mu
                 JOIN migration_tenants mt ON mt.id = mu.tenant_id
                 WHERE mu.project_id = %s
+                  AND COALESCE(mt.include_in_plan, true) = true
                 ORDER BY mt.tenant_name, mu.user_type, mu.username
             """, (project_id,))
             rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
@@ -5415,6 +5656,7 @@ async def list_cohorts(project_id: str):
                        COALESCE(ROUND(SUM(t.total_disk_gb)::numeric, 1), 0) AS total_disk_gb
                 FROM migration_cohorts c
                 LEFT JOIN migration_tenants t ON t.cohort_id = c.id
+                    AND COALESCE(t.include_in_plan, true) = true
                 WHERE c.project_id = %s
                 GROUP BY c.id
                 ORDER BY c.cohort_order, c.created_at
@@ -5509,6 +5751,34 @@ async def delete_cohort(project_id: str, cohort_id: int, user=Depends(get_curren
     return {"status": "ok"}
 
 
+@router.delete("/projects/{project_id}/cohorts",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_all_cohorts(project_id: str, user=Depends(get_current_user)):
+    """
+    Delete ALL cohorts for a project and unassign all tenants.
+    Use this to rebuild cohort groupings from scratch after changing exclusions
+    or reassessing the migration plan.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            # Unassign all tenants first
+            cur.execute("""
+                UPDATE migration_tenants SET cohort_id = NULL
+                WHERE project_id = %s AND cohort_id IS NOT NULL
+            """, (project_id,))
+            unassigned = cur.rowcount
+            # Delete all cohorts
+            cur.execute("DELETE FROM migration_cohorts WHERE project_id = %s", (project_id,))
+            deleted = cur.rowcount
+            conn.commit()
+    _log_activity(actor=actor, action="delete_all_cohorts", resource_type="migration_cohort",
+                  resource_id=project_id,
+                  details={"cohorts_deleted": deleted, "tenants_unassigned": unassigned})
+    return {"status": "ok", "cohorts_deleted": deleted, "tenants_unassigned": unassigned}
+
+
 @router.post("/projects/{project_id}/cohorts/{cohort_id}/assign-tenants",
              dependencies=[Depends(require_permission("migration", "write"))])
 async def assign_tenants_to_cohort(project_id: str, cohort_id: int,
@@ -5559,19 +5829,20 @@ async def get_cohort_summary(project_id: str, cohort_id: int):
             if not cohort:
                 raise HTTPException(status_code=404, detail="Cohort not found")
 
-            # Tenants in this cohort
+            # Tenants in this cohort — only those still in scope
             cur.execute("""
                 SELECT id, tenant_name, include_in_plan, migration_priority,
                        vm_count, total_vcpu, total_ram_mb, total_disk_gb,
                        target_domain_name, target_project_name
                 FROM migration_tenants
                 WHERE cohort_id = %s AND project_id = %s
+                  AND COALESCE(include_in_plan, true) = true
                 ORDER BY migration_priority, tenant_name
             """, (cohort_id, project_id))
             tenants = [_serialize_row(dict(r)) for r in cur.fetchall()]
             tenant_ids = [t["id"] for t in tenants]
 
-            # VM status breakdown for this cohort
+            # VM status breakdown for this cohort — exclude individually excluded VMs
             status_breakdown = {}
             if tenant_ids:
                 placeholders = ', '.join(['%s'] * len(tenant_ids))
@@ -5586,6 +5857,8 @@ async def get_cohort_summary(project_id: str, cohort_id: int):
                           WHERE id IN ({placeholders})
                       )
                       AND power_state = 'poweredOn'
+                      AND NOT COALESCE(exclude_from_migration, false)
+                      AND NOT COALESCE(template, false)
                     GROUP BY migration_status
                 """, [project_id] + tenant_ids)
                 for row in cur.fetchall():
@@ -5726,8 +5999,11 @@ async def get_cohort_readiness_summary(project_id: str, cohort_id: int):
     with _get_conn() as conn:
         _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT id, tenant_name FROM migration_tenants WHERE cohort_id = %s AND project_id = %s",
-                        (cohort_id, project_id))
+            cur.execute("""
+                SELECT id, tenant_name FROM migration_tenants
+                WHERE cohort_id = %s AND project_id = %s
+                  AND COALESCE(include_in_plan, true) = true
+            """, (cohort_id, project_id))
             tenants = cur.fetchall()
 
         tenant_results = []
@@ -5789,8 +6065,9 @@ async def get_tenant_ease_scores(
                     t.include_in_plan,
                     COALESCE(t.vm_count, 0)            AS vm_count,
                     COALESCE(
-                        ROUND(SUM(v.in_use_gb)::numeric, 2),
-                        ROUND(t.total_disk_gb::numeric / 1024.0, 2),
+                        NULLIF(ROUND(SUM(v.in_use_gb)::numeric, 2), 0),
+                        ROUND(t.total_in_use_gb::numeric, 2),
+                        ROUND(t.total_disk_gb::numeric, 2),
                         0
                     )                                  AS total_used_gb,
                     COALESCE(ROUND(AVG(v.risk_score)::numeric, 1), 0) AS avg_risk_score,
@@ -5836,7 +6113,7 @@ async def get_tenant_ease_scores(
                 WHERE t.project_id = %s
                   AND t.include_in_plan = true
                 GROUP BY t.id, t.tenant_name, t.migration_priority, t.include_in_plan,
-                         t.vm_count, t.total_disk_gb, t.target_confirmed
+                         t.vm_count, t.total_disk_gb, t.total_in_use_gb, t.target_confirmed
                 ORDER BY t.tenant_name
             """, (project_id,))
             raw_tenants = [dict(r) for r in cur.fetchall()]
@@ -5871,8 +6148,9 @@ async def auto_assign_cohorts_endpoint(
                     t.migration_priority,
                     COALESCE(t.vm_count, 0)            AS vm_count,
                     COALESCE(
-                        ROUND(SUM(v.in_use_gb)::numeric, 2),
-                        ROUND(t.total_disk_gb::numeric / 1024.0, 2),
+                        NULLIF(ROUND(SUM(v.in_use_gb)::numeric, 2), 0),
+                        ROUND(t.total_in_use_gb::numeric, 2),
+                        ROUND(t.total_disk_gb::numeric, 2),
                         0
                     )                                  AS total_used_gb,
                     COALESCE(ROUND(AVG(v.risk_score)::numeric, 1), 0) AS avg_risk_score,
@@ -5910,7 +6188,7 @@ async def auto_assign_cohorts_endpoint(
                 WHERE t.project_id = %s
                   AND t.include_in_plan = true
                 GROUP BY t.id, t.tenant_name, t.migration_priority,
-                         t.vm_count, t.total_disk_gb, t.target_confirmed
+                         t.vm_count, t.total_disk_gb, t.total_in_use_gb, t.target_confirmed
             """, (project_id,))
             tenants = [dict(r) for r in cur.fetchall()]
 
@@ -6045,6 +6323,7 @@ class AutoWaveRequest(BaseModel):
     strategy: str = "pilot_first"    # by_tenant | by_risk | pilot_first | by_priority | balanced
     cohort_id: Optional[int] = None  # scope to a specific cohort; None = whole project
     max_vms_per_wave: int = 30
+    max_disk_gb_per_wave: Optional[float] = None  # None = unlimited; set to daily capacity to auto-split
     pilot_vm_count: int = 5
     wave_name_prefix: str = "Wave"
     dry_run: bool = True
@@ -6208,6 +6487,48 @@ async def delete_wave(project_id: str, wave_id: int, user=Depends(get_current_us
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id})
     return {"status": "ok"}
+
+
+@router.delete("/projects/{project_id}/waves",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_all_waves(project_id: str, user=Depends(get_current_user)):
+    """
+    Delete ALL waves for a project and reset assigned VM statuses back to not_started.
+    Use this to rebuild wave groupings from scratch after changing cohort/exclusion config
+    or reassessing the migration schedule.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            # Get all wave numbers before deleting
+            cur.execute("SELECT wave_number FROM migration_waves WHERE project_id = %s",
+                        (project_id,))
+            wave_numbers = [r[0] for r in cur.fetchall()]
+
+            # Reset migration_status to not_started for any VM that was only 'assigned'
+            cur.execute("""
+                UPDATE migration_vms
+                SET migration_status = 'not_started'
+                WHERE project_id = %s
+                  AND migration_status = 'assigned'
+                  AND EXISTS (
+                      SELECT 1 FROM migration_wave_vms wv
+                      WHERE wv.vm_id = migration_vms.id AND wv.project_id = %s
+                  )
+            """, (project_id, project_id))
+            vms_reset = cur.rowcount
+
+            # Remove all wave VM assignments
+            cur.execute("DELETE FROM migration_wave_vms WHERE project_id = %s", (project_id,))
+            # Delete all waves
+            cur.execute("DELETE FROM migration_waves WHERE project_id = %s", (project_id,))
+            deleted = cur.rowcount
+            conn.commit()
+    _log_activity(actor=actor, action="delete_all_waves", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"waves_deleted": deleted, "vms_reset": vms_reset})
+    return {"status": "ok", "waves_deleted": deleted, "vms_reset": vms_reset}
 
 
 @router.post("/projects/{project_id}/waves/{wave_id}/assign-vms",
@@ -6442,6 +6763,7 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
             vms=grp["vms"], tenants=grp["tenants"], dependencies=deps,
             strategy=req.strategy,
             max_vms_per_wave=req.max_vms_per_wave,
+            max_disk_gb_per_wave=req.max_disk_gb_per_wave if req.max_disk_gb_per_wave else float("inf"),
             pilot_vm_count=req.pilot_vm_count,
             wave_name_prefix=prefix,
         )
@@ -7865,4 +8187,261 @@ def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+# ===========================================================================
+# Phase 5.0 — Tech Fix Time: Fix Settings + Migration Summary
+# ===========================================================================
+
+def _get_fix_settings(project_id: str, conn) -> dict:
+    """Return fix settings for the project, auto-creating defaults if missing."""
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM migration_fix_settings WHERE project_id = %s", (project_id,))
+    row = cur.fetchone()
+    if row:
+        cols = [d[0] for d in cur.description]
+        return dict(zip(cols, row))
+    # Auto-create defaults
+    defaults = DEFAULT_FIX_WEIGHTS.copy()
+    cols = list(defaults.keys())
+    vals = list(defaults.values())
+    placeholders = ", ".join(["%s"] * len(vals))
+    col_list = ", ".join(cols)
+    cur.execute(
+        f"INSERT INTO migration_fix_settings (project_id, {col_list}) "
+        f"VALUES (%s, {placeholders}) ON CONFLICT (project_id) DO NOTHING "
+        f"RETURNING *",
+        [project_id] + vals,
+    )
+    conn.commit()
+    cur.execute("SELECT * FROM migration_fix_settings WHERE project_id = %s", (project_id,))
+    row = cur.fetchone()
+    cols2 = [d[0] for d in cur.description]
+    return dict(zip(cols2, row))
+
+
+@router.get("/projects/{project_id}/fix-settings")
+async def get_fix_settings(project_id: str):
+    with _get_conn() as conn:
+        settings = _get_fix_settings(project_id, conn)
+        return {"settings": settings}
+
+
+@router.patch("/projects/{project_id}/fix-settings")
+async def update_fix_settings(project_id: str, request: Request,
+                               user=Depends(get_current_user)):
+    body = await request.json()
+    allowed = set(DEFAULT_FIX_WEIGHTS.keys())
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    with _get_conn() as conn:
+        _get_fix_settings(project_id, conn)  # ensure row exists
+        cur = conn.cursor()
+        set_clause = ", ".join([f"{k} = %s" for k in updates])
+        vals = list(updates.values()) + [project_id]
+        cur.execute(
+            f"UPDATE migration_fix_settings SET {set_clause} WHERE project_id = %s",
+            vals,
+        )
+        conn.commit()
+        cur.execute("SELECT * FROM migration_fix_settings WHERE project_id = %s", (project_id,))
+        row = cur.fetchone()
+        cols = [d[0] for d in cur.description]
+        return {"settings": dict(zip(cols, row))}
+
+
+@router.patch("/projects/{project_id}/vms/{vm_id}/fix-override")
+async def set_vm_fix_override(project_id: str, vm_id: int, request: Request,
+                               user=Depends(get_current_user)):
+    """
+    Set or clear the manual tech_fix_minutes_override for a VM.
+    Body: {"minutes": 45}  or  {"minutes": null} to clear.
+    """
+    body = await request.json()
+    minutes = body.get("minutes")  # int or None
+    if minutes is not None and not isinstance(minutes, (int, float)):
+        raise HTTPException(status_code=400, detail="minutes must be a number or null")
+    with _get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE migration_vms SET tech_fix_minutes_override = %s "
+            "WHERE id = %s AND project_id = %s RETURNING id",
+            (int(minutes) if minutes is not None else None, vm_id, project_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="VM not found")
+        conn.commit()
+        return {"id": vm_id, "tech_fix_minutes_override": minutes}
+
+
+@router.get("/projects/{project_id}/migration-summary")
+async def get_migration_summary(project_id: str):
+    """
+    Return a management-level migration summary including:
+    - total VMs, data volume, estimated data-copy time
+    - estimated tech fix time (weighted by OS fix rates)
+    - estimated downtime (cutover + fix)
+    - per-OS and per-cohort/wave breakdowns
+    - per-day daily schedule (days, tenants, VMs, storage, tech time, cold/warm, risk)
+    - methodology notes explaining every calculation
+    """
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        settings = _get_fix_settings(project_id, conn)
+        cur = conn.cursor()
+
+        # Fetch all in-scope VMs (including risk_category for day-level risk breakdown)
+        cur.execute("""
+            SELECT vm.id, vm.vm_name, vm.os_family, vm.in_use_gb, vm.total_disk_gb,
+                   vm.disk_count, vm.nic_count, vm.snapshot_count, vm.risk_score,
+                   vm.risk_category,
+                   vm.migration_mode, vm.migration_mode_override,
+                   vm.tech_fix_minutes_override,
+                   t.tenant_name, c.name AS cohort_name,
+                   (SELECT COUNT(*) FROM migration_vm_dependencies d
+                     JOIN migration_vms v2 ON v2.id = d.depends_on_vm_id
+                     WHERE d.project_id = vm.project_id
+                       AND d.vm_id = vm.id
+                       AND COALESCE(v2.tenant_name, '') != COALESCE(vm.tenant_name, '')) AS cross_tenant_dep_count
+            FROM migration_vms vm
+            LEFT JOIN migration_tenants t ON t.project_id = vm.project_id
+                                        AND t.tenant_name = vm.tenant_name
+            LEFT JOIN migration_cohorts c ON c.id = t.cohort_id
+            WHERE vm.project_id = %s
+              AND (t.include_in_plan IS NULL OR t.include_in_plan = TRUE)
+              AND NOT COALESCE(vm.exclude_from_migration, false)
+              AND NOT COALESCE(vm.template, false)
+        """, (project_id,))
+        cols = [d[0] for d in cur.description]
+        vms = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        # Fetch tenants WITH cohort JOIN — same as export-plan so cohort_name/cohort_order
+        # are populated, otherwise generate_migration_plan assigns everything "Uncohorted"
+        cur.execute("""
+            SELECT t.*,
+                   c.name         AS cohort_name,
+                   c.cohort_order AS cohort_order
+            FROM migration_tenants t
+            LEFT JOIN migration_cohorts c ON c.id = t.cohort_id
+            WHERE t.project_id = %s AND t.include_in_plan = true
+            ORDER BY c.cohort_order NULLS LAST, t.vm_count DESC
+        """, (project_id,))
+        tenants = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+
+        # Fetch full VM rows (v.*) for generate_migration_plan — needs priority + all cols
+        cur.execute("""
+            SELECT v.* FROM migration_vms v
+            JOIN migration_tenants t ON t.project_id = v.project_id
+                AND t.tenant_name = v.tenant_name
+            WHERE v.project_id = %s
+              AND NOT COALESCE(v.template, false)
+              AND NOT COALESCE(v.exclude_from_migration, false)
+              AND t.include_in_plan = true
+            ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
+        """, (project_id,))
+        plan_vms = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+
+        # Full bandwidth model (uses all project bandwidth fields)
+        bw_model = compute_bandwidth_model(project)
+        bw_mbps = bw_model.bottleneck_mbps
+
+        summary = compute_project_fix_summary(vms, settings, bw_mbps)
+
+        # Total provisioned disk (total_disk_gb) — for parity with Migration Plan's "Total Disk"
+        total_provisioned_gb = round(
+            sum(float(v.get("total_disk_gb") or 0) for v in vms), 1
+        )
+
+        # Per-cohort breakdown (use vms with cross_tenant_dep_count for accurate fix calc)
+        cohort_map: dict = {}
+        for vm in vms:
+            cohort = vm.get("cohort_name") or "Unassigned"
+            if cohort not in cohort_map:
+                cohort_map[cohort] = []
+            cohort_map[cohort].append(vm)
+
+        per_cohort = []
+        for cohort_name, c_vms in cohort_map.items():
+            c_summary = compute_project_fix_summary(c_vms, settings, bw_mbps)
+            per_cohort.append({
+                "cohort_name":    cohort_name,
+                "vm_count":       len(c_vms),
+                "data_gb":        c_summary["total_data_gb"],
+                "data_copy_hours": c_summary["data_copy_hours"],
+                "fix_hours":      c_summary["total_fix_hours"],
+                "downtime_hours": c_summary["total_downtime_hours"],
+            })
+        per_cohort.sort(key=lambda x: x["cohort_name"])
+
+        # Per-day breakdown via full migration plan generation
+        # Build risk lookup from the detailed VM query (has risk_category)
+        vm_risk: dict = {v["vm_name"]: (v.get("risk_category") or "GREEN") for v in vms}
+        per_day: list = []
+        try:
+            plan = generate_migration_plan(
+                vms=plan_vms,
+                tenants=tenants,
+                project_settings=project,
+                bottleneck_mbps=bw_mbps,
+            )
+            for day in plan.get("daily_schedule", []):
+                day_vms = day.get("vms", [])
+                tenants_set = {v["tenant_name"] for v in day_vms}
+                cold = sum(1 for v in day_vms if "cold" in (v.get("mode") or ""))
+                warm = len(day_vms) - cold
+                total_gb = round(sum(float(v.get("in_use_gb") or 0) for v in day_vms), 1)
+                green  = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "GREEN")
+                yellow = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "YELLOW")
+                red    = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "RED")
+                per_day.append({
+                    "day":               day["day"],
+                    "cohort_name":       day.get("cohort_name", ""),
+                    "tenant_count":      len(tenants_set),
+                    "vm_count":          day.get("vm_count", len(day_vms)),
+                    "total_gb":          total_gb,
+                    "wall_clock_hours":  round(float(day.get("wall_clock_hours") or 0), 2),
+                    "total_agent_hours": round(float(day.get("total_estimated_hours") or 0), 2),
+                    "cold_count":        cold,
+                    "warm_count":        warm,
+                    "risk_green":        green,
+                    "risk_yellow":       yellow,
+                    "risk_red":          red,
+                    "over_capacity":     bool(day.get("over_capacity", False)),
+                })
+        except Exception:
+            per_day = []
+
+        methodology = {
+            "data_copy": (
+                f"Data copy time = Total in-use GB ÷ (bandwidth {bw_mbps} Mbps converted to GB/h). "
+                "Assumes dedicated migration bandwidth with no contention. "
+                "WAN or shared links will increase this value."
+            ),
+            "fix_time": (
+                "Per-VM tech fix score is calculated by summing weight values for each risk factor "
+                "(OS type, extra volumes, extra NICs, cold mode, risk score, snapshots, cross-tenant deps). "
+                "The raw score is then multiplied by the OS-family fix rate (probability the VM needs "
+                "any intervention) to give an expected value per VM. "
+                "Override any VM's score manually using the Fix Override field in the VM list."
+            ),
+            "downtime": (
+                f"Per-VM downtime = cutover window ({int(settings.get('cutover_minutes', 30))} min fixed) "
+                "+ expected tech fix time. Total downtime is the sum across all in-scope VMs. "
+                "In practice, waves run in parallel so elapsed calendar time will be lower."
+            ),
+            "fix_rates": (
+                f"Windows fix rate={float(settings.get('fix_rate_windows', 0.5)):.0%}, "
+                f"Linux fix rate={float(settings.get('fix_rate_linux', 0.2)):.0%}, "
+                f"Other OS fix rate={float(settings.get('fix_rate_other', 0.4)):.0%}. "
+                "A global override rate (if set) applies to all VMs regardless of OS."
+            ),
+        }
+
+        return {
+            **summary,
+            "total_provisioned_gb": total_provisioned_gb,
+            "per_cohort":    per_cohort,
+            "per_day":       per_day,
+            "bandwidth_mbps": bw_mbps,
+            "methodology":   methodology,
+        }
 
