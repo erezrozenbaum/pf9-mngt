@@ -202,24 +202,34 @@ def _sheet_daily_schedule(wb, plan: Dict):
     ws = wb.create_sheet("Daily Schedule")
     ws.sheet_view.showGridLines = False
 
-    cols = ["Day", "Tenant", "VM Name", "Mode", "OS Family", "Disk (GB)", "In Use (GB)", "Est. Hours"]
+    cols = ["Day", "Tenant", "VM Name", "Mode", "OS Family", "Disk (GB)", "In Use (GB)", "VM Est. Hours"]
     _write_table_header(ws, 1, cols)
 
     row = 2
     for day in plan.get("daily_schedule", []):
         day_num = day.get("day", "")
+        wall_h  = day.get("wall_clock_hours", "")
+        vm_cnt  = day.get("vm_count", len(day.get("vms", [])))
+        # Day summary row (light blue)
+        _write_row(ws, row, [
+            f"Day {day_num}",
+            f"{vm_cnt} VM{'s' if vm_cnt != 1 else ''}",
+            f"Wall-clock: {wall_h}h",
+            "", "", "", "", "",
+        ], alt=False, fill_hex="DBEAFE")
+        row += 1
         for vm in day.get("vms", []):
             mode = vm.get("mode", "")
             fill = _RED if mode == "cold_required" else (_YELLOW if mode == "warm_risky" else None)
             _write_row(ws, row, [
-                day_num,
+                "",
                 vm.get("tenant_name", ""),
                 vm.get("vm_name", ""),
                 mode.replace("_", " "),
                 vm.get("os_family", ""),
                 round(float(vm.get("disk_gb", 0)), 1),
                 round(float(vm.get("in_use_gb", 0)), 1),
-                round(float(vm.get("est_hours", 0)), 2),
+                round(float(vm.get("estimated_hours", 0)), 2),
             ], alt=(row % 2 == 0), fill_hex=fill)
             row += 1
         # blank row between days
@@ -326,6 +336,20 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
     ))
     story.append(HRFlowable(width="100%", thickness=1, color=_HDR, spaceAfter=10))
 
+    # ── Executive Summary (if present) ────────────────────────────────────
+    exec_summary = plan.get("executive_summary", "") or ""
+    if exec_summary.strip():
+        story.append(Paragraph("Executive Summary", s_h2))
+        story.append(Paragraph(exec_summary, s_body))
+        story.append(Spacer(1, 0.3 * cm))
+
+    # ── Technical Notes (if present) ──────────────────────────────────────
+    tech_notes = plan.get("technical_notes", "") or ""
+    if tech_notes.strip():
+        story.append(Paragraph("Technical Notes", s_h2))
+        story.append(Paragraph(tech_notes, s_body))
+        story.append(Spacer(1, 0.3 * cm))
+
     # ── Project Summary ────────────────────────────────────────────────────
     story.append(Paragraph("Project Summary", s_h2))
     ps = plan.get("project_summary", {})
@@ -426,20 +450,29 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
         s_caption,
     ))
 
-    sched_header = ["Day", "Tenant", "VM Name", "Mode", "OS Family", "Disk (GB)", "In Use (GB)", "Est. Hours"]
+    sched_header = ["Day", "Tenant", "VM Name", "Mode", "OS Family", "Disk (GB)", "In Use (GB)", "VM Est. Hours"]
     sched_rows = [sched_header]
+    day_header_row_indices: list = []
     for day in plan.get("daily_schedule", []):
         day_num = day.get("day", "")
+        wall_h  = day.get("wall_clock_hours", "?")
+        vm_cnt  = day.get("vm_count", len(day.get("vms", [])))
+        day_header_row_indices.append(len(sched_rows))
+        sched_rows.append([
+            f"Day {day_num}",
+            f"{vm_cnt} VM{'s' if vm_cnt != 1 else ''}  \u2014  Wall-clock: {wall_h}h",
+            "", "", "", "", "", "",
+        ])
         for vm in day.get("vms", []):
             sched_rows.append([
-                f"Day {day_num}",
+                "",
                 vm.get("tenant_name", ""),
                 vm.get("vm_name", ""),
                 (vm.get("mode", "") or "").replace("_", " "),
                 vm.get("os_family", ""),
                 round(float(vm.get("disk_gb", 0)), 1),
                 round(float(vm.get("in_use_gb", 0)), 1),
-                round(float(vm.get("est_hours", 0)), 2),
+                round(float(vm.get("estimated_hours", 0)), 2),
             ])
 
     cw_sched = [1.8*cm, 4*cm, 7*cm, 3*cm, 2.5*cm, 2*cm, 2.5*cm, 2.5*cm]
@@ -458,7 +491,15 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
         ("TOPPADDING",   (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
     ]
+    # Day header rows: light blue background, bold, span all cols
+    for dhi in day_header_row_indices:
+        style_sched.append(("BACKGROUND", (0, dhi), (-1, dhi), _HDR_LT))
+        style_sched.append(("FONTNAME",   (0, dhi), (-1, dhi), "Helvetica-Bold"))
+        style_sched.append(("TEXTCOLOR",  (0, dhi), (-1, dhi), colors.HexColor("#1e40af")))
+        style_sched.append(("SPAN",       (1, dhi), (-1, dhi)))
     for ri, row in enumerate(sched_rows[1:], 1):
+        if ri in day_header_row_indices:
+            continue
         mode_str = row[3] if len(row) > 3 else ""
         if "cold" in mode_str:
             style_sched.append(("BACKGROUND", (0, ri), (-1, ri), _RED_P))
@@ -542,6 +583,351 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
         canvas.setFillColor(colors.grey)
         txt = f"Platform9 Migration Planner  ·  {project_name}  ·  Page {doc.page}"
         canvas.drawCentredString(landscape(A4)[0] / 2, 0.8 * cm, txt)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    return buf.getvalue()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Migration Summary Report  (Excel + PDF)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_summary_excel_report(summary: Dict[str, Any], project_name: str) -> bytes:
+    """
+    Generate a 4-sheet Excel workbook from a migration-summary API response dict.
+
+    Sheets:
+      1. Summary KPIs      — key metrics
+      2. Daily Schedule    — per_day[] with over-capacity highlighting
+      3. OS Breakdown      — per_os_breakdown[]
+      4. Cohort Breakdown  — per_cohort[]
+    """
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    # ── Sheet 1: Summary KPIs ─────────────────────────────────────────────
+    ws1 = wb.create_sheet("Summary KPIs")
+    ws1.sheet_view.showGridLines = False
+
+    ws1.merge_cells("A1:C1")
+    t = ws1["A1"]
+    t.value = f"Migration Summary — {project_name}"
+    t.font = Font(bold=True, name="Calibri", size=16, color=_BLUE)
+    t.alignment = Alignment(horizontal="left", vertical="center")
+    ws1.row_dimensions[1].height = 30
+
+    ws1.merge_cells("A2:C2")
+    sub = ws1["A2"]
+    sub.value = f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}"
+    sub.font = Font(name="Calibri", size=10, color="6B7280")
+
+    ws1.append([])  # blank row 3
+
+    migration_days = len(summary.get("per_day") or [])
+    kv_pairs = [
+        ("Total VMs",              summary.get("total_vms", "")),
+        ("In-Use Data (GB)",       summary.get("total_data_gb", "")),
+        ("Total Provisioned (GB)", summary.get("total_provisioned_gb", "")),
+        ("Migration Days",         migration_days),
+        ("Est. Data-Copy (h)",     round(float(summary.get("data_copy_hours") or 0), 2)),
+        ("Est. Tech Fix (h)",      round(float(summary.get("total_fix_hours") or 0), 2)),
+        ("Est. Copy Hours (h)",    round(float(summary.get("total_copy_hours") or 0), 2)),
+        ("Est. Total Downtime (h)", round(float(summary.get("total_downtime_hours") or 0), 2)),
+        ("Bandwidth (Mbps)",       summary.get("bandwidth_mbps", "")),
+    ]
+
+    ws1.cell(row=4, column=1, value="Metric").font = Font(bold=True, name="Calibri", size=10)
+    ws1.cell(row=4, column=2, value="Value").font  = Font(bold=True, name="Calibri", size=10)
+    ws1.cell(row=4, column=1).fill = _hdr_fill_lt()
+    ws1.cell(row=4, column=2).fill = _hdr_fill_lt()
+    for i, (k, v) in enumerate(kv_pairs, 5):
+        alt = (i % 2 == 0)
+        ws1.cell(row=i, column=1, value=k).fill  = _grey_fill() if alt else PatternFill()
+        ws1.cell(row=i, column=2, value=v).fill  = _grey_fill() if alt else PatternFill()
+        for ci in (1, 2):
+            ws1.cell(row=i, column=ci).font   = Font(name="Calibri", size=10)
+            ws1.cell(row=i, column=ci).border = _thin_border()
+    _set_col_widths(ws1, [30, 22, 10])
+
+    # ── Sheet 2: Daily Schedule ───────────────────────────────────────────
+    ws2 = wb.create_sheet("Daily Schedule")
+    ws2.sheet_view.showGridLines = False
+
+    day_cols = [
+        "Day", "Cohort", "Tenants", "VMs",
+        "Total GB", "Wall-Clock (h)", "Total Agent (h)",
+        "Cold", "Warm",
+        "Risk Green", "Risk Yellow", "Risk Red", "Over Capacity",
+    ]
+    _write_table_header(ws2, 1, day_cols)
+
+    _RED_FILL  = PatternFill("solid", fgColor="FEE2E2")
+    _YELL_FILL = PatternFill("solid", fgColor="FEF9C3")
+
+    for i, day in enumerate(summary.get("per_day") or [], 2):
+        over = bool(day.get("over_capacity"))
+        fill_hex = "FEE2E2" if over else None
+        _write_row(ws2, i, [
+            day.get("day", i - 1),
+            day.get("cohort_name", ""),
+            day.get("tenant_count", 0),
+            day.get("vm_count", 0),
+            day.get("total_gb", 0),
+            round(float(day.get("wall_clock_hours") or 0), 2),
+            round(float(day.get("total_agent_hours") or 0), 2),
+            day.get("cold_count", 0),
+            day.get("warm_count", 0),
+            day.get("risk_green", 0),
+            day.get("risk_yellow", 0),
+            day.get("risk_red", 0),
+            "YES" if over else "no",
+        ], alt=(i % 2 == 0), fill_hex=fill_hex)
+
+    ws2.auto_filter.ref = f"A1:{get_column_letter(len(day_cols))}1"
+    ws2.freeze_panes = "A2"
+    _set_col_widths(ws2, [5, 20, 8, 6, 10, 14, 14, 6, 6, 11, 12, 10, 13])
+
+    # ── Sheet 3: OS Breakdown ─────────────────────────────────────────────
+    ws3 = wb.create_sheet("OS Breakdown")
+    ws3.sheet_view.showGridLines = False
+
+    os_cols = ["OS Family", "VM Count", "Fix Rate", "Fix Hours (Total)"]
+    _write_table_header(ws3, 1, os_cols)
+    for i, entry in enumerate(summary.get("per_os_breakdown") or [], 2):
+        _write_row(ws3, i, [
+            entry.get("os_family", ""),
+            entry.get("vm_count", 0),
+            f"{float(entry.get('fix_rate', 0)):.0%}",
+            round(float(entry.get("fix_hours") or 0), 2),
+        ], alt=(i % 2 == 0))
+    ws3.freeze_panes = "A2"
+    _set_col_widths(ws3, [18, 12, 12, 18])
+
+    # ── Sheet 4: Cohort Breakdown ─────────────────────────────────────────
+    ws4 = wb.create_sheet("Cohort Breakdown")
+    ws4.sheet_view.showGridLines = False
+
+    coh_cols = ["Cohort", "VMs", "Data (GB)", "Data-Copy (h)", "Fix Hours", "Downtime (h)"]
+    _write_table_header(ws4, 1, coh_cols)
+    for i, coh in enumerate(summary.get("per_cohort") or [], 2):
+        _write_row(ws4, i, [
+            coh.get("cohort_name", ""),
+            coh.get("vm_count", 0),
+            round(float(coh.get("data_gb") or 0), 1),
+            round(float(coh.get("data_copy_hours") or 0), 2),
+            round(float(coh.get("fix_hours") or 0), 2),
+            round(float(coh.get("downtime_hours") or 0), 2),
+        ], alt=(i % 2 == 0))
+    ws4.freeze_panes = "A2"
+    _set_col_widths(ws4, [22, 8, 12, 14, 12, 14])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def generate_summary_pdf_report(summary: Dict[str, Any], project_name: str) -> bytes:
+    """
+    Generate a management-level migration summary PDF (A4 portrait) containing:
+    KPI overview, daily schedule table, OS breakdown, and cohort breakdown.
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=1.5 * cm,
+        leftMargin=1.5 * cm,
+        topMargin=2.0 * cm,
+        bottomMargin=1.5 * cm,
+        title=f"Migration Summary — {project_name}",
+    )
+
+    styles = getSampleStyleSheet()
+    s_title   = ParagraphStyle("SumTitle",  parent=styles["Title"],   fontSize=17, spaceAfter=4,  textColor=colors.HexColor("#1D4ED8"))
+    s_h2      = ParagraphStyle("SumH2",     parent=styles["Heading2"],fontSize=11, spaceAfter=4,  textColor=colors.HexColor("#1E40AF"), spaceBefore=12)
+    s_caption = ParagraphStyle("SumCap",    parent=styles["Normal"],  fontSize=8,  textColor=colors.grey, spaceAfter=6)
+
+    _HDR    = colors.HexColor("#1D4ED8")
+    _HDR_LT = colors.HexColor("#DBEAFE")
+    _GREY_P = colors.HexColor("#F3F4F6")
+    _RED_P  = colors.HexColor("#FEE2E2")
+    _YEL_P  = colors.HexColor("#FEF9C3")
+    _GRN_P  = colors.HexColor("#DCFCE7")
+
+    story: list = []
+
+    # ── Title ──────────────────────────────────────────────────────────────
+    story.append(Paragraph("Migration Summary Report", s_title))
+    story.append(Paragraph(f"<b>Project:</b> {project_name}", styles["Normal"]))
+    story.append(Paragraph(
+        f"Generated: {datetime.utcnow().strftime('%B %d, %Y  %H:%M UTC')}",
+        s_caption,
+    ))
+    story.append(HRFlowable(width="100%", thickness=1, color=_HDR, spaceAfter=10))
+
+    # ── KPI table ──────────────────────────────────────────────────────────
+    story.append(Paragraph("Key Metrics", s_h2))
+    migration_days = len(summary.get("per_day") or [])
+    kpi_data = [
+        ["Metric", "Value"],
+        ["Total VMs in Scope",      str(summary.get("total_vms", "—"))],
+        ["In-Use Data (GB)",         str(round(float(summary.get("total_data_gb") or 0), 1))],
+        ["Total Provisioned (GB)",   str(round(float(summary.get("total_provisioned_gb") or 0), 1))],
+        ["Migration Days",           str(migration_days)],
+        ["Est. Data-Copy Time (h)",  str(round(float(summary.get("data_copy_hours") or 0), 2))],
+        ["Est. Tech Fix Time (h)",   str(round(float(summary.get("total_fix_hours") or 0), 2))],
+        ["Est. Total Downtime (h)",  str(round(float(summary.get("total_downtime_hours") or 0), 2))],
+        ["Effective Bandwidth (Mbps)", str(summary.get("bandwidth_mbps", "—"))],
+    ]
+    t_kpi = Table(kpi_data, colWidths=[8.5 * cm, 5.0 * cm])
+    t_kpi.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
+        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 9),
+        ("FONTNAME",      (0, 1), (0, -1), "Helvetica-Bold"),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
+        ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+        ("TOPPADDING",    (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_kpi)
+    story.append(Spacer(1, 0.4 * cm))
+
+    # ── Daily Schedule ─────────────────────────────────────────────────────
+    story.append(Paragraph("Daily Migration Schedule", s_h2))
+    day_hdr = [["Day", "Cohort", "Tenants", "VMs", "GB", "Wall-h", "Agent-h", "Cold", "Warm", "🔴 Red", "🟡 Yel", "🟢 Grn", "Cap⚠"]]
+    day_rows: list = []
+    over_rows: list = []
+    for day in summary.get("per_day") or []:
+        over = bool(day.get("over_capacity"))
+        ri = len(day_rows) + 1
+        if over:
+            over_rows.append(ri)
+        day_rows.append([
+            day.get("day", ""),
+            (day.get("cohort_name") or "")[:18],
+            day.get("tenant_count", 0),
+            day.get("vm_count", 0),
+            str(round(float(day.get("total_gb") or 0), 1)),
+            str(round(float(day.get("wall_clock_hours") or 0), 2)),
+            str(round(float(day.get("total_agent_hours") or 0), 2)),
+            day.get("cold_count", 0),
+            day.get("warm_count", 0),
+            day.get("risk_red", 0),
+            day.get("risk_yellow", 0),
+            day.get("risk_green", 0),
+            "YES" if over else "",
+        ])
+
+    cw_day = [1.0*cm, 3.5*cm, 1.5*cm, 1.3*cm, 1.5*cm, 1.6*cm, 1.7*cm,
+              1.2*cm, 1.2*cm, 1.3*cm, 1.2*cm, 1.3*cm, 1.3*cm]
+    t_day = Table(day_hdr + day_rows, colWidths=cw_day, repeatRows=1)
+    day_style = [
+        ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
+        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 7.5),
+        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
+        ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#D1D5DB")),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",         (2, 0), (-1, -1), "CENTER"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 3),
+        ("TOPPADDING",    (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for ri in over_rows:
+        day_style.append(("BACKGROUND", (0, ri), (-1, ri), _RED_P))
+        day_style.append(("TEXTCOLOR",  (12, ri), (12, ri), colors.HexColor("#DC2626")))
+    t_day.setStyle(TableStyle(day_style))
+    story.append(t_day)
+    story.append(Spacer(1, 0.4 * cm))
+
+    # ── OS Breakdown ───────────────────────────────────────────────────────
+    os_entries = summary.get("per_os_breakdown") or []
+    if os_entries:
+        story.append(Paragraph("OS Family Breakdown", s_h2))
+        os_hdr = [["OS Family", "VM Count", "Fix Rate", "Fix Hours"]]
+        os_rows = [[
+            e.get("os_family", ""),
+            e.get("vm_count", 0),
+            f"{float(e.get('fix_rate', 0)):.0%}",
+            str(round(float(e.get("fix_hours") or 0), 2)),
+        ] for e in os_entries]
+        t_os = Table(os_hdr + os_rows, colWidths=[5*cm, 3*cm, 3*cm, 4*cm])
+        t_os.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 9),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
+            ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN",         (1, 0), (-1, -1), "CENTER"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(t_os)
+        story.append(Spacer(1, 0.4 * cm))
+
+    # ── Cohort Breakdown ───────────────────────────────────────────────────
+    cohorts = summary.get("per_cohort") or []
+    if cohorts:
+        story.append(Paragraph("Cohort Breakdown", s_h2))
+        coh_hdr = [["Cohort", "VMs", "Data (GB)", "Data-Copy (h)", "Fix Hours", "Downtime (h)"]]
+        coh_rows = [[
+            c.get("cohort_name", ""),
+            c.get("vm_count", 0),
+            str(round(float(c.get("data_gb") or 0), 1)),
+            str(round(float(c.get("data_copy_hours") or 0), 2)),
+            str(round(float(c.get("fix_hours") or 0), 2)),
+            str(round(float(c.get("downtime_hours") or 0), 2)),
+        ] for c in cohorts]
+        t_coh = Table(coh_hdr + coh_rows, colWidths=[4.5*cm, 2.2*cm, 3*cm, 3.5*cm, 3*cm, 3.5*cm])
+        t_coh.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 9),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
+            ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN",         (1, 0), (-1, -1), "CENTER"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(t_coh)
+        story.append(Spacer(1, 0.4 * cm))
+
+    # ── Methodology ────────────────────────────────────────────────────────
+    methodology = summary.get("methodology") or {}
+    if methodology:
+        story.append(Paragraph("Calculation Methodology", s_h2))
+        method_body = ParagraphStyle("MBody", parent=styles["Normal"], fontSize=8, spaceAfter=5, leading=11)
+        labels = {
+            "data_copy": "Data-Copy Time",
+            "fix_time":  "Tech Fix Time",
+            "downtime":  "Downtime Estimate",
+            "fix_rates": "OS Fix Rates",
+        }
+        for key, label in labels.items():
+            if key in methodology:
+                story.append(Paragraph(f"<b>{label}:</b> {methodology[key]}", method_body))
+
+    # ── Footer ─────────────────────────────────────────────────────────────
+    def _footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.grey)
+        txt = f"Platform9 Migration Summary  ·  {project_name}  ·  Page {doc.page}"
+        canvas.drawCentredString(A4[0] / 2, 0.7 * cm, txt)
         canvas.restoreState()
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)

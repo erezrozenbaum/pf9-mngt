@@ -1415,7 +1415,23 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_ph
 # prep_approval_status/by/at columns on migration_projects + migration_prep_approvals table
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_prep_approval.sql
 
-# 25. Verify schema
+# 25. Apply Bulk Customer Onboarding tables (v1.38.0+)
+# onboarding_batches + child tables for customers, projects, networks, users
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_onboarding_runbook.sql
+
+# 26. Apply Onboarding v1.38.1 schema updates
+# Additional columns for onboarding workflows and LDAP provisioning support
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_onboarding_v1381.sql
+
+# 27. Apply Phase 5.0 Tech Fix Time tables (v1.42.0+)
+# tech_fix_minutes_override on migration_vms + migration_fix_settings table
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_tech_fix.sql
+
+# 28. Apply narrative fields for Migration Plan PDF/UI (v1.44.0+)
+# Adds executive_summary + technical_notes TEXT columns to migration_projects
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_narrative_fields.sql
+
+# 29. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 

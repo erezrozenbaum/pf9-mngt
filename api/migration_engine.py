@@ -488,6 +488,8 @@ _VLAN_PATTERN = _re.compile(r'[_\-\s]?vlan[_\-\s]?(\d+)', _re.IGNORECASE)
 _NSXT_PATTERNS = [
     "nsx-t", "nsxt", "nsx_t", "overlay", "geneve", "segment",
     "t0-", "t1-", "tier-0", "tier-1", "ls-",
+    "routed_net",  # NSX-T Routed/T1 GENEVE segments (exact VMware naming convention)
+    "dlr-", "esg-",  # NSX-V Distributed/Edge logical router uplinks
 ]
 _ISOLATED_PATTERNS = ["isolated", "internal-only", "no-uplink", "air-gap"]
 
@@ -1048,6 +1050,14 @@ def generate_migration_plan(
     total_weeks = duration_days / 7.0
     effective_days = max(1, total_weeks * working_days_week)
 
+    # ── Throughput model for daily scheduling ──
+    # bottleneck_mbps is the SHARED pipe across ALL concurrent migrations.
+    # Total throughput is always capped at bottleneck_mbps regardless of slot count.
+    # Real-world efficiency ~0.55 (midpoint of per-VM factors in estimate_vm_time).
+    AVG_BW_EFFICIENCY = 0.55
+    effective_gbph = (bottleneck_mbps / 8) * 3600 / 1024 * AVG_BW_EFFICIENCY
+    max_gb_per_day = effective_gbph * working_hours  # max in-use GB transferable per working day
+
     # Estimate time for each VM
     vm_estimates = []
     for vm in vms:
@@ -1194,12 +1204,19 @@ def generate_migration_plan(
             day_number += 1
             day_vms: List[Dict[str, Any]] = []
             day_hours_used = 0.0
+            day_transfer_gb = 0.0  # total data volume assigned to this day
 
             while vm_idx < len(cohort_vms) and len(day_vms) < total_concurrent:
                 v = cohort_vms[vm_idx]
                 est = v["_estimate"]
-                eff_h = est.warm_total_hours if "cold" not in est.mode else est.cold_total_hours
-                if day_hours_used + eff_h > working_hours * total_concurrent and day_vms:
+                is_cold = "cold" in est.mode
+                eff_h = est.warm_total_hours if not is_cold else est.cold_total_hours
+                # Data that must transit the wire for this VM today
+                transfer_gb = est.in_use_gb if not is_cold else est.total_disk_gb
+                # Throughput cap: don't schedule more data than the pipe can carry per day.
+                # Always accept the first VM even if it alone exceeds the cap
+                # (a single huge VM can't be split; it will flag as over_capacity).
+                if day_vms and day_transfer_gb + transfer_gb > max_gb_per_day:
                     break
                 day_vms.append({
                     "vm_name": v.get("vm_name"),
@@ -1207,12 +1224,20 @@ def generate_migration_plan(
                     "cohort_name": cohort_name,
                     "cohort_order": cohort_order if cohort_order != 9999 else None,
                     "mode": est.mode,
+                    "os_family": v.get("os_family"),
+                    "in_use_gb": round(float(v.get("in_use_gb") or 0), 2),
                     "disk_gb": round(est.total_disk_gb, 2),
                     "estimated_hours": round(eff_h, 2),
                 })
                 day_hours_used += eff_h
+                day_transfer_gb += transfer_gb
                 vm_idx += 1
 
+            # Wall-clock = time to push this day's data through the shared bottleneck pipe.
+            # All concurrent VMs share the pipe; elapsed = total_data / total_throughput.
+            wall_clock_h = round(
+                day_transfer_gb / effective_gbph if effective_gbph > 0 else 0.0, 2
+            )
             daily_schedule.append({
                 "day": day_number,
                 "cohort_name": cohort_name,
@@ -1221,6 +1246,9 @@ def generate_migration_plan(
                 "vm_count": len(day_vms),
                 "vms": day_vms,
                 "total_estimated_hours": round(day_hours_used, 2),
+                "transfer_gb": round(day_transfer_gb, 1),
+                "wall_clock_hours": wall_clock_h,
+                "over_capacity": wall_clock_h > working_hours,
             })
 
         cohort_schedule_summary.append({
@@ -1264,6 +1292,8 @@ def generate_migration_plan(
             "agent_count": agent_count,
             "total_concurrent_slots": total_concurrent,
             "bottleneck_mbps": round(bottleneck_mbps, 1),
+            "effective_gbph": round(effective_gbph, 1),
+            "max_gb_per_day": round(max_gb_per_day, 1),
             "estimated_schedule_days": day_number,
             "total_downtime_hours": round(total_downtime_h, 2),
         },
@@ -1881,6 +1911,7 @@ def auto_assign_cohorts(
 
         slots: Dict[int, int] = {}
         profile_vm_counts = [0] * num_cohorts
+        profile_disk_gb   = [0.0] * num_cohorts   # track disk per slot for disk-cap guardrail
 
         # ---- pilot_bulk in ramp mode: first pilot_size easiest → slot 1, rest fill slots 2..N ----
         if strategy == "pilot_bulk":
@@ -1890,33 +1921,42 @@ def auto_assign_cohorts(
             for t in pilot:
                 slots[t["tenant_id"]] = 1
                 profile_vm_counts[0] += t["vm_count"]
+                profile_disk_gb[0]   += t.get("total_used_gb", 0)
             cur_wave = 1  # start from slot index 1 (= wave slot 2)
             for t in rest:
                 for _ in range(max(num_cohorts - 1, 1)):
-                    # per-profile cap takes priority, else fall back to guardrail max_vms
-                    cap = cohort_profiles[cur_wave].get("max_vms") or max_vms
-                    if profile_vm_counts[cur_wave] + t["vm_count"] <= cap:
+                    # per-profile VM cap takes priority, else fall back to guardrail max_vms
+                    cap      = cohort_profiles[cur_wave].get("max_vms") or max_vms
+                    fits_vms = profile_vm_counts[cur_wave] + t["vm_count"] <= cap
+                    fits_gb  = profile_disk_gb[cur_wave]  + t.get("total_used_gb", 0) <= max_gb
+                    if fits_vms and fits_gb:
                         break
                     if cur_wave < num_cohorts - 1:
                         cur_wave += 1
+                        reason = "VM cap" if not fits_vms else "disk cap"
                         warnings.append(
-                            f"Wave {cur_wave} guardrail hit — overflow tenant '{t['tenant_name']}' placed in next wave"
+                            f"Wave {cur_wave} {reason} hit — overflow tenant '{t['tenant_name']}' placed in next wave"
                         )
-                slots[t["tenant_id"]] = cur_wave + 1
+                slots[t["tenant_id"]]      = cur_wave + 1
                 profile_vm_counts[cur_wave] += t["vm_count"]
+                profile_disk_gb[cur_wave]   += t.get("total_used_gb", 0)
         else:
             for t in ordering:
                 placed = False
                 for slot_idx, profile in enumerate(cohort_profiles):
-                    # per-profile cap takes priority, else fall back to guardrail max_vms
+                    # per-profile VM cap takes priority, else fall back to guardrail max_vms
                     cap = profile.get("max_vms") or max_vms
-                    if profile_vm_counts[slot_idx] + t["vm_count"] <= cap:
+                    if (profile_vm_counts[slot_idx] + t["vm_count"] <= cap
+                            and profile_disk_gb[slot_idx] + t.get("total_used_gb", 0) <= max_gb):
                         slots[t["tenant_id"]] = slot_idx + 1
                         profile_vm_counts[slot_idx] += t["vm_count"]
+                        profile_disk_gb[slot_idx]   += t.get("total_used_gb", 0)
                         placed = True
                         break
                 if not placed:
                     slots[t["tenant_id"]] = num_cohorts
+                    profile_vm_counts[num_cohorts - 1] += t["vm_count"]
+                    profile_disk_gb[num_cohorts - 1]   += t.get("total_used_gb", 0)
                     warnings.append(
                         f"Tenant \u2018{t['tenant_name']}\u2019 overflowed all cohort caps \u2014 placed in last cohort"
                     )
@@ -1933,30 +1973,42 @@ def auto_assign_cohorts(
 
         slots: Dict[int, int] = {t["tenant_id"]: 1 for t in pilot}
 
-        # Distribute remaining tenants across wave slots (2..num_cohorts)
-        n_wave_slots = max(num_cohorts - 1, 1)
-        wave_vms  = [0]   * n_wave_slots
-        wave_gb   = [0.0] * n_wave_slots
-        cur_wave  = 0
+        # Distribute remaining tenants across wave slots (2..N), auto-expanding if caps are hit
+        # so that no single "Main" bucket accumulates unbounded overflow.
+        wave_vms: List[int]   = [0]
+        wave_gb:  List[float] = [0.0]
+        cur_wave = 0
         for t in remaining:
-            for _ in range(n_wave_slots):
+            # Advance (or create new) slots until t fits
+            while True:
                 v = wave_vms[cur_wave] + t["vm_count"]
                 g = wave_gb[cur_wave]  + t["total_used_gb"]
                 if v <= max_vms and g <= max_gb:
                     break
-                cur_wave = min(cur_wave + 1, n_wave_slots - 1)
-                warnings.append(f"Cohort {cur_wave + 1} guardrail hit — overflow tenant '{t['tenant_name']}' placed in next wave")
-            slots[t["tenant_id"]] = cur_wave + 2  # slot 2 = Wave 1, etc.
+                cur_wave += 1
+                if cur_wave >= len(wave_vms):
+                    wave_vms.append(0)
+                    wave_gb.append(0.0)
+                warnings.append(
+                    f"Cohort {cur_wave + 1} guardrail hit — overflow tenant '{t['tenant_name']}' placed in next cohort"
+                )
+            slots[t["tenant_id"]] = cur_wave + 2  # pilot = slot 1, first wave = slot 2
             wave_vms[cur_wave] += t["vm_count"]
             wave_gb[cur_wave]  += t["total_used_gb"]
 
-        # Auto-name: Pilot / Wave 1 / Wave 2 / ... / Main
-        if num_cohorts == 2:
+        # Build names: 🧪 Pilot / 🔄 Wave 1 … 🔄 Wave N-1 / 🚀 Main
+        total_wave_slots = len(wave_vms)
+        actual_num_cohorts = total_wave_slots + 1  # +1 for pilot slot
+        if total_wave_slots == 1:
             names = ["🧪 Pilot", "🚀 Main"]
         else:
-            names = ["🧪 Pilot"] + [f"🔄 Wave {i}" for i in range(1, num_cohorts - 1)] + ["🚀 Main"]
+            names = (
+                ["🧪 Pilot"]
+                + [f"🔄 Wave {i}" for i in range(1, total_wave_slots)]
+                + ["🚀 Main"]
+            )
 
-        return _format_auto_assign_result(scored, slots, num_cohorts, names, by_id, warnings)
+        return _format_auto_assign_result(scored, slots, actual_num_cohorts, names, by_id, warnings)
 
     # ---- Strategy: riskiest_last ----
     if strategy == "riskiest_last":
@@ -2094,7 +2146,7 @@ def _format_auto_assign_result(
             "name":           names[slot - 1] if slot - 1 < len(names) else f"Cohort {slot}",
             "tenant_count":   len(members),
             "vm_count":       vm_cnt,
-            "total_disk_gb":  round(used_gb, 1),
+            "total_used_gb":  round(used_gb, 1),
             "avg_ease_score": round(avg_ease, 1),
             "avg_risk":       round(avg_risk, 1),
         })
@@ -2126,12 +2178,36 @@ PREFLIGHT_CHECKS = [
 ]
 
 
+def _greedy_wave_split(
+    vms: List[Dict[str, Any]],
+    max_vms: int,
+    max_disk_gb: float,
+    disk_fn,
+) -> List[List[Dict[str, Any]]]:
+    """Split a sorted VM list into groups respecting both a VM-count and a disk-GB cap."""
+    chunks: List[List[Dict]] = []
+    current: List[Dict] = []
+    current_disk = 0.0
+    for v in vms:
+        d = disk_fn(v)
+        if current and (len(current) >= max_vms or current_disk + d > max_disk_gb):
+            chunks.append(current)
+            current = []
+            current_disk = 0.0
+        current.append(v)
+        current_disk += d
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def build_wave_plan(
     vms: List[Dict[str, Any]],
     tenants: List[Dict[str, Any]],
     dependencies: List[Dict[str, Any]],     # [{vm_id, depends_on_vm_id}]
     strategy: str = "pilot_first",
     max_vms_per_wave: int = 30,
+    max_disk_gb_per_wave: float = float("inf"),
     pilot_vm_count: int = 5,
     wave_name_prefix: str = "Wave",
 ) -> Dict[str, Any]:
@@ -2225,10 +2301,10 @@ def build_wave_plan(
         )
         for i, tname in enumerate(ordered_tenants, 1):
             tvms = sorted(tenant_groups[tname], key=lambda v: (_risk_order(v), _vm_disk(v)))
-            # Split tenant if too large
-            for chunk_start in range(0, len(tvms), max_vms_per_wave):
-                chunk = tvms[chunk_start:chunk_start + max_vms_per_wave]
-                suffix = f" (part {chunk_start // max_vms_per_wave + 1})" if len(tvms) > max_vms_per_wave else ""
+            # Split tenant if too large (respecting both VM count and disk caps)
+            t_chunks = _greedy_wave_split(tvms, max_vms_per_wave, max_disk_gb_per_wave, _vm_disk)
+            for part_n, chunk in enumerate(t_chunks, 1):
+                suffix = f" (part {part_n})" if len(t_chunks) > 1 else ""
                 waves_spec.append({
                     "name": f"{wave_name_prefix} {len(waves_spec) + 1} — {tname}{suffix}",
                     "wave_type": "regular",
@@ -2237,15 +2313,16 @@ def build_wave_plan(
 
     elif strategy == "by_risk":
         # Green → Wave 1, Yellow → Wave 2, Red → Wave 3+
+        # Each band is also split by _greedy_wave_split so disk cap is respected within each band.
         buckets = {"GREEN": [], "YELLOW": [], "RED": []}
         for v in candidate_vms:
             rc = (v.get("risk_classification") or "GREEN").upper()
             buckets.get(rc, buckets["RED"]).append(v)
         for band, label in [("GREEN", "🟢 Low Risk"), ("YELLOW", "🟡 Medium Risk"), ("RED", "🔴 High Risk")]:
             bvms = sorted(buckets[band], key=lambda v: (_vm_disk(v), _tenant_priority(v)))
-            for chunk_start in range(0, len(bvms), max_vms_per_wave):
-                chunk = bvms[chunk_start:chunk_start + max_vms_per_wave]
-                suffix = f" pt{chunk_start // max_vms_per_wave + 1}" if len(bvms) > max_vms_per_wave else ""
+            chunks = _greedy_wave_split(bvms, max_vms_per_wave, max_disk_gb_per_wave, _vm_disk)
+            for part_n, chunk in enumerate(chunks, 1):
+                suffix = f" pt{part_n}" if len(chunks) > 1 else ""
                 waves_spec.append({
                     "name": f"{wave_name_prefix} {len(waves_spec) + 1} — {label}{suffix}",
                     "wave_type": "regular",
@@ -2255,8 +2332,7 @@ def build_wave_plan(
     elif strategy == "by_priority":
         # All VMs sorted by (tenant_priority, risk, disk), chunked into waves
         sorted_vms = sorted(candidate_vms, key=lambda v: (_tenant_priority(v), _risk_order(v), _vm_disk(v)))
-        for chunk_start in range(0, len(sorted_vms), max_vms_per_wave):
-            chunk = sorted_vms[chunk_start:chunk_start + max_vms_per_wave]
+        for chunk in _greedy_wave_split(sorted_vms, max_vms_per_wave, max_disk_gb_per_wave, _vm_disk):
             waves_spec.append({
                 "name": f"{wave_name_prefix} {len(waves_spec) + 1}",
                 "wave_type": "regular",
@@ -2348,3 +2424,183 @@ def build_wave_plan(
                                "severity": c[2]} for c in PREFLIGHT_CHECKS],
     }
 
+
+# ---------------------------------------------------------------------------
+# Phase 5.0 — Tech Fix Time Scoring
+# ---------------------------------------------------------------------------
+
+#: Default weights used when no project-level settings row exists
+DEFAULT_FIX_WEIGHTS: dict = {
+    "weight_windows":           20,
+    "weight_extra_volume":      15,
+    "weight_extra_nic":         10,
+    "weight_cold_mode":         15,
+    "weight_risk_yellow":       15,
+    "weight_risk_red":          25,
+    "weight_has_snapshots":     10,
+    "weight_cross_tenant_dep":  15,
+    "weight_unknown_os":        20,
+    # fix rates (probability VM will need a fix at all)
+    "fix_rate_windows":         0.50,
+    "fix_rate_linux":           0.20,
+    "fix_rate_other":           0.40,
+    "fix_rate_global":          None,
+    "cutover_minutes":          30,
+}
+
+
+def compute_vm_fix_time(vm: dict, settings: Optional[dict] = None) -> dict:
+    """
+    Estimate post-migration technical fix time for a single VM.
+
+    Returns a dict with:
+      fix_minutes_raw   — full score assuming this VM needs a fix
+      fix_minutes       — adjusted by OS-family fix rate (expected value)
+      cutover_minutes   — downtime for final sync + first boot
+      downtime_minutes  — cutover + fix_minutes
+      factors           — list of {name, minutes, reason} contributing items
+      is_override       — True if tech_fix_minutes_override was used
+    """
+    s = {**DEFAULT_FIX_WEIGHTS, **(settings or {})}
+
+    # Manual override wins entirely
+    if vm.get("tech_fix_minutes_override") is not None:
+        raw = int(vm["tech_fix_minutes_override"])
+        cutover = int(s.get("cutover_minutes") or 30)
+        return {
+            "fix_minutes_raw":  raw,
+            "fix_minutes":      raw,
+            "cutover_minutes":  cutover,
+            "downtime_minutes": cutover + raw,
+            "factors":          [{"name": "Manual override", "minutes": raw,
+                                   "reason": "Set explicitly by planner"}],
+            "is_override":      True,
+        }
+
+    factors: List[dict] = []
+    total = 0
+
+    os_family = (vm.get("os_family") or "").lower()
+    if os_family == "windows":
+        m = int(s.get("weight_windows", 20))
+        factors.append({"name": "Windows OS", "minutes": m,
+                         "reason": "NIC adapter rename (vmxnet3→virtio), disk letter reassignment"})
+        total += m
+    elif os_family not in ("linux",):
+        m = int(s.get("weight_unknown_os", 20))
+        factors.append({"name": "Unknown/other OS", "minutes": m,
+                         "reason": "Unknown boot behaviour on target platform"})
+        total += m
+
+    extra_disks = max(0, int(vm.get("disk_count") or 1) - 1)
+    if extra_disks > 0:
+        m = int(s.get("weight_extra_volume", 15)) * extra_disks
+        factors.append({"name": f"{extra_disks} extra data volume(s)", "minutes": m,
+                         "reason": "fstab/disk-UUID changes, partition table fixups, volume activation scripts"})
+        total += m
+
+    extra_nics = max(0, int(vm.get("nic_count") or 1) - 1)
+    if extra_nics > 0:
+        m = int(s.get("weight_extra_nic", 10)) * extra_nics
+        factors.append({"name": f"{extra_nics} extra NIC(s)", "minutes": m,
+                         "reason": "Multiple IP configs, routes and DNS entries to verify/re-apply"})
+        total += m
+
+    mode = (vm.get("migration_mode_override") or vm.get("migration_mode") or "warm").lower()
+    if mode == "cold":
+        m = int(s.get("weight_cold_mode", 15))
+        factors.append({"name": "Cold migration", "minutes": m,
+                         "reason": "Higher chance of stale driver state at first boot"})
+        total += m
+
+    risk_score = float(vm.get("risk_score") or 0)
+    if risk_score > 75:
+        m = int(s.get("weight_risk_red", 25))
+        factors.append({"name": "High risk (Red, >" + "75)", "minutes": m,
+                         "reason": "Complex VM flagged by risk scorer"})
+        total += m
+    elif risk_score > 50:
+        m = int(s.get("weight_risk_yellow", 15))
+        factors.append({"name": "Elevated risk (Yellow, >50)", "minutes": m,
+                         "reason": "VM flagged by risk scorer"})
+        total += m
+
+    if int(vm.get("snapshot_count") or 0) > 0:
+        m = int(s.get("weight_has_snapshots", 10))
+        factors.append({"name": "Has snapshots", "minutes": m,
+                         "reason": "Consolidation issues, disk-chain complexity"})
+        total += m
+
+    if int(vm.get("cross_tenant_dep_count") or 0) > 0:
+        m = int(s.get("weight_cross_tenant_dep", 15))
+        factors.append({"name": "Cross-tenant dependency", "minutes": m,
+                         "reason": "Requires coordinated fix window with dependent tenant"})
+        total += m
+
+    # Apply OS-family fix rate to get expected value
+    global_rate = s.get("fix_rate_global")
+    if global_rate is not None:
+        rate = float(global_rate)
+    elif os_family == "windows":
+        rate = float(s.get("fix_rate_windows", 0.50))
+    elif os_family == "linux":
+        rate = float(s.get("fix_rate_linux", 0.20))
+    else:
+        rate = float(s.get("fix_rate_other", 0.40))
+
+    cutover = int(s.get("cutover_minutes", 30))
+    adjusted = round(total * rate, 1)
+
+    return {
+        "fix_minutes_raw":  total,
+        "fix_minutes":      adjusted,        # expected value after fix-rate
+        "fix_rate":         rate,
+        "cutover_minutes":  cutover,
+        "downtime_minutes": cutover + adjusted,
+        "factors":          factors,
+        "is_override":      False,
+    }
+
+
+def compute_project_fix_summary(vms: List[dict], settings: Optional[dict],
+                                 bw_model_mbps: float) -> dict:
+    """
+    Aggregate fix-time summary for an entire project (or subset of VMs).
+
+    Returns a management-level dict with:
+      total_vms, total_fix_hours, total_downtime_hours,
+      data_copy_hours, per_os_breakdown, methodology
+    """
+    s = {**DEFAULT_FIX_WEIGHTS, **(settings or {})}
+    per_os: dict = {}
+    total_fix_min = 0.0
+    total_cutover_min = 0.0
+    total_data_gb = 0.0
+
+    for vm in vms:
+        result = compute_vm_fix_time(vm, s)
+        total_fix_min += result["fix_minutes"]
+        total_cutover_min += result["cutover_minutes"]
+        total_data_gb += float(vm.get("in_use_gb") or vm.get("total_disk_gb") or 0)
+
+        fam = (vm.get("os_family") or "other").lower()
+        if fam not in per_os:
+            per_os[fam] = {"vm_count": 0, "fix_hours": 0.0, "fix_rate": result["fix_rate"]}
+        per_os[fam]["vm_count"] += 1
+        per_os[fam]["fix_hours"] = round(
+            per_os[fam]["fix_hours"] + result["fix_minutes"] / 60, 2)
+
+    # Data-copy time (bandwidth model): total GB / bottleneck GB/h
+    bottleneck_gbph = (bw_model_mbps / 8) * 3600 / 1024 if bw_model_mbps > 0 else 1
+    data_copy_hours = round(total_data_gb / max(bottleneck_gbph, 0.01), 2)
+
+    return {
+        "total_vms":           len(vms),
+        "total_data_gb":       round(total_data_gb, 1),
+        "data_copy_hours":     data_copy_hours,
+        "total_fix_hours":     round(total_fix_min / 60, 2),
+        "total_cutover_hours": round(total_cutover_min / 60, 2),
+        "total_downtime_hours": round((total_fix_min + total_cutover_min) / 60, 2),
+        "per_os_breakdown":    per_os,
+        "settings_used":       s,
+    }

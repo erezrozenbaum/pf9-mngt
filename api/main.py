@@ -1018,6 +1018,41 @@ async def delete_user(request: Request, username: str, current_user: User = Depe
             detail=str(e)
         )
 
+@app.post("/auth/users/{username}/password")
+async def reset_user_password(
+    username: str,
+    request: Request,
+    current_user: User = Depends(require_authentication),
+):
+    """Reset an LDAP user's password (superadmin only)."""
+    if current_user.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Superadmin access required")
+
+    body = await request.json()
+    new_password = body.get("new_password", "")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    success = ldap_auth.change_password(username, new_password)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to reset password. Check server logs.")
+
+    # Audit log
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO activity_log (username, action, resource_type, resource_id, details)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (current_user.username, "password_reset", "user", username,
+                     f"Password reset by {current_user.username}"),
+                )
+            conn.commit()
+    except Exception:
+        pass
+
+    return {"message": f"Password for '{username}' has been reset successfully"}
+
 @app.get("/auth/audit")
 async def get_audit_logs(
     request: Request,
