@@ -694,9 +694,11 @@ def generate_summary_excel_report(summary: Dict[str, Any], project_name: str) ->
 
     os_cols = ["OS Family", "VM Count", "Fix Rate", "Fix Hours (Total)"]
     _write_table_header(ws3, 1, os_cols)
-    for i, entry in enumerate(summary.get("per_os_breakdown") or [], 2):
+    os_breakdown = summary.get("per_os_breakdown") or {}
+    os_items = os_breakdown.items() if isinstance(os_breakdown, dict) else [(e.get("os_family",""), e) for e in os_breakdown]
+    for i, (fam, entry) in enumerate(os_items, 2):
         _write_row(ws3, i, [
-            entry.get("os_family", ""),
+            fam,
             entry.get("vm_count", 0),
             f"{float(entry.get('fix_rate', 0)):.0%}",
             round(float(entry.get("fix_hours") or 0), 2),
@@ -849,16 +851,18 @@ def generate_summary_pdf_report(summary: Dict[str, Any], project_name: str) -> b
     story.append(Spacer(1, 0.4 * cm))
 
     # ── OS Breakdown ───────────────────────────────────────────────────────
-    os_entries = summary.get("per_os_breakdown") or []
-    if os_entries:
+    os_raw = summary.get("per_os_breakdown") or {}
+    os_items_pdf = os_raw.items() if isinstance(os_raw, dict) else [(e.get("os_family",""), e) for e in os_raw]
+    os_items_pdf = list(os_items_pdf)
+    if os_items_pdf:
         story.append(Paragraph("OS Family Breakdown", s_h2))
         os_hdr = [["OS Family", "VM Count", "Fix Rate", "Fix Hours"]]
         os_rows = [[
-            e.get("os_family", ""),
-            e.get("vm_count", 0),
-            f"{float(e.get('fix_rate', 0)):.0%}",
-            str(round(float(e.get("fix_hours") or 0), 2)),
-        ] for e in os_entries]
+            fam,
+            entry.get("vm_count", 0),
+            f"{float(entry.get('fix_rate', 0)):.0%}",
+            str(round(float(entry.get("fix_hours") or 0), 2)),
+        ] for fam, entry in os_items_pdf]
         t_os = Table(os_hdr + os_rows, colWidths=[5*cm, 3*cm, 3*cm, 4*cm])
         t_os.setStyle(TableStyle([
             ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
