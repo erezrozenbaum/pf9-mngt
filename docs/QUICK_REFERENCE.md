@@ -112,6 +112,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - "☁️ VM Provisioning" card in Runbooks tab — 4-step form: domain/project → VM rows → OS credentials + cloud-init preview → review + submit
   - Tenant-scoped auth via `provisionsrv` Keystone service account (not in LDAP); run `setup_provision_user.py` once after deploy
   - Windows: cloudbase-init `#ps1_sysnative` + Nova `adminPass`; dry-run emits `windows_cloudinit` + `windows_glance_property` warnings
+  - **Auto Glance patch** (v1.44.2): execution automatically sets `os_type=windows`, `hw_disk_bus=scsi`, `hw_scsi_model=virtio-scsi`, `hw_firmware_type=bios` on the image before creating the boot volume
   - Admin Tools → "🖥️ VM Provisioning" sub-tab: full batch history + expandable per-VM table + dark-terminal activity timeline
   - Rich completion email: VM table with image/flavor/OS/GB/error columns + execution timeline section
   - 15 API endpoints at `/api/vm-provisioning/*`; 2 auto-migrated DB tables; 5 notification event types
