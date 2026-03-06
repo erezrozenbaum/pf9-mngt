@@ -632,6 +632,25 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                 "windows" if "windows" in raw_os or "win" in raw_os else "linux"
             )
 
+            # Ensure Windows images carry the required Glance properties so Nova
+            # configures the correct virtual hardware (SCSI bus, virtio-scsi model,
+            # BIOS firmware).  We patch the image before creating the boot volume so
+            # that the properties are present when Cinder and Nova inspect it.
+            if os_type == "windows":
+                try:
+                    admin_client.update_image_properties(image_id, {
+                        "os_type":        "windows",
+                        "hw_disk_bus":    "scsi",
+                        "hw_scsi_model":  "virtio-scsi",
+                        "hw_firmware_type": "bios",
+                    })
+                except Exception as _img_patch_err:
+                    _log_activity(conn, "vm_provisioning_vm", str(vm_id),
+                                   "image_patch_warning",
+                                   f"{vm.get('image_name')}: could not patch Windows image "
+                                   f"properties — {_img_patch_err}",
+                                   batch.get("created_by", "system"))
+
             # Resolve flavor
             fl_obj = flavors_cache.get(vm.get("flavor_id") or "") or \
                      flavors_cache.get(vm.get("flavor_name") or "")

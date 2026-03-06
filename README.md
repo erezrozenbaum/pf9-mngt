@@ -750,6 +750,9 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.44.2 — VM Provisioning: Windows Glance image properties auto-patched on execution
+- ✅ **Windows Glance properties auto-set** — execution thread now patches the image with `os_type=windows`, `hw_disk_bus=scsi`, `hw_scsi_model=virtio-scsi`, `hw_firmware_type=bios` before creating the boot volume, fixing boot failures caused by missing hardware metadata
+
 ### v1.39.0 — VM Provisioning (Runbook 2): Tenant-Scoped Auth + Windows Cloud-Init + Admin History + Rich Email
 - ✅ **`provisionsrv` service account** — dedicated Keystone user (not in LDAP) authenticates with a real project-scoped token for each execution batch, ensuring Nova/Cinder/Neutron resources land in the correct tenant project
 - ✅ **Windows cloud-init fixed** — `net user Administrator /active:yes` (no `/add`) + `adminPass` injected into Nova body for cloudbase-init `SetUserPasswordPlugin`; custom user path uses `/add` + Administrators group

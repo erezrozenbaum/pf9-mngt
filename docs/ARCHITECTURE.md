@@ -146,6 +146,8 @@ This document covers:
 
 > **Dual-session pattern**: For tenant-scoped operations (snapshots, VM provisioning), `pf9_api` maintains two simultaneous Keystone sessions — (1) an **admin session** (`PF9_USERNAME`) for cross-tenant metadata queries, and (2) a **project-scoped service-user session** (`snapshotsrv` or `provisionsrv`) for resource creation in the correct tenant project. The service users are native Keystone users (not in LDAP) and are invisible to tenant-facing UIs.
 
+> **Windows image pre-patching** (v1.44.2): The admin session is also used to patch Glance image properties (`os_type`, `hw_disk_bus`, `hw_scsi_model`, `hw_firmware_type`) before the boot volume is created for any Windows VM. This guarantees correct virtual hardware configuration (virtio-scsi bus, BIOS firmware) without requiring operators to manually set image metadata at upload time.
+
 ## 🎯 Core Design Principles
 
 ### 1. **Microservices Architecture**

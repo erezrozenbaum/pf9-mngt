@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.44.2] - 2026-03-06
+
+### Fixed — Windows VM auto-provisioning: Glance image properties not set (`api/vm_provisioning_routes.py`)
+
+#### Bug Fix — Windows VMs boot with wrong virtual hardware (wrong disk bus / missing SCSI model / wrong firmware)
+- Windows VMs provisioned via Runbook 2 failed to boot reliably because the Glance image was missing the required hardware-property metadata (`os_type`, `hw_disk_bus`, `hw_scsi_model`, `hw_firmware_type`). Nova and Cinder used default values (IDE bus, SeaBIOS) which are incompatible with most Windows cloud images.
+- The execution thread now calls `admin_client.update_image_properties()` immediately after detecting `os_type == "windows"` and **before** the Cinder boot volume is created. This performs a Glance v2 JSON-Patch on the image, setting:
+  - `os_type = windows`
+  - `hw_disk_bus = scsi`
+  - `hw_scsi_model = virtio-scsi`
+  - `hw_firmware_type = bios`
+- The patch runs once per image per batch execution; subsequent provisioning runs are idempotent (Glance `add` op is safe when the property already exists with the same value).
+- If the Glance PATCH fails (e.g. insufficient permissions), a `image_patch_warning` entry is written to `activity_log` and provisioning continues — the failure is non-fatal so that partially-configured environments are not blocked.
+
+---
+
 ## [1.44.1] - 2026-03-05
 
 ### Fixed — Migration Summary Excel/PDF export errors (`api/export_reports.py`, `pf9-ui`)
