@@ -658,6 +658,16 @@ docker exec pf9_api python3 /app/setup_provision_user.py
 3. All Nova/Neutron/Cinder API calls use this scoped token → resources are created in (and visible within) the correct tenant project
 4. Role assignments are cached in-process — no repeated Keystone calls per VM within a batch
 
+**Windows Image Glance Properties (v1.44.2):**  
+When a Windows OS is detected, the admin client automatically patches the Glance image before creating the boot volume:
+```
+os_type        = windows
+hw_disk_bus    = scsi
+hw_scsi_model  = virtio-scsi
+hw_firmware_type = bios
+```
+This ensures Nova creates the VM with the correct virtual hardware regardless of how the image was originally uploaded. The patch is idempotent — re-running on an already-patched image is safe.
+
 > **Note**: The `provisionsrv` user must **not** be an LDAP-managed user (do not add it in OpenLDAP). Keeping it Keystone-native ensures it never appears in tenant-facing user lists or is accidentally included in exports.
 
 ### Environment File Security
