@@ -9,12 +9,15 @@ This module provides:
 """
 
 import os
+import logging
 import ldap
 import hashlib
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from functools import wraps
+
+logger = logging.getLogger(__name__)
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -36,8 +39,10 @@ LDAP_USER_DN = os.getenv("LDAP_USER_DN", "ou=users,dc=pf9mgmt,dc=local")
 _jwt_env = os.getenv("JWT_SECRET_KEY", "")
 if not _jwt_env:
     _jwt_env = secrets.token_urlsafe(48)
-    print("[SECURITY WARNING] JWT_SECRET_KEY not set — generated a random ephemeral key. "
-          "Sessions will be invalidated on every restart. Set JWT_SECRET_KEY in .env.")
+    logger.warning(
+        "JWT_SECRET_KEY not set — generated a random ephemeral key. "
+        "Sessions will be invalidated on every restart. Set JWT_SECRET_KEY in .env."
+    )
 JWT_SECRET_KEY = _jwt_env
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
@@ -104,38 +109,38 @@ class LDAPAuthenticator:
             
             # Try cn format first (our setup)
             try:
-                print(f"[AUTH] Trying CN format: {user_dn_cn}")
+                logger.debug("[AUTH] Trying CN format: %s", user_dn_cn)
                 conn = ldap.initialize(self.server)
                 conn.protocol_version = ldap.VERSION3
                 conn.set_option(ldap.OPT_REFERRALS, 0)
                 conn.simple_bind_s(user_dn_cn, password)
                 conn.unbind_s()
-                print(f"[AUTH] CN format successful for {username}")
+                logger.debug("[AUTH] CN format successful for %s", username)
                 return True
             except ldap.INVALID_CREDENTIALS as e:
-                print(f"[AUTH] CN format failed: {e}")
+                logger.debug("[AUTH] CN format failed: %s", e)
                 # Try uid format as fallback with a fresh connection
                 try:
-                    print(f"[AUTH] Trying UID format: {user_dn_uid}")
+                    logger.debug("[AUTH] Trying UID format: %s", user_dn_uid)
                     conn = ldap.initialize(self.server)
                     conn.protocol_version = ldap.VERSION3
                     conn.set_option(ldap.OPT_REFERRALS, 0)
                     conn.simple_bind_s(user_dn_uid, password)
                     conn.unbind_s()
-                    print(f"[AUTH] UID format successful for {username}")
+                    logger.debug("[AUTH] UID format successful for %s", username)
                     return True
                 except ldap.INVALID_CREDENTIALS as e2:
-                    print(f"[AUTH] UID format also failed: {e2}")
+                    logger.debug("[AUTH] UID format also failed: %s", e2)
                     return False
-            
+
         except ldap.INVALID_CREDENTIALS:
-            print(f"[AUTH] Invalid credentials for {username}")
+            logger.warning("[AUTH] Invalid credentials for %s", username)
             return False
         except ldap.LDAPError as e:
-            print(f"[AUTH] LDAP Error: {e}")
+            logger.error("[AUTH] LDAP error for %s: %s", username, e)
             return False
         except Exception as e:
-            print(f"[AUTH] Unexpected error: {e}")
+            logger.error("[AUTH] Unexpected error for %s: %s", username, e)
             return False
 
     def get_user_info(self, username: str) -> Dict[str, Any]:
@@ -161,8 +166,8 @@ class LDAPAuthenticator:
                 }
                 
         except Exception as e:
-            print(f"Error getting user info: {e}")
-            
+            logger.error("Error getting user info for %s: %s", username, e)
+
         return {'username': username, 'name': username, 'email': '', 'groups': []}
 
     def get_all_users(self) -> List[Dict[str, Any]]:
@@ -198,7 +203,7 @@ class LDAPAuthenticator:
             return users
             
         except Exception as e:
-            print(f"Error getting all users: {e}")
+            logger.error("Error getting all LDAP users: %s", e)
             return []
 
     def create_user(self, username: str, email: str, password: str, full_name: str = None) -> bool:
@@ -238,11 +243,11 @@ class LDAPAuthenticator:
             conn.add_s(user_dn, user_attrs)
             conn.unbind_s()
             
-            print(f"User {username} created successfully in LDAP")
+            logger.info("User %s created successfully in LDAP", username)
             return True
-            
+
         except Exception as e:
-            print(f"Error creating user {username}: {e}")
+            logger.error("Error creating user %s in LDAP: %s", username, e)
             return False
 
     def delete_user(self, username: str) -> bool:
@@ -261,11 +266,11 @@ class LDAPAuthenticator:
             conn.delete_s(user_dn)
             conn.unbind_s()
             
-            print(f"User {username} deleted successfully from LDAP")
+            logger.info("User %s deleted successfully from LDAP", username)
             return True
-            
+
         except Exception as e:
-            print(f"Error deleting user {username}: {e}")
+            logger.error("Error deleting user %s from LDAP: %s", username, e)
             return False
 
     def change_password(self, username: str, new_password: str) -> bool:
@@ -282,10 +287,10 @@ class LDAPAuthenticator:
             user_dn = f"cn={username},{self.user_dn}"
             conn.modify_s(user_dn, [(ldap.MOD_REPLACE, 'userPassword', [hashed.encode('utf-8')])])
             conn.unbind_s()
-            print(f"Password changed for {username}")
+            logger.info("Password changed for user %s", username)
             return True
         except Exception as e:
-            print(f"Error changing password for {username}: {e}")
+            logger.error("Error changing password for %s: %s", username, e)
             return False
 
 # JWT Token Management
@@ -351,7 +356,7 @@ def get_user_role(username: str) -> Optional[str]:
                 return "viewer"
             
     except Exception as e:
-        print(f"Error getting user role: {e}")
+        logger.error("Error getting user role for %s: %s", username, e)
         return "viewer"
 
 def set_user_role(username: str, role: str, granted_by: str = "system") -> bool:
@@ -379,7 +384,7 @@ def set_user_role(username: str, role: str, granted_by: str = "system") -> bool:
             # auto-commit via context manager
             return True
     except Exception as e:
-        print(f"Error setting user role: {e}")
+        logger.error("Error setting user role for %s: %s", username, e)
         return False
 
 def has_permission(username: str, resource: str, permission: str) -> bool:
@@ -434,7 +439,7 @@ def has_permission(username: str, resource: str, permission: str) -> bool:
                     """, (role, permission))
                 return cur.fetchone() is not None
     except Exception as e:
-        print(f"Error checking permissions: {e}")
+        logger.error("Error checking permissions for %s/%s/%s: %s", username, resource, permission, e)
         return False
 
 # Session Management
@@ -451,7 +456,7 @@ def create_user_session(username: str, role: str, token: str, ip_address: str = 
                     VALUES (%s, %s, %s, %s, %s, %s)
                 """, (username, role, token_hash, expires_at, ip_address, user_agent))
     except Exception as e:
-        print(f"Error creating session: {e}")
+        logger.error("Error creating session for %s: %s", username, e)
 
 def invalidate_user_session(token: str):
     """Invalidate user session"""
@@ -465,7 +470,7 @@ def invalidate_user_session(token: str):
                     WHERE token_hash = %s
                 """, (token_hash,))
     except Exception as e:
-        print(f"Error invalidating session: {e}")
+        logger.error("Error invalidating session: %s", e)
 
 def log_auth_event(username: str, action: str, success: bool = True, ip_address: str = None, 
                    user_agent: str = None, resource: str = None, endpoint: str = None, details: dict = None):
@@ -479,7 +484,7 @@ def log_auth_event(username: str, action: str, success: bool = True, ip_address:
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (username, action, success, ip_address, user_agent, resource, endpoint, details))
     except Exception as e:
-        print(f"Error logging auth event: {e}")
+        logger.error("Error logging auth event for %s/%s: %s", username, action, e)
 
 # FastAPI Dependencies
 ldap_auth = LDAPAuthenticator()
