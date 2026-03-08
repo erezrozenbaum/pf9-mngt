@@ -1298,10 +1298,18 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Seed a default email channel
+-- Seed default channels (email + webhook placeholders)
 INSERT INTO notification_channels (channel_type, name, enabled, config)
-VALUES ('email', 'Default SMTP', true, '{"from_name": "Platform9 Management"}')
-ON CONFLICT DO NOTHING;
+SELECT 'email', 'Default SMTP', true, '{"from_name": "Platform9 Management"}'::jsonb
+WHERE NOT EXISTS (SELECT 1 FROM notification_channels WHERE channel_type = 'email' AND name = 'Default SMTP');
+
+INSERT INTO notification_channels (channel_type, name, enabled, config)
+SELECT 'slack', 'Slack Incoming Webhook', false, '{"note": "Set SLACK_WEBHOOK_URL env var to enable"}'::jsonb
+WHERE NOT EXISTS (SELECT 1 FROM notification_channels WHERE channel_type = 'slack' AND name = 'Slack Incoming Webhook');
+
+INSERT INTO notification_channels (channel_type, name, enabled, config)
+SELECT 'teams', 'Microsoft Teams Webhook', false, '{"note": "Set TEAMS_WEBHOOK_URL env var to enable"}'::jsonb
+WHERE NOT EXISTS (SELECT 1 FROM notification_channels WHERE channel_type = 'teams' AND name = 'Microsoft Teams Webhook');
 
 -- Per-user notification subscriptions
 CREATE TABLE IF NOT EXISTS notification_preferences (
@@ -2212,6 +2220,10 @@ CREATE TABLE IF NOT EXISTS backup_history (
     error_message   TEXT,
     started_at      TIMESTAMPTZ,
     completed_at    TIMESTAMPTZ,
+    -- Backup integrity validation (E5)
+    integrity_status     TEXT CHECK (integrity_status IN ('pending', 'valid', 'invalid', 'skipped')),
+    integrity_checked_at TIMESTAMPTZ,
+    integrity_notes      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -2956,4 +2968,23 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('operator',   'system_metadata', 'read'),
     ('admin',      'system_metadata', 'read'),
     ('superadmin', 'system_metadata', 'admin')
+ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- =====================================================================
+-- Inventory Snapshots (E6 — Phase E)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS inventory_snapshots (
+    id              SERIAL PRIMARY KEY,
+    collected_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    snapshot        JSONB NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_snapshots_collected_at
+    ON inventory_snapshots (collected_at DESC);
+
+INSERT INTO role_permissions (role, resource, action) VALUES
+    ('viewer',     'inventory_versions', 'read'),
+    ('operator',   'inventory_versions', 'read'),
+    ('admin',      'inventory_versions', 'read'),
+    ('superadmin', 'inventory_versions', 'admin')
 ON CONFLICT (role, resource, action) DO NOTHING;

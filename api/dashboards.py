@@ -69,17 +69,6 @@ async def get_rvtools_last_run():
     return {"last_run": last_run}
 
 
-def get_db_connection():
-    """DEPRECATED: Use db_pool.get_connection() instead."""
-    return psycopg2.connect(
-        host=os.getenv("PF9_DB_HOST", "db"),
-        port=int(os.getenv("PF9_DB_PORT", "5432")),
-        dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
-        user=os.getenv("PF9_DB_USER", "pf9"),
-        password=os.getenv("PF9_DB_PASSWORD", ""),
-    )
-
-
 def _calculate_metrics_summary(metrics_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Normalize metrics cache and calculate summary stats."""
     if not metrics_data:

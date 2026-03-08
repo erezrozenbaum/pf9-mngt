@@ -5,7 +5,7 @@
 > This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.44.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.45.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -189,13 +189,15 @@ A 15-minute explainer video walking through the UI and key features:
 
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
+| **nginx (TLS proxy)** | nginx:1.27-alpine | 80/443 | HTTPS termination, HTTP→HTTPS redirect, reverse proxy to API and UI |
 | **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 28+ management tabs + admin panel |
-| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 150+ REST endpoints, RBAC middleware, 2 workers |
-| **LDAP Server** | OpenLDAP | 389 | Enterprise authentication directory |
-| **LDAP Admin** | phpLDAPadmin | 8081 | Web-based LDAP management |
+| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 150+ REST endpoints, RBAC middleware, 4 workers + --max-requests 1000 |
+| **Redis** | redis:7-alpine | internal | OpenStack inventory/quota cache (60–300 s TTL, allkeys-lru, 128 MiB cap) |
+| **LDAP Server** | OpenLDAP | internal | Enterprise authentication directory (not exposed to host) |
+| **LDAP Admin** | phpLDAPadmin | 8081 *(dev profile)* | Web-based LDAP management (`--profile dev`) |
 | **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
-| **Database** | PostgreSQL 16 | 5432 | 65+ tables, history tracking, audit, metering, runbooks, migration planner |
-| **Database Admin** | pgAdmin4 | 8080 | Web-based PostgreSQL management |
+| **Database** | PostgreSQL 16 | internal | 65+ tables, history tracking, audit, metering, runbooks, migration planner (not exposed to host) |
+| **Database Admin** | pgAdmin4 | 8080 *(dev profile)* | Web-based PostgreSQL management (`--profile dev`) |
 | **Snapshot Worker** | Python | — | Automated snapshot management |
 | **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
 | **Backup Worker** | Python / PostgreSQL | — | Scheduled database backups and restores |

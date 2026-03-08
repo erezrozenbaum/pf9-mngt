@@ -54,7 +54,6 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     expires_in: int
-    refresh_token: Optional[str] = None
     user: Optional["User"] = None
 
 class TokenData(BaseModel):
@@ -138,9 +137,6 @@ class LDAPAuthenticator:
         except Exception as e:
             print(f"[AUTH] Unexpected error: {e}")
             return False
-        except Exception as e:
-            print(f"Authentication Error: {e}")
-            return False
 
     def get_user_info(self, username: str) -> Dict[str, Any]:
         """Get user information from LDAP"""
@@ -148,8 +144,9 @@ class LDAPAuthenticator:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
             
-            # Search for user
-            search_filter = f"(uid={username})"
+            # Search for user — escape username to prevent LDAP injection
+            safe_username = ldap.filter.escape_filter_chars(username)
+            search_filter = f"(uid={safe_username})"
             attrs = ['uid', 'cn', 'mail', 'memberOf']
             
             result = conn.search_s(self.user_dn, ldap.SCOPE_SUBTREE, search_filter, attrs)
@@ -305,15 +302,30 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 def verify_token(token: str) -> Optional[TokenData]:
-    """Verify and decode JWT token"""
+    """Verify JWT token and confirm the session has not been revoked (e.g. after logout)"""
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         username: str = payload.get("sub")
         role: str = payload.get("role")
         if username is None:
             return None
-        token_data = TokenData(username=username, role=role)
-        return token_data
+        # Check the session is still active in the DB (catches post-logout token reuse)
+        try:
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT 1 FROM user_sessions "
+                        "WHERE token_hash = %s AND is_active = true AND expires_at > NOW()",
+                        (token_hash,),
+                    )
+                    if cur.fetchone() is None:
+                        return None
+        except Exception:
+            # DB unavailable — fall back to JWT-only validation; revocation cannot
+            # be enforced but the JWT signature and expiry still hold.
+            pass
+        return TokenData(username=username, role=role)
     except JWTError:
         return None
 

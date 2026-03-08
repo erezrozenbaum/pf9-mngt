@@ -199,11 +199,13 @@ Start-Sleep 15
 Write-Host "5. Verifying services..." -ForegroundColor Yellow
 
 $services = @(
-    @{Name="Database"; Url="http://localhost:5432"; Container="pf9_db"},
-    @{Name="API"; Url="http://localhost:8000/health"; Container="pf9_api"},
-    @{Name="UI"; Url="http://localhost:5173"; Container="pf9_ui"},
-    @{Name="Monitoring"; Url="http://localhost:8001/health"; Container="pf9_monitoring"},
-    @{Name="Backup Worker"; Url=$null; Container="pf9_backup_worker"}
+    @{Name="Database"; Container="pf9_db"},
+    @{Name="API"; Container="pf9_api"},
+    @{Name="UI"; Container="pf9_ui"},
+    @{Name="Monitoring"; Container="pf9_monitoring"},
+    @{Name="Redis"; Container="pf9_redis"},
+    @{Name="nginx"; Container="pf9_nginx"},
+    @{Name="Backup Worker"; Container="pf9_backup_worker"}
 )
 
 $allGood = $true
@@ -224,11 +226,12 @@ if ($allGood) {
     Write-Host "PF9 Management Portal is ready!" -ForegroundColor Green
     Write-Host ""
     Write-Host "Services:" -ForegroundColor Cyan
-    Write-Host "  • UI:         http://localhost:5173" -ForegroundColor White
-    Write-Host "  • API:        http://localhost:8000" -ForegroundColor White  
-    Write-Host "  • API Metrics: http://localhost:8000/metrics" -ForegroundColor White
-    Write-Host "  • Monitoring: http://localhost:8001" -ForegroundColor White
-    Write-Host "  • PgAdmin:    http://localhost:8080" -ForegroundColor White
+    Write-Host "  • HTTPS (nginx): https://localhost" -ForegroundColor Green
+    Write-Host "  • UI (direct):   http://localhost:5173" -ForegroundColor White
+    Write-Host "  • API (direct):  http://localhost:8000" -ForegroundColor White  
+    Write-Host "  • API Metrics:   http://localhost:8000/metrics" -ForegroundColor White
+    Write-Host "  • Monitoring:    http://localhost:8001" -ForegroundColor White
+    Write-Host "  • PgAdmin:       http://localhost:8080  (dev profile only)" -ForegroundColor Gray
     Write-Host ""
     
     # Start background metrics collector

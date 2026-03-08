@@ -1190,7 +1190,6 @@ async def create_pricing(
                 if "uq_pricing_category_name" in str(e):
                     raise HTTPException(status_code=409, detail=f"A pricing entry for '{body.item_name}' in category '{body.category}' already exists.")
                 raise
-        conn.commit()
     d = dict(row)
     for k in list(d.keys()):
         if hasattr(d[k], "isoformat"):
@@ -1226,7 +1225,6 @@ async def update_pricing(
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Pricing entry not found")
-        conn.commit()
     d = dict(row)
     for k in list(d.keys()):
         if hasattr(d[k], "isoformat"):
@@ -1247,7 +1245,6 @@ async def delete_pricing(
             cur.execute("DELETE FROM metering_pricing WHERE id = %s", (pricing_id,))
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Pricing entry not found")
-        conn.commit()
     return {"detail": "Deleted"}
 
 
@@ -1335,7 +1332,6 @@ async def sync_flavors_to_pricing(
                 )
                 removed = cur.rowcount
 
-        conn.commit()
 
     return {
         "detail": f"Synced from OpenStack: {inserted} added, {removed} removed, {len(existing_pricing) - removed} unchanged",

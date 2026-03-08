@@ -13,6 +13,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import DOMPurify from "dompurify";
 import { API_BASE } from "../config";
 import "./CopilotPanel.css";
 
@@ -530,7 +531,7 @@ const CopilotPanel: React.FC<CopilotPanelProps> = ({ token, isAdmin }) => {
                   <div key={m.id} className={`copilot-msg ${m.role}`}>
                     {m.role === "bot" ? (
                       <>
-                        <div dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }} />
+                        <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderMarkdown(m.text)) }} />
                         <div className="copilot-msg-meta">
                           <span className={`copilot-backend-badge ${m.backend || "builtin"}`}>
                             {BACKEND_LABELS[m.backend || "builtin"]?.icon}{" "}

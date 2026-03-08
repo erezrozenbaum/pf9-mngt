@@ -160,7 +160,6 @@ async def mfa_setup(current_user: User = Depends(require_authentication)):
                 """,
                 (username, secret),
             )
-        conn.commit()
 
     logger.info("MFA setup initiated for %s", username)
     return MFASetupResponse(secret=secret, qr_code_base64=qr_b64, otpauth_url=otpauth_url)
@@ -201,7 +200,6 @@ async def mfa_verify_setup(
                 """,
                 (hashed_codes, username),
             )
-        conn.commit()
 
     logger.info("MFA enabled for %s", username)
     return MFABackupCodesResponse(backup_codes=plain_codes)
@@ -245,7 +243,6 @@ async def mfa_verify_login(body: MFAVerifyRequest, current_user: User = Depends(
                         "UPDATE user_mfa SET backup_codes = %s, updated_at = now() WHERE username = %s",
                         (stored, username),
                     )
-                conn.commit()
             logger.info("Backup code used by %s (%d remaining)", username, len(stored))
 
     if not verified:
@@ -296,7 +293,6 @@ async def mfa_disable(
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM user_mfa WHERE username = %s", (username,))
-        conn.commit()
 
     logger.info("MFA disabled for %s", username)
     return {"detail": "MFA disabled successfully"}
@@ -376,7 +372,6 @@ async def mfa_admin_reset(
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM user_mfa WHERE username = %s", (username,))
-        conn.commit()
 
     logger.warning(
         "MFA force-reset for user '%s' by admin '%s'. Reason: %s",

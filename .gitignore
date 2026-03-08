@@ -87,3 +87,9 @@ MIGRATION_PLANNER_PHASES.md
 improvements_plan.md
 RUNBOOKS_PLAN.md
 create_releases.ps1
+docs_remediation_plan.md
+
+# TLS certificates - never commit private keys
+nginx/certs/*.key
+nginx/certs/*.crt
+nginx/certs/*.pem

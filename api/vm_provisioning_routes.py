@@ -16,14 +16,11 @@ import logging
 import os
 import re
 import secrets
-import smtplib
 import string
 import threading
 import time
 import traceback
 from datetime import datetime, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from typing import Any, Dict, List, Optional
 
 import psycopg2
@@ -34,33 +31,21 @@ from pydantic import BaseModel, validator
 
 from auth import require_permission, get_current_user
 from pf9_control import get_client
+from smtp_helper import send_email as smtp_send_email
+from db_pool import get_connection, get_pool
 
 logger = logging.getLogger("vm_provisioning")
 
 router = APIRouter(prefix="/api/vm-provisioning", tags=["vm-provisioning"])
 
 # ---------------------------------------------------------------------------
-# SMTP config
-# ---------------------------------------------------------------------------
-SMTP_ENABLED = os.getenv("SMTP_ENABLED", "false").lower() in ("true", "1", "yes")
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
-SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM_ADDRESS = os.getenv("SMTP_FROM_ADDRESS", "pf9-mgmt@example.com")
-SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Platform9 Management")
-
-# ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
 def _db():
-    from db_pool import get_pool
     return get_pool().getconn()
 
 def _release(conn):
     try:
-        from db_pool import get_pool
         get_pool().putconn(conn)
     except Exception:
         try:
@@ -136,17 +121,13 @@ def _ensure_tables():
     global _tables_initialized
     if _tables_initialized:
         return
-    conn = _db()
     try:
-        with conn.cursor() as cur:
-            cur.execute(_TABLES_SQL)
-        conn.commit()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_TABLES_SQL)
         _tables_initialized = True
     except Exception as e:
-        conn.rollback()
         logger.error(f"vm_provisioning _ensure_tables failed: {e}")
-    finally:
-        _release(conn)
 
 # ---------------------------------------------------------------------------
 # Naming helpers
@@ -385,28 +366,8 @@ class DecisionRequest(BaseModel):
 # Email
 # ---------------------------------------------------------------------------
 def _send_email(to_addrs: List[str], subject: str, html_body: str):
-    if not SMTP_ENABLED or not SMTP_HOST or not to_addrs:
-        return
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_ADDRESS}>"
-    msg["To"] = ", ".join(to_addrs)
-    msg.attach(MIMEText(html_body, "html"))
-    try:
-        if SMTP_USE_TLS:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-                s.ehlo()
-                s.starttls()
-                if SMTP_USERNAME:
-                    s.login(SMTP_USERNAME, SMTP_PASSWORD)
-                s.sendmail(SMTP_FROM_ADDRESS, to_addrs, msg.as_string())
-        else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-                if SMTP_USERNAME:
-                    s.login(SMTP_USERNAME, SMTP_PASSWORD)
-                s.sendmail(SMTP_FROM_ADDRESS, to_addrs, msg.as_string())
-    except Exception as e:
-        logger.warning(f"Email send failed to {to_addrs}: {e}")
+    if to_addrs:
+        smtp_send_email(to_addrs, subject, html_body)
 
 
 def _build_completion_email(batch: dict, vm_rows: list, activity_steps: list = None) -> str:
@@ -1121,68 +1082,60 @@ async def create_batch(
 ):
     """Create a provisioning batch from form or Excel-validated data."""
     _ensure_tables()
-    conn = _db()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """INSERT INTO vm_provisioning_batches
-                   (name, domain_name, project_name, require_approval, created_by,
-                    status, approval_status)
-                   VALUES (%s,%s,%s,%s,%s,'validated','pending_approval')
-                   RETURNING id""",
-                (body.name, body.domain_name, body.project_name,
-                 body.require_approval, user.username),
-            )
-            batch_id = cur.fetchone()["id"]
-
-            for vm in body.vms:
-                sgs = vm.security_groups or ["default"]
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    """INSERT INTO vm_provisioning_vms
-                       (batch_id, vm_name_suffix, count, image_name, image_id,
-                        flavor_name, flavor_id, volume_gb, network_name, network_id,
-                        security_groups, fixed_ip, hostname,
-                        os_username, os_password, extra_cloudinit, os_type)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (batch_id, vm.vm_name_suffix, vm.count,
-                     vm.image_name, vm.image_id,
-                     vm.flavor_name, vm.flavor_id, vm.volume_gb,
-                     vm.network_name, vm.network_id,
-                     Json(sgs), vm.fixed_ip, vm.hostname,
-                     vm.os_username, vm.os_password,
-                     vm.extra_cloudinit, vm.os_type),
+                    """INSERT INTO vm_provisioning_batches
+                       (name, domain_name, project_name, require_approval, created_by,
+                        status, approval_status)
+                       VALUES (%s,%s,%s,%s,%s,'validated','pending_approval')
+                       RETURNING id""",
+                    (body.name, body.domain_name, body.project_name,
+                     body.require_approval, user.username),
                 )
-        conn.commit()
-        _log_activity(conn, "vm_provisioning", str(batch_id), "batch_created",
-                       f"Batch '{body.name}' created", user.username)
-        return {"batch_id": batch_id, "status": "validated"}
+                batch_id = cur.fetchone()["id"]
+
+                for vm in body.vms:
+                    sgs = vm.security_groups or ["default"]
+                    cur.execute(
+                        """INSERT INTO vm_provisioning_vms
+                           (batch_id, vm_name_suffix, count, image_name, image_id,
+                            flavor_name, flavor_id, volume_gb, network_name, network_id,
+                            security_groups, fixed_ip, hostname,
+                            os_username, os_password, extra_cloudinit, os_type)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (batch_id, vm.vm_name_suffix, vm.count,
+                         vm.image_name, vm.image_id,
+                         vm.flavor_name, vm.flavor_id, vm.volume_gb,
+                         vm.network_name, vm.network_id,
+                         Json(sgs), vm.fixed_ip, vm.hostname,
+                         vm.os_username, vm.os_password,
+                         vm.extra_cloudinit, vm.os_type),
+                    )
+            _log_activity(conn, "vm_provisioning", str(batch_id), "batch_created",
+                           f"Batch '{body.name}' created", user.username)
+            return {"batch_id": batch_id, "status": "validated"}
     except Exception as e:
-        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _release(conn)
 
 
 @router.get("/batches")
 async def list_batches(user=Depends(get_current_user)):
     _ensure_tables()
-    conn = _db()
-    try:
+    with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 "SELECT * FROM vm_provisioning_batches ORDER BY created_at DESC LIMIT 100"
             )
             rows = [dict(r) for r in cur.fetchall()]
-        return rows
-    finally:
-        _release(conn)
+    return rows
 
 
 @router.get("/batches/{batch_id}")
 async def get_batch(batch_id: int, user=Depends(get_current_user)):
     _ensure_tables()
-    conn = _db()
-    try:
+    with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
             batch = cur.fetchone()
@@ -1190,19 +1143,16 @@ async def get_batch(batch_id: int, user=Depends(get_current_user)):
                 raise HTTPException(status_code=404, detail="Batch not found")
             cur.execute("SELECT * FROM vm_provisioning_vms WHERE batch_id=%s ORDER BY id", (batch_id,))
             vms = [dict(r) for r in cur.fetchall()]
-        result = dict(batch)
-        result["vms"] = vms
-        return result
-    finally:
-        _release(conn)
+    result = dict(batch)
+    result["vms"] = vms
+    return result
 
 
 @router.get("/batches/{batch_id}/logs")
 async def get_batch_logs(batch_id: int, user=Depends(get_current_user)):
     """Return activity_log entries for this batch and its VMs (most recent first)."""
     _ensure_tables()
-    conn = _db()
-    try:
+    with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Collect VM ids for this batch
             cur.execute("SELECT id FROM vm_provisioning_vms WHERE batch_id=%s", (batch_id,))
@@ -1228,24 +1178,22 @@ async def get_batch_logs(batch_id: int, user=Depends(get_current_user)):
                 params,
             )
             logs = [dict(r) for r in cur.fetchall()]
-        return logs
-    finally:
-        _release(conn)
+    return logs
 
 
 @router.post("/batches/{batch_id}/dry-run")
 async def dry_run(batch_id: int, user=Depends(get_current_user)):
     """Pre-flight: validate image/flavor/network/SG/quota/IP/name for each VM row."""
     _ensure_tables()
-    conn = _db()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
-            batch = cur.fetchone()
-            if not batch:
-                raise HTTPException(status_code=404, detail="Batch not found")
-            cur.execute("SELECT * FROM vm_provisioning_vms WHERE batch_id=%s ORDER BY id", (batch_id,))
-            vm_rows = [dict(r) for r in cur.fetchall()]
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
+                batch = cur.fetchone()
+                if not batch:
+                    raise HTTPException(status_code=404, detail="Batch not found")
+                cur.execute("SELECT * FROM vm_provisioning_vms WHERE batch_id=%s ORDER BY id", (batch_id,))
+                vm_rows = [dict(r) for r in cur.fetchall()]
 
         admin = get_client()
         project_id = admin.resolve_project_id(
@@ -1451,55 +1399,51 @@ async def dry_run(batch_id: int, user=Depends(get_current_user)):
         dry_run_status = "dry_run_failed" if has_errors else "dry_run_passed"
         results = {"per_vm": per_vm_results, "quota": quota_checks}
 
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE vm_provisioning_batches SET status=%s, dry_run_results=%s, updated_at=NOW() WHERE id=%s",
-                (dry_run_status, Json(results), batch_id),
-            )
-        conn.commit()
-
-        _log_activity(conn, "vm_provisioning", str(batch_id),
-                       f"vm_provisioning_dry_run_{'passed' if not has_errors else 'failed'}",
-                       f"Dry-run {dry_run_status}", user.username)
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE vm_provisioning_batches SET status=%s, dry_run_results=%s, updated_at=NOW() WHERE id=%s",
+                        (dry_run_status, Json(results), batch_id),
+                    )
+                _log_activity(conn, "vm_provisioning", str(batch_id),
+                               f"vm_provisioning_dry_run_{'passed' if not has_errors else 'failed'}",
+                               f"Dry-run {dry_run_status}", user.username)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
         return {"status": dry_run_status, "results": results}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _release(conn)
 
 
 @router.post("/batches/{batch_id}/submit")
 async def submit_batch(batch_id: int, user=Depends(get_current_user)):
     """Submit batch for admin approval."""
     _ensure_tables()
-    conn = _db()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
-            batch = cur.fetchone()
-            if not batch:
-                raise HTTPException(status_code=404, detail="Batch not found")
-            if batch["status"] not in ("validated", "dry_run_passed", "dry_run_failed"):
-                raise HTTPException(status_code=400, detail=f"Cannot submit batch in status '{batch['status']}'")
-            cur.execute(
-                "UPDATE vm_provisioning_batches SET approval_status='pending_approval', updated_at=NOW() WHERE id=%s",
-                (batch_id,),
-            )
-        conn.commit()
-        _log_activity(conn, "vm_provisioning", str(batch_id),
-                       "vm_provisioning_submitted", "Submitted for approval",
-                       user.username)
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
+                batch = cur.fetchone()
+                if not batch:
+                    raise HTTPException(status_code=404, detail="Batch not found")
+                if batch["status"] not in ("validated", "dry_run_passed", "dry_run_failed"):
+                    raise HTTPException(status_code=400, detail=f"Cannot submit batch in status '{batch['status']}'")
+                cur.execute(
+                    "UPDATE vm_provisioning_batches SET approval_status='pending_approval', updated_at=NOW() WHERE id=%s",
+                    (batch_id,),
+                )
+            _log_activity(conn, "vm_provisioning", str(batch_id),
+                           "vm_provisioning_submitted", "Submitted for approval",
+                           user.username)
         return {"status": "pending_approval"}
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _release(conn)
 
 
 @router.post("/batches/{batch_id}/decision")
@@ -1507,64 +1451,59 @@ async def batch_decision(batch_id: int, body: DecisionRequest,
                           user=Depends(get_current_user)):
     """Admin: approve or reject a batch."""
     _ensure_tables()
-    conn = _db()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
-            batch = cur.fetchone()
-            if not batch:
-                raise HTTPException(status_code=404, detail="Batch not found")
-            new_approval = "approved" if body.decision == "approve" else "rejected"
-            cur.execute(
-                "UPDATE vm_provisioning_batches SET approval_status=%s, updated_at=NOW() WHERE id=%s",
-                (new_approval, batch_id),
-            )
-        conn.commit()
-        _log_activity(conn, "vm_provisioning", str(batch_id),
-                       f"vm_provisioning_{new_approval}",
-                       body.comment or f"Batch {new_approval}",
-                       user.username)
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
+                batch = cur.fetchone()
+                if not batch:
+                    raise HTTPException(status_code=404, detail="Batch not found")
+                new_approval = "approved" if body.decision == "approve" else "rejected"
+                cur.execute(
+                    "UPDATE vm_provisioning_batches SET approval_status=%s, updated_at=NOW() WHERE id=%s",
+                    (new_approval, batch_id),
+                )
+            _log_activity(conn, "vm_provisioning", str(batch_id),
+                           f"vm_provisioning_{new_approval}",
+                           body.comment or f"Batch {new_approval}",
+                           user.username)
         return {"approval_status": new_approval}
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _release(conn)
 
 
 @router.post("/batches/{batch_id}/re-execute")
 async def re_execute_batch(batch_id: int, user=Depends(get_current_user)):
     """Re-execute a failed or partially-failed batch, retrying only the failed VMs."""
     _ensure_tables()
-    conn = _db()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
-            batch = cur.fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
-        if batch["status"] not in ("failed", "partially_failed", "complete"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Re-execute requires a completed/failed batch (current: {batch['status']})"
-            )
-        if batch["require_approval"] and batch["approval_status"] != "approved":
-            raise HTTPException(status_code=400, detail="Batch not yet approved")
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
+                batch = cur.fetchone()
+            if not batch:
+                raise HTTPException(status_code=404, detail="Batch not found")
+            if batch["status"] not in ("failed", "partially_failed", "complete"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Re-execute requires a completed/failed batch (current: {batch['status']})"
+                )
+            if batch["require_approval"] and batch["approval_status"] != "approved":
+                raise HTTPException(status_code=400, detail="Batch not yet approved")
 
-        # Reset failed VM rows; complete rows will be skipped by the thread
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE vm_provisioning_vms SET status='pending', error_msg=NULL "
-                "WHERE batch_id=%s AND status='failed'",
-                (batch_id,),
-            )
-            cur.execute(
-                "UPDATE vm_provisioning_batches SET status='executing', updated_at=NOW() WHERE id=%s",
-                (batch_id,),
-            )
-        conn.commit()
+            # Reset failed VM rows; complete rows will be skipped by the thread
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE vm_provisioning_vms SET status='pending', error_msg=NULL "
+                    "WHERE batch_id=%s AND status='failed'",
+                    (batch_id,),
+                )
+                cur.execute(
+                    "UPDATE vm_provisioning_batches SET status='executing', updated_at=NOW() WHERE id=%s",
+                    (batch_id,),
+                )
 
         t = threading.Thread(
             target=_execute_batch_thread,
@@ -1578,36 +1517,32 @@ async def re_execute_batch(batch_id: int, user=Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _release(conn)
 
 
 @router.post("/batches/{batch_id}/execute")
 async def execute_batch(batch_id: int, user=Depends(get_current_user)):
     """Execute batch: provision all VMs in a background thread."""
     _ensure_tables()
-    conn = _db()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
-            batch = cur.fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
-        if batch["require_approval"] and batch["approval_status"] != "approved":
-            raise HTTPException(status_code=400, detail="Batch not yet approved")
-        if batch["status"] == "executing":
-            raise HTTPException(status_code=400, detail="Batch already executing")
-        if batch["status"] == "complete":
-            raise HTTPException(status_code=400, detail="Batch already complete — use Re-run to retry failed VMs")
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
+                batch = cur.fetchone()
+            if not batch:
+                raise HTTPException(status_code=404, detail="Batch not found")
+            if batch["require_approval"] and batch["approval_status"] != "approved":
+                raise HTTPException(status_code=400, detail="Batch not yet approved")
+            if batch["status"] == "executing":
+                raise HTTPException(status_code=400, detail="Batch already executing")
+            if batch["status"] == "complete":
+                raise HTTPException(status_code=400, detail="Batch already complete — use Re-run to retry failed VMs")
 
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE vm_provisioning_batches SET status='executing', updated_at=NOW() WHERE id=%s",
-                (batch_id,),
-            )
-        conn.commit()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE vm_provisioning_batches SET status='executing', updated_at=NOW() WHERE id=%s",
+                    (batch_id,),
+                )
 
         operator_email = None
         t = threading.Thread(
@@ -1622,66 +1557,55 @@ async def execute_batch(batch_id: int, user=Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _release(conn)
 
 
 @router.post("/batches/{batch_id}/reset")
 async def reset_batch(batch_id: int, user=Depends(get_current_user)):
     """Force-reset a stuck/executing batch back to 'failed' so it can be re-run."""
     _ensure_tables()
-    conn = _db()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
-            batch = cur.fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE vm_provisioning_batches SET status='failed', updated_at=NOW() WHERE id=%s",
-                (batch_id,),
-            )
-            cur.execute(
-                "UPDATE vm_provisioning_vms SET status='failed', error_msg='Force-reset by user' "
-                "WHERE batch_id=%s AND status IN ('pending','executing')",
-                (batch_id,),
-            )
-        conn.commit()
-        _log_activity(conn, "vm_provisioning", str(batch_id), "batch_reset",
-                       "Batch force-reset to failed by user", user.username)
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
+                batch = cur.fetchone()
+            if not batch:
+                raise HTTPException(status_code=404, detail="Batch not found")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE vm_provisioning_batches SET status='failed', updated_at=NOW() WHERE id=%s",
+                    (batch_id,),
+                )
+                cur.execute(
+                    "UPDATE vm_provisioning_vms SET status='failed', error_msg='Force-reset by user' "
+                    "WHERE batch_id=%s AND status IN ('pending','executing')",
+                    (batch_id,),
+                )
+            _log_activity(conn, "vm_provisioning", str(batch_id), "batch_reset",
+                           "Batch force-reset to failed by user", user.username)
         return {"status": "failed", "batch_id": batch_id, "message": "Batch reset — use Re-run to retry"}
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _release(conn)
 
 
 @router.delete("/batches/{batch_id}")
 async def delete_batch(batch_id: int, user=Depends(get_current_user)):
     _ensure_tables()
-    conn = _db()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT status FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
-            row = cur.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Batch not found")
-            if row["status"] == "executing":
-                raise HTTPException(status_code=400, detail="Cannot delete a batch that is actively executing")
-            cur.execute("DELETE FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
-        conn.commit()
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT status FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Batch not found")
+                if row["status"] == "executing":
+                    raise HTTPException(status_code=400, detail="Cannot delete a batch that is actively executing")
+                cur.execute("DELETE FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
         return {"deleted": True}
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _release(conn)
 

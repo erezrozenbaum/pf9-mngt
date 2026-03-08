@@ -189,8 +189,6 @@ def _ensure_tables() -> None:
     """
     # Columns added after initial release — safe on existing installs via IF NOT EXISTS
     _ALTER_SQL = """
-    ALTER TABLE onboarding_customers
-        DROP COLUMN IF EXISTS department_tag;
     ALTER TABLE onboarding_projects
         ADD COLUMN IF NOT EXISTS subscription_id       TEXT DEFAULT '',
         ADD COLUMN IF NOT EXISTS quota_instances       INT DEFAULT 10,
@@ -215,6 +213,8 @@ def _ensure_tables() -> None:
         ALTER COLUMN cidr DROP NOT NULL;
     ALTER TABLE onboarding_users
         ADD COLUMN IF NOT EXISTS user_password TEXT;
+    ALTER TABLE onboarding_customers
+        ADD COLUMN IF NOT EXISTS department_tag TEXT;
     """
     try:
         with get_connection() as conn:
@@ -1653,21 +1653,10 @@ class SendNotificationsRequest(BaseModel):
     extra_recipients: List[str] = []  # additional addresses (non-personalised summary)
 
 
-def _smtp_send(msg, to_email: str, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_ADDRESS):
-    import smtplib, ssl
-    if SMTP_USE_TLS:
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            server.ehlo(); server.starttls(context=ctx); server.ehlo()
-            if SMTP_USERNAME:
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM_ADDRESS, [to_email], msg.as_string())
-    else:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            server.ehlo()
-            if SMTP_USERNAME:
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM_ADDRESS, [to_email], msg.as_string())
+def _smtp_send(msg, to_email: str, *args, **kwargs):
+    """Thin wrapper — delegates to smtp_helper.send_raw."""
+    from smtp_helper import send_raw
+    send_raw(msg, to_email)
 
 
 @router.post("/batches/{batch_id}/send-notifications")
@@ -1738,15 +1727,12 @@ def send_notifications(
     for n in all_networks:
         nets_by_proj[(n["domain_name"], n["project_name"])].append(n)
 
-    try:
-        from notification_routes import (  # type: ignore
-            SMTP_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS,
-            SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_ADDRESS, SMTP_FROM_NAME,
-        )
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-    except ImportError as ie:
-        raise HTTPException(status_code=500, detail=f"Could not import SMTP config: {ie}")
+    from smtp_helper import (
+        SMTP_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS,
+        SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_ADDRESS, SMTP_FROM_NAME,
+    )
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
 
     sent = 0
     skipped = 0

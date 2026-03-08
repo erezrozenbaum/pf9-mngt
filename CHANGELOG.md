@@ -5,6 +5,177 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.0] - 2026-03-08
+
+### Features — Phase E
+
+#### E1 — vJailbreak execution backend (`api/migration_routes.py`)
+- New `GET /api/migration/projects/{project_id}/vjailbreak-status` — reports whether the vJailbreak agent is configured and reachable. Returns `not_configured`, `connected`, or `unreachable` JSON.
+- New `POST /api/migration/projects/{project_id}/waves/{wave_id}/execute` — forwards a wave execution request to the vJailbreak REST API. Returns `503` with a clear human-readable message when `VJAILBREAK_API_URL` is not set. Proxies `dry_run` flag and `notes` to the agent. Always logs an activity entry regardless of agent availability. Admin/superadmin RBAC (inherits `admin` action on `migration` resource).
+
+#### E3 — Slack / Microsoft Teams webhook notifications (`api/webhook_helper.py`, `api/notification_routes.py`)
+- New `api/webhook_helper.py` module: reads `SLACK_WEBHOOK_URL` and `TEAMS_WEBHOOK_URL` from environment. Exports `SLACK_ENABLED`, `TEAMS_ENABLED`, `send_slack()`, `send_teams()`, and `post_event()`. Slack uses Block Kit JSON; Teams uses the MessageCard schema.
+- New `GET /notifications/webhook-config` — returns `{slack_enabled, teams_enabled, any_enabled}` (no secrets exposed). Requires `notifications:read`.
+- New `POST /notifications/test-webhook` — sends a test message to Slack, Teams, or both. Body: `{channel: "slack"|"teams"|"all"}`. Requires `notifications:write`.
+- New `db/migrate_webhook_channels.sql` — seeds `slack` and `teams` placeholder rows in `notification_channels` (requires `WHERE NOT EXISTS` guard, idempotent).
+- `db/init.sql` updated to seed all three channel types on fresh install.
+
+#### E5 — Backup integrity validation (`backup_worker/main.py`, `db/migrate_backup_integrity.sql`)
+- New `integrity_status` (`pending`/`valid`/`invalid`/`skipped`), `integrity_checked_at`, and `integrity_notes` columns added to `backup_history` via `db/migrate_backup_integrity.sql`.
+- New `_validate_backup(conn, job_id, filepath)` function: runs `gunzip -t` to verify gzip integrity, then peeks the first 4 KiB and confirms the decompressed content looks like a pg_dump SQL script. Writes result back to `backup_history` and commits.
+- Called automatically from `_run_backup()` on every successful backup before the worker yields.
+
+#### E6 — Inventory versioning (`api/main.py`, `db/migrate_inventory_versions.sql`)
+- New `inventory_snapshots` table: `id SERIAL`, `collected_at TIMESTAMPTZ`, `snapshot JSONB` (servers, projects, volumes, counts). Index on `collected_at DESC`. 90-day automatic retention.
+- Snapshot captured at end of every `refresh_inventory` call.
+- New `GET /api/inventory/snapshots` — lists recent snapshots (newest first), `limit` param (1–500, default 50).
+- New `GET /api/inventory/diff` — takes `from_ts` / `to_ts` ISO-8601 params, finds nearest snapshots and returns a structured diff (added/removed/changed servers with status/flavor/hypervisor deltas, added/removed projects, added/removed volumes, resource count table).
+- `db/migrate_inventory_versions.sql` + `db/init.sql` updated.
+
+#### E7 — Inventory diff in drift detector (`check_drift.py`)
+- Extended `check_drift.py` with an `=== INVENTORY CHANGE SUMMARY (last 7 days) ===` section.
+- Fetches the most recent snapshot and the nearest snapshot ≥7 days ago. Diffs servers (added/removed/changed with field-level deltas, up to 5 examples each), projects (added/removed), volumes (added/removed), and a resource count table showing before → after with delta.
+- Handles edge cases: no snapshots, only one snapshot (prints counts only with a note).
+
+
+
+### Technical Debt — Phase D cleanup (`api/`)
+
+#### D1 — Replace `_db()`/`_release()` with connection-pool context manager (`api/vm_provisioning_routes.py`)
+- All API route handlers converted from `_db()`/`_release()` manual connection management to `with get_connection() as conn:`. Connections are now returned to the pool automatically even on exception.
+- `_ensure_tables()` likewise converted.
+- `_execute_batch_thread` (background thread) retains `_db()`/`_release()` intentionally — it holds a single long-lived connection across hundreds of lines of Platform9 API work.
+- `dry_run` split into two separate `with get_connection()` blocks (read-only pre-flight, then status-write after Platform9 processing) to free the connection during the long computation window.
+
+#### D2 — Remove deprecated `get_db_connection()` helpers (`api/dashboards.py`, `api/notification_routes.py`)
+- Removed local `get_db_connection()` shim functions that pre-dated the connection pool. All DB access now uses `db_pool.get_connection`.
+
+#### D3 — Remove redundant `conn.commit()` inside context-manager blocks
+- Removed ~110 redundant `conn.commit()` calls across `mfa_routes.py`, `runbook_routes.py`, `search.py`, `backup_routes.py`, `metering_routes.py`, `main.py`, `migration_routes.py`, and `provisioning_routes.py`. The `db_pool.get_connection()` context manager already commits automatically on clean exit.
+- Six `conn.commit()` calls in `vm_provisioning_routes.py` (inside `_log_activity` and `_execute_batch_thread`) are retained — these use manual connection management intentionally.
+
+#### D4 — Fix unbounded `request_duration` memory growth (`api/performance_metrics.py`)
+- `request_duration` defaultdict factory changed from `list` → `deque(maxlen=100)`. Removed dead manual guard code. Each endpoint now retains only the last 100 latency samples, preventing unbounded memory growth under sustained load.
+
+#### D5 — Centralise SMTP configuration (`api/smtp_helper.py`)
+- New `api/smtp_helper.py` module: single source of truth for all SMTP environment variables (`SMTP_ENABLED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USE_TLS`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, `SMTP_FROM_NAME`).
+- Exports `send_email(to_addrs, subject, html_body, *, raise_on_error=False)` and `send_raw(msg, to_addrs)`.
+- Removed duplicate SMTP import blocks and 8-constant env-var patterns from `notification_routes.py`, `provisioning_routes.py`, `vm_provisioning_routes.py`, and `onboarding_routes.py`.
+
+#### D6 — Remove unused Python packages (`api/requirements.txt`)
+- Removed `asyncpg==0.29.0` (no async DB driver needed — psycopg2 is used) and `pydantic-settings==2.6.1` (settings loaded via `os.getenv` directly).
+
+#### D7 — Delete stale backup file (`pf9-ui/src/components/`)
+- Deleted `MeteringTab.tsx.bak`. `.gitignore` already covers `*.bak`.
+
+#### D9 — Token-bucket rate limiter for Platform9 API calls (`api/pf9_control.py`)
+- Added thread-safe token-bucket rate limiter to `Pf9Client`. Gated by `PF9_RATE_LIMIT_ENABLED=true` (default off). Rate configurable via `PF9_API_RATE_LIMIT` (requests/second, default 10). The `_throttle()` method is called in `_headers()`, which is the single chokepoint for all authenticated API calls.
+
+---
+
+## [1.44.5] - 2026-03-08
+
+### Infrastructure — Phase C production hardening (`docker-compose.yml`, `api/`, `nginx/`, `pf9-ui/`)
+
+#### C1 — Production UI Dockerfile (`pf9-ui/Dockerfile.prod`)
+- Added two-stage build: `node:20-alpine` runs `npm ci && npm run build`, then `nginx:1.27-alpine` serves the static `dist/` output with an SPA fallback (`try_files $uri $uri/ /index.html`). Eliminates the Vite dev server in production.
+
+#### C2 — nginx TLS termination layer (`nginx/`)
+- New `nginx/` directory with `Dockerfile`, `nginx.conf`, and `generate_certs.ps1`. The `pf9_nginx` service terminates HTTPS on ports 80/443, redirects HTTP→HTTPS, and reverse-proxies `/api/`, `/auth/`, `/settings/`, `/health`, and other API paths to `pf9_api:8000`; all other requests proxy to `pf9_ui:5173`.
+- Security headers added: `Strict-Transport-Security`, `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`.
+- Self-signed 4096-bit RSA dev certs generated via `nginx/generate_certs.ps1`; `nginx/certs/*.key` and `nginx/certs/*.crt` added to `.gitignore`.
+
+#### C3 — PostgreSQL port no longer exposed to host (`docker-compose.yml`)
+- Removed `ports: "5432:5432"` from the `db` service. Database is accessible only via the internal Docker network (`pf9_db:5432`).
+
+#### C4 — LDAP ports no longer exposed to host (`docker-compose.yml`)
+- Removed `ports: "389:389"` and `"636:636"` from the `ldap` service. LDAP accessible internally only.
+
+#### C5 — Healthchecks on `pf9_api` and `pf9_ui` (`docker-compose.yml`)
+- `pf9_api`: `python -c "urllib.request.urlopen('http://localhost:8000/health')"`, interval 30 s, 3 retries, start_period 40 s.
+- `pf9_ui`: `wget -q -O /dev/null http://127.0.0.1:5173` (explicit IPv4 — Alpine's `localhost` resolves to `::1`), interval 30 s, start_period 60 s.
+
+#### C6 — pgAdmin and phpLDAPadmin gated behind `dev` profile (`docker-compose.yml`)
+- Both services now have `profiles: ["dev"]`. They start only with `docker compose --profile dev up`; absent from the default production stack.
+
+#### C7 — Gunicorn scaled to 4 workers + memory recycling (`api/Dockerfile`)
+- `CMD` updated: `-w 4` (was `-w 2`), `--max-requests 1000 --max-requests-jitter 100` added to prevent gradual memory growth.
+
+#### C8 — Resource limits on all services (`docker-compose.yml`)
+- `deploy.resources.limits` added to every service: `pf9_api` (1.5 CPU / 1 GiB), `db` (1.0 CPU / 1 GiB), `snapshot_worker` (1.0 CPU / 768 MiB), `pf9_ui` (0.5 CPU / 512 MiB), workers/ldap/monitoring (0.5 CPU / 256 MiB), `nginx` (0.5 CPU / 128 MiB), `redis` (0.3 CPU / 192 MiB).
+
+#### C9 — Redis caching for hot OpenStack API calls (`docker-compose.yml`, `api/`)
+- New `pf9_redis` service: `redis:7-alpine`, 128 MiB `maxmemory`, `allkeys-lru` eviction, persistence disabled.
+- New `api/cache.py`: `@cached(ttl, key_prefix)` decorator uses lazy Redis connection; falls back to direct call on any Redis error — API boots and works without Redis.
+- Added `redis>=5.0.0` to `api/requirements.txt`.
+- Applied `@cached` to 7 methods in `api/pf9_control.py`: `list_servers` (60 s), `list_flavors` (300 s), `list_domains` (120 s), `list_projects` / `list_volumes` / `get_compute_quotas` / `get_network_quotas` (60 s each).
+
+---
+
+## [1.44.4] - 2026-03-08
+
+### Security — Phase B security hardening (`api/auth.py`, `api/main.py`, `pf9-ui/src/components/CopilotPanel.tsx`)
+
+#### Security Fix — XSS via `dangerouslySetInnerHTML` in Copilot chat (`pf9-ui/src/components/CopilotPanel.tsx`)
+- Bot messages were rendered via `dangerouslySetInnerHTML={{ __html: renderMarkdown(m.text) }}` with no sanitization. If the backend returned HTML/script content in a message, it would execute in the user's browser.
+- Added `dompurify ^3.2.0` (and `@types/dompurify ^3.0.0`) as a dependency. The call site is now `DOMPurify.sanitize(renderMarkdown(m.text))` — all generated HTML is stripped of any unsafe tags/attributes before insertion.
+
+#### Security Fix — CORS wildcard on RBAC 403 responses (`api/main.py`)
+- The `rbac_middleware` 403 response set `Access-Control-Allow-Origin: *` alongside `Access-Control-Allow-Credentials: true`, which is an invalid combination (browsers reject credentials with wildcard), and also unnecessarily broad.
+- Changed to the same validated-origin pattern already used for 401 responses: origin is checked against `ALLOWED_ORIGINS` and set explicitly, or omitted if not recognised.
+
+#### Security Fix — TrustedHostMiddleware wildcard removed (`api/main.py`)
+- `allowed_hosts` included `"*"`, making the middleware a no-op.
+- Now derived from `ALLOWED_ORIGINS`: scheme is stripped and port is dropped to extract bare hostnames (`localhost`, `127.0.0.1`, plus any production host from `PF9_ALLOWED_ORIGINS`). Wildcard entry removed entirely.
+
+#### Security Fix — JWT revocation enforced on logout (`api/auth.py`)
+- `verify_token()` only validated the JWT signature and expiry; tokens remained accepted after logout because the `user_sessions` table was never consulted.
+- Now performs a DB lookup after signature validation: `SELECT 1 FROM user_sessions WHERE token_hash = %s AND is_active = true AND expires_at > NOW()`. Returns `None` (→ 401) if the session is not found or has been marked inactive. Falls back to JWT-only validation if the DB is temporarily unavailable.
+
+#### Security Fix — CORS `allow_headers` / `expose_headers` narrowed from `"*"` (`api/main.py`)
+- Replaced wildcard with explicit lists: `allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]`, `expose_headers=["Content-Type", "X-Request-ID"]`.
+
+#### Cleanup — Removed dead refresh-token configuration (`api/auth.py`, `api/main.py`, `docker-compose.yml`)
+- The `Token` Pydantic model had a `refresh_token: Optional[str] = None` field that was always `None` in responses and unused by the UI.
+- Both login response dicts in `main.py` returned `"refresh_token": None`. Removed.
+- `docker-compose.yml` defined `JWT_REFRESH_TOKEN_EXPIRE_DAYS` which was never read by the application. Removed.
+
+---
+
+## [1.44.3] - 2026-03-08
+
+### Security — Phase A critical security & bug fixes (`api/auth.py`, `api/log_collector.py`, `api/main.py`, `api/onboarding_routes.py`)
+
+#### Security Fix — LDAP injection in `get_user_info()` (`api/auth.py`)
+- The `username` value passed to `ldap.search_s()` was embedded directly into the filter string `(uid=<username>)`. An attacker with control over the username field could craft a payload such as `*)(uid=*)(|(uid=` to bypass the filter and retrieve arbitrary LDAP objects.
+- Fixed by wrapping `username` with `ldap.filter.escape_filter_chars()` before constructing the search filter.
+
+#### Security Fix — Command injection in `search_logs()` (`api/log_collector.py`)
+- `search_term` was interpolated directly into a shell command executed over SSH (`sudo grep … <search_term>`). Shell metacharacters (`$()`, `` ` ``, `;`, `|`, etc.) would have been interpreted by the remote shell.
+- Fixed by: (1) validating `search_term` against a strict allowlist regex (`^[\w\s./:@_-]{1,200}$`) — rejects on mismatch with HTTP 400; (2) switching `grep` to `-F` (fixed-string) mode; (3) wrapping the term with `shlex.quote()`.
+
+#### Security Fix — MFA fails-open (`api/main.py`)
+- An unhandled exception during the MFA verification step (e.g. DB timeout) caused the login flow to silently continue and issue a JWT as if MFA had passed.
+- Fixed: the `except Exception` block now logs at ERROR level and raises `HTTPException(status_code=503)` instead of proceeding.
+
+#### Bug Fix — Debug endpoints expose internal data (`api/main.py`)
+- `GET /simple-test` returned `{"message": "working"}` with no authentication required.
+- `GET /test-users-db` returned a user count and 3 sample rows including plaintext email addresses — also unauthenticated.
+- Both endpoints removed entirely.
+
+#### Bug Fix — `NameError` crash in log collector (`api/log_collector.py`)
+- `list_available_logs()` and `search_logs()` both referenced the undefined variable `host` in their return dicts; the correct local variable is `ssh_host`. This caused an unhandled `NameError` on every call.
+- Fixed: both return dicts now use `"host": ssh_host`.
+
+#### Bug Fix — Destructive `DROP COLUMN` in startup migration (`api/onboarding_routes.py`)
+- `_ensure_tables()` contained `ALTER TABLE onboarding_customers DROP COLUMN IF EXISTS department_tag` which ran on every application restart, silently deleting in-use data.
+- Fix: the `DROP COLUMN` statement was removed. An `ADD COLUMN IF NOT EXISTS department_tag TEXT` was added to `_ALTER_SQL` to restore the column on existing installs where it had already been dropped.
+
+#### Code Quality — Removed unreachable dead code (`api/auth.py`)
+- A second `except Exception as e: print(f"Authentication Error: {e}")` block in `LDAPAuthenticator.authenticate()` could never be reached (the first handler in the same try/except covered the same exception type). Removed.
+
+---
+
 ## [1.44.2] - 2026-03-06
 
 ### Fixed — Windows VM auto-provisioning: Glance image properties not set (`api/vm_provisioning_routes.py`)

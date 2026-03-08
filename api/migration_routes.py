@@ -159,7 +159,6 @@ def _ensure_tables():
                 if os.path.exists(migration):
                     with open(migration) as f:
                         cur.execute(f.read())
-                    conn.commit()
                     logger.info("Migration planner tables created")
 
 
@@ -180,7 +179,6 @@ def _ensure_activity_log_table():
                 if os.path.exists(migration):
                     with open(migration) as f:
                         cur.execute(f.read())
-                    conn.commit()
 
 
 def _ensure_phase4_tables():
@@ -201,7 +199,6 @@ def _ensure_phase4_tables():
                 if os.path.exists(migration):
                     with open(migration) as f:
                         cur.execute(f.read())
-                    conn.commit()
                     logger.info("Phase 4A tables created")
 
 
@@ -263,7 +260,6 @@ def _ensure_prep_approval_tables():
                     CREATE INDEX IF NOT EXISTS idx_prep_approvals_project
                         ON migration_prep_approvals(project_id, created_at DESC);
                 """)
-                conn.commit()
                 logger.info("Prep approval tables created")
 
 
@@ -287,7 +283,6 @@ def _ensure_narrative_columns():
                     ALTER TABLE migration_projects ADD COLUMN technical_notes TEXT;
                 EXCEPTION WHEN duplicate_column THEN NULL; END $$;
             """)
-            conn.commit()
 
 
 try:
@@ -657,7 +652,6 @@ async def create_project(req: CreateProjectRequest, user = Depends(get_current_u
                 INSERT INTO migration_tenant_rules (project_id) VALUES (%s)
             """, (project["project_id"],))
 
-            conn.commit()
 
     _log_activity(actor=actor, action="create", resource_type="migration_project",
                   resource_id=project["project_id"], resource_name=req.name)
@@ -767,7 +761,6 @@ async def update_project(project_id: str, req: UpdateProjectRequest, user = Depe
                 RETURNING *
             """, params + [project_id])
             project = dict(cur.fetchone())
-            conn.commit()
 
     _log_activity(actor=actor, action="update", resource_type="migration_project",
                   resource_id=project_id, details=updates)
@@ -784,7 +777,6 @@ async def delete_project(project_id: str, user = Depends(get_current_user)):
         project = _get_project(project_id, conn)
         with conn.cursor() as cur:
             cur.execute("DELETE FROM migration_projects WHERE project_id = %s", (project_id,))
-            conn.commit()
 
     _log_activity(actor=actor, action="delete", resource_type="migration_project",
                   resource_id=project_id, resource_name=project["name"])
@@ -834,7 +826,6 @@ async def archive_project(project_id: str, user = Depends(get_current_user)):
             """, (project_id, project["name"], Json(summary), actor))
 
             cur.execute("DELETE FROM migration_projects WHERE project_id = %s", (project_id,))
-            conn.commit()
 
     _log_activity(actor=actor, action="archive", resource_type="migration_project",
                   resource_id=project_id, resource_name=project["name"], details=summary)
@@ -1018,7 +1009,6 @@ async def upload_rvtools(project_id: str, file: UploadFile = File(...), user = D
                 WHERE project_id = %s
             """, (file.filename, Json(stats), project_id))
 
-            conn.commit()
 
         wb.close()
 
@@ -1077,7 +1067,6 @@ async def reparse_memory(project_id: str, file: UploadFile = File(...), user = D
 
             updated = _parse_vmemory_sheet(wb["vMemory"], project_id, cur)
 
-        conn.commit()
         wb.close()
 
     _log_activity(actor=actor, action="reparse_memory", resource_type="migration_project",
@@ -1124,7 +1113,6 @@ async def clear_rvtools_data(project_id: str, user = Depends(get_current_user)):
                     updated_at = now()
                 WHERE project_id = %s
             """, (project_id,))
-            conn.commit()
 
     _log_activity(actor=actor, action="clear_rvtools", resource_type="migration_project",
                   resource_id=project_id, resource_name=project["name"])
@@ -2114,7 +2102,6 @@ async def update_vm(project_id: str, vm_id: str, req: UpdateVMRequest, user = De
             vm = cur.fetchone()
             if not vm:
                 raise HTTPException(status_code=404, detail="VM not found")
-            conn.commit()
 
     _log_activity(actor=actor, action="update_vm", resource_type="migration_vm",
                   resource_id=vm_id, details=updates)
@@ -2232,7 +2219,6 @@ async def update_tenant(project_id: str, tenant_id: int, req: UpdateTenantReques
                     WHERE project_id = %s AND tenant_name = %s
                 """, (updates["tenant_name"], project_id, old_tenant_name))
 
-            conn.commit()
 
     _log_activity(actor=actor, action="update_tenant", resource_type="migration_tenant",
                   resource_id=str(tenant_id), details=updates)
@@ -2287,7 +2273,6 @@ async def reclassify_networks(project_id: str, user=Depends(get_current_user)):
         _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             _build_network_summary(project_id, cur)
-            conn.commit()
     _log_activity(actor=actor, action="reclassify_networks", resource_type="migration_network",
                   resource_id=project_id, details={"reason": "manual reclassify"})
     return {"status": "ok", "message": "Network types refreshed from current classification rules"}
@@ -2319,7 +2304,6 @@ async def update_network(project_id: str, network_id: int, req: Request, user=De
             net = cur.fetchone()
             if not net:
                 raise HTTPException(status_code=404, detail="Network not found")
-            conn.commit()
 
     _log_activity(actor=actor, action="update_network", resource_type="migration_network",
                   resource_id=str(network_id), details=updates)
@@ -2469,7 +2453,6 @@ async def update_risk_config(project_id: str, request: Request, user = Depends(g
                     VALUES (%s, %s) RETURNING *
                 """, (project_id, Json(rules)))
                 config = cur.fetchone()
-            conn.commit()
 
     _log_activity(actor=actor, action="update_risk_config", resource_type="migration_project",
                   resource_id=project_id)
@@ -2533,7 +2516,6 @@ async def run_assessment(project_id: str, user = Depends(get_current_user)):
                 WHERE project_id = %s
             """, (project_id,))
 
-            conn.commit()
 
     _log_activity(actor=actor, action="run_assessment", resource_type="migration_project",
                   resource_id=project_id, details={"vms_scored": scored})
@@ -2575,7 +2557,6 @@ async def reset_assessment(project_id: str, user = Depends(get_current_user)):
                 UPDATE migration_projects SET status = 'assessment', updated_at = now()
                 WHERE project_id = %s
             """, (project_id,))
-            conn.commit()
 
     _log_activity(actor=actor, action="reset_assessment", resource_type="migration_project",
                   resource_id=project_id)
@@ -2603,7 +2584,6 @@ async def reset_plan(project_id: str, user = Depends(get_current_user)):
                     updated_at = now()
                 WHERE project_id = %s
             """, (project_id,))
-            conn.commit()
 
     _log_activity(actor=actor, action="reset_plan", resource_type="migration_project",
                   resource_id=project_id)
@@ -2638,7 +2618,6 @@ async def approve_project(project_id: str, user = Depends(get_current_user)):
                     updated_at = now()
                 WHERE project_id = %s
             """, (actor, project_id))
-            conn.commit()
 
     _log_activity(actor=actor, action="approve", resource_type="migration_project",
                   resource_id=project_id, resource_name=project["name"])
@@ -2994,7 +2973,6 @@ async def bulk_scope_tenants(project_id: str, req: BulkScopeRequest, user=Depend
                     WHERE id = %s AND project_id = %s
                 """, (req.include_in_plan, req.exclude_reason if not req.include_in_plan else None,
                       tid, project_id))
-        conn.commit()
     _log_activity(actor=actor, action="bulk_scope_tenants", resource_type="migration_project",
                   resource_id=project_id, details={"tenant_ids": req.tenant_ids, "include": req.include_in_plan})
     return {"status": "ok", "updated": len(req.tenant_ids)}
@@ -3069,7 +3047,6 @@ async def bulk_replace_target(project_id: str, req: BulkReplaceTargetRequest,
                         updated_at = now()
                     WHERE id = %s AND project_id = %s
                 """, (item["new_value"], item["id"], project_id))
-            conn.commit()
 
     _log_activity(actor=actor, action="bulk_replace_target", resource_type="migration_project",
                   resource_id=project_id,
@@ -3134,7 +3111,6 @@ async def bulk_replace_network(project_id: str, req: BulkReplaceNetworkRequest,
                         updated_at = now()
                     WHERE id = %s AND project_id = %s
                 """, (item["new_value"], item["id"], project_id))
-            conn.commit()
 
     _log_activity(actor=actor, action="bulk_replace_network", resource_type="migration_project",
                   resource_id=project_id,
@@ -3156,7 +3132,6 @@ async def confirm_all_tenants(project_id: str, user=Depends(get_current_user)):
                 WHERE project_id = %s AND target_confirmed = false
             """, (project_id,))
             affected = cur.rowcount
-        conn.commit()
     _log_activity(actor=actor, action="confirm_all_tenants", resource_type="migration_project",
                   resource_id=project_id, details={"affected": affected})
     return {"status": "ok", "affected_count": affected}
@@ -3176,7 +3151,6 @@ async def confirm_all_networks(project_id: str, user=Depends(get_current_user)):
                 WHERE project_id = %s AND confirmed = false
             """, (project_id,))
             affected = cur.rowcount
-        conn.commit()
     _log_activity(actor=actor, action="confirm_all_networks", resource_type="migration_project",
                   resource_id=project_id, details={"affected": affected})
     return {"status": "ok", "affected_count": affected}
@@ -3198,7 +3172,6 @@ async def confirm_all_subnets(project_id: str, user=Depends(get_current_user)):
                   AND NOT COALESCE(subnet_details_confirmed, false)
             """, (project_id,))
             affected = cur.rowcount
-        conn.commit()
     _log_activity(actor=actor, action="confirm_all_subnets", resource_type="migration_project",
                   resource_id=project_id, details={"affected": affected})
     return {"status": "ok", "affected_count": affected}
@@ -3466,7 +3439,6 @@ async def import_network_mapping_template(
                     skipped_no_db_match += 1
                     if len(sample_no_match) < 5:
                         sample_no_match.append(src)
-        conn.commit()
 
     skipped = skipped_empty_patch + skipped_no_db_match
     diag: dict = {}
@@ -3539,7 +3511,6 @@ async def add_tenant_filter(project_id: str, req: TenantFilterRequest, user=Depe
             else:
                 affected = 0
 
-        conn.commit()
     _log_activity(actor=actor, action="add_tenant_filter", resource_type="migration_project",
                   resource_id=project_id, details={"pattern": req.pattern, "affected": affected})
     return {"status": "ok", "filter": row, "tenants_excluded": affected}
@@ -3556,7 +3527,6 @@ async def delete_tenant_filter(project_id: str, filter_id: int, user=Depends(get
                         (filter_id, project_id))
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Filter not found")
-        conn.commit()
     _log_activity(actor=actor, action="delete_tenant_filter", resource_type="migration_project",
                   resource_id=project_id, details={"filter_id": filter_id})
     return {"status": "ok"}
@@ -3597,7 +3567,6 @@ async def set_overcommit_profile(project_id: str, req: UpdateOvercommitRequest, 
                 UPDATE migration_projects SET overcommit_profile_name = %s, updated_at = now()
                 WHERE project_id = %s
             """, (req.overcommit_profile_name, project_id))
-        conn.commit()
     _log_activity(actor=actor, action="set_overcommit_profile", resource_type="migration_project",
                   resource_id=project_id, details={"profile": req.overcommit_profile_name})
     return {"status": "ok"}
@@ -3708,7 +3677,6 @@ async def create_node_profile(project_id: str, req: NodeProfileRequest, user=Dep
                   req.storage_tb, req.max_cpu_util_pct, req.max_ram_util_pct, req.max_disk_util_pct,
                   req.is_default))
             profile = _serialize_row(dict(cur.fetchone()))
-        conn.commit()
     _log_activity(actor=actor, action="create_node_profile", resource_type="migration_project",
                   resource_id=project_id, details={"profile_name": req.profile_name})
     return {"status": "ok", "profile": profile}
@@ -3725,7 +3693,6 @@ async def delete_node_profile(project_id: str, profile_id: int, user=Depends(get
                         (profile_id, project_id))
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Node profile not found")
-        conn.commit()
     _log_activity(actor=actor, action="delete_node_profile", resource_type="migration_project",
                   resource_id=project_id, details={"profile_id": profile_id})
     return {"status": "ok"}
@@ -3832,7 +3799,6 @@ async def upsert_node_inventory(project_id: str, req: NodeInventoryRequest, user
             """, (project_id, req.profile_id, req.current_nodes, req.current_vcpu_used,
                   req.current_ram_gb_used, req.current_disk_tb_used, req.notes))
             inv = _serialize_row(dict(cur.fetchone()))
-        conn.commit()
     _log_activity(actor=actor, action="upsert_node_inventory", resource_type="migration_project",
                   resource_id=project_id, details={"current_nodes": req.current_nodes})
     return {"status": "ok", "inventory": inv}
@@ -4037,7 +4003,6 @@ async def update_pcd_settings(project_id: str, req: PcdSettingsRequest, user=Dep
         with conn.cursor() as cur:
             cur.execute(f"UPDATE migration_projects SET {', '.join(set_parts)} WHERE project_id = %s",
                         params + [project_id])
-        conn.commit()
     _log_activity(actor=actor, action="update_pcd_settings", resource_type="migration_project",
                   resource_id=project_id, details=list(updates.keys()))
     return {"status": "ok"}
@@ -4197,7 +4162,6 @@ async def run_pcd_gap_analysis(project_id: str, user=Depends(get_current_user)):
                   ) > 0
             """, (project_id, project_id, project_id))
 
-        conn.commit()
 
     _log_activity(actor=actor, action="pcd_gap_analysis", resource_type="migration_project",
                   resource_id=project_id,
@@ -4286,7 +4250,6 @@ async def get_pcd_gaps(
                       WHERE project_id = %s
                   ) > 0
             """, (project_id, project_id, project_id))
-            conn.commit()
 
             conditions = ["project_id = %s"]
             params: List[Any] = [project_id]
@@ -4323,7 +4286,6 @@ async def resolve_pcd_gap(project_id: str, gap_id: int, user=Depends(get_current
             """, (gap_id, project_id))
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Gap not found")
-        conn.commit()
     _log_activity(actor=actor, action="resolve_pcd_gap", resource_type="migration_project",
                   resource_id=project_id, details={"gap_id": gap_id})
     return {"status": "ok"}
@@ -4508,7 +4470,6 @@ async def update_vm_status(project_id: str, vm_id: int, req: VMStatusUpdateReque
             vm = cur.fetchone()
             if not vm:
                 raise HTTPException(status_code=404, detail="VM not found")
-            conn.commit()
 
     _log_activity(actor=actor, action="update_vm_status", resource_type="migration_vm",
                   resource_id=str(vm_id), details={"status": req.status, "note": req.status_note})
@@ -4538,7 +4499,6 @@ async def bulk_update_vm_status(project_id: str, req: VMBulkStatusRequest,
                 WHERE project_id = %s AND id = ANY(%s)
             """, (req.status, req.status_note, actor, project_id, req.vm_ids))
             updated = cur.rowcount
-            conn.commit()
 
     _log_activity(actor=actor, action="bulk_update_vm_status", resource_type="migration_vm",
                   resource_id=project_id, details={"status": req.status, "count": updated, "vm_ids": req.vm_ids})
@@ -4565,7 +4525,6 @@ async def update_vm_mode_override(project_id: str, vm_id: int, req: VMModeOverri
             vm = cur.fetchone()
             if not vm:
                 raise HTTPException(status_code=404, detail="VM not found")
-            conn.commit()
 
     _log_activity(actor=actor, action="update_vm_mode_override", resource_type="migration_vm",
                   resource_id=str(vm_id), details={"override": req.override})
@@ -4640,7 +4599,6 @@ async def add_vm_dependency(project_id: str, vm_id: int, req: VMDependencyReques
                 RETURNING *
             """, (project_id, vm_id, req.depends_on_vm_id, req.dependency_type, req.notes))
             dep = cur.fetchone()
-            conn.commit()
 
     _log_activity(actor=actor, action="add_vm_dependency", resource_type="migration_vm_dependency",
                   resource_id=str(dep["id"]), details={"vm_id": vm_id, "depends_on": req.depends_on_vm_id})
@@ -4661,7 +4619,6 @@ async def delete_vm_dependency(project_id: str, vm_id: int, dep_id: int,
             """, (dep_id, project_id, vm_id))
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Dependency not found")
-            conn.commit()
     _log_activity(actor=actor, action="delete_vm_dependency", resource_type="migration_vm_dependency",
                   resource_id=str(dep_id), details={"vm_id": vm_id})
     return {"status": "ok"}
@@ -4716,7 +4673,6 @@ async def list_network_mappings(project_id: str):
                   AND vlan_id IS NULL
                   AND source_network_name ~ '[Vv][Ll][Aa][Nn][_-]?[0-9]+'
             """, (project_id,))
-            conn.commit()
 
             # Fetch all mappings with VM count per source network (in-scope VMs only)
             cur.execute("""
@@ -4772,7 +4728,6 @@ async def create_network_mapping(project_id: str, req: NetworkMappingCreateReque
             """, (project_id, req.source_network_name, req.target_network_name,
                   req.target_network_id, req.vlan_id, req.notes))
             mapping = cur.fetchone()
-            conn.commit()
     _log_activity(actor=actor, action="create_network_mapping", resource_type="migration_network_mapping",
                   resource_id=str(mapping["id"]), details={"source": req.source_network_name})
     return {"status": "ok", "mapping": _serialize_row(dict(mapping))}
@@ -4826,7 +4781,6 @@ async def update_network_mapping(project_id: str, mapping_id: int,
             mapping = cur.fetchone()
             if not mapping:
                 raise HTTPException(status_code=404, detail="Network mapping not found")
-            conn.commit()
     _log_activity(actor=actor, action="update_network_mapping", resource_type="migration_network_mapping",
                   resource_id=str(mapping_id), details=updates)
     return {"status": "ok", "mapping": _serialize_row(dict(mapping))}
@@ -4844,7 +4798,6 @@ async def delete_network_mapping(project_id: str, mapping_id: int,
                         (mapping_id, project_id))
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Network mapping not found")
-            conn.commit()
     _log_activity(actor=actor, action="delete_network_mapping", resource_type="migration_network_mapping",
                   resource_id=str(mapping_id), details={})
     return {"status": "ok"}
@@ -4944,7 +4897,6 @@ async def refresh_flavor_staging(project_id: str, user=Depends(get_current_user)
                       AND source_shape NOT IN %s
                 """, (project_id, tuple(new_shapes)))
 
-            conn.commit()
     _log_activity(actor=actor, action="refresh_flavor_staging", resource_type="migration_flavor_staging",
                   resource_id=project_id, details={"inserted": inserted, "updated": updated})
     return {"status": "ok", "inserted": inserted, "updated": updated}
@@ -4983,7 +4935,6 @@ async def update_flavor_staging(staging_id: int, req: FlavorStagingUpdateRequest
                       AND resolved  = false
                       AND resource_name = %s
                 """, (row["project_id"], row["source_shape"]))
-            conn.commit()
     _log_activity(actor=actor, action="update_flavor_staging", resource_type="migration_flavor_staging",
                   resource_id=str(staging_id), details=updates)
     return {"status": "ok", "flavor": _serialize_row(row)}
@@ -5022,7 +4973,6 @@ async def flavor_staging_bulk_rename(project_id: str, req: FlavorBulkRenameReque
                         SET target_flavor_name = %s, confirmed = false, updated_at = now()
                         WHERE id = %s AND project_id = %s
                     """, (p["new_value"], p["id"], project_id))
-            conn.commit()
             _log_activity(actor=actor, action="flavor_staging_bulk_rename",
                           resource_type="migration_flavor_staging",
                           resource_id=project_id, details={"affected": len(preview)})
@@ -5044,7 +4994,6 @@ async def flavor_staging_confirm_all(project_id: str, user=Depends(get_current_u
                 WHERE project_id = %s AND skip IS NOT TRUE AND confirmed IS NOT TRUE
             """, (project_id,))
             affected = cur.rowcount
-        conn.commit()
     _log_activity(actor=actor, action="flavor_staging_confirm_all",
                   resource_type="migration_flavor_staging", resource_id=project_id,
                   details={"affected": affected})
@@ -5156,7 +5105,6 @@ async def flavor_staging_match_from_pcd(project_id: str, user=Depends(get_curren
                     "pcd_flavor_id": best["id"],
                     "pcd_flavor_name": best["name"],
                 })
-        conn.commit()
 
     # ── Auto-resolve flavor gaps for matched shapes ───────────────────────────
     gaps_resolved = 0
@@ -5173,7 +5121,6 @@ async def flavor_staging_match_from_pcd(project_id: str, user=Depends(get_curren
                       AND resource_name = ANY(%s)
                 """, (project_id, matched_shapes))
                 gaps_resolved = cur.rowcount
-            conn.commit()
 
     _log_activity(actor=actor, action="flavor_staging_match_from_pcd",
                   resource_type="migration_flavor_staging", resource_id=project_id,
@@ -5263,7 +5210,6 @@ async def refresh_image_requirements(project_id: str, user=Depends(get_current_u
                     inserted += 1
                 else:
                     updated += 1
-            conn.commit()
     _log_activity(actor=actor, action="refresh_image_requirements", resource_type="migration_image_requirements",
                   resource_id=project_id, details={"inserted": inserted, "updated": updated})
     return {"status": "ok", "inserted": inserted, "updated": updated}
@@ -5370,7 +5316,6 @@ async def image_requirements_match_from_pcd(project_id: str, user=Depends(get_cu
                 matched += 1
                 details.append({"os_family": row.get("os_family"), "matched": True,
                                 "glance_image_id": best["id"], "glance_image_name": best["name"]})
-        conn.commit()
 
     # ── Auto-resolve image gaps for matched families ──────────────────────────
     gaps_resolved = 0
@@ -5387,7 +5332,6 @@ async def image_requirements_match_from_pcd(project_id: str, user=Depends(get_cu
                       AND resource_name = ANY(%s)
                 """, (project_id, matched_families))
                 gaps_resolved = cur.rowcount
-            conn.commit()
 
     _log_activity(actor=actor, action="image_requirements_match_from_pcd",
                   resource_type="migration_image_requirements", resource_id=project_id,
@@ -5410,7 +5354,6 @@ async def image_requirements_confirm_all(project_id: str, user=Depends(get_curre
                 WHERE project_id = %s AND confirmed IS NOT TRUE
             """, (project_id,))
             affected = cur.rowcount
-        conn.commit()
     _log_activity(actor=actor, action="image_requirements_confirm_all",
                   resource_type="migration_image_requirements", resource_id=project_id,
                   details={"affected": affected})
@@ -5450,7 +5393,6 @@ async def update_image_requirement(req_id: int, req: ImageRequirementUpdateReque
                       AND resolved  = false
                       AND resource_name = %s
                 """, (row["project_id"], row["os_family"]))
-            conn.commit()
     _log_activity(actor=actor, action="update_image_requirement", resource_type="migration_image_requirements",
                   resource_id=str(req_id), details=updates)
     return {"status": "ok", "image_req": _serialize_row(row)}
@@ -5548,7 +5490,6 @@ async def seed_service_accounts(project_id: str, user=Depends(get_current_user))
                 """, (t["id"], project_id, username, temp_pw))
                 if cur.fetchone():
                     created += 1
-            conn.commit()
     _log_activity(actor=actor, action="seed_service_accounts", resource_type="migration_tenant_users",
                   resource_id=project_id, details={"created": created})
     return {"status": "ok", "created": created}
@@ -5581,7 +5522,6 @@ async def create_tenant_user(project_id: str, req: TenantUserCreateRequest,
             """, (req.tenant_id, project_id, req.user_type, req.username, req.email,
                   req.role, req.is_existing_user, not req.is_existing_user, req.notes))
             row = cur.fetchone()
-            conn.commit()
     _log_activity(actor=actor, action="create_tenant_user", resource_type="migration_tenant_users",
                   resource_id=str(row["id"]), details={"username": req.username, "type": req.user_type})
     return {"status": "ok", "user": _serialize_row(dict(row))}
@@ -5609,7 +5549,6 @@ async def update_tenant_user(user_id: int, req: TenantUserUpdateRequest,
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Tenant user not found")
-            conn.commit()
     _log_activity(actor=actor, action="update_tenant_user", resource_type="migration_tenant_users",
                   resource_id=str(user_id), details=updates)
     return {"status": "ok", "user": _serialize_row(dict(row))}
@@ -5630,7 +5569,6 @@ async def delete_tenant_user(user_id: int, user=Depends(get_current_user)):
                 raise HTTPException(status_code=400,
                                     detail="Service accounts cannot be deleted — regenerate password or edit username instead")
             cur.execute("DELETE FROM migration_tenant_users WHERE id = %s", (user_id,))
-            conn.commit()
     _log_activity(actor=actor, action="delete_tenant_user", resource_type="migration_tenant_users",
                   resource_id=str(user_id), details={})
     return {"status": "ok"}
@@ -5696,7 +5634,6 @@ async def create_cohort(project_id: str, req: CreateCohortRequest,
                   req.agent_slots_override, req.schedule_duration_days,
                   req.target_vms_per_day, req.notes))
             cohort = cur.fetchone()
-            conn.commit()
     _log_activity(actor=actor, action="create_cohort", resource_type="migration_cohort",
                   resource_id=str(cohort["id"]), details={"name": req.name})
     return {"status": "ok", "cohort": _serialize_row(dict(cohort))}
@@ -5725,7 +5662,6 @@ async def update_cohort(project_id: str, cohort_id: int, req: UpdateCohortReques
             cohort = cur.fetchone()
             if not cohort:
                 raise HTTPException(status_code=404, detail="Cohort not found")
-            conn.commit()
     _log_activity(actor=actor, action="update_cohort", resource_type="migration_cohort",
                   resource_id=str(cohort_id), details=updates)
     return {"status": "ok", "cohort": _serialize_row(dict(cohort))}
@@ -5745,7 +5681,6 @@ async def delete_cohort(project_id: str, cohort_id: int, user=Depends(get_curren
                         (cohort_id, project_id))
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Cohort not found")
-            conn.commit()
     _log_activity(actor=actor, action="delete_cohort", resource_type="migration_cohort",
                   resource_id=str(cohort_id), details={})
     return {"status": "ok"}
@@ -5772,7 +5707,6 @@ async def delete_all_cohorts(project_id: str, user=Depends(get_current_user)):
             # Delete all cohorts
             cur.execute("DELETE FROM migration_cohorts WHERE project_id = %s", (project_id,))
             deleted = cur.rowcount
-            conn.commit()
     _log_activity(actor=actor, action="delete_all_cohorts", resource_type="migration_cohort",
                   resource_id=project_id,
                   details={"cohorts_deleted": deleted, "tenants_unassigned": unassigned})
@@ -5808,7 +5742,6 @@ async def assign_tenants_to_cohort(project_id: str, cohort_id: int,
                 WHERE project_id = %s AND id = ANY(%s)
             """, (target_cohort_id, project_id, req.tenant_ids))
             updated = cur.rowcount
-            conn.commit()
 
     _log_activity(actor=actor, action="assign_tenants_to_cohort", resource_type="migration_cohort",
                   resource_id=str(cohort_id),
@@ -5984,7 +5917,6 @@ async def get_tenant_readiness(project_id: str, tenant_id: int):
                             checked_at = EXCLUDED.checked_at,
                             notes = EXCLUDED.notes
                 """, (tenant_id, c["check_name"], c["check_status"], c["notes"]))
-            conn.commit()
 
     passed = sum(1 for c in checks if c["check_status"] == "pass")
     overall = "pass" if passed == len(checks) else ("fail" if any(c["check_status"] == "fail" for c in checks) else "pending")
@@ -6226,7 +6158,6 @@ async def auto_assign_cohorts_endpoint(
                     """, (project_id, cname, slot))
                     new_id = cur.fetchone()["id"]
                     created_cohort_ids[slot] = new_id
-                    conn.commit()
             # Refresh existing cohorts list after creation
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
@@ -6267,7 +6198,6 @@ async def auto_assign_cohorts_endpoint(
                         UPDATE migration_tenants SET cohort_id = %s, updated_at = now()
                         WHERE id = %s AND project_id = %s
                     """, (cid, tid, project_id))
-                conn.commit()
         _log_activity(actor=actor, action="auto_assign_cohorts",
                       resource_type="migration_project", resource_id=project_id,
                       details={"strategy": req.strategy, "num_cohorts": req.num_cohorts,
@@ -6431,7 +6361,6 @@ async def create_wave(project_id: str, req: CreateWaveRequest,
                     INSERT INTO migration_wave_preflights (wave_id, check_name, check_label, severity)
                     VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
                 """, (wave["id"], cname, clabel, severity))
-        conn.commit()
     _log_activity(actor=getattr(user, "username", "?"), action="create_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_number": wave_number, "name": wave_name})
@@ -6462,7 +6391,6 @@ async def update_wave(project_id: str, wave_id: int, req: UpdateWaveRequest,
             if not row:
                 raise HTTPException(status_code=404, detail="Wave not found")
             wave = _serialize_row(dict(row))
-        conn.commit()
     return {"status": "ok", "wave": wave}
 
 
@@ -6482,7 +6410,6 @@ async def delete_wave(project_id: str, wave_id: int, user=Depends(get_current_us
                     detail=f"Cannot delete a wave in '{row['status']}' status")
             cur.execute("DELETE FROM migration_waves WHERE id=%s AND project_id=%s",
                         (wave_id, project_id))
-        conn.commit()
     _log_activity(actor=getattr(user, "username", "?"), action="delete_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id})
@@ -6524,7 +6451,6 @@ async def delete_all_waves(project_id: str, user=Depends(get_current_user)):
             # Delete all waves
             cur.execute("DELETE FROM migration_waves WHERE project_id = %s", (project_id,))
             deleted = cur.rowcount
-            conn.commit()
     _log_activity(actor=actor, action="delete_all_waves", resource_type="migration_project",
                   resource_id=project_id,
                   details={"waves_deleted": deleted, "vms_reset": vms_reset})
@@ -6572,7 +6498,6 @@ async def assign_vms_to_wave(project_id: str, wave_id: int, req: AssignVmsReques
                     UPDATE migration_vms SET migration_status='assigned'
                     WHERE id=%s AND project_id=%s AND migration_status='not_started'
                 """, (vm_id, project_id))
-        conn.commit()
     _log_activity(actor=getattr(user, "username", "?"), action="assign_vms_to_wave",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id, "vm_count": len(req.vm_ids), "replace": req.replace})
@@ -6605,7 +6530,6 @@ async def remove_vm_from_wave(project_id: str, wave_id: int, vm_id: int,
                     WHERE wv2.vm_id=%s AND wv2.project_id=%s
                   )
             """, (vm_id, project_id, vm_id, project_id))
-        conn.commit()
     return {"status": "ok"}
 
 
@@ -6648,7 +6572,6 @@ async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveReq
                 "WHERE id=%s AND project_id=%s RETURNING *",
                 (req.status, wave_id, project_id))
             wave = _serialize_row(dict(cur.fetchone()))
-        conn.commit()
     _log_activity(actor=getattr(user, "username", "?"), action="advance_wave_status",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id, "from": current_status, "to": req.status})
@@ -6841,7 +6764,6 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
                         UPDATE migration_vms SET migration_status='assigned'
                         WHERE id=%s AND project_id=%s AND migration_status='not_started'
                     """, (vm_id, project_id))
-            conn.commit()
             created_waves.append({"wave_number": wave_number, "name": wave_name,
                                    "wave_id": wave_id, "cohort_id": cohort_id_for_wave,
                                    "vm_count": len(w["vm_ids"])})
@@ -6875,7 +6797,6 @@ async def get_wave_preflights(project_id: str, wave_id: int):
                 SELECT * FROM migration_wave_preflights WHERE wave_id=%s ORDER BY id
             """, (wave_id,))
             checks = [_serialize_row(dict(r)) for r in cur.fetchall()]
-        conn.commit()
     passed = sum(1 for c in checks if c["check_status"] == "pass")
     blockers_failing = sum(1 for c in checks
                            if c["severity"] == "blocker" and c["check_status"] == "fail")
@@ -6914,7 +6835,6 @@ async def update_wave_preflight(project_id: str, wave_id: int, check_name: str,
             if not row:
                 raise HTTPException(status_code=404, detail="Preflight check not found")
             check = _serialize_row(dict(row))
-        conn.commit()
     return {"status": "ok", "check": check}
 
 
@@ -7195,7 +7115,6 @@ async def generate_prep_tasks(project_id: str, user=Depends(get_current_user)):
                         (project_id, task_order, task_type, task_name, tenant_name, detail, status)
                     VALUES (%s,%s,%s,%s,%s,%s,'pending')
                 """, row)
-            conn.commit()
 
     _log_activity(actor=actor, action="generate_prep_tasks", resource_type="migration_prep_tasks",
                   resource_id=project_id, details={"task_count": len(inserts)})
@@ -7285,7 +7204,6 @@ async def approve_prep_plan(project_id: str, body: PrepApproveRequest, user=Depe
                 SET prep_approval_status=%s, prep_approved_by=%s, prep_approved_at=now()
                 WHERE project_id=%s
             """, (body.decision, actor, project_id))
-            conn.commit()
     _log_activity(actor=actor, action=f"{body.decision}_prep_plan",
                   resource_type="migration_prep_tasks", resource_id=project_id,
                   details={"decision": body.decision, "comment": body.comment or ""})
@@ -7634,7 +7552,6 @@ async def execute_prep_task(project_id: str, task_id: int, user=Depends(get_curr
                 return {"status": "ok", "message": "already_done", "task": _serialize_row(task)}
             cur.execute("UPDATE migration_prep_tasks SET status='running', executed_by=%s, executed_at=now() WHERE id=%s",
                         (actor, task_id))
-            conn.commit()
 
         try:
             res = _execute_one_task(task, project_id, conn, actor)
@@ -7643,7 +7560,6 @@ async def execute_prep_task(project_id: str, task_id: int, user=Depends(get_curr
                                SET status='done', resource_id=%s, result=%s, error_message=NULL
                                WHERE id=%s""",
                             (res["resource_id"], json.dumps(res["result"]), task_id))
-                conn.commit()
             _log_activity(actor=actor, action="execute_prep_task", resource_type="migration_prep_tasks",
                           resource_id=str(task_id), details={"task_type": task["task_type"], "task_name": task["task_name"]})
             return {"status": "ok", "resource_id": res["resource_id"], "result": res["result"]}
@@ -7653,7 +7569,6 @@ async def execute_prep_task(project_id: str, task_id: int, user=Depends(get_curr
                 with conn.cursor() as cur:
                     cur.execute("UPDATE migration_prep_tasks SET status='failed', error_message=%s WHERE id=%s",
                                 (str(exc), task_id))
-                    conn.commit()
             except Exception:
                 pass
             raise HTTPException(status_code=500, detail=str(exc))
@@ -7685,13 +7600,11 @@ async def run_all_prep_tasks(project_id: str, user=Depends(get_current_user)):
             with conn.cursor() as cur:
                 cur.execute("UPDATE migration_prep_tasks SET status='running', executed_by=%s, executed_at=now() WHERE id=%s",
                             (actor, tid))
-                conn.commit()
             try:
                 res = _execute_one_task(task, project_id, conn, actor)
                 with conn.cursor() as cur:
                     cur.execute("UPDATE migration_prep_tasks SET status='done', resource_id=%s, result=%s, error_message=NULL WHERE id=%s",
                                 (res["resource_id"], json.dumps(res["result"]), tid))
-                    conn.commit()
                 if res.get("result", {}).get("skipped"):
                     skipped_count += 1
                 else:
@@ -7702,7 +7615,6 @@ async def run_all_prep_tasks(project_id: str, user=Depends(get_current_user)):
                     with conn.cursor() as cur:
                         cur.execute("UPDATE migration_prep_tasks SET status='failed', error_message=%s WHERE id=%s",
                                     (str(exc), tid))
-                        conn.commit()
                 except Exception:
                     pass
                 fail_count += 1
@@ -7789,7 +7701,6 @@ async def rollback_prep_task(project_id: str, task_id: int, user=Depends(get_cur
 
             with conn.cursor() as cur:
                 cur.execute("UPDATE migration_prep_tasks SET status='pending', resource_id=NULL, result='{}', error_message=NULL WHERE id=%s", (task_id,))
-                conn.commit()
         except HTTPException:
             raise
         except Exception as exc:
@@ -7809,7 +7720,6 @@ async def clear_prep_tasks(project_id: str, user=Depends(get_current_user)):
         _get_project(project_id, conn)
         with conn.cursor() as cur:
             cur.execute("DELETE FROM migration_prep_tasks WHERE project_id=%s AND status IN ('pending','failed')", (project_id,))
-            conn.commit()
     _log_activity(actor=actor, action="clear_prep_tasks", resource_type="migration_prep_tasks",
                   resource_id=project_id, details={})
     return {"status": "ok"}
@@ -8211,7 +8121,6 @@ def _get_fix_settings(project_id: str, conn) -> dict:
         f"RETURNING *",
         [project_id] + vals,
     )
-    conn.commit()
     cur.execute("SELECT * FROM migration_fix_settings WHERE project_id = %s", (project_id,))
     row = cur.fetchone()
     cols2 = [d[0] for d in cur.description]
@@ -8242,7 +8151,6 @@ async def update_fix_settings(project_id: str, request: Request,
             f"UPDATE migration_fix_settings SET {set_clause} WHERE project_id = %s",
             vals,
         )
-        conn.commit()
         cur.execute("SELECT * FROM migration_fix_settings WHERE project_id = %s", (project_id,))
         row = cur.fetchone()
         cols = [d[0] for d in cur.description]
@@ -8269,7 +8177,6 @@ async def set_vm_fix_override(project_id: str, vm_id: int, request: Request,
         )
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="VM not found")
-        conn.commit()
         return {"id": vm_id, "tech_fix_minutes_override": minutes}
 
 
@@ -8444,4 +8351,195 @@ async def get_migration_summary(project_id: str):
             "bandwidth_mbps": bw_mbps,
             "methodology":   methodology,
         }
+
+
+# =============================================================================
+# Phase 5 — vJailbreak Agent Integration (E1)
+# =============================================================================
+# Set VJAILBREAK_API_URL to the base URL of your vJailbreak REST API.
+# When not set, the endpoints return a "not_connected" status so the UI can
+# surface a helpful configuration message instead of a raw error.
+# =============================================================================
+
+_VJAILBREAK_API_URL: str = os.getenv("VJAILBREAK_API_URL", "").rstrip("/")
+
+
+@router.get(
+    "/projects/{project_id}/vjailbreak-status",
+    dependencies=[Depends(require_permission("migration", "read"))],
+)
+async def get_vjailbreak_status(project_id: str):
+    """Return vJailbreak agent connectivity status for this project.
+
+    When VJAILBREAK_API_URL is not configured, returns ``not_configured``.
+    When configured, performs a lightweight health-check against the agent.
+    """
+    if not _VJAILBREAK_API_URL:
+        return {
+            "status": "not_configured",
+            "message": (
+                "vJailbreak agent URL is not configured. "
+                "Set the VJAILBREAK_API_URL environment variable to enable execution."
+            ),
+            "agent_url": None,
+        }
+
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+    health_url = f"{_VJAILBREAK_API_URL}/api/v1/health"
+    try:
+        with _ureq.urlopen(health_url, timeout=5) as resp:
+            reachable = 200 <= resp.getcode() < 300
+    except (_uerr.URLError, OSError):
+        reachable = False
+
+    if reachable:
+        return {
+            "status": "connected",
+            "message": "vJailbreak agent is reachable.",
+            "agent_url": _VJAILBREAK_API_URL,
+        }
+    return {
+        "status": "unreachable",
+        "message": (
+            f"vJailbreak agent at {_VJAILBREAK_API_URL} did not respond. "
+            "Check that the agent is running and the URL is correct."
+        ),
+        "agent_url": _VJAILBREAK_API_URL,
+    }
+
+
+class VjailbreakExecuteRequest(BaseModel):
+    dry_run: bool = False
+    notes: Optional[str] = None
+
+
+@router.post(
+    "/projects/{project_id}/waves/{wave_id}/execute",
+    dependencies=[Depends(require_permission("migration", "execute"))],
+)
+async def execute_wave(
+    project_id: str,
+    wave_id: int,
+    body: VjailbreakExecuteRequest = VjailbreakExecuteRequest(),
+    current_user=Depends(get_current_user),
+):
+    """Trigger wave execution via the vJailbreak agent.
+
+    When ``VJAILBREAK_API_URL`` is not set, the call is rejected with a clear
+    error so the UI can prompt the operator to configure the agent URL.
+
+    When set, the request is forwarded to the vJailbreak REST API.  An
+    activity log entry is created regardless of the outcome.
+
+    Body parameters
+    ---------------
+    dry_run : bool
+        Pass through to vJailbreak — performs pre-flight checks without
+        actually starting the migration.
+    notes : str, optional
+        Optional operator note recorded in the activity log.
+    """
+    actor = current_user.get("username", "system") if current_user else "system"
+
+    # Look up the wave to include context in the log entry
+    with _get_conn() as conn:
+        _get_project(project_id, conn)   # 404 guard
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT w.id, w.wave_number, w.name, w.status,
+                   COUNT(t.id) AS tenant_count
+            FROM   migration_waves w
+            LEFT JOIN migration_cohorts c ON c.wave_id = w.id
+            LEFT JOIN migration_tenants t ON t.cohort_id = c.id
+            WHERE  w.id = %s AND w.project_id = %s
+            GROUP  BY w.id, w.wave_number, w.name, w.status
+            """,
+            (wave_id, project_id),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Wave {wave_id} not found in project {project_id}")
+
+    col_names = ["id", "wave_number", "name", "status", "tenant_count"]
+    wave = dict(zip(col_names, row))
+
+    _log_activity(
+        actor=actor,
+        action="execute_wave",
+        resource_type="migration_wave",
+        resource_id=wave_id,
+        details={
+            "project_id": project_id,
+            "wave_number": wave.get("wave_number"),
+            "wave_name": wave.get("name"),
+            "dry_run": body.dry_run,
+            "notes": body.notes,
+            "vjailbreak_configured": bool(_VJAILBREAK_API_URL),
+        },
+    )
+
+    if not _VJAILBREAK_API_URL:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "vJailbreak agent URL is not configured. "
+                "Set the VJAILBREAK_API_URL environment variable to enable wave execution."
+            ),
+        )
+
+    # Forward the execution request to the vJailbreak agent
+    import json as _json
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+
+    payload = _json.dumps(
+        {
+            "project_id": project_id,
+            "wave_id": wave_id,
+            "wave_number": wave.get("wave_number"),
+            "dry_run": body.dry_run,
+            "initiated_by": actor,
+        }
+    ).encode("utf-8")
+
+    execute_url = f"{_VJAILBREAK_API_URL}/api/v1/migrations"
+    req = _ureq.Request(
+        execute_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with _ureq.urlopen(req, timeout=30) as resp:
+            resp_body = _json.loads(resp.read().decode("utf-8"))
+        logger.info(
+            "execute_wave project=%s wave=%s dry_run=%s by=%s → vJailbreak accepted",
+            project_id, wave_id, body.dry_run, actor,
+        )
+        return {
+            "status": "accepted",
+            "wave": wave,
+            "vjailbreak_response": resp_body,
+            "dry_run": body.dry_run,
+        }
+    except _uerr.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", "replace")[:500] if exc.fp else ""
+        logger.error(
+            "execute_wave project=%s wave=%s vJailbreak HTTP %s: %s",
+            project_id, wave_id, exc.code, err_body,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"vJailbreak agent returned HTTP {exc.code}: {err_body}",
+        )
+    except (_uerr.URLError, OSError) as exc:
+        logger.error("execute_wave project=%s wave=%s vJailbreak unreachable: %s", project_id, wave_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach vJailbreak agent at {_VJAILBREAK_API_URL}: {exc}",
+        )
 

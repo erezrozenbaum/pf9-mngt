@@ -7,6 +7,8 @@ Securely collects logs from Platform9 compute hosts via SSH
 import paramiko
 import json
 import os
+import re
+import shlex
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import asyncio
@@ -172,7 +174,7 @@ class PF9LogCollector:
                         })
             
             return {
-                "host": host,
+                "host": ssh_host,
                 "log_files": log_files,
                 "count": len(log_files),
                 "timestamp": datetime.now().isoformat()
@@ -193,15 +195,19 @@ class PF9LogCollector:
             return {"error": f"Cannot connect to {ssh_host}"}
         
         try:
-            # Use sudo to search log files as they may require root access
-            command = f"sudo grep -n -C 2 '{search_term}' {log_path} | tail -{lines}"
+            # Validate search_term against a strict allowlist to prevent command injection
+            if not re.match(r'^[\w\s./:@_-]{1,200}$', search_term):
+                return {"error": "Invalid characters in search term"}
+            # Use -F (fixed strings) so search_term is never treated as a regex,
+            # and shlex.quote to safely embed it in the shell command.
+            command = f"sudo grep -F -n -C 2 {shlex.quote(search_term)} {log_path} | tail -{lines}"
             stdin, stdout, stderr = client.exec_command(command)
             
             content = stdout.read().decode('utf-8', errors='replace')
             error = stderr.read().decode('utf-8', errors='replace')
             
             return {
-                "host": host,
+                "host": ssh_host,
                 "log_type": log_type,
                 "search_term": search_term,
                 "content": content,

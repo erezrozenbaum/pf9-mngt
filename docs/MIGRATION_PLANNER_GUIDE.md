@@ -43,7 +43,7 @@ The **Migration Planner** is an integrated module within pf9-mngt that guides op
 | 4B.2 | Phase 4B Approval Workflow (2-step gate), Dry Run simulation, Audit Log | ✅ Complete |
 | 4C | vJailbreak Handoff — credential bundle + tenant handoff sheet | ✅ Complete | v1.37.0 |
 | 5.0 | Tech Fix Time — per-VM fix model, Migration Summary tab, fix override UI | ✅ Complete | v1.42.0 |
-| 5+ | vJailbreak integration & live execution | 🔲 Planned |
+| 5+ | vJailbreak agent integration — status probe + wave execution endpoint | ✅ Partial (stub) | v1.45.0 |
 | 6 | Post-migration validation | 🔲 Planned |
 
 ---
@@ -610,6 +610,36 @@ A JSON document containing everything vJailbreak needs to connect to each PCD pr
 - **Single cohort** — `GET /api/migration/projects/{id}/cohorts/{cid}/export-vjailbreak-bundle`
 
 If any tenants are missing service accounts or PCD project IDs (provisioning incomplete) the response includes a `warnings[]` array but still returns the partial bundle.
+
+### vJailbreak Agent Status & Wave Execution (v1.45.0)
+
+Once a vJailbreak agent is deployed, set `VJAILBREAK_API_URL` in the API environment and use these endpoints:
+
+**GET** `/api/migration/projects/{id}/vjailbreak-status`  
+Returns agent connectivity: `not_configured`, `connected`, or `unreachable`.
+
+```json
+{ "status": "connected", "message": "vJailbreak agent is reachable.", "agent_url": "https://vj.example.com" }
+```
+
+**POST** `/api/migration/projects/{id}/waves/{wave_id}/execute`  
+*Requires: `migration:admin`*  
+Forwards the wave to the vJailbreak REST API. Returns HTTP 503 with a clear message when the agent URL is not configured.
+
+Request body (optional):
+```json
+{ "dry_run": false, "notes": "Executing wave 1 – low-risk tenants" }
+```
+
+Response:
+```json
+{
+  "status": "accepted",
+  "wave": { "id": 1, "wave_number": 1, "name": "Wave 1", "status": "planned", "tenant_count": 3 },
+  "vjailbreak_response": { ... },
+  "dry_run": false
+}
+```
 
 ### Tenant Handoff Sheet (PDF)
 
