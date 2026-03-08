@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.5] - 2026-03-08
+
+### Fixed
+
+- **`pf9_rvtools.py` — DB connection error on host**: PostgreSQL port 5432 was not exposed from Docker to the host, causing `psycopg2.OperationalError` on every run (with noisy multi-line traceback). Exposed port `5432:5432` in `docker-compose.yml` and removed spurious `traceback.print_exc()` from the graceful-failure handler so the error message is clean if the DB is ever unreachable.
+
 ## [1.45.4] - 2026-03-09
 
 ### Fixed

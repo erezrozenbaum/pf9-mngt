@@ -590,7 +590,6 @@ def main():
         except Exception as e:
             print(f"[DB] Database connection failed: {e}")
             print("[DB] Continuing without database storage...")
-            traceback.print_exc()
             conn = None
             run_id = None
 
