@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.4] - 2026-03-09
+
+### Fixed
+
+- **VM Provisioning — auto-refresh (live progress)**: `loadBatchLogs` was calling `.json()` on the already-parsed return value of `apiFetch<T>`, causing a silent `TypeError` that was caught by the surrounding `catch {}`. Logs never updated during execution. Fixed by removing the erroneous `.json()` call (`apiFetch` already returns parsed JSON).
+- **VM Provisioning — polling killed itself on every update**: The polling `useEffect` listed `batches` in its dependency array; every time `fetchBatches()` ran and updated state, the cleanup function fired and killed the interval, which was then re-created with a stale closure over the old `batches`/`expandedIds`. Rewrote to use `batchesRef`/`expandedIdsRef` refs so the interval is created once on mount and always reads the latest state.
+- **VM Provisioning — completion emails never sent**: `execute_batch` and `re_execute_batch` hardcoded `operator_email = None`, so the perfectly-functional email logic in `_execute_batch_thread` was never triggered. Both endpoints now look up the operator's email via `ldap_auth.get_user_info(user.username)` and pass it to the background thread.
+
+### Added
+
+- **VM Provisioning History in Runbooks tab**: Added a collapsible **"☁️ VM Provisioning History"** section to the `RunbooksTab` main page, directly below "My Executions". Shows a live table of all provisioning batches (ID, name, domain/project, status badge, approval status, created-by, date) with a one-click **"▶ Open Provisioning"** button. Loads automatically on page mount and has a manual 🔄 refresh. Surfaces provisioning history without requiring navigation into the full Provisioning runbook.
+- **VM Provisioning — in-app notification bell**: `_execute_batch_thread` now calls `_fire_notification` from `provisioning_routes` on completion/failure, firing a `vm_provisioning_completed` or `vm_provisioning_failed` event to all users who have subscribed to those event types in the Notification Preferences panel. This is independent of the operator email and works for any admin who wants to monitor all provisioning activity.
+
+## [1.45.3] - 2026-03-08
+
+### Added
+
+- VM auto-provisioning runbook: per-VM **"Delete boot volume on VM deletion"** toggle (`delete_on_termination`). Each VM row now has a checkbox (default: checked / true) that controls whether the attached boot volume is automatically deleted when the VM is destroyed in Nova. Previously this was always hardcoded to `true`.
+  - `api/pf9_control.py`: `create_server_bfv()` accepts new `delete_on_termination: bool = True` parameter passed through to Cinder `block_device_mapping_v2`
+  - `api/vm_provisioning_routes.py`: `VmRowRequest` model gains `delete_on_termination: bool = True`; DB schema adds `delete_on_termination BOOLEAN NOT NULL DEFAULT TRUE`; Excel template and upload parser both support the new column; `create_server_bfv` call forwards the value
+  - `pf9-ui/src/components/VmProvisioningTab.tsx`: `VmRow` interface, `newVmRow()`, payload builder, and per-VM form all updated; checkbox renders below the Boot Volume (GB) field
+
+## [1.45.2] - 2026-03-08
+
+### Fixed
+
+- `api/main.py`: raised `project-quotas` endpoint `page_size` cap from 500 to 5000 so all quota rows can be fetched in a single pass
+- `pf9-ui/src/App.tsx`: Quotas tab now fetches all pages of `/project-quotas` (parallel requests) so all projects appear instead of only the first ~17
+
 ## [1.45.1] - 2026-03-08
 
 ### Fixed

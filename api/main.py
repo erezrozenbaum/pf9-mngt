@@ -6183,7 +6183,7 @@ def project_quotas_list(
     project_id: Optional[str] = None,
     service: Optional[str] = None,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=100, ge=1, le=500),
+    page_size: int = Query(default=100, ge=1, le=5000),
 ):
     where: List[str] = []
     params: List[Any] = []

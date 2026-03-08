@@ -83,6 +83,7 @@ interface VmRow {
   extraCloudInit: string;
   showExtra: boolean;
   osType: string;             // auto from image
+  deleteOnTermination: boolean;
   sgDropdownOpen: boolean;
 }
 
@@ -205,6 +206,7 @@ function newVmRow(): VmRow {
     extraCloudInit: "",
     showExtra: false,
     osType: "linux",
+    deleteOnTermination: true,
     sgDropdownOpen: false,
   };
 }
@@ -244,8 +246,8 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
 
   async function loadBatchLogs(batchId: number) {
     try {
-      const res = await apiFetch(`/api/vm-provisioning/batches/${batchId}/logs`);
-      const data = await res.json();
+      // apiFetch already returns parsed JSON — do NOT call .json() again
+      const data = await apiFetch<any[]>(`/api/vm-provisioning/batches/${batchId}/logs`);
       setBatchLogs((p) => ({ ...p, [batchId]: Array.isArray(data) ? data : [] }));
     } catch {
       // silently ignore
@@ -329,23 +331,27 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
   }, []);
 
 
+  // Refs so the interval callback always reads the latest values without stale closures
+  const batchesRef = useRef(batches);
+  const expandedIdsRef = useRef(expandedIds);
+  useEffect(() => { batchesRef.current = batches; }, [batches]);
+  useEffect(() => { expandedIdsRef.current = expandedIds; }, [expandedIds]);
+
   useEffect(() => {
-    const hasExecuting = batches.some((b) => b.status === "executing");
-    if (hasExecuting && !pollRef.current) {
-      pollRef.current = setInterval(() => {
-        fetchBatches();
-        // Also refresh logs for any expanded executing batch
-        batches.filter((b) => b.status === "executing" && expandedIds.has(b.id))
-               .forEach((b) => loadBatchLogs(b.id));
-      }, 6000);
-    } else if (!hasExecuting && pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    return () => {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    };
-  }, [batches, fetchBatches, expandedIds]);
+    const id = setInterval(() => {
+      const executing = batchesRef.current.filter((b) => b.status === "executing");
+      if (executing.length === 0) return;
+      // Refresh the full batch list (metadata + status)
+      fetchBatches();
+      // For any expanded executing batch, also refresh VM details + logs
+      executing
+        .filter((b) => expandedIdsRef.current.has(b.id))
+        .forEach((b) => { refreshBatch(b.id); loadBatchLogs(b.id); });
+    }, 5000);
+    return () => clearInterval(id);
+  // fetchBatches is stable (useCallback with [] deps); refreshBatch/loadBatchLogs are plain functions
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ──────────────────────────────────────────────────────────────
   // Fetch resources (step 1 → 2 transition)
@@ -495,6 +501,7 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
             os_password: row.osPassword,
             extra_cloudinit: row.extraCloudInit || null,
             os_type: row.osType,
+            delete_on_termination: row.deleteOnTermination,
           };
         }),
       };
@@ -945,6 +952,13 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
                 <input className="vmp-input" type="number" min={1} max={2048} value={row.volumeGb}
                   onChange={(e) => updateRow(idx, { volumeGb: Math.max(1, +e.target.value) })} />
               </div>
+              <div className="vmp-field" style={{ justifyContent: "flex-end" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none" }}>
+                  <input type="checkbox" checked={row.deleteOnTermination}
+                    onChange={(e) => updateRow(idx, { deleteOnTermination: e.target.checked })} />
+                  <span>Delete boot volume on VM deletion</span>
+                </label>
+              </div>
               <div className="vmp-field">
                 <label className="vmp-label">Hostname Override</label>
                 <input className="vmp-input" placeholder="auto" value={row.hostname}
@@ -1145,6 +1159,27 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
                   {isWin ? "Windows" : "Linux"}
                 </span>
               </div>
+
+              {/* Windows OOBE notice */}
+              {isWin && (
+                <div style={{
+                  display: "flex", gap: 10, alignItems: "flex-start",
+                  background: "rgba(251,191,36,.08)", border: "1px solid rgba(251,191,36,.35)",
+                  borderRadius: 6, padding: "10px 14px", marginBottom: 14,
+                  fontSize: "0.82rem", color: "#fbbf24", lineHeight: 1.55,
+                }}>
+                  <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>⚠️</span>
+                  <span>
+                    <strong>Windows OOBE notice:</strong> On first boot this VM will show the Windows
+                    setup wizard (language, region, keyboard). You can choose any password there —
+                    cloudbase-init will then run the script below and <em>replace</em> that password
+                    with the one set in <strong>OS Password</strong> and create the account
+                    <strong> {row.osUsername || "…"}</strong>. After that reboot you can log in with
+                    the credentials configured here.
+                  </span>
+                </div>
+              )}
+
               <div className="vmp-form-grid">
                 <div className="vmp-field">
                   <label className="vmp-label">OS Username <span className="req">*</span></label>
@@ -1153,7 +1188,7 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
                     onChange={(e) => updateRow(idx, { osUsername: e.target.value })} />
                 </div>
                 <div className="vmp-field">
-                  <label className="vmp-label">OS Password <span className="req">*</span></label>
+                  <label className="vmp-label">{isWin ? "OS Password (applied post-OOBE)" : "OS Password"} <span className="req">*</span></label>
                   <input className="vmp-input" type="password" placeholder="min 6 chars"
                     value={row.osPassword}
                     onChange={(e) => updateRow(idx, { osPassword: e.target.value })} />

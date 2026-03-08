@@ -1134,6 +1134,7 @@ class Pf9Client:
         project_id: Optional[str] = None,
         admin_pass: Optional[str] = None,
         image_id: Optional[str] = None,
+        delete_on_termination: bool = True,
     ) -> Dict[str, Any]:
         """Boot a VM from an existing Cinder volume.
 
@@ -1156,7 +1157,7 @@ class Pf9Client:
             "uuid": volume_id,
             "source_type": "volume",
             "destination_type": "volume",
-            "delete_on_termination": True,
+            "delete_on_termination": delete_on_termination,
         }
 
         sgs: List[Dict[str, str]] = []
