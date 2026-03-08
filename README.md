@@ -682,7 +682,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.45.4](CHANGELOG.md) — March 8, 2026
+**Current version:** [v1.45.5](CHANGELOG.md) — March 8, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
