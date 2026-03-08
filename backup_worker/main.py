@@ -183,6 +183,8 @@ def _run_backup(conn, job_id: int, backup_type: str = "manual", initiated_by: st
         )
         _update_config_last_backup(conn, "database")
         log.info("Backup job %s completed – %s bytes in %.1f s", job_id, size, duration)
+        # Validate backup integrity: gzip check + pg_dump header
+        _validate_backup(conn, job_id, filepath)
         return True
 
     except Exception as exc:
@@ -204,9 +206,75 @@ def _run_backup(conn, job_id: int, backup_type: str = "manual", initiated_by: st
         return False
 
 
+
+def _validate_backup(conn, job_id: int, filepath: str) -> None:
+    """Verify a .sql.gz backup file is intact.
+
+    Two checks:
+    1. gzip integrity (gunzip -t) — catches truncated or corrupt archives.
+    2. Header check — peek at the first 4 KiB and confirm the decompressed
+       content looks like a pg_dump SQL script.
+    """
+    log.info("Validating backup job %s: %s", job_id, filepath)
+    status = "invalid"
+    notes = ""
+    try:
+        # Step 1: gzip integrity (fast, reads entire file)
+        r = subprocess.run(
+            ["gunzip", "-t", filepath],
+            capture_output=True,
+            timeout=300,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(
+                f"gzip integrity check failed (rc={r.returncode}): "
+                f"{r.stderr.decode('utf-8', 'replace')[:200]}"
+            )
+
+        # Step 2: peek at first 4 KiB and verify pg_dump header
+        gunzip_proc = subprocess.Popen(
+            ["gunzip", "-c", filepath],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            head_bytes = gunzip_proc.stdout.read(4096)
+        finally:
+            gunzip_proc.stdout.close()
+            gunzip_proc.wait(timeout=30)
+
+        head_text = head_bytes.decode("utf-8", "replace")
+        if not (
+            head_text.startswith("--")
+            or "PostgreSQL database dump" in head_text
+            or head_text.lstrip().startswith("SET ")
+        ):
+            raise RuntimeError(
+                "Decompressed content does not look like a pg_dump output "
+                f"(first 60 chars: {head_text[:60]!r})"
+            )
+
+        status = "valid"
+        notes = f"gzip OK; header: {head_text[:80].strip()!r}"
+        log.info("Backup job %s integrity: valid", job_id)
+
+    except Exception as exc:
+        status = "invalid"
+        notes = str(exc)[:500]
+        log.error("Backup validation job %s: %s", job_id, exc)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE backup_history "
+            "SET integrity_status=%s, integrity_checked_at=%s, integrity_notes=%s "
+            "WHERE id=%s",
+            (status, datetime.datetime.utcnow(), notes, job_id),
+        )
+    conn.commit()
+
+
 def _run_restore(conn, job_id: int, source_path: str):
     """Restore a backup into the database."""
-    log.info("Starting restore job %s from %s", job_id, source_path)
 
     if not os.path.isfile(source_path):
         _update_job(conn, job_id, status="failed", error_message="Source file not found",

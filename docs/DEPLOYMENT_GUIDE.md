@@ -308,18 +308,21 @@ docker-compose logs -f
 # Check status
 docker-compose ps
 
-# Expected output:
-# NAME            STATUS           PORTS
-# pf9_db          Up (healthy)     0.0.0.0:5432->5432/tcp
-# pf9_ldap        Up (healthy)     0.0.0.0:389->389/tcp
-# pf9_api         Up (healthy)     0.0.0.0:8000->8000/tcp
-# pf9_ui          Up (healthy)     0.0.0.0:5173->5173/tcp
-# pf9_monitoring  Up (healthy)     0.0.0.0:8001->8001/tcp
-# pf9_pgadmin     Up (healthy)     0.0.0.0:8080->80/tcp
-# phpldapadmin    Up (healthy)     0.0.0.0:8081->80/tcp
-# pf9_notification_worker  Up       (background worker, no port)
-# pf9_backup_worker         Up       (background worker, no port)
-# pf9_metering_worker       Up       (background worker, no port)
+# Expected output (default profile — pgAdmin and phpLDAPadmin excluded):
+# NAME                      STATUS             PORTS
+# pf9_nginx                 Up (healthy)       0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
+# pf9_api                   Up (healthy)       0.0.0.0:8000->8000/tcp
+# pf9_ui                    Up (healthy)       0.0.0.0:5173->5173/tcp
+# pf9_monitoring            Up (healthy)       0.0.0.0:8001->8001/tcp
+# pf9_db                    Up                 5432/tcp  (internal only, not host-exposed)
+# pf9_ldap                  Up                 389/tcp   (internal only, not host-exposed)
+# pf9_redis                 Up                 6379/tcp  (internal only)
+# pf9_notification_worker   Up                 (background worker, no port)
+# pf9_backup_worker         Up                 (background worker, no port)
+# pf9_metering_worker       Up                 (background worker, no port)
+#
+# To also start dev tools (pgAdmin + phpLDAPadmin):
+#   docker compose --profile dev up -d
 ```
 
 ### Step 6: Verify Database Initialization
@@ -387,6 +390,11 @@ PF9_USER_DOMAIN=Default              # User domain in Platform9
 PF9_PROJECT_NAME=service             # Project for service account
 PF9_PROJECT_DOMAIN=Default           # Project domain
 PF9_REGION_NAME=region-one           # Region name
+
+# Optional - Platform9 API Rate Limiter
+# Prevents overwhelming the Platform9 API under heavy provisioning/migration load
+PF9_RATE_LIMIT_ENABLED=false         # Set to true to enable token-bucket rate limiting
+PF9_API_RATE_LIMIT=10                # Max requests per second (default 10)
 ```
 
 **Finding Your Platform9 URL**:
@@ -537,6 +545,35 @@ HEALTH_ALERT_THRESHOLD=50                 # Tenant health score below this trigg
 ```
 
 > **Note**: The notification worker runs as a separate container (`pf9_notification_worker`). When `SMTP_ENABLED=false`, the worker starts but does not send emails. Users can still configure preferences via the UI.
+
+#### Slack / Teams Webhook Notifications (E3)
+
+To receive notifications in Slack or Microsoft Teams, set one or both of the following variables in the `pf9_api` service environment:
+
+```bash
+# Slack Incoming Webhook URL
+# Create one at: Slack app settings → Incoming Webhooks → Add New Webhook
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
+
+# Microsoft Teams Incoming Webhook URL
+# Create one at: Teams channel → Connectors → Incoming Webhook → Configure
+TEAMS_WEBHOOK_URL=https://<tenant>.webhook.office.com/webhookb2/...
+```
+
+When set, the `POST /notifications/test-webhook` endpoint can be used to verify connectivity. These variables are never exposed via the API — only whether the channel is configured or not is visible to users (`GET /notifications/webhook-config`).
+
+#### vJailbreak Agent Integration (E1)
+
+To enable wave execution via a vJailbreak agent:
+
+```bash
+# Base URL of the vJailbreak REST API (no trailing slash)
+VJAILBREAK_API_URL=https://vjailbreak.example.com
+```
+
+When not set, `POST /api/migration/projects/{id}/waves/{wave_id}/execute` returns HTTP 503 with a human-readable configuration message. When set, the request is forwarded to `{VJAILBREAK_API_URL}/api/v1/migrations`.
+
+
 
 #### Database Backup Configuration
 

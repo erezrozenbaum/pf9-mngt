@@ -397,11 +397,11 @@ server {
    - [ ] Set `CORS_ORIGINS` environment variable
    - [ ] Test with production domain
 
-3. **Implement HTTPS**
-   - [ ] Obtain SSL/TLS certificates
-   - [ ] Configure nginx/Apache reverse proxy
-   - [ ] Redirect all HTTP traffic to HTTPS
-   - [ ] Add HSTS headers
+3. **Implement HTTPS** ✅ *(deployed in Phase C)*
+   - [x] nginx reverse proxy deployed — see `nginx/` directory
+   - [x] HTTP→HTTPS redirect on port 80
+   - [x] HSTS, X-Frame-Options, X-Content-Type-Options headers added
+   - [ ] Replace `nginx/certs/server.crt` / `server.key` with a real CA-signed certificate for production
 
 ### Priority 2: High (Recommended)
 
@@ -477,16 +477,9 @@ server {
      command: postgres -c max_connections=20
    ```
 
-9. **Container Resource Limits**
-   ```yaml
-   services:
-     pf9_api:
-       deploy:
-         resources:
-           limits:
-             memory: 512M
-             cpus: '0.5'
-   ```
+9. **Container Resource Limits** ✅ *(deployed in Phase C)*
+   All services have `deploy.resources.limits` in `docker-compose.yml`:
+   `pf9_api` (1.5 CPU / 1 GiB), `db` (1.0 CPU / 1 GiB), workers (0.5 CPU / 256 MiB), `nginx` (0.5 CPU / 128 MiB), `redis` (0.3 CPU / 192 MiB).
 
 ---
 
@@ -651,11 +644,11 @@ Masks:
 - [ ] Configure snapshot service user password (encrypted recommended)
 - [ ] Verify snapshot service user exists in Platform9 (email from `SNAPSHOT_SERVICE_USER_EMAIL`)
 - [ ] Restrict CORS to production domain only
-- [ ] Configure HTTPS with valid SSL/TLS certificates
+- [x] Configure HTTPS with valid SSL/TLS certificates *(nginx deployed; swap dev cert for CA-signed cert in prod)*
 - [ ] Implement rate limiting on API endpoints
 - [ ] Enable database SSL/TLS connections
 - [ ] Add security headers to all responses
-- [ ] Configure resource limits on containers
+- [x] Configure resource limits on containers *(deploy.resources.limits on all services)*
 - [ ] Set up centralized logging and monitoring
 - [ ] Create backup and disaster recovery procedures
 - [ ] Document incident response procedures

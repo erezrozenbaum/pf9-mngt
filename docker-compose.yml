@@ -6,16 +6,21 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
+    # C3: port 5432 NOT exposed externally — access via internal Docker network only
     volumes:
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
 
   pgadmin:
     image: dpage/pgadmin4
     container_name: pf9_pgadmin
+    profiles: ["dev"]   # C6: only starts with: docker compose --profile dev up
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@pf9-mgmt.local}
       PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:?ERROR: PGADMIN_PASSWORD must be set in .env}"
@@ -26,6 +31,11 @@ services:
     depends_on:
       - db
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
 
   pf9_api:
     build:
@@ -60,7 +70,6 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
-      JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-30}
 
       # === Logging Configuration ===
       LOG_FILE: /app/logs/pf9_api.log
@@ -120,6 +129,10 @@ services:
       COPILOT_ANTHROPIC_API_KEY: ${COPILOT_ANTHROPIC_API_KEY:-}
       COPILOT_ANTHROPIC_MODEL: ${COPILOT_ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
       COPILOT_REDACT_SENSITIVE: ${COPILOT_REDACT_SENSITIVE:-true}
+      # C9: Redis cache
+      REDIS_URL: redis://redis:6379/0
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-60}
     ports:
       - "8000:8000"
     volumes:
@@ -131,7 +144,19 @@ services:
     depends_on:
       - db
       - ldap
+      - redis
     restart: unless-stopped
+    healthcheck:   # C5
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1g
 
   pf9_ui:
     build:
@@ -144,6 +169,17 @@ services:
     depends_on:
       - pf9_api
     restart: unless-stopped
+    healthcheck:   # C5
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
 
   pf9_monitoring:
     build:
@@ -170,6 +206,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
 
   snapshot_worker:
     build:
@@ -215,6 +256,11 @@ services:
     depends_on:
       - db
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768m
 
   # LDAP Directory Service for Authentication
   ldap:
@@ -230,9 +276,7 @@ services:
       LDAP_TLS_VERIFY_CLIENT: "never"
       LDAP_ADMIN_DN: "cn=admin,${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}"
       LDAP_BASE_DN: "${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}"
-    ports:
-      - "${LDAP_PORT:-389}:389"
-      - "${LDAP_SSL_PORT:-636}:636"
+    # C4: ports 389/636 NOT exposed externally — LDAP accessible via internal Docker network only
     volumes:
       - ldap_data:/var/lib/ldap
       - ldap_config:/etc/ldap/slapd.d
@@ -242,6 +286,11 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
 
   # Email Notification Worker
   notification_worker:
@@ -273,6 +322,11 @@ services:
     depends_on:
       - db
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
 
   # Database & LDAP Backup Worker
   backup_worker:
@@ -300,11 +354,17 @@ services:
       - db
       - ldap
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
 
-  # LDAP Administration Interface (Optional - can be disabled in production)
+  # LDAP Administration Interface (dev only)
   phpldapadmin:
     image: osixia/phpldapadmin:latest
     container_name: pf9_ldap_admin
+    profiles: ["dev"]   # C6: only starts with: docker compose --profile dev up
     environment:
       PHPLDAPADMIN_LDAP_HOSTS: ldap
       PHPLDAPADMIN_HTTPS: "false"
@@ -313,6 +373,11 @@ services:
     depends_on:
       - ldap
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.3"
+          memory: 256m
 
   # Operational Metering Worker
   metering_worker:
@@ -333,6 +398,11 @@ services:
       - pf9_monitoring
       - pf9_api
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
 
   # Search Indexer Worker (Ops Assistant)
   search_worker:
@@ -349,6 +419,44 @@ services:
     depends_on:
       - db
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+  # C9: Redis — inventory/quota cache (60 s TTL by default)
+  redis:
+    image: redis:7-alpine
+    container_name: pf9_redis
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.3"
+          memory: 192m
+
+  # C2: nginx TLS termination — proxies /api + /auth to pf9_api, everything else to pf9_ui
+  # Generate self-signed dev certs first:  .\nginx\generate_certs.ps1
+  nginx:
+    build:
+      context: ./nginx
+    container_name: pf9_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - pf9_api
+      - pf9_ui
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
 
 volumes:
   pgdata:

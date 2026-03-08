@@ -717,6 +717,22 @@ if ($ForceRebuild) {
 }
 
 Write-Info "Starting all services..."
+
+# Generate self-signed TLS certs for nginx if they don't exist yet
+if (-not (Test-Path ".\nginx\certs\server.crt") -or -not (Test-Path ".\nginx\certs\server.key")) {
+    Write-Info "Generating self-signed TLS certificates for nginx..."
+    try {
+        & ".\nginx\generate_certs.ps1"
+        Write-Success "TLS certificates generated in nginx/certs/"
+    } catch {
+        Write-Warning "Could not generate TLS certs: $_"
+        Write-Info "Run manually: .\nginx\generate_certs.ps1"
+        Write-Info "Or place custom server.crt and server.key in nginx/certs/"
+    }
+} else {
+    Write-Info "TLS certificates already present in nginx/certs/"
+}
+
 Invoke-Compose @("up", "-d", "--build")
 Write-Success "All services started"
 
@@ -870,11 +886,13 @@ if (-not $SkipHealthCheck) {
     Write-Section "Step 10: Running Health Checks"
     
     $checks = @(
+        @{Name="nginx HTTPS"; Url="https://localhost/health"; Critical=$true; SkipCertCheck=$true},
         @{Name="API"; Url="http://localhost:8000/health"; Critical=$true},
         @{Name="API Docs"; Url="http://localhost:8000/docs"; Critical=$false},
         @{Name="Monitoring"; Url="http://localhost:8001/health"; Critical=$true},
         @{Name="UI"; Url="http://localhost:5173"; Critical=$true},
-        @{Name="pgAdmin"; Url="http://localhost:8080"; Critical=$false},
+        @{Name="Redis"; Url=$null; Container="pf9_redis"; Critical=$false},
+        @{Name="pgAdmin (dev profile)"; Url=$null; Container="pf9_pgadmin"; Critical=$false},
         @{Name="Notification Worker"; Url=$null; Container="pf9_notification_worker"; Critical=$false},
         @{Name="Backup Worker"; Url=$null; Container="pf9_backup_worker"; Critical=$false},
         @{Name="Metering Worker"; Url=$null; Container="pf9_metering_worker"; Critical=$false}
@@ -906,6 +924,20 @@ if (-not $SkipHealthCheck) {
 
         if (Test-Http $check.Url) {
             Write-Success "$($check.Name) is responding"
+        } elseif ($check.SkipCertCheck) {
+            # Try again ignoring TLS certificate (self-signed dev cert)
+            try {
+                Invoke-WebRequest -Uri $check.Url -SkipCertificateCheck -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop | Out-Null
+                Write-Success "$($check.Name) is responding (self-signed cert)"
+            } catch {
+                if ($check.Critical) {
+                    Write-Error "$($check.Name) is not responding (critical)"
+                    $criticalFailed = $true
+                } else {
+                    Write-Warning "$($check.Name) is not responding (non-critical)"
+                }
+                $allOk = $false
+            }
         } else {
             if ($check.Critical) {
                 Write-Error "$($check.Name) is not responding (critical)"
@@ -937,11 +969,12 @@ Write-Section "Deployment Complete!"
 
 Write-Host ""
 Write-Host "Access Points:" -ForegroundColor Cyan
-Write-Host "  UI:            http://localhost:5173" -ForegroundColor White
-Write-Host "  API:           http://localhost:8000" -ForegroundColor White
-Write-Host "  API Docs:      http://localhost:8000/docs" -ForegroundColor White
-Write-Host "  Monitoring:    http://localhost:8001" -ForegroundColor White
-Write-Host "  pgAdmin:       http://localhost:8080" -ForegroundColor White
+Write-Host "  HTTPS (nginx):  https://localhost" -ForegroundColor Green
+Write-Host "  UI (direct):    http://localhost:5173" -ForegroundColor White
+Write-Host "  API (direct):   http://localhost:8000" -ForegroundColor White
+Write-Host "  API Docs:       http://localhost:8000/docs" -ForegroundColor White
+Write-Host "  Monitoring:     http://localhost:8001" -ForegroundColor White
+Write-Host "  pgAdmin:        http://localhost:8080  (dev profile only)" -ForegroundColor Gray
 Write-Host ""
 
 Write-Host "Next Steps:" -ForegroundColor Cyan

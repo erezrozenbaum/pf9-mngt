@@ -5,14 +5,10 @@ Provides CRUD for notification preferences, notification history,
 test email sending, and SMTP configuration status.
 """
 
-import os
 import json
 import smtplib
-import ssl
 import hashlib
 import logging
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -23,22 +19,18 @@ from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, get_current_user
 from db_pool import get_connection
+from smtp_helper import (
+    SMTP_ENABLED, SMTP_HOST, SMTP_PORT,
+    send_email as smtp_send_email,
+)
+from webhook_helper import (
+    SLACK_ENABLED, TEAMS_ENABLED,
+    send_slack, send_teams, post_event as webhook_post_event,
+)
 
 logger = logging.getLogger("pf9_notifications_api")
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
-
-# ---------------------------------------------------------------------------
-# SMTP config (same env vars as the notification worker)
-# ---------------------------------------------------------------------------
-SMTP_ENABLED = os.getenv("SMTP_ENABLED", "false").lower() in ("true", "1", "yes")
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
-SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM_ADDRESS = os.getenv("SMTP_FROM_ADDRESS", "pf9-mgmt@example.com")
-SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Platform9 Management")
 
 VALID_EVENT_TYPES = [
     "drift_critical", "drift_warning", "drift_info",
@@ -68,18 +60,6 @@ VALID_EVENT_TYPES = [
 
 VALID_SEVERITIES = ["info", "warning", "critical"]
 VALID_DELIVERY_MODES = ["immediate", "digest"]
-
-
-# DEPRECATED: use db_pool.get_connection() instead
-def get_db_connection():
-    """Deprecated — kept only for backward compatibility. Use get_connection() from db_pool."""
-    return psycopg2.connect(
-        host=os.getenv("PF9_DB_HOST", "db"),
-        port=int(os.getenv("PF9_DB_PORT", "5432")),
-        dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
-        user=os.getenv("PF9_DB_USER", "pf9"),
-        password=os.getenv("PF9_DB_PASSWORD", ""),
-    )
 
 
 def ensure_tables():
@@ -354,13 +334,7 @@ async def send_test_email(body: TestEmailRequest, current_user=Depends(get_curre
     if not SMTP_ENABLED:
         raise HTTPException(status_code=400, detail="SMTP is not enabled. Set SMTP_ENABLED=true in environment.")
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_ADDRESS}>"
-        msg["To"] = body.to_email
-        msg["Subject"] = "PF9 Management — Test Notification"
-
-        html = """
+    html = """
         <html><body style="font-family: sans-serif; padding: 20px;">
         <h2 style="color: #1a73e8;">✅ Test Email Successful</h2>
         <p>This confirms that email notifications are working correctly for
@@ -369,24 +343,13 @@ async def send_test_email(body: TestEmailRequest, current_user=Depends(get_curre
         </body></html>
         """.format(time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
 
-        msg.attach(MIMEText(html, "html"))
-
-        if SMTP_USE_TLS:
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-                server.ehlo()
-                server.starttls(context=ctx)
-                server.ehlo()
-                if SMTP_USERNAME:
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.sendmail(SMTP_FROM_ADDRESS, [body.to_email], msg.as_string())
-        else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-                server.ehlo()
-                if SMTP_USERNAME:
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.sendmail(SMTP_FROM_ADDRESS, [body.to_email], msg.as_string())
-
+    try:
+        smtp_send_email(
+            body.to_email,
+            "PF9 Management — Test Notification",
+            html,
+            raise_on_error=True,
+        )
         return {"status": "ok", "message": f"Test email sent to {body.to_email}"}
 
     except smtplib.SMTPAuthenticationError:
@@ -395,3 +358,60 @@ async def send_test_email(body: TestEmailRequest, current_user=Depends(get_curre
         raise HTTPException(status_code=400, detail=f"Could not connect to SMTP server {SMTP_HOST}:{SMTP_PORT}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send test email: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Webhook (Slack / Teams) config and test
+# ---------------------------------------------------------------------------
+
+class TestWebhookRequest(BaseModel):
+    channel: str = "all"  # "slack" | "teams" | "all"
+
+
+@router.get(
+    "/webhook-config",
+    dependencies=[Depends(require_permission("notifications", "read"))],
+)
+async def get_webhook_config():
+    """Return which webhook channels are configured (no secrets exposed)."""
+    return {
+        "slack_enabled": SLACK_ENABLED,
+        "teams_enabled": TEAMS_ENABLED,
+        "any_enabled": SLACK_ENABLED or TEAMS_ENABLED,
+    }
+
+
+@router.post(
+    "/test-webhook",
+    dependencies=[Depends(require_permission("notifications", "write"))],
+)
+async def send_test_webhook(body: TestWebhookRequest):
+    """Send a test message to Slack and/or Teams to verify webhook configuration."""
+    channel = body.channel.lower()
+    if channel not in ("slack", "teams", "all"):
+        raise HTTPException(status_code=400, detail="channel must be 'slack', 'teams', or 'all'")
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    subject = "PF9 Management — Test Webhook Notification"
+    body_text = (
+        f"This confirms that webhook notifications are working correctly "
+        f"for the Platform9 Management System.\nSent at: {now_str}"
+    )
+
+    results: dict = {}
+
+    if channel in ("slack", "all"):
+        if not SLACK_ENABLED:
+            results["slack"] = {"status": "skipped", "reason": "SLACK_WEBHOOK_URL not configured"}
+        else:
+            ok = send_slack(subject, body_text, event_type="test")
+            results["slack"] = {"status": "ok" if ok else "error"}
+
+    if channel in ("teams", "all"):
+        if not TEAMS_ENABLED:
+            results["teams"] = {"status": "skipped", "reason": "TEAMS_WEBHOOK_URL not configured"}
+        else:
+            ok = send_teams(subject, body_text, event_type="test")
+            results["teams"] = {"status": "ok" if ok else "error"}
+
+    return {"results": results}

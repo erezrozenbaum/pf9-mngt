@@ -152,7 +152,6 @@ async def update_backup_config(
                 vals,
             )
             row = cur.fetchone()
-        conn.commit()
 
     if not row:
         raise HTTPException(status_code=404, detail="Backup config not initialised")
@@ -194,7 +193,6 @@ async def trigger_manual_backup(
                 (target, current_user.username),
             )
             row = cur.fetchone()
-        conn.commit()
 
     logger.info("Manual %s backup queued by %s – job %s", target, current_user.username, row["id"])
     return _row_to_dict(row)
@@ -331,7 +329,6 @@ async def trigger_restore(
                 (restore_target, source.get("file_name"), source_path, current_user.username),
             )
             row = cur.fetchone()
-        conn.commit()
 
     logger.info(
         "Restore queued by %s from backup %s – job %s",
@@ -367,7 +364,6 @@ async def delete_backup(
                     logger.warning("Could not delete file %s: %s", fpath, exc)
 
             cur.execute("DELETE FROM backup_history WHERE id = %s", (backup_id,))
-        conn.commit()
 
     logger.info("Backup %s deleted by %s", backup_id, current_user.username)
     return {"detail": "Backup deleted", "id": backup_id}

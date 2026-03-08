@@ -17,7 +17,7 @@ class PerformanceMetrics:
     def __init__(self, max_history: int = 1000):
         self._lock = threading.Lock()
         self.request_count = defaultdict(int)
-        self.request_duration = defaultdict(list)
+        self.request_duration = defaultdict(lambda: deque(maxlen=100))
         self.status_codes = defaultdict(int)
         self.recent_requests = deque(maxlen=max_history)
         self.slow_requests = deque(maxlen=100)  # Track slowest requests
@@ -43,8 +43,6 @@ class PerformanceMetrics:
             self.status_codes[status_code] += 1
             
             # Track duration
-            if endpoint not in self.request_duration:
-                self.request_duration[endpoint] = deque(maxlen=100)
             self.request_duration[endpoint].append(duration)
             
             # Record in recent requests

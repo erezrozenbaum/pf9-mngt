@@ -48,7 +48,6 @@ def _ensure_tables():
                     if os.path.exists(migration):
                         with open(migration) as f:
                             cur.execute(f.read())
-                        conn.commit()
                         logger.info("Runbook tables created via auto-migration")
     except Exception as e:
         logger.warning(f"Could not ensure runbook tables on startup: {e}")

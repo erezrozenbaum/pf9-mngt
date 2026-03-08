@@ -202,7 +202,6 @@ async def trigger_reindex(
                 SET last_indexed_at = '1970-01-01T00:00:00Z',
                     docs_count = 0
             """)
-        conn.commit()
 
     return {"status": "ok", "message": "All watermarks reset — full re-index will run on next cycle"}
 

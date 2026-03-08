@@ -1,9 +1,13 @@
 import os
 import json
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
+
+from cache import cached
 
 
 class Pf9Client:
@@ -27,6 +31,14 @@ class Pf9Client:
         self.keystone_endpoint: Optional[str] = None
         self.glance_endpoint: Optional[str] = None
 
+        # Token-bucket rate limiter (gated by PF9_RATE_LIMIT_ENABLED)
+        self._rl_enabled = os.getenv("PF9_RATE_LIMIT_ENABLED", "false").lower() in ("1", "true", "yes")
+        _rate = float(os.getenv("PF9_API_RATE_LIMIT", "10"))  # requests per second
+        self._rl_rate = max(0.1, _rate)
+        self._rl_tokens: float = self._rl_rate
+        self._rl_last: float = time.monotonic()
+        self._rl_lock = threading.Lock()
+
     # ---------------------------
     # Keystone auth + catalog
     # ---------------------------
@@ -35,6 +47,28 @@ class Pf9Client:
         if self.token is None or self._token_expires_at is None:
             return False
         return self._token_expires_at > datetime.now(timezone.utc) + timedelta(minutes=5)
+
+    def _throttle(self) -> None:
+        """Token-bucket rate limiter. Blocks until a token is available.
+
+        Enabled only when PF9_RATE_LIMIT_ENABLED=true/1/yes.
+        Rate configured via PF9_API_RATE_LIMIT (requests/second, default 10).
+        """
+        if not self._rl_enabled:
+            return
+        with self._rl_lock:
+            now = time.monotonic()
+            elapsed = now - self._rl_last
+            self._rl_last = now
+            # Refill tokens (capped at burst == rate)
+            self._rl_tokens = min(self._rl_rate, self._rl_tokens + elapsed * self._rl_rate)
+            if self._rl_tokens >= 1.0:
+                self._rl_tokens -= 1.0
+                return
+            # Need to wait for the next token
+            wait = (1.0 - self._rl_tokens) / self._rl_rate
+            self._rl_tokens = 0.0
+        time.sleep(wait)
 
     def invalidate(self) -> None:
         """Force re-authentication on the next API call."""
@@ -118,6 +152,7 @@ class Pf9Client:
         raise RuntimeError(f"No public endpoint for {service_type}")
 
     def _headers(self) -> Dict[str, str]:
+        self._throttle()
         if self.token is None:
             self.authenticate()
         return {
@@ -129,6 +164,7 @@ class Pf9Client:
     # Flavors (Nova)
     # ---------------------------
 
+    @cached(ttl=60, key_prefix="pf9:servers")
     def list_servers(self, project_id: Optional[str] = None, all_tenants: bool = True) -> List[Dict[str, Any]]:
         """List Nova servers. If all_tenants=True, lists across all projects (admin only)."""
         self.authenticate()
@@ -152,6 +188,7 @@ class Pf9Client:
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
+    @cached(ttl=300, key_prefix="pf9:flavors")
     def list_flavors(self) -> List[Dict[str, Any]]:
         """List all Nova flavors with details (public + private, admin scope)."""
         self.authenticate()
@@ -449,6 +486,7 @@ class Pf9Client:
         r.raise_for_status()
         return r.json().get("domain", {})
 
+    @cached(ttl=120, key_prefix="pf9:domains")
     def list_domains(self) -> List[Dict[str, Any]]:
         self.authenticate()
         url = f"{self.keystone_endpoint}/domains"
@@ -491,6 +529,7 @@ class Pf9Client:
         r.raise_for_status()
         return r.json().get("project", {})
 
+    @cached(ttl=60, key_prefix="pf9:projects")
     def list_projects(self, domain_id: Optional[str] = None) -> List[Dict[str, Any]]:
         self.authenticate()
         url = f"{self.keystone_endpoint}/projects"
@@ -640,6 +679,7 @@ class Pf9Client:
     # ---------------------------
     # Cinder – Volumes
     # ---------------------------
+    @cached(ttl=60, key_prefix="pf9:volumes")
     def list_volumes(self, project_id: Optional[str] = None, all_tenants: bool = True) -> List[Dict[str, Any]]:
         """List Cinder volumes."""
         self.authenticate()
@@ -691,6 +731,7 @@ class Pf9Client:
     # ---------------------------
     # Nova – Quotas
     # ---------------------------
+    @cached(ttl=60, key_prefix="pf9:compute_quotas")
     def get_compute_quotas(self, project_id: str) -> Dict[str, Any]:
         self.authenticate()
         assert self.nova_endpoint
@@ -719,6 +760,7 @@ class Pf9Client:
     # ---------------------------
     # Neutron – Quotas
     # ---------------------------
+    @cached(ttl=60, key_prefix="pf9:network_quotas")
     def get_network_quotas(self, project_id: str) -> Dict[str, Any]:
         self.authenticate()
         assert self.neutron_endpoint

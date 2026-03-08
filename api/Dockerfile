@@ -19,6 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY api/ ./
 COPY p9_common.py ./
 
-# Run FastAPI via gunicorn with 2 uvicorn workers for concurrency
-CMD ["gunicorn", "main:app", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "300", "--graceful-timeout", "60"]
+# C7: 4 workers; max-requests restarts workers after 1000 requests to prevent memory leaks
+CMD ["gunicorn", "main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "300", "--graceful-timeout", "60", "--max-requests", "1000", "--max-requests-jitter", "100"]
 

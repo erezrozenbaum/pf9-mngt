@@ -1901,6 +1901,46 @@ Response:
 }
 ```
 
+### Get Webhook Configuration
+**GET** `/notifications/webhook-config`  
+*Requires: `notifications:read`*
+
+Returns which outbound webhook channels are configured. No secrets are exposed.
+
+Response:
+```json
+{
+  "slack_enabled": true,
+  "teams_enabled": false,
+  "any_enabled": true
+}
+```
+
+### Send Test Webhook
+**POST** `/notifications/test-webhook`  
+*Requires: `notifications:write`*
+
+Sends a test message to Slack, Teams, or both to verify webhook connectivity.
+
+Request:
+```json
+{
+  "channel": "all"
+}
+```
+
+`channel` — `"slack"` | `"teams"` | `"all"` (default `"all"`)
+
+Response:
+```json
+{
+  "results": {
+    "slack": { "status": "ok" },
+    "teams": { "status": "skipped", "reason": "TEAMS_WEBHOOK_URL not configured" }
+  }
+}
+```
+
 ### Get Admin Notification Statistics
 **GET** `/notifications/admin/stats`  
 *Requires: `notifications:admin`*

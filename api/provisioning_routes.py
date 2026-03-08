@@ -23,8 +23,6 @@ import json
 import secrets
 import string
 import logging
-import smtplib
-import ssl
 import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -33,27 +31,14 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, validator, root_validator
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 from pf9_control import get_client
 from auth import require_permission, get_current_user
+from smtp_helper import send_email as smtp_send_email, SMTP_ENABLED
 
 logger = logging.getLogger("pf9_provisioning")
 
 router = APIRouter(prefix="/api/provisioning", tags=["provisioning"])
-
-# ---------------------------------------------------------------------------
-# SMTP config (reuse from env — same as notification_worker)
-# ---------------------------------------------------------------------------
-SMTP_ENABLED = os.getenv("SMTP_ENABLED", "false").lower() in ("true", "1", "yes")
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
-SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM_ADDRESS = os.getenv("SMTP_FROM_ADDRESS", "pf9-mgmt@example.com")
-SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "Platform9 Management")
 
 PF9_LOGIN_URL = os.getenv("PF9_LOGIN_URL", os.getenv("PF9_AUTH_URL", "").replace("/keystone/v3", ""))
 
@@ -83,7 +68,6 @@ def _ensure_tables():
                 if os.path.exists(migration):
                     with open(migration) as f:
                         cur.execute(f.read())
-                    conn.commit()
                     logger.info("Provisioning tables created")
             # Ensure multi-network columns exist (idempotent via migrate_provisioning_networks.sql)
             cur.execute("""
@@ -100,7 +84,6 @@ def _ensure_tables():
                 if os.path.exists(net_migration):
                     with open(net_migration) as f:
                         cur.execute(f.read())
-                    conn.commit()
                     logger.info("Multi-network columns added to provisioning_jobs")
 
 
@@ -122,7 +105,6 @@ def _ensure_activity_log_table():
                 if os.path.exists(migration):
                     with open(migration) as f:
                         cur.execute(f.read())
-                    conn.commit()
                     logger.info("Activity log table created")
 
 
@@ -501,7 +483,6 @@ def _log_step(conn, job_id: str, step_number: int, step_name: str,
             RETURNING id
         """, (job_id, step_number, step_name, description, status,
               resource_id, Json(detail or {}), error, status, status))
-        conn.commit()
 
 
 def _update_step(conn, job_id: str, step_number: int,
@@ -530,7 +511,6 @@ def _update_step(conn, job_id: str, step_number: int,
             f"WHERE job_id = %s AND step_number = %s",
             vals,
         )
-        conn.commit()
 
 
 # PF9 role mapping — maps our provisioning labels to actual Keystone role names.
@@ -589,7 +569,6 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                 "UPDATE provisioning_jobs SET status='running', started_at=now() WHERE job_id=%s",
                 (job_id,)
             )
-            conn.commit()
 
         # ── Step 1: Create Domain (or use existing) ──────────
         if req.existing_domain_id:
@@ -947,7 +926,6 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                   results.get("security_group_id"),
                   Json(_created_nets),
                   job_id))
-            conn.commit()
 
         return results
 
@@ -959,7 +937,6 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                 "error_message=%s WHERE job_id=%s",
                 (str(e), job_id),
             )
-            conn.commit()
         raise
 
 
@@ -1053,36 +1030,7 @@ def _render_welcome_email(username: str, password: str, login_url: str,
 
 def _send_email(to_address: str, subject: str, html_body: str) -> bool:
     """Send email via SMTP."""
-    if not SMTP_ENABLED:
-        logger.info(f"SMTP disabled — would send to {to_address}: {subject}")
-        return True
-
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_ADDRESS}>"
-        msg["To"] = to_address
-        msg["Subject"] = subject
-        msg.attach(MIMEText(html_body, "html"))
-
-        if SMTP_USE_TLS:
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-                server.ehlo()
-                server.starttls(context=ctx)
-                server.ehlo()
-                if SMTP_USERNAME:
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.sendmail(SMTP_FROM_ADDRESS, [to_address], msg.as_string())
-        else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-                server.ehlo()
-                if SMTP_USERNAME:
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.sendmail(SMTP_FROM_ADDRESS, [to_address], msg.as_string())
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send email: {e}")
-        return False
+    return smtp_send_email(to_address, subject, html_body)
 
 
 # ---------------------------------------------------------------------------
@@ -1129,7 +1077,6 @@ async def provision_customer(
                 user.get("username", "system") if isinstance(user, dict) else "system",
             ))
             job = cur.fetchone()
-            conn.commit()
 
         job_id = job["job_id"]
 

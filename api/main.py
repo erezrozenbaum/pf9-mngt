@@ -10,7 +10,7 @@ from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta, timezone
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from fastapi import FastAPI, Query, HTTPException, status, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -338,8 +338,14 @@ async def add_cache_control_headers(request: Request, call_next):
         response.headers["Expires"] = "0"
     return response
 
-# Security middleware (TrustedHost)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "*"])
+# Security middleware (TrustedHost) — derive trusted hosts from ALLOWED_ORIGINS; never wildcard
+_trusted_hosts: set = set()
+for _origin in ALLOWED_ORIGINS:
+    try:
+        _trusted_hosts.add(_origin.split("://", 1)[1].rstrip("/").split(":")[0])
+    except IndexError:
+        pass
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=sorted(_trusted_hosts) or ["localhost"])
 
 # CORS middleware (added LAST so it executes FIRST in the chain)
 app.add_middleware(
@@ -347,8 +353,8 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+    expose_headers=["Content-Type", "X-Request-ID"],
 )
 
 # RBAC middleware (enforces read/write permissions by resource)
@@ -465,10 +471,12 @@ async def rbac_middleware(request: Request, call_next):
             status_code=403,
             content={"detail": f"Insufficient permissions for {resource}:{permission}"}
         )
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        origin = request.headers.get("origin", "")
+        if origin in ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
 
     return await call_next(request)
@@ -573,7 +581,6 @@ async def login(request: Request, login_data: LoginRequest):
                 "token_type": "bearer",
                 "expires_in": 300,
                 "expires_at": (datetime.utcnow() + mfa_expires).isoformat() + "Z",
-                "refresh_token": None,
                 "mfa_required": True,
                 "user": {
                     "username": login_data.username,
@@ -582,8 +589,12 @@ async def login(request: Request, login_data: LoginRequest):
                 },
             }
     except Exception as exc:
-        # If MFA check fails, log but proceed without MFA
-        logger.warning("MFA check error for %s: %s", login_data.username, exc)
+        # MFA check failed — fail closed to prevent MFA bypass
+        logger.error("MFA check error for %s: %s", login_data.username, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="MFA service temporarily unavailable, please try again",
+        )
     # ── End MFA check ─────────────────────────────────────────────
     
     # Create JWT token
@@ -607,7 +618,6 @@ async def login(request: Request, login_data: LoginRequest):
         "token_type": "bearer",
         "expires_in": JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "expires_at": expires_at.isoformat() + "Z",  # ISO format for UI
-        "refresh_token": None,  # For future implementation
         "user": {
             "username": login_data.username,
             "role": role,
@@ -1047,7 +1057,6 @@ async def reset_user_password(
                     (current_user.username, "password_reset", "user", username,
                      f"Password reset by {current_user.username}"),
                 )
-            conn.commit()
     except Exception:
         pass
 
@@ -1292,37 +1301,6 @@ def get_system_logs(
             extra={"context": {"error": str(e)}}
         )
         raise HTTPException(status_code=500, detail="Failed to read system logs")
-
-
-@app.get("/simple-test")
-@limiter.limit("30/minute")
-def simple_test(request: Request):
-    """Simple test endpoint"""
-    return {"message": "working", "timestamp": datetime.utcnow().isoformat()}
-
-
-# Removed simple test endpoint - using full endpoint below
-
-@app.get("/test-users-db")
-@limiter.limit("30/minute")
-def test_users_db(request: Request):
-    """Test users database connectivity"""
-    try:
-        with get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT COUNT(*) as count FROM users")
-                count = cur.fetchone()['count']
-                
-                cur.execute("SELECT name, email, domain_id FROM users LIMIT 3")
-                sample = [dict(row) for row in cur.fetchall()]
-                
-            return {
-                "status": "success",
-                "total_users": count,
-                "sample_users": sample
-            }
-    except Exception as e:
-        return {"status": "error", "message": str(e), "type": type(e).__name__}
 
 
 @app.get("/volumes-with-metadata") 
@@ -2640,14 +2618,201 @@ async def refresh_inventory(
             except Exception as e:
                 summary["hypervisors"] = {"error": str(e)}
 
-        conn.commit()
+        # --- Inventory snapshot (E6) ---
+        try:
+            with get_connection() as snap_conn:
+                with snap_conn.cursor(cursor_factory=RealDictCursor) as sc:
+                    sc.execute(
+                        "SELECT id, name, status, project_id, flavor_id, hypervisor_hostname "
+                        "FROM servers"
+                    )
+                    snap_servers = [dict(r) for r in sc.fetchall()]
+                    sc.execute("SELECT id, name, domain_id FROM projects")
+                    snap_projects = [dict(r) for r in sc.fetchall()]
+                    sc.execute("SELECT id, name, status, size_gb, project_id FROM volumes")
+                    snap_volumes = [dict(r) for r in sc.fetchall()]
+                    sc.execute("SELECT COUNT(*) AS cnt FROM networks")
+                    net_cnt = sc.fetchone()["cnt"]
+
+                    snapshot_data = {
+                        "servers": snap_servers,
+                        "projects": snap_projects,
+                        "volumes": snap_volumes,
+                        "counts": {
+                            "servers": len(snap_servers),
+                            "projects": len(snap_projects),
+                            "volumes": len(snap_volumes),
+                            "networks": net_cnt,
+                        },
+                    }
+                    sc.execute(
+                        "INSERT INTO inventory_snapshots (collected_at, snapshot) VALUES (NOW(), %s)",
+                        (Json(snapshot_data),),
+                    )
+                    # Prune snapshots older than 90 days
+                    sc.execute(
+                        "DELETE FROM inventory_snapshots WHERE collected_at < NOW() - INTERVAL '90 days'"
+                    )
+            summary["inventory_snapshot"] = {"servers": len(snap_servers), "projects": len(snap_projects)}
+        except Exception as e:
+            summary["inventory_snapshot"] = {"error": str(e)}
 
     return {"detail": "Inventory refresh complete", "summary": summary}
 
 
 # ---------------------------------------------------------------------------
-#  Flavors (read-only for UI, create/delete via /admin)
+#  Inventory snapshots — list & diff  (E6)
 # ---------------------------------------------------------------------------
+
+@app.get("/api/inventory/snapshots")
+async def list_inventory_snapshots(
+    limit: int = Query(default=50, ge=1, le=500),
+    current_user: User = Depends(require_authentication),
+):
+    """Return recent inventory snapshot timestamps (newest first)."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """SELECT id, collected_at,
+                          (snapshot->'counts')::jsonb AS counts
+                   FROM inventory_snapshots
+                   ORDER BY collected_at DESC
+                   LIMIT %s""",
+                (limit,),
+            )
+            rows = [
+                {
+                    "id": r["id"],
+                    "collected_at": r["collected_at"].isoformat(),
+                    "counts": r["counts"],
+                }
+                for r in cur.fetchall()
+            ]
+    return {"snapshots": rows, "total": len(rows)}
+
+
+@app.get("/api/inventory/diff")
+async def inventory_diff(
+    from_ts: str = Query(..., description="ISO-8601 timestamp for the start of the window"),
+    to_ts: str = Query(..., description="ISO-8601 timestamp for the end of the window"),
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Compare two inventory snapshots.
+
+    Returns the nearest snapshot at-or-before *from_ts* and the nearest
+    snapshot at-or-before *to_ts*, then diffs servers, projects, and volumes.
+    """
+    try:
+        from datetime import datetime as _dt
+        from_dt = _dt.fromisoformat(from_ts.replace("Z", "+00:00"))
+        to_dt = _dt.fromisoformat(to_ts.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid timestamp: {exc}")
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, collected_at, snapshot FROM inventory_snapshots "
+                "WHERE collected_at <= %s ORDER BY collected_at DESC LIMIT 1",
+                (from_dt,),
+            )
+            snap_from = cur.fetchone()
+            cur.execute(
+                "SELECT id, collected_at, snapshot FROM inventory_snapshots "
+                "WHERE collected_at <= %s ORDER BY collected_at DESC LIMIT 1",
+                (to_dt,),
+            )
+            snap_to = cur.fetchone()
+
+    if not snap_from:
+        raise HTTPException(status_code=404, detail="No inventory snapshot found at or before from_ts")
+    if not snap_to:
+        raise HTTPException(status_code=404, detail="No inventory snapshot found at or before to_ts")
+
+    fd = snap_from["snapshot"]
+    td = snap_to["snapshot"]
+
+    # --- servers ---
+    from_srv = {s["id"]: s for s in fd.get("servers", [])}
+    to_srv = {s["id"]: s for s in td.get("servers", [])}
+    servers_added = list(to_srv[i] for i in set(to_srv) - set(from_srv))
+    servers_removed = list(from_srv[i] for i in set(from_srv) - set(to_srv))
+    servers_changed = []
+    for sid in set(from_srv) & set(to_srv):
+        before, after = from_srv[sid], to_srv[sid]
+        delta = {
+            k: {"before": before.get(k), "after": after.get(k)}
+            for k in ("status", "flavor_id", "hypervisor_hostname")
+            if before.get(k) != after.get(k)
+        }
+        if delta:
+            servers_changed.append({"id": sid, "name": after.get("name"), "changes": delta})
+
+    # --- projects ---
+    from_proj = {p["id"]: p for p in fd.get("projects", [])}
+    to_proj = {p["id"]: p for p in td.get("projects", [])}
+    projects_added = list(to_proj[i] for i in set(to_proj) - set(from_proj))
+    projects_removed = list(from_proj[i] for i in set(from_proj) - set(to_proj))
+
+    # --- volumes ---
+    from_vol = {v["id"]: v for v in fd.get("volumes", [])}
+    to_vol = {v["id"]: v for v in td.get("volumes", [])}
+    volumes_added = list(to_vol[i] for i in set(to_vol) - set(from_vol))
+    volumes_removed = list(from_vol[i] for i in set(from_vol) - set(to_vol))
+    volumes_changed = []
+    for vid in set(from_vol) & set(to_vol):
+        before, after = from_vol[vid], to_vol[vid]
+        delta = {
+            k: {"before": before.get(k), "after": after.get(k)}
+            for k in ("status", "size_gb")
+            if before.get(k) != after.get(k)
+        }
+        if delta:
+            volumes_changed.append({"id": vid, "name": after.get("name"), "changes": delta})
+
+    return {
+        "from": {
+            "snapshot_id": snap_from["id"],
+            "collected_at": snap_from["collected_at"].isoformat(),
+        },
+        "to": {
+            "snapshot_id": snap_to["id"],
+            "collected_at": snap_to["collected_at"].isoformat(),
+        },
+        "servers": {
+            "added": servers_added,
+            "removed": servers_removed,
+            "changed": servers_changed,
+            "counts": {
+                "added": len(servers_added),
+                "removed": len(servers_removed),
+                "changed": len(servers_changed),
+            },
+        },
+        "projects": {
+            "added": projects_added,
+            "removed": projects_removed,
+            "counts": {"added": len(projects_added), "removed": len(projects_removed)},
+        },
+        "volumes": {
+            "added": volumes_added,
+            "removed": volumes_removed,
+            "changed": volumes_changed,
+            "counts": {
+                "added": len(volumes_added),
+                "removed": len(volumes_removed),
+                "changed": len(volumes_changed),
+            },
+        },
+        "resource_counts": {
+            "from": fd.get("counts", {}),
+            "to": td.get("counts", {}),
+        },
+    }
+
+
+
 
 VALID_FLAVOR_SORT_COLUMNS = {
     "flavor_name": "flavor_name",
@@ -6599,7 +6764,6 @@ async def reset_environment_data(
             try:
                 tables_sql = ", ".join(all_tables)
                 cur.execute(f"TRUNCATE {tables_sql} RESTART IDENTITY CASCADE")
-                conn.commit()
             except Exception as e:
                 conn.rollback()
                 logger.error(f"Data reset failed: {e}")
