@@ -112,8 +112,8 @@ def cached(ttl: int = DEFAULT_TTL, key_prefix: str = ""):
                 )
                 key_hash = hashlib.md5(key_data.encode()).hexdigest()
                 client.delete(f"{prefix}:{key_hash}")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Cache invalidation error for %s:%s: %s", prefix, key_hash, exc)
 
         wrapper.invalidate = invalidate
         return wrapper

@@ -1,15 +1,102 @@
 # Platform9 Management System
 
-**Engineering Teams Add-On Platform: Enhanced Inventory, Monitoring & Daily Operations for Platform9**
-
-> This is **not** a replacement for the official Platform9 UI. It is an engineering-focused operational layer that complements Platform9 — adding the automation, visibility, and MSP-grade workflows that engineering teams need day to day.
+**Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.45.0-blue.svg)](CHANGELOG.md)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Kubernetes-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
+[![Version](https://img.shields.io/badge/version-1.45.1-blue.svg)](CHANGELOG.md)
+[![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
 pf9-mngt is an open-source operational add-on for Platform9 / OpenStack — it gives engineering and MSP teams automated snapshots, VM restore, full inventory persistence, and day-to-day monitoring in a single self-hosted stack.
+
+---
+
+## What pf9-mngt Is
+
+- A **self-hosted operational layer** that continuously persists all Platform9 / OpenStack metadata into your own PostgreSQL database — independently of platform availability
+- A **snapshot automation engine** built from scratch (no native scheduler exists in Platform9 or OpenStack): quota-aware, multi-tenant, policy-driven, with SLA compliance reporting
+- A **VM restore system** with side-by-side and replace modes — full flavor, network, IP, credential, and volume automation (no native equivalent exists in OpenStack)
+- A **migration planning workbench** from RVTools ingestion through cohort design, wave planning, and PCD auto-provisioning
+- An **engineering dashboard** with 28+ management tabs, RBAC, full audit trail, metering/chargeback, notifications, runbooks, and an AI Ops Copilot
+
+---
+
+## What pf9-mngt Is Not
+
+- **Not a replacement for the official Platform9 UI** — it is a complementary operational layer that adds engineering workflows the native UI does not provide
+- **Not an official Platform9 product** — it is an independent open-source project, not endorsed by or affiliated with Platform9 Systems, Inc.
+- **Not a cloud control plane** — it does not replace Keystone, Nova, Cinder, or Neutron; it orchestrates them via their APIs
+- **Not intended for end users** — it is an engineering and MSP operations console for the team managing the platform
+
+---
+
+## 🚀 System Architecture
+
+**14-container microservices platform:**
+
+| Service | Stack | Port | Purpose |
+|---------|-------|------|---------|
+| **nginx (TLS proxy)** | nginx:1.27-alpine | 80/443 | HTTPS termination, HTTP→HTTPS redirect, reverse proxy to API and UI |
+| **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 28+ management tabs + admin panel |
+| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 155+ REST endpoints, RBAC middleware, 4 workers + --max-requests 1000 |
+| **Redis** | redis:7-alpine | internal | OpenStack inventory/quota cache (60–300 s TTL, allkeys-lru, 128 MiB cap) |
+| **LDAP Server** | OpenLDAP | internal | Enterprise authentication directory (not exposed to host) |
+| **LDAP Admin** | phpLDAPadmin | 8081 *(dev profile)* | Web-based LDAP management (`--profile dev`) |
+| **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
+| **Database** | PostgreSQL 16 | internal | 65+ tables, audit, metering, migration planner (not exposed to host) |
+| **Database Admin** | pgAdmin4 | 8080 *(dev profile)* | Web-based PostgreSQL management (`--profile dev`) |
+| **Snapshot Worker** | Python | — | Automated snapshot management |
+| **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
+| **Backup Worker** | Python / PostgreSQL | — | Scheduled database backups and restores |
+| **Metering Worker** | Python / PostgreSQL | — | Resource metering every 15 minutes |
+| **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
+
+```text
+Platform9 / OpenStack APIs
+           │
+     ┌─────┴─────┐
+     │  pf9-api  │  FastAPI / Gunicorn (4 workers)
+     └─────┬─────┘
+           │
+  ┌────────┼────────┬────────┐
+  │        │        │        │
+Redis     LDAP   pf9_db   nginx
+(cache)  (auth)(PostgreSQL)(TLS)
+           │
+  ┌────────┼──────────────────────────────┐
+  │        │         │         │          │
+Snapshot Backup  Metering   Search  Notifications
+Worker   Worker   Worker    Worker    Worker
+           │
+     ┌─────┴─────┐
+     │  pf9-ui   │  React / Vite (served via nginx)
+     └───────────┘
+```
+
+> Host scripts (`pf9_rvtools.py`, `host_metrics_collector.py`) run via Windows Task Scheduler for infrastructure discovery and metrics collection.
+
+---
+
+## 📊 Feature Status
+
+| Feature | Status |
+|---------|--------|
+| Inventory Engine (RVTools-style, 29 resource types) | ✅ Production |
+| Snapshot Automation | ✅ Production |
+| VM Restore (side-by-side + replace modes) | ✅ Production |
+| Reports (20 types + CSV export) | ✅ Production |
+| Customer Provisioning & Domain Management | ✅ Production |
+| Metering & Chargeback | ✅ Production |
+| Notifications (SMTP + Slack + Teams) | ✅ Production |
+| Drift Detection | ✅ Production |
+| Ops Assistant — Full-Text Search & Smart Queries | ✅ Production |
+| Runbooks (14 built-in, approval workflows) | ✅ Production |
+| Backup & Restore (DB) with Integrity Validation | ✅ Production |
+| Inventory Versioning & Diff | ✅ Production |
+| AI Ops Copilot | 🔶 Beta |
+| Migration Planner (end-to-end) | ✅ Production |
+| Kubernetes Deployment | ⬜ Planned |
+| Tenant Self-Service Portal | ⬜ Planned |
 
 ---
 
@@ -137,7 +224,7 @@ Every service is containerized. That means **you decide**:
 | ☸️ **Kubernetes** | Production-grade HA and horizontal scaling — containers are ready, effort is minimal |
 | 🔧 **Your own orchestration** | Adapt to whatever infrastructure decisions you have already made |
 
-> See [docs/KUBERNETES_MIGRATION_GUIDE.md](docs/KUBERNETES_MIGRATION_GUIDE.md) for migration planning.  
+> **Note:** Kubernetes deployment is a design target — the architecture is planned but not yet tested in production. See [docs/KUBERNETES_MIGRATION_GUIDE.md](docs/KUBERNETES_MIGRATION_GUIDE.md) for the design plan.  
 > See [docs/LINUX_DEPLOYMENT_GUIDE.md](docs/LINUX_DEPLOYMENT_GUIDE.md) for running on Linux.
 
 ---
@@ -180,31 +267,6 @@ A 15-minute explainer video walking through the UI and key features:
 [![Watch on YouTube](https://img.shields.io/badge/YouTube-Watch%20Video-red?logo=youtube)](https://www.youtube.com/watch?v=68-LQ9ugU_E)
 
 ▶️ [**PF9 Management System — Full UI Walkthrough (15 min)**](https://www.youtube.com/watch?v=68-LQ9ugU_E)
-
----
-
-## 🚀 System Architecture
-
-**Enterprise microservices-based platform** with 12 containerized services plus host-based automation:
-
-| Service | Stack | Port | Purpose |
-|---------|-------|------|---------|
-| **nginx (TLS proxy)** | nginx:1.27-alpine | 80/443 | HTTPS termination, HTTP→HTTPS redirect, reverse proxy to API and UI |
-| **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 28+ management tabs + admin panel |
-| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 150+ REST endpoints, RBAC middleware, 4 workers + --max-requests 1000 |
-| **Redis** | redis:7-alpine | internal | OpenStack inventory/quota cache (60–300 s TTL, allkeys-lru, 128 MiB cap) |
-| **LDAP Server** | OpenLDAP | internal | Enterprise authentication directory (not exposed to host) |
-| **LDAP Admin** | phpLDAPadmin | 8081 *(dev profile)* | Web-based LDAP management (`--profile dev`) |
-| **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
-| **Database** | PostgreSQL 16 | internal | 65+ tables, history tracking, audit, metering, runbooks, migration planner (not exposed to host) |
-| **Database Admin** | pgAdmin4 | 8080 *(dev profile)* | Web-based PostgreSQL management (`--profile dev`) |
-| **Snapshot Worker** | Python | — | Automated snapshot management |
-| **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
-| **Backup Worker** | Python / PostgreSQL | — | Scheduled database backups and restores |
-| **Metering Worker** | Python / PostgreSQL | — | Resource metering every 15 minutes |
-| **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
-
-> Host scripts (`pf9_rvtools.py`, `host_metrics_collector.py`) run via Windows Task Scheduler for infrastructure discovery and metrics collection.
 
 ---
 
@@ -618,7 +680,19 @@ pf9-mngt/
 
 ---
 
-## 🆘 Troubleshooting
+## �️ Project Status
+
+**Current version:** [v1.45.1](CHANGELOG.md) — March 8, 2026
+
+**Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
+
+**Platform:** Docker Compose with nginx TLS termination. All 14 containers have restart policies and resource limits. Redis cache, rate limiting, and structured logging active.
+
+**Maturity:** 14 of 16 tracked features are production-grade. AI Copilot is in beta. Kubernetes deployment is a planned future option.
+
+---
+
+## �🆘 Troubleshooting
 
 **"Failed to fetch" in UI**
 - Check API: `docker-compose logs pf9_api`
@@ -1019,4 +1093,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.39.0 | **Last Updated**: March 2026
+**Project Status**: Active Development | **Version**: 1.45.1 | **Last Updated**: March 8, 2026

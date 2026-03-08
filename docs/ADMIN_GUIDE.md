@@ -1,6 +1,448 @@
-# Platform9 Management System - Administrator Guide
+# Platform9 Management System — Administrator Guide
 
-## Recent Major Enhancements
+**Version**: 1.45.0  
+**Last Updated**: March 8, 2026  
+**Audience**: System administrators and platform operators
+
+---
+
+## Purpose
+
+This is the day-to-day operations reference for administrators managing pf9-mngt.
+For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
+
+---
+
+## Quick Reference
+
+| Task | How | Permission |
+|------|-----|------------|
+| Start all services | `docker-compose up -d` | Host access |
+| Stop all services | `docker-compose down` | Host access |
+| Check service health | `docker-compose ps` | Host access |
+| View logs | `docker-compose logs <service>` | Host access |
+| Add a user | UI → Users → Add | Superadmin |
+| Reset a password | UI → Users → 🔑 | Superadmin |
+| Trigger snapshot run | UI → Snapshot Policies → Run Now | Admin |
+| Trigger restore | UI → Restore → New Restore Job | Admin |
+| Run backup now | UI → Backup → 🚀 Run Backup Now | Superadmin |
+| View audit log | UI → Audit | Admin |
+| View system logs | UI → System Logs | Admin/Superadmin |
+
+---
+
+## Table of Contents
+
+1. [System Startup](#1-system-startup)
+2. [Verifying Service Health](#2-verifying-service-health)
+3. [User Administration](#3-user-administration)
+4. [Role and Permission Management](#4-role-and-permission-management)
+5. [Snapshot Management](#5-snapshot-management)
+6. [Restore Operations](#6-restore-operations)
+7. [Migration Planner Operations](#7-migration-planner-operations)
+8. [Monitoring and Metrics](#8-monitoring-and-metrics)
+9. [Notifications](#9-notifications)
+10. [Backup and Recovery](#10-backup-and-recovery)
+11. [Audit Review](#11-audit-review)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Reference: Authentication & Authorization](#authentication--authorization)
+14. [Reference: Monitoring System](#real-time-monitoring-system)
+15. [Appendix: Feature History by Version](#appendix-feature-history-by-version)
+
+---
+
+## 1. System Startup
+
+```bash
+# Start all 14 containers
+docker-compose up -d
+
+# Windows full automated deployment (first time or after config changes)
+.\deployment.ps1
+
+# Quick restart
+.\startup.ps1
+```
+
+Allow 30–60 seconds for all containers to reach healthy status. Verify:
+
+```bash
+docker-compose ps
+# All containers should show Up or Up (healthy)
+```
+
+Service URLs after startup:
+
+| Service | URL |
+|---------|-----|
+| UI | https://\<host\> (port 443 in production, 5173 in dev) |
+| API Docs | http://\<host\>:8000/docs |
+| Monitoring | http://\<host\>:8001/health |
+| pgAdmin | http://\<host\>:8080 (`--profile dev` only) |
+| LDAP Admin | http://\<host\>:8081 (`--profile dev` only) |
+
+---
+
+## 2. Verifying Service Health
+
+```bash
+# API health endpoint
+curl http://localhost:8000/health
+# Expected: {"status":"healthy",...}
+
+# All container states
+docker-compose ps
+
+# Live resource usage
+docker stats --no-stream
+
+# Redis cache
+docker-compose exec pf9_redis redis-cli ping
+# Expected: PONG
+
+# Database
+docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM servers;"
+```
+
+**Check individual workers:**
+
+```bash
+docker-compose logs pf9_snapshot_worker --tail=20
+docker-compose logs pf9_notification_worker --tail=20
+docker-compose logs pf9_backup_worker --tail=20
+docker-compose logs pf9_metering_worker --tail=20
+docker-compose logs pf9_search_worker --tail=20
+```
+
+**If a container is in Exiting state:**
+
+```bash
+docker-compose logs <container-name> --tail=50
+docker-compose restart <container-name>
+```
+
+---
+
+## 3. User Administration
+
+### Add a new user
+
+1. Create the user in LDAP:
+
+```bash
+docker-compose exec pf9_ldap ldapadd -x \
+  -D "cn=admin,${LDAP_BASE_DN}" \
+  -w "${LDAP_ADMIN_PASSWORD}" << 'EOF'
+dn: uid=jsmith,ou=users,dc=company,dc=local
+objectClass: inetOrgPerson
+uid: jsmith
+cn: John Smith
+sn: Smith
+mail: jsmith@company.com
+userPassword: TemporaryPassword123!
+EOF
+```
+
+2. Assign a role in the UI: **Users** tab → find user → **Assign Role**
+
+### Reset a password
+
+UI: **Users** tab → find user → click 🔑 → enter new password → Save.
+Superadmin only. Action is fully audit-logged.
+
+### Disable / remove a user
+
+1. Remove the user from LDAP (they can no longer authenticate)
+2. Their active JWT session expires within 480 minutes (8 hours) automatically
+3. For immediate revocation set `active=false` in `user_roles` table:
+
+```bash
+docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+  -c "UPDATE user_roles SET active=false WHERE username='jsmith';"
+```
+
+### Role hierarchy
+
+| Role | Capabilities |
+|------|--------------|
+| `viewer` | Read all data |
+| `operator` | Read + limited write (no delete) |
+| `technical` | Read + write (no delete) |
+| `admin` | Full admin except user management |
+| `superadmin` | Full access including user management and destructive operations |
+
+---
+
+## 4. Role and Permission Management
+
+Permissions are stored in the `role_permissions` table. `superadmin` always has wildcard `*` permission (enforced on every deployment by `deployment.ps1`).
+
+**View current permissions:**
+
+```bash
+docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+  -c "SELECT role, resource, action FROM role_permissions ORDER BY role, resource;"
+```
+
+**Add a permission to a role:**
+
+```bash
+docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+  -c "INSERT INTO role_permissions (role, resource, action) VALUES ('operator', 'snapshots', 'write') ON CONFLICT DO NOTHING;"
+```
+
+**MFA requirements** are set per-user or globally via the Admin panel → MFA Settings.
+
+---
+
+## 5. Snapshot Management
+
+### How it works
+
+1. `pf9_snapshot_worker` runs on a configurable schedule
+2. Reads snapshot policies from volume metadata in Platform9
+3. Supported policies: `daily_5`, `monthly_1st`, `monthly_15th`
+4. The `snapshotsrv` service user creates snapshots in the correct tenant project
+5. Retention rules auto-delete snapshots older than the policy threshold
+
+### Trigger snapshot run manually
+
+**UI**: Snapshot Policies tab → **🔄 Run Now**
+
+**API**:
+```bash
+curl -X POST http://localhost:8000/snapshot/run-now \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+### Assign a policy to a volume
+
+```bash
+openstack volume set \
+  --property auto_snapshot=true \
+  --property snapshot_policies=daily_5 \
+  --property retention_daily_5=5 \
+  <volume-id>
+```
+
+### View compliance
+
+- **UI**: Snapshot Policies tab → Compliance column per tenant
+- **Report**: Reports tab → Snapshot Compliance
+
+---
+
+## 6. Restore Operations
+
+### Prerequisites
+
+- `RESTORE_ENABLED=true` in `.env`
+- `RESTORE_DRY_RUN=false` in `.env` to allow execution (default is `true` = plan-only)
+- Snapshot service user configured (same as snapshot worker)
+
+### Run a restore
+
+1. **UI → Restore tab → New Restore Job**
+2. Select source VM and mode:
+   - **Side-by-side**: Creates new VM + new volume alongside original — non-destructive, validate before cutover
+   - **Replace**: Deletes original, restores from snapshot — superadmin only, requires typed confirmation
+3. Select IP strategy: `NEW_IPS` (DHCP), `TRY_SAME_IPS` (best-effort), `SAME_IPS_OR_FAIL` (strict)
+4. Click **Dry Run** to validate the full plan without executing
+5. Click **Execute** when ready
+
+### View restore audit
+
+**UI**: Restore Audit tab — full history with operator, mode, duration, and outcome.
+
+---
+
+## 7. Migration Planner Operations
+
+The Migration Planner is a multi-stage workflow. See [MIGRATION_PLANNER_GUIDE.md](MIGRATION_PLANNER_GUIDE.md) for the full operational guide.
+
+**High-level stages:**
+
+| Stage | UI Location | Notes |
+|-------|-------------|-------|
+| RVTools ingestion | Migration → Upload | Upload `.xlsx` from VMware RVTools |
+| VM assessment | Migration → VMs | Risk scoring, OS classification |
+| Tenant scoping | Migration → Tenants | Mark in-scope tenants |
+| Target mapping | Migration → Network Map | Map source networks to PCD |
+| Cohort planning | Migration → Cohorts | Group VMs into ordered workstreams |
+| Wave planning | Migration → Waves | Build execution waves per cohort |
+| PCD preparation | Migration → Prepare PCD | Auto-provision domains, projects, networks |
+| Wave execution | Migration → Waves → Execute | Forward to vJailbreak agent |
+
+---
+
+## 8. Monitoring and Metrics
+
+### Host metrics collection
+
+Metrics are collected from Platform9 hypervisors via Prometheus `node_exporter` (port 9388) and `libvirt_exporter` (port 9177).
+
+```powershell
+# Run collection manually (Windows)
+python host_metrics_collector.py --once
+
+# Verify scheduled task
+schtasks /query /tn "PF9 Metrics Collection"
+
+# Fix monitoring if not working after startup
+.\fix_monitoring.ps1
+```
+
+### View metrics
+
+- **UI**: Monitoring tab — live CPU, memory, disk per host
+- **API Metrics** (Admin/Superadmin): UI → System → API Metrics, or:
+
+```bash
+curl http://localhost:8000/api/metrics -H "Authorization: Bearer <admin-token>"
+```
+
+- **System Logs** (Admin/Superadmin): UI → System Logs, or:
+
+```bash
+curl "http://localhost:8000/api/logs?limit=50&log_file=all" -H "Authorization: Bearer <admin-token>"
+```
+
+---
+
+## 9. Notifications
+
+### Enable email
+
+```bash
+# In .env
+SMTP_ENABLED=true
+SMTP_HOST=your-mail-server.com
+SMTP_PORT=587
+SMTP_USE_TLS=true
+SMTP_FROM_ADDRESS=pf9-mgmt@yourcompany.com
+
+# Restart worker
+docker-compose restart pf9_notification_worker
+```
+
+### Enable Slack / Teams
+
+```bash
+# In .env (pf9_api service)
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+TEAMS_WEBHOOK_URL=https://outlook.webhook.office.com/...
+```
+
+Test: UI → Notifications → Test Webhook.
+
+### Per-user preferences
+
+UI → Notifications → Preferences: subscribe to event types (snapshot failures, drift, compliance, health drops), set severity filter, configure daily digest.
+
+---
+
+## 10. Backup and Recovery
+
+### Enable automated backups
+
+1. UI → **Backup** tab → Settings → enable Automated Backups
+2. Set schedule (daily/weekly), time (UTC), and max retention count
+3. Backups write to `./backups/` as compressed `.sql.gz` files
+
+> **Before production**: Move the backup destination off the same machine.
+
+### Manual backup
+
+```bash
+docker-compose exec pf9_db pg_dump -U $POSTGRES_USER $POSTGRES_DB \
+  | gzip > backups/manual-$(date +%Y%m%d).sql.gz
+```
+
+### Restore from backup
+
+**UI**: Backup tab → History sub-tab → click ♻️ Restore on any completed backup (superadmin only).
+
+**CLI (emergency)**:
+```bash
+gunzip -c backups/<backup-file>.sql.gz \
+  | docker-compose exec -T pf9_db psql -U $POSTGRES_USER $POSTGRES_DB
+```
+
+---
+
+## 11. Audit Review
+
+### Authentication audit
+
+**UI**: Audit tab — authentication events, user management actions, IPs. Filter by user, action, date. 90-day retention.
+
+**CLI**:
+```bash
+docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+  -c "SELECT timestamp, username, action, resource_type, ip_address FROM auth_audit ORDER BY timestamp DESC LIMIT 50;"
+```
+
+### Activity log
+
+**UI**: Activity Log tab — all provisioning and domain management operations.
+
+### Resource change history
+
+**UI**: History tab — infrastructure changes with configurable timeframe (1 hour to 1 week), filters by resource type, project, domain.
+
+---
+
+## 12. Troubleshooting
+
+**API not responding:**
+```bash
+docker-compose logs pf9_api --tail=50
+docker-compose restart pf9_api
+```
+
+**UI shows “Failed to fetch”:**
+```bash
+curl http://localhost:8000/health
+docker-compose logs pf9_api | grep -i cors
+```
+
+**Login failures:**
+```bash
+docker-compose exec pf9_ldap ldapwhoami -x \
+  -D "cn=admin,${LDAP_BASE_DN}" -w "${LDAP_ADMIN_PASSWORD}"
+docker-compose logs pf9_api | grep -i "auth\|ldap\|token"
+```
+
+**Workers not running:**
+```bash
+docker-compose ps
+docker-compose restart pf9_snapshot_worker pf9_notification_worker pf9_backup_worker
+```
+
+**Platform9 connection 401:**
+```bash
+curl -i ${PF9_AUTH_URL}/auth/tokens \
+  -H "Content-Type: application/json" \
+  -d '{"auth":{"identity":{"methods":["password"],"password":{"user":{"name":"'${PF9_USERNAME}'","domain":{"name":"'${PF9_USER_DOMAIN}'"},"password":"'${PF9_PASSWORD}'"}}}}}'
+```
+
+**Monitoring not collecting:**
+```powershell
+.\fix_monitoring.ps1
+python host_metrics_collector.py --once
+```
+
+**Disk full:**
+```bash
+docker system df
+docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+  -c "SELECT pg_size_pretty(pg_database_size('${POSTGRES_DB}'));"
+docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANALYZE;"
+```
+
+---
+
+## Appendix: Feature History by Version
 
 ### Migration Planner Phase 5.0 — Tech Fix Time & Migration Summary (v1.42.0 ✅ Complete)
 
@@ -640,30 +1082,21 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 
 ---
 
-## Table of Contents
+## Reference Sections
+
+Detailed technical reference material continues below. These sections cover architecture internals, deep-dive configurations, and historical operational context.
+
 1. [System Overview](#system-overview)
-2. [Architecture & Components](#architecture--components)
-3. [Authentication & Authorization](#authentication--authorization)
-4. [Real-Time Monitoring System](#real-time-monitoring-system)
-5. [Drift Detection](#drift-detection)
-6. [Tenant Health Monitoring](#tenant-health-monitoring)
-7. [Production Features](#production-features)
-   - [Startup Configuration Validation](#1-startup-configuration-validation-)
-   - [API Performance Metrics](#2-api-performance-metrics-)
-   - [Structured Logging](#3-structured-logging-centralized-logging-foundation-)
-   - [Automated Metrics Collection](#4-automated-metrics-collection-)
-8. [Core Components Deep Dive](#core-components-deep-dive)
-9. [Installation & Deployment](#installation--deployment)
-10. [Security Considerations](#security-considerations)
-11. [Database Management](#database-management)
-12. [API Operations](#api-operations)
-13. [UI Management](#ui-management)
-14. [Data Collection & Reporting](#data-collection--reporting)
-15. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
-16. [Maintenance & Updates](#maintenance--updates)
-17. [Code Quality Issues](#code-quality-issues)
-18. [Recommended Improvements](#recommended-improvements)
-19. [Ops Search (Ops Assistant)](#ops-search-ops-assistant)
+2. [Authentication & Authorization](#authentication--authorization)
+3. [Real-Time Monitoring System](#real-time-monitoring-system)
+4. [Drift Detection](#drift-detection)
+5. [Tenant Health Monitoring](#tenant-health-monitoring)
+6. [Core Components Deep Dive](#core-components-deep-dive)
+7. [Installation & Deployment](#installation--deployment)
+8. [Security Considerations](#security-considerations)
+9. [Database Management](#database-management)
+10. [API Operations](#api-operations)
+11. [Ops Search (Ops Assistant)](#ops-search-ops-assistant)
 
 ---
 

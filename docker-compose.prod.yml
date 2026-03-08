@@ -1,0 +1,62 @@
+# docker-compose.prod.yml — production overrides
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this changes vs. docker-compose.yml:
+#   - dev tools (pgAdmin, phpLDAPadmin) moved to opt-in "dev" profile
+#   - PostgreSQL and LDAP ports NOT bound to host
+#   - API: 4 Gunicorn workers + worker recycling
+#   - UI: nginx production build (Dockerfile.prod) instead of Vite dev server
+#   - Redis rate-limiter enabled by default
+#   - Redis port NOT bound to host
+
+services:
+
+  # -------------------------------------------------------------------------
+  # DB — remove host port binding (already done in base, but explicit here)
+  # -------------------------------------------------------------------------
+  db:
+    ports: []
+
+  # -------------------------------------------------------------------------
+  # LDAP — remove host port binding
+  # -------------------------------------------------------------------------
+  ldap:
+    ports: []
+
+  # -------------------------------------------------------------------------
+  # Redis — remove host port binding, enable rate limiter
+  # -------------------------------------------------------------------------
+  redis:
+    ports: []
+
+  # -------------------------------------------------------------------------
+  # API — 4 workers, worker recycling, rate-limiter on by default
+  # -------------------------------------------------------------------------
+  pf9_api:
+    command: >
+      gunicorn main:app
+      -w 4
+      -k uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:8000
+      --timeout 300
+      --graceful-timeout 60
+      --max-requests 1000
+      --max-requests-jitter 50
+    environment:
+      PF9_RATE_LIMIT_ENABLED: "${PF9_RATE_LIMIT_ENABLED:-true}"
+
+  # -------------------------------------------------------------------------
+  # UI — nginx production build (two-stage: npm build → nginx:alpine)
+  #      Requires pf9-ui/Dockerfile.prod
+  # -------------------------------------------------------------------------
+  pf9_ui:
+    build:
+      context: ./pf9-ui
+      dockerfile: Dockerfile.prod
+    environment: {}    # Remove VITE_API_TARGET — not needed in prod nginx build
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
