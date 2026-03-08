@@ -2115,14 +2115,27 @@ const App: React.FC = () => {
     })();
   }, [activeTab, inventoryRefreshKey]);
 
-  // Load project quotas
+  // Load project quotas (fetch all pages to show every project)
   useEffect(() => {
     if (activeTab !== "quotas") return;
     (async () => {
       setLoading(true);
       try {
-        const res = await fetchJson<PagedResponse<any>>(`${API_BASE}/project-quotas?page=1&page_size=500`);
-        if (res) { setQuotasData(res.items || []); setQuotasTotal(res.total || 0); }
+        const first = await fetchJson<PagedResponse<any>>(`${API_BASE}/project-quotas?page=1&page_size=500`);
+        if (!first) return;
+        const total = first.total || 0;
+        let items = first.items || [];
+        if (total > 500) {
+          const remaining = Math.ceil((total - 500) / 500);
+          const pages = await Promise.all(
+            Array.from({ length: remaining }, (_, i) =>
+              fetchJson<PagedResponse<any>>(`${API_BASE}/project-quotas?page=${i + 2}&page_size=500`)
+            )
+          );
+          for (const p of pages) if (p?.items) items = items.concat(p.items);
+        }
+        setQuotasData(items);
+        setQuotasTotal(total);
       } catch (e: any) { setError(e.message); } finally { setLoading(false); }
     })();
   }, [activeTab, inventoryRefreshKey]);

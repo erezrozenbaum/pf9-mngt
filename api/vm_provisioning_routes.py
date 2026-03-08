@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, validator
 
-from auth import require_permission, get_current_user
+from auth import require_permission, get_current_user, ldap_auth
 from pf9_control import get_client
 from smtp_helper import send_email as smtp_send_email
 from db_pool import get_connection, get_pool
@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS vm_provisioning_vms (
     os_password     TEXT NOT NULL,
     extra_cloudinit TEXT,
     os_type         TEXT NOT NULL DEFAULT 'linux',
+    delete_on_termination BOOLEAN NOT NULL DEFAULT TRUE,
     pcd_server_ids  JSONB DEFAULT '[]',
     assigned_ips    JSONB DEFAULT '[]',
     status          TEXT NOT NULL DEFAULT 'pending',
@@ -125,6 +126,11 @@ def _ensure_tables():
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(_TABLES_SQL)
+                # Migration: add delete_on_termination if it doesn't exist yet
+                cur.execute(
+                    """ALTER TABLE vm_provisioning_vms
+                       ADD COLUMN IF NOT EXISTS delete_on_termination BOOLEAN NOT NULL DEFAULT TRUE"""
+                )
         _tables_initialized = True
     except Exception as e:
         logger.error(f"vm_provisioning _ensure_tables failed: {e}")
@@ -185,8 +191,43 @@ def _build_cloudinit_windows(os_username: str, os_password: str,
     Handles two cases:
       - os_username == 'administrator': enable + set password on built-in account
       - any other username: enable Administrator + create new local user
+
+    NOTE: If the image was NOT sysprep'd via `cloudbase-init.exe /sysprep`, the
+    Windows OOBE wizard will still appear on first boot (before this script runs).
+    The correct fix is image-level: prepare the template VM with
+    `cloudbase-init.exe /sysprep` so SkipMachineOOBE is set in the sysprep
+    unattend.xml and cloudbase-init fires via SetupComplete before any login screen.
     """
     is_builtin_admin = os_username.strip().lower() == "administrator"
+
+    # Unattend snippet written to suppress OOBE on subsequent boots / reboots
+    # (helps if the image was not sysprep'd via cloudbase-init's own /sysprep command)
+    oobe_suppression = r"""
+# Write an unattend.xml to suppress OOBE on subsequent boots
+$unattendDir = "C:\Windows\Panther"
+if (-not (Test-Path $unattendDir)) { New-Item -ItemType Directory -Path $unattendDir | Out-Null }
+$unattendXml = @'
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+    </component>
+  </settings>
+</unattend>
+'@
+Set-Content -Path "$unattendDir\unattend.xml" -Value $unattendXml -Encoding UTF8
+"""
 
     if is_builtin_admin:
         # Built-in account already exists — cannot use /add, just set password and activate
@@ -195,7 +236,7 @@ def _build_cloudinit_windows(os_username: str, os_password: str,
 net user Administrator "{os_password}"
 net user Administrator /active:yes
 wmic useraccount where \"name='Administrator'\" set PasswordExpires=False
-"""
+{oobe_suppression}"""
     else:
         script = f"""#ps1_sysnative
 # cloudbase-init: enable Administrator and create user {os_username}
@@ -203,7 +244,7 @@ net user Administrator /active:yes
 net user "{os_username}" "{os_password}" /add /y
 net localgroup Administrators "{os_username}" /add
 wmic useraccount where \"name='{os_username}'\" set PasswordExpires=False
-"""
+{oobe_suppression}"""
     if extra and extra.strip():
         script += f"\n{extra.strip()}\n"
     return script
@@ -236,7 +277,7 @@ def _build_excel_template() -> io.BytesIO:
         "domain_name", "project_name", "vm_name_suffix", "count",
         "image_name", "flavor_name", "volume_gb",
         "network_name", "security_groups", "fixed_ip", "hostname",
-        "os_username", "os_password", "extra_cloudinit",
+        "os_username", "os_password", "extra_cloudinit", "delete_on_termination",
     ]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=h)
@@ -254,7 +295,7 @@ def _build_excel_template() -> io.BytesIO:
         "mycustomer", "myproject", "web", 1,
         "ubuntu-22.04", "m1.small.bfv", 50,
         "tenant-net", "default", "", "",
-        "ubuntu", "REDACTED_PASSWORD", "",
+        "ubuntu", "REDACTED_PASSWORD", "", True,
     ])
 
     # ── README sheet ──────────────────────────────────────────────────
@@ -276,6 +317,7 @@ def _build_excel_template() -> io.BytesIO:
         ("os_username", "Required. OS user created via cloud-init."),
         ("os_password", "Required. Initial OS password (min 8 chars)."),
         ("extra_cloudinit", "Optional. Additional cloud-init YAML to merge (advanced)."),
+        ("delete_on_termination", "true/false — delete boot volume when VM is deleted. Default: true."),
     ]
     for i, (col, note) in enumerate(notes, 3):
         readme.cell(row=i, column=1, value=col).font = Font(bold=True)
@@ -308,6 +350,7 @@ class VmRowRequest(BaseModel):
     os_password: str
     extra_cloudinit: Optional[str] = None
     os_type: str = "linux"
+    delete_on_termination: bool = True
 
     @validator("vm_name_suffix")
     def validate_suffix(cls, v):
@@ -728,6 +771,7 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                         # Pass image_id so Nova reads hw_firmware_type / hw_machine_type from Glance
                         # This ensures UEFI firmware for Windows Server 2019+ GPT images
                         image_id=image_id,
+                        delete_on_termination=vm.get("delete_on_termination", True),
                     )
                     server_id = server.get("id")
                 except Exception as e:
@@ -827,6 +871,7 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                        batch.get("created_by", "system"))
 
         # Send notification email
+        final_vms: list = []
         if operator_email:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("SELECT * FROM vm_provisioning_vms WHERE batch_id=%s", (batch_id,))
@@ -842,6 +887,32 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                 activity_steps = [dict(r) for r in cur.fetchall()]
             html = _build_completion_email(batch, final_vms, activity_steps)
             _send_email([operator_email], f"VM Provisioning '{batch['name']}' — {final_status}", html)
+
+        # Fire in-app notification bell for all subscribers of this event type
+        try:
+            from provisioning_routes import _fire_notification
+            total_vms = sum(r.get("count", 1) for r in final_vms) if final_vms else 0
+            created_vms = sum(
+                len(r.get("pcd_server_ids") or [])
+                for r in final_vms
+                if r.get("status") == "complete"
+            ) if final_vms else 0
+            event_type = "vm_provisioning_completed" if final_status == "complete" else "vm_provisioning_failed"
+            severity = "info" if final_status == "complete" else ("critical" if final_status == "failed" else "warning")
+            _fire_notification(
+                event_type=event_type,
+                summary=f"VM Provisioning '{batch['name']}' {final_status.replace('_', ' ')} — "
+                        f"{created_vms}/{total_vms} VMs active · "
+                        f"{batch['domain_name']}/{batch['project_name']}",
+                severity=severity,
+                resource_id=str(batch_id),
+                resource_name=batch["name"],
+                domain_name=batch["domain_name"],
+                project_name=batch["project_name"],
+                actor=batch.get("created_by", "system"),
+            )
+        except Exception as _ne:
+            logger.warning("Could not fire in-app notification for batch %s: %s", batch_id, _ne)
 
     except Exception as e:
         logger.error(f"Batch {batch_id} execution thread error: {traceback.format_exc()}")
@@ -1061,6 +1132,7 @@ async def upload_excel(
             "os_username": os_user,
             "os_password": os_pass,
             "extra_cloudinit": _col(row_dict, "extra_cloudinit"),
+            "delete_on_termination": str(_col(row_dict, "delete_on_termination", "true")).strip().lower() not in ("false", "0", "no"),
         })
 
     if errors:
@@ -1103,15 +1175,17 @@ async def create_batch(
                            (batch_id, vm_name_suffix, count, image_name, image_id,
                             flavor_name, flavor_id, volume_gb, network_name, network_id,
                             security_groups, fixed_ip, hostname,
-                            os_username, os_password, extra_cloudinit, os_type)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            os_username, os_password, extra_cloudinit, os_type,
+                            delete_on_termination)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                         (batch_id, vm.vm_name_suffix, vm.count,
                          vm.image_name, vm.image_id,
                          vm.flavor_name, vm.flavor_id, vm.volume_gb,
                          vm.network_name, vm.network_id,
                          Json(sgs), vm.fixed_ip, vm.hostname,
                          vm.os_username, vm.os_password,
-                         vm.extra_cloudinit, vm.os_type),
+                         vm.extra_cloudinit, vm.os_type,
+                         vm.delete_on_termination),
                     )
             _log_activity(conn, "vm_provisioning", str(batch_id), "batch_created",
                            f"Batch '{body.name}' created", user.username)
@@ -1505,9 +1579,15 @@ async def re_execute_batch(batch_id: int, user=Depends(get_current_user)):
                     (batch_id,),
                 )
 
+        re_operator_email = None
+        try:
+            info = ldap_auth.get_user_info(user.username)
+            re_operator_email = info.get("email") or None
+        except Exception:
+            pass
         t = threading.Thread(
             target=_execute_batch_thread,
-            args=(batch_id, None),
+            args=(batch_id, re_operator_email),
             daemon=True,
         )
         t.start()
@@ -1545,6 +1625,11 @@ async def execute_batch(batch_id: int, user=Depends(get_current_user)):
                 )
 
         operator_email = None
+        try:
+            info = ldap_auth.get_user_info(user.username)
+            operator_email = info.get("email") or None
+        except Exception:
+            pass
         t = threading.Thread(
             target=_execute_batch_thread,
             args=(batch_id, operator_email),

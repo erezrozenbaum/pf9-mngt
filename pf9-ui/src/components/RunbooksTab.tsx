@@ -120,6 +120,10 @@ export default function RunbooksTab() {
   const [selectedExec, setSelectedExec] = useState<Execution | null>(null);
   const [showMyExecs, setShowMyExecs] = useState(true);
 
+  // VM Provisioning batch history
+  const [vmBatches, setVmBatches] = useState<any[]>([]);
+  const [showVmBatches, setShowVmBatches] = useState(true);
+
   // ------- Toast helper --------------------------------------------------
   const showToast = useCallback((msg: string, type: string = "info") => {
     setToast({ msg, type });
@@ -170,11 +174,20 @@ export default function RunbooksTab() {
     }
   }, [showToast]);
 
+  const fetchVmBatches = useCallback(async () => {
+    try {
+      const data = await apiFetch<any[]>("/api/vm-provisioning/batches");
+      setVmBatches(data);
+    } catch (e: any) {
+      console.error("Failed to fetch VM provisioning batches:", e);
+    }
+  }, []);
+
   // Initial load
   useEffect(() => {
     setLoading(true);
-    Promise.all([fetchRunbooks(), fetchStats(), fetchMyExecs()]).finally(() => setLoading(false));
-  }, [fetchRunbooks, fetchStats, fetchMyExecs]);
+    Promise.all([fetchRunbooks(), fetchStats(), fetchMyExecs(), fetchVmBatches()]).finally(() => setLoading(false));
+  }, [fetchRunbooks, fetchStats, fetchMyExecs, fetchVmBatches]);
 
   // ------- Actions -------------------------------------------------------
   const openTriggerModal = (rb: Runbook) => {
@@ -1200,6 +1213,75 @@ export default function RunbooksTab() {
               </div>
             )}
           </>
+        )}
+      </div>
+
+      {/* ────── VM PROVISIONING HISTORY ────── */}
+      <div className="rb-section">
+        <div className="rb-section-header" onClick={() => setShowVmBatches(!showVmBatches)} style={{ cursor: "pointer" }}>
+          <h3>{showVmBatches ? "▾" : "▸"} ☁️ VM Provisioning History</h3>
+          <div className="rb-section-controls">
+            <button className="rb-btn small" onClick={(e) => { e.stopPropagation(); fetchVmBatches(); }}>
+              🔄 Refresh
+            </button>
+            <button className="rb-btn small primary" onClick={(e) => { e.stopPropagation(); setShowProvisioning(true); }}>
+              ▶ Open Provisioning
+            </button>
+            <span className="rb-meta">{vmBatches.length} batches</span>
+          </div>
+        </div>
+
+        {showVmBatches && (
+          <div className="rb-exec-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Batch Name</th>
+                  <th>Domain / Project</th>
+                  <th>Status</th>
+                  <th>Approval</th>
+                  <th>Created By</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vmBatches.slice(0, 20).map((b) => {
+                  const statusClass = b.status === "complete" ? "completed"
+                    : b.status === "failed" || b.status === "partially_failed" ? "failed"
+                    : b.status === "executing" ? "executing"
+                    : b.status === "dry_run_passed" || b.status === "validated" ? "completed"
+                    : "pending_approval";
+                  const approvalClass = b.approval_status === "approved" ? "completed"
+                    : b.approval_status === "rejected" ? "failed"
+                    : "pending_approval";
+                  return (
+                    <tr key={b.id}>
+                      <td className="rb-meta">#{b.id}</td>
+                      <td>{b.name || `Batch #${b.id}`}</td>
+                      <td className="rb-meta">{b.domain_name} / {b.project_name}</td>
+                      <td><span className={`rb-status-badge ${statusClass}`}>{b.status?.replace(/_/g, " ")}</span></td>
+                      <td><span className={`rb-status-badge ${approvalClass}`}>{b.approval_status?.replace(/_/g, " ") || "—"}</span></td>
+                      <td>{b.created_by}</td>
+                      <td className="rb-meta">{formatDate(b.created_at)}</td>
+                    </tr>
+                  );
+                })}
+                {vmBatches.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="rb-empty-row">No VM provisioning batches yet — click ▶ Open Provisioning to create one!</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            {vmBatches.length > 20 && (
+              <div className="rb-pagination">
+                <button className="rb-btn small primary" onClick={() => setShowProvisioning(true)}>
+                  View all {vmBatches.length} batches in Provisioning →
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

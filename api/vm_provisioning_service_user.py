@@ -216,6 +216,14 @@ def get_provisioner_client(
     client.keystone_endpoint = None
     client.glance_endpoint = None
 
+    # Rate-limiter attributes (must mirror Pf9Client.__init__ so _throttle() works)
+    client._rl_enabled = os.getenv("PF9_RATE_LIMIT_ENABLED", "false").lower() in ("1", "true", "yes")
+    _rate = float(os.getenv("PF9_API_RATE_LIMIT", "10"))
+    client._rl_rate = max(0.1, _rate)
+    client._rl_tokens = client._rl_rate
+    client._rl_last = __import__("time").monotonic()
+    client._rl_lock = __import__("threading").Lock()
+
     # authenticate() does the real Keystone password auth + endpoint discovery
     client.authenticate()
     # Override project_id with the pre-resolved UUID (authenticate() may resolve it again
