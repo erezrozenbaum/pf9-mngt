@@ -1,27 +1,28 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.2
-**Last Updated**: March 2026  
+**Version**: 2.3
+**Last Updated**: March 8, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
-**Alternative**: See [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) for Kubernetes deployment
+**Alternative**: See [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) for the Kubernetes design plan (not yet implemented)
 
 ---
 
 ## Table of Contents
 
 1. [Quick Start (5 Minutes)](#quick-start-5-minutes)
-2. [System Requirements](#system-requirements)
-3. [Pre-Deployment Checklist](#pre-deployment-checklist)
-4. [Detailed Installation](#detailed-installation)
-5. [Environment Configuration](#environment-configuration)
-6. [First-Time Setup](#first-time-setup)
-7. [Verification & Testing](#verification--testing)
-8. [Post-Deployment Operations](#post-deployment-operations)
-9. [Common Issues & Troubleshooting](#common-issues--troubleshooting)
-10. [Backup & Recovery](#backup--recovery)
-11. [Upgrade & Migration](#upgrade--migration)
-12. [Production Hardening](#production-hardening)
+2. [Deployment Architectures](#deployment-architectures)
+3. [System Requirements](#system-requirements)
+4. [Pre-Deployment Checklist](#pre-deployment-checklist)
+5. [Detailed Installation](#detailed-installation)
+6. [Environment Configuration](#environment-configuration)
+7. [First-Time Setup](#first-time-setup)
+8. [Verification & Testing](#verification--testing)
+9. [Post-Deployment Operations](#post-deployment-operations)
+10. [Common Issues & Troubleshooting](#common-issues--troubleshooting)
+11. [Backup & Recovery](#backup--recovery)
+12. [Upgrade, Rollback & Migration](#upgrade-rollback--migration)
+13. [Production Hardening](#production-hardening)
 
 ---
 
@@ -31,8 +32,8 @@ For the impatient developer:
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/yourusername/pf9-management.git
-cd pf9-management
+git clone https://github.com/erezrozenbaum/pf9-mngt.git
+cd pf9-mngt
 
 # 2. Create minimal .env file
 cat > .env << 'EOF'
@@ -88,6 +89,106 @@ docker-compose restart pf9_api
 ```
 
 Demo mode pre-populates: 3 domains, 7 projects, 5 hypervisors, 35 VMs, ~50 volumes, ~100 snapshots, networks, subnets, users with RBAC, snapshot policies, compliance reports, drift events, metering pricing, runbooks, and activity log entries. A static metrics cache provides host + VM metrics without real collection.
+
+---
+
+## Deployment Architectures
+
+Choose the topology that fits your environment.
+
+### Option A — Single Host (Default, Recommended for Most Teams)
+
+All 14 containers run on one host. nginx handles TLS termination. This is the current tested topology.
+
+```text
+                    Internet / VPN
+                         │
+                    ┌────┴────┐
+                    │  nginx  │  :443 (TLS), :80 (redirect)
+                    └────┬────┘
+              ┌──────────┴───────────┐
+         ┌────┴────┐           ┌─────┴─────┐
+         │ pf9_api │           │  pf9_ui   │
+         │  :8000  │           │   :5173   │
+         └────┬────┘           └───────────┘
+    ┌─────────┼──────────┬──────────┐
+  pf9_db   pf9_ldap  pf9_redis  pf9_monitoring
+ (internal) (internal) (internal)   (:8001)
+    │
+  Workers (snapshot, backup, metering, search, notifications)
+```
+
+**When to use:** Single-tenant self-hosted deployments, evaluation, up to ~50 concurrent users.
+
+**Ports exposed to host:**
+
+| Port | Service | Exposed in Dev | Exposed in Production |
+|------|---------|---------------|----------------------|
+| 443 | nginx (HTTPS) | ✅ | ✅ |
+| 80 | nginx (HTTP → redirect) | ✅ | ✅ |
+| 8000 | API (direct) | ✅ | ❌ close before go-live |
+| 5173 | UI (direct) | ✅ | ❌ close before go-live |
+| 8001 | Monitoring (direct) | ✅ | ❌ close before go-live |
+| 8080 | pgAdmin (dev only) | `--profile dev` | ❌ never |
+| 8081 | phpLDAPadmin (dev only) | `--profile dev` | ❌ never |
+
+> In production: close ports 8000, 5173, and 8001 on the host firewall. All traffic goes through nginx on 443.
+
+---
+
+### Option B — Separate DB Host
+
+For teams that want the database on a separate, backed-up machine:
+
+1. Run PostgreSQL on the dedicated host
+2. Set `POSTGRES_HOST=<db-host-ip>` in `.env`
+3. Remove the `pf9_db` service from your compose run: `docker-compose up -d --scale pf9_db=0`
+4. Ensure `pg_hba.conf` on the DB host allows the app host's IP
+
+**When to use:** When you already have a managed PostgreSQL instance or need data isolation.
+
+---
+
+### Option C — External LDAP / Active Directory
+
+To use your corporate LDAP or Active Directory instead of the bundled OpenLDAP:
+
+1. Set in `.env`:
+   ```bash
+   LDAP_URL=ldap://your-ad-server.company.com:389
+   LDAP_BASE_DN=dc=company,dc=com
+   LDAP_BIND_DN=cn=svc-pf9,ou=service-accounts,dc=company,dc=com
+   LDAP_BIND_PASSWORD=<service-account-password>
+   LDAP_USER_DN=ou=users,dc=company,dc=com
+   ```
+2. Remove or comment out the `pf9_ldap` and `phpldapadmin` services
+3. Users must exist in AD/LDAP to authenticate; roles are still managed in the pf9-mngt database
+
+**When to use:** Enterprise environments with existing Active Directory.
+
+---
+
+### TLS Configuration (nginx)
+
+The bundled nginx container handles TLS termination. In production, replace the self-signed certificates with your own:
+
+```bash
+# Place your certificates on the host:
+mkdir -p secrets/
+cp your-cert.crt secrets/nginx-cert.crt
+cp your-cert.key secrets/nginx-cert.key
+```
+
+The `docker-compose.yml` mounts `./secrets/` into the nginx container. The nginx configuration at `nginx/nginx.conf` expects:
+
+```nginx
+ssl_certificate     /etc/nginx/certs/nginx-cert.crt;
+ssl_certificate_key /etc/nginx/certs/nginx-cert.key;
+ssl_protocols       TLSv1.2 TLSv1.3;
+ssl_ciphers         HIGH:!aNULL:!MD5;
+```
+
+For free certificates, use Let's Encrypt with Certbot on the host, then mount the certificate paths into the container volumes.
 
 ---
 
@@ -198,12 +299,12 @@ netstat -ano | findstr ":5173 :8000 :8001 :5432 :8080 :389 :636 :8081"
 
 ```bash
 # HTTPS (no SSH key needed)
-git clone https://github.com/yourusername/pf9-management.git
-cd pf9-management
+git clone https://github.com/erezrozenbaum/pf9-mngt.git
+cd pf9-mngt
 
 # SSH (if you have SSH key configured)
-git clone git@github.com:yourusername/pf9-management.git
-cd pf9-management
+git clone git@github.com:erezrozenbaum/pf9-mngt.git
+cd pf9-mngt
 
 # Verify structure
 ls -la
@@ -1350,7 +1451,7 @@ rm -rf /tmp/restore
 
 ---
 
-## Upgrade & Migration
+## Upgrade, Rollback & Migration
 
 ### Upgrading the System
 
@@ -1483,6 +1584,62 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 
 > **Note**: All migration scripts are idempotent (use `IF NOT EXISTS` / `ON CONFLICT DO NOTHING`). Safe to re-run.
+
+---
+
+### Rollback Procedure
+
+Use this procedure if an upgrade causes issues and you need to revert to the previous version.
+
+#### Step 1 — Stop the broken services
+
+```bash
+docker-compose down
+```
+
+#### Step 2 — Restore the database from backup
+
+```bash
+# Identify the backup taken before upgrade
+ls -lt ./backups/     # or check the Backup tab in the UI
+
+# Restore (replaces current database)
+docker-compose up -d pf9_db
+sleep 15
+# Drop and recreate the database
+docker-compose exec pf9_db psql -U ${POSTGRES_USER} -c "DROP DATABASE ${POSTGRES_DB};"
+docker-compose exec pf9_db psql -U ${POSTGRES_USER} -c "CREATE DATABASE ${POSTGRES_DB};"
+# Restore from backup
+docker-compose exec -T pf9_db psql -U ${POSTGRES_USER} ${POSTGRES_DB} < ./backups/<backup-file>.sql
+# Or for .sql.gz:
+guzip -c ./backups/<backup-file>.sql.gz | docker-compose exec -T pf9_db psql -U ${POSTGRES_USER} ${POSTGRES_DB}
+```
+
+#### Step 3 — Check out the previous code version
+
+```bash
+# Find the previous tag
+git log --oneline -10
+
+# Check out the previous version
+git checkout v1.44.1   # replace with your previous version tag
+```
+
+#### Step 4 — Rebuild and restart
+
+```bash
+docker-compose build
+docker-compose up -d
+```
+
+#### Step 5 — Verify the rollback
+
+```bash
+curl http://localhost:8000/health
+docker-compose ps
+```
+
+> **Important:** After rollback, database migrations from the failed upgrade will be present in the schema. They are additive and idempotent, so this is safe — the old code will ignore unknown columns. If this causes issues, restore the database from the pre-upgrade backup (Step 2).
 
 ---
 
@@ -1678,28 +1835,17 @@ services:
 
 `--max-requests 1000` recycles each worker after 1000 requests, preventing memory creep from long-running processes.
 
-#### 5. Add healthchecks to pf9_api and pf9_ui
+#### 5. Healthchecks (already configured)
 
-The API and UI containers currently have no healthchecks. Add them:
+`docker-compose.yml` already defines healthchecks for `pf9_api`, `pf9_ui`, `pf9_monitoring`, and `pf9_ldap`. No changes needed here.
 
-```yaml
-# docker-compose.prod.yml
-services:
-  pf9_api:
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+To verify they are passing:
 
-  pf9_ui:
-    # Only works after switching to nginx (step 3 above)
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+```bash
+docker-compose ps
+# STATUS column should show "Up (healthy)" for pf9_api, pf9_ui, pf9_monitoring, pf9_ldap
+# If a service shows "Up (unhealthy)", inspect it:
+docker inspect pf9_api | jq '.[0].State.Health'
 ```
 
 #### 6. Add an nginx reverse proxy for HTTPS
@@ -1785,10 +1931,10 @@ See [SECURITY.md](SECURITY.md) and [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md
 - [SECURITY.md](SECURITY.md) - Security configuration & hardening
 - [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) - Kubernetes deployment
 - [API Documentation](http://localhost:8000/docs) - Interactive API docs
-- [GitHub Issues](https://github.com/yourusername/pf9-management/issues) - Bug reports & feature requests
+- [GitHub Issues](https://github.com/erezrozenbaum/pf9-mngt/issues) - Bug reports & feature requests
 
 ---
 
-**Last Updated**: February 2026  
+**Last Updated**: March 8, 2026  
 **Maintained By**: Erez Rozenbaum & Community Contributors  
 **License**: MIT

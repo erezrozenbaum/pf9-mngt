@@ -1,10 +1,24 @@
-# Platform9 Management System - Kubernetes Migration Guide
+# Platform9 Management System — Kubernetes Design and Migration Plan
 
 **Version**: 2.0  
-**Date**: February 2026  
-**Status**: Migration Planning Guide (Not yet implemented)  
-**Scope**: Complete migration from Docker Compose to Kubernetes with Helm charts  
-**Priority**: Reliability, High Availability, Production-Ready  
+**Date**: March 8, 2026  
+**Scope**: Architecture design for future migration from Docker Compose to Kubernetes
+
+---
+
+> ## ⚠️ Status: Design Target Only — Not Yet Implemented
+>
+> **Kubernetes deployment does not exist today.**
+>
+> This document is a design and migration plan for a future Kubernetes deployment.
+> The current production stack runs on **Docker Compose** and is fully functional.
+>
+> - No Helm charts have been created
+> - No Kubernetes manifests exist in this repository
+> - No production validation has been done on any Kubernetes configuration described here
+>
+> This document is kept to capture architecture decisions and migration thinking.
+> It will be updated as implementation begins.
 
 ---
 
