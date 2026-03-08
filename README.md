@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.45.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.45.1-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -682,7 +682,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.45.0](CHANGELOG.md) — March 8, 2026
+**Current version:** [v1.45.1](CHANGELOG.md) — March 8, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -1093,4 +1093,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.45.0 | **Last Updated**: March 8, 2026
+**Project Status**: Active Development | **Version**: 1.45.1 | **Last Updated**: March 8, 2026

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.45.1] - 2026-03-08
+
+### Fixed
+
+- `api/auth.py`: replaced `print()` calls with structured `logger` calls so JWT warnings appear in the structured log pipeline instead of stdout
+- `api/cache.py`: replaced bare `pass` in exception handlers with `logger.warning(...)` so cache misses and serialisation errors are observable
+
+### Added
+
+- `docker-compose.prod.yml`: production overrides file — PostgreSQL, LDAP, and Redis ports not bound to host; API runs 4 Gunicorn workers with `--max-requests` recycling; rate-limiter enabled by default; UI built from `Dockerfile.prod` (nginx, not Vite dev server)
+- `.env.example`: updated with new env vars added since v1.39.0 (notification worker, VM provisioning service user, backup integrity, SMTP options A/B) and improved inline documentation
+
+### Documentation
+
+- `README.md`: added "What pf9-mngt Is / Is Not" sections; moved System Architecture to top with 14-container table and ASCII diagram; added Feature Status Matrix (16 features); added Project Status section; fixed K8s badge and deployment note; updated footer version to 1.45.0
+- `docs/KUBERNETES_MIGRATION_GUIDE.md`: renamed to "Kubernetes Design and Migration Plan"; added prominent ⚠️ "Status: Design Target Only — Not Yet Implemented" warning block at the top
+- `docs/DEPLOYMENT_GUIDE.md`: added Deployment Architectures section (Options A single-host, B separate DB, C external LDAP/AD + TLS configuration); added Rollback Procedure; fixed all placeholder `yourusername/pf9-management` URLs; corrected healthcheck claim; updated version to 2.3
+- `docs/ADMIN_GUIDE.md`: added 12 task-based operational sections (System Startup, Health, User Admin, Roles, Snapshots, Restore, Migration, Monitoring, Notifications, Backup, Audit, Troubleshooting) + Quick Reference table at the top; moved 641-line release notes block to "Appendix: Feature History by Version"
+
 ## [1.45.0] - 2026-03-08
 
 ### Features — Phase E
