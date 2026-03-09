@@ -48,6 +48,9 @@ C:/Reports/
 *~
 .DS_Store
 
+# Internal planning documents (not for public repo)
+_plans/
+
 # Logs
 *.log
 *.log.err
