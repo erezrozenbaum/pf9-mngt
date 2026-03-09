@@ -154,6 +154,8 @@ interface NetworkSummary {
 interface Props {
   project: MigrationProject;
   onProjectUpdated: (p: MigrationProject) => void;
+  /** Opens the VMware-side dependency graph for a migration tenant. */
+  onViewTenantGraph?: (label: string, graphUrl: string) => void;
 }
 
 type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness" | "prepare" | "vjb" | "summary";
@@ -216,7 +218,7 @@ interface MigrationFunnel {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
+export default function SourceAnalysis({ project, onProjectUpdated, onViewTenantGraph }: Props) {
   const pid = project.project_id;
   const [subView, setSubView] = useState<SubView>("dashboard");
   const [error, setError] = useState("");
@@ -1024,12 +1026,12 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
 
       {/* ---- Tenants ---- */}
       {subView === "tenants" && (
-        <TenantsView tenants={tenants} projectId={pid} onRefresh={() => { loadTenants(); loadStats(); }} />
+        <TenantsView tenants={tenants} projectId={pid} onRefresh={() => { loadTenants(); loadStats(); }} onViewTenantGraph={onViewTenantGraph} />
       )}
 
       {/* ---- Cohorts ---- */}
       {subView === "cohorts" && (
-        <CohortsView projectId={pid} project={project} tenants={tenants} onRefreshTenants={() => { loadTenants(); loadStats(); }} />
+        <CohortsView projectId={pid} project={project} tenants={tenants} onRefreshTenants={() => { loadTenants(); loadStats(); }} onViewTenantGraph={onViewTenantGraph} />
       )}
 
       {/* ---- Networks ---- */}
@@ -1276,8 +1278,9 @@ function DashboardView({ stats, hosts, clusters, tenants }: {
 /*  Tenants View  (Phase 2A — Scoping · Phase 2B — Target Mapping)   */
 /* ================================================================== */
 
-function TenantsView({ tenants, projectId, onRefresh }: {
-  tenants: Tenant[]; projectId: number; onRefresh: () => void
+function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
+  tenants: Tenant[]; projectId: number; onRefresh: () => void;
+  onViewTenantGraph?: (label: string, graphUrl: string) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
@@ -2066,6 +2069,13 @@ function TenantsView({ tenants, projectId, onRefresh }: {
                   </td>
                   <td style={tdStyle}>
                     <button onClick={() => startEdit(t)} style={btnSmall} title="Edit">✏️</button>
+                    {onViewTenantGraph && (
+                      <button
+                        onClick={() => onViewTenantGraph(t.tenant_name, `/api/migration/projects/${projectId}/graph?tenant_id=${t.id}`)}
+                        style={{ ...btnSmall, marginLeft: 4 }}
+                        title="View dependency graph for this tenant"
+                      >🕸️</button>
+                    )}
                   </td>
                 </tr>
               );
@@ -2891,8 +2901,9 @@ interface Cohort {
   total_ram_gb: number;
 }
 
-function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
-  projectId: number; project: MigrationProject; tenants: Tenant[]; onRefreshTenants: () => void
+function CohortsView({ projectId, project, tenants, onRefreshTenants, onViewTenantGraph }: {
+  projectId: number; project: MigrationProject; tenants: Tenant[]; onRefreshTenants: () => void;
+  onViewTenantGraph?: (label: string, graphUrl: string) => void;
 }) {
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [unassignedCount, setUnassignedCount] = useState(0);
@@ -3665,6 +3676,7 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
                           <thead>
                             <tr style={{ background: "#eff6ff" }}>
                               <th style={{ padding: "3px 8px", textAlign: "left", fontWeight: 600, color: "#1e40af" }}>Tenant</th>
+                              <th style={{ padding: "3px 8px", textAlign: "center", fontWeight: 600, color: "#1e40af" }}></th>
                               <th style={{ padding: "3px 8px", textAlign: "center", fontWeight: 600, color: "#1e40af" }}>Ease</th>
                               <th style={{ padding: "3px 8px", textAlign: "right", fontWeight: 600, color: "#1e40af" }}>Move to</th>
                             </tr>
@@ -3678,6 +3690,15 @@ function CohortsView({ projectId, project, tenants, onRefreshTenants }: {
                                   <td style={{ padding: "3px 8px", maxWidth: 140, overflow: "hidden",
                                     textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                                     title={t.tenant_name}>{t.tenant_name}</td>
+                                  <td style={{ padding: "3px 8px", textAlign: "center" }}>
+                                    {onViewTenantGraph && (
+                                      <button
+                                        onClick={() => onViewTenantGraph(t.tenant_name, `/api/migration/projects/${projectId}/graph?tenant_id=${t.id}`)}
+                                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.9rem", padding: "0 2px" }}
+                                        title="View dependency graph"
+                                      >🕸️</button>
+                                    )}
+                                  </td>
                                   <td style={{ padding: "3px 8px", textAlign: "center" }}>
                                     {ease !== null ? (
                                       <span style={{

@@ -938,3 +938,191 @@ body,
   background: linear-gradient(90deg, #b45309, #92400e);
   color: #fef3c7;
 }
+
+/* ============================================================
+   Cloud Dependency Graph – drawer & controls
+   ============================================================ */
+
+.graph-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
+.graph-drawer {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  background: var(--color-surface, #0f172a);
+  overflow: hidden;
+}
+
+.graph-drawer-mobile {
+  width: 100vw;
+  overflow-y: auto;
+}
+
+.graph-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border, #334155);
+  background: var(--color-surface-elevated, #1e293b);
+  flex-shrink: 0;
+}
+
+.graph-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--color-text-secondary, #94a3b8);
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.graph-close-btn:hover {
+  background: var(--color-surface-hover, #334155);
+  color: var(--color-text-primary, #f1f5f9);
+}
+
+.graph-controls-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--color-surface-elevated, #1e293b);
+  border-bottom: 1px solid var(--color-border, #334155);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.graph-pill {
+  background: var(--color-surface, #0f172a);
+  border: 1px solid var(--color-border, #334155);
+  color: var(--color-text-secondary, #94a3b8);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.graph-pill:hover {
+  border-color: #3b82f6;
+  color: #93c5fd;
+}
+.graph-pill-active {
+  background: #1d4ed8;
+  border-color: #3b82f6;
+  color: #fff;
+  font-weight: 600;
+}
+
+.graph-action-btn {
+  background: none;
+  border: 1px solid var(--color-border, #334155);
+  color: var(--color-text-secondary, #94a3b8);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.graph-action-btn:hover:not(:disabled) {
+  border-color: #3b82f6;
+  color: #93c5fd;
+}
+.graph-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.graph-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--color-text-secondary, #94a3b8);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+  user-select: none;
+}
+.graph-type-chip:hover {
+  background: var(--color-surface, #0f172a);
+  border-color: var(--color-border, #334155);
+}
+.graph-type-chip input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  accent-color: #3b82f6;
+  cursor: pointer;
+}
+
+.graph-node-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  border-left: 1px solid #334155;
+  padding: 12px;
+  background: #1e293b;
+  overflow-y: auto;
+  color: #f1f5f9;
+}
+
+.graph-loading,
+.graph-error {
+  padding: 12px 16px;
+  font-size: 13px;
+}
+.graph-error {
+  color: #f87171;
+}
+
+.graph-overlay-loading,
+.graph-overlay-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--color-text-secondary, #94a3b8);
+  background: rgba(15, 23, 42, 0.75);
+  z-index: 10;
+  pointer-events: none;
+}
+.graph-overlay-error {
+  color: #f87171;
+}
+
+/* "View Dependencies" button inside detail panels */
+.graph-view-deps-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--color-surface-elevated, #1e293b);
+  border: 1px solid var(--color-border, #334155);
+  border-radius: 6px;
+  color: var(--color-text-primary, #f1f5f9);
+  cursor: pointer;
+  transition: all 0.15s;
+  width: 100%;
+  justify-content: center;
+}
+.graph-view-deps-btn:hover {
+  background: #1e3a5f;
+  border-color: #3b82f6;
+  color: #93c5fd;
+}
+

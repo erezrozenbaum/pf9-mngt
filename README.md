@@ -826,6 +826,28 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.48.0 — Cloud Dependency Graph: VMware-Side Migration Graph (Phase 4)
+- ✅ **`GET /api/migration/projects/{id}/graph`** — new VMware-side dependency graph built from RVTools import data; returns the same `{ nodes, edges, root, truncated }` format as `/api/graph` so `DependencyGraph` renders it unchanged
+- ✅ **Node types**: `tenant` (Org-vDC root), `vm`, `network` (portgroup/VLAN), `disk` (virtual disk), cross-tenant `tenant` nodes
+- ✅ **VM nodes** show multi-line detail: IP · migration status / vCPU · RAM / CPU% · MEM% usage (from RVTools vInfo + perf data)
+- ✅ **Disk nodes** show: allocated GB · actual used GB (%) / thin|thick · datastore name
+- ✅ **Migration status rings** on VM nodes: 🟢 complete / 🟡 in progress / 🔴 failed; legend auto-adapts labels for VMware context
+- ✅ **`graphUrl` prop** on `DependencyGraph` — all PCD-specific controls (depth pills, "Explore from here", action buttons) suppressed when set
+- ✅ **🕸️ View Graph** button on every tenant row and inside cohort expansions in the Migration Planner Source Analysis tab
+- ✅ **🕸️ View Dependencies** button added to Projects tab rows (PCD tenant graph)
+
+### v1.47.0 — Cloud Dependency Graph: Backend API + UI + Node Actions (Phases 1–3)
+- ✅ **`GET /api/graph`** — new BFS dependency graph endpoint: given any resource (`vm`, `volume`, `network`, `tenant`, `snapshot`, `security_group`, `floating_ip`, `subnet`, `port`, `host`, `image`, `domain`), returns the full node+edge graph up to the requested depth (1–3 hops)
+- ✅ **12 node types, 15 edge types** — all relationships derived from the existing DB schema; no new columns required
+- ✅ **VM→SecurityGroup edge** — reads `ports.raw_json->'security_groups'` JSONB array (no join table)
+- ✅ **Badges on every node** — `no_snapshot`, `drift`, `error_state`, `power_off`, `restore_source` flags for at-a-glance risk assessment
+- ✅ **150-node cap** with `truncated` flag to prevent hairball graphs on large tenants
+- ✅ **RBAC** `resources:read` — Viewer and above
+- ✅ **Full-screen graph drawer** (`DependencyGraph.tsx`) — ReactFlow + dagre hierarchical layout; 12 color-coded node types; depth pills (1/2/3); type filter checkboxes; dark sidebar
+- ✅ **🔍 Explore from here** — re-root the graph at any clicked node; **← Back** history breadcrumb; mobile fallback table
+- ✅ **🕸️ View Dependencies** button on Servers, Volumes, Snapshots, Networks, and Projects tab rows
+- ✅ **Node action buttons** — click any node to get: **"🔗 Open in tab"** (switch to resource's native tab + pre-select it), **"📸 Create Snapshot"** (volumes), **"🚀 View in Migration Planner"** (VMs + tenants)
+
 ### v1.46.0 — Migration Planner Phase 4D: vJailbreak CRD Push + Tenant User Overhaul
 - ✅ **vJailbreak CRD Push tab** — new 🚀 sub-tab in the Migration Planner pushes `OpenstackCreds`, `VMwareCreds`, and `NetworkMappings` CRDs directly to a vJailbreak Kubernetes cluster via its `/apis/vjailbreak.k8s.pf9.io/v1alpha1/` API; supports dry-run preview, idempotent apply (skip-if-exists), and per-resource task log
 - ✅ **Connection settings** — per-project `vjb_api_url`, `vjb_namespace`, and `vjb_bearer_token` stored on `migration_projects`; token is masked in API responses

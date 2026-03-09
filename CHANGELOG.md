@@ -5,6 +5,105 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.48.0] - 2026-03-09
+
+### Added — Cloud Dependency Graph: VMware-Side Migration Graph (Phase 4)
+
+> Phase 4 was redesigned from a PCD overlay to a VMware-side graph built from RVTools import data,
+> since VMs don't exist on PCD yet during the planning phase.
+
+#### New endpoint: `api/migration_routes.py`
+- **`GET /api/migration/projects/{project_id}/graph?tenant_id=`** — builds a dependency graph
+  from RVTools import data (`migration_vms`, `migration_vm_nics`, `migration_vm_disks`,
+  `migration_networks`, `migration_tenants`) — not from OpenStack/PCD.
+- Returns `{ root, nodes, edges, truncated }` in the same format as `/api/graph`.
+- **Node types**: `tenant` (Org-vDC root), `vm`, `network` (portgroup/VLAN), `disk`, cross-tenant `tenant`.
+- **VM nodes** include multi-line status: IP · migration status / vCPU · RAM / CPU% · MEM% usage.
+- **Disk nodes** include: allocated GB · used GB (%) / thin|thick · datastore.
+- **Migration overlay** on VM nodes: `complete` → confirmed (green), `in_progress/validating/pre_checks_passed` → pending (amber), `failed/cancelled` → missing (red), `not_started` → no ring.
+- **Cross-tenant nodes**: other tenants sharing the same portgroup appear as extra tenant nodes hanging off network nodes; edge label shows VM count.
+- **150-node hard cap** — sets `truncated: true` when hit.
+
+#### Modified: `pf9-ui/src/components/graph/DependencyGraph.tsx`
+- **New prop**: `graphUrl?: string` — when set, fetches that URL directly instead of `/api/graph`; bypasses all PCD graph logic.
+- Node subtitle div now uses `whiteSpace: pre-wrap` + `lineHeight: 1.4` to render multi-line status fields.
+- Depth pills hidden when `graphUrl` is set.
+- "Explore from here" button hidden when `graphUrl` is set.
+- All three action buttons (`Open in tab`, `Create Snapshot`, `View in Migration Planner`) suppressed when `graphUrl` is set — PCD resource IDs don't exist during planning.
+- **Migration legend** shown when either `migrationProjectId != null` OR `graphUrl != null`; labels remapped for VMware context: confirmed → "complete", pending → "in progress", missing → "failed".
+- Added `disk` node type: color `#d97706` (amber), icon 🖴, included in `ALL_NODE_TYPES`.
+
+#### Modified: `pf9-ui/src/App.tsx`
+- `graphTarget` type extended: `graphUrl?: string`.
+- **`handleViewMigrationGraph(label, graphUrl)`** — simplified; sets `graphTarget` directly with the migration graph URL; no OpenStack project lookup needed.
+- `<DependencyGraph graphUrl={graphTarget.graphUrl} />` passed through.
+
+#### Modified: `pf9-ui/src/components/MigrationPlannerTab.tsx`
+- `onViewTenantGraph` prop signature simplified to `(label: string, graphUrl: string) => void`.
+
+#### Modified: `pf9-ui/src/components/migration/SourceAnalysis.tsx`
+- `onViewTenantGraph` signature updated to match.
+- **`TenantsView`**: 🕸️ button calls `onViewTenantGraph(t.tenant_name, '/api/migration/projects/${projectId}/graph?tenant_id=${t.id}')`.
+- **`CohortsView`**: same pattern for tenant rows inside expanded cohorts.
+
+---
+
+### Added — Cloud Dependency Graph: Node Actions (Phase 3)
+
+#### Modified: `pf9-ui/src/components/graph/DependencyGraph.tsx`
+- **Node action buttons** added to the existing node detail sidebar (visible on click):
+  - **"🔗 Open in {tab} tab"** — navigates to the resource's native tab (Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs, Security Groups, Projects, Hypervisors, Images, Domains) and pre-selects that exact resource; closes the graph drawer automatically.
+  - **"📸 Create Snapshot"** (volume nodes only) — navigates to the Snapshots tab and shows a guided prompt directing the user to the Create Snapshot button.
+  - **"🚀 View in Migration Planner"** (VM and tenant nodes only) — navigates directly to the Migration Planner tab.
+- New optional props: `onNavigate?: (tab, resourceId, resourceType) => void` and `onCreateSnapshot?: (volumeId, volumeName) => void` — both passed from App.tsx; buttons are hidden when the callbacks are not provided.
+- `NODE_TYPE_TO_TAB` map (12 entries) converts node type strings to `ActiveTab` IDs.
+
+#### Modified: `pf9-ui/src/App.tsx`
+- `handleGraphNavigate` callback: switches tab via `setActiveTab`, looks up the full resource object in already-loaded in-memory arrays (`servers`, `volumes`, `snapshots`, `networks`, `images`, `hypervisors`, `projects`) and calls the matching `setSelected*` setter so the detail panel opens automatically; then closes the graph drawer.
+- `handleGraphCreateSnapshot` callback: navigates to Snapshots tab, closes drawer, and shows an `alert()` after 200 ms guiding the user.
+- Both callbacks passed to `<DependencyGraph onNavigate={...} onCreateSnapshot={...} />`.
+
+---
+
+### Added — Cloud Dependency Graph: Backend API + UI Panel (Phase 1 & 2)
+
+#### New file: `api/graph_routes.py`
+- **`GET /api/graph`** — BFS dependency graph builder starting from any supported resource type (`vm`, `volume`, `network`, `tenant`, `snapshot`, `security_group`, `floating_ip`, `subnet`, `port`, `host`, `image`, `domain`).
+- **Query params**: `root_type` (required), `root_id` (required), `depth` 1–3 (default 2), `domain` (optional domain-filter).
+- **12 node types** fully supported with per-type DB fetchers and expansion logic.
+- **15 edge traversals** including the tricky VM→SecurityGroup path (reads `ports.raw_json->'security_groups'` JSONB array — no join table needed).
+- **Badge computation** on every node — `no_snapshot` (volumes with no snapshots), `drift` (unacknowledged drift events), `error_state` (status=ERROR), `power_off` (VM SHUTOFF), `restore_source` (snapshot used as a restore point).
+- **150-node hard cap** — BFS stops and sets `truncated: true` to prevent hairball graphs.
+- **Domain filter** — optional `domain` query param restricts tenant/project expansion to a specific domain; useful for MSP multi-tenant environments.
+- **Registered** in `api/main.py` via `app.include_router(graph_router)`.
+- **RBAC**: `resources:read` (Viewer and above).
+- **Tested**: `depth=2` from a real VM returns 24 nodes and 38 edges.
+
+#### New file: `pf9-ui/src/components/graph/DependencyGraph.tsx`
+- Full-screen drawer panel built on **ReactFlow** with **dagre** hierarchical (`TB`) auto-layout.
+- **12 color-coded node types** — each with a distinct color, emoji icon, subtype label and status line.
+- **Badge strips** on nodes for `drift`, `no_snapshot`, `error_state`, `power_off`, `restore_source`.
+- **Depth pills** (1 / 2 / 3) — change depth and re-fetch live.
+- **Type filter checkboxes** — hide/show any of the 12 node types; `port` and `subnet` hidden by default to reduce noise.
+- **Node detail sidebar** — click any node to see Type, Status, full UUID, and badges. Sidebar has a forced dark background so values are always readable regardless of app theme.
+- **🔍 Explore from here** — click any non-root node's "Explore from here" button to re-root the graph at that node (e.g. click a Network to see all its subnets, VMs, tenants).
+- **← Back navigation** — breadcrumb history stack; Back button appears when you have drilled down.
+- **Mobile fallback** — viewport < 768 px shows a plain table list instead of the canvas.
+- **Truncation warning** — banner shown when the 150-node cap is hit.
+
+#### Modified: `pf9-ui/src/App.tsx`
+- **"🕸️ View Dependencies"** button added to the detail panels of: Servers, Snapshots, Networks, Volumes.
+- `graphTarget` state drives the full-screen graph drawer overlay rendered at the bottom of the component tree.
+- Import of `DependencyGraph` + `GraphRootType` type.
+
+#### New file: `pf9-ui/src/vite-env.d.ts`
+- TypeScript `declare module` stubs for `reactflow/dist/style.css` and `reactflow/dist/base.css` — satisfies `noUncheckedSideEffectImports` without disabling the rule.
+
+#### Modified: `pf9-ui/src/App.css`
+- Graph drawer styles: `.graph-drawer-backdrop`, `.graph-drawer`, `.graph-drawer-header`, `.graph-controls-bar`, `.graph-pill`, `.graph-pill-active`, `.graph-action-btn`, `.graph-type-chip`, `.graph-node-sidebar`, `.graph-view-deps-btn`, overlay loading/error states.
+
+---
+
 ## [1.46.0] - 2026-03-10
 
 ### Added — Migration Planner Phase 4D: vJailbreak Push + Users UX Overhaul

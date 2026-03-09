@@ -86,6 +86,8 @@ type SubView = "projects" | "setup" | "analysis";
 
 interface Props {
   isAdmin?: boolean;
+  /** Opens the VMware-side dependency graph for a migration tenant. */
+  onViewTenantGraph?: (label: string, graphUrl: string) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -108,7 +110,7 @@ const STATUS_COLORS: Record<string, string> = {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function MigrationPlannerTab({ isAdmin }: Props) {
+export default function MigrationPlannerTab({ isAdmin, onViewTenantGraph }: Props) {
   const [subView, setSubView] = useState<SubView>("projects");
   const [projects, setProjects] = useState<MigrationProject[]>([]);
   const [selectedProject, setSelectedProject] = useState<MigrationProject | null>(null);
@@ -354,6 +356,7 @@ export default function MigrationPlannerTab({ isAdmin }: Props) {
         <SourceAnalysis
           project={selectedProject}
           onProjectUpdated={(p) => { setSelectedProject(p); loadProjects(); }}
+          onViewTenantGraph={onViewTenantGraph}
         />
       )}
     </div>

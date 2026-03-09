@@ -2278,6 +2278,313 @@ async def reclassify_networks(project_id: str, user=Depends(get_current_user)):
     return {"status": "ok", "message": "Network types refreshed from current classification rules"}
 
 
+# ---------------------------------------------------------------------------
+# VMware Dependency Graph  (GET /projects/{project_id}/graph)
+# Returns the same { nodes, edges, root, truncated } format as /api/graph so
+# the DependencyGraph component can render it unchanged.
+# Nodes are built from RVTools import data (migration_vms, migration_vm_nics,
+# migration_networks, migration_tenants) — NOT from OpenStack/PCD.
+# ---------------------------------------------------------------------------
+@router.get("/projects/{project_id}/graph", dependencies=[Depends(require_permission("migration", "read"))])
+async def get_migration_vmware_graph(
+    project_id: str,
+    tenant_id: int = Query(..., description="migration_tenants.id to centre the graph on"),
+):
+    """
+    Build a VMware-side dependency graph for a single tenant in a migration project.
+
+    Node types returned: 'tenant' (Org-vDC), 'vm', 'network' (portgroup/VLAN).
+    Edges: tenant→vm (contains), vm→network (NIC), vm→vm (explicit dependency),
+           network→tenant (cross-tenant: other tenants sharing the same portgroup).
+
+    migration_overlay.status on VM nodes:
+      complete               → confirmed  (green)
+      in_progress/validating/pre_checks_passed → pending (amber)
+      failed/cancelled       → missing    (red)
+      not_started            → null       (no ring — not yet started is normal)
+    """
+    MAX_NODES = 150
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            # --- Root tenant node ---
+            cur.execute(
+                "SELECT id, tenant_name, target_project_name, target_confirmed, include_in_plan "
+                "FROM migration_tenants WHERE project_id = %s AND id = %s",
+                (project_id, tenant_id),
+            )
+            tenant = cur.fetchone()
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Tenant not found in this project")
+
+            root_id = f"tenant:{tenant['id']}"
+            if not tenant["include_in_plan"]:
+                t_overlay = {"status": "missing"}
+            elif tenant["target_confirmed"]:
+                t_overlay = {"status": "confirmed"}
+            else:
+                t_overlay = {"status": "pending"}
+
+            nodes: dict = {}
+            edges: list = []
+            nodes[root_id] = {
+                "id": root_id,
+                "type": "tenant",
+                "label": tenant["tenant_name"],
+                "status": tenant["target_project_name"] or "",
+                "badges": [] if tenant["include_in_plan"] else ["excluded"],
+                "db_id": str(tenant["id"]),
+                "migration_overlay": t_overlay,
+            }
+
+            # --- VMs in this tenant (non-template) ---
+            cur.execute("""
+                SELECT id, vm_name, migration_status, power_state, risk_score,
+                       exclude_from_migration, primary_ip, guest_os, cpu_count, ram_mb,
+                       cpu_usage_percent, memory_usage_percent
+                FROM migration_vms
+                WHERE project_id = %s AND tenant_name = %s AND (template IS NOT TRUE)
+                ORDER BY vm_name
+            """, (project_id, tenant["tenant_name"]))
+            all_vms = cur.fetchall()
+
+            vm_ids_in_tenant: list = []
+            vm_names_in_tenant: list = []
+            truncated = False
+
+            for vm in all_vms:
+                if len(nodes) >= MAX_NODES:
+                    truncated = True
+                    break
+                node_id = f"vm:{vm['id']}"
+                vm_ids_in_tenant.append(vm["id"])
+                vm_names_in_tenant.append(vm["vm_name"])
+
+                status = vm["migration_status"] or "not_started"
+                if status == "complete":
+                    overlay = {"status": "confirmed"}
+                elif status in ("in_progress", "validating", "pre_checks_passed"):
+                    overlay = {"status": "pending"}
+                elif status in ("failed", "cancelled"):
+                    overlay = {"status": "missing"}
+                else:
+                    overlay = None  # not_started: no ring
+
+                badges = []
+                if vm["risk_score"] and float(vm["risk_score"]) >= 70:
+                    badges.append("risk_high")
+                if vm["exclude_from_migration"]:
+                    badges.append("excluded")
+                if vm["power_state"] and vm["power_state"].lower() == "poweredoff":
+                    badges.append("power_off")
+
+                # Build multi-line status string:
+                # Line 1: IP (+ migration status if not the default)
+                # Line 2: allocated vCPU / RAM
+                # Line 3: CPU % / MEM % usage (if available)
+                ip_str     = vm["primary_ip"] or ""
+                mig_label  = status if status != "not_started" else ""
+                line1      = " · ".join(p for p in [ip_str, mig_label] if p)
+
+                line2 = ""
+                if vm["cpu_count"] or vm["ram_mb"]:
+                    cpu_part = f"{vm['cpu_count']} vCPU" if vm["cpu_count"] else ""
+                    ram_part = f"{vm['ram_mb'] / 1024:.1f} GB RAM" if vm["ram_mb"] else ""
+                    line2 = " · ".join(p for p in [cpu_part, ram_part] if p)
+
+                usage_parts = []
+                if vm["cpu_usage_percent"] is not None:
+                    usage_parts.append(f"CPU {float(vm['cpu_usage_percent']):.0f}%")
+                if vm["memory_usage_percent"] is not None:
+                    usage_parts.append(f"MEM {float(vm['memory_usage_percent']):.0f}%")
+                line3 = " · ".join(usage_parts)
+
+                vm_status = "\n".join(l for l in [line1, line2, line3] if l)
+
+                nodes[node_id] = {
+                    "id": node_id,
+                    "type": "vm",
+                    "label": vm["vm_name"],
+                    "status": vm_status,
+                    "badges": badges,
+                    "db_id": str(vm["id"]),
+                    "migration_overlay": overlay,
+                }
+                edges.append({"source": root_id, "target": node_id, "label": "contains"})
+
+            # --- Disk nodes (from RVTools vDisk sheet) ---
+            if vm_names_in_tenant:
+                cur.execute("""
+                    SELECT d.id, d.vm_name, d.disk_label, d.capacity_gb, d.consumed_gb,
+                           d.datastore, d.thin_provisioned, v.id AS vm_pk
+                    FROM migration_vm_disks d
+                    JOIN migration_vms v ON v.vm_name = d.vm_name AND v.project_id = d.project_id
+                    WHERE d.project_id = %s
+                      AND d.vm_name = ANY(%s)
+                    ORDER BY d.vm_name, d.disk_label
+                """, (project_id, vm_names_in_tenant))
+                for disk in cur.fetchall():
+                    if len(nodes) >= MAX_NODES:
+                        truncated = True
+                        break
+                    disk_node_id = f"disk:{disk['id']}"
+                    # Line 1: allocated size + used size (with %)
+                    cap_gb = float(disk["capacity_gb"]) if disk["capacity_gb"] else None
+                    used_gb = float(disk["consumed_gb"]) if disk["consumed_gb"] else None
+                    alloc_str = f"{cap_gb:.0f} GB allocated" if cap_gb else ""
+                    if used_gb is not None:
+                        if cap_gb:
+                            pct = used_gb / cap_gb * 100
+                            used_str = f"{used_gb:.0f} GB used ({pct:.0f}%)"
+                        else:
+                            used_str = f"{used_gb:.0f} GB used"
+                    else:
+                        used_str = ""
+                    disk_line1 = " · ".join(p for p in [alloc_str, used_str] if p)
+                    # Line 2: provisioning type + datastore
+                    thin_str = "thin" if disk["thin_provisioned"] else "thick"
+                    ds = disk["datastore"] or ""
+                    disk_line2 = " · ".join(p for p in [thin_str, ds] if p)
+                    disk_status = "\n".join(l for l in [disk_line1, disk_line2] if l)
+                    nodes[disk_node_id] = {
+                        "id": disk_node_id,
+                        "type": "disk",
+                        "label": disk["disk_label"] or f"Disk {disk['id']}",
+                        "status": disk_status,
+                        "badges": [],
+                        "db_id": str(disk["id"]),
+                        "migration_overlay": None,
+                    }
+                    vm_nid = f"vm:{disk['vm_pk']}"
+                    if vm_nid in nodes:
+                        edges.append({"source": vm_nid, "target": disk_node_id, "label": "disk"})
+
+            # --- Explicit VM→VM dependencies (within this tenant) ---
+            if vm_ids_in_tenant:
+                cur.execute("""
+                    SELECT vm_id, depends_on_vm_id, dependency_type
+                    FROM migration_vm_dependencies
+                    WHERE project_id = %s
+                      AND vm_id = ANY(%s)
+                      AND depends_on_vm_id = ANY(%s)
+                """, (project_id, vm_ids_in_tenant, vm_ids_in_tenant))
+                for dep in cur.fetchall():
+                    edges.append({
+                        "source": f"vm:{dep['vm_id']}",
+                        "target": f"vm:{dep['depends_on_vm_id']}",
+                        "label": dep["dependency_type"] or "depends_on",
+                    })
+
+            # --- Network nodes (portgroups used by VMs in this tenant) ---
+            network_names_shown: set = set()
+            if vm_names_in_tenant:
+                cur.execute("""
+                    SELECT DISTINCT n.id, n.network_name, n.vlan_id, n.network_type
+                    FROM migration_networks n
+                    JOIN migration_vm_nics nic
+                        ON nic.network_name = n.network_name AND nic.project_id = n.project_id
+                    WHERE n.project_id = %s
+                      AND nic.vm_name = ANY(%s)
+                    ORDER BY n.network_name
+                """, (project_id, vm_names_in_tenant))
+                networks = cur.fetchall()
+
+                for net in networks:
+                    if len(nodes) >= MAX_NODES:
+                        truncated = True
+                        break
+                    net_node_id = f"network:{net['id']}"
+                    vlan_sfx = f" (VLAN {net['vlan_id']})" if net["vlan_id"] else ""
+                    nodes[net_node_id] = {
+                        "id": net_node_id,
+                        "type": "network",
+                        "label": f"{net['network_name']}{vlan_sfx}",
+                        "status": net["network_type"] or "",
+                        "badges": [],
+                        "db_id": str(net["id"]),
+                        "migration_overlay": None,
+                    }
+                    network_names_shown.add(net["network_name"])
+
+                    # Edges: vm → network for each NIC in this tenant
+                    cur.execute("""
+                        SELECT DISTINCT v.id
+                        FROM migration_vms v
+                        JOIN migration_vm_nics nic
+                            ON nic.vm_name = v.vm_name AND nic.project_id = v.project_id
+                        WHERE v.project_id = %s
+                          AND v.id = ANY(%s)
+                          AND nic.network_name = %s
+                    """, (project_id, vm_ids_in_tenant, net["network_name"]))
+                    for row in cur.fetchall():
+                        vm_nid = f"vm:{row['id']}"
+                        if vm_nid in nodes:
+                            edges.append({"source": vm_nid, "target": net_node_id, "label": "nic"})
+
+            # --- Cross-tenant connections (other tenants sharing the same portgroups) ---
+            if network_names_shown:
+                cur.execute("""
+                    SELECT mt.id, mt.tenant_name, n.network_name,
+                           COUNT(DISTINCT v.id) AS vm_count
+                    FROM migration_tenants mt
+                    JOIN migration_vms v ON v.tenant_name = mt.tenant_name
+                        AND v.project_id = mt.project_id
+                        AND NOT COALESCE(v.template, false)
+                    JOIN migration_vm_nics nic ON nic.vm_name = v.vm_name
+                        AND nic.project_id = v.project_id
+                    JOIN migration_networks n ON n.network_name = nic.network_name
+                        AND n.project_id = nic.project_id
+                    WHERE mt.project_id = %s
+                      AND mt.id != %s
+                      AND n.network_name = ANY(%s)
+                    GROUP BY mt.id, mt.tenant_name, n.network_name
+                    ORDER BY vm_count DESC
+                """, (project_id, tenant_id, list(network_names_shown)))
+
+                # Map network_name → net_node_id for edge building
+                net_name_to_node_id = {
+                    n["label"].split(" (VLAN")[0]: nid
+                    for nid, n in nodes.items() if n["type"] == "network"
+                }
+
+                for row in cur.fetchall():
+                    if len(nodes) >= MAX_NODES:
+                        truncated = True
+                        break
+                    cross_nid = f"tenant:{row['id']}"
+                    if cross_nid not in nodes:
+                        nodes[cross_nid] = {
+                            "id": cross_nid,
+                            "type": "tenant",
+                            "label": row["tenant_name"],
+                            "status": "cross-tenant",
+                            "badges": ["cross_tenant"],
+                            "db_id": str(row["id"]),
+                            "migration_overlay": None,
+                        }
+                    net_nid = net_name_to_node_id.get(row["network_name"])
+                    if net_nid:
+                        already = any(
+                            e["source"] == net_nid and e["target"] == cross_nid
+                            for e in edges
+                        )
+                        if not already:
+                            edges.append({
+                                "source": net_nid,
+                                "target": cross_nid,
+                                "label": f"{row['vm_count']} VM{'s' if row['vm_count'] != 1 else ''}",
+                            })
+
+            return {
+                "root": root_id,
+                "nodes": list(nodes.values()),
+                "edges": edges,
+                "truncated": truncated,
+            }
+
+
 @router.patch("/projects/{project_id}/networks/{network_id}",
               dependencies=[Depends(require_permission("migration", "write"))])
 async def update_network(project_id: str, network_id: int, req: Request, user=Depends(get_current_user)):

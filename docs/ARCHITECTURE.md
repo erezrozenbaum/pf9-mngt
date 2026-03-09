@@ -955,6 +955,19 @@ PATCH /api/migration/projects/{id}/fix-settings                      # Update we
 PATCH /api/migration/projects/{id}/vms/{vm_id}/fix-override          # Set or clear per-VM tech fix time override (minutes)
 GET  /api/migration/projects/{id}/migration-summary                  # Executive summary: KPI totals, OS breakdown, cohort breakdown
 
+# Cloud Dependency Graph (v1.47.0)
+GET  /api/graph                  # BFS dependency graph from any resource (root_type, root_id, depth=1-3, domain?)
+                                 # Node types: vm, volume, snapshot, network, subnet, port, fip, sg, tenant, host, image, domain
+                                 # Badges: no_snapshot, drift, error_state, power_off, restore_source
+                                 # Hard cap: 150 nodes (truncated: true when hit)
+                                 # RBAC: resources:read
+
+# Cloud Dependency Graph UI (v1.47.0 — pf9-ui/src/components/graph/DependencyGraph.tsx)
+# Full-screen ReactFlow drawer opened via "🕸️ View Dependencies" on any resource detail panel
+# Features: dagre TB layout, 12 color-coded node types, depth pills (1/2/3), type filter checkboxes
+#           node sidebar: Explore From Here (re-root), ← Back history, Open in Tab, Create Snapshot, View in Migration Planner
+# Entry points: Servers, Volumes, Snapshots, Networks (App.tsx graphTarget state)
+
 # System Health & Testing
 GET  /health                     # Service health check
 GET  /simple-test                # Basic functionality test
