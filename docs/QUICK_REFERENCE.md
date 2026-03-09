@@ -101,6 +101,15 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - New `per_day[]` array in summary response: day, cohort_name, tenant_count, vm_count, total_gb, wall_clock_hours, total_agent_hours, cold_count, warm_count, risk_green/yellow/red, over_capacity
   - New `total_provisioned_gb` KPI field in summary response
   - **UI**: "Migration Days" KPI card; "In-Use Data (TB)" with provisioned subtitle; per-day table between KPI strip and OS breakdown; over-capacity rows in red + ⚠️; Migration Plan daily schedule shows ⚠️ indicator on over-capacity days; project summary footer shows daily throughput cap
+- **Migration Planner Phase 4D — Tenant User Bulk Ops & vJailbreak CRD Push** (v1.46.0):
+  - **Tenant Users UX overhaul**: filter bar (type / status / role / search), checkbox multi-select, bulk confirm, set-role, delete via `/bulk-action`
+  - **"👤 Seed Tenant Owners"** button — bulk-creates one `admin@<domain>` owner per tenant (idempotent); uses `target_domain_name` if set, else `tenant_name`
+  - **Bulk Find & Replace** panel — regex replace on `username`, `email`, or `role` across all tenant users; `preview` mode returns diffs without writing
+  - **"✓ Confirm All"** button — marks all unconfirmed users confirmed in one call
+  - **🚀 vJailbreak Push sub-tab**: configure API URL + namespace + bearer token (per-project, token masked); dry-run preview (would_create / would_skip per CRD type); push `OpenstackCreds`, `VMwareCreds`, `NetworkMappings` CRDs to a live Kubernetes cluster; task log table with done/skipped/failed pill badges + clear button
+  - 10 new API endpoints: `seed-tenant-owners`, `bulk-replace`, `confirm-all`, `bulk-action`, `vjailbreak-push-settings` (GET/PATCH), `vjailbreak-push/dry-run`, `vjailbreak-push`, `vjailbreak-push-tasks` (GET/DELETE)
+  - DB: `migration_projects.vjb_api_url / vjb_namespace / vjb_bearer_token`; new `migration_vjailbreak_push_tasks` table
+  - `.env.example`: `VJB_API_URL`, `VJB_NAMESPACE`, `VJB_BEARER_TOKEN` (stored per-project in DB; env vars serve as defaults)
 - **Migration Planner Phase 5.0 — Tech Fix Time & Migration Summary** (v1.42.0):
   - New **Migration Summary** tab: executive KPIs (total VMs, total fix hours, migrated count, at-risk count), OS breakdown, cohort breakdown
   - **Tech Fix Time model**: weighted per-VM fix time engine (`compute_vm_fix_time`) using base rate, risk multipliers, snapshot/NIC/disk penalties, and OS-specific rates

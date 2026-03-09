@@ -919,6 +919,18 @@ GET  /api/migration/projects/{id}/tenant-users                       # List tena
 POST /api/migration/projects/{id}/tenant-users                       # Add user definition
 PATCH /api/migration/projects/{id}/tenant-users/{id}                 # Update user definition
 DELETE /api/migration/projects/{id}/tenant-users/{id}                # Remove user definition
+POST /api/migration/projects/{id}/tenant-users/seed-tenant-owners    # Bulk-seed admin@<domain> owner per tenant (v1.46.0)
+POST /api/migration/projects/{id}/tenant-users/bulk-replace          # Regex find-and-replace on username/email/role (v1.46.0)
+POST /api/migration/projects/{id}/tenant-users/confirm-all           # Mark all unconfirmed users as confirmed (v1.46.0)
+POST /api/migration/projects/{id}/tenant-users/bulk-action           # Mass confirm/set-role/delete by user IDs (v1.46.0)
+
+# Phase 4D — vJailbreak CRD Push (v1.46.0)
+GET  /api/migration/projects/{id}/vjailbreak-push-settings           # Read vJailbreak API URL, namespace, token status
+PATCH /api/migration/projects/{id}/vjailbreak-push-settings          # Update URL, namespace, bearer token
+POST /api/migration/projects/{id}/vjailbreak-push/dry-run            # Simulate CRD push; returns would_create/would_skip counts
+POST /api/migration/projects/{id}/vjailbreak-push                    # Push OpenstackCreds + VMwareCreds + NetworkMappings CRDs
+GET  /api/migration/projects/{id}/vjailbreak-push-tasks              # Task log for all CRD push attempts
+DELETE /api/migration/projects/{id}/vjailbreak-push-tasks            # Clear push task log
 
 # Phase 4B — PCD Auto-Provisioning
 GET  /api/migration/projects/{id}/prep-readiness                     # Pre-flight 4A gate check

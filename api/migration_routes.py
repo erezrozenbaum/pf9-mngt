@@ -8543,3 +8543,690 @@ async def execute_wave(
             detail=f"Could not reach vJailbreak agent at {_VJAILBREAK_API_URL}: {exc}",
         )
 
+
+# =============================================================================
+# Phase 4D — Users UX Overhaul + vJailbreak CRD Auto-Push  (v1.43.0)
+# =============================================================================
+#
+#  4D.1  POST /projects/{id}/tenant-users/seed-tenant-owners
+#  4D.2  POST /projects/{id}/tenant-users/bulk-replace
+#        POST /projects/{id}/tenant-users/confirm-all
+#        POST /projects/{id}/tenant-users/bulk-action
+#  4D.3  GET  /projects/{id}/vjailbreak-settings
+#        PATCH /projects/{id}/vjailbreak-settings
+#        POST /projects/{id}/vjailbreak-push/dry-run
+#        POST /projects/{id}/vjailbreak-push
+#        GET  /projects/{id}/vjailbreak-push-tasks
+#        DELETE /projects/{id}/vjailbreak-push-tasks
+# =============================================================================
+
+import re as _re
+
+
+def _k8s_name(raw: str, max_len: int = 52) -> str:
+    """Convert an arbitrary string to a valid Kubernetes resource name."""
+    s = raw.lower()
+    s = _re.sub(r"[^a-z0-9-]", "-", s)
+    s = _re.sub(r"-{2,}", "-", s).strip("-")
+    return s[:max_len] or "tenant"
+
+
+def _vjb_k8s_request(method: str, url: str, token: str,
+                     payload: Optional[dict] = None, verify_tls: bool = False) -> dict:
+    """Make an authenticated request to the vJailbreak Kubernetes CRD API."""
+    import requests as _req
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    resp = _req.request(
+        method, url,
+        headers=headers,
+        json=payload,
+        verify=verify_tls,
+        timeout=20,
+    )
+    if resp.status_code == 404 and method == "GET":
+        return {}
+    resp.raise_for_status()
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code}
+
+
+def _vjb_base_url(project: dict) -> str:
+    api_url = (project.get("vjb_api_url") or "").rstrip("/")
+    ns = (project.get("vjb_namespace") or "migration").strip()
+    return f"{api_url}/apis/vjailbreak.k8s.pf9.io/v1alpha1/namespaces/{ns}"
+
+
+# ─── 4D.1  Seed Tenant Owners ────────────────────────────────────────────────
+
+@router.post("/projects/{project_id}/tenant-users/seed-tenant-owners",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def seed_tenant_owners(project_id: str, user=Depends(get_current_user)):
+    """Auto-create one tenant_owner row per in-scope tenant that doesn't have one yet."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT mt.id, mt.tenant_name,
+                       COALESCE(mt.target_domain_name, mt.tenant_name) AS domain
+                FROM migration_tenants mt
+                WHERE mt.project_id = %s
+                  AND COALESCE(mt.include_in_plan, true) = true
+                  AND NOT EXISTS (
+                      SELECT 1 FROM migration_tenant_users u
+                      WHERE u.tenant_id = mt.id AND u.user_type = 'tenant_owner'
+                  )
+                ORDER BY mt.tenant_name
+            """, (project_id,))
+            tenants = cur.fetchall()
+
+            created = 0
+            for t in tenants:
+                domain = (t["domain"] or t["tenant_name"]).lower()
+                # Clean domain into a simple form for the email username
+                domain_slug = _re.sub(r"[^a-z0-9]+", "-", domain).strip("-")
+                username = f"admin@{domain_slug}"[:80]
+                email = username
+                temp_pw = _generate_temp_password()
+                cur.execute("""
+                    INSERT INTO migration_tenant_users
+                        (tenant_id, project_id, user_type, username, email, role,
+                         is_existing_user, temp_password, password_must_change, confirmed)
+                    VALUES (%s, %s, 'tenant_owner', %s, %s, 'admin', false, %s, true, false)
+                    ON CONFLICT (tenant_id, username) DO NOTHING
+                    RETURNING id
+                """, (t["id"], project_id, username, email, temp_pw))
+                if cur.fetchone():
+                    created += 1
+
+    _log_activity(actor=actor, action="seed_tenant_owners",
+                  resource_type="migration_tenant_users",
+                  resource_id=project_id, details={"created": created})
+    return {"status": "ok", "created": created}
+
+
+# ─── 4D.2  Users Bulk Operations ─────────────────────────────────────────────
+
+@router.post("/projects/{project_id}/tenant-users/bulk-replace",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_replace_tenant_users(project_id: str, request: Request,
+                                    user=Depends(get_current_user)):
+    """Find-and-replace across a chosen field on all user rows in this project.
+
+    Body: {field, find, replace, case_sensitive, preview}
+    Allowed fields: username, email, role
+    """
+    actor = getattr(user, "username", "system")
+    body = await request.json()
+    field = body.get("field", "username")
+    find  = body.get("find", "")
+    repl  = body.get("replace", "")
+    cs    = bool(body.get("case_sensitive", False))
+    preview = bool(body.get("preview", False))
+
+    allowed_fields = {"username", "email", "role"}
+    if field not in allowed_fields:
+        raise HTTPException(status_code=400,
+                            detail=f"field must be one of {sorted(allowed_fields)}")
+    if not find:
+        raise HTTPException(status_code=400, detail="find must be a non-empty string")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if cs:
+                cur.execute(f"""
+                    SELECT id, tenant_id, {field} AS current_value
+                    FROM migration_tenant_users
+                    WHERE project_id = %s AND {field} LIKE %s
+                """, (project_id, f"%{find}%"))
+            else:
+                cur.execute(f"""
+                    SELECT id, tenant_id, {field} AS current_value
+                    FROM migration_tenant_users
+                    WHERE project_id = %s AND LOWER({field}) LIKE LOWER(%s)
+                """, (project_id, f"%{find}%"))
+            rows = cur.fetchall()
+
+            affected = []
+            for r in rows:
+                old_val = r["current_value"] or ""
+                if cs:
+                    new_val = old_val.replace(find, repl)
+                else:
+                    new_val = _re.sub(_re.escape(find), repl, old_val, flags=_re.IGNORECASE)
+                affected.append({"id": r["id"], "old": old_val, "new": new_val})
+
+            if not preview and affected:
+                for item in affected:
+                    cur.execute(
+                        f"UPDATE migration_tenant_users SET {field} = %s, confirmed = false "
+                        "WHERE id = %s",
+                        (item["new"], item["id"]),
+                    )
+
+    if not preview:
+        _log_activity(actor=actor, action="bulk_replace_tenant_users",
+                      resource_type="migration_tenant_users",
+                      resource_id=project_id,
+                      details={"field": field, "find": find,
+                               "replace": repl, "affected": len(affected)})
+    return {
+        "preview": preview,
+        "affected_count": len(affected),
+        "changes": affected,
+    }
+
+
+@router.post("/projects/{project_id}/tenant-users/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def confirm_all_tenant_users(project_id: str, user=Depends(get_current_user)):
+    """Set confirmed=true for all user rows in this project."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE migration_tenant_users SET confirmed = true "
+                "WHERE project_id = %s AND confirmed = false",
+                (project_id,),
+            )
+            affected = cur.rowcount
+    _log_activity(actor=actor, action="confirm_all_tenant_users",
+                  resource_type="migration_tenant_users",
+                  resource_id=project_id, details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.post("/projects/{project_id}/tenant-users/bulk-action",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_action_tenant_users(project_id: str, request: Request,
+                                   user=Depends(get_current_user)):
+    """Perform a bulk action on selected user rows.
+
+    Body: {action: 'confirm'|'set_role'|'delete', user_ids: [int...], role?: str}
+    """
+    actor = getattr(user, "username", "system")
+    body = await request.json()
+    action   = body.get("action", "")
+    user_ids = body.get("user_ids", [])
+    role     = body.get("role", "")
+
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="user_ids must be a non-empty list")
+    valid_actions = {"confirm", "set_role", "delete"}
+    if action not in valid_actions:
+        raise HTTPException(status_code=400,
+                            detail=f"action must be one of {sorted(valid_actions)}")
+
+    placeholders = ",".join(["%s"] * len(user_ids))
+    affected = 0
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            if action == "confirm":
+                cur.execute(
+                    f"UPDATE migration_tenant_users SET confirmed = true "
+                    f"WHERE project_id = %s AND id IN ({placeholders})",
+                    [project_id] + user_ids,
+                )
+                affected = cur.rowcount
+
+            elif action == "set_role":
+                if role not in ("admin", "member", "reader"):
+                    raise HTTPException(status_code=400,
+                                        detail="role must be admin, member, or reader")
+                cur.execute(
+                    f"UPDATE migration_tenant_users SET role = %s "
+                    f"WHERE project_id = %s AND id IN ({placeholders})",
+                    [role, project_id] + user_ids,
+                )
+                affected = cur.rowcount
+
+            elif action == "delete":
+                # Only tenant_owners can be bulk-deleted; service accounts are protected
+                cur.execute(
+                    f"DELETE FROM migration_tenant_users "
+                    f"WHERE project_id = %s "
+                    f"  AND user_type = 'tenant_owner' "
+                    f"  AND id IN ({placeholders})",
+                    [project_id] + user_ids,
+                )
+                affected = cur.rowcount
+
+    _log_activity(actor=actor, action=f"bulk_{action}_tenant_users",
+                  resource_type="migration_tenant_users",
+                  resource_id=project_id,
+                  details={"action": action, "count": len(user_ids), "affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+# ─── 4D.3  vJailbreak Push (Kubernetes CRD API) ───────────────────────────────
+
+@router.get("/projects/{project_id}/vjailbreak-push-settings",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_vjb_push_settings(project_id: str):
+    """Return vJailbreak CRD push settings for this project (token masked)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+    token = project.get("vjb_bearer_token") or ""
+    return {
+        "vjb_api_url":   project.get("vjb_api_url") or "",
+        "vjb_namespace": project.get("vjb_namespace") or "migration",
+        "vjb_bearer_token_set": bool(token),
+        "vjb_bearer_token_hint": f"…{token[-6:]}" if len(token) > 6 else ("set" if token else ""),
+    }
+
+
+@router.patch("/projects/{project_id}/vjailbreak-push-settings",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_vjb_push_settings(project_id: str, request: Request,
+                                   user=Depends(get_current_user)):
+    """Update vJailbreak push settings (URL, namespace, bearer token)."""
+    actor = getattr(user, "username", "system")
+    body = await request.json()
+    allowed = {"vjb_api_url", "vjb_namespace", "vjb_bearer_token"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields")
+    set_clause = ", ".join(f"{k} = %s" for k in updates)
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE migration_projects SET {set_clause} WHERE project_id = %s",
+                list(updates.values()) + [project_id],
+            )
+    _log_activity(actor=actor, action="update_vjb_settings",
+                  resource_type="migration_project",
+                  resource_id=project_id,
+                  details={k: ("***" if k == "vjb_bearer_token" else v)
+                            for k, v in updates.items()})
+    return {"status": "ok", "updated": list(updates.keys())}
+
+
+def _list_existing_crd_names(base_url: str, crd_type: str, token: str) -> set:
+    """Return the set of CRD .metadata.name values that already exist."""
+    try:
+        data = _vjb_k8s_request("GET", f"{base_url}/{crd_type}", token)
+        items = data.get("items", [])
+        return {i.get("metadata", {}).get("name", "") for i in items}
+    except Exception:
+        return set()
+
+
+def _build_openstackcreds_crd(name: str, namespace: str,
+                               auth_url: str, project_name: str,
+                               domain_name: str, username: str, password: str) -> dict:
+    return {
+        "apiVersion": "vjailbreak.k8s.pf9.io/v1alpha1",
+        "kind": "OpenstackCreds",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "OS_AUTH_URL":      auth_url,
+            "OS_USERNAME":      username,
+            "OS_PASSWORD":      password,
+            "OS_PROJECT_NAME":  project_name,
+            "OS_DOMAIN_NAME":   domain_name,
+            "OS_INSECURE":      "true",
+        },
+    }
+
+
+def _build_networkmapping_crd(name: str, namespace: str,
+                               mappings: list) -> dict:
+    return {
+        "apiVersion": "vjailbreak.k8s.pf9.io/v1alpha1",
+        "kind": "NetworkMapping",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "networks": [
+                {"source": m["source"], "target": m["target"]}
+                for m in mappings
+            ],
+        },
+    }
+
+
+def _build_vmwarecreds_crd(name: str, namespace: str,
+                            vcenter_host: str, vcenter_user: str,
+                            vcenter_password: str, insecure: bool = True) -> dict:
+    return {
+        "apiVersion": "vjailbreak.k8s.pf9.io/v1alpha1",
+        "kind": "VMwareCreds",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "VCENTER_HOST":     vcenter_host,
+            "VCENTERUSERNAME":  vcenter_user,
+            "VCENTERPASSWORD":  vcenter_password,
+            "VCENTER_INSECURE": "true" if insecure else "false",
+        },
+    }
+
+
+def _fetch_bundle_data_for_push(project_id: str, conn) -> tuple:
+    """Return (project, tenants_with_creds, network_mappings) for push operations."""
+    project = _get_project(project_id, conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT mt.id, mt.tenant_name,
+                   mt.target_project_name, mt.target_domain_name,
+                   mu.username AS svc_username,
+                   mu.temp_password AS svc_password,
+                   pt.resource_id AS pcd_project_id
+            FROM migration_tenants mt
+            LEFT JOIN migration_tenant_users mu
+                   ON mu.tenant_id = mt.id AND mu.user_type = 'service_account'
+            LEFT JOIN migration_prep_tasks pt
+                   ON pt.project_id = mt.project_id
+                  AND pt.task_type = 'create_project'
+                  AND pt.tenant_name = mt.tenant_name
+                  AND pt.status = 'done'
+            WHERE mt.project_id = %s
+              AND COALESCE(mt.include_in_plan, true) = true
+            ORDER BY mt.tenant_name
+        """, (project_id,))
+        tenants = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT source_network_name, target_network_name, target_network_id
+            FROM migration_network_mappings
+            WHERE project_id = %s
+              AND confirmed = true
+              AND COALESCE(is_external, false) = false
+            ORDER BY source_network_name
+        """, (project_id,))
+        net_maps = [dict(r) for r in cur.fetchall()]
+
+    return project, tenants, net_maps
+
+
+@router.post("/projects/{project_id}/vjailbreak-push/dry-run",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def vjb_push_dry_run(project_id: str, request: Request,
+                           user=Depends(get_current_user)):
+    """Dry-run: check what would be created on vJailbreak without writing anything.
+
+    Body (optional):
+      vcenter_host, vcenter_user — include VMwareCreds in the preview
+    """
+    body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
+
+    with _get_conn() as conn:
+        project, tenants, net_maps = _fetch_bundle_data_for_push(project_id, conn)
+
+    vjb_url   = (project.get("vjb_api_url") or "").rstrip("/")
+    namespace = (project.get("vjb_namespace") or "migration").strip()
+    token     = project.get("vjb_bearer_token") or ""
+
+    if not vjb_url or not token:
+        return {
+            "status": "not_configured",
+            "message": "Configure vJailbreak API URL and bearer token in the settings panel first.",
+        }
+
+    base = f"{vjb_url}/apis/vjailbreak.k8s.pf9.io/v1alpha1/namespaces/{namespace}"
+
+    try:
+        existing_creds   = _list_existing_crd_names(base, "openstackcreds", token)
+        existing_netmaps = _list_existing_crd_names(base, "networkmappings", token)
+        existing_vmcreds = _list_existing_crd_names(base, "vmwarecreds", token)
+        reachable = True
+    except Exception as exc:
+        return {"status": "unreachable", "message": str(exc)}
+
+    auth_url = project.get("pcd_auth_url") or ""
+
+    creds_preview = []
+    no_svc = []
+    for t in tenants:
+        name = f"creds-{_k8s_name(t['tenant_name'])}"
+        has_svc = bool(t.get("svc_username") and t.get("svc_password"))
+        if not has_svc:
+            no_svc.append(t["tenant_name"])
+        creds_preview.append({
+            "tenant_name":     t["tenant_name"],
+            "crd_name":        name,
+            "action":          "skip_existing" if name in existing_creds else "create",
+            "has_service_acct": has_svc,
+        })
+
+    netmap_name = f"netmap-{_k8s_name(project_id)}"
+    netmap_preview = {
+        "crd_name": netmap_name,
+        "action":   "skip_existing" if netmap_name in existing_netmaps else "create",
+        "mapping_count": len(net_maps),
+    }
+
+    vmcreds_preview = None
+    vcenter_host = body.get("vcenter_host", "")
+    if vcenter_host:
+        vc_name = f"vcenter-{_k8s_name(vcenter_host)}"
+        vmcreds_preview = {
+            "crd_name": vc_name,
+            "action":   "skip_existing" if vc_name in existing_vmcreds else "create",
+        }
+
+    would_create = sum(1 for c in creds_preview if c["action"] == "create")
+    would_skip   = sum(1 for c in creds_preview if c["action"] == "skip_existing")
+    if netmap_preview["action"] == "create":
+        would_create += 1
+    else:
+        would_skip += 1
+    if vmcreds_preview:
+        if vmcreds_preview["action"] == "create":
+            would_create += 1
+        else:
+            would_skip += 1
+
+    return {
+        "status": "ok",
+        "reachable": reachable,
+        "vjb_api_url": vjb_url,
+        "namespace": namespace,
+        "would_create": would_create,
+        "would_skip_existing": would_skip,
+        "warnings": [f"No service account for: {n}" for n in no_svc],
+        "openstackcreds": creds_preview,
+        "networkmappings": netmap_preview,
+        "vmwarecreds": vmcreds_preview,
+    }
+
+
+@router.post("/projects/{project_id}/vjailbreak-push",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def vjb_push(project_id: str, request: Request,
+                   user=Depends(get_current_user)):
+    """Push credentials, network mappings, and (optionally) VMware creds to vJailbreak as Kubernetes CRDs.
+
+    Body: {vcenter_host?, vcenter_user?, vcenter_password?}
+    The vCenter password is NEVER stored — used only during this request.
+    """
+    actor = getattr(user, "username", "system")
+    body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
+
+    with _get_conn() as conn:
+        project, tenants, net_maps = _fetch_bundle_data_for_push(project_id, conn)
+
+        vjb_url   = (project.get("vjb_api_url") or "").rstrip("/")
+        namespace = (project.get("vjb_namespace") or "migration").strip()
+        token     = project.get("vjb_bearer_token") or ""
+
+        if not vjb_url or not token:
+            raise HTTPException(
+                status_code=400,
+                detail="vJailbreak API URL and bearer token must be configured in settings.",
+            )
+
+        base     = f"{vjb_url}/apis/vjailbreak.k8s.pf9.io/v1alpha1/namespaces/{namespace}"
+        auth_url = project.get("pcd_auth_url") or ""
+
+        # Clear previous push tasks for this project
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM migration_vjailbreak_push_tasks WHERE project_id = %s",
+                (project_id,),
+            )
+
+        existing_creds   = _list_existing_crd_names(base, "openstackcreds", token)
+        existing_netmaps = _list_existing_crd_names(base, "networkmappings", token)
+        existing_vmcreds = _list_existing_crd_names(base, "vmwarecreds", token)
+
+        results = []
+
+        # 1. OpenstackCreds — one per tenant
+        for t in tenants:
+            crd_name  = f"creds-{_k8s_name(t['tenant_name'])}"
+            svc_user  = t.get("svc_username") or ""
+            svc_pass  = t.get("svc_password") or ""
+            proj_name = t.get("target_project_name") or t["tenant_name"]
+            dom_name  = t.get("target_domain_name") or "Default"
+
+            if crd_name in existing_creds:
+                status, error = "skipped", None
+            elif not svc_user or not svc_pass:
+                status, error = "failed", "No service account credentials found"
+            else:
+                try:
+                    payload = _build_openstackcreds_crd(
+                        crd_name, namespace, auth_url,
+                        proj_name, dom_name, svc_user, svc_pass,
+                    )
+                    _vjb_k8s_request("POST", f"{base}/openstackcreds", token, payload)
+                    status, error = "done", None
+                except Exception as exc:
+                    status, error = "failed", str(exc)[:500]
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO migration_vjailbreak_push_tasks
+                        (project_id, tenant_name, resource_type, resource_name,
+                         status, error_message, pushed_by)
+                    VALUES (%s, %s, 'openstackcreds', %s, %s, %s, %s)
+                """, (project_id, t["tenant_name"], crd_name, status, error, actor))
+
+            results.append({"type": "openstackcreds", "name": crd_name,
+                             "tenant": t["tenant_name"], "status": status, "error": error})
+
+        # 2. NetworkMapping — one combined CRD for the whole project
+        if net_maps:
+            netmap_name = f"netmap-{_k8s_name(project_id)}"
+            if netmap_name in existing_netmaps:
+                nm_status, nm_error = "skipped", None
+            else:
+                try:
+                    mappings = [
+                        {
+                            "source": m["source_network_name"],
+                            "target": m.get("target_network_id") or m["target_network_name"],
+                        }
+                        for m in net_maps
+                    ]
+                    payload = _build_networkmapping_crd(netmap_name, namespace, mappings)
+                    _vjb_k8s_request("POST", f"{base}/networkmappings", token, payload)
+                    nm_status, nm_error = "done", None
+                except Exception as exc:
+                    nm_status, nm_error = "failed", str(exc)[:500]
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO migration_vjailbreak_push_tasks
+                        (project_id, tenant_name, resource_type, resource_name,
+                         status, error_message, pushed_by)
+                    VALUES (%s, NULL, 'networkmappings', %s, %s, %s, %s)
+                """, (project_id, netmap_name, nm_status, nm_error, actor))
+
+            results.append({"type": "networkmappings", "name": netmap_name,
+                             "tenant": None, "status": nm_status, "error": nm_error})
+
+        # 3. VMwareCreds — optional, at operator's request, password NOT stored
+        vcenter_host = body.get("vcenter_host", "").strip()
+        vcenter_user = body.get("vcenter_user", "").strip()
+        vcenter_pass = body.get("vcenter_password", "").strip()
+
+        if vcenter_host and vcenter_user and vcenter_pass:
+            vc_name = f"vcenter-{_k8s_name(vcenter_host)}"
+            if vc_name in existing_vmcreds:
+                vc_status, vc_error = "skipped", None
+            else:
+                try:
+                    payload = _build_vmwarecreds_crd(
+                        vc_name, namespace, vcenter_host, vcenter_user, vcenter_pass
+                    )
+                    _vjb_k8s_request("POST", f"{base}/vmwarecreds", token, payload)
+                    vc_status, vc_error = "done", None
+                except Exception as exc:
+                    vc_status, vc_error = "failed", str(exc)[:500]
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO migration_vjailbreak_push_tasks
+                        (project_id, tenant_name, resource_type, resource_name,
+                         status, error_message, pushed_by)
+                    VALUES (%s, NULL, 'vmwarecreds', %s, %s, %s, %s)
+                """, (project_id, vc_name, vc_status, vc_error, actor))
+
+            results.append({"type": "vmwarecreds", "name": vc_name,
+                             "tenant": None, "status": vc_status, "error": vc_error})
+
+    done_count    = sum(1 for r in results if r["status"] == "done")
+    skipped_count = sum(1 for r in results if r["status"] == "skipped")
+    failed_count  = sum(1 for r in results if r["status"] == "failed")
+
+    _log_activity(actor=actor, action="vjailbreak_push",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"done": done_count, "skipped": skipped_count, "failed": failed_count})
+
+    return {
+        "status": "ok",
+        "done":    done_count,
+        "skipped": skipped_count,
+        "failed":  failed_count,
+        "results": results,
+    }
+
+
+@router.get("/projects/{project_id}/vjailbreak-push-tasks",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_vjb_push_tasks(project_id: str):
+    """List all vJailbreak push task records for this project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_vjailbreak_push_tasks
+                WHERE project_id = %s
+                ORDER BY pushed_at DESC, id
+            """, (project_id,))
+            rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    done    = sum(1 for r in rows if r["status"] == "done")
+    skipped = sum(1 for r in rows if r["status"] == "skipped")
+    failed  = sum(1 for r in rows if r["status"] == "failed")
+    return {"tasks": rows, "done": done, "skipped": skipped, "failed": failed}
+
+
+@router.delete("/projects/{project_id}/vjailbreak-push-tasks",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def clear_vjb_push_tasks(project_id: str, user=Depends(get_current_user)):
+    """Clear the push task log for this project (safe — does NOT touch vJailbreak)."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM migration_vjailbreak_push_tasks WHERE project_id = %s",
+                (project_id,),
+            )
+            count = cur.rowcount
+    _log_activity(actor=actor, action="clear_vjb_push_tasks",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"deleted": count})
+    return {"status": "ok", "deleted": count}
+
