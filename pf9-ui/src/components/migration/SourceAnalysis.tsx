@@ -156,7 +156,7 @@ interface Props {
   onProjectUpdated: (p: MigrationProject) => void;
 }
 
-type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness" | "prepare" | "summary";
+type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness" | "prepare" | "vjb" | "summary";
 
 // Phase 3 — Wave Planning types
 interface Wave {
@@ -578,6 +578,7 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
           { id: "capacity" as SubView, label: "⚖️ Capacity" },
           { id: "readiness" as SubView, label: "🎯 PCD Readiness" },
           { id: "prepare" as SubView, label: "⚙️ Prepare PCD" },
+          { id: "vjb" as SubView, label: "🚀 vJailbreak Push" },
           { id: "plan" as SubView, label: "📋 Migration Plan" },
           { id: "summary" as SubView, label: "📈 Migration Summary" },
           { id: "risk" as SubView, label: "⚠️ Risk Config" },
@@ -1075,6 +1076,11 @@ export default function SourceAnalysis({ project, onProjectUpdated }: Props) {
       {/* ---- Prepare PCD (Phase 4B) ---- */}
       {subView === "prepare" && (
         <PreparePcdView projectId={pid} />
+      )}
+
+      {/* ---- vJailbreak Push (Phase 4D) ---- */}
+      {subView === "vjb" && (
+        <VJailbreakPushView projectId={pid} />
       )}
 
       {/* ---- Migration Summary (Phase 5.0) ---- */}
@@ -7790,25 +7796,55 @@ function ImageRequirementsView({ projectId }: { projectId: number }) {
 }
 
 /* ================================================================== */
-/*  Phase 4A — TenantUsersView  (4A.4)                               */
+/*  Phase 4D — TenantUsersView  (overhauled)                         */
 /* ================================================================== */
 
 function TenantUsersView({ projectId }: { projectId: number }) {
   const [users, setUsers] = useState<any[]>([]);
+  const [tenants, setTenants] = useState<{ id: number; tenant_name: string; target_domain_name: string | null }[]>([]);
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [seedingOwners, setSeedingOwners] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState<number | null>(null);
   const [editRow, setEditRow] = useState<Record<number, any>>({});
   const [showAdd, setShowAdd] = useState(false);
   const [newUser, setNewUser] = useState({ tenant_id: 0, username: "", email: "", role: "member", notes: "" });
 
+  // Filters
+  const [filterType, setFilterType] = useState<"all" | "service_account" | "tenant_owner">("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "confirmed" | "pending">("all");
+  const [filterRole, setFilterRole] = useState("all");
+  const [search, setSearch] = useState("");
+
+  // Find & Replace
+  const [showFR, setShowFR] = useState(false);
+  const [frField, setFrField] = useState("username");
+  const [frFind, setFrFind] = useState("");
+  const [frReplace, setFrReplace] = useState("");
+  const [frCase, setFrCase] = useState(false);
+  const [frBusy, setFrBusy] = useState(false);
+  const [frPreview, setFrPreview] = useState<{ matched: number; changes: any[] } | null>(null);
+
+  // Bulk select
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkRole, setBulkRole] = useState("member");
+  const [bulkBusy, setBulkBusy] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const r = await apiFetch<{ users: any[]; tenant_count: number; confirmed_tenant_count: number }>(
-        `/api/migration/projects/${projectId}/tenant-users`);
-      setUsers(r.users ?? []);
+      const [ur, tr] = await Promise.all([
+        apiFetch<{ users: any[] }>(`/api/migration/projects/${projectId}/tenant-users`),
+        apiFetch<{ tenants: any[] }>(`/api/migration/projects/${projectId}/tenants`),
+      ]);
+      setUsers(ur.users ?? []);
+      setTenants((tr.tenants ?? []).map((t: any) => ({
+        id: t.id,
+        tenant_name: t.tenant_name,
+        target_domain_name: t.target_domain_name ?? null,
+      })));
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }, [projectId]);
@@ -7825,6 +7861,30 @@ function TenantUsersView({ projectId }: { projectId: number }) {
       alert(`✓ Seeded ${r.created} service account(s). ${r.skipped} already existed.`);
     } catch (e: any) { setError(e.message); }
     finally { setSeeding(false); }
+  };
+
+  const seedOwners = async () => {
+    if (!window.confirm("Auto-create tenant owner accounts (admin@<domain>) for all tenants?\nExisting owners will be skipped.")) return;
+    setSeedingOwners(true);
+    try {
+      const r = await apiFetch<{ created: number; skipped: number }>(
+        `/api/migration/projects/${projectId}/tenant-users/seed-tenant-owners`, { method: "POST" });
+      await load();
+      alert(`✓ Seeded ${r.created} tenant owner(s). ${r.skipped} already existed.`);
+    } catch (e: any) { setError(e.message); }
+    finally { setSeedingOwners(false); }
+  };
+
+  const confirmAll = async () => {
+    if (!window.confirm("Mark ALL unconfirmed user definitions as confirmed?")) return;
+    setConfirmingAll(true);
+    try {
+      const r = await apiFetch<{ updated: number }>(
+        `/api/migration/projects/${projectId}/tenant-users/confirm-all`, { method: "POST" });
+      await load();
+      alert(`✓ ${r.updated} user(s) marked as confirmed.`);
+    } catch (e: any) { setError(e.message); }
+    finally { setConfirmingAll(false); }
   };
 
   const saveEdit = async (id: number) => {
@@ -7847,11 +7907,11 @@ function TenantUsersView({ projectId }: { projectId: number }) {
 
   const addUser = async () => {
     if (!newUser.tenant_id || !newUser.username.trim()) {
-      alert("Tenant ID and username are required."); return;
+      alert("Tenant and username are required."); return;
     }
     try {
       await apiFetch(`/api/migration/projects/${projectId}/tenant-users`, {
-        method: "POST", body: JSON.stringify({ ...newUser, user_type: "tenant_owner" })
+        method: "POST", body: JSON.stringify({ ...newUser, user_type: "tenant_owner" }),
       });
       setNewUser({ tenant_id: 0, username: "", email: "", role: "member", notes: "" });
       setShowAdd(false);
@@ -7859,8 +7919,61 @@ function TenantUsersView({ projectId }: { projectId: number }) {
     } catch (e: any) { setError(e.message); }
   };
 
-  // Group users by tenant_id
-  const grouped = users.reduce((acc: Record<number, any[]>, u) => {
+  const runFR = async (preview: boolean) => {
+    if (!frFind.trim()) { alert("Find text is required."); return; }
+    if (!preview && !window.confirm(`Apply find & replace?\nField: ${frField}\nFind: "${frFind}"\nReplace: "${frReplace}"`)) return;
+    setFrBusy(true);
+    try {
+      const r = await apiFetch<{ matched: number; changes: any[] }>(
+        `/api/migration/projects/${projectId}/tenant-users/bulk-replace`, {
+          method: "POST",
+          body: JSON.stringify({ field: frField, find: frFind, replace: frReplace, case_sensitive: frCase, preview }),
+        });
+      if (preview) {
+        setFrPreview(r);
+      } else {
+        setFrPreview(null);
+        await load();
+        alert(`✓ Updated ${r.matched} user(s).`);
+      }
+    } catch (e: any) { setError(e.message); }
+    finally { setFrBusy(false); }
+  };
+
+  const bulkAction = async (action: "confirm" | "set_role" | "delete") => {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    if (action === "delete" && !window.confirm(`Delete ${ids.length} selected user(s)? Only tenant_owner type can be deleted.`)) return;
+    setBulkBusy(true);
+    try {
+      const r = await apiFetch<{ updated: number }>(
+        `/api/migration/projects/${projectId}/tenant-users/bulk-action`, {
+          method: "POST",
+          body: JSON.stringify({ action, user_ids: ids, role: action === "set_role" ? bulkRole : undefined }),
+        });
+      setSelected(new Set());
+      await load();
+      alert(`✓ ${action} applied to ${r.updated} user(s).`);
+    } catch (e: any) { setError(e.message); }
+    finally { setBulkBusy(false); }
+  };
+
+  // Client-side filtering
+  const filtered = users.filter(u => {
+    if (filterType !== "all" && u.user_type !== filterType) return false;
+    if (filterStatus === "confirmed" && !u.confirmed) return false;
+    if (filterStatus === "pending" && u.confirmed) return false;
+    if (filterRole !== "all" && (u.role ?? "member") !== filterRole) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      if (!((u.username ?? "").toLowerCase().includes(q) ||
+            (u.email ?? "").toLowerCase().includes(q) ||
+            (u.tenant_name ?? "").toLowerCase().includes(q))) return false;
+    }
+    return true;
+  });
+
+  const grouped = filtered.reduce((acc: Record<number, any[]>, u) => {
     const tid = u.tenant_id ?? 0;
     if (!acc[tid]) acc[tid] = [];
     acc[tid].push(u);
@@ -7868,15 +7981,27 @@ function TenantUsersView({ projectId }: { projectId: number }) {
   }, {});
   const tenantIds = Object.keys(grouped).map(Number).sort((a, b) => a - b);
 
-  const confirmedTenants = tenantIds.filter(tid =>
-    grouped[tid].every((u: any) => u.confirmed)
+  // Stats from unfiltered users
+  const allGrouped = users.reduce((acc: Record<number, any[]>, u) => {
+    const tid = u.tenant_id ?? 0;
+    if (!acc[tid]) acc[tid] = [];
+    acc[tid].push(u);
+    return acc;
+  }, {});
+  const allTenantIds = Object.keys(allGrouped).map(Number);
+  const confirmedTenants = allTenantIds.filter(tid =>
+    allGrouped[tid].every((u: any) => u.confirmed)
   ).length;
+
+  const allFilteredIds = filtered.map(u => u.id);
+  const allSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => selected.has(id));
 
   if (loading) return <div style={{ color: "#6b7280", padding: 16 }}>Loading tenant users...</div>;
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
         <div>
           <h3 style={{ margin: 0 }}>👤 Per-Tenant User Definitions</h3>
           <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "0.85rem" }}>
@@ -7884,44 +8009,70 @@ function TenantUsersView({ projectId }: { projectId: number }) {
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {tenantIds.length > 0 && (
+          {allTenantIds.length > 0 && (
             <span style={{
               padding: "4px 10px", borderRadius: 6, fontSize: "0.78rem", fontWeight: 600,
-              background: confirmedTenants === tenantIds.length ? "#dcfce7" : "#fff7ed",
-              color: confirmedTenants === tenantIds.length ? "#15803d" : "#9a3412",
-              border: `1px solid ${confirmedTenants === tenantIds.length ? "#86efac" : "#fdba74"}`,
+              background: confirmedTenants === allTenantIds.length ? "#dcfce7" : "#fff7ed",
+              color: confirmedTenants === allTenantIds.length ? "#15803d" : "#9a3412",
+              border: `1px solid ${confirmedTenants === allTenantIds.length ? "#86efac" : "#fdba74"}`,
             }}>
-              {confirmedTenants}/{tenantIds.length} tenants confirmed
+              {confirmedTenants}/{allTenantIds.length} tenants confirmed
             </span>
           )}
           <button onClick={seed} disabled={seeding}
-            style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac" }}>
-            {seeding ? "⏳ Seeding..." : "🤖 Seed Service Accounts"}
+            style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", fontSize: "0.82rem", padding: "6px 12px" }}>
+            {seeding ? "⏳..." : "🤖 Seed Service Accts"}
+          </button>
+          <button onClick={seedOwners} disabled={seedingOwners}
+            style={{ ...btnSecondary, background: "#faf5ff", color: "#7c3aed", border: "1px solid #d8b4fe", fontSize: "0.82rem", padding: "6px 12px" }}>
+            {seedingOwners ? "⏳..." : "👤 Seed Tenant Owners"}
+          </button>
+          <button onClick={confirmAll} disabled={confirmingAll}
+            style={{ ...btnSecondary, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", fontSize: "0.82rem", padding: "6px 12px" }}>
+            {confirmingAll ? "⏳..." : "✓ Confirm All"}
           </button>
           <button onClick={() => setShowAdd(!showAdd)}
-            style={{ ...btnSecondary, background: showAdd ? "#eff6ff" : undefined }}>
+            style={{ ...btnSecondary, background: showAdd ? "#eff6ff" : undefined, fontSize: "0.82rem", padding: "6px 12px" }}>
             ➕ Add Owner
           </button>
-          <button onClick={load} style={btnSecondary}>🔄 Refresh</button>
+          <button onClick={() => { setShowFR(!showFR); setFrPreview(null); }}
+            style={{ ...btnSecondary, background: showFR ? "#fefce8" : undefined, fontSize: "0.82rem", padding: "6px 12px" }}>
+            🔁 Find &amp; Replace
+          </button>
+          <button onClick={load} style={{ ...btnSecondary, fontSize: "0.82rem", padding: "6px 12px" }}>🔄</button>
         </div>
       </div>
 
+      {/* Add Owner Form */}
       {showAdd && (
-        <div style={{ marginBottom: 14, padding: 14, background: "#f0fdf4",
-          border: "1px solid #86efac", borderRadius: 8 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8, color: "#15803d", fontSize: "0.88rem" }}>
-            ➕ Add Tenant Owner Account
-          </div>
+        <div style={{ marginBottom: 14, padding: 14, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, color: "#15803d", fontSize: "0.88rem" }}>➕ Add Tenant Owner Account</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8, marginBottom: 10 }}>
             <div>
-              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Tenant ID *</label>
-              <input type="number" value={newUser.tenant_id || ""} onChange={e => setNewUser(p => ({ ...p, tenant_id: +e.target.value }))}
-                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="numeric tenant ID" />
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Tenant *</label>
+              <select
+                value={newUser.tenant_id || ""}
+                onChange={e => {
+                  const tid = +e.target.value;
+                  const t = tenants.find(x => x.id === tid);
+                  const domain = t?.target_domain_name ?? t?.tenant_name ?? "";
+                  const slug = domain.toLowerCase().replace(/[^a-z0-9]/g, ".").replace(/\.+/g, ".").replace(/^\.|\.$/g, "");
+                  setNewUser(p => ({ ...p, tenant_id: tid, username: slug ? `admin@${slug}` : "" }));
+                }}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }}
+              >
+                <option value="">— select tenant —</option>
+                {tenants.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.tenant_name}{t.target_domain_name ? ` (${t.target_domain_name})` : ""}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Username *</label>
               <input value={newUser.username} onChange={e => setNewUser(p => ({ ...p, username: e.target.value }))}
-                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="e.g. admin@tenant.com" />
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="admin@domain.com" />
             </div>
             <div>
               <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Email</label>
@@ -7940,7 +8091,7 @@ function TenantUsersView({ projectId }: { projectId: number }) {
             <div>
               <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Notes</label>
               <input value={newUser.notes} onChange={e => setNewUser(p => ({ ...p, notes: e.target.value }))}
-                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="optional notes" />
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: "100%" }} placeholder="optional" />
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -7950,11 +8101,152 @@ function TenantUsersView({ projectId }: { projectId: number }) {
         </div>
       )}
 
+      {/* Find & Replace Panel */}
+      {showFR && (
+        <div style={{ marginBottom: 14, padding: 14, background: "#fefce8", border: "1px solid #fde047", borderRadius: 8 }}>
+          <div style={{ fontWeight: 600, marginBottom: 10, color: "#78350f", fontSize: "0.88rem" }}>🔁 Bulk Find &amp; Replace</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 8 }}>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Field</label>
+              <select value={frField} onChange={e => { setFrField(e.target.value); setFrPreview(null); }}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem" }}>
+                <option value="username">username</option>
+                <option value="email">email</option>
+                <option value="role">role</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Find</label>
+              <input value={frFind} onChange={e => { setFrFind(e.target.value); setFrPreview(null); }}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: 170 }} placeholder="text to find" />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Replace with</label>
+              <input value={frReplace} onChange={e => { setFrReplace(e.target.value); setFrPreview(null); }}
+                style={{ ...inputStyle, padding: "4px 6px", fontSize: "0.82rem", width: 170 }} placeholder="replacement" />
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.82rem", cursor: "pointer", paddingBottom: 2 }}>
+              <input type="checkbox" checked={frCase} onChange={e => setFrCase(e.target.checked)} /> Case-sensitive
+            </label>
+            <button onClick={() => runFR(true)} disabled={frBusy || !frFind.trim()}
+              style={{ ...btnSmall, background: "#fef9c3", color: "#78350f", border: "1px solid #fde047" }}>
+              {frBusy ? "⏳" : "👁 Preview"}
+            </button>
+            <button onClick={() => runFR(false)} disabled={frBusy || !frFind.trim() || frPreview === null}
+              style={{ ...btnSmall, background: "#16a34a", color: "#fff" }}>
+              {frBusy ? "⏳" : "✓ Apply"}
+            </button>
+          </div>
+          {frPreview && (
+            <div style={{ marginTop: 6, fontSize: "0.8rem" }}>
+              <span style={{ fontWeight: 600, color: frPreview.matched > 0 ? "#15803d" : "#6b7280" }}>
+                {frPreview.matched} match{frPreview.matched !== 1 ? "es" : ""} found
+              </span>
+              {(frPreview.changes ?? []).slice(0, 6).map((c: any, i: number) => (
+                <div key={i} style={{ marginLeft: 12, color: "#374151" }}>
+                  <span style={{ color: "#dc2626" }}>— {c.old}</span>{" → "}
+                  <span style={{ color: "#16a34a" }}>+ {c.new_val}</span>
+                  {" "}<span style={{ color: "#9ca3af", fontSize: "0.72rem" }}>({c.tenant_name})</span>
+                </div>
+              ))}
+              {(frPreview.changes?.length ?? 0) > 6 && (
+                <div style={{ marginLeft: 12, color: "#9ca3af" }}>...and {frPreview.changes.length - 6} more</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Filter Bar */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 12,
+        padding: "8px 10px", background: "#f9fafb", border: "1px solid var(--border, #e5e7eb)", borderRadius: 6 }}>
+        <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "#374151" }}>Filter:</span>
+        <select value={filterType} onChange={e => setFilterType(e.target.value as any)}
+          style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.78rem" }}>
+          <option value="all">All types</option>
+          <option value="service_account">🤖 Service Accounts</option>
+          <option value="tenant_owner">👤 Tenant Owners</option>
+        </select>
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as any)}
+          style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.78rem" }}>
+          <option value="all">All status</option>
+          <option value="confirmed">✓ Confirmed</option>
+          <option value="pending">⏳ Pending</option>
+        </select>
+        <select value={filterRole} onChange={e => setFilterRole(e.target.value)}
+          style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.78rem" }}>
+          <option value="all">All roles</option>
+          <option value="admin">admin</option>
+          <option value="member">member</option>
+          <option value="reader">reader</option>
+        </select>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          style={{ ...inputStyle, padding: "3px 8px", fontSize: "0.78rem", width: 200 }}
+          placeholder="🔍 search username / email / tenant..." />
+        {(filterType !== "all" || filterStatus !== "all" || filterRole !== "all" || search.trim()) && (
+          <button onClick={() => { setFilterType("all"); setFilterStatus("all"); setFilterRole("all"); setSearch(""); }}
+            style={{ ...btnSmall, fontSize: "0.72rem", padding: "2px 8px", color: "#6b7280" }}>✕ Clear</button>
+        )}
+        <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "#9ca3af" }}>
+          {filtered.length}/{users.length} users shown
+        </span>
+      </div>
+
+      {/* Bulk Action Toolbar */}
+      {selected.size > 0 && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10,
+          padding: "8px 12px", background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 6 }}>
+          <span style={{ fontWeight: 600, fontSize: "0.82rem", color: "#1d4ed8" }}>
+            {selected.size} selected
+          </span>
+          <button onClick={() => bulkAction("confirm")} disabled={bulkBusy}
+            style={{ ...btnSmall, background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", fontSize: "0.75rem" }}>
+            {bulkBusy ? "⏳" : "✓ Confirm"}
+          </button>
+          <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <select value={bulkRole} onChange={e => setBulkRole(e.target.value)}
+              style={{ ...inputStyle, padding: "2px 4px", fontSize: "0.75rem" }}>
+              <option value="admin">admin</option>
+              <option value="member">member</option>
+              <option value="reader">reader</option>
+            </select>
+            <button onClick={() => bulkAction("set_role")} disabled={bulkBusy}
+              style={{ ...btnSmall, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #93c5fd", fontSize: "0.75rem" }}>
+              Set Role
+            </button>
+          </span>
+          <button onClick={() => bulkAction("delete")} disabled={bulkBusy}
+            style={{ ...btnSmall, background: "#fef2f2", color: "#dc2626", border: "1px solid #fca5a5", fontSize: "0.75rem" }}>
+            🗑 Delete
+          </button>
+          <button onClick={() => setSelected(new Set())}
+            style={{ ...btnSmall, fontSize: "0.72rem", color: "#6b7280", padding: "2px 8px" }}>✕ Clear sel</button>
+        </div>
+      )}
+
+      {/* Select-all toggle above the table area */}
+      {filtered.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, fontSize: "0.78rem", color: "#6b7280" }}>
+          <input type="checkbox" checked={allSelected}
+            onChange={() => {
+              if (allSelected) {
+                setSelected(prev => { const n = new Set(prev); allFilteredIds.forEach(id => n.delete(id)); return n; });
+              } else {
+                setSelected(prev => new Set([...prev, ...allFilteredIds]));
+              }
+            }}
+          />
+          <span>{allSelected ? "Deselect all" : "Select all visible"} ({filtered.length})</span>
+        </div>
+      )}
+
       {error && <div style={{ ...alertError, marginBottom: 10 }}>{error}</div>}
 
       {tenantIds.length === 0 ? (
         <div style={{ color: "#6b7280", textAlign: "center", padding: "24px 0", fontSize: "0.88rem" }}>
-          No user definitions yet. Click "Seed Service Accounts" to auto-create migration service accounts.
+          {users.length === 0
+            ? "No user definitions yet. Click \"Seed Service Accounts\" to auto-create migration service accounts."
+            : "No users match the current filters."}
         </div>
       ) : (
         tenantIds.map(tid => {
@@ -7981,6 +8273,20 @@ function TenantUsersView({ projectId }: { projectId: number }) {
               <table style={{ ...tableStyle, fontSize: "0.8rem" }}>
                 <thead>
                   <tr>
+                    <th style={{ ...thStyle, width: 32, textAlign: "center", fontSize: "0.75rem", padding: "8px 6px" }}>
+                      <input type="checkbox"
+                        checked={tenantUsers.every(u => selected.has(u.id))}
+                        onChange={() => {
+                          const ids = tenantUsers.map(u => u.id);
+                          const allIn = ids.every(id => selected.has(id));
+                          setSelected(prev => {
+                            const n = new Set(prev);
+                            ids.forEach(id => allIn ? n.delete(id) : n.add(id));
+                            return n;
+                          });
+                        }}
+                      />
+                    </th>
                     <th style={{ ...thStyle, fontSize: "0.75rem" }}>Type</th>
                     <th style={{ ...thStyle, fontSize: "0.75rem" }}>Username</th>
                     <th style={{ ...thStyle, fontSize: "0.75rem" }}>Email</th>
@@ -7995,7 +8301,16 @@ function TenantUsersView({ projectId }: { projectId: number }) {
                     const ed = editRow[u.id];
                     const isEditing = !!ed;
                     return (
-                      <tr key={u.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                      <tr key={u.id} style={{ borderBottom: "1px solid #e5e7eb",
+                        background: selected.has(u.id) ? "#eff6ff" : undefined }}>
+                        <td style={{ ...tdStyle, textAlign: "center", padding: "6px 6px" }}>
+                          <input type="checkbox" checked={selected.has(u.id)}
+                            onChange={() => setSelected(prev => {
+                              const n = new Set(prev);
+                              n.has(u.id) ? n.delete(u.id) : n.add(u.id);
+                              return n;
+                            })} />
+                        </td>
                         <td style={tdStyle}>
                           <span style={{ ...pillStyle, fontSize: "0.68rem",
                             background: u.user_type === "service_account" ? "#eff6ff" : "#faf5ff",
@@ -8075,6 +8390,397 @@ function TenantUsersView({ projectId }: { projectId: number }) {
     </div>
   );
 }
+
+/* ================================================================== */
+/*  Phase 4D — VJailbreakPushView                                     */
+/* ================================================================== */
+
+function VJailbreakPushView({ projectId }: { projectId: number }) {
+  const [settings, setSettings] = useState<{
+    vjb_api_url: string; vjb_namespace: string; has_token: boolean; masked_token: string
+  } | null>(null);
+  const [editUrl, setEditUrl] = useState("");
+  const [editNs, setEditNs] = useState("migration");
+  const [editToken, setEditToken] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(true);
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  const [vcHost, setVcHost] = useState("");
+  const [vcUser, setVcUser] = useState("");
+  const [vcPass, setVcPass] = useState("");
+  const [vcInsecure, setVcInsecure] = useState(true);
+  const [vcOpen, setVcOpen] = useState(false);
+
+  const [dryRunResult, setDryRunResult] = useState<any>(null);
+  const [dryRunBusy, setDryRunBusy] = useState(false);
+  const [pushResult, setPushResult] = useState<any>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [clearingTasks, setClearingTasks] = useState(false);
+
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/vjailbreak-push-settings`);
+      setSettings(r);
+      setEditUrl(r.vjb_api_url ?? "");
+      setEditNs(r.vjb_namespace ?? "migration");
+    } catch (_) {}
+  }, [projectId]);
+
+  const loadTasks = useCallback(async () => {
+    setTasksLoading(true);
+    try {
+      const r = await apiFetch<{ tasks: any[] }>(`/api/migration/projects/${projectId}/vjailbreak-push-tasks`);
+      setTasks(r.tasks ?? []);
+    } catch (e: any) { setError(e.message); }
+    finally { setTasksLoading(false); }
+  }, [projectId]);
+
+  useEffect(() => { loadSettings(); loadTasks(); }, [loadSettings, loadTasks]);
+
+  const saveSettings = async () => {
+    setSavingSettings(true); setError(""); setSuccess("");
+    try {
+      const body: any = { vjb_api_url: editUrl.trim(), vjb_namespace: editNs.trim() };
+      if (editToken.trim()) body.vjb_bearer_token = editToken.trim();
+      await apiFetch(`/api/migration/projects/${projectId}/vjailbreak-push-settings`, {
+        method: "PATCH", body: JSON.stringify(body),
+      });
+      setEditToken("");
+      await loadSettings();
+      setSuccess("✓ Settings saved.");
+    } catch (e: any) { setError(e.message); }
+    finally { setSavingSettings(false); }
+  };
+
+  const dryRun = async () => {
+    setDryRunBusy(true); setError(""); setDryRunResult(null);
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/vjailbreak-push/dry-run`,
+        { method: "POST" });
+      setDryRunResult(r);
+    } catch (e: any) { setError(e.message); }
+    finally { setDryRunBusy(false); }
+  };
+
+  const doPush = async () => {
+    if (!dryRunResult) {
+      alert("Run a dry-run first to preview what will be created."); return;
+    }
+    if (!window.confirm(
+      `Push ${dryRunResult.would_create} CRD(s) to vJailbreak?\n${dryRunResult.would_skip_existing} will be skipped (already exist).`
+    )) return;
+    setPushBusy(true); setError(""); setPushResult(null);
+    try {
+      const body: any = {};
+      if (vcHost.trim()) {
+        body.vcenter_host = vcHost.trim();
+        body.vcenter_username = vcUser.trim();
+        body.vcenter_password = vcPass;
+        body.vcenter_insecure = vcInsecure;
+      }
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/vjailbreak-push`, {
+        method: "POST", body: JSON.stringify(body),
+      });
+      setPushResult(r);
+      await loadTasks();
+      setSuccess(`✓ Push complete: ${r.done} created, ${r.skipped} skipped, ${r.failed} failed.`);
+    } catch (e: any) { setError(e.message); }
+    finally { setPushBusy(false); }
+  };
+
+  const clearTasks = async () => {
+    if (!window.confirm("Clear the push task log? This does NOT remove anything from vJailbreak.")) return;
+    setClearingTasks(true);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/vjailbreak-push-tasks`, { method: "DELETE" });
+      setTasks([]);
+    } catch (e: any) { setError(e.message); }
+    finally { setClearingTasks(false); }
+  };
+
+  const taskStats = tasks.reduce((acc: Record<string, number>, t) => {
+    acc[t.status] = (acc[t.status] ?? 0) + 1; return acc;
+  }, {});
+
+  const apiConfigured = !!(settings?.vjb_api_url);
+
+  return (
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <h3 style={{ margin: 0 }}>🚀 vJailbreak CRD Push</h3>
+        <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "0.85rem" }}>
+          Create <code>OpenstackCreds</code>, <code>NetworkMappings</code>, and <code>VMwareCreds</code> CRDs
+          directly on vJailbreak via its Kubernetes CRD API.
+        </p>
+      </div>
+
+      {error && <div style={{ ...alertError, marginBottom: 10 }}>{error}</div>}
+      {success && <div style={{ ...alertSuccess, marginBottom: 10 }}>{success}</div>}
+
+      {/* Connection Settings Panel */}
+      <div style={{ marginBottom: 14, border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, overflow: "hidden" }}>
+        <div onClick={() => setSettingsOpen(o => !o)}
+          style={{ padding: "10px 14px", background: "#f9fafb", cursor: "pointer",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            borderBottom: settingsOpen ? "1px solid var(--border, #e5e7eb)" : "none" }}>
+          <strong style={{ fontSize: "0.88rem" }}>⚙️ Connection Settings</strong>
+          <span style={{ fontSize: "0.8rem" }}>
+            {apiConfigured
+              ? <span style={{ color: "#15803d" }}>✓ {settings!.vjb_api_url}</span>
+              : <span style={{ color: "#9a3412" }}>Not configured</span>}
+            {" "}{settingsOpen ? "▲" : "▼"}
+          </span>
+        </div>
+        {settingsOpen && (
+          <div style={{ padding: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10, marginBottom: 12 }}>
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>API URL *</label>
+                <input value={editUrl} onChange={e => setEditUrl(e.target.value)}
+                  style={{ ...inputStyle, padding: "5px 8px", fontSize: "0.82rem", width: "100%" }}
+                  placeholder="https://vjailbreak.yourdomain.com" />
+              </div>
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Namespace</label>
+                <input value={editNs} onChange={e => setEditNs(e.target.value)}
+                  style={{ ...inputStyle, padding: "5px 8px", fontSize: "0.82rem", width: "100%" }}
+                  placeholder="migration" />
+              </div>
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>
+                  Bearer Token{settings?.has_token && <span style={{ color: "#15803d", fontWeight: 400 }}> ({settings.masked_token} — leave blank to keep)</span>}
+                </label>
+                <input type="password" value={editToken} onChange={e => setEditToken(e.target.value)}
+                  style={{ ...inputStyle, padding: "5px 8px", fontSize: "0.82rem", width: "100%" }}
+                  placeholder={settings?.has_token ? "leave blank to keep current" : "paste Bearer token"} />
+              </div>
+            </div>
+            <button onClick={saveSettings} disabled={savingSettings}
+              style={{ ...btnSmall, background: "#2563eb", color: "#fff", padding: "6px 16px" }}>
+              {savingSettings ? "⏳ Saving..." : "💾 Save Settings"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* VMware Credentials Panel (optional, not stored) */}
+      <div style={{ marginBottom: 14, border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, overflow: "hidden" }}>
+        <div onClick={() => setVcOpen(o => !o)}
+          style={{ padding: "10px 14px", background: "#f9fafb", cursor: "pointer",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            borderBottom: vcOpen ? "1px solid var(--border, #e5e7eb)" : "none" }}>
+          <strong style={{ fontSize: "0.88rem" }}>
+            🖥️ VMware Credentials
+            <span style={{ color: "#6b7280", fontSize: "0.78rem", fontWeight: 400 }}> (optional — not stored)</span>
+          </strong>
+          <span style={{ fontSize: "0.8rem" }}>
+            {vcHost.trim()
+              ? <span style={{ color: "#15803d" }}>✓ {vcHost}</span>
+              : <span style={{ color: "#9ca3af" }}>Not set — VMwareCreds CRD will be skipped</span>}
+            {" "}{vcOpen ? "▲" : "▼"}
+          </span>
+        </div>
+        {vcOpen && (
+          <div style={{ padding: 14 }}>
+            <p style={{ margin: "0 0 10px", fontSize: "0.82rem", color: "#6b7280" }}>
+              Password is sent only for this push session and is never persisted to the database.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>vCenter Host</label>
+                <input value={vcHost} onChange={e => setVcHost(e.target.value)}
+                  style={{ ...inputStyle, padding: "5px 8px", fontSize: "0.82rem", width: "100%" }}
+                  placeholder="vcenter.domain.com" />
+              </div>
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Username</label>
+                <input value={vcUser} onChange={e => setVcUser(e.target.value)}
+                  style={{ ...inputStyle, padding: "5px 8px", fontSize: "0.82rem", width: "100%" }}
+                  placeholder="administrator@vsphere.local" />
+              </div>
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "#374151", display: "block", marginBottom: 2 }}>Password</label>
+                <input type="password" value={vcPass} onChange={e => setVcPass(e.target.value)}
+                  style={{ ...inputStyle, padding: "5px 8px", fontSize: "0.82rem", width: "100%" }}
+                  placeholder="password" />
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-end", paddingBottom: 4 }}>
+                <label style={{ display: "flex", gap: 6, fontSize: "0.82rem", cursor: "pointer", alignItems: "center" }}>
+                  <input type="checkbox" checked={vcInsecure} onChange={e => setVcInsecure(e.target.checked)} />
+                  Skip TLS verification
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Dry Run + Push Actions */}
+      <div style={{ marginBottom: 14, padding: 16, border: "1px solid var(--border, #e5e7eb)", borderRadius: 8 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+          <button onClick={dryRun} disabled={dryRunBusy || !apiConfigured}
+            style={{ ...btnSecondary, background: "#fefce8", border: "1px solid #fde047", color: "#78350f", fontWeight: 600 }}>
+            {dryRunBusy ? "⏳ Running..." : "🔍 Dry Run Preview"}
+          </button>
+          <button onClick={doPush} disabled={pushBusy || !apiConfigured || !dryRunResult}
+            style={{ ...btnPrimary }}>
+            {pushBusy ? "⏳ Pushing..." : "🚀 Push to vJailbreak"}
+          </button>
+          {!apiConfigured && (
+            <span style={{ fontSize: "0.8rem", color: "#9a3412" }}>⚠️ Configure API URL in Connection Settings first</span>
+          )}
+          {apiConfigured && !dryRunResult && !pushBusy && (
+            <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>Run a dry-run first to preview changes before pushing</span>
+          )}
+        </div>
+
+        {/* Dry Run Result */}
+        {dryRunResult && (
+          <div>
+            <div style={{ display: "flex", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+              <span style={{ padding: "4px 12px", borderRadius: 6, background: "#dcfce7", color: "#15803d", fontWeight: 600, fontSize: "0.82rem" }}>
+                {dryRunResult.would_create} to create
+              </span>
+              <span style={{ padding: "4px 12px", borderRadius: 6, background: "#f3f4f6", color: "#6b7280", fontWeight: 600, fontSize: "0.82rem" }}>
+                {dryRunResult.would_skip_existing} already exist (will skip)
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 10 }}>
+              {/* OpenstackCreds */}
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ padding: "6px 10px", background: "#eff6ff", fontWeight: 600, fontSize: "0.78rem", color: "#1d4ed8" }}>
+                  OpenstackCreds ({(dryRunResult.openstackcreds ?? []).length})
+                </div>
+                <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                  {(dryRunResult.openstackcreds ?? []).map((c: any, i: number) => (
+                    <div key={i} style={{ padding: "4px 10px", fontSize: "0.75rem", borderBottom: "1px solid #f3f4f6",
+                      display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: "monospace" }}>{c.name}</span>
+                      <span style={{ color: c.exists ? "#9ca3af" : "#15803d" }}>{c.exists ? "skip" : "create"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* NetworkMappings */}
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ padding: "6px 10px", background: "#f0fdf4", fontWeight: 600, fontSize: "0.78rem", color: "#15803d" }}>
+                  NetworkMappings ({(dryRunResult.networkmappings ?? []).length})
+                </div>
+                <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                  {(dryRunResult.networkmappings ?? []).map((c: any, i: number) => (
+                    <div key={i} style={{ padding: "4px 10px", fontSize: "0.75rem", borderBottom: "1px solid #f3f4f6",
+                      display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: "monospace" }}>{c.name}</span>
+                      <span style={{ color: c.exists ? "#9ca3af" : "#15803d" }}>{c.exists ? "skip" : "create"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* VMwareCreds (if available) */}
+              {dryRunResult.vmwarecreds && (
+                <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden" }}>
+                  <div style={{ padding: "6px 10px", background: "#fdf4ff", fontWeight: 600, fontSize: "0.78rem", color: "#7c3aed" }}>
+                    VMwareCreds (1)
+                  </div>
+                  <div style={{ padding: "4px 10px", fontSize: "0.75rem", display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontFamily: "monospace" }}>{dryRunResult.vmwarecreds.name}</span>
+                    <span style={{ color: dryRunResult.vmwarecreds.exists ? "#9ca3af" : "#7c3aed" }}>
+                      {dryRunResult.vmwarecreds.exists ? "skip" : "create"}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Push Result Summary */}
+        {pushResult && (
+          <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: 6, fontSize: "0.82rem",
+            background: pushResult.failed > 0 ? "#fef2f2" : "#f0fdf4",
+            border: `1px solid ${pushResult.failed > 0 ? "#fca5a5" : "#86efac"}` }}>
+            Push complete: <strong>{pushResult.done} created</strong>, {pushResult.skipped} skipped, {pushResult.failed} failed.
+            {pushResult.failed > 0 && <span style={{ color: "#dc2626" }}> — See task log below for errors.</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Task Log */}
+      <div style={{ border: "1px solid var(--border, #e5e7eb)", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ padding: "10px 14px", background: "#f9fafb",
+          borderBottom: "1px solid var(--border, #e5e7eb)",
+          display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <strong style={{ fontSize: "0.88rem" }}>📋 Push Task Log</strong>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {Object.entries(taskStats).map(([s, c]) => (
+              <span key={s} style={{ ...pillStyle, fontSize: "0.72rem",
+                background: s === "done" ? "#dcfce7" : s === "failed" ? "#fef2f2" : s === "skipped" ? "#f3f4f6" : "#fff7ed",
+                color: s === "done" ? "#15803d" : s === "failed" ? "#dc2626" : s === "skipped" ? "#6b7280" : "#ea580c" }}>
+                {c as number} {s}
+              </span>
+            ))}
+            <button onClick={loadTasks} style={{ ...btnSmall, fontSize: "0.72rem", padding: "2px 8px" }}>🔄</button>
+            {tasks.length > 0 && (
+              <button onClick={clearTasks} disabled={clearingTasks}
+                style={{ ...btnSmall, background: "#fef2f2", color: "#dc2626", border: "1px solid #fca5a5", fontSize: "0.72rem", padding: "2px 8px" }}>
+                {clearingTasks ? "⏳" : "🗑 Clear"}
+              </button>
+            )}
+          </div>
+        </div>
+        {tasksLoading ? (
+          <div style={{ padding: 14, color: "#6b7280", fontSize: "0.85rem" }}>Loading...</div>
+        ) : tasks.length === 0 ? (
+          <div style={{ padding: "20px 14px", color: "#9ca3af", fontSize: "0.85rem", textAlign: "center" }}>
+            No push tasks yet. Run a push to create CRDs on vJailbreak.
+          </div>
+        ) : (
+          <table style={{ ...tableStyle, fontSize: "0.78rem" }}>
+            <thead>
+              <tr>
+                <th style={thStyleSm}>Tenant</th>
+                <th style={thStyleSm}>Resource Type</th>
+                <th style={thStyleSm}>CRD Name</th>
+                <th style={thStyleSm}>Status</th>
+                <th style={thStyleSm}>Error</th>
+                <th style={thStyleSm}>Pushed At</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((t: any) => (
+                <tr key={t.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                  <td style={tdStyleSm}>{t.tenant_name ?? "—"}</td>
+                  <td style={tdStyleSm}><code style={{ fontSize: "0.72rem" }}>{t.resource_type}</code></td>
+                  <td style={{ ...tdStyleSm, fontFamily: "monospace" }}>{t.resource_name ?? "—"}</td>
+                  <td style={tdStyleSm}>
+                    <span style={{ ...pillStyle, fontSize: "0.7rem",
+                      background: t.status === "done" ? "#dcfce7" : t.status === "failed" ? "#fef2f2" : t.status === "skipped" ? "#f3f4f6" : "#fff7ed",
+                      color: t.status === "done" ? "#15803d" : t.status === "failed" ? "#dc2626" : t.status === "skipped" ? "#6b7280" : "#ea580c" }}>
+                      {t.status}
+                    </span>
+                  </td>
+                  <td style={{ ...tdStyleSm, color: "#dc2626", maxWidth: 240, wordBreak: "break-word" }}>
+                    {t.error_message ?? "—"}
+                  </td>
+                  <td style={{ ...tdStyleSm, color: "#6b7280" }}>
+                    {t.pushed_at ? new Date(t.pushed_at).toLocaleString() : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 /* ------------------------------------------------------------------ */
 /*  Styles                                                             */

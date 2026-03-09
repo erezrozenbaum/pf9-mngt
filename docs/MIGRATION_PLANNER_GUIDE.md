@@ -540,7 +540,7 @@ Phase 4A collects the information that cannot be derived from RVTools — the ac
 | **4A.1 Subnet Details** | CIDR, gateway, DNS, DHCP pool start/end per confirmed network mapping | `PATCH /network-mappings/{id}`, `POST /network-mappings/confirm-all` |
 | **4A.2 Flavor Staging** | Review de-duplicated (vCPU, RAM) shapes; rename, Find & Replace, confirm or skip | `GET/PATCH /flavor-staging`, `POST /flavor-staging/confirm-all` |
 | **4A.3 Image Requirements** | One row per OS family; confirm after uploading to PCD Glance | `GET/PATCH /image-requirements`, `POST /image-requirements/confirm-all` |
-| **4A.4 Tenant Users** | Define service accounts and owner accounts per tenant | `GET/POST/PATCH/DELETE /tenant-users` |
+| **4A.4 Tenant Users** | Define service accounts and owner accounts per tenant; seed all-tenant owner accounts in bulk, bulk find-and-replace fields, confirm & bulk-action | `GET/POST/PATCH/DELETE /tenant-users`, `POST /tenant-users/seed-tenant-owners`, `POST /tenant-users/bulk-replace`, `POST /tenant-users/confirm-all`, `POST /tenant-users/bulk-action` |
 
 The **⚙️ Prepare PCD** tab gate (`GET /prep-readiness`) will show red ✗ for any unfinished item.
 
@@ -877,6 +877,21 @@ Any VM can have `tech_fix_minutes_override` set, locking it to an operator-suppl
 | `POST` | `/api/migration/projects/{id}/tenant-users` | Add user definition |
 | `PATCH` | `/api/migration/projects/{id}/tenant-users/{id}` | Update user |
 | `DELETE` | `/api/migration/projects/{id}/tenant-users/{id}` | Remove user |
+| `POST` | `/api/migration/projects/{id}/tenant-users/seed-tenant-owners` | Bulk-seed one `admin@<slug>` owner per tenant (idempotent) |
+| `POST` | `/api/migration/projects/{id}/tenant-users/bulk-replace` | Regex find-and-replace across a user field (preview + apply) |
+| `POST` | `/api/migration/projects/{id}/tenant-users/confirm-all` | Mark all unconfirmed users as confirmed |
+| `POST` | `/api/migration/projects/{id}/tenant-users/bulk-action` | Confirm / set-role / delete for a set of user IDs |
+
+### Phase 4D — vJailbreak CRD Push *(v1.46.0)*
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/migration/projects/{id}/vjailbreak-push-settings` | Get vJailbreak API URL, namespace, and token status |
+| `PATCH` | `/api/migration/projects/{id}/vjailbreak-push-settings` | Update URL, namespace, or bearer token |
+| `POST` | `/api/migration/projects/{id}/vjailbreak-push/dry-run` | Simulate CRD push — returns `would_create` / `would_skip` counts per type |
+| `POST` | `/api/migration/projects/{id}/vjailbreak-push` | Push `OpenstackCreds`, `VMwareCreds`, `NetworkMappings` CRDs to vJailbreak cluster |
+| `GET` | `/api/migration/projects/{id}/vjailbreak-push-tasks` | List task log for all CRD push attempts |
+| `DELETE` | `/api/migration/projects/{id}/vjailbreak-push-tasks` | Clear push task log |
 
 ### Phase 4B — PCD Auto-Provisioning
 

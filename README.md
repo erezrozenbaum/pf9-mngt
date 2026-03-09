@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.45.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.46.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -682,7 +682,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.45.5](CHANGELOG.md) — March 8, 2026
+**Current version:** [v1.46.0](CHANGELOG.md) — March 9, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -825,6 +825,15 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.46.0 — Migration Planner Phase 4D: vJailbreak CRD Push + Tenant User Overhaul
+- ✅ **vJailbreak CRD Push tab** — new 🚀 sub-tab in the Migration Planner pushes `OpenstackCreds`, `VMwareCreds`, and `NetworkMappings` CRDs directly to a vJailbreak Kubernetes cluster via its `/apis/vjailbreak.k8s.pf9.io/v1alpha1/` API; supports dry-run preview, idempotent apply (skip-if-exists), and per-resource task log
+- ✅ **Connection settings** — per-project `vjb_api_url`, `vjb_namespace`, and `vjb_bearer_token` stored on `migration_projects`; token is masked in API responses
+- ✅ **Tenant Users tab overhauled** — filter bar (type/status/role/search), 🔁 Find & Replace panel for bulk field edits, bulk-select toolbar (confirm / set-role / delete), 🌱 Seed Tenant Owners button, ✓ Confirm All button
+- ✅ **`migration_vjailbreak_push_tasks` table** — tracks every CRD push attempt (resource type, name, status, error, actor, timestamp)
+- ✅ **`POST /tenant-users/seed-tenant-owners`** — bulk-creates one `admin@<slug>` owner account per tenant with a random 20-char password; idempotent (skips existing)
+- ✅ **`POST /tenant-users/bulk-replace`** — regex-based find-and-replace across a chosen user field for all users in a project (preview + apply)
+- ✅ **`POST /tenant-users/bulk-action`** — confirm / set-role / delete for a set of user IDs in one call
 
 ### v1.44.2 — VM Provisioning: Windows Glance image properties auto-patched on execution
 - ✅ **Windows Glance properties auto-set** — execution thread now patches the image with `os_type=windows`, `hw_disk_bus=scsi`, `hw_scsi_model=virtio-scsi`, `hw_firmware_type=bios` before creating the boot volume, fixing boot failures caused by missing hardware metadata
@@ -1093,4 +1102,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.45.3 | **Last Updated**: March 8, 2026
+**Project Status**: Active Development | **Version**: 1.46.0 | **Last Updated**: March 9, 2026

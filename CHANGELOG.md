@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.46.0] - 2026-03-10
+
+### Added — Migration Planner Phase 4D: vJailbreak Push + Users UX Overhaul
+
+#### DB Migration (`db/migrate_phase4d.sql`)
+- **`migration_projects` table** — three new columns: `vjb_api_url TEXT`, `vjb_namespace TEXT DEFAULT 'migration'`, `vjb_bearer_token TEXT` for per-project vJailbreak Kubernetes CRD API config.
+- **`migration_vjailbreak_push_tasks` table** — task log for each CRD push operation: `project_id`, `cohort_id`, `tenant_name`, `resource_type`, `resource_name`, `status` (pending/done/skipped/failed), `error_message`, `pushed_by`, `pushed_at`.
+
+#### Backend API (`api/migration_routes.py`)
+- **`POST /projects/{id}/tenant-users/seed-tenant-owners`** — bulk-seeds one `tenant_owner` record per tenant (`admin@<domain_slug>` using `target_domain_name` if set, else `tenant_name`); skips tenants that already have a `tenant_owner` row.
+- **`POST /projects/{id}/tenant-users/confirm-all`** — marks all unconfirmed user rows as `confirmed=true`; returns `{updated: N}`.
+- **`POST /projects/{id}/tenant-users/bulk-replace`** — find-and-replace on `username`, `email`, or `role` fields across all tenant users for a project; supports `preview: true` (dry-run returns match count + sample diffs without writing).
+- **`POST /projects/{id}/tenant-users/bulk-action`** — mass `confirm`, `set_role`, or `delete` on a list of `user_ids`; delete restricted to `tenant_owner` type.
+- **`GET /PATCH /projects/{id}/vjailbreak-push-settings`** — read/update `vjb_api_url`, `vjb_namespace`, `vjb_bearer_token` per project; token masked in GET response.
+- **`POST /projects/{id}/vjailbreak-push/dry-run`** — connects to vJailbreak K8s CRD API (Bearer token), lists existing `openstackcreds`/`networkmappings`/`vmwarecreds` CRDs, returns `{would_create, would_skip_existing, openstackcreds[], networkmappings[], vmwarecreds?}` — no writes.
+- **`POST /projects/{id}/vjailbreak-push`** — idempotent push: creates `openstackcreds` CRD per tenant (skips by name if already exists), one `networkmappings` CRD for the project, optional `vmwarecreds` CRD (vCenter password accepted in request body and **never** stored to DB); logs each resource to `migration_vjailbreak_push_tasks`.
+- **`GET /projects/{id}/vjailbreak-push-tasks`** — task log with done/skipped/failed summary counts.
+- **`DELETE /projects/{id}/vjailbreak-push-tasks`** — clears task log (does NOT touch vJailbreak).
+- **Internal helpers**: `_k8s_name()` slugifier, `_vjb_k8s_request()` Bearer-token HTTP client, `_build_openstackcreds_crd()`, `_build_networkmapping_crd()`, `_build_vmwarecreds_crd()`.
+
+#### Frontend UI (`pf9-ui/src/components/migration/SourceAnalysis.tsx`)
+- **`TenantUsersView` overhaul**:
+  - Filter bar: type (all / service_account / tenant_owner), status (all / confirmed / pending), role (all/admin/member/reader), search across username/email/tenant name; "Clear" resets all filters.
+  - Bulk Find & Replace panel: field selector (username/email/role), find/replace text, case-sensitive toggle, preview mode, apply button — calls `/bulk-replace` API.
+  - Checkbox column + bulk action toolbar: select individual rows or select-all; bulk confirm, set-role (with inline dropdown), delete — calls `/bulk-action` API.
+  - **"👤 Seed Tenant Owners"** button — calls `/seed-tenant-owners` to batch-create `admin@<domain>` owner for every tenant in one click.
+  - **"✓ Confirm All"** button — calls `/confirm-all` to confirm all rows at once.
+  - "Add Owner" form upgraded: tenant-name dropdown auto-fills `username` as `admin@<domain>` on selection (instead of raw numeric Tenant ID input).
+  - Parallel fetch of users + tenants on mount for the dropdown.
+  - Inline per-row ✓ (confirm) and ✏️ (edit) actions preserved.
+- **`VJailbreakPushView` (new component)**: collapsible ⚙️ Connection Settings panel (URL/namespace/token save), collapsible 🖥️ VMware Credentials panel (not persisted), 🔍 Dry Run button + results preview (tables of would_create vs would_skip), 🚀 Push button with confirmation dialog + result summary, 📋 Push Task Log table with per-status pill badges, refresh, and clear.
+- **`"vjb"` sub-tab** added to sub-nav ("🚀 vJailbreak Push") and `SubView` union type, wired to `VJailbreakPushView`.
+
+#### Configuration
+- **`.env.example`** — added `VJB_API_URL`, `VJB_NAMESPACE`, `VJB_BEARER_TOKEN` documentation block.
+- **`deployment.ps1`** — added `migrate_phase4d.sql` to provisioning migration sequence.
+
+---
+
 ## [1.45.5] - 2026-03-08
 
 ### Fixed
