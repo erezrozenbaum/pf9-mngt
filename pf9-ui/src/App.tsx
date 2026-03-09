@@ -32,6 +32,7 @@ import OpsSearch from "./components/OpsSearch";
 import RunbooksTab from "./components/RunbooksTab";
 import MigrationPlannerTab from "./components/MigrationPlannerTab";
 import CopilotPanel from "./components/CopilotPanel";
+import DependencyGraph, { type GraphRootType } from "./components/graph/DependencyGraph";
 import { useNavigation } from "./hooks/useNavigation";
 
 // ---------------------------------------------------------------------------
@@ -1455,6 +1456,47 @@ const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsTotal, setProjectsTotal] = useState(0);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+
+  // Dependency graph drawer
+  const [graphTarget, setGraphTarget] = useState<{ type: GraphRootType; id: string; label: string; migrationProjectId?: number; graphUrl?: string } | null>(null);
+
+  /** Called when user clicks "Open in tab" from the graph sidebar */
+  const handleGraphNavigate = useCallback((tab: string, resourceId: string, resourceType: string) => {
+    setActiveTab(tab as ActiveTab);
+    // Pre-select the specific resource so the detail panel opens immediately
+    switch (resourceType) {
+      case "vm":       setSelectedServer(servers.find((s) => s.vm_id === resourceId) ?? null); break;
+      case "volume":   setSelectedVolume(volumes.find((v) => v.id === resourceId) ?? null); break;
+      case "snapshot": setSelectedSnapshot(snapshots.find((s) => s.snapshot_id === resourceId) ?? null); break;
+      case "network":  setSelectedNetwork(networks.find((n) => n.network_id === resourceId) ?? null); break;
+      case "image":    setSelectedImage(images.find((i) => i.image_id === resourceId) ?? null); break;
+      case "host":     setSelectedHypervisor(hypervisors.find((h) => h.hypervisor_id === resourceId) ?? null); break;
+      case "tenant":   setSelectedProject(projects.find((p) => p.tenant_id === resourceId) ?? null); break;
+    }
+    setGraphTarget(null);
+  }, [servers, volumes, snapshots, networks, images, hypervisors, projects]);
+
+  /** Called when user clicks "Create Snapshot" on a volume node in the graph */
+  const handleGraphCreateSnapshot = useCallback((_volumeId: string, volumeName: string) => {
+    setActiveTab("snapshots" as ActiveTab);
+    setGraphTarget(null);
+    // Brief delay so the tab renders before we surface the alert/toast
+    setTimeout(() => {
+      alert(`To create a snapshot for "${volumeName}", use the Create Snapshot button in the Snapshots tab.`);
+    }, 200);
+  }, []);
+
+  /**
+   * Called from the Migration Planner when the user wants to view the VMware
+   * dependency graph for a tenant. Uses the migration-side graph endpoint
+   * (built from RVTools data) rather than the PCD/OpenStack graph.
+   */
+  const handleViewMigrationGraph = useCallback((
+    label: string,
+    graphUrl: string,
+  ) => {
+    setGraphTarget({ type: "tenant", id: "migration", label, graphUrl });
+  }, []);
 
   const [ports, setPorts] = useState<Port[]>([]);
   const [portsTotal, setPortsTotal] = useState(0);
@@ -4033,12 +4075,13 @@ const App: React.FC = () => {
                   <th>Project ID</th>
                   <th>Project Name</th>
                   <th>Domain</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {projects.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="pf9-empty">
+                    <td colSpan={4} className="pf9-empty">
                       No projects found.
                     </td>
                   </tr>
@@ -4052,6 +4095,14 @@ const App: React.FC = () => {
                       <td>{p.tenant_id}</td>
                       <td>{p.tenant_name}</td>
                       <td>{p.domain_name}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <button
+                          className="graph-view-deps-btn"
+                          onClick={() => setGraphTarget({ type: "tenant", id: p.tenant_id, label: p.tenant_name })}
+                        >
+                          🕸️ View Dependencies
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -5934,6 +5985,7 @@ const App: React.FC = () => {
           {activeTab === "migration_planner" && (
             <MigrationPlannerTab
               isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
+              onViewTenantGraph={handleViewMigrationGraph}
             />
           )}
 
@@ -5975,6 +6027,12 @@ const App: React.FC = () => {
                 <strong>Created:</strong>{" "}
                 {formatDate(selectedServer.created_at)}
               </p>
+              <button
+                className="graph-view-deps-btn"
+                onClick={() => setGraphTarget({ type: "vm", id: selectedServer.vm_id, label: selectedServer.vm_name })}
+              >
+                🕸️ View Dependencies
+              </button>
             </div>
           )}
 
@@ -6015,6 +6073,12 @@ const App: React.FC = () => {
               <p>
                 <strong>Deleted:</strong> {yesNo(selectedSnapshot.is_deleted)}
               </p>
+              <button
+                className="graph-view-deps-btn"
+                onClick={() => setGraphTarget({ type: "snapshot", id: selectedSnapshot.snapshot_id, label: selectedSnapshot.snapshot_name || selectedSnapshot.snapshot_id })}
+              >
+                🕸️ View Dependencies
+              </button>
             </div>
           )}
 
@@ -6045,6 +6109,12 @@ const App: React.FC = () => {
                 <strong>Last seen:</strong>{" "}
                 {formatDate(selectedNetwork.last_seen_at)}
               </p>
+              <button
+                className="graph-view-deps-btn"
+                onClick={() => setGraphTarget({ type: "network", id: selectedNetwork.network_id, label: selectedNetwork.network_name || selectedNetwork.network_id })}
+              >
+                🕸️ View Dependencies
+              </button>
             </div>
           )}
 
@@ -6159,6 +6229,12 @@ const App: React.FC = () => {
                 <strong>Last seen:</strong>{" "}
                 {formatDate(selectedVolume.last_seen_at)}
               </p>
+              <button
+                className="graph-view-deps-btn"
+                onClick={() => setGraphTarget({ type: "volume", id: selectedVolume.id || selectedVolume.volume_id, label: selectedVolume.volume_name })}
+              >
+                🕸️ View Dependencies
+              </button>
             </div>
           )}
 
@@ -6305,6 +6381,22 @@ const App: React.FC = () => {
           token={authToken}
           isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
         />
+      )}
+
+      {/* Cloud Dependency Graph drawer */}
+      {graphTarget && (
+        <div className="graph-drawer-backdrop">
+          <DependencyGraph
+            rootType={graphTarget.type}
+            rootId={graphTarget.id}
+            rootLabel={graphTarget.label}
+            onClose={() => setGraphTarget(null)}
+            onNavigate={handleGraphNavigate}
+            onCreateSnapshot={handleGraphCreateSnapshot}
+            migrationProjectId={graphTarget.migrationProjectId}
+            graphUrl={graphTarget.graphUrl}
+          />
+        </div>
       )}
     </div>
     </ThemeProvider>

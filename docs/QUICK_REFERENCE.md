@@ -101,6 +101,14 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - New `per_day[]` array in summary response: day, cohort_name, tenant_count, vm_count, total_gb, wall_clock_hours, total_agent_hours, cold_count, warm_count, risk_green/yellow/red, over_capacity
   - New `total_provisioned_gb` KPI field in summary response
   - **UI**: "Migration Days" KPI card; "In-Use Data (TB)" with provisioned subtitle; per-day table between KPI strip and OS breakdown; over-capacity rows in red + ⚠️; Migration Plan daily schedule shows ⚠️ indicator on over-capacity days; project summary footer shows daily throughput cap
+- **Cloud Dependency Graph — Backend API + UI + Node Actions** (v1.47.0-dev):
+  - `GET /api/graph?root_type=<type>&root_id=<id>&depth=1-3` — BFS graph from any resource; returns `nodes[]`, `edges[]`, `node_count`, `edge_count`, `truncated`
+  - 12 node types: `vm`, `volume`, `snapshot`, `network`, `subnet`, `port`, `fip`, `sg`, `tenant`, `host`, `image`, `domain`
+  - 15 edge traversals including VM→SG via `ports.raw_json` JSONB; badges: `no_snapshot`, `drift`, `error_state`, `power_off`, `restore_source`
+  - 150-node hard cap; optional `domain` filter param; RBAC `resources:read`
+  - **UI**: full-screen `DependencyGraph.tsx` drawer (ReactFlow + dagre); depth pills; type filter checkboxes; dark node sidebar; "🔍 Explore from here" re-root + "← Back" history
+  - **Entry points**: "🕸️ View Dependencies" on Servers, Volumes, Snapshots, Networks detail panels
+  - **Node actions**: "🔗 Open in tab" (navigate + pre-select), "📸 Create Snapshot" (volumes), "🚀 View in Migration Planner" (VMs/tenants)
 - **Migration Planner Phase 4D — Tenant User Bulk Ops & vJailbreak CRD Push** (v1.46.0):
   - **Tenant Users UX overhaul**: filter bar (type / status / role / search), checkbox multi-select, bulk confirm, set-role, delete via `/bulk-action`
   - **"👤 Seed Tenant Owners"** button — bulk-creates one `admin@<domain>` owner per tenant (idempotent); uses `target_domain_name` if set, else `tenant_name`
