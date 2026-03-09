@@ -38,19 +38,32 @@
 
       <table class="detail-table">
         <tr><td>Resource Type</td><td>{{ event.resource_type }}</td></tr>
-        <tr><td>Resource Name</td><td>{{ event.resource_name or event.resource_id }}</td></tr>
+        <tr>
+          <td>Resource Name</td>
+          <td>
+            {{ event.resource_name }}
+            {% if event.resource_id and event.resource_id != event.resource_name %}
+            <br><span style="color:#999; font-size:11px;">{{ event.resource_id }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% if event.project_name %}
+        <tr><td>Tenant / Project</td><td>{{ event.project_name }}</td></tr>
+        {% endif %}
+        {% if event.domain_name %}
+        <tr><td>Domain</td><td>{{ event.domain_name }}</td></tr>
+        {% endif %}
         <tr><td>Field Changed</td><td><strong>{{ event.field_name }}</strong></td></tr>
         <tr>
           <td>Change</td>
           <td>
             <code>{{ event.old_value }}</code>
+            {% if event.old_value_raw %}<br><span style="color:#999; font-size:11px;">{{ event.old_value_raw }}</span>{% endif %}
             <span class="change-arrow"> → </span>
             <code>{{ event.new_value }}</code>
+            {% if event.new_value_raw %}<br><span style="color:#999; font-size:11px;">{{ event.new_value_raw }}</span>{% endif %}
           </td>
         </tr>
-        {% if event.project_name %}
-        <tr><td>Project</td><td>{{ event.project_name }}</td></tr>
-        {% endif %}
         <tr><td>Detected At</td><td>{{ event.detected_at }}</td></tr>
       </table>
 
