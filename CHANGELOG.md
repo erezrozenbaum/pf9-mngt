@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.0] - 2026-03-09
+
+### Fixed — Drift Detection: Enriched Event Context (UUIDs → Friendly Names)
+
+Addressed the core usability problem where drift events displayed raw UUIDs with no
+context — making it impossible to identify which VM, tenant, or resource was affected
+without cross-referencing elsewhere.
+
+#### Backend: `api/main.py`
+- **`GET /drift/events`** and **`GET /drift/events/{event_id}`** — SQL rewritten to resolve
+  friendly names at query time:
+  - `resource_name`: live-looks up the actual name from `servers`, `volumes`, `networks`,
+    or `snapshots` when the stored value is NULL or an empty string (common for unnamed volumes);
+    falls back to UUID only when no name exists anywhere.
+  - `project_name` / `domain_name`: JOINed from `projects` / `domains` tables — events
+    now always carry tenant name even when the inventory sync did not include it at write time.
+  - `old_value_label` / `new_value_label` (new response fields): resolves UUID reference
+    fields to friendly names — `server_id` → VM name, `flavor_id` → flavor name,
+    `network_id` → network name, `image_id` → image name. Raw UUID still returned for
+    copy/reference.
+  - `NULLIF(..., '')` wrapping on all CASE name lookups so empty-string names correctly
+    fall through to the UUID fallback (root cause: unnamed volumes have `name = ''` in DB,
+    not NULL).
+
+#### Backend: `notifications/main.py`
+- `collect_drift_events()` SQL updated with identical enrichment — resolved resource name,
+  tenant/domain JOIN, `old_value_label` / `new_value_label` lookups, `NULLIF` guards.
+- `summary` string now includes tenant name:
+  `"Drift detected on volumes 'vol-name' (tenant: service): server_id changed"`.
+- Notification payload `old_value` / `new_value` carry the friendly name; original UUID
+  preserved in `old_value_raw` / `new_value_raw`.
+
+#### Email template: `notifications/templates/drift_alert.html`
+- **Tenant / Project** row moved above Field Changed and always rendered.
+- **Domain** row added (was previously missing entirely).
+- **Resource Name** shows friendly name with UUID dimmed below when they differ.
+- **Change row** shows resolved name with raw UUID as small subtext.
+
+#### Frontend: `pf9-ui/src/components/DriftDetection.tsx`
+- `DriftEvent` interface extended with `old_value_label` and `new_value_label` fields.
+- **Detail panel**: Resource row shows `(unnamed) <UUID>` for volumes with no assigned name,
+  or name + UUID dimmed below when a name exists. Tenant / Project (renamed from "Project")
+  and Domain rows always shown when IDs are present (were silently hidden when names were NULL).
+  Old/New Value rows display the resolved friendly name with raw UUID as subtext.
+- **List table**: Change column uses resolved label; Name column tooltip shows both
+  name and UUID.
+- **CSV export**: adds "Tenant / Project" and "Domain" columns; old/new value columns
+  include resolved name with UUID in parentheses.
+
+---
+
 ## [1.48.0] - 2026-03-09
 
 ### Added — Cloud Dependency Graph: VMware-Side Migration Graph (Phase 4)

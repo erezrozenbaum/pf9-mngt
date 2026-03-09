@@ -5567,11 +5567,43 @@ def list_drift_events(
         where = " AND ".join(conditions)
         sql = f"""
             WITH cte AS (
-                SELECT de.*,
-                       dr.description AS rule_description,
-                       COUNT(*) OVER() AS _total
+                SELECT
+                    de.id, de.rule_id, de.resource_type, de.resource_id,
+                    COALESCE(
+                        NULLIF(NULLIF(de.resource_name, ''), de.resource_id),
+                        NULLIF(CASE de.resource_type
+                            WHEN 'servers'   THEN (SELECT s.name FROM servers   s WHERE s.id = de.resource_id)
+                            WHEN 'volumes'   THEN (SELECT v.name FROM volumes   v WHERE v.id = de.resource_id)
+                            WHEN 'networks'  THEN (SELECT n.name FROM networks  n WHERE n.id = de.resource_id)
+                            WHEN 'snapshots' THEN (SELECT snap.name FROM snapshots snap WHERE snap.id = de.resource_id)
+                        END, ''),
+                        de.resource_id
+                    ) AS resource_name,
+                    de.project_id,
+                    COALESCE(de.project_name, proj.name) AS project_name,
+                    de.domain_id,
+                    COALESCE(de.domain_name, dom.name)   AS domain_name,
+                    de.severity, de.field_changed, de.old_value, de.new_value,
+                    de.description, de.detected_at,
+                    de.acknowledged, de.acknowledged_by, de.acknowledged_at, de.acknowledge_note,
+                    dr.description AS rule_description,
+                    NULLIF(CASE de.field_changed
+                        WHEN 'server_id'  THEN (SELECT s.name FROM servers  s WHERE s.id = de.old_value)
+                        WHEN 'flavor_id'  THEN (SELECT f.name FROM flavors  f WHERE f.id = de.old_value)
+                        WHEN 'network_id' THEN (SELECT n.name FROM networks n WHERE n.id = de.old_value)
+                        WHEN 'image_id'   THEN (SELECT i.name FROM images   i WHERE i.id = de.old_value)
+                    END, '') AS old_value_label,
+                    NULLIF(CASE de.field_changed
+                        WHEN 'server_id'  THEN (SELECT s.name FROM servers  s WHERE s.id = de.new_value)
+                        WHEN 'flavor_id'  THEN (SELECT f.name FROM flavors  f WHERE f.id = de.new_value)
+                        WHEN 'network_id' THEN (SELECT n.name FROM networks n WHERE n.id = de.new_value)
+                        WHEN 'image_id'   THEN (SELECT i.name FROM images   i WHERE i.id = de.new_value)
+                    END, '') AS new_value_label,
+                    COUNT(*) OVER() AS _total
                 FROM drift_events de
                 LEFT JOIN drift_rules dr ON dr.id = de.rule_id
+                LEFT JOIN projects proj  ON proj.id = de.project_id
+                LEFT JOIN domains  dom   ON dom.id  = de.domain_id
                 WHERE {where}
                 ORDER BY {order_col} {direction}
                 LIMIT %(limit)s OFFSET %(offset)s
@@ -5604,9 +5636,43 @@ def get_drift_event(event_id: int, current_user: User = Depends(require_authenti
         with get_connection() as conn:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute("""
-                SELECT de.*, dr.description AS rule_description, dr.field_name AS rule_field
+                SELECT
+                    de.id, de.rule_id, de.resource_type, de.resource_id,
+                    COALESCE(
+                        NULLIF(NULLIF(de.resource_name, ''), de.resource_id),
+                        NULLIF(CASE de.resource_type
+                            WHEN 'servers'   THEN (SELECT s.name FROM servers   s WHERE s.id = de.resource_id)
+                            WHEN 'volumes'   THEN (SELECT v.name FROM volumes   v WHERE v.id = de.resource_id)
+                            WHEN 'networks'  THEN (SELECT n.name FROM networks  n WHERE n.id = de.resource_id)
+                            WHEN 'snapshots' THEN (SELECT snap.name FROM snapshots snap WHERE snap.id = de.resource_id)
+                        END, ''),
+                        de.resource_id
+                    ) AS resource_name,
+                    de.project_id,
+                    COALESCE(de.project_name, proj.name) AS project_name,
+                    de.domain_id,
+                    COALESCE(de.domain_name, dom.name)   AS domain_name,
+                    de.severity, de.field_changed, de.old_value, de.new_value,
+                    de.description, de.detected_at,
+                    de.acknowledged, de.acknowledged_by, de.acknowledged_at, de.acknowledge_note,
+                    dr.description AS rule_description,
+                    dr.field_name  AS rule_field,
+                    NULLIF(CASE de.field_changed
+                        WHEN 'server_id'  THEN (SELECT s.name FROM servers  s WHERE s.id = de.old_value)
+                        WHEN 'flavor_id'  THEN (SELECT f.name FROM flavors  f WHERE f.id = de.old_value)
+                        WHEN 'network_id' THEN (SELECT n.name FROM networks n WHERE n.id = de.old_value)
+                        WHEN 'image_id'   THEN (SELECT i.name FROM images   i WHERE i.id = de.old_value)
+                    END, '') AS old_value_label,
+                    NULLIF(CASE de.field_changed
+                        WHEN 'server_id'  THEN (SELECT s.name FROM servers  s WHERE s.id = de.new_value)
+                        WHEN 'flavor_id'  THEN (SELECT f.name FROM flavors  f WHERE f.id = de.new_value)
+                        WHEN 'network_id' THEN (SELECT n.name FROM networks n WHERE n.id = de.new_value)
+                        WHEN 'image_id'   THEN (SELECT i.name FROM images   i WHERE i.id = de.new_value)
+                    END, '') AS new_value_label
                 FROM drift_events de
                 LEFT JOIN drift_rules dr ON dr.id = de.rule_id
+                LEFT JOIN projects proj  ON proj.id = de.project_id
+                LEFT JOIN domains  dom   ON dom.id  = de.domain_id
                 WHERE de.id = %s
             """, (event_id,))
             row = cur.fetchone()

@@ -51,6 +51,8 @@ interface DriftEvent {
   acknowledged_at: string | null;
   acknowledge_note: string | null;
   rule_description?: string;
+  old_value_label?: string | null;
+  new_value_label?: string | null;
 }
 
 interface EventsResponse {
@@ -330,13 +332,17 @@ export default function DriftDetection({ selectedDomain, selectedTenant }: Drift
     if (events.length === 0) return;
     const headers = [
       "ID", "Detected At", "Severity", "Resource Type", "Resource Name",
+      "Tenant / Project", "Domain",
       "Field Changed", "Old Value", "New Value", "Description",
       "Acknowledged", "Acknowledged By", "Note",
     ];
     const rows = events.map((e) => [
       e.id, e.detected_at, e.severity, e.resource_type, e.resource_name,
-      e.field_changed, e.old_value ?? "", e.new_value ?? "", e.description,
-      e.acknowledged ? "Yes" : "No", e.acknowledged_by ?? "", e.acknowledge_note ?? "",
+      e.project_name ?? e.project_id ?? "", e.domain_name ?? e.domain_id ?? "",
+      e.field_changed,
+      e.old_value_label ? `${e.old_value_label} (${e.old_value})` : (e.old_value ?? ""),
+      e.new_value_label ? `${e.new_value_label} (${e.new_value})` : (e.new_value ?? ""),
+      e.description, e.acknowledged ? "Yes" : "No", e.acknowledged_by ?? "", e.acknowledge_note ?? "",
     ]);
     const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -591,13 +597,13 @@ export default function DriftDetection({ selectedDomain, selectedTenant }: Drift
                       <td style={{ whiteSpace: "nowrap" }}>{fmtDateShort(ev.detected_at)}</td>
                       <td><span className={`drift-severity ${ev.severity}`}>{ev.severity}</span></td>
                       <td>{RESOURCE_LABELS[ev.resource_type] || ev.resource_type}</td>
-                      <td title={ev.resource_name}>{truncate(ev.resource_name, 28)}</td>
+                      <td title={`${ev.resource_name}${ev.resource_id !== ev.resource_name ? ` (${ev.resource_id})` : ''}`}>{truncate(ev.resource_name, 28)}</td>
                       <td><code style={{ fontSize: ".8rem" }}>{ev.field_changed}</code></td>
                       <td>
                         <span className="drift-change">
-                          <span className="old">{truncate(ev.old_value, 20)}</span>
+                          <span className="old">{truncate(ev.old_value_label ?? ev.old_value, 20)}</span>
                           <span className="arrow">→</span>
-                          <span className="new">{truncate(ev.new_value, 20)}</span>
+                          <span className="new">{truncate(ev.new_value_label ?? ev.new_value, 20)}</span>
                         </span>
                       </td>
                       <td>
@@ -714,18 +720,33 @@ export default function DriftDetection({ selectedDomain, selectedTenant }: Drift
             </div>
             <div className="drift-detail-row">
               <span className="label">Resource</span>
-              <span className="value">{detailEvent.resource_name} <span style={{ opacity: .5, fontSize: ".75rem" }}>({detailEvent.resource_id})</span></span>
+              <span className="value">
+                {detailEvent.resource_name && detailEvent.resource_name !== detailEvent.resource_id
+                  ? <>{detailEvent.resource_name} <span style={{ opacity: .45, fontSize: ".72rem", display: "block" }}>{detailEvent.resource_id}</span></>
+                  : <><span style={{ opacity: .6, fontStyle: "italic" }}>(unnamed)</span> <span style={{ fontSize: ".8rem" }}>{detailEvent.resource_id}</span></>
+                }
+              </span>
             </div>
-            {detailEvent.project_name && (
+            {(detailEvent.project_name || detailEvent.project_id) && (
               <div className="drift-detail-row">
-                <span className="label">Project</span>
-                <span className="value">{detailEvent.project_name}</span>
+                <span className="label">Tenant / Project</span>
+                <span className="value">
+                  {detailEvent.project_name || <span style={{ opacity: .6, fontStyle: "italic" }}>unknown</span>}
+                  {detailEvent.project_id && (
+                    <span style={{ opacity: .45, fontSize: ".72rem", display: "block" }}>{detailEvent.project_id}</span>
+                  )}
+                </span>
               </div>
             )}
-            {detailEvent.domain_name && (
+            {(detailEvent.domain_name || detailEvent.domain_id) && (
               <div className="drift-detail-row">
                 <span className="label">Domain</span>
-                <span className="value">{detailEvent.domain_name}</span>
+                <span className="value">
+                  {detailEvent.domain_name || <span style={{ opacity: .6, fontStyle: "italic" }}>unknown</span>}
+                  {detailEvent.domain_id && (
+                    <span style={{ opacity: .45, fontSize: ".72rem", display: "block" }}>{detailEvent.domain_id}</span>
+                  )}
+                </span>
               </div>
             )}
             <div className="drift-detail-row">
@@ -734,11 +755,21 @@ export default function DriftDetection({ selectedDomain, selectedTenant }: Drift
             </div>
             <div className="drift-detail-row">
               <span className="label">Old Value</span>
-              <span className="value drift-change"><span className="old">{detailEvent.old_value ?? "—"}</span></span>
+              <span className="value drift-change">
+                <span className="old">{detailEvent.old_value_label ?? detailEvent.old_value ?? "—"}</span>
+                {detailEvent.old_value_label && detailEvent.old_value && (
+                  <span style={{ opacity: .45, fontSize: ".72rem", display: "block" }}>{detailEvent.old_value}</span>
+                )}
+              </span>
             </div>
             <div className="drift-detail-row">
               <span className="label">New Value</span>
-              <span className="value drift-change"><span className="new">{detailEvent.new_value ?? "—"}</span></span>
+              <span className="value drift-change">
+                <span className="new">{detailEvent.new_value_label ?? detailEvent.new_value ?? "—"}</span>
+                {detailEvent.new_value_label && detailEvent.new_value && (
+                  <span style={{ opacity: .45, fontSize: ".72rem", display: "block" }}>{detailEvent.new_value}</span>
+                )}
+              </span>
             </div>
             <div className="drift-detail-row">
               <span className="label">Description</span>

@@ -187,33 +187,70 @@ def collect_drift_events(conn, since: datetime) -> List[Dict]:
     events = []
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute("""
-            SELECT id, resource_type, resource_id, resource_name,
-                   field_changed, old_value, new_value, severity,
-                   project_name, detected_at
-            FROM drift_events
-            WHERE detected_at >= %s
-              AND acknowledged = false
-            ORDER BY detected_at DESC
+            SELECT
+                de.id, de.resource_type, de.resource_id,
+                COALESCE(
+                    NULLIF(NULLIF(de.resource_name, ''), de.resource_id),
+                    NULLIF(CASE de.resource_type
+                        WHEN 'servers'   THEN (SELECT s.name FROM servers   s WHERE s.id = de.resource_id)
+                        WHEN 'volumes'   THEN (SELECT v.name FROM volumes   v WHERE v.id = de.resource_id)
+                        WHEN 'networks'  THEN (SELECT n.name FROM networks  n WHERE n.id = de.resource_id)
+                        WHEN 'snapshots' THEN (SELECT snap.name FROM snapshots snap WHERE snap.id = de.resource_id)
+                    END, ''),
+                    de.resource_id
+                ) AS resource_name,
+                de.field_changed, de.old_value, de.new_value, de.severity,
+                COALESCE(de.project_name, proj.name) AS project_name,
+                COALESCE(de.domain_name,  dom.name)  AS domain_name,
+                de.detected_at,
+                CASE de.field_changed
+                    WHEN 'server_id'  THEN (SELECT s.name FROM servers  s WHERE s.id = de.old_value)
+                    WHEN 'flavor_id'  THEN (SELECT f.name FROM flavors  f WHERE f.id = de.old_value)
+                    WHEN 'network_id' THEN (SELECT n.name FROM networks n WHERE n.id = de.old_value)
+                    WHEN 'image_id'   THEN (SELECT i.name FROM images   i WHERE i.id = de.old_value)
+                END AS old_value_label,
+                CASE de.field_changed
+                    WHEN 'server_id'  THEN (SELECT s.name FROM servers  s WHERE s.id = de.new_value)
+                    WHEN 'flavor_id'  THEN (SELECT f.name FROM flavors  f WHERE f.id = de.new_value)
+                    WHEN 'network_id' THEN (SELECT n.name FROM networks n WHERE n.id = de.new_value)
+                    WHEN 'image_id'   THEN (SELECT i.name FROM images   i WHERE i.id = de.new_value)
+                END AS new_value_label
+            FROM drift_events de
+            LEFT JOIN projects proj ON proj.id = de.project_id
+            LEFT JOIN domains  dom  ON dom.id  = de.domain_id
+            WHERE de.detected_at >= %s
+              AND de.acknowledged = false
+            ORDER BY de.detected_at DESC
             LIMIT 200
         """, (since,))
         for row in cur.fetchall():
+            resource_name = row.get("resource_name") or row["resource_id"]
+            project_name  = row.get("project_name") or ""
+            domain_name   = row.get("domain_name") or ""
+            old_label = row.get("old_value_label")
+            new_label = row.get("new_value_label")
+            summary = (
+                f"Drift detected on {row.get('resource_type', '')} "
+                f"'{resource_name}'"
+                + (f" (tenant: {project_name})" if project_name else "")
+                + f": {row.get('field_changed', '')} changed"
+            )
             events.append({
                 "event_type": f"drift_{row['severity']}",
                 "event_id": str(row["id"]),
                 "resource_id": row["resource_id"] or "",
-                "resource_name": row.get("resource_name", ""),
+                "resource_name": resource_name,
                 "resource_type": row.get("resource_type", ""),
                 "severity": row["severity"],
                 "field_name": row.get("field_changed", ""),
-                "old_value": str(row.get("old_value", "")),
-                "new_value": str(row.get("new_value", "")),
-                "project_name": row.get("project_name", ""),
+                "old_value": old_label or str(row.get("old_value", "") or ""),
+                "old_value_raw": str(row.get("old_value", "") or "") if old_label else "",
+                "new_value": new_label or str(row.get("new_value", "") or ""),
+                "new_value_raw": str(row.get("new_value", "") or "") if new_label else "",
+                "project_name": project_name,
+                "domain_name": domain_name,
                 "detected_at": row["detected_at"].isoformat() if row["detected_at"] else "",
-                "summary": (
-                    f"Drift detected on {row.get('resource_type', '')} "
-                    f"'{row.get('resource_name', row['resource_id'])}': "
-                    f"{row.get('field_changed', '')} changed"
-                ),
+                "summary": summary,
             })
     return events
 
