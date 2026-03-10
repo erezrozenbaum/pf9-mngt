@@ -81,13 +81,14 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Chargeback export with per-category cost breakdown (compute, storage, snapshot, restore, volume, network, TOTAL)
   - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
-- **Runbooks Tab** (v1.21 → v1.55):
+- **Runbooks Tab** (v1.21 → v1.56):
   - "📋 Runbooks" tab with policy-as-code catalogue and one-click execution
-  - 18 built-in engines across 4 categories:
-    - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*
+  - 20 built-in engines across 5 categories:
+    - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*, **DR Drill** *(v1.56)*
     - **Security**: Security Group Audit, Security & Compliance Audit
     - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast, **Quota Adjustment** *(v1.53)*
     - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning, **Org Usage Report** *(v1.53)*, **Capacity Forecast** *(v1.55)*
+    - **Provisioning**: **Tenant Offboarding** *(v1.56)*
   - Schema-driven parameter forms with dry-run toggle and risk-level badges
   - Approval workflow: per-runbook policies with role-based trigger→approver mappings (high-risk runbooks require admin approval)
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)

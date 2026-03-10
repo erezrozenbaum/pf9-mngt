@@ -3214,6 +3214,648 @@ def _engine_capacity_forecast(params: dict, dry_run: bool, actor: str) -> dict:
     }
 
 
+# ===== Engine: disaster_recovery_drill ====================================
+
+@register_engine("disaster_recovery_drill")
+def _engine_dr_drill(params: dict, dry_run: bool, actor: str) -> dict:
+    """
+    Clone VMs tagged as DR candidates into an isolated network, verify boot,
+    then tear down cleanly regardless of success/failure.
+
+    Parameters
+    ----------
+    target_project          : project ID to scope the drill (blank = scan all)
+    server_ids              : explicit VM IDs to drill (blank = use tag_filter)
+    tag_filter              : metadata key that marks DR candidates (default 'dr_candidate')
+    boot_timeout_minutes    : per-VM boot poll timeout (default 10)
+    max_vms                 : maximum number of VMs to drill in one run (default 10)
+    network_cidr            : CIDR for the ephemeral DR network (default '192.168.99.0/24')
+    skip_teardown_on_failure: if True, leave DR resources up when a boot fails (default False)
+    """
+    import time
+    from pf9_control import get_client
+
+    target_project = params.get("target_project", "")
+    server_ids_filter = params.get("server_ids", [])
+    tag_filter = params.get("tag_filter", "dr_candidate")
+    boot_timeout = int(params.get("boot_timeout_minutes", 10)) * 60
+    max_vms = int(params.get("max_vms", 10))
+    network_cidr = params.get("network_cidr", "192.168.99.0/24")
+    skip_teardown_on_failure = bool(params.get("skip_teardown_on_failure", False))
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # ── 1. Quota pre-check ─────────────────────────────────────────────────
+    quota_status = "unchecked"
+    try:
+        q_url = f"{client.nova_endpoint}/os-quota-sets/{target_project or 'admin'}/detail"
+        q_resp = client.session.get(q_url, headers=headers)
+        if q_resp.ok:
+            qs = q_resp.json().get("quota_set", {})
+            inst = qs.get("instances", {})
+            cores = qs.get("cores", {})
+            if isinstance(inst, dict) and isinstance(cores, dict):
+                inst_avail = inst.get("limit", -1) - inst.get("in_use", 0)
+                cores_avail = cores.get("limit", -1) - cores.get("in_use", 0)
+                if inst_avail != -1 and inst_avail < max_vms:
+                    logger.warning(f"dr_drill: quota tight — only {inst_avail} instance slots free")
+                quota_status = f"instances_available={inst_avail}, cores_available={cores_avail}"
+            else:
+                quota_status = "quota data not structured"
+    except Exception as e:
+        logger.warning(f"dr_drill: quota check failed: {e}")
+        quota_status = f"check_failed: {e}"
+
+    # ── 2. Find candidate VMs ──────────────────────────────────────────────
+    candidate_vms = []
+    try:
+        url = f"{client.nova_endpoint}/servers/detail?all_tenants=true&limit=500"
+        if target_project:
+            url += f"&project_id={target_project}"
+        srv_resp = client.session.get(url, headers=headers)
+        srv_resp.raise_for_status()
+        all_servers = srv_resp.json().get("servers", [])
+    except Exception as e:
+        raise HTTPException(500, f"Could not fetch server list: {e}")
+
+    for srv in all_servers:
+        sid = srv["id"]
+        # Filter by explicit list if provided
+        if server_ids_filter and sid not in server_ids_filter:
+            continue
+        # Filter by tag if no explicit list
+        if not server_ids_filter:
+            meta = srv.get("metadata", {})
+            if tag_filter not in meta and meta.get(tag_filter, "false").lower() != "true":
+                # Accept if tag key is present (value of 'true' or just key present)
+                if tag_filter not in meta:
+                    continue
+        candidate_vms.append(srv)
+        if len(candidate_vms) >= max_vms:
+            break
+
+    # Find latest snapshot for each candidate
+    vm_snapshots: dict = {}
+    try:
+        snap_resp = client.session.get(
+            f"{client.nova_endpoint}/servers/{'{server_id}'}/snapshots" if False else
+            f"{client.glance_endpoint}/v2/images?visibility=private&limit=500",
+            headers=headers,
+        )
+        if snap_resp.ok:
+            all_images = snap_resp.json().get("images", [])
+            # Group by instance_uuid metadata
+            for img in all_images:
+                if img.get("image_type") != "snapshot":
+                    continue
+                iid = img.get("instance_uuid", "")
+                if not iid:
+                    continue
+                existing = vm_snapshots.get(iid)
+                if not existing or img.get("created_at", "") > existing.get("created_at", ""):
+                    vm_snapshots[iid] = img
+    except Exception as e:
+        logger.warning(f"dr_drill: snapshot fetch failed: {e}")
+
+    if dry_run or not candidate_vms:
+        return {
+            "result": {
+                "mode": "dry_run" if dry_run else "no_candidates",
+                "candidates": [
+                    {
+                        "vm_id": s["id"],
+                        "vm_name": s.get("name", ""),
+                        "status": s.get("status", ""),
+                        "has_snapshot": s["id"] in vm_snapshots,
+                        "snapshot_id": vm_snapshots.get(s["id"], {}).get("id"),
+                    }
+                    for s in candidate_vms
+                ],
+                "quota_status": quota_status,
+                "network_cidr": network_cidr,
+                "max_vms": max_vms,
+                "tag_filter": tag_filter,
+            },
+            "items_found": len(candidate_vms),
+            "items_actioned": 0,
+        }
+
+    # ── 3. Create isolated DR network + subnet ─────────────────────────────
+    ts_label = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dr_network_name = f"dr-drill-{ts_label}"
+    dr_network_id = None
+    dr_subnet_id = None
+    dr_vms_created: list = []
+
+    try:
+        net_resp = client.session.post(
+            f"{client.neutron_endpoint}/v2.0/networks",
+            headers=headers,
+            json={"network": {"name": dr_network_name, "admin_state_up": True,
+                              "shared": False, "router:external": False}},
+        )
+        net_resp.raise_for_status()
+        dr_network_id = net_resp.json()["network"]["id"]
+
+        sub_resp = client.session.post(
+            f"{client.neutron_endpoint}/v2.0/subnets",
+            headers=headers,
+            json={"subnet": {
+                "network_id": dr_network_id,
+                "name": f"dr-drill-sub-{ts_label}",
+                "ip_version": 4,
+                "cidr": network_cidr,
+                "enable_dhcp": True,
+                "dns_nameservers": [],
+                "gateway_ip": None,
+            }},
+        )
+        sub_resp.raise_for_status()
+        dr_subnet_id = sub_resp.json()["subnet"]["id"]
+    except Exception as e:
+        raise HTTPException(500, f"Failed to create DR network: {e}")
+
+    # ── 4. Boot each VM from its snapshot into the DR network ─────────────
+    drill_results = []
+    boot_failed = False
+
+    def _poll_vm_status(vid: str, target: str, timeout_secs: int) -> bool:
+        deadline = time.time() + timeout_secs
+        while time.time() < deadline:
+            r = client.session.get(f"{client.nova_endpoint}/servers/{vid}", headers=headers)
+            if r.ok:
+                st = r.json().get("server", {}).get("status", "")
+                if st.upper() == target.upper():
+                    return True
+                if st.upper() == "ERROR":
+                    return False
+            time.sleep(10)
+        return False
+
+    for srv in candidate_vms:
+        sid = srv["id"]
+        sname = srv.get("name", sid[:8])
+        snap = vm_snapshots.get(sid)
+
+        if not snap:
+            drill_results.append({
+                "vm_id": sid, "vm_name": sname,
+                "status": "skipped", "reason": "no snapshot found",
+            })
+            continue
+
+        dr_vm_name = f"{sname}-DR-{ts_label}"
+        try:
+            boot_body = {
+                "server": {
+                    "name": dr_vm_name,
+                    "imageRef": snap["id"],
+                    "flavorRef": srv.get("flavor", {}).get("id", ""),
+                    "networks": [{"uuid": dr_network_id}],
+                    "metadata": {
+                        "dr_drill": "true",
+                        "source_vm": sid,
+                        "drill_timestamp": ts_label,
+                        "actor": actor,
+                    },
+                }
+            }
+            boot_resp = client.session.post(
+                f"{client.nova_endpoint}/servers",
+                headers=headers, json=boot_body,
+            )
+            boot_resp.raise_for_status()
+            dr_vm_id = boot_resp.json()["server"]["id"]
+            dr_vms_created.append(dr_vm_id)
+
+            boot_start = time.time()
+            boot_ok = _poll_vm_status(dr_vm_id, "ACTIVE", boot_timeout)
+            boot_time = round(time.time() - boot_start, 1)
+
+            entry = {
+                "vm_id": sid,
+                "vm_name": sname,
+                "dr_vm_id": dr_vm_id,
+                "dr_vm_name": dr_vm_name,
+                "snapshot_id": snap["id"],
+                "boot_time_seconds": boot_time,
+                "boot_success": boot_ok,
+                "status": "booted" if boot_ok else "boot_timeout",
+            }
+            drill_results.append(entry)
+            if not boot_ok:
+                boot_failed = True
+
+        except Exception as e:
+            logger.error(f"dr_drill: boot failed for {sname}: {e}")
+            drill_results.append({
+                "vm_id": sid, "vm_name": sname,
+                "status": "error", "reason": str(e),
+            })
+            boot_failed = True
+
+    # ── 5. Teardown — always unless skip_teardown_on_failure + boot failed ─
+    teardown_skipped = skip_teardown_on_failure and boot_failed
+    teardown_log = []
+
+    if not teardown_skipped:
+        for dr_vid in dr_vms_created:
+            try:
+                del_r = client.session.delete(
+                    f"{client.nova_endpoint}/servers/{dr_vid}", headers=headers
+                )
+                teardown_log.append({"dr_vm_id": dr_vid, "deleted": del_r.status_code < 300})
+            except Exception as e:
+                teardown_log.append({"dr_vm_id": dr_vid, "deleted": False, "error": str(e)})
+
+        # Poll until all DR VMs are gone (up to 120s) before deleting network
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            still_alive = []
+            for dr_vid in dr_vms_created:
+                r = client.session.get(f"{client.nova_endpoint}/servers/{dr_vid}", headers=headers)
+                if r.status_code != 404:
+                    still_alive.append(dr_vid)
+            if not still_alive:
+                break
+            time.sleep(10)
+
+        # Delete subnet then network
+        if dr_subnet_id:
+            try:
+                client.session.delete(
+                    f"{client.neutron_endpoint}/v2.0/subnets/{dr_subnet_id}", headers=headers
+                )
+            except Exception as e:
+                logger.warning(f"dr_drill: subnet delete failed: {e}")
+        if dr_network_id:
+            try:
+                client.session.delete(
+                    f"{client.neutron_endpoint}/v2.0/networks/{dr_network_id}", headers=headers
+                )
+                teardown_log.append({"network": dr_network_name, "deleted": True})
+            except Exception as e:
+                teardown_log.append({"network": dr_network_name, "deleted": False, "error": str(e)})
+    else:
+        teardown_log.append({"note": f"Teardown skipped because skip_teardown_on_failure=true and boot_failed=true. "
+                                     f"DR network={dr_network_name} ({dr_network_id}) left running."})
+
+    booted_ok = sum(1 for r in drill_results if r.get("boot_success"))
+    items_actioned = len(dr_vms_created)
+
+    # Log to activity_log
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO activity_log (action, resource_type, details, performed_by, created_at)
+                    VALUES (%s, %s, %s::jsonb, %s, now())
+                """, (
+                    "dr_drill",
+                    "runbook",
+                    json.dumps({
+                        "vms_drilled": len(dr_vms_created),
+                        "boot_ok": booted_ok,
+                        "boot_failed": len(dr_vms_created) - booted_ok,
+                        "teardown_skipped": teardown_skipped,
+                        "dr_network": dr_network_name,
+                    }),
+                    actor,
+                ))
+    except Exception as e:
+        logger.warning(f"dr_drill: activity_log write failed: {e}")
+
+    return {
+        "result": {
+            "mode": "executed",
+            "drill_timestamp": ts_label,
+            "candidates_found": len(candidate_vms),
+            "vms_drilled": len(dr_vms_created),
+            "boot_success_count": booted_ok,
+            "dr_network": {"name": dr_network_name, "id": dr_network_id, "cidr": network_cidr},
+            "drill_results": drill_results,
+            "teardown_skipped": teardown_skipped,
+            "teardown_log": teardown_log,
+            "quota_status": quota_status,
+        },
+        "items_found": len(candidate_vms),
+        "items_actioned": items_actioned,
+    }
+
+
+# ===== Engine: tenant_offboarding =========================================
+
+@register_engine("tenant_offboarding")
+def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
+    """
+    Safely exit a customer from the platform:
+      1. Verify confirm_project_name matches the real project name
+      2. Generate a final org_usage_report
+      3. Release all floating IPs
+      4. Stop all VMs gracefully
+      5. Delete all unattached ports
+      6. Disable the Keystone project
+      7. Tag all resources with offboarding metadata
+      8. Call CRM integration if configured
+      9. Email final report if customer_email provided
+     10. Log change_request ticket stub (skipped until T1 is live)
+
+    Parameters
+    ----------
+    project_id           : Keystone project UUID (required)
+    confirm_project_name : must exactly match the project name (safety check)
+    retention_days       : days before final deletion is scheduled (default 30)
+    email_final_report   : send the usage report to customer_email (default True)
+    customer_email       : recipient email for final report
+    """
+    import time
+    from pf9_control import get_client
+
+    project_id = params.get("project_id", "").strip()
+    confirm_name = params.get("confirm_project_name", "").strip()
+    retention_days = int(params.get("retention_days", 30))
+    email_report = params.get("email_final_report", True)
+    customer_email = params.get("customer_email", "").strip()
+
+    if not project_id:
+        raise HTTPException(400, "project_id is required")
+    if not confirm_name:
+        raise HTTPException(400, "confirm_project_name is required (safety check)")
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # ── 1. Verify project name ─────────────────────────────────────────────
+    try:
+        r = client.session.get(f"{client.keystone_endpoint}/projects/{project_id}", headers=headers)
+        r.raise_for_status()
+        real_name = r.json().get("project", {}).get("name", "")
+    except Exception as e:
+        raise HTTPException(500, f"Could not fetch project from Keystone: {e}")
+
+    if real_name != confirm_name:
+        raise HTTPException(400,
+            f"confirm_project_name mismatch: given '{confirm_name}' but project is named '{real_name}'. "
+            "Aborting to prevent accidental offboarding.")
+
+    # ── 2. Generate final usage report ────────────────────────────────────
+    usage_report: dict = {}
+    try:
+        report_engine = RUNBOOK_ENGINES.get("org_usage_report")
+        if report_engine:
+            report_out = report_engine(
+                {"project_id": project_id, "include_cost_estimate": True,
+                 "include_snapshot_details": True, "period_days": 30},
+                True, actor,
+            )
+            usage_report = report_out.get("result", {})
+    except Exception as e:
+        logger.warning(f"tenant_offboarding: usage report failed: {e}")
+        usage_report = {"error": str(e)}
+
+    # Build step tracking
+    steps = []
+
+    def _step(name: str, done: bool, detail: str = ""):
+        steps.append({"step": name, "done": done, "detail": detail})
+
+    _step("verify_project_name", True, f"Confirmed: '{real_name}' ({project_id})")
+
+    if dry_run:
+        # Dry-run: list what WOULD happen
+        servers_count = 0
+        fips_count = 0
+        ports_count = 0
+        try:
+            srv_resp = client.session.get(
+                f"{client.nova_endpoint}/servers/detail?all_tenants=true&project_id={project_id}",
+                headers=headers)
+            servers_count = len(srv_resp.json().get("servers", [])) if srv_resp.ok else 0
+        except Exception:
+            pass
+        try:
+            fip_resp = client.session.get(
+                f"{client.neutron_endpoint}/v2.0/floatingips?project_id={project_id}",
+                headers=headers)
+            fips_count = len(fip_resp.json().get("floatingips", [])) if fip_resp.ok else 0
+        except Exception:
+            pass
+        try:
+            port_resp = client.session.get(
+                f"{client.neutron_endpoint}/v2.0/ports?project_id={project_id}&device_id=",
+                headers=headers)
+            ports_count = len(port_resp.json().get("ports", [])) if port_resp.ok else 0
+        except Exception:
+            pass
+
+        retention_until = (datetime.now(timezone.utc).date() +
+                           __import__("datetime").timedelta(days=retention_days)).isoformat()
+        return {
+            "result": {
+                "mode": "dry_run",
+                "project_id": project_id,
+                "project_name": real_name,
+                "plan": [
+                    {"step": "release_floating_ips",    "count": fips_count},
+                    {"step": "stop_vms",                "count": servers_count},
+                    {"step": "delete_unattached_ports", "count": ports_count},
+                    {"step": "disable_keystone_project"},
+                    {"step": "tag_resources", "metadata": {
+                        "offboarding_date": datetime.now(timezone.utc).date().isoformat(),
+                        "retention_until": retention_until,
+                    }},
+                    {"step": "crm_churn_log", "note": "fires if CRM integration is configured"},
+                    {"step": "email_final_report", "to": customer_email or "(not set)"},
+                    {"step": "ticket_stub", "note": "skipped until ticket system (T1) is live"},
+                ],
+                "usage_report_preview": usage_report,
+            },
+            "items_found": servers_count + fips_count,
+            "items_actioned": 0,
+        }
+
+    # ── 3. Release all floating IPs ────────────────────────────────────────
+    fips_released = 0
+    try:
+        fip_resp = client.session.get(
+            f"{client.neutron_endpoint}/v2.0/floatingips?project_id={project_id}",
+            headers=headers)
+        if fip_resp.ok:
+            for fip in fip_resp.json().get("floatingips", []):
+                del_r = client.session.delete(
+                    f"{client.neutron_endpoint}/v2.0/floatingips/{fip['id']}",
+                    headers=headers)
+                if del_r.status_code < 300:
+                    fips_released += 1
+    except Exception as e:
+        logger.warning(f"tenant_offboarding: FIP release error: {e}")
+    _step("release_floating_ips", True, f"{fips_released} FIPs released")
+
+    # ── 4. Stop all VMs ────────────────────────────────────────────────────
+    vms_stopped = 0
+    try:
+        srv_resp = client.session.get(
+            f"{client.nova_endpoint}/servers/detail?all_tenants=true&project_id={project_id}",
+            headers=headers)
+        if srv_resp.ok:
+            servers = srv_resp.json().get("servers", [])
+            for srv in servers:
+                if srv.get("status", "").upper() not in ("SHUTOFF", "STOPPED"):
+                    stop_r = client.session.post(
+                        f"{client.nova_endpoint}/servers/{srv['id']}/action",
+                        headers=headers, json={"os-stop": None})
+                    if stop_r.status_code < 300:
+                        vms_stopped += 1
+    except Exception as e:
+        logger.warning(f"tenant_offboarding: VM stop error: {e}")
+    _step("stop_vms", True, f"{vms_stopped} VMs stopped")
+
+    # ── 5. Delete unattached ports ─────────────────────────────────────────
+    ports_deleted = 0
+    try:
+        port_resp = client.session.get(
+            f"{client.neutron_endpoint}/v2.0/ports?project_id={project_id}",
+            headers=headers)
+        if port_resp.ok:
+            for port in port_resp.json().get("ports", []):
+                if not port.get("device_id"):
+                    del_r = client.session.delete(
+                        f"{client.neutron_endpoint}/v2.0/ports/{port['id']}",
+                        headers=headers)
+                    if del_r.status_code < 300:
+                        ports_deleted += 1
+    except Exception as e:
+        logger.warning(f"tenant_offboarding: port delete error: {e}")
+    _step("delete_unattached_ports", True, f"{ports_deleted} ports deleted")
+
+    # ── 6. Disable Keystone project ────────────────────────────────────────
+    keystone_disabled = False
+    try:
+        patch_r = client.session.patch(
+            f"{client.keystone_endpoint}/projects/{project_id}",
+            headers=headers,
+            json={"project": {"enabled": False}},
+        )
+        keystone_disabled = patch_r.status_code < 300
+    except Exception as e:
+        logger.warning(f"tenant_offboarding: Keystone disable error: {e}")
+    _step("disable_keystone_project", keystone_disabled,
+          "project disabled" if keystone_disabled else "disable failed — check manually")
+
+    # ── 7. Tag resources with offboarding metadata ─────────────────────────
+    today = datetime.now(timezone.utc).date().isoformat()
+    retention_until = (datetime.now(timezone.utc).date() +
+                       __import__("datetime").timedelta(days=retention_days)).isoformat()
+    tag_meta = {"offboarding_date": today, "retention_until": retention_until, "offboarded_by": actor}
+    tagged_count = 0
+    try:
+        srv_resp2 = client.session.get(
+            f"{client.nova_endpoint}/servers/detail?all_tenants=true&project_id={project_id}",
+            headers=headers)
+        if srv_resp2.ok:
+            for srv in srv_resp2.json().get("servers", []):
+                client.session.post(
+                    f"{client.nova_endpoint}/servers/{srv['id']}/metadata",
+                    headers=headers, json={"metadata": tag_meta})
+                tagged_count += 1
+    except Exception as e:
+        logger.warning(f"tenant_offboarding: metadata tagging error: {e}")
+    _step("tag_resources", True, f"{tagged_count} VMs tagged; retention_until={retention_until}")
+
+    # ── 8. CRM integration call ────────────────────────────────────────────
+    crm_status = "skipped — no CRM integration configured"
+    try:
+        crm_result = _call_billing_gate(
+            project_id=project_id,
+            resource="tenant_churn",
+            units=1,
+            cost_estimate=0,
+            actor=actor,
+        )
+        if crm_result.get("skipped"):
+            crm_status = "skipped — integration not configured or disabled"
+        else:
+            crm_status = f"notified: charge_id={crm_result.get('charge_id', 'n/a')}"
+    except Exception as e:
+        crm_status = f"error: {e}"
+    _step("crm_churn_log", True, crm_status)
+
+    # ── 9. Email final report ──────────────────────────────────────────────
+    email_status = "skipped"
+    if email_report and customer_email:
+        try:
+            from smtp_helper import send_email
+            html = usage_report.get("html_body", "<p>Usage report unavailable.</p>")
+            subject = f"Your {real_name} Cloud Account — Final Usage Report"
+            sent = send_email(customer_email, subject, html)
+            email_status = "sent" if sent else "smtp_error"
+        except Exception as e:
+            email_status = f"error: {e}"
+    elif email_report and not customer_email:
+        email_status = "skipped — customer_email not provided"
+    _step("email_final_report", True, email_status)
+
+    # ── 10. Change request ticket stub ────────────────────────────────────
+    _step("ticket_stub", False,
+          f"Skipped — ticket system (T1) not yet implemented. "
+          f"Manual action required: schedule deletion of project '{real_name}' "
+          f"after {retention_until}.")
+
+    # Log to activity_log
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO activity_log (action, resource_type, resource_id, details, performed_by, created_at)
+                    VALUES (%s, %s, %s, %s::jsonb, %s, now())
+                """, (
+                    "tenant_offboarding",
+                    "project",
+                    project_id,
+                    json.dumps({
+                        "project_name": real_name,
+                        "fips_released": fips_released,
+                        "vms_stopped": vms_stopped,
+                        "ports_deleted": ports_deleted,
+                        "keystone_disabled": keystone_disabled,
+                        "tagged_count": tagged_count,
+                        "retention_until": retention_until,
+                        "email_status": email_status,
+                    }),
+                    actor,
+                ))
+    except Exception as e:
+        logger.warning(f"tenant_offboarding: activity_log write failed: {e}")
+
+    items_actioned = sum([
+        fips_released, vms_stopped, ports_deleted,
+        1 if keystone_disabled else 0,
+    ])
+
+    return {
+        "result": {
+            "mode": "executed",
+            "project_id": project_id,
+            "project_name": real_name,
+            "steps": steps,
+            "fips_released": fips_released,
+            "vms_stopped": vms_stopped,
+            "ports_deleted": ports_deleted,
+            "keystone_disabled": keystone_disabled,
+            "resources_tagged": tagged_count,
+            "retention_until": retention_until,
+            "crm_status": crm_status,
+            "email_status": email_status,
+            "usage_report": usage_report,
+        },
+        "items_found": vms_stopped + fips_released + ports_deleted,
+        "items_actioned": items_actioned,
+    }
+
+
 # ---------------------------------------------------------------------------
 #  Core execution logic
 # ---------------------------------------------------------------------------

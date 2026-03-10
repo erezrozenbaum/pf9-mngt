@@ -2568,7 +2568,23 @@ ON CONFLICT (name) DO UPDATE SET
     parameters_schema = EXCLUDED.parameters_schema,
     updated_at = now();
 
--- Seed default approval policies
+-- v1.56.0 runbooks
+INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema) VALUES
+(
+    'disaster_recovery_drill',
+    'Disaster Recovery Drill',
+    'Clone VMs tagged as DR candidates into an isolated network, verify they boot successfully within the timeout, then tear down all drill resources. Provides a safe, repeatable DR validation without touching production traffic.',
+    'compute', 'medium', true,
+    '{"type":"object","properties":{"target_project":{"type":"string","x-lookup":"projects_optional","description":"Scope drill to one project (blank = scan all projects)"},"server_ids":{"type":"array","items":{"type":"string"},"x-lookup":"vms_multi","description":"Explicit VM IDs to drill (blank = use tag_filter)"},"tag_filter":{"type":"string","default":"dr_candidate","description":"Metadata key on VMs that marks them as DR candidates"},"boot_timeout_minutes":{"type":"integer","default":10,"minimum":1,"description":"Per-VM boot poll timeout in minutes"},"max_vms":{"type":"integer","default":10,"minimum":1,"description":"Maximum number of VMs to include in a single drill run"},"network_cidr":{"type":"string","default":"192.168.99.0/24","description":"CIDR for the ephemeral isolated DR network"},"skip_teardown_on_failure":{"type":"boolean","default":false,"description":"Leave DR resources running if a VM fails to boot (for debugging)"}}}'
+),
+(
+    'tenant_offboarding',
+    'Tenant Offboarding',
+    'Safely exits a customer from the platform: releases FIPs, stops VMs, removes unattached ports, disables the Keystone project, tags resources with retention metadata, notifies CRM, and emails a final usage report. Requires confirm_project_name to match exactly.',
+    'provisioning', 'critical', true,
+    '{"type":"object","required":["project_id","confirm_project_name"],"properties":{"project_id":{"type":"string","x-lookup":"projects","description":"Keystone project to offboard"},"confirm_project_name":{"type":"string","description":"Must exactly match the project name (safety check)"},"retention_days":{"type":"integer","default":30,"description":"Days before final resource deletion is scheduled"},"email_final_report":{"type":"boolean","default":true,"description":"Send the usage report to the customer email"},"customer_email":{"type":"string","format":"email","description":"Recipient for the final usage report email"}}}'
+)
+ON CONFLICT (name) DO UPDATE SET
 INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode) VALUES
     ('stuck_vm_remediation',   'operator',   'admin',  'single_approval'),
     ('stuck_vm_remediation',   'admin',      'admin',  'auto_approve'),
@@ -2626,7 +2642,14 @@ INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role
     ('vm_rightsizing',              'superadmin', 'admin',  'auto_approve'),
     ('capacity_forecast',           'operator',   'admin',  'auto_approve'),
     ('capacity_forecast',           'admin',      'admin',  'auto_approve'),
-    ('capacity_forecast',           'superadmin', 'admin',  'auto_approve')
+    ('capacity_forecast',           'superadmin', 'admin',  'auto_approve'),
+    -- v1.56.0 runbooks
+    ('disaster_recovery_drill',     'operator',   'admin',  'single_approval'),
+    ('disaster_recovery_drill',     'admin',      'admin',  'single_approval'),
+    ('disaster_recovery_drill',     'superadmin', 'admin',  'single_approval'),
+    ('tenant_offboarding',          'operator',   'admin',  'single_approval'),
+    ('tenant_offboarding',          'admin',      'admin',  'single_approval'),
+    ('tenant_offboarding',          'superadmin', 'admin',  'single_approval')
 ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
 
 -- =====================================================================
@@ -3147,6 +3170,10 @@ BEGIN
         -- vm_rightsizing: Engineering, Tier3, Management
         ('vm_rightsizing', d_eng), ('vm_rightsizing', d_t3), ('vm_rightsizing', d_mgmt),
         -- capacity_forecast: Engineering, Tier3, Management
-        ('capacity_forecast', d_eng), ('capacity_forecast', d_t3), ('capacity_forecast', d_mgmt)
+        ('capacity_forecast', d_eng), ('capacity_forecast', d_t3), ('capacity_forecast', d_mgmt),
+        -- disaster_recovery_drill: Engineering only
+        ('disaster_recovery_drill', d_eng),
+        -- tenant_offboarding: Management + Engineering
+        ('tenant_offboarding', d_mgmt), ('tenant_offboarding', d_eng)
     ON CONFLICT (runbook_name, dept_id) DO NOTHING;
 END $$;
