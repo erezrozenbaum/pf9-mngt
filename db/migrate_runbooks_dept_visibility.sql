@@ -238,3 +238,53 @@ BEGIN
         ('org_usage_report', d_mgmt)
     ON CONFLICT (runbook_name, dept_id) DO NOTHING;
 END $$;
+
+-- ── 3d. Insert new runbooks for v1.55.0 (vm_rightsizing + capacity_forecast) ──
+INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema)
+VALUES
+(
+    'vm_rightsizing',
+    'VM Rightsizing',
+    'Analyse VM CPU and RAM utilisation from metering data over a configurable window. Identifies over-provisioned VMs, suggests a smaller cheaper flavor, and optionally performs the resize with a pre-resize snapshot for safety.',
+    'compute', 'high', true,
+    '{"type":"object","properties":{"target_project":{"type":"string","x-lookup":"projects_optional","description":"Scope to one project (blank = all projects)"},"server_ids":{"type":"array","items":{"type":"string"},"x-lookup":"vms_multi","description":"Specific VMs to analyse (blank = all VMs in project)"},"analysis_days":{"type":"integer","default":14,"minimum":3,"description":"Days of metering history to average"},"cpu_idle_pct":{"type":"number","default":15,"description":"Max average CPU % to qualify as over-provisioned"},"ram_idle_pct":{"type":"number","default":30,"description":"Max average RAM % to qualify as over-provisioned"},"min_savings_per_month":{"type":"number","default":5,"description":"Minimum monthly USD savings for a VM to appear in results"},"require_snapshot_first":{"type":"boolean","default":true,"description":"Create a snapshot before resizing each VM"}}}'
+),
+(
+    'capacity_forecast',
+    'Capacity Forecast',
+    'Runs a linear-regression forecast on hypervisor history data to project when vCPU and RAM capacity will reach the configured warning threshold. Returns weekly trend data, current utilisation, and days-to-threshold for each dimension.',
+    'general', 'low', false,
+    '{"type":"object","properties":{"warn_days_threshold":{"type":"integer","default":90,"description":"Raise an alert if exhaustion is projected within this many days"},"capacity_warn_pct":{"type":"number","default":80,"description":"Capacity utilisation % treated as the warning threshold"},"trigger_ticket":{"type":"boolean","default":false,"description":"Attempt to open a capacity ticket when alerts are generated (requires ticket system)"}}}'
+)
+ON CONFLICT (name) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    description  = EXCLUDED.description,
+    category     = EXCLUDED.category,
+    risk_level   = EXCLUDED.risk_level,
+    supports_dry_run = EXCLUDED.supports_dry_run,
+    parameters_schema = EXCLUDED.parameters_schema,
+    updated_at   = now();
+
+INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode) VALUES
+    ('vm_rightsizing',  'operator',   'admin', 'single_approval'),
+    ('vm_rightsizing',  'admin',      'admin', 'single_approval'),
+    ('vm_rightsizing',  'superadmin', 'admin', 'auto_approve'),
+    ('capacity_forecast','operator',  'admin', 'auto_approve'),
+    ('capacity_forecast','admin',     'admin', 'auto_approve'),
+    ('capacity_forecast','superadmin','admin', 'auto_approve')
+ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
+
+-- Dept visibility for v1.55.0 runbooks (must follow runbooks INSERT above)
+DO $$
+DECLARE
+    d_eng  int; d_t3 int; d_mgmt int;
+BEGIN
+    SELECT id INTO d_eng  FROM departments WHERE name = 'Engineering' LIMIT 1;
+    SELECT id INTO d_t3   FROM departments WHERE name = 'Tier3 Support' LIMIT 1;
+    SELECT id INTO d_mgmt FROM departments WHERE name = 'Management' LIMIT 1;
+
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        ('vm_rightsizing', d_eng),    ('vm_rightsizing', d_t3),    ('vm_rightsizing', d_mgmt),
+        ('capacity_forecast', d_eng), ('capacity_forecast', d_t3), ('capacity_forecast', d_mgmt)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+END $$;

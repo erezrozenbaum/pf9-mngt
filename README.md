@@ -90,7 +90,7 @@ Worker   Worker   Worker    Worker    Worker
 | Notifications (SMTP + Slack + Teams) | ✅ Production |
 | Drift Detection | ✅ Production |
 | Ops Assistant — Full-Text Search & Smart Queries | ✅ Production |
-| Runbooks (16 built-in, dept visibility, approval workflows) | ✅ Production |
+| Runbooks (18 built-in, dept visibility, approval workflows) | ✅ Production |
 | External Integrations Framework (billing gate, CRM, webhooks) | ✅ Production |
 | Dependency Graph: Health Scores, Blast Radius, Delete Impact | ✅ Production |
 | Backup & Restore (DB) with Integrity Validation | ✅ Production |
@@ -393,12 +393,12 @@ A 15-minute explainer video walking through the UI and key features:
 - **Paginated Results**: Relevance-ranked results with highlighted keyword snippets and metadata pill cards
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
-### 📋 Policy-as-Code Runbooks *(v1.21 → v1.53)*
-- **Runbook Catalogue**: Browse 16 built-in operational runbooks with schema-driven parameter forms:
-  - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
+### 📋 Policy-as-Code Runbooks *(v1.21 → v1.55)*
+- **Runbook Catalogue**: Browse 18 built-in operational runbooks with schema-driven parameter forms:
+  - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)* — identifies over-provisioned VMs and suggests/executes flavor downsizing with pre-snapshot safety
   - **Security**: Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast
   - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, **Quota Adjustment** *(v1.53)* — sets Nova/Neutron/Cinder quota with billing gate + dry-run diff
-  - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)* — full usage + cost report with email-ready HTML body
+  - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)* — full usage + cost report with email-ready HTML body, **Capacity Forecast** *(v1.55)* — linear regression on cluster vCPU/RAM history, projects days to 80% capacity
 - **Department Visibility** *(v1.52)*: Admins control which departments see each runbook via a live checkbox matrix in the UI; non-admin users receive only the runbooks their department is allowed to trigger
 - **External Integrations** *(v1.52)*: Connect billing gates, CRM systems, or generic webhooks. `auth_credential` Fernet-encrypted at rest. Action runbooks call `_call_billing_gate()` for pre-authorization before applying changes — silently skips if no integration is configured
 - **Result Export**: Every runbook result can be exported as CSV, JSON, or printed to PDF directly from the detail panel

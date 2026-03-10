@@ -325,7 +325,9 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
     const neededLookups = new Set<string>();
     for (const [, schema] of Object.entries(props) as any) {
       if (schema["x-lookup"]) {
-        neededLookups.add((schema["x-lookup"] as string).replace("_optional", ""));
+        const rawLt = schema["x-lookup"] as string;
+        // vms_multi → vms, projects_optional → projects, etc.
+        neededLookups.add(rawLt.replace("_optional", "").replace("_multi", ""));
       }
     }
     if (neededLookups.size > 0) {
@@ -1443,11 +1445,49 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
 
                 if (schema["x-lookup"]) {
                   // Dropdown backed by a live OpenStack lookup
-                  const lt = (schema["x-lookup"] as string).replace("_optional", "");
-                  const isOptional = (schema["x-lookup"] as string).endsWith("_optional");
+                  const rawLookup = schema["x-lookup"] as string;
+                  const isMulti = rawLookup.endsWith("_multi");
+                  const lt = rawLookup.replace("_optional", "").replace("_multi", "");
+                  const isOptional = rawLookup.includes("_optional");
                   const options: any[] = lookupData[lt] || [];
                   const loading = lookupLoading && !options.length;
                   const isVms = lt === "vms";
+
+                  if (isMulti) {
+                    // Multi-select (e.g. server_ids)
+                    const selectedIds: string[] = Array.isArray(triggerParams[key])
+                      ? triggerParams[key]
+                      : [];
+                    field = (
+                      <select
+                        multiple
+                        size={Math.min(6, Math.max(3, options.length))}
+                        value={selectedIds}
+                        disabled={loading}
+                        onChange={(e) => {
+                          const selected = Array.from(
+                            e.target.selectedOptions,
+                            (o) => o.value
+                          );
+                          setTriggerParams({ ...triggerParams, [key]: selected });
+                        }}
+                        style={{ minHeight: 80 }}
+                      >
+                        {loading && <option disabled>Loading…</option>}
+                        {isVms
+                          ? options.map((o: any) => (
+                              <option key={o.id} value={o.id}>
+                                {o.name} [{o.project_name}] ({o.status})
+                              </option>
+                            ))
+                          : options.map((o: any) => (
+                              <option key={o.id} value={o.id}>
+                                {o.name}
+                              </option>
+                            ))}
+                      </select>
+                    );
+                  } else {
                   field = (
                     <select
                       value={triggerParams[key] ?? ""}
@@ -1484,6 +1524,7 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
                           ))}
                     </select>
                   );
+                  }
                 } else if (schema.enum) {
                   field = (
                     <select
