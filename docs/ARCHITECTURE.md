@@ -479,7 +479,7 @@ Every infrastructure resource follows a **dual-table pattern**:
 | `search_documents` | Full-text search index — tsvector column with GIN index + pg_trgm indexes on title/body. 9 indexes total. |
 | `search_indexer_state` | Per-doc-type watermarks (last_id, last_updated_at, run_count, duration_ms) for incremental indexing |
 
-#### Runbooks (4 tables)
+#### Runbooks (6 tables)
 
 | Table | Purpose |
 |---|---|
@@ -487,6 +487,8 @@ Every infrastructure resource follows a **dual-table pattern**:
 | `runbook_approval_policies` | Per-runbook trigger→approver role mappings (approval_mode, escalation_timeout, daily rate limit). UNIQUE(runbook_name, trigger_role) |
 | `runbook_executions` | Full execution audit trail (status lifecycle, dry_run flag, parameters/result JSONB, triggered_by, approved_by, items_found/actioned) |
 | `runbook_approvals` | Individual approval records for multi-approval workflows (FK CASCADE to executions) |
+| `runbook_dept_visibility` | Department-scoped access control — `(runbook_name FK→runbooks, dept_id FK→departments)`. Absence of rows means globally visible. Admin/superadmin bypass this filter. |
+| `external_integrations` | External service registry for billing gates, CRM, and webhooks. `auth_credential` column stores Fernet-encrypted (AES-128-CBC + HMAC) credentials derived from `JWT_SECRET`. Supports `bearer`, `basic`, and `api_key` auth types. |
 
 ### Key Database Views
 
@@ -713,6 +715,7 @@ api/
 ├── restore_management.py # Snapshot restore planner + executor (8 endpoints)
 ├── metering_routes.py    # Operational metering endpoints (14 endpoints + 6 CSV exports)
 ├── navigation_routes.py  # Department & navigation visibility management (15+ endpoints)
+├── integration_routes.py # External integrations CRUD + test API (6 endpoints, superadmin write)
 ├── performance_metrics.py # Thread-safe request tracking with locking
 ├── migration_engine.py   # Migration intelligence: risk scoring, bandwidth model, tenant detection, schedule-aware agent sizing
 ├── migration_routes.py   # Migration planner API (80+ endpoints)

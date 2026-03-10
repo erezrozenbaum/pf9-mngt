@@ -2988,3 +2988,110 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('admin',      'inventory_versions', 'read'),
     ('superadmin', 'inventory_versions', 'admin')
 ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- =====================================================================
+-- RUNBOOK DEPT VISIBILITY + EXTERNAL INTEGRATIONS (v1.52.0 / Phase A)
+-- =====================================================================
+
+-- Runbook department visibility
+-- Absence of rows for a runbook = visible to ALL departments.
+-- Superadmin always sees all runbooks regardless.
+CREATE TABLE IF NOT EXISTS runbook_dept_visibility (
+    id           SERIAL PRIMARY KEY,
+    runbook_name TEXT NOT NULL REFERENCES runbooks(name) ON DELETE CASCADE,
+    dept_id      INTEGER NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+    UNIQUE(runbook_name, dept_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rdv_runbook ON runbook_dept_visibility(runbook_name);
+CREATE INDEX IF NOT EXISTS idx_rdv_dept    ON runbook_dept_visibility(dept_id);
+
+-- External integrations framework
+-- auth_credential is Fernet-encrypted at rest (key = sha256(JWT_SECRET)).
+CREATE TABLE IF NOT EXISTS external_integrations (
+    id                      SERIAL PRIMARY KEY,
+    name                    TEXT UNIQUE NOT NULL,
+    display_name            TEXT NOT NULL,
+    integration_type        TEXT NOT NULL DEFAULT 'webhook',
+    base_url                TEXT NOT NULL,
+    auth_type               TEXT NOT NULL DEFAULT 'bearer',
+    auth_credential         TEXT,
+    auth_header_name        TEXT NOT NULL DEFAULT 'Authorization',
+    request_template        JSONB NOT NULL DEFAULT '{}',
+    response_approval_path  TEXT NOT NULL DEFAULT 'approved',
+    response_reason_path    TEXT NOT NULL DEFAULT 'reason',
+    response_charge_id_path TEXT NOT NULL DEFAULT 'charge_id',
+    enabled                 BOOLEAN NOT NULL DEFAULT false,
+    timeout_seconds         INTEGER NOT NULL DEFAULT 10,
+    verify_ssl              BOOLEAN NOT NULL DEFAULT true,
+    last_tested_at          TIMESTAMPTZ,
+    last_test_status        TEXT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ext_integ_name    ON external_integrations(name);
+CREATE INDEX IF NOT EXISTS idx_ext_integ_type    ON external_integrations(integration_type);
+CREATE INDEX IF NOT EXISTS idx_ext_integ_enabled ON external_integrations(enabled);
+
+-- Role permissions for integrations resource
+INSERT INTO role_permissions (role, resource, action) VALUES
+    ('admin',      'integrations', 'read'),
+    ('admin',      'integrations', 'admin'),
+    ('superadmin', 'integrations', 'read'),
+    ('superadmin', 'integrations', 'admin')
+ON CONFLICT (role, resource, action) DO NOTHING;
+
+-- Seed dept visibility for the 14 shipped runbooks
+-- Uses name-based lookup to be safe against ID differences across installs.
+DO $$
+DECLARE
+    d_eng  INTEGER := (SELECT id FROM departments WHERE name = 'Engineering'   LIMIT 1);
+    d_t1   INTEGER := (SELECT id FROM departments WHERE name = 'Tier1 Support' LIMIT 1);
+    d_t2   INTEGER := (SELECT id FROM departments WHERE name = 'Tier2 Support' LIMIT 1);
+    d_t3   INTEGER := (SELECT id FROM departments WHERE name = 'Tier3 Support' LIMIT 1);
+    d_sal  INTEGER := (SELECT id FROM departments WHERE name = 'Sales'         LIMIT 1);
+    d_mgmt INTEGER := (SELECT id FROM departments WHERE name = 'Management'    LIMIT 1);
+BEGIN
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        -- stuck_vm_remediation: Engineering, Tier1, Tier2, Tier3
+        ('stuck_vm_remediation', d_eng), ('stuck_vm_remediation', d_t1),
+        ('stuck_vm_remediation', d_t2),  ('stuck_vm_remediation', d_t3),
+        -- vm_health_quickfix: Engineering, Tier1, Tier2, Tier3
+        ('vm_health_quickfix', d_eng), ('vm_health_quickfix', d_t1),
+        ('vm_health_quickfix', d_t2),  ('vm_health_quickfix', d_t3),
+        -- password_reset_console: Engineering, Tier1, Tier2, Tier3
+        ('password_reset_console', d_eng), ('password_reset_console', d_t1),
+        ('password_reset_console', d_t2),  ('password_reset_console', d_t3),
+        -- snapshot_before_escalation: Engineering, Tier1, Tier2, Tier3
+        ('snapshot_before_escalation', d_eng), ('snapshot_before_escalation', d_t1),
+        ('snapshot_before_escalation', d_t2),  ('snapshot_before_escalation', d_t3),
+        -- orphan_resource_cleanup: Engineering, Tier2, Tier3
+        ('orphan_resource_cleanup', d_eng), ('orphan_resource_cleanup', d_t2),
+        ('orphan_resource_cleanup', d_t3),
+        -- security_group_audit: Engineering, Tier2, Tier3
+        ('security_group_audit', d_eng), ('security_group_audit', d_t2),
+        ('security_group_audit', d_t3),
+        -- security_compliance_audit: Engineering, Tier3
+        ('security_compliance_audit', d_eng), ('security_compliance_audit', d_t3),
+        -- quota_threshold_check: Engineering, Tier2, Tier3, Sales, Management
+        ('quota_threshold_check', d_eng), ('quota_threshold_check', d_t2),
+        ('quota_threshold_check', d_t3),  ('quota_threshold_check', d_sal),
+        ('quota_threshold_check', d_mgmt),
+        -- snapshot_quota_forecast: Engineering, Tier3
+        ('snapshot_quota_forecast', d_eng), ('snapshot_quota_forecast', d_t3),
+        -- diagnostics_bundle: Engineering, Tier1, Tier2, Tier3
+        ('diagnostics_bundle', d_eng), ('diagnostics_bundle', d_t1),
+        ('diagnostics_bundle', d_t2),  ('diagnostics_bundle', d_t3),
+        -- upgrade_opportunity_detector: Engineering, Sales, Management
+        ('upgrade_opportunity_detector', d_eng), ('upgrade_opportunity_detector', d_sal),
+        ('upgrade_opportunity_detector', d_mgmt),
+        -- monthly_executive_snapshot: Sales, Management
+        ('monthly_executive_snapshot', d_sal), ('monthly_executive_snapshot', d_mgmt),
+        -- cost_leakage_report: Engineering, Tier3, Sales, Management
+        ('cost_leakage_report', d_eng), ('cost_leakage_report', d_t3),
+        ('cost_leakage_report', d_sal), ('cost_leakage_report', d_mgmt),
+        -- user_last_login: Engineering, Management
+        ('user_last_login', d_eng), ('user_last_login', d_mgmt)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+END $$;

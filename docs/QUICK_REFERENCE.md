@@ -83,15 +83,28 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
 - **Runbooks Tab** (v1.21 → v1.25 - NEW ✨):
   - "📋 Runbooks" tab with policy-as-code catalogue and one-click execution
-  - 13 built-in engines across 4 categories:
+  - 14 built-in engines across 4 categories:
     - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
     - **Security**: Security Group Audit, Security & Compliance Audit
     - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast
-    - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
+    - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning
   - Schema-driven parameter forms with dry-run toggle and risk-level badges
   - Approval workflow: per-runbook policies with role-based trigger→approver mappings (high-risk runbooks require admin approval)
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
+- **Runbook Dept Visibility** (v1.52.0):
+  - Admin-only checkbox grid (runbooks × departments); absence of rows = visible to all
+  - `GET /api/runbooks/visibility` — full matrix (admin+)
+  - `PUT /api/runbooks/visibility/{runbook_name}` — replace dept list for runbook (admin+)
+  - Non-admin users only see runbooks their department is permitted to view
+- **External Integrations** (v1.52.0):
+  - Register billing gates, CRM, and webhooks; `auth_credential` Fernet-encrypted at rest
+  - `GET /api/integrations` — list all (admin+)
+  - `GET /api/integrations/{name}` — get single (admin+)
+  - `POST /api/integrations` — create (superadmin)
+  - `PUT /api/integrations/{name}` — update (superadmin)
+  - `DELETE /api/integrations/{name}` — delete (superadmin)
+  - `POST /api/integrations/{name}/test` — fire test request + persist `last_test_status`
 - **Migration Planner — Per-Day Schedule Breakdown + Throughput Cap Fix** (v1.44.0):
   - **Engine rewrite** (`migration_engine.py`): replaced per-slot hour packing with a real GB/day throughput ceiling — `effective_gbph = (bottleneck_mbps/8) × 3600/1024 × 0.55`; `max_gb_per_day = effective_gbph × working_hours`
   - `wall_clock_hours` now `day_transfer_gb / effective_gbph` (was `day_hours_used / total_concurrent` — badly under-counted)
@@ -824,6 +837,22 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/expo
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/api-usage"          # CSV export: API usage
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/efficiency"         # CSV export: efficiency
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/metering/export/chargeback"         # CSV export: chargeback report
+
+# Runbook Dept Visibility endpoints (v1.52.0 - admin+)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/runbooks/visibility"                # Full runbook×dept matrix
+curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"dept_ids":[1,2]}' "http://localhost:8000/api/runbooks/visibility/security_compliance_audit"   # Update dept list for runbook
+
+# External Integrations endpoints (v1.52.0)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/integrations"                      # List all integrations (admin+)
+curl -H "Authorization: Bearer <token>" "http://localhost:8000/api/integrations/billing"              # Get single integration (admin+)
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"name":"billing","integration_type":"billing_gate","base_url":"https://billing.internal/v1/authorize","auth_type":"bearer","auth_credential":"<token>","enabled":true}' \
+  "http://localhost:8000/api/integrations"                                                             # Create integration (superadmin)
+curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"enabled":false}' "http://localhost:8000/api/integrations/billing"                             # Update integration (superadmin)
+curl -X DELETE -H "Authorization: Bearer <token>" "http://localhost:8000/api/integrations/billing"   # Delete integration (superadmin)
+curl -X POST -H "Authorization: Bearer <token>" "http://localhost:8000/api/integrations/billing/test" # Test connectivity + persist status
 ```
 
 ### Query Parameters
