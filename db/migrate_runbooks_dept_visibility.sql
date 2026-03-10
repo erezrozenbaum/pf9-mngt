@@ -95,6 +95,35 @@ INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role
     ('org_usage_report', 'superadmin', 'admin', 'auto_approve')
 ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
 
+-- ── 3c. Patch parameters_schema — add x-lookup hints (v1.54.0 UX) ───────────
+-- Idempotent: ON CONFLICT DO UPDATE — safe to run on any existing install.
+UPDATE runbooks SET parameters_schema = '{"type":"object","properties":{"stuck_threshold_minutes":{"type":"integer","default":30,"description":"Minutes a VM must be stuck before intervention"},"action":{"type":"string","enum":["soft_reboot","hard_reboot","report_only"],"default":"report_only","description":"Remediation action to take"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"},"target_domain":{"type":"string","default":"","description":"Limit to specific domain (empty = all)"}}}'
+    WHERE name = 'stuck_vm_remediation';
+
+UPDATE runbooks SET parameters_schema = '{"type":"object","properties":{"resource_types":{"type":"array","items":{"type":"string","enum":["ports","volumes","floating_ips"]},"default":["ports","volumes","floating_ips"],"description":"Which resource types to scan (ports, volumes, floating_ips)"},"age_threshold_days":{"type":"integer","default":7,"description":"Only target resources older than N days"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"},"target_domain":{"type":"string","default":"","description":"Limit to specific domain (empty = all)"}}}'
+    WHERE name = 'orphan_resource_cleanup';
+
+UPDATE runbooks SET parameters_schema = '{"type":"object","properties":{"flag_ports":{"type":"array","items":{"type":"integer"},"default":[22,3389,3306,5432,1433,27017],"description":"Ports to flag when open to 0.0.0.0/0"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"}}}'
+    WHERE name = 'security_group_audit';
+
+UPDATE runbooks SET parameters_schema = '{"type":"object","properties":{"warning_pct":{"type":"integer","default":80,"description":"Warning threshold percentage"},"critical_pct":{"type":"integer","default":95,"description":"Critical threshold percentage"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"}}}'
+    WHERE name = 'quota_threshold_check';
+
+UPDATE runbooks SET parameters_schema = '{"type":"object","properties":{"server_id":{"type":"string","x-lookup":"vms","description":"Select the VM to diagnose"},"auto_restart":{"type":"boolean","default":false,"description":"Restart the VM if issues found"},"restart_type":{"type":"string","enum":["soft","hard","guest_os"],"default":"soft","description":"Restart method"}},"required":["server_id"]}'
+    WHERE name = 'vm_health_quickfix';
+
+UPDATE runbooks SET parameters_schema = '{"type":"object","properties":{"server_id":{"type":"string","x-lookup":"vms","description":"Select the VM to snapshot"},"reference_id":{"type":"string","default":"","description":"Ticket or incident reference ID"},"tag_prefix":{"type":"string","default":"Pre-T2-escalation","description":"Tag prefix for the snapshot"}},"required":["server_id"]}'
+    WHERE name = 'snapshot_before_escalation';
+
+UPDATE runbooks SET parameters_schema = '{"type":"object","properties":{"server_id":{"type":"string","x-lookup":"vms","description":"Select the VM"},"new_password":{"type":"string","default":"","description":"New password (auto-generated if blank)"},"enable_console":{"type":"boolean","default":true,"description":"Enable VNC/SPICE console"},"console_expiry_minutes":{"type":"integer","default":30,"description":"Console link expiry in minutes"}},"required":["server_id"]}'
+    WHERE name = 'password_reset_console';
+
+UPDATE runbooks SET parameters_schema = '{"type":"object","required":["project_id"],"properties":{"project_id":{"type":"string","x-lookup":"projects","description":"Select the target project"},"project_name":{"type":"string","x-hidden":true,"description":"Display name (auto-filled)"},"new_vcpus":{"type":"integer","minimum":0,"description":"New vCPU quota limit (0 = no change)"},"new_ram_mb":{"type":"integer","minimum":0,"description":"New RAM quota in MB (0 = no change)"},"new_instances":{"type":"integer","minimum":0,"description":"New instance quota limit (0 = no change)"},"new_networks":{"type":"integer","minimum":0,"description":"New Neutron network quota (0 = no change)"},"new_volumes":{"type":"integer","minimum":0,"description":"New Cinder volumes quota (0 = no change)"},"new_gigabytes":{"type":"integer","minimum":0,"description":"New Cinder gigabytes quota (0 = no change)"},"reason":{"type":"string","description":"Free-text justification (written to audit log)"},"require_billing_approval":{"type":"boolean","default":true,"description":"Call billing gate when quota is being increased"}}}'
+    WHERE name = 'quota_adjustment';
+
+UPDATE runbooks SET parameters_schema = '{"type":"object","required":["project_id"],"properties":{"project_id":{"type":"string","x-lookup":"projects","description":"Select the target project"},"include_cost_estimate":{"type":"boolean","default":true,"description":"Include cost estimate table in the report"},"include_snapshot_details":{"type":"boolean","default":true,"description":"Query Cinder snapshot list for snapshot GB total"},"period_days":{"type":"integer","default":30,"minimum":1,"description":"Billing/usage period in days for cost calculations"}}}'
+    WHERE name = 'org_usage_report';
+
 -- ── 4. Seed dept visibility for the 14 shipped runbooks ──────────────
 -- Department IDs match the seed order in init.sql:
 --   1 = Engineering
