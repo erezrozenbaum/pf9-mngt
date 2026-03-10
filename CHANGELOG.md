@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.55.0] - 2026-03-10
+
+### Added — Phase B2: Action Runbooks — VM Rightsizing + Capacity Forecast
+
+#### Runbook 17: `vm_rightsizing`
+- **Purpose:** Identifies over-provisioned VMs by analysing `metering_resources` CPU/RAM
+  usage over a configurable window (default 14 days), then suggests — or automatically
+  executes — a downsize to a cheaper Nova flavor.
+- **Analysis:** Computes average and peak CPU % + RAM % per VM; applies a 25 % vCPU safety
+  headroom and 50 % RAM headroom over peak actual usage; skips VMs that are already at minimum
+  safe size.
+- **Flavor selection:** Iterates the full Nova flavor catalog (including private flavors),
+  prices each via `metering_pricing.category='flavor'` (falling back to per-vCPU + per-GB-RAM
+  formula), and selects the cheapest option that satisfies headroom requirements without
+  upsizing both dimensions simultaneously.
+- **Dry-run:** Returns `candidates[]` with current/suggested flavor, savings_per_month,
+  peak_cpu_pct, peak_ram_mb, data_points; and `skipped[]` with skip reason. No Nova changes.
+- **Execute mode:** Pre-snapshot (if `require_snapshot_first=true`) → stop → resize →
+  confirmResize → start. Full API progress written to `result.execution[]`.
+- **Parameters:** `target_project` (projects_optional), `server_ids` (vms_multi), 
+  `analysis_days=14`, `cpu_idle_pct=15`, `ram_idle_pct=30`, `min_savings_per_month=5`,
+  `require_snapshot_first=true`.
+- **Risk level:** high | **Dry-run:** yes | **Dept visibility:** Engineering, Tier3, Management
+- **Approval policy:** operator → single_approval; admin → single_approval; superadmin → auto_approve
+
+#### Runbook 18: `capacity_forecast`
+- **Purpose:** Reads `hypervisors_history` to trend weekly aggregate vCPU + RAM usage across
+  the entire cluster, performs numpy-free linear regression, and projects days until 80 % 
+  capacity is reached (configurable via `capacity_warn_pct`).
+- **Output:** `trend[]` (weekly data points), `capacity{}` (totals), `current_utilisation{}`,
+  `forecast{}` (days_to_vcpu_warn, days_to_ram_warn), `alerts[]` (populated when breach is
+  within `warn_days_threshold`), optional ticket stub logging.
+- **Graceful degradation:** Returns `"insufficient_data"` status with ≤1 data week; requires
+  ≥3 unique weeks for regression to be meaningful.
+- **Risk level:** low | **Read-only:** yes | **Dept visibility:** Engineering, Tier3, Management
+- **Approval policy:** auto_approve for all roles
+
+#### UI Enhancement: `vms_multi` multi-select lookup
+- `RunbooksTab.tsx` now renders `x-lookup: vms_multi` schema fields as a `<select multiple>`
+  control, enabling users to scope a rightsizing run to specific VMs.
+- Lookup type normalisation strips both `_optional` and `_multi` suffixes before calling
+  `/lookup/{type}` so existing infrastructure is reused without extra API routes.
+
+#### Bug Fix: `ram_usage_mb` is allocated, not actual
+- `metering_resources.ram_usage_mb` stores the allocated RAM (equals `ram_allocated_mb`),
+  not actual used RAM. The `vm_rightsizing` engine was using `MAX(ram_usage_mb)` as peak RAM,
+  which inflated the minimum required RAM to `allocated × 1.5` — making downsizing impossible
+  for any VM. Fixed to use `MAX(ram_usage_percent) × ram_allocated_mb / 100` for actual peak RAM.
+
+#### DB Changes
+- `db/migrate_runbooks_dept_visibility.sql` — section 3d: two new runbook INSERTs, six new
+  approval policy rows, visibility seeds for Engineering/Tier3/Management (fully idempotent).
+- `db/init.sql` — same changes for fresh-install parity.
+
 ## [1.53.0] - 2026-03-10
 
 ### Added — Phase B1: Action Runbooks — Quota Adjustment + Org Usage Report

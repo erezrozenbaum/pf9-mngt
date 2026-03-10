@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.45.0  
-**Last Updated**: March 8, 2026  
+**Version**: 1.55.0  
+**Last Updated**: March 10, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -26,6 +26,8 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 | Trigger snapshot run | UI → Snapshot Policies → Run Now | Admin |
 | Trigger restore | UI → Restore → New Restore Job | Admin |
 | Run backup now | UI → Backup → 🚀 Run Backup Now | Superadmin |
+| Run rightsizing analysis | UI → Runbooks → vm_rightsizing (dry-run) | Operator+ |
+| Check capacity forecast | UI → Runbooks → capacity_forecast | Operator+ |
 | View audit log | UI → Audit | Admin |
 | View system logs | UI → System Logs | Admin/Superadmin |
 
@@ -811,13 +813,13 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **Dark Mode**: Full dark theme support for panel, messages, chips, help view, welcome screen, and settings.
 - **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
 
-### Policy-as-Code Runbooks (v1.21 → v1.25 - NEW ✨)
-- **📋 Runbooks Tab**: Operator-facing catalogue of 14 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
-- **14 Built-in Runbooks**:
-  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
-  - **Security** — Security Group Audit, Security & Compliance Audit
-  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast
-  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning
+### Policy-as-Code Runbooks (v1.21 → v1.55)
+- **📋 Runbooks Tab**: Operator-facing catalogue of 18 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
+- **18 Built-in Runbooks**:
+  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)* — identifies over-provisioned VMs and suggests/executes flavor downsizing with pre-snapshot safety
+  - **Security** — Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast
+  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, **Quota Adjustment** *(v1.53)* — sets Nova/Neutron/Cinder quota with billing gate + dry-run diff
+  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)* — full usage + cost report with email-ready HTML body, **Capacity Forecast** *(v1.55)* — linear regression on cluster vCPU/RAM history projecting days to 80% capacity
 - **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout. High-risk runbooks (e.g. `password_reset_console`) default to `single_approval` for operator/admin triggers.
 - **Admin Governance Sub-Tabs**: Three new sub-tabs in Admin → Auth Management: Runbook Executions (filterable history with detail panel), Runbook Approvals (pending queue with approve/reject/cancel), Runbook Policies (per-runbook approval policy editor)
 - **Notification Events**: `runbook_approval_requested`, `runbook_completed`, `runbook_failed`
@@ -825,6 +827,19 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **RBAC**: viewer=`runbooks:read`, operator=`runbooks:read+write`, admin/superadmin=`runbooks:read+write+admin`
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
 - **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`). `db/migrate_new_runbooks.sql` for adding the 7 new runbooks (v1.25+).
+
+### Action Runbooks — Quota Adjustment + Org Usage Report (v1.53.0)
+- **`quota_adjustment`** (Runbook 15): Set Nova/Neutron/Cinder quota for a project. Dry-run returns a before/after diff and cost estimate. Supports an optional billing gate pre-authorization call before applying changes. Writes a full audit entry with `charge_id`, reason, actor, and before/after diff.
+- **`org_usage_report`** (Runbook 16): Read-only usage + cost report for a single org/project. Covers Nova quota+usage, per-server breakdown, Neutron quota, Cinder quota+usage, floating IPs, snapshots. Outputs `result.html_body` — a pre-rendered HTML table ready to email to the customer.
+- **Friendly Dropdown Lookups** (v1.54.0): `x-lookup: vms` and `x-lookup: projects` schema fields render as live-populated `<select>` dropdowns in the trigger modal instead of free-text fields. Lookup data fetched from `/api/runbooks/lookup/{type}`.
+- **`vms_multi` multi-select** (v1.55.0): `x-lookup: vms_multi` renders as `<select multiple>` so operators can scope a rightsizing run to specific VMs.
+
+### Action Runbooks — VM Rightsizing + Capacity Forecast (v1.55.0)
+- **`vm_rightsizing`** (Runbook 17): Analyses `metering_resources` CPU/RAM usage (default 14-day window), identifies over-provisioned VMs, and suggests the cheapest fitting flavor using peak usage + 25 % vCPU / 50 % RAM headroom. Execute mode: pre-snapshot → stop → resize → confirmResize → start. Dry-run returns `candidates[]` with current/suggested flavor, savings_per_month, and `skipped[]` with skip reason.
+  - **Parameters**: `target_project` (projects_optional), `server_ids` (vms_multi), `analysis_days=14`, `cpu_idle_pct=15`, `ram_idle_pct=30`, `min_savings_per_month=5`, `require_snapshot_first=true`
+  - **Risk**: high | **Approval**: operator/admin → single_approval; superadmin → auto | **Dept**: Engineering, Tier3, Management
+- **`capacity_forecast`** (Runbook 18): Reads `hypervisors_history`, aggregates weekly vCPU + RAM usage, runs numpy-free linear regression, and projects days until the cluster reaches `capacity_warn_pct` (default 80 %). Generates `alerts[]` when breach is within `warn_days_threshold` days. Optional `trigger_ticket` param stubs a future ticket workflow.
+  - **Risk**: low | **Read-only** | **Dept**: Engineering, Tier3, Management
 
 ### Runbook Department Visibility (v1.52.0)
 - **Department-scoped filtering**: Non-admin users receive only the runbooks their department is permitted to see. Admin and superadmin bypass the filter entirely and always see all runbooks.

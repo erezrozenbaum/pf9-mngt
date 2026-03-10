@@ -2682,6 +2682,538 @@ def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
     }
 
 
+# ===== Engine: vm_rightsizing =============================================
+
+@register_engine("vm_rightsizing")
+def _engine_vm_rightsizing(params: dict, dry_run: bool, actor: str) -> dict:
+    """
+    Analyse VM CPU / RAM usage from metering data and suggest (or apply)
+    downsizes to a smaller, cheaper flavor.
+
+    Parameters
+    ----------
+    target_project      : project ID to scope the analysis (blank = all)
+    server_ids          : list of VM IDs to analyse (blank = all in project)
+    analysis_days       : how many days of metering history to consider (default 14)
+    cpu_idle_pct        : max avg CPU % to be a candidate (default 15)
+    ram_idle_pct        : max avg RAM % to be a candidate (default 30)
+    min_savings_per_month : minimum USD savings to include in candidate list (default 5)
+    require_snapshot_first : take a snapshot before resizing (default True)
+    """
+    import time
+    from pf9_control import get_client
+
+    target_project = params.get("target_project", "")
+    server_ids_filter = params.get("server_ids", [])
+    analysis_days = int(params.get("analysis_days", 14))
+    cpu_idle_pct = float(params.get("cpu_idle_pct", 15))
+    ram_idle_pct = float(params.get("ram_idle_pct", 30))
+    min_savings = float(params.get("min_savings_per_month", 5))
+    require_snapshot = params.get("require_snapshot_first", True)
+
+    pricing = _load_metering_pricing()
+    price_vcpu = pricing.get("price_per_vcpu_month", 15.0)
+    price_gb_ram = pricing.get("price_per_gb_ram_month", 5.0)
+    currency = pricing.get("cost_currency", "USD")
+
+    # ── 1. Pull average usage from metering_resources ──────────────────────
+    usage_map: Dict[str, dict] = {}
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT
+                        vm_id,
+                        vm_name,
+                        project_name,
+                        vcpus_allocated,
+                        ram_allocated_mb,
+                        AVG(cpu_usage_percent)::numeric(6,2)  AS avg_cpu_pct,
+                        AVG(ram_usage_percent)::numeric(6,2)  AS avg_ram_pct,
+                        AVG(ram_usage_mb)::numeric(12,2)      AS avg_ram_mb,
+                        MAX(cpu_usage_percent)::numeric(6,2)  AS peak_cpu_pct,
+                        MAX(ram_usage_percent)::numeric(6,2)  AS peak_ram_pct,
+                        COUNT(*)                               AS data_points
+                    FROM metering_resources
+                    WHERE collected_at > now() - interval '%s days'
+                    GROUP BY vm_id, vm_name, project_name, vcpus_allocated, ram_allocated_mb
+                    HAVING COUNT(*) >= 3
+                """, (analysis_days,))
+                for row in cur.fetchall():
+                    usage_map[row["vm_id"]] = dict(row)
+    except Exception as e:
+        logger.error(f"vm_rightsizing: metering query failed: {e}")
+        raise HTTPException(500, f"Metering data query failed: {e}")
+
+    # ── 2. Fetch Nova flavor catalog ────────────────────────────────────────
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    try:
+        fl_resp = client.session.get(
+            f"{client.nova_endpoint}/flavors/detail?is_public=None",
+            headers=headers,
+        )
+        fl_resp.raise_for_status()
+        nova_flavors = fl_resp.json().get("flavors", [])
+    except Exception as e:
+        logger.error(f"vm_rightsizing: flavor fetch failed: {e}")
+        raise HTTPException(500, f"Could not fetch flavor list: {e}")
+
+    # Build flavor lookup: id→{vcpus, ram_mb, disk_gb, name}
+    flavor_by_id: Dict[str, dict] = {
+        f["id"]: {
+            "id": f["id"],
+            "name": f.get("name", ""),
+            "vcpus": f.get("vcpus", 0),
+            "ram_mb": f.get("ram", 0),
+            "disk_gb": f.get("disk", 0),
+        }
+        for f in nova_flavors
+    }
+
+    # Augment flavor cost from metering_pricing by matching name
+    flavor_cost: Dict[str, float] = {}
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT item_name, vcpus, ram_gb, cost_per_month
+                    FROM metering_pricing
+                    WHERE category = 'flavor' AND vcpus > 0 AND cost_per_month > 0
+                """)
+                for row in cur.fetchall():
+                    flavor_cost[row["item_name"]] = float(row["cost_per_month"])
+    except Exception as e:
+        logger.warning(f"vm_rightsizing: could not load flavor pricing: {e}")
+
+    def _flavor_cost(flv: dict) -> float:
+        """Estimate monthly cost for a flavor, using metering_pricing or formula."""
+        cost = flavor_cost.get(flv["name"])
+        if cost:
+            return cost
+        vcpus = flv["vcpus"]
+        ram_gb = flv["ram_mb"] / 1024.0
+        return round(vcpus * price_vcpu + ram_gb * price_gb_ram, 2)
+
+    # ── 3. Fetch VMs from Nova ──────────────────────────────────────────────
+    url = f"{client.nova_endpoint}/servers/detail?all_tenants=true&limit=1000"
+    if target_project:
+        url += f"&project_id={target_project}"
+    try:
+        srv_resp = client.session.get(url, headers=headers)
+        srv_resp.raise_for_status()
+        all_servers = srv_resp.json().get("servers", [])
+    except Exception as e:
+        raise HTTPException(500, f"Could not fetch server list: {e}")
+
+    # ── 4. Find candidates ─────────────────────────────────────────────────
+    candidates = []
+    skipped = []
+
+    for srv in all_servers:
+        sid = srv["id"]
+
+        # Filter by explicit server_ids list if provided
+        if server_ids_filter and sid not in server_ids_filter:
+            continue
+
+        srv_status = srv.get("status", "")
+        if srv_status.upper() not in ("ACTIVE", "SHUTOFF"):
+            skipped.append({"vm_id": sid, "vm_name": srv.get("name", ""), "reason": f"status={srv_status}"})
+            continue
+
+        usage = usage_map.get(sid)
+        if not usage:
+            skipped.append({"vm_id": sid, "vm_name": srv.get("name", ""), "reason": "no metering data"})
+            continue
+
+        avg_cpu = float(usage["avg_cpu_pct"] or 0)
+        avg_ram_pct = float(usage["avg_ram_pct"] or 0)
+        if avg_cpu >= cpu_idle_pct or avg_ram_pct >= ram_idle_pct:
+            continue  # Not over-provisioned
+
+        # Current flavor
+        current_flavor_id = srv.get("flavor", {}).get("id", "")
+        current_flavor = flavor_by_id.get(current_flavor_id)
+        if not current_flavor:
+            skipped.append({"vm_id": sid, "vm_name": srv.get("name", ""), "reason": "flavor not found"})
+            continue
+
+        current_cost = _flavor_cost(current_flavor)
+
+        # Required resources (peak + headroom)
+        peak_cpu_pct = float(usage["peak_cpu_pct"] or avg_cpu)
+        peak_ram_pct = float(usage["peak_ram_pct"] or usage["avg_ram_pct"] or 0)
+        current_vcpus = current_flavor["vcpus"]
+        current_ram_mb = current_flavor["ram_mb"]
+
+        # Need enough for peak usage × safety margin
+        # peak_ram_pct is actual % used; ram_usage_mb stores allocated (not actual used)
+        peak_ram_mb_actual = (peak_ram_pct / 100.0) * current_ram_mb
+        min_vcpus = max(1, int(round((peak_cpu_pct / 100.0) * current_vcpus * 1.25 + 0.5)))
+        min_ram_mb = int(peak_ram_mb_actual * 1.5)
+
+        # Must actually be smaller than current
+        if min_vcpus >= current_vcpus and min_ram_mb >= current_ram_mb:
+            continue  # Headroom calc says keep current size
+
+        # Find cheapest smaller-or-equal flavor that covers minimum requirements
+        best_flavor = None
+        best_cost = current_cost
+        for flv in flavor_by_id.values():
+            if flv["vcpus"] < min_vcpus:
+                continue
+            if flv["ram_mb"] < min_ram_mb:
+                continue
+            if flv["vcpus"] > current_vcpus and flv["ram_mb"] > current_ram_mb:
+                continue  # Don't upsize both dimensions
+            if flv["id"] == current_flavor_id:
+                continue
+            flv_cost = _flavor_cost(flv)
+            if flv_cost < best_cost:
+                best_cost = flv_cost
+                best_flavor = flv
+
+        if not best_flavor:
+            continue
+
+        savings = round(current_cost - best_cost, 2)
+        if savings < min_savings:
+            continue
+
+        tenant_id = srv.get("tenant_id", "")
+        candidates.append({
+            "vm_id": sid,
+            "vm_name": srv.get("name", ""),
+            "project_id": tenant_id,
+            "project_name": usage["project_name"] or tenant_id,
+            "status": srv_status,
+            "current_flavor": {
+                "id": current_flavor_id,
+                "name": current_flavor["name"],
+                "vcpus": current_flavor["vcpus"],
+                "ram_mb": current_flavor["ram_mb"],
+                "cost_per_month": current_cost,
+            },
+            "suggested_flavor": {
+                "id": best_flavor["id"],
+                "name": best_flavor["name"],
+                "vcpus": best_flavor["vcpus"],
+                "ram_mb": best_flavor["ram_mb"],
+                "cost_per_month": best_cost,
+            },
+            "savings_per_month": savings,
+            "avg_cpu_pct": avg_cpu,
+            "avg_ram_pct": avg_ram_pct,
+            "peak_cpu_pct": peak_cpu_pct,
+            "peak_ram_mb": round(peak_ram_mb_actual, 1),
+            "data_points": int(usage["data_points"]),
+            "analysis_days": analysis_days,
+        })
+
+    total_savings = round(sum(c["savings_per_month"] for c in candidates), 2)
+
+    if dry_run or not candidates:
+        return {
+            "result": {
+                "candidates": candidates,
+                "skipped": skipped,
+                "total_candidates": len(candidates),
+                "total_savings_per_month": total_savings,
+                "currency": currency,
+                "analysis_days": analysis_days,
+                "cpu_idle_threshold_pct": cpu_idle_pct,
+                "ram_idle_threshold_pct": ram_idle_pct,
+                "mode": "dry_run" if dry_run else "scan",
+                "resized": [],
+                "errors": [],
+            },
+            "items_found": len(candidates),
+            "items_actioned": 0,
+        }
+
+    # ── 5. Actual resize ───────────────────────────────────────────────────
+    resized = []
+    errors = []
+    items_actioned = 0
+
+    def _poll_status(sid: str, target_status: str, timeout: int = 300) -> bool:
+        """Poll Nova until VM reaches target_status. Returns True on success."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            r = client.session.get(f"{client.nova_endpoint}/servers/{sid}", headers=headers)
+            if r.status_code == 200:
+                st = r.json().get("server", {}).get("status", "")
+                if st.upper() == target_status.upper():
+                    return True
+                if st.upper() in ("ERROR",):
+                    return False
+            time.sleep(10)
+        return False
+
+    for c in candidates:
+        sid = c["vm_id"]
+        new_flavor_id = c["suggested_flavor"]["id"]
+        was_active = c["status"].upper() == "ACTIVE"
+        snap_result = None
+
+        try:
+            # 5a. Snapshot first if required
+            if require_snapshot:
+                snap_engine = RUNBOOK_ENGINES.get("snapshot_before_escalation")
+                if snap_engine:
+                    snap_out = snap_engine(
+                        {"server_id": sid, "tag_prefix": "pre-resize", "reference_id": f"rightsizing-{actor}"},
+                        False, actor
+                    )
+                    snap_result = snap_out.get("result", {}).get("snapshot_name", "n/a")
+
+            # 5b. Stop if ACTIVE
+            if was_active:
+                r = client.session.post(
+                    f"{client.nova_endpoint}/servers/{sid}/action",
+                    headers=headers, json={"os-stop": None}
+                )
+                if r.status_code >= 300:
+                    raise RuntimeError(f"Stop failed HTTP {r.status_code}")
+                if not _poll_status(sid, "SHUTOFF", timeout=120):
+                    raise RuntimeError("Timed out waiting for SHUTOFF")
+
+            # 5c. Resize
+            r = client.session.post(
+                f"{client.nova_endpoint}/servers/{sid}/action",
+                headers=headers, json={"resize": {"flavorRef": new_flavor_id}}
+            )
+            if r.status_code >= 300:
+                raise RuntimeError(f"Resize failed HTTP {r.status_code}: {r.text[:200]}")
+            if not _poll_status(sid, "VERIFY_RESIZE", timeout=300):
+                raise RuntimeError("Timed out waiting for VERIFY_RESIZE")
+
+            # 5d. Confirm resize
+            r = client.session.post(
+                f"{client.nova_endpoint}/servers/{sid}/action",
+                headers=headers, json={"confirmResize": None}
+            )
+            if r.status_code >= 300:
+                raise RuntimeError(f"confirmResize failed HTTP {r.status_code}")
+
+            # 5e. Restart if was active
+            if was_active:
+                client.session.post(
+                    f"{client.nova_endpoint}/servers/{sid}/action",
+                    headers=headers, json={"os-start": None}
+                )
+
+            resized.append({
+                "vm_id": sid,
+                "vm_name": c["vm_name"],
+                "old_flavor": c["current_flavor"]["name"],
+                "new_flavor": c["suggested_flavor"]["name"],
+                "savings_per_month": c["savings_per_month"],
+                "snapshot_name": snap_result,
+            })
+            items_actioned += 1
+
+        except Exception as e:
+            logger.error(f"vm_rightsizing: resize {sid} failed: {e}")
+            errors.append({"vm_id": sid, "vm_name": c["vm_name"], "error": str(e)})
+
+    return {
+        "result": {
+            "candidates": candidates,
+            "skipped": skipped,
+            "resized": resized,
+            "errors": errors,
+            "total_candidates": len(candidates),
+            "total_savings_per_month": total_savings,
+            "currency": currency,
+            "analysis_days": analysis_days,
+            "mode": "executed",
+        },
+        "items_found": len(candidates),
+        "items_actioned": items_actioned,
+    }
+
+
+# ===== Engine: capacity_forecast ==========================================
+
+@register_engine("capacity_forecast")
+def _engine_capacity_forecast(params: dict, dry_run: bool, actor: str) -> dict:
+    """
+    Run a linear-regression capacity forecast on hypervisor history data.
+    Projects when vCPU / RAM usage will reach the warning threshold.
+
+    Parameters
+    ----------
+    warn_days_threshold : alert if exhaustion projected within this many days (default 90)
+    trigger_ticket      : if True, attempts to open a capacity ticket (default False)
+    capacity_warn_pct   : capacity utilisation level treated as "exhaustion" (default 80)
+    """
+    warn_days = int(params.get("warn_days_threshold", 90))
+    trigger_ticket = bool(params.get("trigger_ticket", False))
+    warn_pct = float(params.get("capacity_warn_pct", 80.0))
+
+    # ── 1. Pull weekly capacity snapshots from hypervisors_history ─────────
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT
+                        EXTRACT(EPOCH FROM DATE_TRUNC('week', recorded_at))::bigint AS week_epoch,
+                        DATE_TRUNC('week', recorded_at)  AS week_start,
+                        SUM(vcpus)                        AS total_vcpus,
+                        SUM((raw_json::json->>'vcpus_used')::int)       AS used_vcpus,
+                        SUM(memory_mb)                    AS total_ram_mb,
+                        SUM((raw_json::json->>'memory_mb_used')::int)   AS used_ram_mb,
+                        SUM(running_vms)                  AS total_running_vms,
+                        COUNT(DISTINCT hypervisor_id)     AS hypervisor_count
+                    FROM hypervisors_history
+                    WHERE state = 'up'
+                    GROUP BY DATE_TRUNC('week', recorded_at)
+                    ORDER BY week_start
+                """)
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"capacity_forecast: DB query failed: {e}")
+        raise HTTPException(500, f"Capacity data query failed: {e}")
+
+    if len(rows) < 2:
+        return {
+            "result": {
+                "error": "Insufficient historical data for forecast (need ≥ 2 weekly snapshots)",
+                "data_points": len(rows),
+            },
+            "items_found": 0,
+            "items_actioned": 0,
+        }
+
+    # Convert to floats for regression
+    epochs = [float(r["week_epoch"]) for r in rows]
+    used_vcpus = [float(r["used_vcpus"] or 0) for r in rows]
+    used_ram = [float(r["used_ram_mb"] or 0) for r in rows]
+
+    # Total capacity (use the most recent row as representative)
+    total_vcpus = float(rows[-1]["total_vcpus"] or 0)
+    total_ram_mb = float(rows[-1]["total_ram_mb"] or 0)
+
+    # ── 2. Simple numpy-free linear regression ─────────────────────────────
+    def _linreg(x: list, y: list):
+        """Returns (slope, intercept) for y = slope*x + intercept."""
+        n = len(x)
+        if n < 2:
+            return 0.0, y[-1] if y else 0.0
+        sx = sum(x)
+        sy = sum(y)
+        sxy = sum(xi * yi for xi, yi in zip(x, y))
+        sxx = sum(xi * xi for xi in x)
+        denom = n * sxx - sx * sx
+        if denom == 0:
+            return 0.0, sy / n
+        slope = (n * sxy - sx * sy) / denom
+        intercept = (sy - slope * sx) / n
+        return slope, intercept
+
+    slope_vcpu, intercept_vcpu = _linreg(epochs, used_vcpus)
+    slope_ram, intercept_ram = _linreg(epochs, used_ram)
+
+    # ── 3. Project exhaustion ──────────────────────────────────────────────
+    now_epoch = float(rows[-1]["week_epoch"])
+    secs_per_day = 86400.0
+
+    def _days_to_limit(slope: float, intercept: float, current_epoch: float, limit: float) -> float:
+        """Days until slope*x + intercept reaches limit. Returns inf if slope ≤ 0."""
+        if slope <= 0:
+            return float("inf")
+        target_epoch = (limit - intercept) / slope
+        return max(0.0, (target_epoch - current_epoch) / secs_per_day)
+
+    vcpu_limit = total_vcpus * (warn_pct / 100.0)
+    ram_limit = total_ram_mb * (warn_pct / 100.0)
+
+    days_to_vcpu_warn = _days_to_limit(slope_vcpu, intercept_vcpu, now_epoch, vcpu_limit)
+    days_to_ram_warn = _days_to_limit(slope_ram, intercept_ram, now_epoch, ram_limit)
+
+    # Current utilisation
+    current_used_vcpus = used_vcpus[-1] if used_vcpus else 0
+    current_used_ram = used_ram[-1] if used_ram else 0
+    current_vcpu_pct = round(current_used_vcpus / total_vcpus * 100, 1) if total_vcpus else 0
+    current_ram_pct = round(current_used_ram / total_ram_mb * 100, 1) if total_ram_mb else 0
+
+    # ── 4. Build result ────────────────────────────────────────────────────
+    alerts = []
+    if days_to_vcpu_warn != float("inf") and days_to_vcpu_warn <= warn_days:
+        alerts.append({
+            "dimension": "vcpus",
+            "days_to_warn_threshold": round(days_to_vcpu_warn, 1),
+            "current_used": int(current_used_vcpus),
+            "total_capacity": int(total_vcpus),
+            "current_pct": current_vcpu_pct,
+            "warn_pct": warn_pct,
+            "severity": "critical" if days_to_vcpu_warn < 30 else "warning",
+        })
+    if days_to_ram_warn != float("inf") and days_to_ram_warn <= warn_days:
+        alerts.append({
+            "dimension": "memory_mb",
+            "days_to_warn_threshold": round(days_to_ram_warn, 1),
+            "current_used_mb": int(current_used_ram),
+            "total_capacity_mb": int(total_ram_mb),
+            "current_pct": current_ram_pct,
+            "warn_pct": warn_pct,
+            "severity": "critical" if days_to_ram_warn < 30 else "warning",
+        })
+
+    # Weekly trend data for charts
+    trend = [
+        {
+            "week": str(r["week_start"])[:10],
+            "used_vcpus": int(r["used_vcpus"] or 0),
+            "used_ram_mb": int(r["used_ram_mb"] or 0),
+            "running_vms": int(r["total_running_vms"] or 0),
+        }
+        for r in rows
+    ]
+
+    forecast_result = {
+        "alerts": alerts,
+        "trend": trend,
+        "capacity": {
+            "total_vcpus": int(total_vcpus),
+            "total_ram_mb": int(total_ram_mb),
+            "hypervisor_count": int(rows[-1]["hypervisor_count"] or 0),
+        },
+        "current_utilisation": {
+            "vcpus_used": int(current_used_vcpus),
+            "vcpus_pct": current_vcpu_pct,
+            "ram_used_mb": int(current_used_ram),
+            "ram_pct": current_ram_pct,
+        },
+        "forecast": {
+            "days_to_vcpu_warn": round(days_to_vcpu_warn, 1) if days_to_vcpu_warn != float("inf") else None,
+            "days_to_ram_warn": round(days_to_ram_warn, 1) if days_to_ram_warn != float("inf") else None,
+            "warn_pct": warn_pct,
+            "warn_days_threshold": warn_days,
+            "data_weeks": len(rows),
+        },
+    }
+
+    # ── 5. Ticket stub ─────────────────────────────────────────────────────
+    if trigger_ticket and alerts:
+        logger.warning(
+            "capacity_forecast: trigger_ticket=true but ticket system (T1) is not yet "
+            "implemented — skipping ticket creation. Alerts: %s",
+            [a["dimension"] for a in alerts],
+        )
+        forecast_result["ticket_status"] = "skipped — ticket system not yet available"
+
+    return {
+        "result": forecast_result,
+        "items_found": len(alerts),
+        "items_actioned": 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 #  Core execution logic
 # ---------------------------------------------------------------------------
