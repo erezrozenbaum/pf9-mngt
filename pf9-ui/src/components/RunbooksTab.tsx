@@ -96,7 +96,9 @@ function formatDate(iso: string | null | undefined): string {
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export default function RunbooksTab() {
+export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
+  const isAdmin = userRole === "admin" || userRole === "superadmin";
+  const isSuperadmin = userRole === "superadmin";
   const [runbooks, setRunbooks] = useState<Runbook[]>([]);
   const [stats, setStats] = useState<ExecutionStats[]>([]);
   const [loading, setLoading] = useState(false);
@@ -123,6 +125,22 @@ export default function RunbooksTab() {
   // VM Provisioning batch history
   const [vmBatches, setVmBatches] = useState<any[]>([]);
   const [showVmBatches, setShowVmBatches] = useState(true);
+
+  // --- Visibility admin state ----------------------------------------
+  const [showVisibility, setShowVisibility] = useState(false);
+  const [deptList, setDeptList] = useState<{ id: number; name: string }[]>([]);
+  const [visMap, setVisMap] = useState<Record<string, number[]>>({});
+  const [visLoading, setVisLoading] = useState(false);
+  const [visSaving, setVisSaving] = useState<string | null>(null);
+
+  // --- Integrations admin state --------------------------------------
+  const [showIntegrations, setShowIntegrations] = useState(false);
+  const [integrations, setIntegrations] = useState<any[]>([]);
+  const [integrLoading, setIntegrLoading] = useState(false);
+  const [integrForm, setIntegrForm] = useState<any | null>(null); // null = closed
+  const [integrSaving, setIntegrSaving] = useState(false);
+  const [testingIntegr, setTestingIntegr] = useState<string | null>(null);
+  const [integrTestResult, setIntegrTestResult] = useState<Record<string, any>>({});
 
   // ------- Toast helper --------------------------------------------------
   const showToast = useCallback((msg: string, type: string = "info") => {
@@ -182,6 +200,102 @@ export default function RunbooksTab() {
       console.error("Failed to fetch VM provisioning batches:", e);
     }
   }, []);
+
+  const fetchVisibility = useCallback(async () => {
+    if (!isAdmin) return;
+    setVisLoading(true);
+    try {
+      const data = await apiFetch<{ departments: any[]; visibility: Record<string, number[]> }>(
+        "/api/runbooks/visibility"
+      );
+      setDeptList(data.departments || []);
+      setVisMap(data.visibility || {});
+    } catch (e: any) {
+      console.error("Failed to fetch visibility:", e);
+    } finally {
+      setVisLoading(false);
+    }
+  }, [isAdmin]);
+
+  const saveVisibility = async (name: string, deptIds: number[]) => {
+    setVisSaving(name);
+    try {
+      await apiFetch(`/api/runbooks/visibility/${name}`, {
+        method: "PUT",
+        body: JSON.stringify({ dept_ids: deptIds }),
+      });
+      setVisMap((prev) => ({ ...prev, [name]: deptIds }));
+      showToast(`Visibility saved for ${name}`, "success");
+    } catch (e: any) {
+      showToast(`Save failed: ${e.message}`, "error");
+    } finally {
+      setVisSaving(null);
+    }
+  };
+
+  const fetchIntegrations = useCallback(async () => {
+    if (!isAdmin) return;
+    setIntegrLoading(true);
+    try {
+      const data = await apiFetch<any[]>("/api/integrations");
+      setIntegrations(data);
+    } catch (e: any) {
+      console.error("Failed to fetch integrations:", e);
+    } finally {
+      setIntegrLoading(false);
+    }
+  }, [isAdmin]);
+
+  const testIntegration = async (name: string) => {
+    setTestingIntegr(name);
+    try {
+      const result = await apiFetch<any>(`/api/integrations/${name}/test`, { method: "POST" });
+      setIntegrTestResult((prev) => ({ ...prev, [name]: result }));
+      showToast(
+        `Test ${result.test_status === "ok" ? "passed ✓" : "failed: " + result.test_status}`,
+        result.test_status === "ok" ? "success" : "error"
+      );
+    } catch (e: any) {
+      showToast(`Test error: ${e.message}`, "error");
+    } finally {
+      setTestingIntegr(null);
+    }
+  };
+
+  const saveIntegration = async () => {
+    if (!integrForm) return;
+    setIntegrSaving(true);
+    try {
+      const isNew = !integrForm._existing;
+      const method = isNew ? "POST" : "PUT";
+      const url = isNew ? "/api/integrations" : `/api/integrations/${integrForm.name}`;
+      const payload: any = { ...integrForm };
+      delete payload._existing;
+      if (!isNew && !payload.auth_credential?.length) delete payload.auth_credential;
+      await apiFetch(url, { method, body: JSON.stringify(payload) });
+      showToast(
+        isNew ? "Integration created" : "Integration updated",
+        "success"
+      );
+      setIntegrForm(null);
+      await fetchIntegrations();
+    } catch (e: any) {
+      showToast(`Save failed: ${e.message}`, "error");
+    } finally {
+      setIntegrSaving(false);
+    }
+  };
+
+  const deleteIntegration = async (name: string) => {
+    if (!confirm(`Delete integration "${name}"? This cannot be undone.`)) return;
+    try {
+      await apiFetch(`/api/integrations/${name}`, { method: "DELETE" });
+      showToast("Integration deleted", "info");
+      await fetchIntegrations();
+    } catch (e: any) {
+      showToast(`Delete failed: ${e.message}`, "error");
+    }
+  };
 
   // Initial load
   useEffect(() => {
@@ -1360,6 +1474,316 @@ export default function RunbooksTab() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ────── ADMIN: RUNBOOK VISIBILITY ────── */}
+      {isAdmin && (
+        <div className="rb-section">
+          <div
+            className="rb-section-header"
+            onClick={() => {
+              if (!showVisibility) fetchVisibility();
+              setShowVisibility(!showVisibility);
+            }}
+            style={{ cursor: "pointer" }}
+          >
+            <h3>{showVisibility ? "▾" : "▸"} 🏢 Runbook Dept Visibility</h3>
+            <div className="rb-section-controls">
+              <button
+                className="rb-btn small"
+                onClick={(e) => { e.stopPropagation(); fetchVisibility(); }}
+              >
+                🔄 Refresh
+              </button>
+              <span className="rb-meta">Admin only</span>
+            </div>
+          </div>
+
+          {showVisibility && (
+            visLoading ? (
+              <div className="rb-loading"><div className="rb-spinner" /> Loading visibility…</div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="rb-result-table" style={{ minWidth: 600 }}>
+                  <thead>
+                    <tr>
+                      <th>Runbook</th>
+                      {deptList.map((d) => (
+                        <th key={d.id} style={{ fontSize: 12, whiteSpace: "nowrap" }}>{d.name}</th>
+                      ))}
+                      <th>Save</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runbooks.map((rb) => {
+                      const current: number[] = visMap[rb.name] || [];
+                      return (
+                        <tr key={rb.name}>
+                          <td style={{ fontWeight: 500, whiteSpace: "nowrap" }}>
+                            {rb.display_name}
+                            {current.length === 0 && (
+                              <span className="rb-meta" style={{ marginLeft: 6 }}>(all depts)</span>
+                            )}
+                          </td>
+                          {deptList.map((d) => {
+                            const checked = current.includes(d.id);
+                            return (
+                              <td key={d.id} style={{ textAlign: "center" }}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    const next = checked
+                                      ? current.filter((x) => x !== d.id)
+                                      : [...current, d.id];
+                                    setVisMap((prev) => ({ ...prev, [rb.name]: next }));
+                                  }}
+                                />
+                              </td>
+                            );
+                          })}
+                          <td>
+                            <button
+                              className="rb-btn small primary"
+                              disabled={visSaving === rb.name}
+                              onClick={() => saveVisibility(rb.name, visMap[rb.name] || [])}
+                            >
+                              {visSaving === rb.name ? "…" : "💾"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {runbooks.length === 0 && (
+                      <tr>
+                        <td colSpan={deptList.length + 2} className="rb-empty-row">
+                          No runbooks loaded
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                <p className="rb-hint" style={{ marginTop: 8 }}>
+                  Unchecked = that dept cannot see the runbook. No boxes checked = visible to all depts.
+                </p>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* ────── ADMIN: EXTERNAL INTEGRATIONS ────── */}
+      {isAdmin && (
+        <div className="rb-section">
+          <div
+            className="rb-section-header"
+            onClick={() => {
+              if (!showIntegrations) fetchIntegrations();
+              setShowIntegrations(!showIntegrations);
+            }}
+            style={{ cursor: "pointer" }}
+          >
+            <h3>{showIntegrations ? "▾" : "▸"} 🔌 External Integrations</h3>
+            <div className="rb-section-controls">
+              <button
+                className="rb-btn small"
+                onClick={(e) => { e.stopPropagation(); fetchIntegrations(); }}
+              >
+                🔄 Refresh
+              </button>
+              {isSuperadmin && (
+                <button
+                  className="rb-btn small primary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIntegrForm({
+                      name: "", display_name: "", integration_type: "billing_gate",
+                      base_url: "", auth_type: "bearer", auth_credential: "",
+                      auth_header_name: "Authorization", request_template: {},
+                      response_approval_path: "approved", response_reason_path: "reason",
+                      response_charge_id_path: "charge_id",
+                      enabled: false, timeout_seconds: 10, verify_ssl: true,
+                      _existing: false,
+                    });
+                    if (!showIntegrations) { fetchIntegrations(); setShowIntegrations(true); }
+                  }}
+                >
+                  + Add
+                </button>
+              )}
+            </div>
+          </div>
+
+          {showIntegrations && (
+            integrLoading ? (
+              <div className="rb-loading"><div className="rb-spinner" /> Loading integrations…</div>
+            ) : (
+              <>
+                <div className="rb-exec-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Base URL</th>
+                        <th>Auth</th>
+                        <th>Enabled</th>
+                        <th>Last Test</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {integrations.map((intg) => {
+                        const tr = integrTestResult[intg.name];
+                        return (
+                          <tr key={intg.name}>
+                            <td style={{ fontWeight: 500 }}>{intg.display_name}<br /><span className="rb-meta">{intg.name}</span></td>
+                            <td><span className="rb-status-badge pending_approval">{intg.integration_type}</span></td>
+                            <td className="rb-meta" style={{ maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={intg.base_url}>{intg.base_url}</td>
+                            <td className="rb-meta">{intg.auth_type}</td>
+                            <td>
+                              <span className={`rb-status-badge ${intg.enabled ? "completed" : "failed"}`}>
+                                {intg.enabled ? "enabled" : "disabled"}
+                              </span>
+                            </td>
+                            <td className="rb-meta">
+                              {intg.last_test_status ? (
+                                <span className={`rb-status-badge ${intg.last_test_status === "ok" ? "completed" : "failed"}`}>
+                                  {intg.last_test_status}
+                                </span>
+                              ) : "—"}
+                              {tr && (
+                                <div style={{ fontSize: 11, marginTop: 2, color: tr.test_status === "ok" ? "#4caf50" : "#f44336" }}>
+                                  {tr.test_status}
+                                </div>
+                              )}
+                            </td>
+                            <td>
+                              <div style={{ display: "flex", gap: 4 }}>
+                                <button
+                                  className="rb-btn small"
+                                  disabled={testingIntegr === intg.name}
+                                  onClick={() => testIntegration(intg.name)}
+                                >
+                                  {testingIntegr === intg.name ? "…" : "🧪 Test"}
+                                </button>
+                                {isSuperadmin && (
+                                  <>
+                                    <button
+                                      className="rb-btn small primary"
+                                      onClick={() =>
+                                        setIntegrForm({ ...intg, auth_credential: "", _existing: true })
+                                      }
+                                    >
+                                      ✏️
+                                    </button>
+                                    <button
+                                      className="rb-btn small"
+                                      style={{ color: "#f44336" }}
+                                      onClick={() => deleteIntegration(intg.name)}
+                                    >
+                                      🗑
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {integrations.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="rb-empty-row">
+                            No integrations configured.{isSuperadmin ? " Click + Add to create one." : ""}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Integration create/edit form */}
+                {integrForm && (
+                  <div className="rb-modal-overlay" onClick={() => setIntegrForm(null)}>
+                    <div className="rb-modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+                      <h3>{integrForm._existing ? `Edit: ${integrForm.name}` : "New Integration"}</h3>
+
+                      {!integrForm._existing && (
+                        <div className="rb-form-group">
+                          <label>Name (slug)</label>
+                          <input type="text" value={integrForm.name}
+                            placeholder="e.g. billing"
+                            onChange={(e) => setIntegrForm({ ...integrForm, name: e.target.value })} />
+                        </div>
+                      )}
+                      <div className="rb-form-group">
+                        <label>Display Name</label>
+                        <input type="text" value={integrForm.display_name}
+                          onChange={(e) => setIntegrForm({ ...integrForm, display_name: e.target.value })} />
+                      </div>
+                      <div className="rb-form-group">
+                        <label>Type</label>
+                        <select value={integrForm.integration_type}
+                          onChange={(e) => setIntegrForm({ ...integrForm, integration_type: e.target.value })}>
+                          <option value="billing_gate">billing_gate</option>
+                          <option value="crm">crm</option>
+                          <option value="webhook">webhook</option>
+                        </select>
+                      </div>
+                      <div className="rb-form-group">
+                        <label>Base URL</label>
+                        <input type="text" value={integrForm.base_url}
+                          placeholder="https://billing.example.com/api/approve"
+                          onChange={(e) => setIntegrForm({ ...integrForm, base_url: e.target.value })} />
+                      </div>
+                      <div className="rb-form-group">
+                        <label>Auth Type</label>
+                        <select value={integrForm.auth_type}
+                          onChange={(e) => setIntegrForm({ ...integrForm, auth_type: e.target.value })}>
+                          <option value="bearer">bearer</option>
+                          <option value="basic">basic</option>
+                          <option value="api_key">api_key</option>
+                        </select>
+                      </div>
+                      <div className="rb-form-group">
+                        <label>Credential {integrForm._existing && <span className="rb-meta">(leave blank to keep current)</span>}</label>
+                        <input type="password" value={integrForm.auth_credential}
+                          placeholder={integrForm._existing ? "•••• unchanged ••••" : ""}
+                          onChange={(e) => setIntegrForm({ ...integrForm, auth_credential: e.target.value })} />
+                      </div>
+                      <div className="rb-form-group">
+                        <label>Timeout (seconds)</label>
+                        <input type="number" value={integrForm.timeout_seconds} min={1} max={120}
+                          onChange={(e) => setIntegrForm({ ...integrForm, timeout_seconds: parseInt(e.target.value) || 10 })} />
+                      </div>
+                      <div className="rb-checkbox-row">
+                        <input type="checkbox" id="intgr-enabled" checked={integrForm.enabled}
+                          onChange={(e) => setIntegrForm({ ...integrForm, enabled: e.target.checked })} />
+                        <label htmlFor="intgr-enabled">Enabled</label>
+                      </div>
+                      <div className="rb-checkbox-row">
+                        <input type="checkbox" id="intgr-ssl" checked={integrForm.verify_ssl}
+                          onChange={(e) => setIntegrForm({ ...integrForm, verify_ssl: e.target.checked })} />
+                        <label htmlFor="intgr-ssl">Verify SSL</label>
+                      </div>
+
+                      <div className="rb-modal-footer">
+                        <button className="rb-btn" onClick={() => setIntegrForm(null)}>Cancel</button>
+                        <button
+                          className="rb-btn primary"
+                          disabled={integrSaving}
+                          onClick={saveIntegration}
+                        >
+                          {integrSaving ? "Saving…" : integrForm._existing ? "Update" : "Create"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )
+          )}
         </div>
       )}
 

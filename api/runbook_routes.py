@@ -82,6 +82,105 @@ class ApprovalPolicyUpdate(BaseModel):
     enabled: bool = True
 
 
+class RunbookVisibilityUpdate(BaseModel):
+    dept_ids: List[int] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+#  Helper — billing gate (calls external billing integration if configured)
+# ---------------------------------------------------------------------------
+def _call_billing_gate(
+    project_id: str, resource: str, units: float,
+    cost_estimate: float, actor: str
+) -> dict:
+    """
+    Call the configured billing_gate integration.
+    Returns:
+        {"skipped": True}                                — no active integration
+        {"approved": bool, "charge_id": str|None, "reason": str}  — gate response
+    Raises HTTPException(503) if the call itself fails.
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT * FROM external_integrations
+                    WHERE integration_type = 'billing_gate' AND enabled = true
+                    LIMIT 1
+                """)
+                integration = cur.fetchone()
+    except Exception as e:
+        logger.warning(f"Could not query billing gate: {e}")
+        return {"skipped": True, "reason": "billing gate query failed"}
+
+    if not integration:
+        return {"skipped": True, "reason": "no billing gate configured"}
+
+    integration = dict(integration)
+
+    # Decrypt credential using the same Fernet helper as integration_routes
+    def _dec(ct: str) -> str:
+        if not ct:
+            return ""
+        try:
+            import base64, hashlib
+            from cryptography.fernet import Fernet
+            secret = os.environ.get("JWT_SECRET", "changeme-default-secret")
+            key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+            return Fernet(key).decrypt(ct.encode()).decode()
+        except Exception:
+            return ct
+
+    credential = _dec(integration.get("auth_credential") or "")
+    headers = {"Content-Type": "application/json"}
+    auth_type = integration.get("auth_type", "bearer")
+    header_name = integration.get("auth_header_name", "Authorization")
+    if credential:
+        if auth_type == "bearer":
+            headers[header_name] = f"Bearer {credential}"
+        elif auth_type == "basic":
+            import base64 as _b64
+            headers[header_name] = "Basic " + _b64.b64encode(credential.encode()).decode()
+        elif auth_type == "api_key":
+            headers[header_name] = credential
+
+    payload = dict(integration.get("request_template") or {})
+    payload.update({
+        "project_id": project_id,
+        "resource": resource,
+        "units": units,
+        "cost_estimate": cost_estimate,
+        "actor": actor,
+    })
+
+    try:
+        import requests as _req
+        resp = _req.post(
+            integration["base_url"],
+            json=payload,
+            headers=headers,
+            verify=bool(integration.get("verify_ssl", True)),
+            timeout=int(integration.get("timeout_seconds", 10)),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        def _get_path(path: str):
+            val = data
+            for p in (path or "").split("."):
+                val = val.get(p) if isinstance(val, dict) else None
+            return val
+
+        return {
+            "approved": bool(_get_path(integration.get("response_approval_path", "approved"))),
+            "charge_id": str(cid) if (cid := _get_path(integration.get("response_charge_id_path", "charge_id"))) else None,
+            "reason": str(rsn) if (rsn := _get_path(integration.get("response_reason_path", "reason"))) else "",
+        }
+    except Exception as e:
+        logger.error(f"Billing gate call failed: {e}")
+        raise HTTPException(503, f"Billing gate integration error: {str(e)[:200]}")
+
+
 # ---------------------------------------------------------------------------
 #  Helper — fire_notification (import from provisioning_routes)
 # ---------------------------------------------------------------------------
@@ -2196,17 +2295,129 @@ def _execute_runbook(execution_id: str, runbook_name: str, params: dict,
 async def list_runbooks(
     current_user=Depends(require_permission("runbooks", "read")),
 ):
-    """List all runbook definitions."""
+    """List runbook definitions.
+
+    Admin and superadmin see all runbooks.
+    All other roles see only runbooks that either have:
+      - no dept visibility rows (unrestricted), OR
+      - a visibility row matching the caller's department.
+    """
+    if isinstance(current_user, dict):
+        username = current_user.get("username", "")
+        role = current_user.get("role", "operator")
+    else:
+        username = current_user.username if hasattr(current_user, "username") else str(current_user)
+        role = current_user.role if hasattr(current_user, "role") else "operator"
+
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                SELECT runbook_id, name, display_name, description, category,
-                       risk_level, supports_dry_run, enabled,
-                       parameters_schema, created_at, updated_at
-                FROM runbooks ORDER BY category, display_name
-            """)
+            # Admin/superadmin bypass the dept filter
+            if role in ("admin", "superadmin"):
+                cur.execute("""
+                    SELECT runbook_id, name, display_name, description, category,
+                           risk_level, supports_dry_run, enabled,
+                           parameters_schema, created_at, updated_at
+                    FROM runbooks ORDER BY category, display_name
+                """)
+            else:
+                # Resolve department for this user
+                cur.execute(
+                    "SELECT department_id FROM user_roles WHERE username = %s",
+                    (username,)
+                )
+                user_row = cur.fetchone()
+                dept_id = (user_row or {}).get("department_id")
+
+                if dept_id is None:
+                    # User has no dept — show only unrestricted runbooks
+                    cur.execute("""
+                        SELECT runbook_id, name, display_name, description, category,
+                               risk_level, supports_dry_run, enabled,
+                               parameters_schema, created_at, updated_at
+                        FROM runbooks r
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM runbook_dept_visibility rdv
+                            WHERE rdv.runbook_name = r.name
+                        )
+                        ORDER BY category, display_name
+                    """)
+                else:
+                    cur.execute("""
+                        SELECT runbook_id, name, display_name, description, category,
+                               risk_level, supports_dry_run, enabled,
+                               parameters_schema, created_at, updated_at
+                        FROM runbooks r
+                        WHERE (
+                            -- No visibility restrictions = open to everyone
+                            NOT EXISTS (
+                                SELECT 1 FROM runbook_dept_visibility rdv
+                                WHERE rdv.runbook_name = r.name
+                            )
+                            OR
+                            -- Caller's dept is explicitly allowed
+                            EXISTS (
+                                SELECT 1 FROM runbook_dept_visibility rdv
+                                WHERE rdv.runbook_name = r.name AND rdv.dept_id = %s
+                            )
+                        )
+                        ORDER BY category, display_name
+                    """, (dept_id,))
             rows = cur.fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Runbook dept visibility (admin) — must be declared BEFORE /{runbook_name} ──
+@router.get("/visibility")
+async def get_runbook_visibility(
+    current_user=Depends(require_permission("runbooks", "admin")),
+):
+    """Return the full dept visibility matrix across all runbooks. Admin+ only."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, name FROM departments WHERE is_active = true ORDER BY sort_order"
+            )
+            departments = [dict(r) for r in cur.fetchall()]
+
+            vis_map: Dict[str, List[int]] = {}
+            try:
+                cur.execute("SELECT runbook_name, dept_id FROM runbook_dept_visibility")
+                for row in cur.fetchall():
+                    vis_map.setdefault(row["runbook_name"], []).append(row["dept_id"])
+            except Exception:
+                pass  # Table may not exist yet on older installs
+
+    return {"departments": departments, "visibility": vis_map}
+
+
+@router.put("/visibility/{runbook_name}")
+async def set_runbook_visibility(
+    runbook_name: str,
+    body: RunbookVisibilityUpdate,
+    current_user=Depends(require_permission("runbooks", "admin")),
+):
+    """Replace the dept visibility list for one runbook.
+    Empty dept_ids = unrestricted (visible to all depts).
+    Admin+ only.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM runbooks WHERE name = %s", (runbook_name,))
+            if not cur.fetchone():
+                raise HTTPException(404, f"Runbook '{runbook_name}' not found")
+
+            cur.execute(
+                "DELETE FROM runbook_dept_visibility WHERE runbook_name = %s",
+                (runbook_name,)
+            )
+            for dept_id in body.dept_ids:
+                cur.execute(
+                    "INSERT INTO runbook_dept_visibility (runbook_name, dept_id) "
+                    "VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (runbook_name, dept_id),
+                )
+        conn.commit()
+    return {"runbook_name": runbook_name, "dept_ids": body.dept_ids}
 
 
 # ── Get single runbook ───────────────────────────────────────────

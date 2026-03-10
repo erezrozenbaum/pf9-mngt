@@ -5,7 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.51.0] - 2026-03-10
+## [1.52.0] - 2026-03-10
+
+### Added — Phase A: Runbook Department Visibility + External Integrations Framework
+
+#### Runbook Department Visibility
+- **Server-side dept filter on `GET /api/runbooks`** — non-admin users now receive only the
+  runbooks their department is allowed to see. Superadmin/admin bypass the filter and see all.
+- **New `runbook_dept_visibility` table** — join table `(runbook_name, dept_id)` controlling
+  which departments can see each runbook. Absence of rows = visible to all depts.
+- **Seed data** — all 14 existing runbooks pre-seeded with correct dept mappings (Engineering,
+  Tier1–3 Support, Sales, Management as appropriate per runbook sensitivity).
+- **Admin visibility grid in RunbooksTab** — new collapsible "Runbook Dept Visibility" section
+  (admin/superadmin only) with a live checkbox matrix. Toggling and saving updates visibility
+  per runbook instantly via `PUT /api/runbooks/visibility/{name}`.
+- **New API endpoints:**
+  - `GET /api/runbooks/visibility` — full visibility matrix (admin+)
+  - `PUT /api/runbooks/visibility/{runbook_name}` — replace dept list for a runbook (admin+)
+
+#### External Integrations Framework
+- **New `external_integrations` table** — stores billing gate, CRM, and generic webhook
+  integrations. `auth_credential` is Fernet-encrypted at rest (key = SHA-256 of `JWT_SECRET`).
+- **New `api/integration_routes.py`** — full CRUD + test API:
+  - `GET /api/integrations` — list (admin+)
+  - `GET /api/integrations/{name}` — get one (admin+)
+  - `POST /api/integrations` — create (superadmin)
+  - `PUT /api/integrations/{name}` — update (superadmin)
+  - `DELETE /api/integrations/{name}` — delete (superadmin)
+  - `POST /api/integrations/{name}/test` — fire test request, persist `last_test_status`
+- **`_call_billing_gate()` helper in `runbook_routes.py`** — shared utility for upcoming
+  action runbooks to pre-authorize quota changes; returns `{skipped: True}` if no active
+  billing integration is configured (never blocks on missing optional config).
+- **Integrations admin panel in RunbooksTab** — new collapsible "External Integrations" section
+  (admin/superadmin) with table of integrations, per-row 🧪 Test button, and create/edit/delete
+  form for superadmin.
+
+#### DB Migrations
+- `db/migrate_runbooks_dept_visibility.sql` — idempotent migration for existing installs
+- `db/init.sql` — both tables + seeds added at bottom for fresh installs
+
+### [1.51.0] - 2026-03-10
 
 ### Added — Graph: Health Scores, Orphan Detection, Blast Radius & Delete Safety
 

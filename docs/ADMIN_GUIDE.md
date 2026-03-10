@@ -812,12 +812,12 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
 
 ### Policy-as-Code Runbooks (v1.21 → v1.25 - NEW ✨)
-- **📋 Runbooks Tab**: Operator-facing catalogue of 13 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
-- **13 Built-in Runbooks**:
+- **📋 Runbooks Tab**: Operator-facing catalogue of 14 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
+- **14 Built-in Runbooks**:
   - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
   - **Security** — Security Group Audit, Security & Compliance Audit
   - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast
-  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
+  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning
 - **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout. High-risk runbooks (e.g. `password_reset_console`) default to `single_approval` for operator/admin triggers.
 - **Admin Governance Sub-Tabs**: Three new sub-tabs in Admin → Auth Management: Runbook Executions (filterable history with detail panel), Runbook Approvals (pending queue with approve/reject/cancel), Runbook Policies (per-runbook approval policy editor)
 - **Notification Events**: `runbook_approval_requested`, `runbook_completed`, `runbook_failed`
@@ -825,6 +825,50 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **RBAC**: viewer=`runbooks:read`, operator=`runbooks:read+write`, admin/superadmin=`runbooks:read+write+admin`
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
 - **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`). `db/migrate_new_runbooks.sql` for adding the 7 new runbooks (v1.25+).
+
+### Runbook Department Visibility (v1.52.0)
+- **Department-scoped filtering**: Non-admin users receive only the runbooks their department is permitted to see. Admin and superadmin bypass the filter entirely and always see all runbooks.
+- **`runbook_dept_visibility` table**: Join table `(runbook_name, dept_id)` — absence of rows for a runbook means it is visible to all departments. Rows restrict visibility to the listed departments only.
+- **Pre-seeded mappings**: All 14 built-in runbooks are seeded with sensible defaults (e.g., `security_compliance_audit` visible only to Engineering + Tier2/3; `cost_leakage_report` visible to Management + Engineering).
+- **Admin Visibility Grid**: Collapsible **🏢 Runbook Dept Visibility** section in the Runbooks tab (admin/superadmin only). Displays a live checkbox matrix of runbooks × departments. Save button per row. Unchecking all boxes makes a runbook globally visible.
+- **API Endpoints**:
+  - `GET /api/runbooks/visibility` — full matrix (admin+)
+  - `PUT /api/runbooks/visibility/{runbook_name}` — replace dept list for a runbook (admin+)
+- **Migration**: Run `db/migrate_runbooks_dept_visibility.sql` on existing installations.
+
+### External Integrations Framework (v1.52.0)
+- **Purpose**: Allows admins to register external services (billing gates, CRM systems, generic webhooks) that runbook engines can call programmatically. Supports pre-authorization flows before resource-affecting operations.
+- **`external_integrations` table**: Stores `name`, `integration_type` (`billing_gate` | `crm` | `webhook`), `base_url`, `auth_type` (`bearer` | `basic` | `api_key`), encrypted `auth_credential`, `request_template` (JSONB merged with call-time params), JSONPath-style response paths for approval/charge_id/reason, `enabled`, `timeout_seconds`, `verify_ssl`, and test status fields.
+- **Credential security**: `auth_credential` encrypted with Fernet (AES-128-CBC + HMAC-SHA256). Key is derived as `SHA-256(JWT_SECRET)` encoded as URL-safe base64 — never stored in plain text. Credentials are masked in all API responses (`••••••••` + last 4 chars).
+- **Billing Gate Helper**: `_call_billing_gate()` in `runbook_routes.py` — upcoming action runbooks call this before making quota or resource changes. Returns `{skipped: True}` if no enabled billing integration is configured, so it never blocks operation when absent.
+- **Admin Integrations Panel**: Collapsible **🔌 External Integrations** section in the Runbooks tab (admin/superadmin). Table shows all integrations with last test status, 🧪 Test button per row. Superadmin-only create/edit modal.
+- **Testing**: `POST /api/integrations/{name}/test` fires a real HTTP request with the configured auth and template, records `last_tested_at` and `last_test_status` (`ok` / `error: <msg>`).
+- **RBAC**: `integrations:read` → admin+; `integrations:admin` → superadmin only (write/delete/test).
+
+#### Walkthrough: Configuring a Billing Gate
+
+1. Navigate to **Runbooks** tab → scroll to **🔌 External Integrations** (admin/superadmin only).
+2. Click **+ Add Integration** (superadmin required).
+3. Fill in:
+   - **Name**: `billing` (or any identifier)
+   - **Type**: `billing_gate`
+   - **Base URL**: your billing API endpoint (e.g., `https://billing.internal/v1/authorize`)
+   - **Auth Type**: `bearer`; **Credential**: your API token (stored encrypted)
+   - **Request Template** (JSON): `{"service": "openstack", "environment": "prod"}` — merged with per-call params at runtime
+   - **Response → Approval Path**: `approved` (JSONPath key in the response body)
+   - **Response → Charge ID Path**: `charge_id`
+   - **Response → Reason Path**: `reason`
+   - **Timeout**: `10` seconds; check **Verify SSL**
+4. Click **Save**, then click **🧪 Test** to verify connectivity. Confirm `last_test_status` shows `ok`.
+5. Set **Enabled** = true. Once enabled, `_call_billing_gate()` will call this endpoint before resource-affecting runbooks execute.
+
+#### Walkthrough: Configuring Department Visibility
+
+1. Navigate to **Runbooks** tab → scroll to **🏢 Runbook Dept Visibility** (admin/superadmin only).
+2. The grid shows all runbooks as rows and all departments as columns.
+3. Check boxes to grant visibility; uncheck to revoke. A runbook with **no boxes checked** is visible to **all** departments.
+4. Click **Save** on the row you changed. Changes take effect immediately — the next `GET /api/runbooks` call by a member of the affected department will reflect the new visibility.
+5. Admin and superadmin users always see all runbooks regardless of this grid.
 
 ### VM Provisioning — Runbook 2 (v1.39.0)
 - **☁️ VM Provisioning Tab**: Boot-from-volume VM provisioning workflow accessible from the Runbooks tab → ☁️ VM Provisioning card. 4-step form: domain/project + quota overview → VM rows (image, flavor, network, SG, static IP) → OS credentials + cloud-init preview → review + submit.

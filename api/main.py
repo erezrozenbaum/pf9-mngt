@@ -77,6 +77,9 @@ from search import router as search_router
 # Runbook endpoints
 from runbook_routes import router as runbook_router
 
+# External integrations endpoints
+from integration_routes import router as integration_router
+
 # Copilot (Ops AI assistant) endpoints
 from copilot import router as copilot_router
 
@@ -313,6 +316,7 @@ app.include_router(resource_management_router)
 app.include_router(navigation_router)
 app.include_router(search_router)
 app.include_router(runbook_router)
+app.include_router(integration_router)
 app.include_router(copilot_router)
 app.include_router(onboarding_router)
 app.include_router(vm_provisioning_router)

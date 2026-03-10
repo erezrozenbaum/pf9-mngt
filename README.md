@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.50.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.52.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -682,7 +682,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.51.0](CHANGELOG.md) — March 10, 2026
+**Current version:** [v1.52.0](CHANGELOG.md) — March 10, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -825,6 +825,17 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.52.0 — Phase A: Runbook Department Visibility + External Integrations Framework
+- ✅ **Department-scoped runbook filtering** — non-admin users see only the runbooks their department is permitted to view; admin/superadmin bypass the filter and always see all 14 runbooks
+- ✅ **`runbook_dept_visibility` table** — join table `(runbook_name, dept_id)` controlling per-department access; absence of rows means globally visible
+- ✅ **All 14 runbooks pre-seeded** with sensible department mappings (Engineering, Tier 1–3 Support, Sales, Management)
+- ✅ **Admin visibility grid in RunbooksTab** — collapsible checkbox matrix (runbooks × departments) with per-row save; unchecking all boxes = visible to all
+- ✅ **`external_integrations` table** — stores billing gate, CRM, and webhook integrations; `auth_credential` Fernet-encrypted at rest
+- ✅ **`/api/integrations` CRUD + test API** — create, update, delete (superadmin); list, get (admin+); test fires real HTTP request and persists `last_test_status`
+- ✅ **`_call_billing_gate()` helper** in runbook engine — shared pre-authorization utility for upcoming action runbooks; gracefully skips if no billing integration configured
+- ✅ **Admin integrations panel in RunbooksTab** — table with 🧪 Test button per row, superadmin-only create/edit modal
+- ✅ **`db/migrate_runbooks_dept_visibility.sql`** — idempotent migration for existing installs
 
 ### v1.51.0 — Graph: Health Scores, Orphan Detection, Blast Radius & Delete Safety
 - ✅ **Health Score engine** — every node shows a coloured score circle (0–100); VM/volume/host each have tailored deduction rules for error states, missing snapshots, drift, and resource pressure

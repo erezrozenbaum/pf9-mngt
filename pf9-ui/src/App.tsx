@@ -5978,7 +5978,7 @@ const App: React.FC = () => {
 
           {/* Runbooks */}
           {activeTab === "runbooks" && (
-            <RunbooksTab />
+            <RunbooksTab userRole={authUser?.role || ""} />
           )}
 
           {/* Migration Planner */}
