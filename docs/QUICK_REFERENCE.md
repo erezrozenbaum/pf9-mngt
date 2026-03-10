@@ -81,11 +81,11 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Chargeback export with per-category cost breakdown (compute, storage, snapshot, restore, volume, network, TOTAL)
   - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
-- **Runbooks Tab** (v1.21 → v1.56):
+- **Runbooks Tab** (v1.21 → v1.57):
   - "📋 Runbooks" tab with policy-as-code catalogue and one-click execution
-  - 20 built-in engines across 5 categories:
-    - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*, **DR Drill** *(v1.56)*
-    - **Security**: Security Group Audit, Security & Compliance Audit
+  - 24 built-in engines across 5 categories:
+    - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*, **DR Drill** *(v1.56)*, **Hypervisor Maintenance Evacuate** *(v1.57)*
+    - **Security**: Security Group Audit, Security & Compliance Audit, **Security Group Hardening** *(v1.57)*, **Network Isolation Audit** *(v1.57)*, **Image Lifecycle Audit** *(v1.57)*
     - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast, **Quota Adjustment** *(v1.53)*
     - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning, **Org Usage Report** *(v1.53)*, **Capacity Forecast** *(v1.55)*
     - **Provisioning**: **Tenant Offboarding** *(v1.56)*
@@ -93,6 +93,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Approval workflow: per-runbook policies with role-based trigger→approver mappings (high-risk runbooks require admin approval)
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
+  - **Lookup endpoints**: `GET /api/runbooks/lookup/vms`, `/lookup/projects`, `/lookup/hypervisors` *(v1.57)*
 - **Runbook Dept Visibility** (v1.52.0):
   - Admin-only checkbox grid (runbooks × departments); absence of rows = visible to all
   - `GET /api/runbooks/visibility` — full matrix (admin+)

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.56.0  
+**Version**: 1.57.0  
 **Last Updated**: March 10, 2026  
 **Audience**: System administrators and platform operators
 
@@ -813,11 +813,11 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **Dark Mode**: Full dark theme support for panel, messages, chips, help view, welcome screen, and settings.
 - **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
 
-### Policy-as-Code Runbooks (v1.21 → v1.56)
-- **📋 Runbooks Tab**: Operator-facing catalogue of 20 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
-- **20 Built-in Runbooks**:
-  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*, **DR Drill** *(v1.56)*
-  - **Security** — Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast
+### Policy-as-Code Runbooks (v1.21 → v1.57)
+- **📋 Runbooks Tab**: Operator-facing catalogue of 24 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
+- **24 Built-in Runbooks**:
+  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*, **DR Drill** *(v1.56)*, **Hypervisor Maintenance Evacuate** *(v1.57 Phase C2)*
+  - **Security** — Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast, **Security Group Hardening** *(v1.57)*, **Network Isolation Audit** *(v1.57)*, **Image Lifecycle Audit** *(v1.57)*
   - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, **Quota Adjustment** *(v1.53)*
   - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)*, **Capacity Forecast** *(v1.55)*
   - **Provisioning** — **Tenant Offboarding** *(v1.56)*
@@ -834,6 +834,21 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **`org_usage_report`** (Runbook 16): Read-only usage + cost report for a single org/project. Covers Nova quota+usage, per-server breakdown, Neutron quota, Cinder quota+usage, floating IPs, snapshots. Outputs `result.html_body` — a pre-rendered HTML table ready to email to the customer.
 - **Friendly Dropdown Lookups** (v1.54.0): `x-lookup: vms` and `x-lookup: projects` schema fields render as live-populated `<select>` dropdowns in the trigger modal instead of free-text fields. Lookup data fetched from `/api/runbooks/lookup/{type}`.
 - **`vms_multi` multi-select** (v1.55.0): `x-lookup: vms_multi` renders as `<select multiple>` so operators can scope a rightsizing run to specific VMs.
+
+### Action Runbooks — Security Hardening + Isolation Audit + Hypervisor Evacuate (v1.57.0)
+- **`security_group_hardening`** (Runbook 21): Scans all SGs for ingress rules open to `0.0.0.0/0`/`::/0` on sensitive ports (22, 3389, 5432, 3306, 6379, 27017 by default). Dry-run returns a proposed replacement CIDR per rule using graph adjacency data (fallback `10.0.0.0/8`). Execute: DELETE violating rule → CREATE replacement rule(s) with tighter CIDRs.
+  - **Parameters**: `target_project` (projects_optional), `flag_ports=[22,3389,5432,3306,6379,27017]`, `replacement_cidr_fallback="10.0.0.0/8"`
+  - **Risk**: high | **Dry-run**: yes | **Approval**: all roles → single_approval | **Dept**: Engineering, Tier3
+- **`network_isolation_audit`** (Runbook 22): Read-only isolation scan — flags shared networks, cross-tenant routers, overlapping CIDRs (using stdlib `ipaddress`), and FIPs on non-compute device owners. Severity: critical / warning / info.
+  - **Parameters**: `target_project` (projects_optional), `include_fip_check=true`
+  - **Risk**: low | **Read-only** | **Approval**: all roles → auto_approve | **Dept**: Engineering, Tier3
+- **`image_lifecycle_audit`** (Runbook 23): Scores Glance images 0–100 by age (`max_age_days`), EOL OS detection, FIP exposure of in-use VMs, and orphan status. Outputs per-image risk level + recommendation.
+  - **Parameters**: `target_project` (projects_optional), `max_age_days=365`, `include_unused=true`
+  - **Risk**: low | **Read-only** | **Approval**: all roles → auto_approve | **Dept**: Engineering, Management
+- **`hypervisor_maintenance_evacuate`** (Runbook 24, Phase C2): Drains a hypervisor before maintenance. Lists all VMs from `os-hypervisors/{id}/servers`, orders by graph dependency depth (leaf-first), live-migrates each VM, with graceful-stop + cold-migrate fallback. Disables `nova-compute` service after a clean drain.
+  - **Parameters**: `hypervisor_hostname` (required, x-lookup: hypervisors), `migration_strategy=live_first`, `graceful_stop_fallback=true`, `disable_host_after_drain=true`, `max_concurrent_migrations=3`
+  - **Risk**: high | **Dry-run**: yes (migration plan + order) | **Approval**: all roles → single_approval | **Dept**: Engineering only
+- **New lookup endpoint**: `GET /api/runbooks/lookup/hypervisors` — returns hypervisor list (hostname, state, status, vCPU usage, running VMs) for the trigger modal dropdown.
 
 ### Action Runbooks — DR Drill + Tenant Offboarding (v1.56.0)
 - **`disaster_recovery_drill`** (Runbook 19): Clones VMs tagged `dr_candidate` into an ephemeral isolated Neutron network, polls until each boots `ACTIVE`, records per-VM boot times, then tears down all DR resources (VMs → subnet → network). Dry-run lists candidates and quota check without creating anything.

@@ -1579,11 +1579,14 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_te
 # Adds executive_summary + technical_notes TEXT columns to migration_projects
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_narrative_fields.sql
 
-# 29. Apply runbook dept visibility + B1/B2/B3 runbooks (v1.52.0+)
-# Adds runbook_dept_visibility table; seeds runbooks 15-20:
+# 29. Apply runbook dept visibility + B1/B2/B3/C/C2 runbooks (v1.52.0+)
+# Adds runbook_dept_visibility table; seeds runbooks 15-24:
 #   15: org_usage_report, 16: quota_adjustment (B1)
 #   17: vm_rightsizing, 18: capacity_forecast (B2)
 #   19: disaster_recovery_drill, 20: tenant_offboarding (B3 — v1.56.0)
+#   21: security_group_hardening, 22: network_isolation_audit,
+#   23: image_lifecycle_audit (Phase C — v1.57.0)
+#   24: hypervisor_maintenance_evacuate (Phase C2 — v1.57.0)
 # with approval policies and dept visibility rows. Fully idempotent.
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_runbooks_dept_visibility.sql
 

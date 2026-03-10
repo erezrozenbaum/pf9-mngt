@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.57.0] - 2026-03-17
+
+### Added — Phase C: Security Audit Runbooks + Phase C2: Hypervisor Evacuate
+
+#### Runbook 21: `security_group_hardening`
+- **Purpose:** Scans all security groups for ingress rules open to `0.0.0.0/0` or `::/0`
+  on sensitive ports (22, 3389, 5432, 3306, 6379, 27017 by default). In dry-run mode
+  returns a proposed replacement CIDR per rule using graph adjacency data (falls back to
+  `replacement_cidr_fallback`, default `10.0.0.0/8`). In execute mode deletes the
+  violating rule and creates new rules with the tighter CIDRs.
+- **Graph integration:** Queries `graph_nodes` for known IP addresses in the same project
+  to derive minimal `/32` replacement rules.
+- **Activity log:** Writes `security_group_hardening` entry with counts and any errors.
+- **Parameters:** `target_project` (projects_optional), `flag_ports=[22,3389,5432,3306,6379,27017]`,
+  `replacement_cidr_fallback="10.0.0.0/8"`.
+- **Risk level:** high | **Dry-run:** yes | **Dept:** Engineering, Tier3
+- **Approval policy:** all roles → single_approval
+
+#### Runbook 22: `network_isolation_audit`
+- **Purpose:** Read-only scan that checks for: (1) networks with `shared=true` visible
+  across tenants, (2) routers with interfaces in more than one project, (3) overlapping
+  CIDRs between different Neutron networks, (4) FIPs assigned to non-compute device owners.
+- **Severity levels:** critical = isolation breach (CIDR overlap), warning = config risk
+  (shared network, cross-tenant router, unexpected FIP), info = advisory.
+- **Parameters:** `target_project` (projects_optional), `include_fip_check=true`.
+- **Risk level:** low | **Dry-run:** yes (always read-only) | **Dept:** Engineering, Tier3
+- **Approval policy:** all roles → auto_approve
+
+#### Runbook 23: `image_lifecycle_audit`
+- **Purpose:** Scores Glance private images by: age vs `max_age_days` (default 365),
+  EOL OS detection (CentOS 6/7, Ubuntu 14/16, Windows 2008/2012, RHEL 6, Debian 8),
+  FIP exposure of running VMs using the image, and orphan status (not used by any VM).
+  Risk score 0-100 maps to: low/medium/high/critical.
+- **Cross-references:** `GET /servers/detail` for in-use images, `GET /floatingips` for
+  FIP exposure, `GET /ports` per server for port-to-FIP mapping.
+- **Parameters:** `target_project` (projects_optional), `max_age_days=365`,
+  `include_unused=true`.
+- **Risk level:** low | **Dry-run:** yes (always read-only) | **Dept:** Engineering, Management
+- **Approval policy:** all roles → auto_approve
+
+#### Runbook 24: `hypervisor_maintenance_evacuate` (Phase C2)
+- **Purpose:** Drains all VMs from a target compute hypervisor before scheduled maintenance.
+  Queries graph for dependency depth to migrate leaf VMs first. Attempts live migration
+  per VM; falls back to cold migrate (with graceful stop) on failure.
+  Optionally disables `nova-compute` service after a clean drain.
+- **Lookup endpoint:** `GET /api/runbooks/lookup/hypervisors` — lists all hypervisors
+  with hostname, state, status, vCPU usage, and running VM count.
+- **Parameters:** `hypervisor_hostname` (required, x-lookup: hypervisors),
+  `migration_strategy=live_first|cold_only|live_only`, `graceful_stop_fallback=true`,
+  `disable_host_after_drain=true`, `max_concurrent_migrations=3`.
+- **Risk level:** high | **Dry-run:** yes (shows migration plan + order, no changes)
+- **Dept:** Engineering only
+- **Approval policy:** all roles → single_approval
+
+### Added — Lookup Endpoint
+- `GET /api/runbooks/lookup/hypervisors` — returns compute hypervisors list for
+  trigger-modal dropdowns (`id`, `hostname`, `state`, `status`, `vcpus_used`, `vcpus`,
+  `running_vms`).
+
+---
+
 ## [1.56.0] - 2026-03-10
 
 ### Added — Phase B3: Action Runbooks — DR Drill + Tenant Offboarding
