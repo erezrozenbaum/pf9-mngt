@@ -1530,7 +1530,14 @@ def servers(
         h.memory_mb                          AS host_ram_total_mb,
         COALESCE((h.raw_json->>'memory_mb_used')::bigint, 0) AS host_ram_used_mb,
         h.local_gb                           AS host_disk_total_gb,
-        COALESCE((h.raw_json->>'local_gb_used')::integer, 0) AS host_disk_used_gb,
+        -- local_gb_used is 0 for volume-backed (Cinder) VMs; use disk_available_least
+        -- to derive actual consumed disk: total - guaranteed_free = real used
+        CASE
+            WHEN h.local_gb IS NOT NULL AND h.local_gb > 0
+                 AND (h.raw_json->>'disk_available_least') IS NOT NULL
+            THEN h.local_gb - GREATEST(0, (h.raw_json->>'disk_available_least')::integer)
+            ELSE COALESCE((h.raw_json->>'local_gb_used')::integer, 0)
+        END AS host_disk_used_gb,
         COALESCE((h.raw_json->>'running_vms')::integer, 0)  AS host_running_vms,
         s.raw_json
       FROM servers s
@@ -3488,7 +3495,13 @@ def list_hypervisors(
            COALESCE((raw_json->>'memory_mb')::bigint, memory_mb) AS memory_mb, 
            COALESCE((raw_json->>'memory_mb_used')::bigint, memory_mb) AS memory_mb_used, 
            COALESCE((raw_json->>'local_gb')::integer, local_gb) AS local_gb, 
-           COALESCE((raw_json->>'local_gb_used')::integer, local_gb) AS local_gb_used, 
+           CASE
+               WHEN COALESCE((raw_json->>'local_gb')::integer, local_gb) > 0
+                    AND (raw_json->>'disk_available_least') IS NOT NULL
+               THEN COALESCE((raw_json->>'local_gb')::integer, local_gb)
+                    - GREATEST(0, (raw_json->>'disk_available_least')::integer)
+               ELSE COALESCE((raw_json->>'local_gb_used')::integer, 0)
+           END AS local_gb_used, 
            COALESCE((raw_json->>'running_vms')::integer, 0) AS running_vms, 
            COALESCE(raw_json->>'hypervisor_type', hypervisor_type) AS hypervisor_type, 
            COALESCE(raw_json->>'hypervisor_version', '') AS hypervisor_version, 
@@ -3550,10 +3563,21 @@ def monitoring_host_metrics():
             ELSE 0 
         END AS memory_usage_percent,
         COALESCE(local_gb, 0) AS storage_total_gb,
-        COALESCE((raw_json->>'local_gb_used')::integer, 0) AS storage_used_gb,
-        CASE WHEN local_gb > 0 
-            THEN ROUND(COALESCE((raw_json->>'local_gb_used')::numeric, 0) / local_gb * 100, 1) 
-            ELSE 0 
+        CASE
+            WHEN local_gb IS NOT NULL AND local_gb > 0
+                 AND (raw_json->>'disk_available_least') IS NOT NULL
+            THEN local_gb - GREATEST(0, (raw_json->>'disk_available_least')::integer)
+            ELSE COALESCE((raw_json->>'local_gb_used')::integer, 0)
+        END AS storage_used_gb,
+        CASE WHEN local_gb > 0
+            THEN ROUND(
+                CASE
+                    WHEN local_gb IS NOT NULL AND local_gb > 0
+                         AND (raw_json->>'disk_available_least') IS NOT NULL
+                    THEN (local_gb - GREATEST(0, (raw_json->>'disk_available_least')::integer))
+                    ELSE COALESCE((raw_json->>'local_gb_used')::numeric, 0)
+                END / local_gb * 100, 1)
+            ELSE 0
         END AS storage_usage_percent,
         COALESCE((raw_json->>'running_vms')::integer, 0) AS running_vms
     FROM hypervisors

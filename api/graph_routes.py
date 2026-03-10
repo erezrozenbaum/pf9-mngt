@@ -764,8 +764,11 @@ _UUID_RE = re.compile(
 
 
 def _is_valid_id(value: str) -> bool:
-    """Accept standard UUID format or legacy short IDs (at least 8 hex chars)."""
+    """Accept standard UUID format, pure integer IDs (hosts), or legacy short IDs."""
     if _UUID_RE.match(value):
+        return True
+    # Hosts use integer PKs (e.g. hypervisors.id = 8)
+    if re.match(r'^\d+$', value):
         return True
     # Some OpenStack resources use non-UUID IDs (e.g. flavors)
     return bool(re.match(r'^[0-9a-zA-Z_\-]{4,64}$', value))

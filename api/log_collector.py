@@ -4,6 +4,7 @@ PF9 Log Collector Service
 Securely collects logs from Platform9 compute hosts via SSH
 """
 
+import logging
 import paramiko
 import json
 import os
@@ -17,6 +18,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 class PF9LogCollector:
     def __init__(self):
         # SSH configuration from environment
@@ -28,7 +31,7 @@ class PF9LogCollector:
         ssh_hosts_str = os.getenv('SSH_PF9_HOSTS', '')
         self.hosts = [host.strip() for host in ssh_hosts_str.split(',')]
         
-        print(f"Log collector initialized with SSH hosts: {self.hosts}")  # Debug
+        logger.debug("Log collector initialized with SSH hosts: %s", self.hosts)
         
         # Log file paths on compute hosts
         self.log_paths = {
@@ -41,7 +44,7 @@ class PF9LogCollector:
     
     async def get_ssh_connection(self, ssh_host: str) -> Optional[paramiko.SSHClient]:
         """Establish SSH connection directly to SSH host"""
-        print(f"Connecting to SSH host: {ssh_host}")
+        logger.debug("Connecting to SSH host: %s", ssh_host)
         
         try:
             client = paramiko.SSHClient()
@@ -77,10 +80,10 @@ class PF9LogCollector:
             else:
                 raise Exception("No SSH authentication method configured (password or key)")
             
-            print(f"SSH connection successful to {ssh_host}")
+            logger.debug("SSH connection successful to %s", ssh_host)
             return client
         except Exception as e:
-            print(f"SSH connection failed to {ssh_host}: {e}")
+            logger.error("SSH connection failed to %s: %s", ssh_host, e)
             return None
     
     async def get_log_tail(self, ssh_host: str, log_type: str, lines: int = 100) -> Dict:
@@ -126,9 +129,17 @@ class PF9LogCollector:
             return {"error": f"Cannot connect to {host}"}
         
         log_path = self.log_paths.get(log_type)
+        if not log_path:
+            client.close()
+            return {"error": f"Unknown log type: {log_type}"}
+        # Validate start_time is a safe date string before including in the command
+        if not re.match(r'^\d{4}-\d{2}-\d{2}', str(start_time)):
+            client.close()
+            return {"error": "Invalid start_time format — expected YYYY-MM-DD"}
+        safe_date = shlex.quote(str(start_time)[:10])
         try:
             # Get logs from last 24 hours and filter by time range
-            command = f"grep -n '{start_time[:10]}' {log_path} | tail -500"
+            command = f"grep -n {safe_date} {log_path} | tail -500"
             stdin, stdout, stderr = client.exec_command(command)
             
             content = stdout.read().decode('utf-8', errors='replace')

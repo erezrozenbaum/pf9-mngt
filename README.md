@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.49.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.50.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -682,7 +682,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.46.0](CHANGELOG.md) — March 9, 2026
+**Current version:** [v1.50.0](CHANGELOG.md) — March 10, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -825,6 +825,13 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.50.0 — Security Hardening & Code Quality (Phase J)
+- ✅ **Timing-safe admin password check** — `hmac.compare_digest()` replaces `==` on the local admin fallback path
+- ✅ **LDAP connection leak closed** — `get_user_info()` now calls `unbind_s()` in a `finally` block on every path
+- ✅ **Command injection patched** — `get_log_range()` validates `start_time` with a `YYYY-MM-DD` regex and wraps it with `shlex.quote()` before interpolating into SSH command
+- ✅ **`_db()` / `_release()` helpers removed** — VM provisioning thread now manages the connection lifecycle inline via `getconn()` / `putconn()` in a `try/finally`, consistent with the rest of the codebase
+- ✅ **`print()` eliminated** — remaining bare `print()` calls in `auth.py` and `log_collector.py` replaced with structured logger calls
 
 ### v1.48.0 — Cloud Dependency Graph: VMware-Side Migration Graph (Phase 4)
 - ✅ **`GET /api/migration/projects/{id}/graph`** — new VMware-side dependency graph built from RVTools import data; returns the same `{ nodes, edges, root, truncated }` format as `/api/graph` so `DependencyGraph` renders it unchanged
@@ -1124,4 +1131,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.46.0 | **Last Updated**: March 9, 2026
+**Project Status**: Active Development | **Version**: 1.50.0 | **Last Updated**: March 10, 2026
