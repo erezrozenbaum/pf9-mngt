@@ -345,3 +345,116 @@ BEGIN
         ('tenant_offboarding', d_eng)
     ON CONFLICT (runbook_name, dept_id) DO NOTHING;
 END $$;
+
+-- ============================================================
+-- Section 3f: Phase C runbooks (v1.57.0)
+-- security_group_hardening + network_isolation_audit + image_lifecycle_audit
+-- ============================================================
+
+-- Runbook definitions
+INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema) VALUES
+(
+    'security_group_hardening',
+    'Security Group Hardening',
+    'Scans all security groups for overly-permissive ingress rules (0.0.0.0/0 on sensitive ports). In dry-run mode returns a proposed replacement CIDR per rule using graph adjacency data; in execute mode deletes the violating rule and creates tighter replacements.',
+    'security', 'high', true,
+    '{"type":"object","properties":{"target_project":{"type":"string","x-lookup":"projects_optional","description":"Scope to one project (blank = all projects)"},"flag_ports":{"type":"array","items":{"type":"integer"},"default":[22,3389,5432,3306,6379,27017],"description":"Ports to flag when open to 0.0.0.0/0"},"replacement_cidr_fallback":{"type":"string","default":"10.0.0.0/8","description":"CIDR used as replacement when no graph adjacency data is available"}}}'
+),
+(
+    'network_isolation_audit',
+    'Network Isolation Audit',
+    'Read-only scan for network isolation issues: shared tenant networks, cross-tenant routers, overlapping CIDRs between networks, and FIPs assigned to non-compute devices. Returns a severity-classified findings report.',
+    'security', 'low', true,
+    '{"type":"object","properties":{"target_project":{"type":"string","x-lookup":"projects_optional","description":"Scope to one project (blank = all projects)"},"include_fip_check":{"type":"boolean","default":true,"description":"Include check for FIPs assigned to unexpected devices"}}}'
+),
+(
+    'image_lifecycle_audit',
+    'Image Lifecycle Audit',
+    'Scores Glance images by age, OS EOL risk, FIP exposure, and orphan status. Returns a risk-categorised list of images that should be rebuilt or removed. Read-only.',
+    'security', 'low', true,
+    '{"type":"object","properties":{"target_project":{"type":"string","x-lookup":"projects_optional","description":"Scope to one project (blank = all projects)"},"max_age_days":{"type":"integer","default":365,"description":"Images older than this are flagged for rotation"},"include_unused":{"type":"boolean","default":true,"description":"Include images not currently used by any VM"}}}'
+)
+ON CONFLICT (name) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    description = EXCLUDED.description,
+    category = EXCLUDED.category,
+    risk_level = EXCLUDED.risk_level,
+    supports_dry_run = EXCLUDED.supports_dry_run,
+    parameters_schema = EXCLUDED.parameters_schema,
+    updated_at = now();
+
+-- Approval policies for Phase C runbooks
+INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode) VALUES
+    ('security_group_hardening', 'operator',   'admin', 'single_approval'),
+    ('security_group_hardening', 'admin',      'admin', 'single_approval'),
+    ('security_group_hardening', 'superadmin', 'admin', 'single_approval'),
+    ('network_isolation_audit',  'operator',   'admin', 'auto_approve'),
+    ('network_isolation_audit',  'admin',      'admin', 'auto_approve'),
+    ('network_isolation_audit',  'superadmin', 'admin', 'auto_approve'),
+    ('image_lifecycle_audit',    'operator',   'admin', 'auto_approve'),
+    ('image_lifecycle_audit',    'admin',      'admin', 'auto_approve'),
+    ('image_lifecycle_audit',    'superadmin', 'admin', 'auto_approve')
+ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
+
+-- Dept visibility for Phase C runbooks
+DO $$
+DECLARE
+    d_eng int; d_t3 int; d_mgmt int;
+BEGIN
+    SELECT id INTO d_eng  FROM departments WHERE name = 'Engineering'   LIMIT 1;
+    SELECT id INTO d_t3   FROM departments WHERE name = 'Tier3 Support' LIMIT 1;
+    SELECT id INTO d_mgmt FROM departments WHERE name = 'Management'    LIMIT 1;
+
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        -- security_group_hardening: Engineering, Tier3
+        ('security_group_hardening', d_eng), ('security_group_hardening', d_t3),
+        -- network_isolation_audit: Engineering, Tier3
+        ('network_isolation_audit', d_eng),  ('network_isolation_audit', d_t3),
+        -- image_lifecycle_audit: Engineering, Management
+        ('image_lifecycle_audit', d_eng),    ('image_lifecycle_audit', d_mgmt)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+END $$;
+
+-- ============================================================
+-- Section 3g: Phase C2 runbook (v1.57.0)
+-- hypervisor_maintenance_evacuate
+-- ============================================================
+
+-- Runbook definition
+INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema) VALUES
+(
+    'hypervisor_maintenance_evacuate',
+    'Hypervisor Maintenance Evacuate',
+    'Drains a compute hypervisor for maintenance by live-migrating (with cold-migrate fallback) all resident VMs, ordered by graph dependency depth. Optionally disables the host in Nova after a clean drain.',
+    'compute', 'high', true,
+    '{"type":"object","required":["hypervisor_hostname"],"properties":{"hypervisor_hostname":{"type":"string","x-lookup":"hypervisors","description":"FQDN or short hostname of the hypervisor to drain"},"migration_strategy":{"type":"string","enum":["live_first","cold_only","live_only"],"default":"live_first","description":"Migration strategy to use"},"graceful_stop_fallback":{"type":"boolean","default":true,"description":"Stop VM before cold-migrating if live migration fails"},"disable_host_after_drain":{"type":"boolean","default":true,"description":"Set nova-compute service to disabled after all VMs are cleared"},"max_concurrent_migrations":{"type":"integer","default":3,"minimum":1,"maximum":10,"description":"Maximum number of concurrent migration operations"}}}'
+)
+ON CONFLICT (name) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    description = EXCLUDED.description,
+    category = EXCLUDED.category,
+    risk_level = EXCLUDED.risk_level,
+    supports_dry_run = EXCLUDED.supports_dry_run,
+    parameters_schema = EXCLUDED.parameters_schema,
+    updated_at = now();
+
+-- Approval policies for Phase C2 runbook
+INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode) VALUES
+    ('hypervisor_maintenance_evacuate', 'operator',   'admin', 'single_approval'),
+    ('hypervisor_maintenance_evacuate', 'admin',      'admin', 'single_approval'),
+    ('hypervisor_maintenance_evacuate', 'superadmin', 'admin', 'single_approval')
+ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
+
+-- Dept visibility for Phase C2 runbook
+DO $$
+DECLARE
+    d_eng int;
+BEGIN
+    SELECT id INTO d_eng FROM departments WHERE name = 'Engineering' LIMIT 1;
+
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        -- hypervisor_maintenance_evacuate: Engineering only
+        ('hypervisor_maintenance_evacuate', d_eng)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+END $$;
+

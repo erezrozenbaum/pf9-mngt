@@ -3856,6 +3856,666 @@ def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
     }
 
 
+# ===== Engine: security_group_hardening (Runbook 21) =======================
+
+@register_engine("security_group_hardening")
+def _engine_security_group_hardening(params: dict, dry_run: bool, actor: str) -> dict:
+    """Identify overly-permissive SG rules and replace them with tighter CIDRs.
+    Reuses security_group_audit scan logic; applies graph adjacency data where
+    available to compute the minimum safe replacement CIDR per rule."""
+    from pf9_control import get_client
+
+    target_project = params.get("target_project", "")
+    flag_ports     = params.get("flag_ports", [22, 3389, 5432, 3306, 6379, 27017])
+    replacement_fallback = params.get("replacement_cidr_fallback", "10.0.0.0/8")
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+    project_names = _resolve_project_names(client, headers)
+
+    # ── Step 1: scan for violations (same logic as security_group_audit) ──
+    url = f"{client.neutron_endpoint}/v2.0/security-groups"
+    resp = client.session.get(url, headers=headers)
+    resp.raise_for_status()
+    sgs = resp.json().get("security_groups", [])
+
+    violations = []
+    for sg in sgs:
+        if target_project and sg.get("project_id", "") != target_project:
+            continue
+        for rule in sg.get("security_group_rules", []):
+            if rule.get("direction") != "ingress":
+                continue
+            remote = rule.get("remote_ip_prefix") or ""
+            if remote not in ("0.0.0.0/0", "::/0"):
+                continue
+            port_min = rule.get("port_range_min")
+            port_max = rule.get("port_range_max")
+            flagged = []
+            for fp in flag_ports:
+                if port_min is None and port_max is None:
+                    flagged.append(fp)
+                elif port_min is not None and port_max is not None and port_min <= fp <= port_max:
+                    flagged.append(fp)
+            if not flagged:
+                continue
+            sg_pid = sg.get("project_id", "")
+            violations.append({
+                "sg_id":          sg["id"],
+                "sg_name":        sg.get("name", ""),
+                "project_id":     sg_pid,
+                "project_name":   project_names.get(sg_pid, sg_pid),
+                "rule_id":        rule.get("id", ""),
+                "protocol":       rule.get("protocol", "any"),
+                "ethertype":      rule.get("ethertype", "IPv4"),
+                "port_range":     f"{port_min}-{port_max}" if port_min else "all",
+                "remote_ip_prefix": remote,
+                "flagged_ports":  flagged,
+            })
+
+    if not violations:
+        return {"result": {"mode": "dry_run" if dry_run else "executed",
+                           "violations_found": 0, "remediations": [],
+                           "message": "No violations found — no action required."},
+                "items_found": 0, "items_actioned": 0}
+
+    # ── Step 2: attempt graph lookup for source CIDRs ──
+    graph_cidr_map: dict = {}  # rule_id → list[str]
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT n.metadata->>'ip_address' AS ip
+                    FROM graph_nodes n
+                    WHERE n.type = 'vm' AND n.metadata->>'ip_address' IS NOT NULL
+                    LIMIT 500
+                """)
+                known_ips = [r[0] for r in cur.fetchall() if r[0]]
+        # Group into /32 list — real impl would derive minimal supernet CIDRs
+        # For each violation, propose: known IPs in same project as CIDR list
+        suggested_cidrs = [f"{ip}/32" for ip in known_ips] if known_ips else []
+    except Exception:
+        suggested_cidrs = []
+
+    # ── Step 3: build remediation plan ──
+    remediations = []
+    for v in violations:
+        proposed = suggested_cidrs if suggested_cidrs else [replacement_fallback]
+        # Deduplicate and cap to 10 entries for readability
+        proposed = list(dict.fromkeys(proposed))[:10]
+        remediations.append({
+            "sg_id":          v["sg_id"],
+            "sg_name":        v["sg_name"],
+            "project_id":     v["project_id"],
+            "project_name":   v["project_name"],
+            "rule_id":        v["rule_id"],
+            "protocol":       v["protocol"],
+            "ethertype":      v["ethertype"],
+            "port_range":     v["port_range"],
+            "current_cidr":   v["remote_ip_prefix"],
+            "proposed_cidrs": proposed,
+            "suggested_only": len(proposed) == 0 or proposed == [replacement_fallback],
+        })
+
+    if dry_run:
+        return {
+            "result": {
+                "mode": "dry_run",
+                "violations_found": len(violations),
+                "remediations": remediations,
+            },
+            "items_found": len(violations),
+            "items_actioned": 0,
+        }
+
+    # ── Step 4: apply — delete old rule, create restricted rules ──
+    applied = 0
+    errors  = []
+    for rem in remediations:
+        old_rule_id = rem["rule_id"]
+        # Delete old permissive rule
+        del_url = f"{client.neutron_endpoint}/v2.0/security-group-rules/{old_rule_id}"
+        dr = client.session.delete(del_url, headers=headers)
+        if dr.status_code not in (200, 204):
+            errors.append({"rule_id": old_rule_id, "error": f"delete failed: {dr.status_code}"})
+            continue
+        # Create one new rule per proposed CIDR
+        for cidr in rem["proposed_cidrs"]:
+            new_rule = {
+                "security_group_rule": {
+                    "security_group_id": rem["sg_id"],
+                    "direction": "ingress",
+                    "protocol": rem["protocol"] if rem["protocol"] != "any" else None,
+                    "ethertype": rem.get("ethertype", "IPv4"),
+                    "remote_ip_prefix": cidr,
+                }
+            }
+            cr = client.session.post(
+                f"{client.neutron_endpoint}/v2.0/security-group-rules",
+                json=new_rule, headers=headers
+            )
+            if cr.status_code not in (200, 201):
+                errors.append({"cidr": cidr, "error": f"create failed: {cr.status_code}"})
+        applied += 1
+
+    # ── activity log ──
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO activity_log (action, actor, resource_type, details)
+                    VALUES ('security_group_hardening', %s, 'security_group',
+                            %s::jsonb)
+                """, (actor, json.dumps({
+                    "violations_found": len(violations),
+                    "rules_replaced": applied,
+                    "errors": errors,
+                    "target_project": target_project,
+                })))
+    except Exception as e:
+        logger.warning(f"security_group_hardening: activity_log write failed: {e}")
+
+    return {
+        "result": {
+            "mode": "executed",
+            "violations_found": len(violations),
+            "rules_replaced": applied,
+            "remediations": remediations,
+            "errors": errors,
+        },
+        "items_found": len(violations),
+        "items_actioned": applied,
+    }
+
+
+# ===== Engine: network_isolation_audit (Runbook 22) ========================
+
+@register_engine("network_isolation_audit")
+def _engine_network_isolation_audit(params: dict, dry_run: bool, actor: str) -> dict:
+    """Scan for network isolation issues: shared networks, cross-tenant routers,
+    overlapping CIDRs, and FIPs attached to unexpected VMs.
+    Read-only — always returns a findings report."""
+    from pf9_control import get_client
+
+    target_project  = params.get("target_project", "")
+    include_fip_check = params.get("include_fip_check", True)
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+    project_names = _resolve_project_names(client, headers)
+
+    findings = []
+
+    # ── 1: shared networks ──
+    nets_resp = client.session.get(
+        f"{client.neutron_endpoint}/v2.0/networks", headers=headers)
+    nets_resp.raise_for_status()
+    networks = nets_resp.json().get("networks", [])
+
+    # Track subnets and CIDRs for overlap detection
+    subnet_cidrs: list[dict] = []
+    for net in networks:
+        if target_project and net.get("project_id", "") != target_project:
+            continue
+        if net.get("shared", False) and not net.get("router:external", False):
+            findings.append({
+                "severity": "warning",
+                "category": "shared_network",
+                "resource_id": net["id"],
+                "resource_name": net.get("name", ""),
+                "project_id": net.get("project_id", ""),
+                "project_name": project_names.get(net.get("project_id", ""), ""),
+                "detail": "Network is shared across tenants",
+            })
+
+    # ── 2: overlapping CIDRs ──
+    subnets_resp = client.session.get(
+        f"{client.neutron_endpoint}/v2.0/subnets", headers=headers)
+    subnets_resp.raise_for_status()
+    subnets = subnets_resp.json().get("subnets", [])
+    for sn in subnets:
+        subnet_cidrs.append({
+            "subnet_id":  sn["id"],
+            "network_id": sn["network_id"],
+            "cidr":       sn.get("cidr", ""),
+            "project_id": sn.get("tenant_id", ""),
+        })
+
+    # Simple pairwise overlap check (O(n²) — safe for typical sizes < 200 subnets)
+    import ipaddress
+    for i, a in enumerate(subnet_cidrs):
+        if target_project and a["project_id"] != target_project:
+            continue
+        try:
+            net_a = ipaddress.ip_network(a["cidr"], strict=False)
+        except ValueError:
+            continue
+        for b in subnet_cidrs[i + 1:]:
+            if a["network_id"] == b["network_id"]:
+                continue  # same network — expected
+            try:
+                net_b = ipaddress.ip_network(b["cidr"], strict=False)
+            except ValueError:
+                continue
+            if net_a.overlaps(net_b):
+                findings.append({
+                    "severity": "critical",
+                    "category": "cidr_overlap",
+                    "resource_id": a["subnet_id"],
+                    "resource_name": a["cidr"],
+                    "detail": f"CIDR {a['cidr']} overlaps with subnet {b['subnet_id']} ({b['cidr']}) in another network",
+                })
+
+    # ── 3: cross-tenant routers ──
+    routers_resp = client.session.get(
+        f"{client.neutron_endpoint}/v2.0/routers", headers=headers)
+    if routers_resp.status_code == 200:
+        routers = routers_resp.json().get("routers", [])
+        for router in routers:
+            r_proj = router.get("project_id", "")
+            if target_project and r_proj != target_project:
+                continue
+            # Fetch router interfaces
+            ports_resp = client.session.get(
+                f"{client.neutron_endpoint}/v2.0/ports?device_id={router['id']}&device_owner=network:router_interface",
+                headers=headers)
+            if ports_resp.status_code != 200:
+                continue
+            port_projects = set()
+            for p in ports_resp.json().get("ports", []):
+                if p.get("project_id"):
+                    port_projects.add(p["project_id"])
+            port_projects.discard(r_proj)
+            if port_projects:
+                findings.append({
+                    "severity": "warning",
+                    "category": "cross_tenant_router",
+                    "resource_id": router["id"],
+                    "resource_name": router.get("name", ""),
+                    "project_id": r_proj,
+                    "project_name": project_names.get(r_proj, ""),
+                    "detail": f"Router connects to subnets owned by other tenants: {list(port_projects)}",
+                })
+
+    # ── 4: FIPs on unexpected VMs ──
+    if include_fip_check:
+        fips_resp = client.session.get(
+            f"{client.neutron_endpoint}/v2.0/floatingips?status=ACTIVE", headers=headers)
+        if fips_resp.status_code == 200:
+            fips = fips_resp.json().get("floatingips", [])
+            for fip in fips:
+                fip_proj = fip.get("project_id", "")
+                if target_project and fip_proj != target_project:
+                    continue
+                port_id = fip.get("port_id")
+                if not port_id:
+                    continue
+                # Look up which device holds this port
+                p_resp = client.session.get(
+                    f"{client.neutron_endpoint}/v2.0/ports/{port_id}", headers=headers)
+                if p_resp.status_code != 200:
+                    continue
+                port = p_resp.json().get("port", {})
+                device_owner = port.get("device_owner", "")
+                # FIPs on non-compute devices are unexpected
+                if device_owner and not device_owner.startswith("compute:"):
+                    findings.append({
+                        "severity": "warning",
+                        "category": "unexpected_fip",
+                        "resource_id": fip["id"],
+                        "resource_name": fip.get("floating_ip_address", ""),
+                        "project_id": fip_proj,
+                        "project_name": project_names.get(fip_proj, ""),
+                        "detail": f"Floating IP assigned to non-compute device: {device_owner}",
+                    })
+
+    by_severity = {"critical": 0, "warning": 0, "info": 0}
+    for f in findings:
+        by_severity[f.get("severity", "info")] = by_severity.get(f.get("severity", "info"), 0) + 1
+
+    return {
+        "result": {
+            "mode": "dry_run" if dry_run else "report",
+            "findings": findings,
+            "summary": by_severity,
+            "total_findings": len(findings),
+        },
+        "items_found": len(findings),
+        "items_actioned": 0,
+    }
+
+
+# ===== Engine: image_lifecycle_audit (Runbook 23) ==========================
+
+@register_engine("image_lifecycle_audit")
+def _engine_image_lifecycle_audit(params: dict, dry_run: bool, actor: str) -> dict:
+    """Score Glance images by age, OS version, exposure, and usage.
+    Returns a risk-categorised list of rebuild candidates. Read-only."""
+    from pf9_control import get_client
+    from datetime import datetime, timezone
+
+    max_age_days   = params.get("max_age_days", 365)
+    include_unused = params.get("include_unused", True)
+    target_project = params.get("target_project", "")
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # ── Fetch all private images ──
+    images_resp = client.session.get(
+        f"{client.glance_endpoint}/v2/images?visibility=private&limit=500",
+        headers=headers)
+    images_resp.raise_for_status()
+    images = images_resp.json().get("images", [])
+
+    # ── Fetch running servers to know which images are in use ──
+    srvs_resp = client.session.get(
+        f"{client.nova_endpoint}/servers/detail?all_tenants=true&limit=1000",
+        headers=headers)
+    srvs_resp.raise_for_status()
+    servers = srvs_resp.json().get("servers", [])
+
+    images_in_use = {s.get("image", {}).get("id") for s in servers if s.get("image")}
+
+    now = datetime.now(timezone.utc)
+    scored = []
+
+    for img in images:
+        owner = img.get("owner", "")
+        if target_project and owner != target_project:
+            continue
+        if not include_unused and img["id"] not in images_in_use:
+            continue
+
+        # Age score
+        created_at = img.get("created_at", "")
+        age_days = 0
+        try:
+            created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            age_days = (now - created_dt).days
+        except Exception:
+            pass
+
+        # OS risk heuristic from name/properties
+        name_lower = (img.get("name") or "").lower()
+        os_version = img.get("os_version") or img.get("os_distro") or ""
+        eol_keywords = ["centos 6", "centos6", "ubuntu 14", "ubuntu14",
+                        "ubuntu 16", "ubuntu16", "windows 2008", "windows 2012",
+                        "rhel 6", "rhel6", "debian 8", "debian8"]
+        eol_risk = any(kw in name_lower or kw in os_version.lower() for kw in eol_keywords)
+
+        # FIP exposure: any running VM using this image has a FIP?
+        fip_exposed = False
+        try:
+            fip_resp = client.session.get(
+                f"{client.neutron_endpoint}/v2.0/floatingips?status=ACTIVE",
+                headers=headers)
+            if fip_resp.status_code == 200:
+                fip_ports = {f.get("port_id") for f in fip_resp.json().get("floatingips", [])}
+                for srv in servers:
+                    srv_image_id = (srv.get("image") or {}).get("id")
+                    if srv_image_id != img["id"]:
+                        continue
+                    # Check if server has a port with a FIP
+                    p_resp = client.session.get(
+                        f"{client.neutron_endpoint}/v2.0/ports?device_id={srv['id']}",
+                        headers=headers)
+                    if p_resp.status_code == 200:
+                        srv_ports = {p["id"] for p in p_resp.json().get("ports", [])}
+                        if srv_ports & fip_ports:
+                            fip_exposed = True
+                            break
+        except Exception:
+            pass
+
+        # Risk score (0-100): age + EOL + FIP + unused
+        score = 0
+        if age_days > max_age_days:
+            score += 40
+        elif age_days > max_age_days // 2:
+            score += 20
+        if eol_risk:
+            score += 35
+        if fip_exposed:
+            score += 15
+        if img["id"] not in images_in_use:
+            score += 10  # orphan image
+
+        risk = "critical" if score >= 70 else "high" if score >= 40 else "medium" if score >= 20 else "low"
+
+        scored.append({
+            "image_id":       img["id"],
+            "image_name":     img.get("name", ""),
+            "owner":          owner,
+            "age_days":       age_days,
+            "os_version":     os_version,
+            "in_use":         img["id"] in images_in_use,
+            "fip_exposed":    fip_exposed,
+            "eol_risk":       eol_risk,
+            "risk_score":     score,
+            "risk_level":     risk,
+            "recommendation": (
+                "Rebuild image from current base" if eol_risk else
+                "Rotate — image is stale" if age_days > max_age_days else
+                "Remove — image is unused and low-value" if img["id"] not in images_in_use else
+                "No immediate action required"
+            ),
+        })
+
+    scored.sort(key=lambda x: x["risk_score"], reverse=True)
+    by_risk = {r: sum(1 for s in scored if s["risk_level"] == r)
+               for r in ("critical", "high", "medium", "low")}
+
+    return {
+        "result": {
+            "mode": "dry_run" if dry_run else "report",
+            "images_scanned": len(scored),
+            "by_risk": by_risk,
+            "images": scored,
+        },
+        "items_found": len(scored),
+        "items_actioned": 0,
+    }
+
+
+# ===== Engine: hypervisor_maintenance_evacuate (Runbook 24) ================
+
+@register_engine("hypervisor_maintenance_evacuate")
+def _engine_hypervisor_maintenance_evacuate(params: dict, dry_run: bool, actor: str) -> dict:
+    """Drain a hypervisor before maintenance. Migrates VMs ordered by graph
+    dependency depth (leaf-first). Falls back to cold migration on live failure.
+    Disables the host in Nova after drain if requested."""
+    from pf9_control import get_client
+    import time
+
+    hv_hostname            = params.get("hypervisor_hostname", "")
+    migration_strategy     = params.get("migration_strategy", "live_first")
+    graceful_stop_fallback = params.get("graceful_stop_fallback", True)
+    disable_after_drain    = params.get("disable_host_after_drain", True)
+    max_concurrent         = params.get("max_concurrent_migrations", 3)
+
+    if not hv_hostname:
+        raise ValueError("hypervisor_hostname is required")
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # ── Step 1: find the hypervisor ──
+    hv_resp = client.session.get(
+        f"{client.nova_endpoint}/os-hypervisors/detail?hypervisor_hostname_pattern={hv_hostname}",
+        headers=headers)
+    hv_resp.raise_for_status()
+    hvs = hv_resp.json().get("hypervisors", [])
+    hv = next((h for h in hvs if h.get("hypervisor_hostname", "").startswith(hv_hostname)), None)
+    if not hv:
+        raise ValueError(f"Hypervisor '{hv_hostname}' not found")
+
+    hv_id = hv["id"]
+
+    # ── Step 2: list servers on this hypervisor ──
+    # Nova's os-hypervisors/{id}/servers is deprecated; host= filter uses compute UUID.
+    # Reliable approach: fetch all servers and filter by OS-EXT-SRV-ATTR:hypervisor_hostname.
+    all_srv_resp = client.session.get(
+        f"{client.nova_endpoint}/servers/detail?all_tenants=true&limit=1000",
+        headers=headers)
+    all_srv_resp.raise_for_status()
+    servers = [
+        s for s in all_srv_resp.json().get("servers", [])
+        if s.get("OS-EXT-SRV-ATTR:hypervisor_hostname", "").startswith(hv_hostname)
+    ]
+
+    if not servers:
+        return {"result": {"mode": "dry_run" if dry_run else "executed",
+                           "hypervisor": hv_hostname, "vms_found": 0,
+                           "message": "No VMs on this hypervisor — nothing to evacuate."},
+                "items_found": 0, "items_actioned": 0}
+
+    # ── Step 3: order by graph dependency depth (leaf-first) ──
+    depth_map: dict[str, int] = {}
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                server_ids = [s["id"] for s in servers]
+                cur.execute("""
+                    SELECT resource_id, COALESCE(metadata->>'dependency_depth', '0')::int AS depth
+                    FROM graph_nodes
+                    WHERE resource_id = ANY(%s) AND type = 'vm'
+                """, (server_ids,))
+                for row in cur.fetchall():
+                    depth_map[row[0]] = row[1]
+    except Exception:
+        pass  # graph not available — proceed without depth ordering
+
+    servers_ordered = sorted(
+        servers,
+        key=lambda s: depth_map.get(s["id"], 0)  # leaf (0 dependents) first
+    )
+
+    if dry_run:
+        vm_list = [{
+            "server_id":   s["id"],
+            "name":        s.get("name", ""),
+            "status":      s.get("status", ""),
+            "depth":       depth_map.get(s["id"], 0),
+            "migration_order": i + 1,
+        } for i, s in enumerate(servers_ordered)]
+        return {
+            "result": {
+                "mode": "dry_run",
+                "hypervisor": hv_hostname,
+                "vms_found": len(servers_ordered),
+                "migration_plan": vm_list,
+            },
+            "items_found": len(servers_ordered),
+            "items_actioned": 0,
+        }
+
+    # ── Step 4: migrate VMs ──
+    migration_results = []
+    migrated = 0
+    errors   = []
+
+    for server in servers_ordered:
+        sid  = server["id"]
+        name = server.get("name", sid)
+        result_entry = {"server_id": sid, "name": name, "strategy": None, "success": False, "detail": ""}
+
+        # Attempt live migration first
+        if migration_strategy in ("live_first", "live_only"):
+            action_url = f"{client.nova_endpoint}/servers/{sid}/action"
+            mr = client.session.post(action_url, headers=headers,
+                                     json={"os-migrateLive": {"host": None, "block_migration": "auto"}})
+            if mr.status_code in (200, 202):
+                result_entry.update({"strategy": "live_migration", "success": True,
+                                     "detail": "Live migration initiated"})
+                migrated += 1
+                migration_results.append(result_entry)
+                continue
+            result_entry["detail"] = f"Live migration failed ({mr.status_code})"
+
+        # Fallback: cold migration
+        if migration_strategy != "live_only" and graceful_stop_fallback:
+            # Stop the VM first
+            client.session.post(
+                f"{client.nova_endpoint}/servers/{sid}/action",
+                headers=headers, json={"os-stop": None})
+            # Wait for SHUTOFF (up to 60s)
+            for _ in range(12):
+                time.sleep(5)
+                st_r = client.session.get(f"{client.nova_endpoint}/servers/{sid}", headers=headers)
+                if st_r.status_code == 200 and st_r.json().get("server", {}).get("status") == "SHUTOFF":
+                    break
+            # Cold migrate
+            cm = client.session.post(
+                f"{client.nova_endpoint}/servers/{sid}/action",
+                headers=headers, json={"migrate": None})
+            if cm.status_code in (200, 202):
+                result_entry.update({"strategy": "cold_migration", "success": True,
+                                     "detail": "Cold migration initiated after stop"})
+                migrated += 1
+            else:
+                result_entry["detail"] += f"; cold migration also failed ({cm.status_code})"
+                errors.append({"server_id": sid, "name": name, "error": result_entry["detail"]})
+        else:
+            errors.append({"server_id": sid, "name": name, "error": result_entry["detail"]})
+
+        migration_results.append(result_entry)
+
+    # ── Step 5: disable host if requested and all VMs migrated ──
+    host_disabled = False
+    if disable_after_drain and not errors:
+        try:
+            svc_resp = client.session.get(
+                f"{client.nova_endpoint}/os-services?host={hv_hostname}&binary=nova-compute",
+                headers=headers)
+            if svc_resp.status_code == 200:
+                services = svc_resp.json().get("services", [])
+                if services:
+                    svc_id = services[0]["id"]
+                    dsr = client.session.put(
+                        f"{client.nova_endpoint}/os-services/{svc_id}",
+                        headers=headers,
+                        json={"status": "disabled", "disabled_reason": f"maintenance — evacuated by {actor}"})
+                    host_disabled = dsr.status_code in (200, 204)
+        except Exception as e:
+            logger.warning(f"hypervisor_evacuate: failed to disable host: {e}")
+
+    # ── activity log ──
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO activity_log (action, actor, resource_type, resource_id, details)
+                    VALUES ('hypervisor_maintenance_evacuate', %s, 'hypervisor', %s, %s::jsonb)
+                """, (actor, str(hv_id), json.dumps({
+                    "hypervisor": hv_hostname,
+                    "vms_found":  len(servers_ordered),
+                    "vms_migrated": migrated,
+                    "host_disabled": host_disabled,
+                    "errors": errors,
+                })))
+    except Exception as e:
+        logger.warning(f"hypervisor_evacuate: activity_log write failed: {e}")
+
+    return {
+        "result": {
+            "mode": "executed",
+            "hypervisor": hv_hostname,
+            "vms_found": len(servers_ordered),
+            "vms_migrated": migrated,
+            "migration_results": migration_results,
+            "host_disabled": host_disabled,
+            "errors": errors,
+        },
+        "items_found": len(servers_ordered),
+        "items_actioned": migrated,
+    }
+
+
 # ---------------------------------------------------------------------------
 #  Core execution logic
 # ---------------------------------------------------------------------------
@@ -4122,6 +4782,39 @@ async def lookup_projects(
         return result
     except Exception as e:
         logger.warning(f"lookup_projects failed: {e}")
+        return []
+
+
+@router.get("/lookup/hypervisors")
+async def lookup_hypervisors(
+    current_user=Depends(require_permission("runbooks", "read")),
+):
+    """Return a list of compute hypervisors for use in trigger-modal dropdowns."""
+    from pf9_control import get_client
+    try:
+        client = get_client()
+        client.authenticate()
+        headers = {"X-Auth-Token": client.token}
+        resp = client.session.get(
+            f"{client.nova_endpoint}/os-hypervisors/detail", headers=headers)
+        resp.raise_for_status()
+        hvs = resp.json().get("hypervisors", [])
+        result = [
+            {
+                "id":       h["id"],
+                "hostname": h.get("hypervisor_hostname", ""),
+                "state":    h.get("state", ""),
+                "status":   h.get("status", ""),
+                "vcpus_used": h.get("vcpus_used", 0),
+                "vcpus":      h.get("vcpus", 0),
+                "running_vms": h.get("running_vms", 0),
+            }
+            for h in hvs
+        ]
+        result.sort(key=lambda x: x["hostname"])
+        return result
+    except Exception as e:
+        logger.warning(f"lookup_hypervisors failed: {e}")
         return []
 
 

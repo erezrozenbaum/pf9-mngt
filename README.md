@@ -90,7 +90,7 @@ Worker   Worker   Worker    Worker    Worker
 | Notifications (SMTP + Slack + Teams) | ✅ Production |
 | Drift Detection | ✅ Production |
 | Ops Assistant — Full-Text Search & Smart Queries | ✅ Production |
-| Runbooks (20 built-in, dept visibility, approval workflows) | ✅ Production |
+| Runbooks (24 built-in, dept visibility, approval workflows) | ✅ Production |
 | External Integrations Framework (billing gate, CRM, webhooks) | ✅ Production |
 | Dependency Graph: Health Scores, Blast Radius, Delete Impact | ✅ Production |
 | Backup & Restore (DB) with Integrity Validation | ✅ Production |
@@ -393,10 +393,10 @@ A 15-minute explainer video walking through the UI and key features:
 - **Paginated Results**: Relevance-ranked results with highlighted keyword snippets and metadata pill cards
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
-### 📋 Policy-as-Code Runbooks *(v1.21 → v1.56)*
-- **Runbook Catalogue**: Browse 20 built-in operational runbooks with schema-driven parameter forms:
-  - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)* — identifies over-provisioned VMs and suggests/executes flavor downsizing with pre-snapshot safety, **DR Drill** *(v1.56)* — clone DR-tagged VMs into isolated network, verify boot, auto-teardown
-  - **Security**: Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast
+### 📋 Policy-as-Code Runbooks *(v1.21 → v1.57)*
+- **Runbook Catalogue**: Browse 24 built-in operational runbooks with schema-driven parameter forms:
+  - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)* — identifies over-provisioned VMs and suggests/executes flavor downsizing with pre-snapshot safety, **DR Drill** *(v1.56)* — clone DR-tagged VMs into isolated network, verify boot, auto-teardown, **Hypervisor Maintenance Evacuate** *(v1.57, Phase C2)* — drain a hypervisor before maintenance: live-migrate all VMs (graph-depth ordered), cold-migrate fallback, disable host after drain
+  - **Security**: Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast, **Security Group Hardening** *(v1.57, Phase C)* — replaces 0.0.0.0/0 rules with graph-derived CIDRs, **Network Isolation Audit** *(v1.57)* — scans shared networks, cross-tenant routers, CIDR overlaps, and unexpected FIPs, **Image Lifecycle Audit** *(v1.57)* — scores images by age + EOL OS + FIP exposure
   - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, **Quota Adjustment** *(v1.53)* — sets Nova/Neutron/Cinder quota with billing gate + dry-run diff
   - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)* — full usage + cost report with email-ready HTML body, **Capacity Forecast** *(v1.55)* — linear regression on cluster vCPU/RAM history, projects days to 80% capacity
   - **Provisioning**: **Tenant Offboarding** *(v1.56)* — 10-step customer exit: FIP release → VM stop → port cleanup → Keystone disable → metadata tagging → CRM notification → final report email

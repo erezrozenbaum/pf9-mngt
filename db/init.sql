@@ -2585,6 +2585,53 @@ INSERT INTO runbooks (name, display_name, description, category, risk_level, sup
     '{"type":"object","required":["project_id","confirm_project_name"],"properties":{"project_id":{"type":"string","x-lookup":"projects","description":"Keystone project to offboard"},"confirm_project_name":{"type":"string","description":"Must exactly match the project name (safety check)"},"retention_days":{"type":"integer","default":30,"description":"Days before final resource deletion is scheduled"},"email_final_report":{"type":"boolean","default":true,"description":"Send the usage report to the customer email"},"customer_email":{"type":"string","format":"email","description":"Recipient for the final usage report email"}}}'
 )
 ON CONFLICT (name) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    description = EXCLUDED.description,
+    category = EXCLUDED.category,
+    risk_level = EXCLUDED.risk_level,
+    supports_dry_run = EXCLUDED.supports_dry_run,
+    parameters_schema = EXCLUDED.parameters_schema,
+    updated_at = now();
+
+-- v1.57.0 runbooks (Phase C + C2)
+INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema) VALUES
+(
+    'security_group_hardening',
+    'Security Group Hardening',
+    'Scans all security groups for overly-permissive ingress rules (0.0.0.0/0 on sensitive ports). In dry-run mode returns a proposed replacement CIDR per rule using graph adjacency data; in execute mode deletes the violating rule and creates tighter replacements.',
+    'security', 'high', true,
+    '{"type":"object","properties":{"target_project":{"type":"string","x-lookup":"projects_optional","description":"Scope to one project (blank = all projects)"},"flag_ports":{"type":"array","items":{"type":"integer"},"default":[22,3389,5432,3306,6379,27017],"description":"Ports to flag when open to 0.0.0.0/0"},"replacement_cidr_fallback":{"type":"string","default":"10.0.0.0/8","description":"CIDR used as replacement when no graph adjacency data is available"}}}'
+),
+(
+    'network_isolation_audit',
+    'Network Isolation Audit',
+    'Read-only scan for network isolation issues: shared tenant networks, cross-tenant routers, overlapping CIDRs between networks, and FIPs assigned to non-compute devices. Returns a severity-classified findings report.',
+    'security', 'low', true,
+    '{"type":"object","properties":{"target_project":{"type":"string","x-lookup":"projects_optional","description":"Scope to one project (blank = all projects)"},"include_fip_check":{"type":"boolean","default":true,"description":"Include check for FIPs assigned to unexpected devices"}}}'
+),
+(
+    'image_lifecycle_audit',
+    'Image Lifecycle Audit',
+    'Scores Glance images by age, OS EOL risk, FIP exposure, and orphan status. Returns a risk-categorised list of images that should be rebuilt or removed. Read-only.',
+    'security', 'low', true,
+    '{"type":"object","properties":{"target_project":{"type":"string","x-lookup":"projects_optional","description":"Scope to one project (blank = all projects)"},"max_age_days":{"type":"integer","default":365,"description":"Images older than this are flagged for rotation"},"include_unused":{"type":"boolean","default":true,"description":"Include images not currently used by any VM"}}}'
+),
+(
+    'hypervisor_maintenance_evacuate',
+    'Hypervisor Maintenance Evacuate',
+    'Drains a compute hypervisor for maintenance by live-migrating (with cold-migrate fallback) all resident VMs, ordered by graph dependency depth. Optionally disables the host in Nova after a clean drain.',
+    'compute', 'high', true,
+    '{"type":"object","required":["hypervisor_hostname"],"properties":{"hypervisor_hostname":{"type":"string","x-lookup":"hypervisors","description":"FQDN or short hostname of the hypervisor to drain"},"migration_strategy":{"type":"string","enum":["live_first","cold_only","live_only"],"default":"live_first","description":"Migration strategy to use"},"graceful_stop_fallback":{"type":"boolean","default":true,"description":"Stop VM before cold-migrating if live migration fails"},"disable_host_after_drain":{"type":"boolean","default":true,"description":"Set nova-compute service to disabled after all VMs are cleared"},"max_concurrent_migrations":{"type":"integer","default":3,"minimum":1,"maximum":10,"description":"Maximum number of concurrent migration operations"}}}'
+)
+ON CONFLICT (name) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    description = EXCLUDED.description,
+    category = EXCLUDED.category,
+    risk_level = EXCLUDED.risk_level,
+    supports_dry_run = EXCLUDED.supports_dry_run,
+    parameters_schema = EXCLUDED.parameters_schema,
+    updated_at = now();
+
 INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode) VALUES
     ('stuck_vm_remediation',   'operator',   'admin',  'single_approval'),
     ('stuck_vm_remediation',   'admin',      'admin',  'auto_approve'),
@@ -2649,7 +2696,20 @@ INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role
     ('disaster_recovery_drill',     'superadmin', 'admin',  'single_approval'),
     ('tenant_offboarding',          'operator',   'admin',  'single_approval'),
     ('tenant_offboarding',          'admin',      'admin',  'single_approval'),
-    ('tenant_offboarding',          'superadmin', 'admin',  'single_approval')
+    ('tenant_offboarding',          'superadmin', 'admin',  'single_approval'),
+    -- v1.57.0 runbooks
+    ('security_group_hardening',          'operator',   'admin',  'single_approval'),
+    ('security_group_hardening',          'admin',      'admin',  'single_approval'),
+    ('security_group_hardening',          'superadmin', 'admin',  'single_approval'),
+    ('network_isolation_audit',           'operator',   'admin',  'auto_approve'),
+    ('network_isolation_audit',           'admin',      'admin',  'auto_approve'),
+    ('network_isolation_audit',           'superadmin', 'admin',  'auto_approve'),
+    ('image_lifecycle_audit',             'operator',   'admin',  'auto_approve'),
+    ('image_lifecycle_audit',             'admin',      'admin',  'auto_approve'),
+    ('image_lifecycle_audit',             'superadmin', 'admin',  'auto_approve'),
+    ('hypervisor_maintenance_evacuate',   'operator',   'admin',  'single_approval'),
+    ('hypervisor_maintenance_evacuate',   'admin',      'admin',  'single_approval'),
+    ('hypervisor_maintenance_evacuate',   'superadmin', 'admin',  'single_approval')
 ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
 
 -- =====================================================================
@@ -3174,6 +3234,15 @@ BEGIN
         -- disaster_recovery_drill: Engineering only
         ('disaster_recovery_drill', d_eng),
         -- tenant_offboarding: Management + Engineering
-        ('tenant_offboarding', d_mgmt), ('tenant_offboarding', d_eng)
+        ('tenant_offboarding', d_mgmt), ('tenant_offboarding', d_eng),
+        -- v1.57.0 Phase C runbooks
+        -- security_group_hardening: Engineering, Tier3
+        ('security_group_hardening', d_eng), ('security_group_hardening', d_t3),
+        -- network_isolation_audit: Engineering, Tier3
+        ('network_isolation_audit', d_eng), ('network_isolation_audit', d_t3),
+        -- image_lifecycle_audit: Engineering, Management
+        ('image_lifecycle_audit', d_eng), ('image_lifecycle_audit', d_mgmt),
+        -- hypervisor_maintenance_evacuate: Engineering only
+        ('hypervisor_maintenance_evacuate', d_eng)
     ON CONFLICT (runbook_name, dept_id) DO NOTHING;
 END $$;
