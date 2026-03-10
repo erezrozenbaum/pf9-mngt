@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.52.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.53.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -90,7 +90,9 @@ Worker   Worker   Worker    Worker    Worker
 | Notifications (SMTP + Slack + Teams) | ✅ Production |
 | Drift Detection | ✅ Production |
 | Ops Assistant — Full-Text Search & Smart Queries | ✅ Production |
-| Runbooks (14 built-in, approval workflows) | ✅ Production |
+| Runbooks (16 built-in, dept visibility, approval workflows) | ✅ Production |
+| External Integrations Framework (billing gate, CRM, webhooks) | ✅ Production |
+| Dependency Graph: Health Scores, Blast Radius, Delete Impact | ✅ Production |
 | Backup & Restore (DB) with Integrity Validation | ✅ Production |
 | Inventory Versioning & Diff | ✅ Production |
 | AI Ops Copilot | 🔶 Beta |
@@ -391,14 +393,16 @@ A 15-minute explainer video walking through the UI and key features:
 - **Paginated Results**: Relevance-ranked results with highlighted keyword snippets and metadata pill cards
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
-### 📋 Policy-as-Code Runbooks *(v1.21 → v1.25)*
-- **Runbook Catalogue**: Browse 14 built-in operational runbooks with schema-driven parameter forms:
+### 📋 Policy-as-Code Runbooks *(v1.21 → v1.53)*
+- **Runbook Catalogue**: Browse 16 built-in operational runbooks with schema-driven parameter forms:
   - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
   - **Security**: Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast
-  - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector
-  - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report
+  - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, **Quota Adjustment** *(v1.53)* — sets Nova/Neutron/Cinder quota with billing gate + dry-run diff
+  - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)* — full usage + cost report with email-ready HTML body
+- **Department Visibility** *(v1.52)*: Admins control which departments see each runbook via a live checkbox matrix in the UI; non-admin users receive only the runbooks their department is allowed to trigger
+- **External Integrations** *(v1.52)*: Connect billing gates, CRM systems, or generic webhooks. `auth_credential` Fernet-encrypted at rest. Action runbooks call `_call_billing_gate()` for pre-authorization before applying changes — silently skips if no integration is configured
 - **Result Export**: Every runbook result can be exported as CSV, JSON, or printed to PDF directly from the detail panel
-- **ILS Pricing from Metering**: Cost-related runbooks (Upgrade Detector, Executive Snapshot, Cost Leakage) pull real pricing from the `metering_pricing` table — per-flavor, per-resource, with automatic currency detection (ILS/USD)
+- **ILS Pricing from Metering**: Cost-related runbooks pull real pricing from the `metering_pricing` table — per-flavor, per-resource, with automatic currency detection (ILS/USD)
 - **Operator-Facing Trigger**: Tier 1 operators can browse and trigger runbooks with dry-run support — no admin access needed
 - **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: auto-approve, single approval, multi-approval
 - **Admin Governance**: Execution History, Approvals queue, and Approval Policies managed via 3 dedicated sub-tabs in the Admin panel
