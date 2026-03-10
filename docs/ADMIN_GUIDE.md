@@ -444,6 +444,61 @@ docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 
 ## Appendix: Feature History by Version
 
+### Graph: Health Scores, Orphan Detection, Blast Radius & Delete Safety (v1.51.0 ✅ Complete)
+
+All features appear inside the existing **Dependency Graph drawer** opened via **"🕸 View Dependencies"** on any resource row (Servers, Volumes, Networks, Snapshots, Projects tabs). No new tab is added.
+
+- **Mode toggle pill** — 3-way control in the graph toolbar: Topology / 💥 Blast Radius / 🗑 Delete Impact
+- **Health Score engine** — per-node 0–100 score shown as a coloured circle (green ≥ 80 / amber ≥ 60 / red < 60):
+  - VM: `error_state` -30, `power_off` -10, `snapshot_missing` -15, `snapshot_stale` -8, `drift` -15
+  - Volume: `error_state` -30, orphan -5, `snapshot_missing` -20, `snapshot_stale` -10
+  - Host: CPU >80% -20, CPU >60% -8, RAM >80% -20, RAM >60% -8
+- **3-state snapshot coverage** — `snapshot_protected` ✅ (< 7 days) / `snapshot_stale` ⚠️ (≥ 7 days) / `snapshot_missing` ❌ per node; replaces old binary `no_snapshot` badge
+- **Orphan detection** — surfaced in graph summary: volumes (`status=available`, unattached), FIPs (no `port_id`), SGs (not referenced by any port, not 'default'), snapshots (parent volume gone)
+- **Capacity pressure tinting** — host nodes tinted green/amber/red by CPU + RAM utilisation; `capacity_pressure` = `healthy` / `warning` / `critical`
+- **Tenant Health Panel** — shown above canvas in Topology mode for tenant-root graphs; shows environment health score, critical/degraded VM counts, orphan count, top-issues list
+- **Blast Radius mode** — highlights all nodes impacted if the selected resource fails; animated edges on impact path; non-impacted nodes dimmed; summary banner: `vms_impacted`, `tenants_impacted`, `floating_ips_stranded`, `volumes_at_risk`
+- **Delete Impact mode** — per-type cascade rules: network (subnets/ports cascade; VMs with no fallback network stranded), volume (snapshots cascade), tenant (all cascade, always unsafe), VM (FIPs stranded, volumes detached), SG (OpenStack blocks if VMs use it); shows `safe_to_delete` flag, `blockers[]`, cascade/stranded overlay on graph
+- **Enhanced sidebar** — health score badge, snapshot coverage row, capacity row (hosts), quick-action links when score < 60: 📸 Create Snapshot (volume), 🔍 View Drift Events (drift badge), 📋 View Logs (error_state)
+- **API changes** — `GET /api/graph` gains `?mode=` param; response extended with `graph_health_score`, `orphan_summary`, `tenant_summary`, `top_issues`, and per-node `health_score`, `capacity_pressure`, `snapshot_coverage` fields; `blast_radius` or `delete_impact` object appended per mode
+
+---
+
+### Security Hardening & Code Quality — Phase J (v1.50.0 ✅ Complete)
+
+- **`hmac.compare_digest()`** — timing-safe admin password comparison in `auth.py`
+- **LDAP connection leak fixed** — `get_user_info()` calls `unbind_s()` in `finally` block on all paths
+- **Command injection patched** — `log_collector.py` `get_log_range()` validates `start_time` with `YYYY-MM-DD` regex + `shlex.quote()` before SSH interpolation
+- **`_db()` / `_release()` helpers removed** — VM provisioning thread manages connection lifecycle inline with `getconn()` / `putconn()` in `try/finally`
+- **`print()` removed** — all bare `print()` calls in `auth.py` and `log_collector.py` replaced with structured logger calls
+- **Host disk % fix** — `local_gb - disk_available_least` formula used in server list, monitoring host-metrics, and Hypervisors tab (was always 0% due to Cinder-backed volumes)
+- **Graph host integer ID fix** — `_is_valid_id()` now accepts integer PKs (e.g. `root_id=8`) for hypervisor nodes
+
+---
+
+### Cloud Dependency Graph — VMware-Side Migration Graph (v1.48.0 ✅ Complete)
+
+- `GET /api/migration/projects/{id}/graph` — VMware-side dependency graph from RVTools data; same `{ nodes, edges }` format as `/api/graph` so `DependencyGraph` renders unchanged
+- Node types: `tenant` (Org-vDC root), `vm`, `network` (portgroup/VLAN), `disk` (virtual disk), cross-tenant `tenant` nodes
+- VM nodes include multi-line detail: IP, migration status, vCPU/RAM, CPU%/MEM% from RVTools vInfo + perf data
+- Migration status rings on VM nodes: 🟢 complete / 🟡 in progress / 🔴 failed
+- **🕸️ View Graph** button on every tenant row and cohort expansion in Migration Planner Source Analysis tab
+- `graphUrl` prop on `DependencyGraph` — PCD-specific controls suppressed when set
+
+---
+
+### Cloud Dependency Graph — Backend API + UI + Node Actions (v1.47.0 ✅ Complete)
+
+- `GET /api/graph?root_type=<type>&root_id=<id>&depth=1-3` — BFS dependency graph; returns `nodes[]`, `edges[]`, `node_count`, `edge_count`, `truncated`
+- 12 node types: `vm`, `volume`, `snapshot`, `network`, `subnet`, `port`, `fip`, `sg`, `tenant`, `host`, `image`, `domain`; 15 edge types; VM→SG via `ports.raw_json` JSONB
+- Badges: `no_snapshot`, `drift`, `error_state`, `power_off`, `restore_source`; 150-node hard cap; RBAC `resources:read`
+- Full-screen `DependencyGraph.tsx` drawer (ReactFlow + dagre); depth pills; type filter checkboxes; dark sidebar
+- **"🔍 Explore from here"** — re-root graph at any clicked node; **← Back** history breadcrumb
+- **"🕸️ View Dependencies"** button on Servers, Volumes, Snapshots, Networks, Projects rows
+- **Node action buttons** — "🔗 Open in tab" (switch tab + pre-select), "📸 Create Snapshot" (volumes), "🚀 View in Migration Planner" (VMs + tenants)
+
+---
+
 ### Migration Planner Phase 5.0 — Tech Fix Time & Migration Summary (v1.42.0 ✅ Complete)
 
 #### 📊 Migration Summary Tab

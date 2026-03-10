@@ -101,13 +101,25 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - New `per_day[]` array in summary response: day, cohort_name, tenant_count, vm_count, total_gb, wall_clock_hours, total_agent_hours, cold_count, warm_count, risk_green/yellow/red, over_capacity
   - New `total_provisioned_gb` KPI field in summary response
   - **UI**: "Migration Days" KPI card; "In-Use Data (TB)" with provisioned subtitle; per-day table between KPI strip and OS breakdown; over-capacity rows in red + ⚠️; Migration Plan daily schedule shows ⚠️ indicator on over-capacity days; project summary footer shows daily throughput cap
-- **Cloud Dependency Graph — Backend API + UI + Node Actions** (v1.47.0-dev):
+- **Cloud Dependency Graph — Health Scores, Blast Radius & Delete Safety** (v1.51.0):
+  - **Three modes** via `?mode=topology|blast_radius|delete_impact`
+  - **Blast Radius** (`?mode=blast_radius`): BFS following "serves" edges; `blast_radius.summary` → `vms_impacted`, `tenants_impacted`, `floating_ips_stranded`, `volumes_at_risk`; impacted nodes highlighted red + animated edges; others dimmed
+  - **Delete Impact** (`?mode=delete_impact`): cascade/stranded analysis per resource type; returns `safe_to_delete`, `blockers[]`, `cascade_node_ids[]`, `stranded_node_ids[]` — network (subnets/ports cascade; VMs with no fallback network stranded), volume (snapshots cascade), tenant (everything cascades), VM (FIPs stranded), SG (blocked if VMs use it)
+  - **Health Score** per node (0–100): VM (−30 error, −10 power_off, −15 snap_missing, −8 snap_stale, −15 drift), Volume (−30 error, −5 orphan, −20 snap_missing, −10 snap_stale), Host (−20 CPU>80%, −8 CPU>60%, −20 RAM>80%, −8 RAM>60%)
+  - **Orphan detection**: volumes (available, unattached), FIPs (no port_id), SGs (not in use, not 'default'), snapshots (parent volume gone) — surfaced in `orphan_summary`
+  - **3-state snapshot coverage**: `snapshot_protected` (< 7 days), `snapshot_stale` (≥ 7 days), `snapshot_missing` (none)
+  - **Capacity pressure**: `healthy` / `warning` / `critical` from host CPU/RAM; nodes tinted accordingly
+  - **Graph-level summary**: `graph_health_score`, `tenant_summary` (vms_critical, vms_degraded, vms_missing_snapshot, vms_with_drift), `top_issues[]`, `orphan_summary`
+  - **UI — Mode toggle**: 3-way pill in toolbar (Topology / 💥 Blast Radius / 🗑 Delete Impact)
+  - **UI — Tenant Health Panel**: shown above canvas in Topology mode when root is a tenant
+  - **UI — Sidebar**: health score badge, snapshot coverage (✅/⚠️/❌), capacity ring, quick-action buttons when score < 60
+- **Cloud Dependency Graph — Backend API + UI + Node Actions** (v1.47.0):
   - `GET /api/graph?root_type=<type>&root_id=<id>&depth=1-3` — BFS graph from any resource; returns `nodes[]`, `edges[]`, `node_count`, `edge_count`, `truncated`
   - 12 node types: `vm`, `volume`, `snapshot`, `network`, `subnet`, `port`, `fip`, `sg`, `tenant`, `host`, `image`, `domain`
   - 15 edge traversals including VM→SG via `ports.raw_json` JSONB; badges: `no_snapshot`, `drift`, `error_state`, `power_off`, `restore_source`
   - 150-node hard cap; optional `domain` filter param; RBAC `resources:read`
   - **UI**: full-screen `DependencyGraph.tsx` drawer (ReactFlow + dagre); depth pills; type filter checkboxes; dark node sidebar; "🔍 Explore from here" re-root + "← Back" history
-  - **Entry points**: "🕸️ View Dependencies" on Servers, Volumes, Snapshots, Networks detail panels
+  - **Entry points**: "🕸️ View Dependencies" on Servers, Volumes, Snapshots, Networks, Projects detail panels
   - **Node actions**: "🔗 Open in tab" (navigate + pre-select), "📸 Create Snapshot" (volumes), "🚀 View in Migration Planner" (VMs/tenants)
 - **Migration Planner Phase 4D — Tenant User Bulk Ops & vJailbreak CRD Push** (v1.46.0):
   - **Tenant Users UX overhaul**: filter bar (type / status / role / search), checkbox multi-select, bulk confirm, set-role, delete via `/bulk-action`

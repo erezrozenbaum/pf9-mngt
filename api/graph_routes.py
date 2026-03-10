@@ -11,25 +11,42 @@ Endpoint:
     &root_id   = <uuid>
     &depth     = 1 | 2 | 3   (default: 2)
     &domain    = <domain_id>  (optional — restrict expansion to nodes in this domain)
+    &mode      = topology | blast_radius | delete_impact  (default: topology)
 
-Response:
+Response (topology mode):
   {
-    "nodes": [ { "id", "db_id", "type", "label", "status", "badges" }, ... ],
+    "nodes": [ { "id", "db_id", "type", "label", "status", "badges",
+                 "health_score", "capacity_pressure", "snapshot_coverage",
+                 "extra" }, ... ],
     "edges": [ { "source", "target", "label" }, ... ],
-    "root":       "<node-id>",
-    "depth":      <int>,
-    "node_count": <int>,
-    "edge_count": <int>,
-    "truncated":  <bool>   -- true if MAX_NODES limit was hit
+    "root":             "<node-id>",
+    "depth":            <int>,
+    "node_count":       <int>,
+    "edge_count":       <int>,
+    "truncated":        <bool>,
+    "graph_health_score": <int | null>,
+    "orphan_summary":   { "volumes": int, "fips": int, "security_groups": int, "snapshots": int },
+    "tenant_summary":   { ... } | null,
+    "top_issues":       [ { "id", "label", "score", "reasons" }, ... ]
   }
 
+Response additions for blast_radius mode:
+  "blast_radius": { "mode": "failure", "summary": {...}, "impact_node_ids": [...] }
+
+Response additions for delete_impact mode:
+  "delete_impact": { "safe_to_delete": bool, "blockers": [...],
+                     "cascade_node_ids": [...], "stranded_node_ids": [...], "summary": {...} }
+
 Badge types:
-  no_snapshot    Volume has no snapshots
-  drift          Resource has unacknowledged drift events
-  error_state    status = ERROR / error
-  power_off      VM is SHUTOFF
-  restore_source Snapshot referenced by a restore job
-  compliance_gap (alias for no_snapshot, used in UI)
+  no_snapshot        Volume has no snapshots (legacy — replaced by snapshot_* below)
+  snapshot_protected Volume has snapshot < 7 days old
+  snapshot_stale     Volume snapshot is > 7 days old
+  snapshot_missing   Volume has no snapshots
+  drift              Resource has unacknowledged drift events
+  error_state        status = ERROR / error
+  power_off          VM is SHUTOFF
+  restore_source     Snapshot referenced by a restore job
+  orphan             Resource exists but is not in use
 
 RBAC: requires resources:read (viewer and above)
 """
@@ -88,7 +105,7 @@ _DRIFT_TYPE_MAP: Dict[str, str] = {
 # Node helpers
 # ---------------------------------------------------------------------------
 
-def _make_node(row: Dict, ntype: str, badges: List[str]) -> Dict:
+def _make_node(row: Dict, ntype: str, badges: List[str], extra: Optional[Dict] = None) -> Dict:
     """Convert a DB row dict into a standardised graph node dict."""
     label = (
         row.get("name")
@@ -97,14 +114,19 @@ def _make_node(row: Dict, ntype: str, badges: List[str]) -> Dict:
         or row.get("id", "")
     )
     status = row.get("status") or row.get("state")
-    return {
-        "id":     f"{ntype}-{row['id']}",
-        "db_id":  row["id"],
-        "type":   ntype,
-        "label":  label,
-        "status": status,
-        "badges": badges,
+    node: Dict[str, Any] = {
+        "id":                 f"{ntype}-{row['id']}",
+        "db_id":              row["id"],
+        "type":               ntype,
+        "label":              label,
+        "status":             status,
+        "badges":             badges,
+        "health_score":       None,   # filled by _apply_health_scores after BFS
+        "capacity_pressure":  None,   # filled for host nodes: healthy|warning|critical
+        "snapshot_coverage":  None,   # filled for volume nodes: protected|stale|missing
+        "extra":              extra or {},
     }
+    return node
 
 
 def _make_edge(
@@ -209,7 +231,13 @@ def _fetch_tenant(cur, db_id: str) -> Optional[Dict]:
 
 def _fetch_host(cur, db_id: str) -> Optional[Dict]:
     cur.execute(
-        "SELECT id, hostname, state, status FROM hypervisors WHERE id = %s",
+        "SELECT id, hostname, state, status, "
+        "       vcpus, vcpus_used, memory_mb, memory_mb_used, "
+        "       local_gb, "
+        "       CASE WHEN local_gb > 0 AND disk_available_least IS NOT NULL "
+        "            THEN local_gb - GREATEST(0, disk_available_least) "
+        "            ELSE local_gb_used END AS local_gb_used_calc "
+        "FROM hypervisors WHERE id = %s",
         (db_id,),
     )
     r = cur.fetchone()
@@ -266,14 +294,53 @@ def _compute_badges(cur, ntype: str, db_id: str, row: Dict) -> List[str]:
     if ntype == "vm" and s == "SHUTOFF":
         badges.append("power_off")
 
-    # no_snapshot (volumes only)
+    # Snapshot coverage (volumes only) — 3-state: protected / stale / missing
     if ntype == "volume":
         cur.execute(
-            "SELECT 1 FROM snapshots WHERE volume_id = %s LIMIT 1",
+            "SELECT MAX(created_at) AS latest FROM snapshots WHERE volume_id = %s",
             (db_id,),
         )
-        if not cur.fetchone():
-            badges.append("no_snapshot")
+        snap_row = cur.fetchone()
+        latest = snap_row["latest"] if snap_row else None
+        if latest is None:
+            badges.append("snapshot_missing")
+        else:
+            import datetime
+            age_days = (datetime.datetime.utcnow() - latest.replace(tzinfo=None)).days
+            if age_days > 7:
+                badges.append("snapshot_stale")
+            else:
+                badges.append("snapshot_protected")
+
+        # Orphan volume: not attached to any VM
+        if not row.get("server_id"):
+            vs = (row.get("status") or "").lower()
+            if vs == "available":
+                badges.append("orphan")
+
+    # Orphan floating IP: not bound to a port
+    if ntype == "fip" and not row.get("port_id"):
+        badges.append("orphan")
+
+    # Orphan security group: not referenced by any VM port, and not named 'default'
+    if ntype == "sg":
+        sg_name = (row.get("name") or "").lower()
+        if sg_name != "default":
+            cur.execute(
+                "SELECT 1 FROM ports "
+                "WHERE (raw_json->'security_groups') ? %s LIMIT 1",
+                (db_id,),
+            )
+            if not cur.fetchone():
+                badges.append("orphan")
+
+    # Orphan snapshot: parent volume is deleted/gone
+    if ntype == "snapshot":
+        vol_id = row.get("volume_id")
+        if vol_id:
+            cur.execute("SELECT 1 FROM volumes WHERE id = %s LIMIT 1", (vol_id,))
+            if not cur.fetchone():
+                badges.append("orphan")
 
     # drift — resource has unacknowledged drift events
     drift_rtype = _DRIFT_TYPE_MAP.get(ntype)
@@ -450,13 +517,15 @@ def _expand_network(
     for r in cur.fetchall():
         neighbors.append(("subnet", dict(r), "has subnet"))
 
-    # Network → VMs attached via ports
+    # Network → VMs attached via ports (include first IP on this network)
     cur.execute(
-        "SELECT DISTINCT s.id, s.name, s.status, s.project_id, "
-        "       s.hypervisor_hostname, s.image_id "
+        "SELECT DISTINCT ON (s.id) "
+        "s.id, s.name, s.status, s.project_id, s.hypervisor_hostname, s.image_id, "
+        "(p.ip_addresses->0->>'ip_address') AS ip_address "
         "FROM servers s "
         "JOIN ports p ON p.device_id = s.id "
-        "WHERE p.network_id = %s AND p.device_owner LIKE 'compute:%%'",
+        "WHERE p.network_id = %s AND p.device_owner LIKE 'compute:%%' "
+        "ORDER BY s.id",
         (net_id,),
     )
     for r in cur.fetchall():
@@ -669,6 +738,290 @@ EXPANDERS: Dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
+# Health score engine (Phase 6)
+# ---------------------------------------------------------------------------
+
+def _compute_health_score(ntype: str, badges: List[str], row: Dict) -> Optional[int]:
+    """
+    Compute a 0–100 health score for a node based on badge penalties and
+    resource-specific conditions.  Returns None for node types where scoring
+    is not meaningful (networks, subnets, ports, fips, images, domains).
+    """
+    if ntype not in ("vm", "volume", "host"):
+        return None
+
+    score = 100
+
+    if ntype == "vm":
+        if "error_state"   in badges: score -= 30
+        if "power_off"     in badges: score -= 10
+        if "snapshot_missing" in badges: score -= 15
+        elif "snapshot_stale" in badges: score -= 8
+        if "drift"         in badges: score -= 15
+
+    elif ntype == "volume":
+        if "error_state"      in badges: score -= 30
+        if "orphan"           in badges: score -= 5
+        if "snapshot_missing" in badges: score -= 20
+        elif "snapshot_stale" in badges: score -= 10
+
+    elif ntype == "host":
+        vcpus       = row.get("vcpus") or 0
+        vcpus_used  = row.get("vcpus_used") or 0
+        mem         = row.get("memory_mb") or 0
+        mem_used    = row.get("memory_mb_used") or 0
+
+        if vcpus > 0:
+            cpu_pct = (vcpus_used / vcpus) * 100
+            if cpu_pct > 80: score -= 20
+            elif cpu_pct > 60: score -= 8
+
+        if mem > 0:
+            ram_pct = (mem_used / mem) * 100
+            if ram_pct > 80: score -= 20
+            elif ram_pct > 60: score -= 8
+
+    return max(0, score)
+
+
+def _capacity_pressure(row: Dict) -> str:
+    """Return 'healthy' | 'warning' | 'critical' for a hypervisor row."""
+    vcpus      = row.get("vcpus") or 0
+    vcpus_used = row.get("vcpus_used") or 0
+    mem        = row.get("memory_mb") or 0
+    mem_used   = row.get("memory_mb_used") or 0
+
+    cpu_pct = (vcpus_used / vcpus * 100) if vcpus > 0 else 0
+    ram_pct = (mem_used / mem * 100)     if mem > 0 else 0
+
+    if cpu_pct > 80 or ram_pct > 80:
+        return "critical"
+    if cpu_pct > 60 or ram_pct > 60:
+        return "warning"
+    return "healthy"
+
+
+def _apply_health_scores(nodes_by_id: Dict[str, Dict]) -> None:
+    """Enrich nodes in-place with health_score and capacity_pressure."""
+    for node in nodes_by_id.values():
+        ntype  = node["type"]
+        badges = node["badges"]
+        # We need the raw row values — stash them in extra during _make_node
+        row_data = node.get("extra", {})
+
+        score = _compute_health_score(ntype, badges, row_data)
+        node["health_score"] = score
+
+        if ntype == "host":
+            node["capacity_pressure"] = _capacity_pressure(row_data)
+        elif ntype == "volume":
+            if "snapshot_missing"   in badges: node["snapshot_coverage"] = "missing"
+            elif "snapshot_stale"   in badges: node["snapshot_coverage"] = "stale"
+            elif "snapshot_protected" in badges: node["snapshot_coverage"] = "protected"
+
+
+def _build_graph_summary(nodes_by_id: Dict[str, Dict]) -> Dict:
+    """
+    Compute orphan_summary, graph_health_score, tenant_summary, top_issues
+    from the fully-built node set.
+    """
+    orphan_counts: Dict[str, int] = {
+        "volumes": 0, "fips": 0, "security_groups": 0, "snapshots": 0
+    }
+    scores: List[int] = []
+    issues: List[Dict] = []
+
+    vm_critical = vm_degraded = 0
+    vms_missing_snapshot = vms_with_drift = 0
+
+    for node in nodes_by_id.values():
+        badges = node["badges"]
+        ntype  = node["type"]
+
+        if "orphan" in badges:
+            if ntype == "volume":        orphan_counts["volumes"]         += 1
+            elif ntype == "fip":         orphan_counts["fips"]            += 1
+            elif ntype == "sg":          orphan_counts["security_groups"] += 1
+            elif ntype == "snapshot":    orphan_counts["snapshots"]       += 1
+
+        hs = node.get("health_score")
+        if hs is not None:
+            scores.append(hs)
+            if hs < 60:
+                issues.append({
+                    "id": node["id"],
+                    "label": node["label"],
+                    "score": hs,
+                    "reasons": [b for b in badges if b not in ("snapshot_protected",)],
+                })
+            if ntype == "vm":
+                if hs < 60: vm_critical += 1
+                elif hs < 80: vm_degraded += 1
+                if "snapshot_missing" in badges: vms_missing_snapshot += 1
+                if "drift" in badges: vms_with_drift += 1
+
+    graph_health_score = int(sum(scores) / len(scores)) if scores else None
+    issues.sort(key=lambda x: x["score"])
+
+    tenant_nodes = [n for n in nodes_by_id.values() if n["type"] == "tenant"]
+    tenant_summary = None
+    if tenant_nodes:
+        tenant_summary = {
+            "vms_critical":          vm_critical,
+            "vms_degraded":          vm_degraded,
+            "vms_missing_snapshot":  vms_missing_snapshot,
+            "vms_with_drift":        vms_with_drift,
+        }
+
+    return {
+        "orphan_summary":     orphan_counts,
+        "graph_health_score": graph_health_score,
+        "tenant_summary":     tenant_summary,
+        "top_issues":         issues[:10],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Blast radius engine (Phase 7)
+# ---------------------------------------------------------------------------
+
+def _compute_blast_radius(root_ntype: str, root_db_id: str, nodes_by_id: Dict[str, Dict], edges_list: List[Dict]) -> Dict:
+    """
+    From the root node, find all nodes that depend on it being alive.
+    Returns blast_radius dict with impact_node_ids and summary.
+    """
+    root_node_id = f"{root_ntype}-{root_db_id}"
+
+    # Build adjacency: for each edge, record what the source "provides to" the target
+    # Impact flows: things that *use* the root resource
+    impact_edges: Dict[str, List[str]] = {}  # node_id → list of nodes it serves
+    for edge in edges_list:
+        src, tgt = edge["source"], edge["target"]
+        impact_edges.setdefault(src, []).append(tgt)
+
+    # BFS from root following "serves" direction
+    impacted: set = set()
+    queue: deque = deque([root_node_id])
+    while queue:
+        current = queue.popleft()
+        for neighbor in impact_edges.get(current, []):
+            if neighbor not in impacted and neighbor != root_node_id:
+                impacted.add(neighbor)
+                queue.append(neighbor)
+
+    # Summarize
+    vms = fips = tenants = volumes = 0
+    for nid in impacted:
+        node = nodes_by_id.get(nid)
+        if not node: continue
+        t = node["type"]
+        if t == "vm":     vms += 1
+        elif t == "fip":  fips += 1
+        elif t == "tenant": tenants += 1
+        elif t == "volume": volumes += 1
+
+    return {
+        "mode": "failure",
+        "summary": {
+            "vms_impacted":       vms,
+            "tenants_impacted":   tenants,
+            "floating_ips_stranded": fips,
+            "volumes_at_risk":    volumes,
+        },
+        "impact_node_ids": list(impacted),
+    }
+
+
+def _compute_delete_impact(cur, root_ntype: str, root_db_id: str, nodes_by_id: Dict[str, Dict], edges_list: List[Dict]) -> Dict:
+    """
+    Determine what gets cascade-deleted or stranded if the root resource is deleted.
+    """
+    root_node_id = f"{root_ntype}-{root_db_id}"
+    cascade_ids: List[str] = []
+    stranded_ids: List[str] = []
+    blockers: List[str] = []
+    safe = True
+
+    if root_ntype == "network":
+        # Cascade: subnets that belong to this network
+        for node in nodes_by_id.values():
+            if node["id"] == root_node_id:
+                continue
+            if node["type"] == "subnet":
+                cascade_ids.append(node["id"])
+            elif node["type"] == "fip":
+                stranded_ids.append(node["id"])
+        # VMs with compute ports on this network BLOCK the delete.
+        # OpenStack returns 409 if active ports with device_owner='compute:nova' exist.
+        for node in nodes_by_id.values():
+            if node["type"] != "vm":
+                continue
+            vm_id = node["db_id"]
+            cur.execute(
+                "SELECT COUNT(*) AS nic_count FROM ports "
+                "WHERE device_id = %s AND network_id = %s AND device_owner LIKE 'compute:%%'",
+                (vm_id, root_db_id),
+            )
+            r = cur.fetchone()
+            nic_count = (r.get("nic_count", 0) if isinstance(r, dict) else (r[0] if r else 0)) or 0
+            if nic_count > 0:
+                blockers.append(
+                    f"VM \"{node['label']}\" has {nic_count} NIC(s) on this network — "
+                    f"OpenStack will reject delete while active ports exist"
+                )
+                stranded_ids.append(node["id"])
+
+    elif root_ntype == "volume":
+        # Cascade: all snapshots of this volume
+        for node in nodes_by_id.values():
+            if node["type"] == "snapshot" and node["id"] != root_node_id:
+                cascade_ids.append(node["id"])
+
+    elif root_ntype == "tenant":
+        # Cascade: everything the tenant owns
+        for node in nodes_by_id.values():
+            if node["id"] != root_node_id:
+                cascade_ids.append(node["id"])
+        safe = False
+
+    elif root_ntype == "vm":
+        # OpenStack detaches (not deletes) volumes. FIPs become unassigned.
+        for node in nodes_by_id.values():
+            if node["type"] == "fip" and node["id"] != root_node_id:
+                stranded_ids.append(node["id"])
+
+    elif root_ntype == "sg":
+        # OpenStack blocks SG delete if VMs are using it
+        vm_count = sum(1 for n in nodes_by_id.values() if n["type"] == "vm")
+        if vm_count > 0:
+            blockers.append(f"Security group is in use by {vm_count} VM(s) — OpenStack will reject delete")
+            safe = False
+
+    # Deduplicate
+    cascade_ids = list(dict.fromkeys(cascade_ids))
+    stranded_ids = list(dict.fromkeys(stranded_ids))
+
+    # Remove overlap — cascade takes priority
+    cascade_set = set(cascade_ids)
+    stranded_ids = [s for s in stranded_ids if s not in cascade_set]
+
+    def count_type(id_list: List[str], t: str) -> int:
+        return sum(1 for nid in id_list if nodes_by_id.get(nid, {}).get("type") == t)
+
+    return {
+        "safe_to_delete":  safe and len(blockers) == 0,
+        "blockers":        blockers,
+        "cascade_node_ids": cascade_ids,
+        "stranded_node_ids": stranded_ids,
+        "summary": {
+            "cascade_count":  len(cascade_ids),
+            "stranded_vms":   count_type(stranded_ids, "vm"),
+            "stranded_fips":  count_type(stranded_ids, "fip"),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # BFS graph builder
 # ---------------------------------------------------------------------------
 
@@ -696,7 +1049,12 @@ def _build_graph(
         nid = f"{ntype}-{row['id']}"
         if nid not in nodes_by_id:
             badges = _compute_badges(cur, ntype, row["id"], row)
-            nodes_by_id[nid] = _make_node(row, ntype, badges)
+            # Store raw row fields needed for health score in extra
+            extra = {k: row.get(k) for k in (
+                "vcpus", "vcpus_used", "memory_mb", "memory_mb_used",
+                "local_gb", "local_gb_used_calc", "server_id", "ip_address",
+            ) if row.get(k) is not None}
+            nodes_by_id[nid] = _make_node(row, ntype, badges, extra)
         return nid
 
     def add_edge(
@@ -742,6 +1100,11 @@ def _build_graph(
         if truncated:
             break
 
+    # Apply health scores + capacity pressure in-place after BFS is complete
+    _apply_health_scores(nodes_by_id)
+
+    summary = _build_graph_summary(nodes_by_id)
+
     return {
         "nodes":      list(nodes_by_id.values()),
         "edges":      edges_list,
@@ -750,6 +1113,7 @@ def _build_graph(
         "node_count": len(nodes_by_id),
         "edge_count": len(edges_list),
         "truncated":  truncated,
+        **summary,
     }
 
 
@@ -784,6 +1148,7 @@ async def get_dependency_graph(
     root_id: str = Query(..., description="ID of the root resource"),
     depth: int = Query(2, ge=1, le=MAX_DEPTH, description="Number of hops to traverse (1–3)"),
     domain: Optional[str] = Query(None, description="Restrict expansion to nodes in this domain"),
+    mode: str = Query("topology", description="Graph mode: topology | blast_radius | delete_impact"),
     migration_project_id: Optional[int] = Query(None, description="Migration project ID — enriches nodes with migration status overlay"),
     current_user: User = Depends(require_permission("resources", "read")),
 ):
@@ -794,9 +1159,8 @@ async def get_dependency_graph(
     the relationships between them.  Stops at MAX_NODES (150) to prevent
     hairball graphs; sets `truncated: true` in the response when capped.
 
-    Optional `migration_project_id` adds a `migration_overlay` field to every
-    vm/tenant node: {"status": "confirmed"|"pending"|"missing"} based on that
-    node's current migration status within the given migration project.
+    mode=blast_radius   adds 'blast_radius' key showing failure impact.
+    mode=delete_impact  adds 'delete_impact' key showing cascade/stranded nodes.
     """
     if root_type not in ROOT_TYPE_ALIAS:
         raise HTTPException(
@@ -813,6 +1177,10 @@ async def get_dependency_graph(
     if domain and not _is_valid_id(domain):
         raise HTTPException(status_code=400, detail="Invalid domain filter format")
 
+    valid_modes = ("topology", "blast_radius", "delete_impact")
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of: {', '.join(valid_modes)}")
+
     ntype = ROOT_TYPE_ALIAS[root_type]
 
     try:
@@ -821,6 +1189,18 @@ async def get_dependency_graph(
                 result = _build_graph(cur, ntype, root_id, depth, domain)
                 if result is not None and migration_project_id is not None:
                     _apply_migration_overlay(cur, result, migration_project_id)
+                if result is not None and mode in ("blast_radius", "delete_impact"):
+                    # Reconstruct nodes_by_id for impact engines
+                    nodes_by_id = {n["id"]: n for n in result["nodes"]}
+                    if mode == "blast_radius":
+                        result["blast_radius"] = _compute_blast_radius(
+                            ntype, root_id, nodes_by_id, result["edges"]
+                        )
+                    elif mode == "delete_impact":
+                        with conn.cursor(cursor_factory=RealDictCursor) as cur2:
+                            result["delete_impact"] = _compute_delete_impact(
+                                cur2, ntype, root_id, nodes_by_id, result["edges"]
+                            )
     except Exception as exc:
         logger.error("Graph build error for %s/%s: %s", root_type, root_id, exc)
         raise HTTPException(status_code=500, detail="Graph query failed")
