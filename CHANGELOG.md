@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.56.0] - 2026-03-10
+
+### Added — Phase B3: Action Runbooks — DR Drill + Tenant Offboarding
+
+#### Runbook 19: `disaster_recovery_drill`
+- **Purpose:** Clone VMs tagged `dr_candidate` into an ephemeral isolated Neutron network,
+  verify each VM boots within the timeout window, then automatically tear down all drill
+  resources (DR VMs + network + subnet) — regardless of success or failure.
+- **Billing gate:** Pre-checks Nova quota headroom for N additional instances before
+  creating any resources. Calls `_call_billing_gate()` if configured.
+- **Boot verification:** Polls Nova for `ACTIVE` status per VM within `boot_timeout_minutes`
+  (default 10). Records per-VM boot_time_seconds in the drill report.
+- **Teardown:** Always runs after the drill (sequential: delete DR VMs → wait for 404 →
+  delete subnet → delete network). Skippable on failure via `skip_teardown_on_failure=true`
+  for post-failure debugging.
+- **Activity log:** Writes a `dr_drill` entry to `activity_log` with VM counts and teardown status.
+- **Parameters:** `target_project` (projects_optional), `server_ids` (vms_multi),
+  `tag_filter=dr_candidate`, `boot_timeout_minutes=10`, `max_vms=10`,
+  `network_cidr=192.168.99.0/24`, `skip_teardown_on_failure=false`.
+- **Risk level:** medium | **Dry-run:** yes (shows candidates + quota, creates nothing)
+- **Dept visibility:** Engineering only
+- **Approval policy:** all roles → single_approval
+
+#### Runbook 20: `tenant_offboarding`
+- **Purpose:** Full customer exit workflow — 10 sequential steps with safety confirmation.
+  Requires `confirm_project_name` to exactly match the real Keystone project name;
+  any mismatch returns HTTP 400 immediately (prevents accidental offboarding).
+- **Steps:**
+  1. Verify `confirm_project_name` matches Keystone — abort if mismatch
+  2. Run `org_usage_report` sub-engine for final report
+  3. Release all floating IPs from project
+  4. Stop all running VMs gracefully (`os-stop`)
+  5. Delete all unattached ports
+  6. Disable project in Keystone (`PATCH /projects/{id}` `{enabled: false}`)
+  7. Tag all VMs with `offboarding_date` + `retention_until` metadata
+  8. Call CRM integration via `_call_billing_gate()` if configured
+  9. Email final usage report HTML to `customer_email` via `smtp_helper`
+  10. Log change-request ticket stub (skipped until T1 ticket system is live)
+- **Activity log:** Writes detailed `tenant_offboarding` entry.
+- **Risk level:** critical | **Dry-run:** yes (full plan preview, no changes)
+- **Dept visibility:** Management (trigger), Engineering (approve + execute)
+- **Approval policy:** all roles → single_approval (superadmin approval required in practice)
+
+#### DB Changes
+- `db/migrate_runbooks_dept_visibility.sql` — section 3e: two new runbook INSERTs,
+  six new approval policy rows, dept visibility seeds for Engineering/Management.
+- `db/init.sql` — same changes for fresh-install parity.
+
 ## [1.55.0] - 2026-03-10
 
 ### Added — Phase B2: Action Runbooks — VM Rightsizing + Capacity Forecast
