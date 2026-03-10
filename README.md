@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.53.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.57.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -687,7 +687,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.52.0](CHANGELOG.md) — March 10, 2026
+**Current version:** [v1.57.0](CHANGELOG.md) — March 10, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -830,6 +830,28 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.57.0 — Phase C: Security Audit Runbooks + Phase C2: Hypervisor Evacuate
+- ✅ **Runbook 21: `security_group_hardening`** — scans all security groups for ingress rules open to `0.0.0.0/0`/`::/0` on sensitive ports; dry-run derives replacement CIDRs from graph adjacency data; execute mode deletes violating rules and creates tighter replacements
+- ✅ **Runbook 22: `network_isolation_audit`** — read-only scan for shared networks, cross-tenant routers, overlapping CIDRs, and FIPs assigned to non-compute device owners; severity-rated findings (critical/warning/info)
+- ✅ **Runbook 23: `image_lifecycle_audit`** — scores Glance private images by age, EOL OS detection (CentOS 6/7, Ubuntu 14/16, Windows 2008/2012, RHEL 6, Debian 8), FIP exposure, and orphan status; risk score 0–100 mapped to low/medium/high/critical
+- ✅ **Runbook 24: `hypervisor_maintenance_evacuate`** — drains all VMs from a target hypervisor before maintenance; graph-depth ordered live-migrate with cold-migrate fallback; optionally disables `nova-compute` after a clean drain; supports `live_first`, `cold_only`, `live_only` strategies
+- ✅ **`GET /api/runbooks/lookup/hypervisors`** — new lookup endpoint exposing compute hypervisors (hostname, state, status, vCPU usage, running VM count) for trigger-modal dropdowns
+
+### v1.56.0 — Phase B3: Action Runbooks — DR Drill + Tenant Offboarding
+- ✅ **Runbook 19: `disaster_recovery_drill`** — clones VMs tagged `dr_candidate` into an ephemeral isolated Neutron network, verifies each VM boots within `boot_timeout_minutes`, then auto-tears down all drill resources regardless of outcome; billing gate quota pre-check before any resource creation
+- ✅ **Runbook 20: `tenant_offboarding`** — 10-step customer exit workflow: FIP release → VM stop → port cleanup → Keystone disable → metadata tagging → CRM notification via billing gate → final usage report email; requires `confirm_project_name` exact match to prevent accidental offboarding; risk level critical with full dry-run preview
+
+### v1.55.0 — Phase B2: Action Runbooks — VM Rightsizing + Capacity Forecast
+- ✅ **Runbook 17: `vm_rightsizing`** — analyses `metering_resources` CPU/RAM usage (default 14 days), selects the cheapest Nova flavor satisfying headroom requirements; execute mode pre-snapshots, stops, resizes, confirms, and restarts VMs; dry-run returns per-VM candidate list with savings estimate
+- ✅ **Runbook 18: `capacity_forecast`** — reads `hypervisors_history` weekly, performs numpy-free linear regression, projects days until configurable capacity threshold (default 80 %) is reached for vCPU and RAM separately; alert list populated when breach is within `warn_days_threshold`
+- ✅ **`vms_multi` multi-select lookup** — `RunbooksTab` now renders `x-lookup: vms_multi` schema fields as a `<select multiple>` control for scoping runbook runs to specific VMs
+- ✅ **Bug fix: `ram_usage_mb` rightsizing** — engine was using allocated RAM as peak RAM, making downsizing impossible; fixed to use `MAX(ram_usage_percent) × ram_allocated_mb / 100`
+
+### v1.53.0 — Phase B1: Action Runbooks — Quota Adjustment + Org Usage Report
+- ✅ **Runbook 15: `quota_adjustment`** — operators set Nova/Neutron/Cinder quota for a project; dry-run returns before/after diff; billing gate integration blocks execution when `require_billing_approval=true` and a gate integration is configured; full before/after audit log entry
+- ✅ **Runbook 16: `org_usage_report`** — read-only usage + cost report for a project covering Nova, Neutron, and Cinder quota/usage plus per-server breakdown; pre-rendered `result.html_body` suitable for direct customer email; cost driven by `metering_pricing` table
+- ✅ **Bug fix: runbook role detection** — `trigger_runbook` was always applying the `operator` approval policy because `hasattr(user, "role")` returns False for dicts; fixed with dict-safe lookup
 
 ### v1.52.0 — Phase A: Runbook Department Visibility + External Integrations Framework
 - ✅ **Department-scoped runbook filtering** — non-admin users see only the runbooks their department is permitted to view; admin/superadmin bypass the filter and always see all 14 runbooks
