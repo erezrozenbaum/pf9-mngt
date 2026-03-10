@@ -9,6 +9,7 @@ This module provides:
 """
 
 import os
+import hmac
 import logging
 import ldap
 import hashlib
@@ -98,7 +99,7 @@ class LDAPAuthenticator:
         """Authenticate user against LDAP"""
         try:
             # Special case for default admin during setup (only if password is configured)
-            if DEFAULT_ADMIN_PASSWORD and username == DEFAULT_ADMIN_USER and password == DEFAULT_ADMIN_PASSWORD:
+            if DEFAULT_ADMIN_PASSWORD and username == DEFAULT_ADMIN_USER and hmac.compare_digest(password, DEFAULT_ADMIN_PASSWORD):
                 return True
                 
             # Connect to LDAP server
@@ -145,6 +146,7 @@ class LDAPAuthenticator:
 
     def get_user_info(self, username: str) -> Dict[str, Any]:
         """Get user information from LDAP"""
+        conn = None
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
@@ -167,6 +169,12 @@ class LDAPAuthenticator:
                 
         except Exception as e:
             logger.error("Error getting user info for %s: %s", username, e)
+        finally:
+            if conn is not None:
+                try:
+                    conn.unbind_s()
+                except Exception:
+                    pass
 
         return {'username': username, 'name': username, 'email': '', 'groups': []}
 
@@ -551,6 +559,6 @@ def initialize_default_admin():
     try:
         if ENABLE_AUTHENTICATION and DEFAULT_ADMIN_USER and DEFAULT_ADMIN_PASSWORD:
             set_user_role(DEFAULT_ADMIN_USER, "superadmin", "system")
-            print(f"Default admin user '{DEFAULT_ADMIN_USER}' initialized")
+            logger.info("Default admin user '%s' initialized", DEFAULT_ADMIN_USER)
     except Exception as e:
-        print(f"Error initializing default admin: {e}")
+        logger.error("Error initializing default admin: %s", e)

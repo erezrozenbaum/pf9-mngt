@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.50.0] - 2026-03-10
+
+### Security — Hardening & Code Quality (Phase J)
+
+Addressed outstanding security findings from the Phase J internal audit. No new features;
+all changes are security fixes or code-quality improvements with no user-visible behaviour
+changes.
+
+#### `api/auth.py`
+- **Timing-safe admin password check** — `password == DEFAULT_ADMIN_PASSWORD` replaced with
+  `hmac.compare_digest()` to eliminate timing-oracle vulnerability on the local admin fallback path.
+- **LDAP connection leak fixed** — `get_user_info()` now unconditionally calls `conn.unbind_s()`
+  in a `try/finally` block; previously the connection was only closed on the exception path, leaking
+  one LDAP handle per successful authentication.
+- **`print()` removed** — `initialize_default_admin()` used bare `print()` for startup diagnostics;
+  replaced with `logger.info` / `logger.error`.
+
+#### `api/log_collector.py`
+- **Command injection patched** — `get_log_range()` interpolated the caller-supplied `start_time`
+  value directly into an SSH `grep` command via an f-string. Now validates the value against a
+  strict `YYYY-MM-DD` regex before use and wraps it with `shlex.quote()`.
+- **Null `log_path` guard** — added early return when `log_path` is `None` before issuing the
+  SSH command.
+- **`print()` removed** — four bare `print()` calls (startup, connect success/failure) replaced
+  with `logger.debug` / `logger.error`.
+
+#### `api/vm_provisioning_routes.py`
+- **Removed `_db()` / `_release()` helpers** — private wrapper functions that obscured the
+  connection lifecycle were removed; `_execute_batch_thread()` now calls `get_pool().getconn()`
+  and `get_pool().putconn()` directly in a `try/finally` block, consistent with the `db_pool`
+  context-manager pattern used everywhere else.
+
+#### `api/graph_routes.py`
+- **Host node graph fix** — `_is_valid_id()` rejected integer IDs (e.g. `root_id=8`) because
+  the fallback regex required a minimum of 4 characters. Added an explicit `^\d+$` branch so
+  `hypervisors.id` integer PKs pass validation; `GET /api/graph?root_type=host&root_id=<n>`
+  now returns 200 instead of 400.
+
+#### `api/main.py`
+- **Host Disk % always 0% fixed (VM inventory + Hypervisors tab)** — Nova's `local_gb_used`
+  is 0 for all PF9 hosts because instances are volume-backed (Cinder) and Nova never allocates
+  ephemeral disk. Three query sites were affected: the server list CTE (`host_disk_used_gb`),
+  the monitoring host-metrics query (`storage_used_gb` / `storage_usage_percent`), and the
+  `GET /hypervisors` endpoint (`local_gb_used`). All three now derive used disk from
+  `local_gb - disk_available_least` (the actual remaining headroom reported by the hypervisor
+  agent), falling back to `local_gb_used` only when `disk_available_least` is absent. Disk
+  values now show realistic numbers (e.g. 34 GB / 35%, 81 GB / 84%, 25 GB / 26%) instead of 0.
+
+---
+
 ## [1.49.0] - 2026-03-09
 
 ### Fixed — Drift Detection: Enriched Event Context (UUIDs → Friendly Names)

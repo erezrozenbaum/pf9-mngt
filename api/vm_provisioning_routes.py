@@ -41,17 +41,6 @@ router = APIRouter(prefix="/api/vm-provisioning", tags=["vm-provisioning"])
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
-def _db():
-    return get_pool().getconn()
-
-def _release(conn):
-    try:
-        get_pool().putconn(conn)
-    except Exception:
-        try:
-            conn.close()
-        except Exception:
-            pass
 
 def _log_activity(conn, resource_type: str, resource_id: str, action: str,
                    details: str, user: str = "system"):
@@ -534,7 +523,7 @@ def _build_completion_email(batch: dict, vm_rows: list, activity_steps: list = N
 # Background execution
 # ---------------------------------------------------------------------------
 def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
-    conn = _db()
+    conn = get_pool().getconn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
@@ -926,7 +915,13 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
         except Exception:
             pass
     finally:
-        _release(conn)
+        try:
+            get_pool().putconn(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def _update_vm_status(conn, vm_id: int, status: str, error_msg: Optional[str] = None):
