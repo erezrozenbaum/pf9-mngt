@@ -142,6 +142,10 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
   const [testingIntegr, setTestingIntegr] = useState<string | null>(null);
   const [integrTestResult, setIntegrTestResult] = useState<Record<string, any>>({});
 
+  // Lookup data for dropdowns (VM list, project list)
+  const [lookupData, setLookupData] = useState<Record<string, any[]>>({});
+  const [lookupLoading, setLookupLoading] = useState(false);
+
   // ------- Toast helper --------------------------------------------------
   const showToast = useCallback((msg: string, type: string = "info") => {
     setToast({ msg, type });
@@ -316,6 +320,25 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
     setTriggerParams(defaults);
     setTriggerDryRun(rb.supports_dry_run);
     setTriggerModal(rb);
+
+    // Fetch lookup data for any x-lookup fields
+    const neededLookups = new Set<string>();
+    for (const [, schema] of Object.entries(props) as any) {
+      if (schema["x-lookup"]) {
+        neededLookups.add((schema["x-lookup"] as string).replace("_optional", ""));
+      }
+    }
+    if (neededLookups.size > 0) {
+      setLookupLoading(true);
+      Promise.all(
+        [...neededLookups].map(async (lt) => {
+          // Use cached data if already loaded
+          if (lookupData[lt]?.length) return;
+          const data = await apiFetch<any[]>(`/api/runbooks/lookup/${lt}`).catch(() => []);
+          setLookupData((prev) => ({ ...prev, [lt]: data }));
+        })
+      ).finally(() => setLookupLoading(false));
+    }
   };
 
   const doTrigger = async () => {
@@ -1410,10 +1433,59 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
 
             {/* Render parameters from schema */}
             {Object.entries(triggerModal.parameters_schema?.properties || {}).map(
-              ([key, schema]: [string, any]) => (
-                <div className="rb-form-group" key={key}>
-                  <label>{key.replace(/_/g, " ")}</label>
-                  {schema.enum ? (
+              ([key, schema]: [string, any]) => {
+                // Skip hidden fields (e.g. project_name auto-filled from project selector)
+                if (schema["x-hidden"]) return null;
+
+                const isRequired = (triggerModal.parameters_schema?.required || []).includes(key);
+
+                let field: React.ReactNode;
+
+                if (schema["x-lookup"]) {
+                  // Dropdown backed by a live OpenStack lookup
+                  const lt = (schema["x-lookup"] as string).replace("_optional", "");
+                  const isOptional = (schema["x-lookup"] as string).endsWith("_optional");
+                  const options: any[] = lookupData[lt] || [];
+                  const loading = lookupLoading && !options.length;
+                  const isVms = lt === "vms";
+                  field = (
+                    <select
+                      value={triggerParams[key] ?? ""}
+                      disabled={loading}
+                      onChange={(e) => {
+                        const updates: Record<string, any> = { [key]: e.target.value };
+                        // Auto-fill project_name when a project is selected
+                        if (key === "project_id" && e.target.value) {
+                          const proj = options.find((o: any) => o.id === e.target.value);
+                          if (proj) updates["project_name"] = proj.name;
+                        }
+                        setTriggerParams({ ...triggerParams, ...updates });
+                      }}
+                    >
+                      {(isOptional || !triggerParams[key]) && (
+                        <option value="">
+                          {loading
+                            ? "Loading…"
+                            : isOptional
+                            ? `— All ${isVms ? "VMs" : "projects"} —`
+                            : `Select ${isVms ? "a VM" : "a project"}…`}
+                        </option>
+                      )}
+                      {isVms
+                        ? options.map((o: any) => (
+                            <option key={o.id} value={o.id}>
+                              {o.name} [{o.project_name}] ({o.status})
+                            </option>
+                          ))
+                        : options.map((o: any) => (
+                            <option key={o.id} value={o.id}>
+                              {o.name}
+                            </option>
+                          ))}
+                    </select>
+                  );
+                } else if (schema.enum) {
+                  field = (
                     <select
                       value={triggerParams[key] ?? schema.default ?? ""}
                       onChange={(e) => setTriggerParams({ ...triggerParams, [key]: e.target.value })}
@@ -1422,7 +1494,9 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
                         <option key={v} value={v}>{v}</option>
                       ))}
                     </select>
-                  ) : schema.type === "integer" ? (
+                  );
+                } else if (schema.type === "integer") {
+                  field = (
                     <input
                       type="number"
                       value={triggerParams[key] ?? schema.default ?? 0}
@@ -1430,17 +1504,31 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
                         setTriggerParams({ ...triggerParams, [key]: parseInt(e.target.value) || 0 })
                       }
                     />
-                  ) : (
+                  );
+                } else {
+                  field = (
                     <input
                       type="text"
                       value={triggerParams[key] ?? schema.default ?? ""}
                       onChange={(e) => setTriggerParams({ ...triggerParams, [key]: e.target.value })}
                       placeholder={schema.description || ""}
                     />
-                  )}
-                  {schema.description && <div className="rb-hint">{schema.description}</div>}
-                </div>
-              )
+                  );
+                }
+
+                return (
+                  <div className="rb-form-group" key={key}>
+                    <label>
+                      {key.replace(/_/g, " ")}
+                      {isRequired && <span style={{ color: "#e74c3c", marginLeft: 2 }}>*</span>}
+                    </label>
+                    {field}
+                    {schema.description && !schema["x-lookup"] && (
+                      <div className="rb-hint">{schema.description}</div>
+                    )}
+                  </div>
+                );
+              }
             )}
 
             {triggerModal.supports_dry_run && (

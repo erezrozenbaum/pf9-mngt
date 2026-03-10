@@ -2883,6 +2883,74 @@ async def set_runbook_visibility(
     return {"runbook_name": runbook_name, "dept_ids": body.dept_ids}
 
 
+# ── Lookup helpers — must be declared BEFORE /{runbook_name} ────────────────
+@router.get("/lookup/vms")
+async def lookup_vms(
+    current_user=Depends(require_permission("runbooks", "read")),
+):
+    """Return a flat list of VMs from Nova for use in trigger-modal dropdowns."""
+    from pf9_control import get_client
+    try:
+        client = get_client()
+        client.authenticate()
+        headers = {"X-Auth-Token": client.token}
+        project_names = _resolve_project_names(client, headers)
+
+        # Try all_tenants first (admin), fall back to tenant-scoped
+        url = f"{client.nova_endpoint}/servers/detail?all_tenants=true&limit=500"
+        resp = client.session.get(url, headers=headers)
+        if resp.status_code == 403:
+            url = f"{client.nova_endpoint}/servers/detail?limit=500"
+            resp = client.session.get(url, headers=headers)
+        resp.raise_for_status()
+
+        servers = resp.json().get("servers", [])
+        result = []
+        for s in servers:
+            pid = s.get("tenant_id", s.get("OS-EXT-STS:tenant_id", ""))
+            result.append({
+                "id": s.get("id"),
+                "name": s.get("name", s.get("id")),
+                "project_id": pid,
+                "project_name": project_names.get(pid, pid),
+                "status": s.get("status", "UNKNOWN"),
+            })
+        result.sort(key=lambda x: (x["project_name"], x["name"]))
+        return result
+    except Exception as e:
+        logger.warning(f"lookup_vms failed: {e}")
+        return []
+
+
+@router.get("/lookup/projects")
+async def lookup_projects(
+    current_user=Depends(require_permission("runbooks", "read")),
+):
+    """Return a flat list of projects from Keystone for use in trigger-modal dropdowns."""
+    from pf9_control import get_client
+    try:
+        client = get_client()
+        client.authenticate()
+        headers = {"X-Auth-Token": client.token}
+        url = f"{client.keystone_endpoint}/projects?all_projects=true"
+        resp = client.session.get(url, headers=headers)
+        if resp.status_code == 403:
+            url = f"{client.keystone_endpoint}/projects"
+            resp = client.session.get(url, headers=headers)
+        resp.raise_for_status()
+        projects = resp.json().get("projects", [])
+        result = [
+            {"id": p["id"], "name": p.get("name", p["id"])}
+            for p in projects
+            if p.get("enabled", True)
+        ]
+        result.sort(key=lambda x: x["name"])
+        return result
+    except Exception as e:
+        logger.warning(f"lookup_projects failed: {e}")
+        return []
+
+
 # ── Get single runbook ───────────────────────────────────────────
 @router.get("/{runbook_name}")
 async def get_runbook(
