@@ -59,6 +59,42 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('superadmin', 'integrations', 'admin')
 ON CONFLICT (role, resource, action) DO NOTHING;
 
+-- ── 3b. Insert new runbooks for v1.53.0 (quota_adjustment + org_usage_report) ──
+INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema)
+VALUES
+(
+    'quota_adjustment',
+    'Quota Adjustment',
+    'Set Nova / Neutron / Cinder quota for a project. Supports dry-run diff, cost estimation, and billing gate approval for quota increases. Core building block for the quota-increase ticket workflow.',
+    'quota', 'high', true,
+    '{"type":"object","required":["project_id"],"properties":{"project_id":{"type":"string","description":"Target project UUID"},"project_name":{"type":"string","description":"Display name (audit only)"},"new_vcpus":{"type":"integer","minimum":0,"description":"New vCPU quota limit (0 = no change)"},"new_ram_mb":{"type":"integer","minimum":0,"description":"New RAM quota in MB (0 = no change)"},"new_instances":{"type":"integer","minimum":0,"description":"New instance quota limit (0 = no change)"},"new_networks":{"type":"integer","minimum":0,"description":"New Neutron network quota (0 = no change)"},"new_volumes":{"type":"integer","minimum":0,"description":"New Cinder volumes quota (0 = no change)"},"new_gigabytes":{"type":"integer","minimum":0,"description":"New Cinder gigabytes quota (0 = no change)"},"reason":{"type":"string","description":"Free-text justification (written to audit log)"},"require_billing_approval":{"type":"boolean","default":true,"description":"Call billing gate when quota is being increased"}}}'
+),
+(
+    'org_usage_report',
+    'Org Usage Report',
+    'Complete read-only usage and cost report for a single project/org. Returns per-resource quota utilisation, active server breakdown, storage and snapshot totals, floating IP count, cost estimate for the period, and a pre-rendered HTML body suitable for email.',
+    'general', 'low', false,
+    '{"type":"object","required":["project_id"],"properties":{"project_id":{"type":"string","description":"Target project UUID"},"include_cost_estimate":{"type":"boolean","default":true,"description":"Include cost estimate table in the report"},"include_snapshot_details":{"type":"boolean","default":true,"description":"Query Cinder snapshot list for snapshot GB total"},"period_days":{"type":"integer","default":30,"minimum":1,"description":"Billing/usage period in days for cost calculations"}}}'
+)
+ON CONFLICT (name) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    description  = EXCLUDED.description,
+    category     = EXCLUDED.category,
+    risk_level   = EXCLUDED.risk_level,
+    supports_dry_run  = EXCLUDED.supports_dry_run,
+    parameters_schema = EXCLUDED.parameters_schema,
+    updated_at   = now();
+
+-- Approval policies for the new runbooks
+INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode) VALUES
+    ('quota_adjustment', 'operator',   'admin', 'single_approval'),
+    ('quota_adjustment', 'admin',      'admin', 'auto_approve'),
+    ('quota_adjustment', 'superadmin', 'admin', 'auto_approve'),
+    ('org_usage_report', 'operator',   'admin', 'auto_approve'),
+    ('org_usage_report', 'admin',      'admin', 'auto_approve'),
+    ('org_usage_report', 'superadmin', 'admin', 'auto_approve')
+ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
+
 -- ── 4. Seed dept visibility for the 14 shipped runbooks ──────────────
 -- Department IDs match the seed order in init.sql:
 --   1 = Engineering
@@ -158,5 +194,18 @@ BEGIN
     -- user_last_login: Engineering, Management
     INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
         ('user_last_login', d_eng), ('user_last_login', d_mgmt)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+
+    -- quota_adjustment: Tier2, Tier3, Engineering, Management  (v1.53.0)
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        ('quota_adjustment', d_t2),  ('quota_adjustment', d_t3),
+        ('quota_adjustment', d_eng), ('quota_adjustment', d_mgmt)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+
+    -- org_usage_report: Sales, Tier2, Tier3, Engineering, Management  (v1.53.0)
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        ('org_usage_report', d_sal), ('org_usage_report', d_t2),
+        ('org_usage_report', d_t3),  ('org_usage_report', d_eng),
+        ('org_usage_report', d_mgmt)
     ON CONFLICT (runbook_name, dept_id) DO NOTHING;
 END $$;

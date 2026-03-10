@@ -2528,6 +2528,21 @@ INSERT INTO runbooks (name, display_name, description, category, risk_level, sup
     'Proactive daily check: for each tenant, compare current volume sizes and snapshot policies against Cinder quotas. Identifies tenants where the next snapshot cycle will fail due to insufficient gigabyte or snapshot-count quota. Recommends exact quota increases needed.',
     'security', 'low', false,
     '{"type":"object","properties":{"include_pending_policies":{"type":"boolean","default":true,"description":"Include volumes with assigned policies even if auto_snapshot is not yet enabled"},"safety_margin_pct":{"type":"integer","default":10,"description":"Extra headroom % to add when calculating if quota is sufficient"}}}'
+),
+-- v1.53.0 runbooks
+(
+    'quota_adjustment',
+    'Quota Adjustment',
+    'Set Nova / Neutron / Cinder quota for a project. Supports dry-run diff, cost estimation, and billing gate approval for quota increases. Core building block for the quota-increase ticket workflow.',
+    'quota', 'high', true,
+    '{"type":"object","required":["project_id"],"properties":{"project_id":{"type":"string","description":"Target project UUID"},"project_name":{"type":"string","description":"Display name (audit only)"},"new_vcpus":{"type":"integer","minimum":0,"description":"New vCPU quota limit (0 = no change)"},"new_ram_mb":{"type":"integer","minimum":0,"description":"New RAM quota in MB (0 = no change)"},"new_instances":{"type":"integer","minimum":0,"description":"New instance quota limit (0 = no change)"},"new_networks":{"type":"integer","minimum":0,"description":"New Neutron network quota (0 = no change)"},"new_volumes":{"type":"integer","minimum":0,"description":"New Cinder volumes quota (0 = no change)"},"new_gigabytes":{"type":"integer","minimum":0,"description":"New Cinder gigabytes quota (0 = no change)"},"reason":{"type":"string","description":"Free-text justification (written to audit log)"},"require_billing_approval":{"type":"boolean","default":true,"description":"Call billing gate when quota is being increased"}}}'
+),
+(
+    'org_usage_report',
+    'Org Usage Report',
+    'Complete read-only usage and cost report for a single project/org. Returns per-resource quota utilisation, active server breakdown, storage and snapshot totals, floating IP count, cost estimate for the period, and a pre-rendered HTML body suitable for email.',
+    'general', 'low', false,
+    '{"type":"object","required":["project_id"],"properties":{"project_id":{"type":"string","description":"Target project UUID"},"include_cost_estimate":{"type":"boolean","default":true,"description":"Include cost estimate table in the report"},"include_snapshot_details":{"type":"boolean","default":true,"description":"Query Cinder snapshot list for snapshot GB total"},"period_days":{"type":"integer","default":30,"minimum":1,"description":"Billing/usage period in days for cost calculations"}}}'
 )
 ON CONFLICT (name) DO UPDATE SET
     display_name = EXCLUDED.display_name,
@@ -2582,7 +2597,14 @@ INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role
     ('user_last_login',             'superadmin', 'admin',  'auto_approve'),
     ('snapshot_quota_forecast',     'operator',   'admin',  'auto_approve'),
     ('snapshot_quota_forecast',     'admin',      'admin',  'auto_approve'),
-    ('snapshot_quota_forecast',     'superadmin', 'admin',  'auto_approve')
+    ('snapshot_quota_forecast',     'superadmin', 'admin',  'auto_approve'),
+    -- v1.53.0 runbooks
+    ('quota_adjustment',            'operator',   'admin',  'single_approval'),
+    ('quota_adjustment',            'admin',      'admin',  'auto_approve'),
+    ('quota_adjustment',            'superadmin', 'admin',  'auto_approve'),
+    ('org_usage_report',            'operator',   'admin',  'auto_approve'),
+    ('org_usage_report',            'admin',      'admin',  'auto_approve'),
+    ('org_usage_report',            'superadmin', 'admin',  'auto_approve')
 ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
 
 -- =====================================================================
@@ -3092,6 +3114,13 @@ BEGIN
         ('cost_leakage_report', d_eng), ('cost_leakage_report', d_t3),
         ('cost_leakage_report', d_sal), ('cost_leakage_report', d_mgmt),
         -- user_last_login: Engineering, Management
-        ('user_last_login', d_eng), ('user_last_login', d_mgmt)
+        ('user_last_login', d_eng), ('user_last_login', d_mgmt),
+        -- quota_adjustment: Tier2, Tier3, Engineering, Management
+        ('quota_adjustment', d_t2),  ('quota_adjustment', d_t3),
+        ('quota_adjustment', d_eng), ('quota_adjustment', d_mgmt),
+        -- org_usage_report: Sales, Tier2, Tier3, Engineering, Management
+        ('org_usage_report', d_sal), ('org_usage_report', d_t2),
+        ('org_usage_report', d_t3),  ('org_usage_report', d_eng),
+        ('org_usage_report', d_mgmt)
     ON CONFLICT (runbook_name, dept_id) DO NOTHING;
 END $$;

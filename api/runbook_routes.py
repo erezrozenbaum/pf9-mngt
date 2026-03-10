@@ -2219,6 +2219,469 @@ def _engine_snapshot_quota_forecast(params: dict, dry_run: bool, actor: str) -> 
     }
 
 
+# ===== Engine: quota_adjustment ============================================
+
+@register_engine("quota_adjustment")
+def _engine_quota_adjustment(params: dict, dry_run: bool, actor: str) -> dict:
+    """
+    Set Nova / Neutron / Cinder quota for a project.
+    Supports dry-run (returns before/after diff + cost estimate) and billing gate approval.
+    """
+    from pf9_control import get_client
+
+    project_id = params.get("project_id", "")
+    project_name = params.get("project_name", project_id)
+    reason = params.get("reason", "")
+    require_billing = params.get("require_billing_approval", True)
+
+    if not project_id:
+        raise HTTPException(400, "project_id is required")
+
+    # Desired new quota values — only include keys explicitly passed and > 0
+    nova_key_map    = {"new_vcpus": "cores", "new_ram_mb": "ram", "new_instances": "instances"}
+    neutron_key_map = {"new_networks": "network"}
+    cinder_key_map  = {"new_volumes": "volumes", "new_gigabytes": "gigabytes"}
+
+    desired_nova    = {v: int(params[k]) for k, v in nova_key_map.items()    if params.get(k) is not None and int(params.get(k, 0) or 0) > 0}
+    desired_neutron = {v: int(params[k]) for k, v in neutron_key_map.items() if params.get(k) is not None and int(params.get(k, 0) or 0) > 0}
+    desired_cinder  = {v: int(params[k]) for k, v in cinder_key_map.items()  if params.get(k) is not None and int(params.get(k, 0) or 0) > 0}
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # ----  1. Read current quotas ----
+    before: dict = {"nova": {}, "neutron": {}, "cinder": {}}
+
+    try:
+        r = client.session.get(f"{client.nova_endpoint}/os-quota-sets/{project_id}/detail", headers=headers)
+        if r.ok:
+            qs = r.json().get("quota_set", {})
+            for key in ("cores", "ram", "instances"):
+                d = qs.get(key, {})
+                before["nova"][key] = d.get("limit", -1) if isinstance(d, dict) else int(d or -1)
+    except Exception as e:
+        logger.warning(f"quota_adjustment: Nova read failed: {e}")
+
+    try:
+        r = client.session.get(f"{client.neutron_endpoint}/v2.0/quotas/{project_id}", headers=headers)
+        if r.ok:
+            qs = r.json().get("quota", {})
+            before["neutron"]["network"] = qs.get("network", -1)
+    except Exception as e:
+        logger.warning(f"quota_adjustment: Neutron read failed: {e}")
+
+    try:
+        r = client.session.get(f"{client.cinder_endpoint}/os-quota-sets/{project_id}?usage=true", headers=headers)
+        if r.ok:
+            qs = r.json().get("quota_set", {})
+            for key in ("volumes", "gigabytes"):
+                d = qs.get(key, {})
+                before["cinder"][key] = d.get("limit", -1) if isinstance(d, dict) else int(d or -1)
+    except Exception as e:
+        logger.warning(f"quota_adjustment: Cinder read failed: {e}")
+
+    # ---- 2. Compute deltas (new − before) ----
+    after = {"nova": desired_nova, "neutron": desired_neutron, "cinder": desired_cinder}
+
+    deltas: dict = {}
+    for svc, fields in after.items():
+        for res, new_val in fields.items():
+            old_val = before[svc].get(res, 0)
+            deltas[f"{svc}.{res}"] = new_val - (old_val if old_val >= 0 else 0)
+
+    any_increase = any(v > 0 for v in deltas.values())
+
+    # ---- 3. Billing gate ----
+    billing_result: dict = {"skipped": True, "reason": "no quota increase requested"}
+    charge_id = None
+
+    if any_increase and require_billing:
+        pricing = _load_metering_pricing()
+        cost_est = round(
+            max(0, deltas.get("nova.cores", 0)) * pricing.get("price_per_vcpu_month", 15)
+            + max(0, deltas.get("nova.ram", 0) / 1024) * pricing.get("price_per_gb_ram_month", 5)
+            + max(0, deltas.get("cinder.gigabytes", 0)) * pricing.get("price_per_gb_volume_month", 2),
+            2,
+        )
+        billing_result = _call_billing_gate(
+            project_id=project_id,
+            resource="quota_increase",
+            units=sum(max(0, v) for v in deltas.values()),
+            cost_estimate=cost_est,
+            actor=actor,
+        )
+        if not billing_result.get("skipped") and not billing_result.get("approved"):
+            return {
+                "result": {
+                    "billing_rejected": True,
+                    "reason": billing_result.get("reason", "rejected by billing gate"),
+                    "before": before,
+                    "after": after,
+                    "deltas": deltas,
+                    "cost_estimate": cost_est,
+                    "cost_currency": pricing.get("cost_currency", "USD"),
+                },
+                "items_found": len(deltas),
+                "items_actioned": 0,
+            }
+        charge_id = billing_result.get("charge_id")
+
+    # ---- 4. Dry-run: return diff + simulation ----
+    if dry_run:
+        pricing = _load_metering_pricing()
+        cost_est = round(
+            max(0, deltas.get("nova.cores", 0)) * pricing.get("price_per_vcpu_month", 15)
+            + max(0, deltas.get("nova.ram", 0) / 1024) * pricing.get("price_per_gb_ram_month", 5)
+            + max(0, deltas.get("cinder.gigabytes", 0)) * pricing.get("price_per_gb_volume_month", 2),
+            2,
+        )
+        return {
+            "result": {
+                "dry_run": True,
+                "before": before,
+                "after": after,
+                "deltas": deltas,
+                "billing_gate_simulation": billing_result,
+                "cost_estimate": cost_est,
+                "cost_currency": pricing.get("cost_currency", "USD"),
+                "reason": reason,
+            },
+            "items_found": len([k for k, v in deltas.items() if v != 0]),
+            "items_actioned": 0,
+        }
+
+    # ---- 5. Apply quotas ----
+    applied: dict = {}
+    errors: list = []
+
+    if desired_nova:
+        try:
+            r = client.session.put(
+                f"{client.nova_endpoint}/os-quota-sets/{project_id}",
+                json={"quota_set": desired_nova}, headers=headers)
+            r.raise_for_status()
+            applied["nova"] = desired_nova
+        except Exception as e:
+            errors.append(f"Nova quota update failed: {e}")
+
+    if desired_neutron:
+        try:
+            r = client.session.put(
+                f"{client.neutron_endpoint}/v2.0/quotas/{project_id}",
+                json={"quota": desired_neutron}, headers=headers)
+            r.raise_for_status()
+            applied["neutron"] = desired_neutron
+        except Exception as e:
+            errors.append(f"Neutron quota update failed: {e}")
+
+    if desired_cinder:
+        try:
+            r = client.session.put(
+                f"{client.cinder_endpoint}/os-quota-sets/{project_id}",
+                json={"quota_set": desired_cinder}, headers=headers)
+            r.raise_for_status()
+            applied["cinder"] = desired_cinder
+        except Exception as e:
+            errors.append(f"Cinder quota update failed: {e}")
+
+    items_actioned = sum(len(v) for v in applied.values())
+
+    # ---- 6. Audit log ----
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO activity_log (actor, action, resource_type, resource_id, details, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, now())
+                """, (actor, "quota_adjustment", "project", project_id,
+                      json.dumps({"before": before, "after": after, "applied": applied,
+                                  "charge_id": charge_id, "reason": reason,
+                                  "project_name": project_name, "errors": errors})))
+    except Exception as e:
+        logger.warning(f"Audit log insert failed: {e}")
+
+    return {
+        "result": {
+            "before": before,
+            "after": after,
+            "applied": applied,
+            "deltas": deltas,
+            "billing_gate": billing_result,
+            "charge_id": charge_id,
+            "reason": reason,
+            "project_name": project_name,
+            "errors": errors,
+        },
+        "items_found": len(deltas),
+        "items_actioned": items_actioned,
+    }
+
+
+# ===== Engine: org_usage_report ============================================
+
+@register_engine("org_usage_report")
+def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
+    """
+    Complete read-only usage + cost report for a single org/project.
+    Returns structured JSON and a pre-rendered HTML body (email-ready).
+    """
+    from pf9_control import get_client
+
+    project_id = params.get("project_id", "")
+    include_cost = params.get("include_cost_estimate", True)
+    include_snapshots = params.get("include_snapshot_details", True)
+    period_days = int(params.get("period_days", 30) or 30)
+
+    if not project_id:
+        raise HTTPException(400, "project_id is required")
+
+    client = get_client()
+    client.authenticate()
+    headers = {"X-Auth-Token": client.token}
+
+    # Resolve project name
+    project_name = project_id
+    try:
+        r = client.session.get(f"{client.keystone_endpoint}/projects/{project_id}", headers=headers)
+        if r.ok:
+            project_name = r.json().get("project", {}).get("name", project_id)
+    except Exception:
+        pass
+
+    usage: dict = {}
+    quota: dict = {}
+
+    # ---- Nova (compute) quota ----
+    try:
+        r = client.session.get(f"{client.nova_endpoint}/os-quota-sets/{project_id}/detail", headers=headers)
+        if r.ok:
+            qs = r.json().get("quota_set", {})
+            for key in ("cores", "ram", "instances"):
+                d = qs.get(key, {})
+                if isinstance(d, dict):
+                    quota[f"nova.{key}"] = {"limit": d.get("limit", -1), "in_use": d.get("in_use", 0)}
+                else:
+                    quota[f"nova.{key}"] = {"limit": int(d or -1), "in_use": 0}
+    except Exception as e:
+        logger.warning(f"org_usage_report: Nova quota failed: {e}")
+
+    # Server list
+    servers: list = []
+    try:
+        r = client.session.get(
+            f"{client.nova_endpoint}/servers/detail?all_tenants=true&project_id={project_id}",
+            headers=headers)
+        if r.ok:
+            servers = r.json().get("servers", [])
+    except Exception as e:
+        logger.warning(f"org_usage_report: server list failed: {e}")
+
+    usage["servers_total"]   = len(servers)
+    usage["servers_active"]  = sum(1 for s in servers if s.get("status") == "ACTIVE")
+    usage["servers_stopped"] = sum(1 for s in servers if s.get("status") in ("SHUTOFF", "STOPPED"))
+    usage["vcpus_in_use"]    = sum(s.get("flavor", {}).get("vcpus", 0) for s in servers)
+    usage["ram_mb_in_use"]   = sum(s.get("flavor", {}).get("ram", 0) for s in servers)
+
+    # ---- Neutron (network) quota ----
+    try:
+        r = client.session.get(f"{client.neutron_endpoint}/v2.0/quotas/{project_id}", headers=headers)
+        if r.ok:
+            qs = r.json().get("quota", {})
+            for key in ("network", "floatingip", "router", "port", "security_group"):
+                quota[f"neutron.{key}"] = {"limit": qs.get(key, -1), "in_use": None}
+    except Exception as e:
+        logger.warning(f"org_usage_report: Neutron quota failed: {e}")
+
+    # Floating IPs
+    floating_ips: list = []
+    try:
+        r = client.session.get(
+            f"{client.neutron_endpoint}/v2.0/floatingips?project_id={project_id}",
+            headers=headers)
+        if r.ok:
+            floating_ips = r.json().get("floatingips", [])
+            if "neutron.floatingip" in quota:
+                quota["neutron.floatingip"]["in_use"] = len(floating_ips)
+    except Exception as e:
+        logger.warning(f"org_usage_report: floating IP list failed: {e}")
+    usage["floating_ips"] = len(floating_ips)
+
+    # ---- Cinder (block storage) quota ----
+    try:
+        r = client.session.get(
+            f"{client.cinder_endpoint}/os-quota-sets/{project_id}?usage=true",
+            headers=headers)
+        if r.ok:
+            qs = r.json().get("quota_set", {})
+            for key in ("volumes", "gigabytes", "snapshots"):
+                d = qs.get(key, {})
+                if isinstance(d, dict):
+                    quota[f"cinder.{key}"] = {"limit": d.get("limit", -1), "in_use": d.get("in_use", 0)}
+                else:
+                    quota[f"cinder.{key}"] = {"limit": int(d or -1), "in_use": 0}
+    except Exception as e:
+        logger.warning(f"org_usage_report: Cinder quota failed: {e}")
+
+    # Volumes list
+    volumes: list = []
+    try:
+        r = client.session.get(
+            f"{client.cinder_endpoint}/volumes/detail?all_tenants=true&project_id={project_id}",
+            headers=headers)
+        if r.ok:
+            volumes = r.json().get("volumes", [])
+    except Exception as e:
+        logger.warning(f"org_usage_report: volume list failed: {e}")
+    usage["volumes"]   = len(volumes)
+    usage["volume_gb"] = sum(v.get("size", 0) for v in volumes)
+
+    # Snapshots
+    snapshots_list: list = []
+    if include_snapshots:
+        try:
+            r = client.session.get(
+                f"{client.cinder_endpoint}/snapshots/detail?all_tenants=true&project_id={project_id}",
+                headers=headers)
+            if r.ok:
+                snapshots_list = r.json().get("snapshots", [])
+        except Exception as e:
+            logger.warning(f"org_usage_report: snapshot list failed: {e}")
+    usage["snapshots"]    = len(snapshots_list)
+    usage["snapshot_gb"]  = sum(s.get("size", 0) for s in snapshots_list)
+
+    # ---- Utilisation % ----
+    utilisation: dict = {}
+    for metric, q in quota.items():
+        lim    = q.get("limit", -1)
+        in_use = q.get("in_use") or 0
+        utilisation[metric] = round(in_use / lim * 100, 1) if lim and lim > 0 else None
+
+    # ---- Cost estimate ----
+    cost_summary: dict = {}
+    if include_cost:
+        pricing    = _load_metering_pricing()
+        currency   = pricing.get("cost_currency", "USD")
+        factor     = period_days / 30.0
+        cost_compute  = round(
+            usage.get("vcpus_in_use", 0)  * pricing.get("price_per_vcpu_month", 15) * factor
+            + (usage.get("ram_mb_in_use", 0) / 1024) * pricing.get("price_per_gb_ram_month", 5) * factor,
+            2,
+        )
+        cost_storage  = round(usage.get("volume_gb", 0)    * pricing.get("price_per_gb_volume_month", 2)   * factor, 2)
+        cost_snaps    = round(usage.get("snapshot_gb", 0)  * pricing.get("cost_per_snapshot_gb_month", 1.5) * factor, 2)
+        cost_fips     = round(usage.get("floating_ips", 0) * pricing.get("cost_per_floating_ip_month", 5)   * factor, 2)
+        cost_summary  = {
+            "compute":       cost_compute,
+            "block_storage": cost_storage,
+            "snapshots":     cost_snaps,
+            "floating_ips":  cost_fips,
+            "total":         round(cost_compute + cost_storage + cost_snaps + cost_fips, 2),
+            "currency":      currency,
+            "period_days":   period_days,
+        }
+
+    # ---- HTML Report ----
+    def _util_bar(pct):
+        if pct is None:
+            return "unlimited"
+        color = "#e74c3c" if pct >= 90 else "#f39c12" if pct >= 75 else "#27ae60"
+        return (
+            f'<span style="font-weight:bold;color:{color}">{pct}%</span>'
+            f'<div style="background:#eee;border-radius:3px;height:8px;width:100px;display:inline-block;margin-left:6px">'
+            f'<div style="background:{color};width:{min(pct, 100)}%;height:8px;border-radius:3px"></div></div>'
+        )
+
+    rows_quota = ""
+    for metric, q in quota.items():
+        lim      = q.get("limit", -1)
+        in_use   = q.get("in_use") or 0
+        lim_disp = "unlimited" if lim == -1 else str(lim)
+        pct      = utilisation.get(metric)
+        rows_quota += (
+            f"<tr>"
+            f"<td style='padding:6px 10px'>{metric}</td>"
+            f"<td style='padding:6px 10px;text-align:right'>{in_use}</td>"
+            f"<td style='padding:6px 10px;text-align:right'>{lim_disp}</td>"
+            f"<td style='padding:6px 10px'>{_util_bar(pct)}</td>"
+            f"</tr>"
+        )
+
+    cost_rows = ""
+    if cost_summary:
+        for cat, val in cost_summary.items():
+            if cat in ("currency", "period_days", "total"):
+                continue
+            cost_rows += (
+                f"<tr><td style='padding:6px 10px'>{cat.replace('_', ' ').title()}</td>"
+                f"<td style='padding:6px 10px;text-align:right'>"
+                f"{cost_summary['currency']} {val:.2f}</td></tr>"
+            )
+        cost_rows += (
+            f"<tr style='font-weight:bold;border-top:2px solid #333'>"
+            f"<td style='padding:6px 10px'>Total ({period_days}d)</td>"
+            f"<td style='padding:6px 10px;text-align:right'>"
+            f"{cost_summary['currency']} {cost_summary['total']:.2f}</td></tr>"
+        )
+
+    cost_section = ""
+    if cost_rows:
+        cost_section = (
+            "<h3>Cost Estimate</h3>"
+            "<table style='border-collapse:collapse;width:50%;font-size:13px'>"
+            "<thead><tr style='background:#2ecc71;color:#fff'>"
+            "<th style='padding:8px 10px;text-align:left'>Category</th>"
+            "<th style='padding:8px 10px;text-align:right'>Estimated Cost</th>"
+            "</tr></thead>"
+            f"<tbody>{cost_rows}</tbody></table>"
+        )
+
+    html_body = (
+        "<div style='font-family:Arial,sans-serif;max-width:720px'>"
+        f"<h2 style='border-bottom:2px solid #3498db;padding-bottom:8px'>Usage Report: {project_name}</h2>"
+        f"<p>Report period: <b>{period_days} days</b> &nbsp;|&nbsp; Generated by: <b>{actor}</b></p>"
+        "<h3>Resource Summary</h3><ul>"
+        f"<li>Servers: <b>{usage.get('servers_total', 0)}</b>"
+        f" ({usage.get('servers_active', 0)} active, {usage.get('servers_stopped', 0)} stopped)</li>"
+        f"<li>vCPUs in use: <b>{usage.get('vcpus_in_use', 0)}</b></li>"
+        f"<li>RAM in use: <b>{usage.get('ram_mb_in_use', 0)} MB"
+        f" ({usage.get('ram_mb_in_use', 0) // 1024} GB)</b></li>"
+        f"<li>Volumes: <b>{usage.get('volumes', 0)}</b> ({usage.get('volume_gb', 0)} GB)</li>"
+        f"<li>Snapshots: <b>{usage.get('snapshots', 0)}</b> ({usage.get('snapshot_gb', 0)} GB)</li>"
+        f"<li>Floating IPs: <b>{usage.get('floating_ips', 0)}</b></li>"
+        "</ul>"
+        "<h3>Quota Utilisation</h3>"
+        "<table style='border-collapse:collapse;width:100%;font-size:13px'>"
+        "<thead><tr style='background:#3498db;color:#fff'>"
+        "<th style='padding:8px 10px;text-align:left'>Resource</th>"
+        "<th style='padding:8px 10px;text-align:right'>In Use</th>"
+        "<th style='padding:8px 10px;text-align:right'>Limit</th>"
+        "<th style='padding:8px 10px;text-align:left'>Utilisation</th>"
+        "</tr></thead>"
+        f"<tbody>{rows_quota}</tbody></table>"
+        f"{cost_section}"
+        "</div>"
+    )
+
+    result = {
+        "project_id":       project_id,
+        "project_name":     project_name,
+        "period_days":      period_days,
+        "usage":            usage,
+        "quota":            quota,
+        "utilisation_pct":  utilisation,
+        "html_body":        html_body,
+    }
+    if cost_summary:
+        result["cost_estimate"] = cost_summary
+
+    return {
+        "result": result,
+        "items_found": len(quota),
+        "items_actioned": 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 #  Core execution logic
 # ---------------------------------------------------------------------------
@@ -2453,8 +2916,12 @@ async def trigger_runbook(
     """Trigger a runbook execution. Depending on approval policy, it may
     execute immediately (auto_approve) or wait for approval."""
     user = current_user
-    username = user.username if hasattr(user, "username") else str(user)
-    role = user.role if hasattr(user, "role") else "operator"
+    if isinstance(user, dict):
+        username = user.get("username", str(user))
+        role = user.get("role", "operator")
+    else:
+        username = user.username if hasattr(user, "username") else str(user)
+        role = user.role if hasattr(user, "role") else "operator"
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:

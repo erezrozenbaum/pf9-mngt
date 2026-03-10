@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.53.0] - 2026-03-10
+
+### Added — Phase B1: Action Runbooks — Quota Adjustment + Org Usage Report
+
+#### Runbook 15: `quota_adjustment`
+- **Purpose:** Operators/TierX actually SET quota for a project. Core building block for
+  the ticket system's quota-increase workflow.
+- **Scope:** Nova (vCPUs, RAM, instances), Neutron (networks), Cinder (volumes, gigabytes)
+- **Dry-run support:** Returns a before/after diff and cost estimate without making any API calls.
+- **Billing gate integration:** When `require_billing_approval=true` and a `billing_gate`
+  integration is configured, calls `_call_billing_gate()` before applying changes. If the gate
+  rejects, the engine returns `{billing_rejected: true, reason}` and stops. If no integration is
+  configured the gate is silently skipped.
+- **Audit log:** Every actual run writes to `activity_log` with full before/after diff,
+  `charge_id`, reason, actor, and project name.
+- **Risk level:** high | **Dry-run:** yes | **Dept visibility:** Tier2, Tier3, Engineering, Management
+- **Approval policy:** operator → single_approval; admin/superadmin → auto_approve
+
+#### Runbook 16: `org_usage_report`
+- **Purpose:** Complete read-only usage + cost report for a single org/project, formatted
+  ready to email directly to the customer.
+- **Scope:** Nova quota+usage (cores, RAM, instances), per-server breakdown (active/stopped),
+  Neutron quota (network, floatingip, router, port, security_group), Cinder quota+usage
+  (volumes, gigabytes, snapshots), floating IP list, snapshot list.
+- **Cost estimate:** Driven by `_load_metering_pricing()` — computes compute, block storage,
+  snapshot, and floating IP costs for the configured `period_days`.
+- **Pre-rendered HTML body:** `result.html_body` — full HTML table with utilisation bars
+  suitable for email. Planned integration with `email-customer` endpoint (ticket workflow).
+- **Risk level:** low | **Read-only:** yes | **Dept visibility:** Sales, Tier2, Tier3, Engineering, Management
+- **Approval policy:** auto_approve for all roles
+
+#### Bug Fixes
+- **`trigger_runbook` role detection** — `current_user` is a `dict` (returned by
+  `require_permission()`); was using `hasattr(user, "role")` which always returned False for
+  dicts, causing all trigger requests to default to the `operator` approval policy regardless
+  of the authenticated user's actual role. Fixed with dict-safe lookup.
+
+#### DB Changes
+- `db/migrate_runbooks_dept_visibility.sql` — two new `INSERT INTO runbooks` rows, six new
+  approval policy rows, and nine new visibility seed rows appended (fully idempotent).
+- `db/init.sql` — same changes to keep fresh-install schema in sync.
+
 ## [1.52.0] - 2026-03-10
 
 ### Added — Phase A: Runbook Department Visibility + External Integrations Framework
