@@ -955,18 +955,30 @@ PATCH /api/migration/projects/{id}/fix-settings                      # Update we
 PATCH /api/migration/projects/{id}/vms/{vm_id}/fix-override          # Set or clear per-VM tech fix time override (minutes)
 GET  /api/migration/projects/{id}/migration-summary                  # Executive summary: KPI totals, OS breakdown, cohort breakdown
 
-# Cloud Dependency Graph (v1.47.0)
-GET  /api/graph                  # BFS dependency graph from any resource (root_type, root_id, depth=1-3, domain?)
+# Cloud Dependency Graph (v1.47.0 → v1.51.0)
+GET  /api/graph                  # BFS dependency graph from any resource
+                                 # Params: root_type, root_id, depth=1-3, domain?, mode=topology|blast_radius|delete_impact
                                  # Node types: vm, volume, snapshot, network, subnet, port, fip, sg, tenant, host, image, domain
-                                 # Badges: no_snapshot, drift, error_state, power_off, restore_source
+                                 # Node fields: id, type, label, db_id, badges[], health_score, capacity_pressure, snapshot_coverage, extra{}
+                                 # Badges: snapshot_protected, snapshot_stale, snapshot_missing, orphan, drift, error_state, power_off, restore_source
+                                 # Response (topology): nodes[], edges[], graph_health_score, orphan_summary{}, tenant_summary{}, top_issues[]
+                                 # Response (blast_radius): + blast_radius{ impact_node_ids[], summary{ vms_impacted, tenants_impacted, floating_ips_stranded, volumes_at_risk } }
+                                 # Response (delete_impact): + delete_impact{ safe_to_delete, blockers[], cascade_node_ids[], stranded_node_ids[], summary{} }
                                  # Hard cap: 150 nodes (truncated: true when hit)
                                  # RBAC: resources:read
 
-# Cloud Dependency Graph UI (v1.47.0 — pf9-ui/src/components/graph/DependencyGraph.tsx)
+# Cloud Dependency Graph UI (v1.47.0 → v1.51.0 — pf9-ui/src/components/graph/DependencyGraph.tsx)
 # Full-screen ReactFlow drawer opened via "🕸️ View Dependencies" on any resource detail panel
 # Features: dagre TB layout, 12 color-coded node types, depth pills (1/2/3), type filter checkboxes
 #           node sidebar: Explore From Here (re-root), ← Back history, Open in Tab, Create Snapshot, View in Migration Planner
-# Entry points: Servers, Volumes, Snapshots, Networks (App.tsx graphTarget state)
+#           health score circle (top-right of node, green/amber/red), capacity pressure tinting on hosts
+#           mode toggle toolbar pill (Topology / 💥 Blast Radius / 🗑 Delete Impact)
+#           blast radius overlay: impacted nodes red + animated edges, others dimmed to 35%
+#           delete impact overlay: cascade=orange, stranded=purple, non-affected=dimmed
+#           summary banners for blast/delete modes between toolbar and canvas
+#           Tenant Health Panel above canvas (topology mode, tenant root)
+#           sidebar: health score badge, snapshot coverage (✅/⚠️/❌), capacity ring, quick-action buttons (score<60)
+# Entry points: Servers, Volumes, Snapshots, Networks, Projects (App.tsx graphTarget state)
 
 # System Health & Testing
 GET  /health                     # Service health check

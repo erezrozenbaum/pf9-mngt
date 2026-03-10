@@ -682,7 +682,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.50.0](CHANGELOG.md) — March 10, 2026
+**Current version:** [v1.51.0](CHANGELOG.md) — March 10, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -825,6 +825,16 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.51.0 — Graph: Health Scores, Orphan Detection, Blast Radius & Delete Safety
+- ✅ **Health Score engine** — every node shows a coloured score circle (0–100); VM/volume/host each have tailored deduction rules for error states, missing snapshots, drift, and resource pressure
+- ✅ **3-state snapshot coverage** — `snapshot_protected` ✅ / `snapshot_stale` ⚠️ / `snapshot_missing` ❌ replaces the old binary `no_snapshot` badge
+- ✅ **Orphan detection** — graph summary surfaces orphaned volumes (status=available, unattached), floating IPs (no port), security groups (not in use), and dangling snapshots
+- ✅ **Capacity pressure tinting** — host nodes are tinted green/amber/red based on CPU and RAM utilisation
+- ✅ **Tenant Health Panel** — shown above the canvas in Topology mode; environment health score, critical/degraded VM counts, orphan count, expandable top-issues list
+- ✅ **Blast Radius mode** — click 💥 to highlight all resources that would be impacted if the selected node fails; animated edges + node dimming; summary banner (VMs, tenants, FIPs, volumes)
+- ✅ **Delete Impact mode** — click 🗑 to preview cascade deletions, stranded resources, and OpenStack blockers before deleting any resource; network/volume/tenant/VM/SG cascade rules
+- ✅ **Sidebar enhancements** — health score badge, snapshot status, capacity ring, and quick-action buttons (📸 Create Snapshot / 🔍 View Drift / 📋 View Logs) auto-suggested when score < 60
 
 ### v1.50.0 — Security Hardening & Code Quality (Phase J)
 - ✅ **Timing-safe admin password check** — `hmac.compare_digest()` replaces `==` on the local admin fallback path

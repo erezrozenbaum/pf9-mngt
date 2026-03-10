@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.51.0] - 2026-03-10
+
+### Added — Graph: Health Scores, Orphan Detection, Blast Radius & Delete Safety
+
+Major enhancement of the Dependency Graph drawer (accessible via **🕸 View Dependencies** on
+any resource row in the Servers, Volumes, Networks, Snapshots, and Projects tabs).
+
+#### `api/graph_routes.py`
+
+**Three-state snapshot coverage** — per-node `snapshot_coverage` field replaces the old binary
+`no_snapshot` badge with three states: `protected` (latest snapshot < 7 days), `stale`
+(latest snapshot ≥ 7 days old), or `missing` (no snapshot exists). Corresponding badges
+`snapshot_protected`, `snapshot_stale`, `snapshot_missing` replace the old `no_snapshot` badge.
+
+**Orphan detection** — graph summary now reports orphaned resources that are wasting capacity:
+- Volumes with `status='available'` and no attached VM
+- Floating IPs with no `port_id`
+- Security groups not referenced by any port and not named 'default'
+- Snapshots whose parent volume no longer exists
+
+**Health Score engine** — every node now carries a `health_score` (0–100):
+- VM: deductions for `error_state` (−30), `power_off` (−10), `snapshot_missing` (−15),
+  `snapshot_stale` (−8), `drift` (−15)
+- Volume: deductions for `error_state` (−30), orphan (−5), `snapshot_missing` (−20),
+  `snapshot_stale` (−10)
+- Host: deductions for CPU >80 % (−20), CPU >60 % (−8), RAM >80 % (−20), RAM >60 % (−8)
+
+**Capacity pressure** (`healthy` / `warning` / `critical`) derived from host CPU and RAM utilisation.
+
+**Graph-level summary** — `graph_health_score`, `tenant_summary` (critical / degraded / snapshot-missing / drift VM counts), `top_issues` list, and full `orphan_summary` returned alongside nodes/edges.
+
+**Blast Radius mode** (`?mode=blast_radius`) — BFS following outgoing "serves" edges from the
+root node; returns `blast_radius.impact_node_ids` and a summary (`vms_impacted`, `tenants_impacted`,
+`floating_ips_stranded`, `volumes_at_risk`).
+
+**Delete Impact mode** (`?mode=delete_impact`) — resource-type-aware cascade/stranded analysis:
+- Network: subnets/ports cascade; VMs with no other network become stranded
+- Volume: snapshots cascade
+- Tenant: all owned resources cascade (always reported as unsafe)
+- VM: FIPs become stranded; volumes are detached (not deleted) so they appear as orphans
+- Security Group: blocked by OpenStack if any VM is using it (reported as a `blocker`)
+
+Returns `delete_impact.safe_to_delete`, `blockers`, `cascade_node_ids`, `stranded_node_ids`, and a summary.
+
+#### `pf9-ui/src/components/graph/DependencyGraph.tsx`
+
+**Mode toggle toolbar** — three-way pill (Topology / 💥 Blast Radius / 🗑 Delete Impact) added
+to the graph toolbar. Active blast/delete mode is highlighted with a dark-red accent.
+
+**Health score circles** — small coloured badge (green ≥ 80, amber ≥ 60, red < 60) shown on
+each node in the top-right corner.
+
+**Capacity pressure tinting** — host/hypervisor nodes are tinted green / amber / red based on
+their `capacity_pressure` value.
+
+**Node dimming in Blast Radius mode** — nodes outside the impact path are dimmed to 35 % opacity;
+nodes in the blast path are highlighted in red; edges on the impact path are animated.
+
+**Delete Impact overlays** — cascade nodes highlighted in orange, stranded nodes in purple;
+non-affected nodes dimmed. FIP stranding edge shown with dashed animated stroke.
+
+**Summary panels** — two inline panels rendered between toolbar and graph canvas:
+- *Blast Radius*: red banner listing impacted VMs, tenants, FIPs, and volumes-at-risk
+- *Delete Impact*: green "Safe to delete" or dark-red warning with blockers, cascade count,
+  and stranded VM/FIP counts
+
+**Tenant Health Panel** — shown above the canvas in Topology mode; displays overall environment
+health score, critical/degraded VM counts, orphan counts, and an expandable top-issues list.
+
+**Enhanced sidebar** — right-click/select a node to see:
+- Health Score with coloured badge
+- Snapshot Coverage (✅ Protected / ⚠️ Stale / ❌ None)
+- Capacity (for hosts): coloured healthy/warning/critical ring
+- Suggested quick-action buttons when `health_score < 60`:
+  `📸 Create Snapshot` (volume with missing/stale snapshot), `🔍 View Drift Events` (drift badge),
+  `📋 View Logs` (error_state badge)
+
+---
+
 ## [1.50.0] - 2026-03-10
 
 ### Security — Hardening & Code Quality (Phase J)
