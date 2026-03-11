@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.57.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.58.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -17,7 +17,7 @@ pf9-mngt is an open-source operational add-on for Platform9 / OpenStack — it g
 - A **snapshot automation engine** built from scratch (no native scheduler exists in Platform9 or OpenStack): quota-aware, multi-tenant, policy-driven, with SLA compliance reporting
 - A **VM restore system** with side-by-side and replace modes — full flavor, network, IP, credential, and volume automation (no native equivalent exists in OpenStack)
 - A **migration planning workbench** from RVTools ingestion through cohort design, wave planning, and PCD auto-provisioning
-- An **engineering dashboard** with 28+ management tabs, RBAC, full audit trail, metering/chargeback, notifications, runbooks, and an AI Ops Copilot
+- An **engineering dashboard** with 30+ management tabs, RBAC, full audit trail, metering/chargeback, notifications, runbooks, a support ticket system, and an AI Ops Copilot
 
 ---
 
@@ -687,7 +687,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.57.0](CHANGELOG.md) — March 10, 2026
+**Current version:** [v1.58.0](CHANGELOG.md) — March 11, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -830,6 +830,15 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.58.0 — Phase T1 + T2: Support Ticket System
+- ✅ **Support Ticket lifecycle**: `support_tickets` table with ticket refs (TKT-YYYY-NNNNN), full status/priority/type model, approval gate, SLA deadlines, OpenStack resource linkage, Slack thread tracking, and escalation chain
+- ✅ **35+ API endpoints** at `/api/tickets`: create, list, get, update, assign, escalate, approve/reject, resolve/reopen/close, comments, SLA policies, email templates, auto-ticket creation
+- ✅ **SLA daemon** — asyncio background task (15-min interval): breach detection, Slack/Teams notification, auto-escalate, activity comment
+- ✅ **Runbook integration**: `trigger-runbook` and `runbook-result` endpoints delegate to the runbook engine with service-token auth; `email-customer` sends named HTML templates via SMTP
+- ✅ **TicketsTab.tsx** — filterable list, create modal, detail view, comment thread, one-click actions (Assign/Escalate/Approve/Reject/Resolve/Reopen/Close), T2 buttons (📧 Email Customer, ▶ Run Runbook), SLA breach/warning indicators, admin panel (SLA policy table + email template editor)
+- ✅ **Navigation**: new "Operations & Support" group (🎫) with Tickets and My Queue items
+- ✅ **5 DB tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence` with 17 seeded SLA policies and 6 email templates
 
 ### v1.57.0 — Phase C: Security Audit Runbooks + Phase C2: Hypervisor Evacuate
 - ✅ **Runbook 21: `security_group_hardening`** — scans all security groups for ingress rules open to `0.0.0.0/0`/`::/0` on sensitive ports; dry-run derives replacement CIDRs from graph adjacency data; execute mode deletes violating rules and creates tighter replacements
@@ -1167,7 +1176,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 130+ commits, 25 releases, 12 containerized services, 150+ API endpoints — built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 130+ commits, 26 releases, 12 containerized services, 170+ API endpoints — built alongside regular responsibilities.
 
 ---
 

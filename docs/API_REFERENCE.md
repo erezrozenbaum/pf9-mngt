@@ -1576,8 +1576,8 @@ Response includes:
 
 ---
 
-**API Version**: 1.10  
-**Last Updated**: February 2026  
+**API Version**: 1.11  
+**Last Updated**: March 2026  
 **Base URL**: http://localhost:8000  
 **Documentation**: http://localhost:8000/docs
 
@@ -4386,3 +4386,318 @@ Downloads the current migration summary as an A4 portrait PDF. Layout: project h
 
 **Response**: `application/pdf`  
 `Content-Disposition: attachment; filename="migration-summary-{project_name}.pdf"`
+
+---
+
+## Support Ticket Endpoints (v1.58.0)
+
+> **Added**: v1.58.0  
+> **RBAC**: viewer/operator/technical → `tickets:read+write`; admin/superadmin → `tickets:admin`.  
+> **DB**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`
+
+All endpoints require `Authorization: Bearer <token>`.
+
+---
+
+### List Tickets
+**GET** `/api/tickets`  
+*Requires: `tickets:read`*
+
+Returns tickets scoped by the caller's role (admin/superadmin see all; others see tickets routed to/from their department).
+
+Query parameters: `status`, `priority`, `ticket_type`, `assigned_to_dept`, `search` (free text match on subject/ref/customer), `limit` (default 100), `offset`.
+
+Response:
+```json
+[
+  {
+    "id": 1,
+    "ref": "TKT-2026-00001",
+    "subject": "Cannot connect to tenant network",
+    "ticket_type": "incident",
+    "status": "open",
+    "priority": "high",
+    "from_dept_id": 2,
+    "to_dept_id": 3,
+    "customer_name": "Acme Corp",
+    "customer_email": "ops@acme.com",
+    "sla_response_deadline": "2026-03-11T12:00:00Z",
+    "sla_resolve_deadline": "2026-03-12T09:00:00Z",
+    "sla_response_breached": false,
+    "sla_resolve_breached": false,
+    "created_at": "2026-03-11T09:00:00Z"
+  }
+]
+```
+
+---
+
+### Create Ticket
+**POST** `/api/tickets`  
+*Requires: `tickets:write`*
+
+Request body:
+```json
+{
+  "subject": "Cannot connect to tenant network",
+  "description": "Tenant reports no connectivity since 08:00.",
+  "ticket_type": "incident",
+  "priority": "high",
+  "from_dept_id": 2,
+  "to_dept_id": 3,
+  "customer_name": "Acme Corp",
+  "customer_email": "ops@acme.com",
+  "requires_approval": false,
+  "auto_notify_customer": true
+}
+```
+
+Response: Created ticket object with `ref`, `id`, and computed SLA deadlines.
+
+---
+
+### Get Ticket
+**GET** `/api/tickets/{ticket_id}`  
+*Requires: `tickets:read`*
+
+Returns full ticket detail including `escalation_chain`, `linked_execution_id`, `last_email_subject`, and all metadata fields.
+
+---
+
+### Update Ticket
+**PUT** `/api/tickets/{ticket_id}`  
+*Requires: `tickets:write`*
+
+Partial update — send only fields to change (subject, description, priority, openstack_resource_id, openstack_resource_type, linked_vm_id, linked_tenant_id, linked_network_id, customer_name, customer_email, auto_notify_customer).
+
+---
+
+### My Queue
+**GET** `/api/tickets/my-queue`  
+*Requires: `tickets:read`*
+
+Returns tickets assigned to or routed from the caller's department, sorted by priority (critical first) then SLA urgency (nearest deadline first). Excludes closed/resolved tickets.
+
+---
+
+### Ticket Stats
+**GET** `/api/tickets/stats`  
+*Requires: `tickets:read`*
+
+Response:
+```json
+{
+  "by_status": {"open": 12, "in_progress": 5, "resolved": 3, "closed": 10},
+  "by_priority": {"critical": 2, "high": 8, "medium": 5, "low": 5},
+  "sla_breached": 3
+}
+```
+
+---
+
+### Assign Ticket
+**POST** `/api/tickets/{ticket_id}/assign`  
+*Requires: `tickets:write`*
+
+Request body:
+```json
+{
+  "assigned_to": "john.doe",
+  "note": "Assigning to network team lead"
+}
+```
+
+Stamps `first_response_at` if not already set. Adds `assignment` activity comment.
+
+---
+
+### Escalate Ticket
+**POST** `/api/tickets/{ticket_id}/escalate`  
+*Requires: `tickets:write`*
+
+Request body:
+```json
+{
+  "to_dept_id": 1,
+  "reason": "Requires Engineering access to compute host"
+}
+```
+
+Appends to `escalation_chain` array. Adds `escalation` activity comment. Fires webhook event.
+
+---
+
+### Approve / Reject Ticket
+**POST** `/api/tickets/{ticket_id}/approve`  
+**POST** `/api/tickets/{ticket_id}/reject`  
+*Requires: `tickets:write`*
+
+Request body (optional):
+```json
+{ "note": "Approved by Engineering manager" }
+```
+
+Changes ticket status to `in_progress` (approve) or `rejected` (reject). Sets `approval_by` + `approval_at`.
+
+---
+
+### Resolve Ticket
+**POST** `/api/tickets/{ticket_id}/resolve`  
+*Requires: `tickets:write`*
+
+Request body:
+```json
+{
+  "resolution_summary": "Reconfigured VLAN mapping on port ovs-br1.",
+  "root_cause": "Incorrect VLAN tag provisioned during onboarding"
+}
+```
+
+Sets status → `resolved`, stamps `resolved_at`. Optionally sends `ticket_resolved` email if `auto_notify_customer=true`.
+
+---
+
+### Reopen / Close Ticket
+**POST** `/api/tickets/{ticket_id}/reopen`  
+**POST** `/api/tickets/{ticket_id}/close`  
+*Requires: `tickets:write`*
+
+Reopen sets status → `in_progress`, clears `resolved_at`. Close sets status → `closed`, stamps `closed_at`.
+
+---
+
+### List / Add Comments
+**GET** `/api/tickets/{ticket_id}/comments`  
+*Requires: `tickets:read`*
+
+Internal notes (`is_internal=true`) are filtered out for the `viewer` role.
+
+**POST** `/api/tickets/{ticket_id}/comments`  
+*Requires: `tickets:write`*
+
+Request body:
+```json
+{
+  "body": "Checked hypervisor — no VLAN mismatch found at host level.",
+  "is_internal": true,
+  "comment_type": "note"
+}
+```
+
+`comment_type` values: `note`, `status_change`, `assignment`, `escalation`, `runbook_result`, `sla_breach`, `email_sent`, `system`.
+
+---
+
+### Email Customer
+**POST** `/api/tickets/{ticket_id}/email-customer`  
+*Requires: `tickets:write`*
+
+Request body:
+```json
+{
+  "template_name": "ticket_assigned",
+  "extra_context": { "assigned_to": "Jane Smith" }
+}
+```
+
+Renders the named HTML template with ticket context (XSS-safe), sends via SMTP, stamps `customer_notified_at` and `last_email_subject`. Returns `{ "sent": true, "subject": "..." }`.
+
+---
+
+### Trigger Runbook
+**POST** `/api/tickets/{ticket_id}/trigger-runbook`  
+*Requires: `tickets:write`*
+
+Request body:
+```json
+{
+  "runbook_name": "vm_health_quick_fix",
+  "dry_run": true,
+  "params": { "server_id": "abc-123" }
+}
+```
+
+Delegates to the runbook engine via internal HTTP (`POST /api/runbooks/trigger`). Stores `linked_execution_id` on the ticket. Adds a `runbook_result` activity comment.
+
+Response: Execution object from the runbook engine (202 Accepted with `execution_id`).
+
+---
+
+### Get Runbook Result
+**GET** `/api/tickets/{ticket_id}/runbook-result`  
+*Requires: `tickets:read`*
+
+Proxies `GET /api/runbooks/executions/{linked_execution_id}` and returns the latest execution result for the ticket's linked runbook execution. Returns 404 if no execution is linked.
+
+---
+
+### SLA Policies
+**GET** `/api/tickets/sla-policies`  
+*Requires: `tickets:read`*
+
+Returns all SLA policies.
+
+**POST** `/api/tickets/sla-policies`  
+*Requires: `tickets:admin`*
+
+Request body:
+```json
+{
+  "team_name": "Tier1 Support",
+  "ticket_type": "incident",
+  "priority": "critical",
+  "response_hours": 1,
+  "resolve_hours": 8,
+  "auto_escalate_after_hours": 6
+}
+```
+
+**PUT** `/api/tickets/sla-policies/{policy_id}`  
+*Requires: `tickets:admin`*
+
+Partial update — send only fields to change.
+
+**DELETE** `/api/tickets/sla-policies/{policy_id}`  
+*Requires: `tickets:admin`*
+
+---
+
+### Email Templates
+**GET** `/api/tickets/email-templates`  
+*Requires: `tickets:admin`*
+
+Returns all 6 templates (`ticket_created`, `ticket_resolved`, `ticket_escalated`, `ticket_assigned`, `ticket_pending_approval`, `ticket_sla_breach`).
+
+**PUT** `/api/tickets/email-templates/{template_name}`  
+*Requires: `tickets:admin`*
+
+Request body:
+```json
+{
+  "subject": "Your ticket {{ref}} has been assigned",
+  "body_html": "<p>Hi {{customer_name}}, ...</p>"
+}
+```
+
+Templates use `{{placeholder}}` syntax. Available placeholders: `ref`, `subject`, `status`, `priority`, `ticket_type`, `customer_name`, `customer_email`, `from_dept`, `to_dept`, `assigned_to`, `resolution_summary`, `created_at`, `resolved_at`.
+
+---
+
+### Auto-Create Ticket (Internal)
+**POST** `/api/tickets/_auto`  
+*Requires: `tickets:write`*
+
+Idempotent endpoint for system-generated tickets (drift events, health alerts, runbook failures). Reserved for Phase T3. Uses `idempotency_key` to prevent duplicates.
+
+Request body:
+```json
+{
+  "subject": "SLA breach detected for tenant acme-prod",
+  "ticket_type": "auto_incident",
+  "priority": "high",
+  "idempotency_key": "drift-vm-abc123-2026-03-11",
+  "to_dept_id": 2
+}
+```
+
+Returns existing ticket if `idempotency_key` already exists (200), or creates new ticket (201).

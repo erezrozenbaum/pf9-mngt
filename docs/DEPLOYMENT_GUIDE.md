@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
 **Version**: 2.3
-**Last Updated**: March 10, 2026  
+**Last Updated**: March 11, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative**: See [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) for the Kubernetes design plan (not yet implemented)
@@ -1590,7 +1590,15 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_na
 # with approval policies and dept visibility rows. Fully idempotent.
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_runbooks_dept_visibility.sql
 
-# 30. Verify schema
+# 30. Apply Support Ticket System tables (v1.58.0+)
+# Creates 5 tables: support_tickets, ticket_comments, ticket_sla_policies,
+# ticket_email_templates, ticket_sequence
+# Seeds 17 SLA policies, 6 HTML email templates, RBAC rows, and
+# the "Operations & Support" nav group with Tickets + My Queue items.
+# Changes sort_order of the group to 9 (avoids conflict with migration_planning=8).
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_support_tickets.sql
+
+# 31. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 
@@ -1946,6 +1954,6 @@ See [SECURITY.md](SECURITY.md) and [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md
 
 ---
 
-**Last Updated**: March 10, 2026  
+**Last Updated**: March 11, 2026  
 **Maintained By**: Erez Rozenbaum & Community Contributors  
 **License**: MIT

@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.57.0  
-**Last Updated**: March 10, 2026  
+**Version**: 1.58.0  
+**Last Updated**: March 11, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -834,6 +834,29 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **`org_usage_report`** (Runbook 16): Read-only usage + cost report for a single org/project. Covers Nova quota+usage, per-server breakdown, Neutron quota, Cinder quota+usage, floating IPs, snapshots. Outputs `result.html_body` — a pre-rendered HTML table ready to email to the customer.
 - **Friendly Dropdown Lookups** (v1.54.0): `x-lookup: vms` and `x-lookup: projects` schema fields render as live-populated `<select>` dropdowns in the trigger modal instead of free-text fields. Lookup data fetched from `/api/runbooks/lookup/{type}`.
 - **`vms_multi` multi-select** (v1.55.0): `x-lookup: vms_multi` renders as `<select multiple>` so operators can scope a rightsizing run to specific VMs.
+
+### Support Ticket System (v1.58.0)
+- **5 new DB tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`.
+- **Ticket refs**: Human-readable `TKT-YYYY-NNNNN` format via per-year auto-increment stored in `ticket_sequence`.
+- **Types**: `service_request`, `incident`, `change_request`, `inquiry`, `escalation`; auto types: `auto_incident`, `auto_change_request` (reserved for T3).
+- **SLA policies**: 17 seeded policies covering Tier1/Tier2/Tier3/Engineering/Management teams across ticket types and priorities. Admin-editable via UI and API.
+- **6 email templates**: `ticket_created`, `ticket_resolved`, `ticket_escalated`, `ticket_assigned`, `ticket_pending_approval`, `ticket_sla_breach` — HTML with `{{placeholder}}` substitution (XSS-safe).
+- **Full lifecycle API** (35+ endpoints at `/api/tickets`):
+  - Create/list/get/update; assign + first-response tracking; escalate (stamps chain); approve/reject (approval gate); resolve/reopen/close
+  - Comment thread: internal notes blocked from viewer role; structured types for audit trail
+  - SLA policy CRUD (admin); email template list+update (admin)
+  - `POST /_auto` — idempotent auto-ticket creation for drift/health/runbook integrations (future T3)
+- **Runbook integration (T2)**: `POST /{id}/trigger-runbook` dispatches to the runbook engine with a short-lived service JWT; stores `linked_execution_id` on the ticket; `GET /{id}/runbook-result` proxies the execution result.
+- **Email-customer (T2)**: `POST /{id}/email-customer` renders a named template with ticket context and sends via SMTP; stamps `customer_notified_at`.
+- **SLA daemon**: asyncio task runs every 15 minutes — sets `sla_response_breached` / `sla_resolve_breached`, posts Slack/Teams breach notifications, adds `sla_breach` activity comments, auto-escalates per SLA policy.
+- **Webhook notifications**: `post_event()` called on ticket created, assigned, escalated, resolved, SLA breach.
+- **Navigation**: "Operations & Support" group (🎫, `sort_order=9`) with **Support Tickets** (🎫) and **My Queue** (📥) items.
+- **RBAC**: `tickets` resource; viewer/operator/technical → `read+write`; admin/superadmin → `admin`.
+- **Migration**: Run `db/migrate_support_tickets.sql` on existing installs. Fully idempotent.
+- **Quick admin tasks**:
+  - View SLA policies: UI → Support Tickets → ⚙ Admin → SLA Policies tab
+  - Edit email template: UI → Support Tickets → ⚙ Admin → Email Templates tab → click template name
+  - Manually breach-check: calls `run_sla_checks()` via background loop; cannot be triggered from UI (runs automatically every 15 min)
 
 ### Action Runbooks — Security Hardening + Isolation Audit + Hypervisor Evacuate (v1.57.0)
 - **`security_group_hardening`** (Runbook 21): Scans all SGs for ingress rules open to `0.0.0.0/0`/`::/0` on sensitive ports (22, 3389, 5432, 3306, 6379, 27017 by default). Dry-run returns a proposed replacement CIDR per rule using graph adjacency data (fallback `10.0.0.0/8`). Execute: DELETE violating rule → CREATE replacement rule(s) with tighter CIDRs.

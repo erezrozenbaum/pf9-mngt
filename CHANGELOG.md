@@ -5,6 +5,107 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.58.0] - 2026-03-24
+
+### Added — Phase T1 + T2: Support Ticket System
+
+#### Core Ticket Infrastructure (Phase T1)
+- **`support_tickets` table** — full lifecycle tracking with ticket refs (`TKT-YYYY-NNNNN`),
+  types (service_request, incident, change_request, inquiry, escalation, auto_incident,
+  auto_change_request), statuses, priority, routing (from/to dept), customer contact fields,
+  OpenStack resource linkage, approval gate, SLA deadlines, resolution fields, Slack thread
+  tracking, and escalation chain.
+- **`ticket_sequence` table** — per-year auto-increment for human-readable ticket refs.
+- **`ticket_comments` table** — activity thread with internal/external notes, structured
+  comment types (status_change, assignment, escalation, runbook_result, sla_breach, etc.),
+  and JSON metadata.
+- **`ticket_sla_policies` table** — SLA rules per `(team × type × priority)` with seeded
+  defaults for Tier1/Tier2/Tier3/Engineering/Management across all relevant ticket types.
+- **`ticket_email_templates` table** — six HTML email templates: `ticket_created`,
+  `ticket_resolved`, `ticket_escalated`, `ticket_assigned`, `ticket_pending_approval`,
+  `ticket_sla_breach`. All templates use `{{placeholder}}` syntax with context-aware
+  variable substitution (XSS-safe via `html.escape`).
+
+#### API Endpoints (`/api/tickets`)
+- `GET/POST /api/tickets` — list (role-scoped) + create
+- `GET /api/tickets/my-queue` — priority-sorted queue for current user
+- `GET /api/tickets/stats` — aggregate counts by status, priority, and SLA breach
+- `GET/PUT /api/tickets/{id}` — detail + update
+- `POST /api/tickets/{id}/assign` — assign with first-response tracking
+- `POST /api/tickets/{id}/escalate` — escalate to new dept, auto-stamps escalation chain
+- `POST /api/tickets/{id}/approve|reject` — approval gate workflow
+- `POST /api/tickets/{id}/resolve|reopen|close` — lifecycle management
+- `GET/POST /api/tickets/{id}/comments` — comment thread (internal notes blocked from viewers)
+- `GET/POST /api/tickets/sla-policies` — SLA policy CRUD (admin only)
+- `PUT /api/tickets/sla-policies/{id}` — update SLA policy
+- `DELETE /api/tickets/sla-policies/{id}` — delete SLA policy
+- `GET /api/tickets/email-templates` — list templates (admin only)
+- `PUT /api/tickets/email-templates/{name}` — edit template body/subject
+- `POST /api/tickets/_auto` — idempotent internal auto-ticket creation
+
+#### Integrations (Phase T2)
+- **`POST /api/tickets/{id}/trigger-runbook`** — trigger a runbook Engine from a ticket context;
+  links `linked_execution_id` back to the ticket, adds a `runbook_result` activity comment.
+- **`GET /api/tickets/{id}/runbook-result`** — proxy the latest execution result from
+  `/api/runbooks/executions/{id}`.
+- **`POST /api/tickets/{id}/email-customer`** — render a named template with ticket context
+  and send via SMTP; stamps `customer_notified_at` + `last_email_subject`.
+- **SLA daemon** — `asyncio` background task (15-min interval) that marks
+  `sla_response_breached` / `sla_resolve_breached`, posts Slack/Teams breach notifications,
+  adds `sla_breach` activity comments, and auto-escalates per SLA policy.
+- **Webhook notifications** — `post_event()` called on: ticket created, assigned, escalated,
+  resolved, SLA breach.
+- **Auto-notify customer on create/resolve** — when `auto_notify_customer=true` and
+  `customer_email` is set, sends `ticket_created`/`ticket_resolved` templates via SMTP.
+
+#### RBAC
+- New `role_permissions` rows for `tickets` resource: viewer/operator/technical → read+write;
+  admin/superadmin → admin.
+
+#### Navigation
+- New nav group **"Operations & Support"** (🎫) with items: `tickets` (🎫 Support Tickets)
+  and `my_queue` (📥 My Queue).
+
+#### Frontend (TicketsTab)
+- Full-featured ticket management UI in `pf9-ui/src/components/TicketsTab.tsx`:
+  - Filterable list view (status, priority, type, team, search)
+  - My Queue mode (pre-filtered, priority-sorted)
+  - Create ticket modal with all fields
+  - Ticket detail view: metadata, SLA indicator, resource linkage
+  - Comment thread with internal/external notes
+  - One-click actions: Assign, Escalate, Approve/Reject, Resolve, Reopen, Close
+  - T2 buttons: 📧 Email Customer (template selector), ▶ Run Runbook (dry-run toggle)
+  - SLA breach/warning indicators in list and detail view
+  - Admin panel: SLA policy table, email template editor
+- `ActiveTab` type extended with `"tickets" | "my_queue"`.
+- Both tabs added to `DEFAULT_TAB_ORDER` and `hideDetailsPanel`.
+
+#### Dependencies
+- `httpx>=0.27.0` added to `api/requirements.txt` (used for internal runbook API delegation).
+
+#### Database
+- `db/migrate_support_tickets.sql` — standalone idempotent migration for existing deployments.
+- `db/init.sql` — all ticket tables, indexes, seed data, nav group, and RBAC appended for
+  fresh installs.
+
+### Bug Fixes — Phase T1 + T2 (found during post-implementation testing)
+- **FastAPI route ordering** (`api/ticket_routes.py`) — Static route blocks `/sla-policies`,
+  `/email-templates`, and `/_auto` were originally declared after the parameterized
+  `/{ticket_id}` route, causing FastAPI to match the literal path segments as integer IDs
+  (resulting in 422 Unprocessable Entity). Fixed by moving all static routes before
+  `/{ticket_id}` in registration order.
+- **Internal httpx auth — trigger-runbook** (`POST /api/tickets/{id}/trigger-runbook`) —
+  The internal call to `/api/runbooks/trigger` had empty auth headers. Since `verify_token()`
+  validates against the `user_sessions` table (not just the JWT signature), the call returned
+  401. Fixed by generating a short-lived (5 min) service JWT via `create_access_token()` and
+  registering it in `user_sessions` before making the request.
+- **Internal httpx auth — runbook-result** (`GET /api/tickets/{id}/runbook-result`) —
+  Same auth issue as trigger-runbook; same fix applied.
+- **Nav group sort_order conflict** (`db/migrate_support_tickets.sql`, `db/init.sql`) —
+  The new "Operations & Support" nav group was assigned `sort_order=8`, conflicting with the
+  existing "Migration Planning" group. Changed to `sort_order=9`. Migration updated to use
+  `ON CONFLICT (key) DO UPDATE SET sort_order=9` for idempotency.
+
 ## [1.57.0] - 2026-03-10
 
 ### Added — Phase C: Security Audit Runbooks + Phase C2: Hypervisor Evacuate
