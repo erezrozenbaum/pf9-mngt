@@ -458,3 +458,113 @@ BEGIN
     ON CONFLICT (runbook_name, dept_id) DO NOTHING;
 END $$;
 
+-- ============================================================
+-- Section 3h: Phase D — cluster_capacity_planner (v1.61.0)
+-- HA-aware cluster capacity planner with flavor slot analysis
+-- ============================================================
+
+INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema)
+VALUES
+(
+    'cluster_capacity_planner',
+    'Cluster Capacity Planner',
+    'HA-aware cluster capacity planner. Models true usable capacity by reserving resources for the largest host (N+1) or two hosts (N+2), applies a configurable safe-operating threshold (default 70%), and reports: current headroom vs HA-safe limit, days until a new host must be added at current growth rate, recommended minimum host spec to extend runway by 6 months, and how many more VMs of each flavor can be provisioned before hitting the HA-safe limit.',
+    'planning', 'low', false,
+    '{"type":"object","properties":{"ha_model":{"type":"string","enum":["n1","n2","custom_pct"],"default":"n1","description":"HA reserve model: n1=reserve largest host, n2=reserve two largest hosts, custom_pct=reserve fixed %"},"ha_reserve_pct":{"type":"number","default":15,"description":"% of total capacity to reserve when ha_model=custom_pct"},"safe_threshold_pct":{"type":"number","default":70,"description":"% of HA-adjusted capacity treated as the safe operating limit"},"add_host_warn_days":{"type":"integer","default":60,"description":"Raise an alert when forced host addition is within this many days"},"growth_window_days":{"type":"integer","default":30,"description":"Rolling window in days to calculate vCPU/RAM growth rate from history"},"include_flavor_breakdown":{"type":"boolean","default":true,"description":"Include per-flavor VM slot count analysis"}}}'
+)
+ON CONFLICT (name) DO UPDATE SET
+    display_name      = EXCLUDED.display_name,
+    description       = EXCLUDED.description,
+    category          = EXCLUDED.category,
+    risk_level        = EXCLUDED.risk_level,
+    supports_dry_run  = EXCLUDED.supports_dry_run,
+    parameters_schema = EXCLUDED.parameters_schema,
+    updated_at        = now();
+
+INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode) VALUES
+    ('cluster_capacity_planner', 'operator',   'admin', 'auto_approve'),
+    ('cluster_capacity_planner', 'admin',      'admin', 'auto_approve'),
+    ('cluster_capacity_planner', 'superadmin', 'admin', 'auto_approve')
+ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
+
+DO $$
+DECLARE
+    d_eng  int;
+    d_mgmt int;
+BEGIN
+    SELECT id INTO d_eng  FROM departments WHERE name = 'Engineering' LIMIT 1;
+    SELECT id INTO d_mgmt FROM departments WHERE name = 'Management'  LIMIT 1;
+
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        ('cluster_capacity_planner', d_eng),
+        ('cluster_capacity_planner', d_mgmt)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+END $$;
+
+-- ============================================================
+-- Section 3i: Visibility entries for vm_provisioning and
+-- bulk_onboarding (v1.61.0)
+--
+-- These are wizard-style runbooks with dedicated route files
+-- (vm_provisioning_routes.py, provision_routes.py) that do NOT
+-- use the standard runbook engine pipeline.  We register them
+-- in the runbooks table so they appear in the Admin visibility
+-- matrix and so the planning doc stays accurate.
+-- The 'enabled' flag is set to false here to prevent them from
+-- appearing in the standard trigger modal (they are triggered
+-- via their own dedicated UI tabs).
+-- ============================================================
+
+INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, enabled, parameters_schema)
+VALUES
+(
+    'vm_provisioning',
+    'VM Provisioning',
+    'Multi-step wizard to provision VMs into tenant projects. Validates quota, creates Cinder boot volumes, injects cloud-init credentials, and executes in batches. Has a dedicated UI in the VM Provisioning tab — not triggered via the standard runbook trigger modal.',
+    'compute', 'high', true, false,
+    '{}'
+),
+(
+    'bulk_onboarding',
+    'Bulk Onboarding',
+    'Excel-driven bulk customer/project onboarding workflow. Parses an uploaded XLSX, validates tenant data, creates Keystone projects and users, assigns quotas, and sends welcome emails. Has a dedicated UI in the Bulk Onboarding tab — not triggered via the standard runbook trigger modal.',
+    'provisioning', 'high', true, false,
+    '{}'
+)
+ON CONFLICT (name) DO UPDATE SET
+    display_name      = EXCLUDED.display_name,
+    description       = EXCLUDED.description,
+    category          = EXCLUDED.category,
+    risk_level        = EXCLUDED.risk_level,
+    supports_dry_run  = EXCLUDED.supports_dry_run,
+    updated_at        = now();
+-- Note: 'enabled' is intentionally NOT updated on conflict — preserves any
+-- admin toggle made via the UI.
+
+DO $$
+DECLARE
+    d_eng  int;
+    d_t2   int;
+    d_t3   int;
+    d_mgmt int;
+BEGIN
+    SELECT id INTO d_eng  FROM departments WHERE name = 'Engineering'   LIMIT 1;
+    SELECT id INTO d_t2   FROM departments WHERE name = 'Tier2 Support' LIMIT 1;
+    SELECT id INTO d_t3   FROM departments WHERE name = 'Tier3 Support' LIMIT 1;
+    SELECT id INTO d_mgmt FROM departments WHERE name = 'Management'    LIMIT 1;
+
+    -- vm_provisioning: Tier2, Tier3, Engineering, Management
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        ('vm_provisioning', d_t2),
+        ('vm_provisioning', d_t3),
+        ('vm_provisioning', d_eng),
+        ('vm_provisioning', d_mgmt)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+
+    -- bulk_onboarding: Engineering, Management only
+    INSERT INTO runbook_dept_visibility (runbook_name, dept_id) VALUES
+        ('bulk_onboarding', d_eng),
+        ('bulk_onboarding', d_mgmt)
+    ON CONFLICT (runbook_name, dept_id) DO NOTHING;
+END $$;
+

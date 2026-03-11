@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.60.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.61.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -688,7 +688,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.60.1](CHANGELOG.md) — March 11, 2026
+**Current version:** [v1.61.0](CHANGELOG.md) — March 12, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -831,6 +831,11 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.61.0 — Phase D: Cluster Capacity Planner + Visibility Fixes
+- ✅ **New runbook `cluster_capacity_planner`** (Runbook #25) — HA-aware cluster capacity analysis: reserves N+1 or N+2 host capacity, applies a 70% safe-operating threshold, forecasts when a new host must be added at current growth rate, recommends minimum host spec for a 6-month runway, and produces a per-flavor VM slot table
+- ✅ **`vm_provisioning` + `bulk_onboarding` in visibility matrix** — both wizard runbooks are now registered in the `runbooks` table (`enabled=false`) so they appear in the Admin Runbook Visibility panel
+- ✅ **Visibility rows seeded**: `vm_provisioning` → Tier2, Tier3, Engineering, Management; `bulk_onboarding` → Engineering, Management
 
 ### v1.60.0 — Phase T4: Analytics, Bulk Actions & Polish
 - ✅ **Ticket analytics**: `GET /api/tickets/analytics?days=30` — admin-only; returns `resolution_by_dept`, `sla_by_dept`, `top_openers`, and daily `volume_trend`

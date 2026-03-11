@@ -4601,6 +4601,299 @@ def _execute_runbook(execution_id: str, runbook_name: str, params: dict,
             logger.warning("Auto-ticket for runbook failure failed: %s", ticket_err)
 
 
+# ===== Engine: cluster_capacity_planner ===================================
+
+@register_engine("cluster_capacity_planner")
+def _engine_cluster_capacity_planner(params: dict, dry_run: bool, actor: str) -> dict:
+    """
+    HA-aware cluster capacity planner.
+
+    Models true usable capacity by reserving the largest compute host (N+1 HA
+    model by default), applies a configurable safe-operating threshold (default
+    70 %), and then:
+      - Reports current headroom vs the safe limit
+      - Projects when you will need to add a host (using rolling-window growth rate)
+      - Recommends minimum host spec to extend the runway by 6 months
+      - Calculates how many more VMs of each flavor you can provision before
+        hitting the HA-safe limit
+
+    Parameters
+    ----------
+    ha_model          : 'n1' (default) | 'n2' | 'custom_pct'
+    ha_reserve_pct    : % of total to reserve when ha_model='custom_pct' (default 15)
+    safe_threshold_pct: % of HA-adjusted capacity treated as operating limit (default 70)
+    add_host_warn_days: alert when forced host addition is within this many days (default 60)
+    growth_window_days: rolling window in days to calculate growth rate (default 30)
+    include_flavor_breakdown: include per-flavor VM slot analysis (default True)
+    """
+    from pf9_control import get_client
+    import math
+
+    ha_model            = str(params.get("ha_model", "n1")).lower()
+    ha_reserve_pct      = float(params.get("ha_reserve_pct", 15.0))
+    safe_pct            = float(params.get("safe_threshold_pct", 70.0))
+    warn_days           = int(params.get("add_host_warn_days", 60))
+    window_days         = int(params.get("growth_window_days", 30))
+    include_flavors     = bool(params.get("include_flavor_breakdown", True))
+
+    # ── 1. Fetch live hypervisor stats from Nova ──────────────────────────
+    try:
+        client = get_client()
+        client.authenticate()
+        headers = {"X-Auth-Token": client.token}
+
+        hv_resp = client.session.get(
+            f"{client.nova_endpoint}/os-hypervisors/detail",
+            headers=headers)
+        hv_resp.raise_for_status()
+        hypervisors = hv_resp.json().get("hypervisors", [])
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch hypervisor data from Nova: {e}")
+
+    active_hvs = [h for h in hypervisors if h.get("state", "") == "up"]
+    if not active_hvs:
+        return {
+            "result": {"error": "No active ('up') hypervisors found in Nova."},
+            "items_found": 0,
+            "items_actioned": 0,
+        }
+
+    # Per-host stats
+    host_stats = []
+    total_vcpus    = 0
+    total_ram_mb   = 0
+    used_vcpus     = 0
+    used_ram_mb    = 0
+
+    for h in active_hvs:
+        hv_vcpus    = h.get("vcpus", 0) or 0
+        hv_ram      = h.get("memory_mb", 0) or 0
+        hv_used_cpu = h.get("vcpus_used", 0) or 0
+        hv_used_ram = h.get("memory_mb_used", 0) or 0
+        total_vcpus  += hv_vcpus
+        total_ram_mb += hv_ram
+        used_vcpus   += hv_used_cpu
+        used_ram_mb  += hv_used_ram
+        host_stats.append({
+            "hostname":   h.get("hypervisor_hostname", h.get("id", "?")),
+            "vcpus":      hv_vcpus,
+            "vcpus_used": hv_used_cpu,
+            "ram_mb":     hv_ram,
+            "ram_used_mb": hv_used_ram,
+            "running_vms": h.get("running_vms", 0) or 0,
+        })
+
+    host_count = len(host_stats)
+
+    # ── 2. Determine HA reserve ───────────────────────────────────────────
+    # N+1: exclude the largest single host from usable capacity
+    if ha_model == "n1":
+        reserve_vcpus  = max((h["vcpus"]  for h in host_stats), default=0)
+        reserve_ram_mb = max((h["ram_mb"] for h in host_stats), default=0)
+        ha_label       = "N+1 (reserve largest host)"
+        largest_host   = next(
+            (h["hostname"] for h in host_stats if h["vcpus"] == reserve_vcpus), "?"
+        )
+    elif ha_model == "n2":
+        sorted_by_cpu = sorted(host_stats, key=lambda h: h["vcpus"], reverse=True)
+        reserve_vcpus  = sum(h["vcpus"]  for h in sorted_by_cpu[:2])
+        reserve_ram_mb = sum(h["ram_mb"] for h in sorted_by_cpu[:2])
+        ha_label       = "N+2 (reserve two largest hosts)"
+        largest_host   = f"{sorted_by_cpu[0]['hostname']}, {sorted_by_cpu[1]['hostname']}" if len(sorted_by_cpu) >= 2 else sorted_by_cpu[0]["hostname"]
+    else:  # custom_pct
+        reserve_vcpus  = total_vcpus  * (ha_reserve_pct / 100.0)
+        reserve_ram_mb = total_ram_mb * (ha_reserve_pct / 100.0)
+        ha_label       = f"custom ({ha_reserve_pct:.0f}% reserve)"
+        largest_host   = None
+
+    ha_vcpus  = total_vcpus  - reserve_vcpus
+    ha_ram_mb = total_ram_mb - reserve_ram_mb
+
+    # ── 3. Safe operating limits ─────────────────────────────────────────
+    safe_vcpus  = ha_vcpus  * (safe_pct / 100.0)
+    safe_ram_mb = ha_ram_mb * (safe_pct / 100.0)
+
+    headroom_vcpus  = safe_vcpus  - used_vcpus
+    headroom_ram_mb = safe_ram_mb - used_ram_mb
+
+    used_of_safe_vcpus_pct = round(used_vcpus  / safe_vcpus  * 100, 1) if safe_vcpus  else 0
+    used_of_safe_ram_pct   = round(used_ram_mb / safe_ram_mb * 100, 1) if safe_ram_mb else 0
+
+    above_safe_threshold = (headroom_vcpus < 0 or headroom_ram_mb < 0)
+
+    # ── 4. Growth rate from hypervisors_history (rolling window) ─────────
+    slope_vcpu = 0.0
+    slope_ram  = 0.0
+    trend_rows = []
+    data_days  = 0
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT
+                        DATE_TRUNC('day', recorded_at)       AS day,
+                        SUM((raw_json::json->>'vcpus_used')::int)     AS used_vcpus,
+                        SUM((raw_json::json->>'memory_mb_used')::int) AS used_ram_mb
+                    FROM hypervisors_history
+                    WHERE state = 'up'
+                      AND recorded_at >= now() - INTERVAL '%s days'
+                    GROUP BY DATE_TRUNC('day', recorded_at)
+                    ORDER BY day
+                """ % window_days)
+                rows = [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"cluster_capacity_planner: history query failed: {e}")
+        rows = []
+
+    if len(rows) >= 2:
+        import time as _time
+        epochs  = [float(r["day"].timestamp()) for r in rows]
+        uv_vals = [float(r["used_vcpus"] or 0) for r in rows]
+        ur_vals = [float(r["used_ram_mb"] or 0)  for r in rows]
+
+        def _slope(x, y):
+            n   = len(x)
+            sx  = sum(x);  sy  = sum(y)
+            sxy = sum(xi*yi for xi, yi in zip(x, y))
+            sxx = sum(xi*xi for xi in x)
+            d   = n * sxx - sx * sx
+            return (n * sxy - sx * sy) / d if d else 0.0
+
+        secs_per_day = 86400.0
+        slope_vcpu = _slope(epochs, uv_vals) * secs_per_day   # vCPUs / day
+        slope_ram  = _slope(epochs, ur_vals)  * secs_per_day  # MB / day
+        data_days  = len(rows)
+
+        trend_rows = [{
+            "date":       str(r["day"])[:10],
+            "used_vcpus": int(r["used_vcpus"] or 0),
+            "used_ram_mb": int(r["used_ram_mb"] or 0),
+        } for r in rows]
+
+    # ── 5. Days until HA-safe limit is exhausted ──────────────────────────
+    def _days_to_exhaust(headroom: float, slope: float) -> float:
+        if slope <= 0:
+            return float("inf")
+        return max(0.0, headroom / slope)
+
+    days_vcpu_full = _days_to_exhaust(headroom_vcpus, slope_vcpu)
+    days_ram_full  = _days_to_exhaust(headroom_ram_mb, slope_ram)
+    days_to_add_host = round(min(d for d in [days_vcpu_full, days_ram_full] if d != float("inf")), 1) \
+                       if any(d != float("inf") for d in [days_vcpu_full, days_ram_full]) \
+                       else None
+    bottleneck = None
+    if days_to_add_host is not None:
+        bottleneck = "vcpu" if days_vcpu_full <= days_ram_full else "ram"
+
+    host_add_alert = (
+        days_to_add_host is not None and days_to_add_host <= warn_days
+    ) or above_safe_threshold
+
+    # ── 6. Recommended minimum host spec to extend runway 6 months ───────
+    target_days = 180
+    rec_vcpus  = max(0, math.ceil(slope_vcpu * target_days)) if slope_vcpu > 0 else 0
+    rec_ram_gb = max(0, math.ceil(slope_ram  * target_days / 1024)) if slope_ram  > 0 else 0
+    # Round up to nearest 8 vCPUs / 32 GB for realistic host sizing
+    rec_vcpus  = math.ceil(rec_vcpus  / 8)  * 8  if rec_vcpus  else 0
+    rec_ram_gb = math.ceil(rec_ram_gb / 32) * 32 if rec_ram_gb else 0
+
+    # ── 7. Per-flavor VM slots remaining ─────────────────────────────────
+    flavor_slots = []
+    if include_flavors:
+        try:
+            fl_resp = client.session.get(
+                f"{client.nova_endpoint}/flavors/detail",
+                headers=headers)
+            if fl_resp.status_code == 200:
+                flavors = fl_resp.json().get("flavors", [])
+                # Exclude disk=0 boot-from-volume-only flavors from slot sizing
+                # (they still count vCPU/RAM)
+                for fl in flavors:
+                    fl_vcpu = fl.get("vcpus", 0) or 0
+                    fl_ram  = fl.get("ram", 0) or 0
+                    if fl_vcpu <= 0 or fl_ram <= 0:
+                        continue
+                    hv = int(headroom_vcpus) if headroom_vcpus > 0 else 0
+                    hr = int(headroom_ram_mb) if headroom_ram_mb > 0 else 0
+                    slots = min(
+                        hv // fl_vcpu if fl_vcpu else 0,
+                        hr // fl_ram  if fl_ram  else 0,
+                    )
+                    flavor_slots.append({
+                        "flavor_id":   fl["id"],
+                        "flavor_name": fl.get("name", fl["id"]),
+                        "vcpus":       fl_vcpu,
+                        "ram_mb":      fl_ram,
+                        "slots_remaining": max(0, slots),
+                    })
+                # Sort: most slots first, then by vCPU ascending
+                flavor_slots.sort(key=lambda f: (-f["slots_remaining"], f["vcpus"]))
+        except Exception as e:
+            logger.warning(f"cluster_capacity_planner: flavor query failed: {e}")
+
+    # ── 8. Per-host breakdown ─────────────────────────────────────────────
+    for h in host_stats:
+        h["vcpu_pct"]  = round(h["vcpus_used"] / h["vcpus"]  * 100, 1) if h["vcpus"]  else 0
+        h["ram_pct"]   = round(h["ram_used_mb"] / h["ram_mb"] * 100, 1) if h["ram_mb"] else 0
+
+    return {
+        "result": {
+            "cluster": {
+                "host_count":   host_count,
+                "total_vcpus":  total_vcpus,
+                "total_ram_mb": total_ram_mb,
+                "used_vcpus":   used_vcpus,
+                "used_ram_mb":  used_ram_mb,
+            },
+            "ha_model": {
+                "model":          ha_label,
+                "largest_host":   largest_host,
+                "reserve_vcpus":  int(reserve_vcpus),
+                "reserve_ram_mb": int(reserve_ram_mb),
+                "ha_capacity_vcpus":  int(ha_vcpus),
+                "ha_capacity_ram_mb": int(ha_ram_mb),
+            },
+            "safe_operating_limit": {
+                "threshold_pct": safe_pct,
+                "safe_vcpus":    int(safe_vcpus),
+                "safe_ram_mb":   int(safe_ram_mb),
+            },
+            "headroom": {
+                "vcpus_available":    int(headroom_vcpus),
+                "ram_mb_available":   int(headroom_ram_mb),
+                "vcpu_of_safe_pct":   used_of_safe_vcpus_pct,
+                "ram_of_safe_pct":    used_of_safe_ram_pct,
+                "above_safe_threshold": above_safe_threshold,
+            },
+            "growth": {
+                "vcpu_per_day":  round(slope_vcpu, 2),
+                "ram_mb_per_day": round(slope_ram, 2),
+                "data_days":     data_days,
+                "window_days":   window_days,
+            },
+            "forecast": {
+                "days_to_vcpu_limit": round(days_vcpu_full, 1) if days_vcpu_full != float("inf") else None,
+                "days_to_ram_limit":  round(days_ram_full,  1) if days_ram_full  != float("inf") else None,
+                "days_to_add_host":   days_to_add_host,
+                "bottleneck":         bottleneck,
+                "host_add_alert":     host_add_alert,
+                "warn_days":          warn_days,
+            },
+            "recommended_host_spec": {
+                "min_vcpus":  rec_vcpus,
+                "min_ram_gb": rec_ram_gb,
+                "note":       f"Minimum spec to extend runway by 6 months at current growth rate",
+            } if (rec_vcpus or rec_ram_gb) else None,
+            "flavor_vm_slots": flavor_slots,
+            "per_host_breakdown": host_stats,
+            "trend": trend_rows,
+        },
+        "items_found":    host_count,
+        "items_actioned": 0,
+    }
+
+
 # ---------------------------------------------------------------------------
 #  API Endpoints
 # ---------------------------------------------------------------------------
@@ -5163,6 +5456,186 @@ async def get_execution(
             approvals = cur.fetchall()
 
     return {**dict(execution), "approvals": [dict(a) for a in approvals]}
+
+
+# ── Email execution results ──────────────────────────────────────
+class ExecEmailRequest(BaseModel):
+    to: str
+    cc: List[str] = []
+    note: str = ""
+
+
+def _render_exec_email_html(ex: dict, note: str = "") -> str:
+    """Render a runbook execution result as an HTML email body."""
+    r = ex.get("result") or {}
+    name = ex.get("runbook_name", "")
+    display = ex.get("display_name") or name
+    status_val = ex.get("status", "")
+    triggered = ex.get("triggered_at") or ""
+    dry_run = ex.get("dry_run", False)
+    items_found = ex.get("items_found", 0)
+    items_actioned = ex.get("items_actioned", 0)
+
+    status_color = "#166534" if status_val == "completed" else "#991b1b" if status_val == "failed" else "#854d0e"
+    status_bg    = "#dcfce7" if status_val == "completed" else "#fee2e2" if status_val == "failed" else "#fef9c3"
+
+    def trow(label: str, value: str) -> str:
+        return f'<tr><td style="padding:5px 10px;font-weight:600;color:#555;white-space:nowrap;">{label}</td><td style="padding:5px 10px;">{value}</td></tr>'
+
+    def section(title: str, content: str) -> str:
+        return (
+            f'<h3 style="margin:20px 0 8px;font-size:14px;color:#374151;border-bottom:1px solid #e5e7eb;padding-bottom:4px;">{title}</h3>'
+            + content
+        )
+
+    def table_from_list(rows: list, exclude_cols: list = []) -> str:
+        if not rows:
+            return "<p style='color:#888;font-style:italic;'>No data</p>"
+        keys = [k for k in rows[0].keys() if k not in exclude_cols]
+        header = "".join(f'<th style="padding:5px 10px;background:#f3f4f6;font-size:11px;text-align:left;border-bottom:1px solid #ddd;">{k.replace("_", " ").title()}</th>' for k in keys)
+        body = ""
+        for row in rows:
+            cells = "".join(f'<td style="padding:5px 10px;font-size:12px;border-bottom:1px solid #eee;">{row.get(k, "")}</td>' for k in keys)
+            body += f"<tr>{cells}</tr>"
+        return f'<table style="width:100%;border-collapse:collapse;"><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table>'
+
+    # ── Header ──────────────────────────────────────────────────
+    lines = [
+        f'<div style="font-family:system-ui,-apple-system,sans-serif;max-width:800px;margin:0 auto;">',
+        f'<div style="background:#1e293b;color:#fff;padding:20px 24px;border-radius:8px 8px 0 0;">',
+        f'<h1 style="margin:0;font-size:18px;">📋 Runbook Result: {display}</h1>',
+        f'<p style="margin:4px 0 0;opacity:.7;font-size:13px;">Platform9 Management · {triggered[:10] if triggered else ""}</p>',
+        f'</div>',
+        f'<div style="border:1px solid #e5e7eb;border-top:none;padding:20px 24px;border-radius:0 0 8px 8px;">',
+    ]
+
+    # Note
+    if note.strip():
+        lines.append(f'<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;"><strong>Note:</strong> {note}</div>')
+
+    # Summary table
+    lines.append(section("Summary", f'<table style="border-collapse:collapse;">'
+        + trow("Status", f'<span style="background:{status_bg};color:{status_color};padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;">{status_val}</span>')
+        + trow("Dry Run", "Yes 🧪" if dry_run else "No (live)")
+        + trow("Triggered At", triggered)
+        + trow("Items Found", str(items_found))
+        + trow("Items Actioned", str(items_actioned))
+        + "</table>"))
+
+    # ── cluster_capacity_planner rich rendering ──────────────────
+    if name == "cluster_capacity_planner":
+        cl   = r.get("cluster", {})
+        ha   = r.get("ha_model", {})
+        safe = r.get("safe_operating_limit", {})
+        hroom = r.get("headroom", {})
+        growth = r.get("growth", {})
+        forecast = r.get("forecast", {})
+        rec_host = r.get("recommended_host_spec")
+        flavors: list = r.get("flavor_vm_slots", [])
+        hosts: list   = r.get("per_host_breakdown", [])
+
+        def fmt_ram(mb):
+            return f"{mb/1024:.1f} GB" if mb >= 1024 else f"{mb} MB"
+
+        is_warn = forecast.get("host_add_alert", False)
+        banner_bg    = "#fef3c7" if is_warn else "#dcfce7"
+        banner_color = "#92400e" if is_warn else "#166534"
+        if is_warn:
+            banner_text = f"⚠️ Host addition needed in ~{forecast.get('days_to_add_host')} days — by {forecast.get('add_host_by_date', 'soon')}"
+        elif forecast.get("days_to_add_host") is None:
+            banner_text = "✅ Capacity is healthy — usage is at low / declining levels"
+        else:
+            banner_text = f"✅ Capacity OK — no urgent host addition needed within {forecast.get('warn_days', 60)} days"
+
+        lines.append(f'<div style="background:{banner_bg};color:{banner_color};padding:10px 14px;border-radius:6px;font-weight:600;margin-bottom:16px;">{banner_text}</div>')
+
+        lines.append(section("Cluster & HA Model", f'<table style="border-collapse:collapse;">'
+            + trow("Hosts", str(cl.get("host_count", "—")))
+            + trow("vCPU (used / raw total)", f"{cl.get('used_vcpus')} / {cl.get('total_vcpus')}")
+            + trow("RAM (used / raw total)", f"{fmt_ram(cl.get('used_ram_mb',0))} / {fmt_ram(cl.get('total_ram_mb',0))}")
+            + trow("HA model", ha.get("model", "—"))
+            + trow("Reserved host", ha.get("largest_host", "—"))
+            + trow("Reserve (vCPU / RAM)", f"{ha.get('reserve_vcpus')} vCPU · {fmt_ram(ha.get('reserve_ram_mb',0))}")
+            + trow("HA-adjusted capacity", f"{ha.get('ha_capacity_vcpus')} vCPU · {fmt_ram(ha.get('ha_capacity_ram_mb',0))}")
+            + trow(f"Safe limit ({safe.get('threshold_pct')}%)", f"{safe.get('safe_vcpus')} vCPU · {fmt_ram(safe.get('safe_ram_mb',0))}")
+            + trow("Headroom vCPU / RAM", f"{hroom.get('vcpus_available')} vCPU · {fmt_ram(hroom.get('ram_mb_available',0))}")
+            + "</table>"))
+
+        vcpu_rate = growth.get("vcpu_per_day", 0) or 0
+        lines.append(section("Growth Trend",
+            f'<table style="border-collapse:collapse;">'
+            + trow("Window", f"{growth.get('data_days')} days (of {growth.get('window_days')} requested)")
+            + trow("vCPU / day", f"{'+' if vcpu_rate > 0 else ''}{vcpu_rate:.2f}")
+            + trow("RAM / day", f"{fmt_ram(abs(growth.get('ram_mb_per_day',0) or 0))} {'increase' if (growth.get('ram_mb_per_day') or 0) > 0 else 'decrease'}")
+            + "</table>"))
+
+        if rec_host:
+            lines.append(section("Recommended Minimum Host Spec",
+                f'<p style="font-size:13px;"><strong>{rec_host["vcpus"]} vCPU · {rec_host["ram_gb"]} GB RAM</strong><br>{rec_host.get("rationale","")}</p>'))
+
+        if hosts:
+            lines.append(section("Per-Host Breakdown", table_from_list(hosts, exclude_cols=[])))
+
+        if flavors:
+            lines.append(section("VM Slots Remaining by Flavor", table_from_list(
+                [{"Flavor": f["flavor_name"], "vCPU": f["vcpus"], "RAM": fmt_ram(f["ram_mb"]), "Slots": f["slots_remaining"]} for f in flavors]
+            )))
+
+    # ── Generic fallback for other runbooks ──────────────────────
+    else:
+        for key, val in r.items():
+            if isinstance(val, list) and val and isinstance(val[0], dict):
+                lines.append(section(key.replace("_", " ").title(), table_from_list(val)))
+            elif isinstance(val, dict):
+                inner = "".join(trow(k.replace("_", " ").title(), str(v)) for k, v in val.items() if not isinstance(v, (dict, list)))
+                if inner:
+                    lines.append(section(key.replace("_", " ").title(), f'<table style="border-collapse:collapse;">{inner}</table>'))
+
+    lines.append(f'<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">')
+    lines.append(f'<p style="font-size:11px;color:#9ca3af;">This email was sent by Platform9 Management. Execution ID: {ex.get("execution_id", "")}</p>')
+    lines.append("</div></div>")
+    return "\n".join(lines)
+
+
+@router.post("/executions/{execution_id}/email-results")
+async def email_execution_results(
+    execution_id: str,
+    payload: ExecEmailRequest,
+    current_user=Depends(require_permission("runbooks", "read")),
+):
+    """Email a formatted execution result to one or more recipients."""
+    from smtp_helper import send_email, SMTP_ENABLED
+
+    username = current_user.username if hasattr(current_user, "username") else str(current_user)
+    role = getattr(current_user, "role", "operator")
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT e.*, r.display_name
+                FROM runbook_executions e
+                LEFT JOIN runbooks r ON e.runbook_name = r.name
+                WHERE e.execution_id = %s
+            """, (execution_id,))
+            ex = cur.fetchone()
+
+    if not ex:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    # Non-admins can only email their own executions
+    if role not in ("admin", "superadmin") and ex["triggered_by"] != username:
+        raise HTTPException(status_code=403, detail="You can only email results from your own executions")
+
+    to_list = [payload.to] + [c for c in payload.cc if c]
+    subject = f"Runbook Result: {ex.get('display_name') or ex['runbook_name']} — {ex['status']}"
+    html_body = _render_exec_email_html(dict(ex), payload.note)
+
+    if not SMTP_ENABLED:
+        logger.info("SMTP disabled — would send '%s' to %s", subject, to_list)
+        return {"sent": True, "smtp_enabled": False, "to": to_list, "note": "SMTP is disabled; email was not actually sent"}
+
+    sent = send_email(to_list, subject, html_body, raise_on_error=True)
+    return {"sent": sent, "smtp_enabled": True, "to": to_list}
 
 
 # ── Pending approvals ────────────────────────────────────────────

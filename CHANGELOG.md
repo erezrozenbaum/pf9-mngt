@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.61.0] - 2026-03-12
+
+### Added — Phase D: Cluster Capacity Planner + Visibility Fixes
+
+#### Phase D — `cluster_capacity_planner` Runbook (Runbook #25)
+New read-only planning runbook that answers the operational question: *"When do I need to add a compute host, and what should it look like?"*
+
+Key differences from the existing `capacity_forecast` runbook (Runbook #18):
+
+| Aspect | `capacity_forecast` | `cluster_capacity_planner` |
+|---|---|---|
+| Capacity model | Raw totals | HA-adjusted (reserve largest host or two) |
+| Threshold | 80% of raw total | 70% of HA-safe capacity |
+| Output framing | "X days to 80%" | "Add a host by DATE (Y days)" |
+| Per-flavor slots | None | Slots remaining for every Nova flavor |
+| Recommended host spec | None | Minimum spec to extend runway 6 months |
+| Per-host breakdown | None | Utilisation % per hypervisor |
+
+**Parameters:**
+- `ha_model` (`n1` / `n2` / `custom_pct`, default `n1`) — reserve model  
+- `ha_reserve_pct` (default `15`) — percentage to reserve when `custom_pct` is selected  
+- `safe_threshold_pct` (default `70`) — % of HA-adjusted capacity as operating limit  
+- `add_host_warn_days` (default `60`) — alert if forced addition is within this many days  
+- `growth_window_days` (default `30`) — rolling window for daily growth rate calculation  
+- `include_flavor_breakdown` (default `true`) — toggle per-flavor VM slot table
+
+**Engine logic summary:**
+1. Fetches live hypervisors from Nova `GET /os-hypervisors/detail`
+2. Derives HA-reserve: N+1 = largest host, N+2 = two largest, custom = fixed %
+3. Applies safe-threshold to HA-adjusted capacity to get headroom
+4. Queries `hypervisors_history` for growth rate (linear slope over the rolling window)
+5. Forewarns if `headroom / slope < add_host_warn_days`
+6. Calculates recommended host spec: `slope × 180 days`, rounded to nearest 8 vCPU / 32 GB
+7. Fetches Nova flavors and computes `min(headroom_vcpus // fl_vcpu, headroom_ram // fl_ram)` per flavor
+
+**Visibility:** Engineering, Management  
+**Risk:** Low (read-only, no side effects)
+
+#### Runbook Visibility Fixes
+- `vm_provisioning` and `bulk_onboarding` were missing from the Admin → Runbook Visibility matrix because they are wizard-style runbooks with dedicated route files, not registered in the standard `runbooks` table.
+- Both are now seeded into the `runbooks` table (`enabled = false` so they do not appear in the standard trigger modal — they continue to use their own dedicated UI tabs).
+- `runbook_dept_visibility` rows added:
+  - `vm_provisioning`: Tier2 Support, Tier3 Support, Engineering, Management
+  - `bulk_onboarding`: Engineering, Management
+
+### Changed
+- `db/migrate_runbooks_dept_visibility.sql` — Sections 3h and 3i appended (idempotent ON CONFLICT DO NOTHING / DO UPDATE).
+
+---
+
 ## [1.60.1] - 2026-03-11
 
 ### Added

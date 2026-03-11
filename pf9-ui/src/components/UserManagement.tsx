@@ -2587,11 +2587,151 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                     }
                     return null;
                   })()}
+                  {/* cluster_capacity_planner — rich view */}
+                  {rbSelectedExec.runbook_name === 'cluster_capacity_planner' && (() => {
+                    const rr = rbSelectedExec.result;
+                    const cl = rr.cluster || {};
+                    const ha = rr.ha_model || {};
+                    const safe = rr.safe_operating_limit || {};
+                    const hroom = rr.headroom || {};
+                    const growth = rr.growth || {};
+                    const forecast = rr.forecast || {};
+                    const recHost = rr.recommended_host_spec;
+                    const flavors: any[] = rr.flavor_vm_slots || [];
+                    const hosts: any[] = rr.per_host_breakdown || [];
+                    const trend: any[] = rr.trend || [];
+                    const fmtRam = (mb: number) => mb >= 1024 ? `${(mb/1024).toFixed(1)} GB` : `${mb} MB`;
+                    const barCol = (p: number) => p >= 85 ? '#ef4444' : p >= 65 ? '#f59e0b' : '#22c55e';
+                    const vcpuUsedPct = cl.total_vcpus > 0 ? Math.round((cl.used_vcpus / cl.total_vcpus) * 100) : 0;
+                    const ramUsedPct  = cl.total_ram_mb  > 0 ? Math.round((cl.used_ram_mb  / cl.total_ram_mb)  * 100) : 0;
+                    const vcpuHAPct   = ha.ha_capacity_vcpus > 0 ? Math.round(((ha.ha_capacity_vcpus - hroom.vcpus_available) / ha.ha_capacity_vcpus) * 100) : 0;
+                    const isWarn = forecast.host_add_alert;
+                    return (
+                      <div className="mt-2 text-sm space-y-3">
+                        {/* Banner */}
+                        <div className={`rounded-lg px-4 py-2 text-sm font-semibold flex items-center gap-2 ${isWarn ? 'bg-yellow-50 text-yellow-800 border border-yellow-200' : 'bg-green-50 text-green-800 border border-green-200'}`}>
+                          <span>{isWarn ? '⚠️' : '✅'}</span>
+                          <span>
+                            {isWarn
+                              ? `Host addition needed in ~${forecast.days_to_add_host} days (by ${forecast.add_host_by_date || 'soon'})`
+                              : forecast.days_to_add_host === null
+                                ? 'Capacity is healthy — usage is at low / declining levels'
+                                : `Capacity OK — no urgent host addition needed within ${forecast.warn_days} days`}
+                          </span>
+                        </div>
+                        {/* KPI row */}
+                        <div className="grid grid-cols-4 gap-2">
+                          {[
+                            { label: 'Cluster vCPU', val: `${cl.used_vcpus} / ${cl.total_vcpus}`, sub: `${vcpuUsedPct}% raw · ${cl.host_count} hosts`, pct: vcpuUsedPct },
+                            { label: 'Cluster RAM',  val: `${fmtRam(cl.used_ram_mb)} / ${fmtRam(cl.total_ram_mb)}`, sub: `${ramUsedPct}% raw`, pct: ramUsedPct },
+                            { label: 'HA-safe headroom', val: `${hroom.vcpus_available} vCPU`, sub: `${fmtRam(hroom.ram_mb_available)} · ${hroom.vcpu_of_safe_pct}% safe-limit used`, pct: vcpuHAPct },
+                            { label: 'Growth rate', val: `${(growth.vcpu_per_day||0)>0?'+':''}${(growth.vcpu_per_day||0).toFixed(2)} vCPU/day`, sub: `${growth.data_days}-day window`, pct: null },
+                          ].map((kpi, i) => (
+                            <div key={i} className="bg-gray-50 border rounded-lg p-3">
+                              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{kpi.label}</div>
+                              <div className="text-base font-bold text-gray-900">{kpi.val}</div>
+                              <div className="text-xs text-gray-500 mt-0.5">{kpi.sub}</div>
+                              {kpi.pct !== null && (
+                                <div className="mt-1 bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                                  <div style={{ width: `${kpi.pct}%`, background: barCol(kpi.pct), height: '100%' }} />
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        {/* HA model */}
+                        <details>
+                          <summary className="cursor-pointer text-xs font-semibold text-gray-600">HA Capacity Model &amp; Safe Limit</summary>
+                          <table className="w-full text-xs border mt-1">
+                            <tbody>
+                              <tr><td className="px-2 py-1 font-medium border-b">Model</td><td className="px-2 py-1 border-b">{ha.model}</td></tr>
+                              <tr><td className="px-2 py-1 font-medium border-b">Reserved host</td><td className="px-2 py-1 border-b">{ha.largest_host || '—'}</td></tr>
+                              <tr><td className="px-2 py-1 font-medium border-b">Reserve (vCPU/RAM)</td><td className="px-2 py-1 border-b">{ha.reserve_vcpus} vCPU · {fmtRam(ha.reserve_ram_mb)}</td></tr>
+                              <tr><td className="px-2 py-1 font-medium border-b">HA-adjusted capacity</td><td className="px-2 py-1 border-b">{ha.ha_capacity_vcpus} vCPU · {fmtRam(ha.ha_capacity_ram_mb)}</td></tr>
+                              <tr><td className="px-2 py-1 font-medium">Safe limit ({safe.threshold_pct}%)</td><td className="px-2 py-1">{safe.safe_vcpus} vCPU · {fmtRam(safe.safe_ram_mb)}</td></tr>
+                            </tbody>
+                          </table>
+                        </details>
+                        {/* Per-host */}
+                        {hosts.length > 0 && (
+                          <details>
+                            <summary className="cursor-pointer text-xs font-semibold text-gray-600">Per-Host Breakdown</summary>
+                            <table className="w-full text-xs border mt-1">
+                              <thead className="bg-gray-50"><tr><th className="px-2 py-1 border-b text-left">Host</th><th className="px-2 py-1 border-b text-left">vCPU</th><th className="px-2 py-1 border-b text-left">vCPU%</th><th className="px-2 py-1 border-b text-left">RAM</th><th className="px-2 py-1 border-b text-left">RAM%</th><th className="px-2 py-1 border-b text-left">VMs</th></tr></thead>
+                              <tbody>
+                                {hosts.map((h: any, i: number) => (
+                                  <tr key={i}>
+                                    <td className="px-2 py-1 border-b font-medium">{h.hostname}</td>
+                                    <td className="px-2 py-1 border-b">{h.vcpus_used}/{h.vcpus}</td>
+                                    <td className="px-2 py-1 border-b">
+                                      <div className="bg-gray-200 rounded h-1.5 w-16 inline-block overflow-hidden align-middle mr-1">
+                                        <div style={{ width: `${h.vcpu_pct}%`, background: barCol(h.vcpu_pct), height: '100%' }} />
+                                      </div>{h.vcpu_pct}%
+                                    </td>
+                                    <td className="px-2 py-1 border-b">{fmtRam(h.ram_used_mb)}/{fmtRam(h.ram_mb)}</td>
+                                    <td className="px-2 py-1 border-b">
+                                      <div className="bg-gray-200 rounded h-1.5 w-16 inline-block overflow-hidden align-middle mr-1">
+                                        <div style={{ width: `${h.ram_pct}%`, background: barCol(h.ram_pct), height: '100%' }} />
+                                      </div>{h.ram_pct}%
+                                    </td>
+                                    <td className="px-2 py-1 border-b">{h.running_vms}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </details>
+                        )}
+                        {/* Flavor slots */}
+                        {flavors.length > 0 && (
+                          <details open>
+                            <summary className="cursor-pointer text-xs font-semibold text-gray-600">VM Slots by Flavor</summary>
+                            <table className="w-full text-xs border mt-1">
+                              <thead className="bg-gray-50"><tr><th className="px-2 py-1 border-b text-left">Flavor</th><th className="px-2 py-1 border-b">vCPU</th><th className="px-2 py-1 border-b">RAM</th><th className="px-2 py-1 border-b">Slots</th></tr></thead>
+                              <tbody>
+                                {flavors.map((f: any, i: number) => (
+                                  <tr key={i}>
+                                    <td className="px-2 py-1 border-b">{f.flavor_name}</td>
+                                    <td className="px-2 py-1 border-b text-center">{f.vcpus}</td>
+                                    <td className="px-2 py-1 border-b text-center">{fmtRam(f.ram_mb)}</td>
+                                    <td className="px-2 py-1 border-b text-center">
+                                      <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${f.slots_remaining >= 20 ? 'bg-green-100 text-green-800' : f.slots_remaining >= 5 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>
+                                        {f.slots_remaining}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </details>
+                        )}
+                        {/* Recommended host spec */}
+                        {recHost && (
+                          <div className="bg-blue-50 border border-blue-200 rounded p-2 text-xs">
+                            <strong>💡 Recommended Host Spec:</strong> {recHost.vcpus} vCPU · {recHost.ram_gb} GB RAM — {recHost.rationale}
+                          </div>
+                        )}
+                        {/* Trend (collapsed) */}
+                        {trend.length > 0 && (
+                          <details>
+                            <summary className="cursor-pointer text-xs text-gray-500">Usage Trend ({trend.length} data points)</summary>
+                            <table className="w-full text-xs border mt-1">
+                              <thead className="bg-gray-50"><tr><th className="px-2 py-1 border-b text-left">Date</th><th className="px-2 py-1 border-b text-left">Used vCPU</th><th className="px-2 py-1 border-b text-left">RAM Used</th></tr></thead>
+                              <tbody>{trend.map((t: any, i: number) => (<tr key={i}><td className="px-2 py-1 border-b">{t.date}</td><td className="px-2 py-1 border-b">{t.used_vcpus}</td><td className="px-2 py-1 border-b">{fmtRam(t.used_ram_mb)}</td></tr>))}</tbody>
+                            </table>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {rbSelectedExec.runbook_name !== 'cluster_capacity_planner' && (
+                  <>
                   {/* Raw JSON fallback */}
                   <details className="mt-1">
                     <summary className="cursor-pointer text-xs text-gray-500">Raw JSON</summary>
                     <pre className="bg-gray-100 p-2 rounded mt-1 text-xs overflow-auto max-h-60">{JSON.stringify(rbSelectedExec.result, null, 2)}</pre>
                   </details>
+                  </>
+                  )}
                 </div>
               )}
             </div>

@@ -154,6 +154,13 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
   const [lookupData, setLookupData] = useState<Record<string, any[]>>({});
   const [lookupLoading, setLookupLoading] = useState(false);
 
+  // Email results state
+  const [emailExec, setEmailExec] = useState<Execution | null>(null);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailCc, setEmailCc] = useState("");
+  const [emailNote, setEmailNote] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+
   // ------- Toast helper --------------------------------------------------
   const showToast = useCallback((msg: string, type: string = "info") => {
     setToast({ msg, type });
@@ -372,6 +379,10 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
         result.status === "completed" ? "success" : "info"
       );
       setTriggerModal(null);
+      // Auto-open result panel so the user sees the output immediately
+      if (result.status === "completed" || result.status === "failed") {
+        setSelectedExec(result);
+      }
       fetchRunbooks();
       fetchStats();
       fetchMyExecs();
@@ -386,6 +397,30 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
   const getStatsFor = (name: string) => stats.find((s) => s.runbook_name === name);
 
   /** Flatten execution result to CSV rows */
+  const sendEmailResults = async () => {
+    if (!emailExec) return;
+    setEmailSending(true);
+    try {
+      const ccList = emailCc
+        .split(/[,;\s]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await apiFetch(`/api/runbooks/executions/${emailExec.execution_id}/email-results`, {
+        method: "POST",
+        body: JSON.stringify({ to: emailTo, cc: ccList, note: emailNote }),
+      });
+      showToast("📧 Results emailed successfully", "success");
+      setEmailExec(null);
+      setEmailTo("");
+      setEmailCc("");
+      setEmailNote("");
+    } catch (e: any) {
+      showToast(`Email failed: ${e.message}`, "error");
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
   const exportExecCsv = (exec: Execution) => {
     const r = exec.result || {};
     const rows: string[][] = [];
@@ -1119,6 +1154,205 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
       );
     }
 
+    // ── Cluster Capacity Planner ──
+    if (name === "cluster_capacity_planner") {
+      const cl = r.cluster || {};
+      const ha = r.ha_model || {};
+      const safe = r.safe_operating_limit || {};
+      const hroom = r.headroom || {};
+      const growth = r.growth || {};
+      const forecast = r.forecast || {};
+      const recHost = r.recommended_host_spec;
+      const flavors: any[] = r.flavor_vm_slots || [];
+      const hosts: any[] = r.per_host_breakdown || [];
+      const trend: any[] = r.trend || [];
+
+      const vcpuUsedPct = cl.total_vcpus > 0 ? Math.round((cl.used_vcpus / cl.total_vcpus) * 100) : 0;
+      const ramUsedPct  = cl.total_ram_mb > 0 ? Math.round((cl.used_ram_mb / cl.total_ram_mb) * 100) : 0;
+      const vcpuHAPct   = ha.ha_capacity_vcpus > 0 ? Math.round(((ha.ha_capacity_vcpus - hroom.vcpus_available) / ha.ha_capacity_vcpus) * 100) : 0;
+
+      const barColor = (pct: number) => pct >= 85 ? "#ef4444" : pct >= 65 ? "#f59e0b" : "#22c55e";
+
+      const isWarn = forecast.host_add_alert;
+      const bannerClass = isWarn ? "warn" : "ok";
+      const bannerIcon  = isWarn ? "⚠️" : "✅";
+      const bannerText  = isWarn
+        ? `Host addition needed in ~${forecast.days_to_add_host} days (by ${forecast.add_host_by_date || "soon"})`
+        : forecast.days_to_add_host === null
+          ? "Capacity is healthy — usage is at low / declining levels"
+          : `Capacity OK — no urgent host addition needed within ${forecast.warn_days} days`;
+
+      const fmtRam = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+
+      return (
+        <div className="rb-result-friendly">
+          {/* Status Banner */}
+          <div className={`rb-cap-banner ${bannerClass}`}>
+            <span>{bannerIcon}</span>
+            <span>{bannerText}</span>
+          </div>
+
+          {/* KPI row */}
+          <div className="rb-cap-kpi-row">
+            <div className="rb-cap-kpi">
+              <div className="rb-cap-kpi-label">Cluster vCPU</div>
+              <div className="rb-cap-kpi-value">{cl.used_vcpus} / {cl.total_vcpus}</div>
+              <div className="rb-cap-kpi-sub">{vcpuUsedPct}% of raw · {cl.host_count} hosts</div>
+              <div className="rb-cap-bar-wrap">
+                <div className="rb-cap-bar-fill" style={{ width: `${vcpuUsedPct}%`, background: barColor(vcpuUsedPct) }} />
+              </div>
+            </div>
+            <div className="rb-cap-kpi">
+              <div className="rb-cap-kpi-label">Cluster RAM</div>
+              <div className="rb-cap-kpi-value">{fmtRam(cl.used_ram_mb)} / {fmtRam(cl.total_ram_mb)}</div>
+              <div className="rb-cap-kpi-sub">{ramUsedPct}% of raw</div>
+              <div className="rb-cap-bar-wrap">
+                <div className="rb-cap-bar-fill" style={{ width: `${ramUsedPct}%`, background: barColor(ramUsedPct) }} />
+              </div>
+            </div>
+            <div className="rb-cap-kpi">
+              <div className="rb-cap-kpi-label">HA-Safe Headroom</div>
+              <div className="rb-cap-kpi-value">{hroom.vcpus_available} vCPU</div>
+              <div className="rb-cap-kpi-sub">{fmtRam(hroom.ram_mb_available)} · {hroom.vcpu_of_safe_pct}% of safe limit used</div>
+              <div className="rb-cap-bar-wrap">
+                <div className="rb-cap-bar-fill" style={{ width: `${vcpuHAPct}%`, background: barColor(vcpuHAPct) }} />
+              </div>
+            </div>
+            <div className="rb-cap-kpi">
+              <div className="rb-cap-kpi-label">Growth Rate</div>
+              <div className="rb-cap-kpi-value" style={{ color: (growth.vcpu_per_day || 0) > 2 ? "#f59e0b" : "#22c55e" }}>
+                {(growth.vcpu_per_day || 0) > 0 ? "+" : ""}{(growth.vcpu_per_day || 0).toFixed(2)} vCPU/day
+              </div>
+              <div className="rb-cap-kpi-sub">
+                {(growth.ram_mb_per_day || 0) > 0 ? "+" : ""}{fmtRam(Math.abs(growth.ram_mb_per_day || 0))}/day · {growth.data_days} day window
+              </div>
+            </div>
+          </div>
+
+          {/* HA Model + Safe Limit */}
+          <div className="rb-cap-section">
+            <div className="rb-cap-section-title">HA Capacity Model</div>
+            <table className="rb-result-table">
+              <tbody>
+                <tr><td><strong>Model</strong></td><td>{ha.model}</td></tr>
+                <tr><td><strong>Reserved host</strong></td><td>{ha.largest_host || "—"}</td></tr>
+                <tr><td><strong>Reserved vCPU</strong></td><td>{ha.reserve_vcpus} · RAM: {fmtRam(ha.reserve_ram_mb)}</td></tr>
+                <tr><td><strong>HA-adjusted capacity</strong></td><td>{ha.ha_capacity_vcpus} vCPU · {fmtRam(ha.ha_capacity_ram_mb)}</td></tr>
+                <tr>
+                  <td><strong>Safe operating limit ({safe.threshold_pct}%)</strong></td>
+                  <td>{safe.safe_vcpus} vCPU · {fmtRam(safe.safe_ram_mb)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Recommended host spec */}
+          {recHost && (
+            <div className="rb-cap-section">
+              <div className="rb-cap-section-title">Recommended Minimum Host Spec</div>
+              <p className="rb-result-summary">
+                To extend capacity runway by 6 months at current growth rate:
+                <strong> {recHost.vcpus} vCPU · {recHost.ram_gb} GB RAM</strong>
+                {recHost.rationale ? ` — ${recHost.rationale}` : ""}
+              </p>
+            </div>
+          )}
+
+          {/* Per-host breakdown */}
+          {hosts.length > 0 && (
+            <div className="rb-cap-section">
+              <div className="rb-cap-section-title">Per-Host Breakdown</div>
+              <table className="rb-result-table">
+                <thead>
+                  <tr>
+                    <th>Host</th>
+                    <th>vCPU Used / Total</th>
+                    <th style={{ width: 100 }}>vCPU %</th>
+                    <th>RAM Used / Total</th>
+                    <th style={{ width: 80 }}>RAM %</th>
+                    <th>VMs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {hosts.map((h: any, i: number) => (
+                    <tr key={i}>
+                      <td><strong>{h.hostname}</strong></td>
+                      <td>{h.vcpus_used} / {h.vcpus}</td>
+                      <td>
+                        <div className="rb-cap-bar-wrap">
+                          <div className="rb-cap-bar-fill" style={{ width: `${h.vcpu_pct}%`, background: barColor(h.vcpu_pct) }} />
+                        </div>
+                        <span style={{ fontSize: 10, color: "#888" }}>{h.vcpu_pct}%</span>
+                      </td>
+                      <td>{fmtRam(h.ram_used_mb)} / {fmtRam(h.ram_mb)}</td>
+                      <td>
+                        <div className="rb-cap-bar-wrap">
+                          <div className="rb-cap-bar-fill" style={{ width: `${h.ram_pct}%`, background: barColor(h.ram_pct) }} />
+                        </div>
+                        <span style={{ fontSize: 10, color: "#888" }}>{h.ram_pct}%</span>
+                      </td>
+                      <td>{h.running_vms}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Flavor VM slots */}
+          {flavors.length > 0 && (
+            <div className="rb-cap-section">
+              <div className="rb-cap-section-title">VM Slots Remaining by Flavor (within HA-safe headroom)</div>
+              <table className="rb-result-table">
+                <thead>
+                  <tr>
+                    <th>Flavor</th>
+                    <th>vCPU</th>
+                    <th>RAM</th>
+                    <th>Slots Remaining</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {flavors.map((f: any, i: number) => {
+                    const chipClass = f.slots_remaining >= 20 ? "high" : f.slots_remaining >= 5 ? "mid" : "low";
+                    return (
+                      <tr key={i}>
+                        <td>{f.flavor_name}</td>
+                        <td>{f.vcpus}</td>
+                        <td>{fmtRam(f.ram_mb)}</td>
+                        <td><span className={`rb-cap-slot-chip ${chipClass}`}>{f.slots_remaining}</span></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Usage trend (collapsed) */}
+          {trend.length > 0 && (
+            <details className="rb-result-raw">
+              <summary>Usage Trend ({trend.length} data points — last {growth.window_days} days)</summary>
+              <table className="rb-result-table" style={{ marginTop: 8 }}>
+                <thead>
+                  <tr><th>Date</th><th>Used vCPU</th><th>RAM Used</th></tr>
+                </thead>
+                <tbody>
+                  {trend.map((t: any, i: number) => (
+                    <tr key={i}>
+                      <td>{t.date}</td>
+                      <td>{t.used_vcpus}</td>
+                      <td>{fmtRam(t.used_ram_mb)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
+        </div>
+      );
+    }
+
     // ── Fallback: raw JSON ──
     return (
       <details className="rb-result-raw">
@@ -1280,6 +1514,14 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
                 <div className="rb-detail-header">
                   <h4>{selectedExec.display_name || selectedExec.runbook_name} — Execution Detail</h4>
                   <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
+                    <button className="rb-btn small" title="Email results" onClick={() => {
+                      setEmailExec(selectedExec);
+                      // Pre-fill with the current user's email if stored in localStorage
+                      const savedEmail = localStorage.getItem("user_email") || "";
+                      setEmailTo(savedEmail);
+                      setEmailCc("");
+                      setEmailNote("");
+                    }}>📧 Email</button>
                     <button className="rb-btn small" title="Export as CSV" onClick={() => exportExecCsv(selectedExec)}>📥 CSV</button>
                     <button className="rb-btn small" title="Export as JSON" onClick={() => exportExecJson(selectedExec)}>📥 JSON</button>
                     <button className="rb-btn small" title="Print / Save as PDF" onClick={() => printExecResult()}>🖨️ PDF</button>
@@ -1941,6 +2183,57 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
 
       {/* Toast */}
       {toast && <div className={`rb-toast ${toast.type}`}>{toast.msg}</div>}
+
+      {/* ────── EMAIL RESULTS MODAL ────── */}
+      {emailExec && (
+        <div className="rb-email-overlay" onClick={() => setEmailExec(null)}>
+          <div className="rb-email-modal" onClick={(e) => e.stopPropagation()}>
+            <h4>📧 Email Results — {emailExec.display_name || emailExec.runbook_name}</h4>
+            <div className="rb-email-field">
+              <label>To *</label>
+              <input
+                type="email"
+                placeholder="recipient@example.com"
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+              />
+            </div>
+            <div className="rb-email-field">
+              <label>CC (comma-separated, optional)</label>
+              <input
+                type="text"
+                placeholder="other@example.com, manager@example.com"
+                value={emailCc}
+                onChange={(e) => setEmailCc(e.target.value)}
+              />
+            </div>
+            <div className="rb-email-field">
+              <label>Note / Context (optional)</label>
+              <textarea
+                placeholder="Add any context or action items for the recipient…"
+                value={emailNote}
+                onChange={(e) => setEmailNote(e.target.value)}
+              />
+            </div>
+            <p className="rb-email-note">
+              The email will include a formatted summary of the execution result.
+              {" "}Execution ID: {emailExec.execution_id.slice(0, 8)}…
+            </p>
+            <div className="rb-email-actions">
+              <button className="rb-btn small" onClick={() => setEmailExec(null)} disabled={emailSending}>
+                Cancel
+              </button>
+              <button
+                className="rb-btn small primary"
+                disabled={!emailTo.trim() || emailSending}
+                onClick={sendEmailResults}
+              >
+                {emailSending ? "Sending…" : "Send Email"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Ticket from Execution modal */}
       {ticketForExec && (
