@@ -6882,6 +6882,30 @@ async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveReq
     _log_activity(actor=getattr(user, "username", "?"), action="advance_wave_status",
                   resource_type="migration_project", resource_id=project_id,
                   details={"wave_id": wave_id, "from": current_status, "to": req.status})
+
+    # T3.5 — Auto service-request ticket when a migration wave completes
+    if req.status == "complete":
+        try:
+            from ticket_routes import _auto_ticket
+            wave_name = wave.get("name", f"Wave {wave_id}")
+            _auto_ticket(
+                title=f"Migration wave complete — {wave_name} (project {project_id})",
+                description=(
+                    f"Wave '{wave_name}' (ID {wave_id}) in migration project {project_id} "
+                    f"has reached 'complete' status. Review and approve progressing to the next phase."
+                ),
+                ticket_type="service_request",
+                priority="normal",
+                to_dept_name="Engineering",
+                auto_source="migration",
+                auto_source_id=f"wave:{wave_id}",
+            )
+        except Exception as ticket_err:
+            import logging
+            logging.getLogger("migration_routes").warning(
+                "Auto-ticket for migration wave completion failed: %s", ticket_err
+            )
+
     return {"status": "ok", "wave": wave}
 
 

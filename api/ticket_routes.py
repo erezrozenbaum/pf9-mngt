@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Any
 
 from fastapi import APIRouter, HTTPException, Depends, Request, Query, status
-from pydantic import BaseModel, Field, EmailStr, validator
+from pydantic import BaseModel, Field, EmailStr, validator, root_validator
 from psycopg2.extras import RealDictCursor
 
 from db_pool import get_connection
@@ -408,7 +408,8 @@ class AutoTicketCreate(BaseModel):
     description:    str = ""
     ticket_type:    str = "auto_incident"
     priority:       str = "high"
-    to_dept_id:     int
+    to_dept_id:     Optional[int] = None    # either to_dept_id OR to_dept_name required
+    to_dept_name:   Optional[str] = None    # resolved to ID in the endpoint
     auto_source:    str
     auto_source_id: str
     resource_type:  Optional[str] = None
@@ -418,6 +419,110 @@ class AutoTicketCreate(BaseModel):
     project_name:   Optional[str] = None
     auto_blocked:   bool = False
     requires_approval: bool = False
+
+    @root_validator(skip_on_failure=True)
+    def _check_dept_provided(cls, values: dict) -> dict:
+        if values.get("to_dept_id") is None and not values.get("to_dept_name"):
+            raise ValueError("Either to_dept_id or to_dept_name must be provided")
+        return values
+
+
+# ---------------------------------------------------------------------------
+#  In-process auto-ticket helper (no FastAPI, pure DB — importable by other modules)
+# ---------------------------------------------------------------------------
+def _auto_ticket(
+    *,
+    title: str,
+    description: str = "",
+    ticket_type: str = "auto_incident",
+    priority: str = "high",
+    to_dept_name: str,
+    auto_source: str,
+    auto_source_id: str,
+    resource_type: Optional[str] = None,
+    resource_id:   Optional[str] = None,
+    resource_name: Optional[str] = None,
+    project_id:    Optional[str] = None,
+    project_name:  Optional[str] = None,
+    auto_blocked:  bool = False,
+    add_comment_if_existing: bool = False,
+) -> dict:
+    """
+    Create an auto-ticket directly via DB (no HTTP round-trip).
+    Idempotent: if an open ticket for (auto_source, auto_source_id) already exists,
+    optionally adds a re-detection comment and returns existing ticket info.
+    Returns {ticket_id, ticket_ref, created: bool}, or {} on error.
+    """
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # Dedup check
+                cur.execute("""
+                    SELECT id, ticket_ref FROM support_tickets
+                    WHERE auto_source = %s AND auto_source_id = %s
+                      AND status NOT IN ('resolved', 'closed')
+                    LIMIT 1
+                """, (auto_source, auto_source_id))
+                existing = cur.fetchone()
+
+                if existing:
+                    if add_comment_if_existing:
+                        _add_comment(
+                            existing["id"],
+                            author="system",
+                            body="Condition re-detected.",
+                            is_internal=True,
+                            comment_type="system",
+                        )
+                    return {"ticket_id": existing["id"], "ticket_ref": existing["ticket_ref"], "created": False}
+
+                # Resolve dept name → ID
+                cur.execute("SELECT id FROM departments WHERE name = %s LIMIT 1", (to_dept_name,))
+                dept_row = cur.fetchone()
+                if not dept_row:
+                    logger.warning("_auto_ticket: dept '%s' not found", to_dept_name)
+                    return {}
+                to_dept_id = dept_row["id"]
+
+                ref        = _generate_ticket_ref()
+                created_at = _now()
+                sla        = _apply_sla(ticket_type, priority, to_dept_id, created_at)
+
+                cur.execute("""
+                    INSERT INTO support_tickets (
+                        ticket_ref, title, description, ticket_type, status, priority,
+                        to_dept_id, opened_by, auto_source, auto_source_id, auto_blocked,
+                        resource_type, resource_id, resource_name, project_id, project_name,
+                        sla_response_hours, sla_resolve_hours, sla_response_at, sla_resolve_at,
+                        created_at, updated_at
+                    ) VALUES (
+                        %s,%s,%s,%s,'open',%s,
+                        %s,'system',%s,%s,%s,
+                        %s,%s,%s,%s,%s,
+                        %s,%s,%s,%s,
+                        %s,%s
+                    ) RETURNING id, ticket_ref
+                """, (
+                    ref, title, description, ticket_type, priority,
+                    to_dept_id, auto_source, auto_source_id, auto_blocked,
+                    resource_type, resource_id, resource_name, project_id, project_name,
+                    sla.get("sla_response_hours"), sla.get("sla_resolve_hours"),
+                    sla.get("sla_response_at"),    sla.get("sla_resolve_at"),
+                    created_at, created_at,
+                ))
+                row = cur.fetchone()
+
+        _add_comment(
+            row["id"], "system",
+            f"Auto-created from {auto_source} (id: {auto_source_id}).",
+            is_internal=True, comment_type="auto_created",
+        )
+        logger.info("_auto_ticket: created %s (%s / %s)", row["ticket_ref"], auto_source, auto_source_id)
+        return {"ticket_id": row["id"], "ticket_ref": row["ticket_ref"], "created": True}
+
+    except Exception as exc:
+        logger.error("_auto_ticket failed: %s", exc)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -836,11 +941,20 @@ async def auto_create_ticket(
     """
     Idempotent auto-ticket endpoint: skip creation if an open ticket for
     the same (auto_source, auto_source_id) already exists.
+    Accepts either to_dept_id (int) or to_dept_name (string).
     """
+    # Resolve to_dept_id from name if not supplied
+    resolved_dept_id = body.to_dept_id
+    if resolved_dept_id is None:
+        resolved_dept_id = _get_dept_id_by_name(body.to_dept_name or "")
+        if not resolved_dept_id:
+            raise HTTPException(status_code=422,
+                                detail=f"Department '{body.to_dept_name}' not found")
+
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id FROM support_tickets
+                SELECT id, ticket_ref FROM support_tickets
                 WHERE auto_source = %s AND auto_source_id = %s
                   AND status NOT IN ('resolved', 'closed')
                 LIMIT 1
@@ -848,7 +962,7 @@ async def auto_create_ticket(
             existing = cur.fetchone()
 
     if existing:
-        return {"ticket_id": existing[0], "created": False,
+        return {"ticket_id": existing[0], "ticket_ref": existing[1], "created": False,
                 "detail": "Existing open ticket for this source"}
 
     # Delegate to the normal create path
@@ -857,7 +971,7 @@ async def auto_create_ticket(
         description=body.description,
         ticket_type=body.ticket_type,
         priority=body.priority,
-        to_dept_id=body.to_dept_id,
+        to_dept_id=resolved_dept_id,
         requires_approval=body.requires_approval,
         resource_type=body.resource_type,
         resource_id=body.resource_id,

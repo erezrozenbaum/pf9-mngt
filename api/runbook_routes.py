@@ -4581,6 +4581,24 @@ def _execute_runbook(execution_id: str, runbook_name: str, params: dict,
             resource_name=runbook_name,
             actor=actor,
         )
+        # T3.4 — Auto-incident ticket for runbook failures (best-effort)
+        try:
+            from ticket_routes import _auto_ticket
+            _auto_ticket(
+                title=f"Runbook '{runbook_name}' failed (execution {execution_id[:8]}…)",
+                description=(
+                    f"Runbook '{runbook_name}' triggered by {actor} failed.\n"
+                    f"Execution ID: {execution_id}\n"
+                    f"Error: {str(e)[:500]}"
+                ),
+                ticket_type="auto_incident",
+                priority="normal",
+                to_dept_name="Engineering",
+                auto_source="runbook_failure",
+                auto_source_id=execution_id,
+            )
+        except Exception as ticket_err:
+            logger.warning("Auto-ticket for runbook failure failed: %s", ticket_err)
 
 
 # ---------------------------------------------------------------------------

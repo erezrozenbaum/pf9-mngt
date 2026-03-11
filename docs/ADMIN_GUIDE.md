@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.58.0  
+**Version**: 1.59.0  
 **Last Updated**: March 11, 2026  
 **Audience**: System administrators and platform operators
 
@@ -845,7 +845,28 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
   - Create/list/get/update; assign + first-response tracking; escalate (stamps chain); approve/reject (approval gate); resolve/reopen/close
   - Comment thread: internal notes blocked from viewer role; structured types for audit trail
   - SLA policy CRUD (admin); email template list+update (admin)
-  - `POST /_auto` — idempotent auto-ticket creation for drift/health/runbook integrations (future T3)
+  - `POST /_auto` — idempotent auto-ticket creation; used by all T3 triggers. Returns `{ticket_id, ticket_ref, created: bool}`. Duplicate detection: open ticket with same `(auto_source, auto_source_id)` returns existing ref with `created=false`.
+
+### Auto-Ticket Triggers (v1.59.0)
+- **T3 overview**: Five system hooks automatically open tickets on significant events. All use `_auto_ticket()` (in-process, no HTTP round-trip). All are idempotent — repeated events add a comment to the existing open ticket instead of opening duplicates.
+- **Dedup key**: `(auto_source, auto_source_id)` — indexed. An open ticket with matching values is reused; a `system` comment "Condition re-detected" is appended.
+- **Hook locations**:
+  | Trigger | Source file | `auto_source` | Fires when |
+  |---|---|---|---|
+  | Drift event | `db_writer.py` → `_detect_drift()` | `drift` | Severity `critical` or `warning` |
+  | Health score drop | `api/graph_routes.py` → `_build_graph()` | `health_score` | Node `health_score < 40` |
+  | Delete gate | `api/graph_routes.py` → `POST /api/graph/request-delete` | `delete_impact` | Manual request |
+  | Runbook failure | `api/runbook_routes.py` → `_execute_runbook()` | `runbook_failure` | Execution exception |
+  | Migration wave | `api/migration_routes.py` → `advance_wave_status()` | `migration` | Status set to `complete` |
+- **UI access**:
+  - Drift detection side-panel: "🎫 Create Incident Ticket" button per event
+  - Tenant health detail panel: "🚨 Report Incident" button (shown when `health_score < 60`)
+  - Graph delete-impact panel: "🎫 Request Delete Approval" button (shown when `!safe_to_delete`)
+- **Admin tasks**:
+  - View all auto-generated tickets: UI → Support Tickets → filter Type = `auto_incident` or `auto_change_request`
+  - Identify T3 tickets programmatically: `SELECT * FROM support_tickets WHERE auto_source IS NOT NULL AND status NOT IN ('resolved','closed');`
+  - Approve a blocked delete gate ticket: Support Tickets → find `auto_blocked=true` ticket → click Approve
+  - To disable a trigger without code change: resolve or close any open auto-ticket for that source (dedup will re-open on next event)
 - **Runbook integration (T2)**: `POST /{id}/trigger-runbook` dispatches to the runbook engine with a short-lived service JWT; stores `linked_execution_id` on the ticket; `GET /{id}/runbook-result` proxies the execution result.
 - **Email-customer (T2)**: `POST /{id}/email-customer` renders a named template with ticket context and sends via SMTP; stamps `customer_notified_at`.
 - **SLA daemon**: asyncio task runs every 15 minutes — sets `sla_response_breached` / `sla_resolve_breached`, posts Slack/Teams breach notifications, adds `sla_breach` activity comments, auto-escalates per SLA policy.

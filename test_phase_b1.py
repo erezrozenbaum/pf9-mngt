@@ -37,7 +37,7 @@ if r.ok:
     names = [rb["name"] for rb in r.json()]
     check("quota_adjustment in list", "quota_adjustment" in names, str(names))
     check("org_usage_report in list", "org_usage_report" in names, str(names))
-    check("total runbooks == 16", len(names) == 16, f"got {len(names)}")
+    check("total runbooks == 24", len(names) == 24, f"got {len(names)}")
 
 # ── quota_adjustment: missing project_id ─────────────────────────────────────
 print("\n[3] quota_adjustment — error on missing project_id")

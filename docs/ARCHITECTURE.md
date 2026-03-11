@@ -353,7 +353,7 @@ Every infrastructure resource follows a **dual-table pattern**:
                   groups (id, name, domain_id)
 ```
 
-### Table Catalog (48+ tables)
+### Table Catalog (65+ tables)
 
 #### Core Infrastructure (14 tables)
 
@@ -489,6 +489,16 @@ Every infrastructure resource follows a **dual-table pattern**:
 | `runbook_approvals` | Individual approval records for multi-approval workflows (FK CASCADE to executions) |
 | `runbook_dept_visibility` | Department-scoped access control — `(runbook_name FK→runbooks, dept_id FK→departments)`. Absence of rows means globally visible. Admin/superadmin bypass this filter. |
 | `external_integrations` | External service registry for billing gates, CRM, and webhooks. `auth_credential` column stores Fernet-encrypted (AES-128-CBC + HMAC) credentials derived from `JWT_SECRET`. Supports `bearer`, `basic`, and `api_key` auth types. |
+
+#### Support Tickets (5 tables)
+
+| Table | Purpose |
+|---|---|
+| `support_tickets` | Full ticket lifecycle with refs (`TKT-YYYY-NNNNN`), types (service_request/incident/change_request/inquiry/escalation/auto_incident/auto_change_request), statuses, priority, routing (from/to dept), customer contact, OpenStack resource linkage, approval gate, SLA deadlines, escalation chain, Slack thread. Key T3 columns: `auto_source`, `auto_source_id`, `auto_blocked`, `requires_approval` — IDX on `(auto_source, auto_source_id)` for dedup. |
+| `ticket_comments` | Activity thread with internal/external notes; structured `comment_type` (status_change/assignment/escalation/runbook_result/sla_breach/email_sent/auto_created/system); `metadata JSONB`. |
+| `ticket_sla_policies` | SLA rules per `(to_dept_id × ticket_type × priority)` with `auto_escalate_on_breach` and `escalate_to_dept_id`. 17 seeded policies. |
+| `ticket_email_templates` | HTML email templates by name (`ticket_created`, `ticket_resolved`, etc.) with `{{placeholder}}` substitution. |
+| `ticket_sequence` | Per-year auto-increment counter for human-readable ticket refs (`year INT PRIMARY KEY, last_seq INT`). |
 
 ### Key Database Views
 
