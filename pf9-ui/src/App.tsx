@@ -30,6 +30,7 @@ import ResourceManagementTab from "./components/ResourceManagementTab";
 import GroupedNavBar from "./components/GroupedNavBar";
 import OpsSearch from "./components/OpsSearch";
 import RunbooksTab from "./components/RunbooksTab";
+import TicketsTab from "./components/TicketsTab";
 import MigrationPlannerTab from "./components/MigrationPlannerTab";
 import CopilotPanel from "./components/CopilotPanel";
 import DependencyGraph, { type GraphRootType } from "./components/graph/DependencyGraph";
@@ -412,7 +413,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -471,6 +472,8 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "quotas",                label: "📊 Quotas" },
   { id: "system_metadata",       label: "🗂️ System Metadata",    actionStyle: true },
   { id: "migration_planner",     label: "🚀 Migration Planner",  adminOnly: true, actionStyle: true },
+  { id: "tickets",               label: "🎫 Support Tickets",    adminOnly: false, actionStyle: true },
+  { id: "my_queue",              label: "📥 My Queue",           adminOnly: false, actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -3015,6 +3018,8 @@ const App: React.FC = () => {
     "resource_management",
     "runbooks",
     "system_metadata",
+    "tickets",
+    "my_queue",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------
@@ -3212,6 +3217,10 @@ const App: React.FC = () => {
             ? "Ops Assistant · full-text search · similarity · smart report suggestions"
             : activeTab === "runbooks"
             ? "Policy-as-code operational runbooks · select and trigger with dry-run"
+            : activeTab === "tickets"
+            ? "Support tickets · SLA tracking · escalation · approval workflows"
+            : activeTab === "my_queue"
+            ? "My assigned tickets · sorted by priority · SLA deadlines"
             : activeTab === "system_metadata"
             ? "Unified system inventory · resource counts · compute & storage · quota hotspots · full Excel export"
             : "Platform9 management"}
@@ -5979,6 +5988,16 @@ const App: React.FC = () => {
           {/* Runbooks */}
           {activeTab === "runbooks" && (
             <RunbooksTab userRole={authUser?.role || ""} />
+          )}
+
+          {/* Support Tickets */}
+          {activeTab === "tickets" && (
+            <TicketsTab userRole={authUser?.role || ""} />
+          )}
+
+          {/* My Queue */}
+          {activeTab === "my_queue" && (
+            <TicketsTab userRole={authUser?.role || ""} myQueueMode />
           )}
 
           {/* Migration Planner */}

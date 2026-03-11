@@ -92,6 +92,9 @@ from migration_routes import router as migration_router
 # Cloud Dependency Graph endpoints
 from graph_routes import router as graph_router
 
+# Support Ticket system (T1+T2)
+from ticket_routes import router as ticket_router, run_sla_checks as _run_sla_checks
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -322,6 +325,7 @@ app.include_router(onboarding_router)
 app.include_router(vm_provisioning_router)
 app.include_router(migration_router)
 app.include_router(graph_router)
+app.include_router(ticket_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")
@@ -541,12 +545,28 @@ from restore_management import setup_restore_routes, RestoreOpenStackClient
 @app.on_event("startup")
 async def startup_event():
     """Initialize authentication system on startup"""
+    import asyncio
     initialize_default_admin()
     # Setup snapshot management routes
     setup_snapshot_routes(app, db_conn)
     # Setup restore management routes
     setup_restore_routes(app, db_conn)
     print(f"PF9 Management API started - Authentication: {'Enabled' if ENABLE_AUTHENTICATION else 'Disabled'}")
+
+    # SLA daemon: check for breached SLA deadlines every 15 minutes
+    async def _sla_daemon():
+        import logging
+        _log = logging.getLogger("pf9_tickets")
+        while True:
+            try:
+                await asyncio.sleep(900)  # 15 minutes
+                await asyncio.get_event_loop().run_in_executor(None, _run_sla_checks)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                _log.error("SLA daemon error: %s", exc)
+
+    asyncio.create_task(_sla_daemon())
 
 # =====================================================================
 # AUTHENTICATION ENDPOINTS

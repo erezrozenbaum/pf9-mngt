@@ -1,6 +1,6 @@
 # Platform9 Management System - Quick Reference
 
-## System Overview (February 2026)
+## System Overview (March 2026)
 
 ### Comprehensive OpenStack Management Platform
 The Platform9 Management System is a enterprise-grade infrastructure management solution providing:
@@ -17,7 +17,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Activity Monitoring**: User last-seen timestamps, account status, and authentication tracking
 - **Role Inference System**: Intelligent role assignment detection when API access is limited
 
-#### Modern React UI Features (22+ Comprehensive Tabs)
+#### Modern React UI Features (30+ Comprehensive Tabs)
 - **Dashboard Tab** (NEW ✨): Landing Dashboard with 14 real-time analytics endpoints
   - Health Summary, Snapshot SLA Compliance, Host Utilization, Recent Activity
   - Coverage Risks, Capacity Pressure, VM Hotspots, Tenant Risk Scores
@@ -107,6 +107,19 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `PUT /api/integrations/{name}` — update (superadmin)
   - `DELETE /api/integrations/{name}` — delete (superadmin)
   - `POST /api/integrations/{name}/test` — fire test request + persist `last_test_status`
+- **Support Tickets Tab** (v1.58.0 — NEW ✨):
+  - Full ticket lifecycle: create, assign, escalate, approve/reject, resolve, reopen, close
+  - Ticket types: service_request, incident, change_request, inquiry, escalation
+  - Human-readable refs: `TKT-YYYY-NNNNN` (per-year auto-increment)
+  - SLA tracking: response + resolution deadlines, breach/warning indicators in list and detail
+  - Comment thread: internal notes (hidden from viewers) and external activity log
+  - Admin sub-panel: SLA policy table (team × type × priority) + HTML email template editor
+  - RBAC: viewer/operator/technical → read+write; admin/superadmin → admin
+  - 35+ API endpoints at `/api/tickets`
+- **My Queue Tab** (v1.58.0 — NEW ✨):
+  - Priority-sorted ticket queue scoped to the current user's department
+  - Pre-filtered view (open/in-progress tickets assigned to or from current user's team)
+  - `GET /api/tickets/my-queue` — returns tickets sorted by priority then SLA urgency
 - **Migration Planner — Per-Day Schedule Breakdown + Throughput Cap Fix** (v1.44.0):
   - **Engine rewrite** (`migration_engine.py`): replaced per-slot hour packing with a real GB/day throughput ceiling — `effective_gbph = (bottleneck_mbps/8) × 3600/1024 × 0.55`; `max_gb_per_day = effective_gbph × working_hours`
   - `wall_clock_hours` now `day_transfer_gb / effective_gbph` (was `day_hours_used / total_concurrent` — badly under-counted)
