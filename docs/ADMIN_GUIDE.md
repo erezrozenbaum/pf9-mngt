@@ -879,6 +879,31 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
   - Edit email template: UI → Support Tickets → ⚙ Admin → Email Templates tab → click template name
   - Manually breach-check: calls `run_sla_checks()` via background loop; cannot be triggered from UI (runs automatically every 15 min)
 
+### Analytics, Bulk Actions & Polish — T4 (v1.60.0)
+- **Analytics endpoint**: `GET /api/tickets/analytics?days=30` (admin/superadmin only) — returns:
+  - `resolution_by_dept`: average resolution hours per destination department
+  - `sla_by_dept`: SLA breach rate % per department
+  - `top_openers`: top 10 users by ticket count
+  - `volume_trend`: daily opened ticket counts over the window
+  - Available in UI: Support Tickets → ⚙ Admin → Analytics tab
+- **Stats bar improvements**: `GET /api/tickets/stats` now includes `resolved_today` and `opened_today`. Priority breakdown is hidden in the stats bar when a status filter is active (prevents misleading counts).
+- **Bulk actions**: `POST /api/tickets/bulk-action` — admin/superadmin only:
+  - `close_stale` — closes open tickets older than `stale_days` with a "bulk closed" note
+  - `reassign` — reassigns a set of tickets to `assigned_to` and marks them `in_progress`
+  - `export_csv` — returns a CSV file attachment of the selected ticket IDs
+  - UI: checkboxes appear per row; bulk toolbar shown when ≥1 ticket selected
+- **Team-member picker**: `GET /api/tickets/team-members/{dept_id}` returns active users from `user_roles` for the given department. Create Ticket modal shows a "Assign to user (optional)" dropdown after team selection. `TicketCreate.assigned_to` field added; if provided, initial status is set to `assigned`.
+- **Opener confirmation email**: when a ticket is created, the `ticket_created` email template is sent to the opener's email (looked up via `users.name = username`). Fires silently; failure is logged as a warning only.
+- **Dept dropdown fix**: `GET /api/navigation/departments` now returns `{"departments": [...]}` — previously returned a plain list, causing empty dropdowns in Create Ticket modal and dept filter across TicketsTab, MeteringTab, and RunbooksTab.
+- **LandingDashboard widget**: ticket KPI card (Open / SLA Breached / Resolved Today / Opened Today) — visible by default on the main dashboard for all roles.
+- **MeteringTab integration**: 📋 "Open Inquiry" button on every resource row opens an inline modal to create a `service_request` ticket linked to that resource.
+- **RunbooksTab integration**: 📎 "Ticket" button on every execution row opens an inline modal pre-filled from runbook name and status.
+- **Quick admin tasks for T4**:
+  - View analytics: UI → Support Tickets → ⚙ Admin → Analytics tab
+  - Bulk close stale tickets: ⚙ Admin → Bulk Actions → enter stale days → Close Stale
+  - Query team members for a dept: `SELECT username FROM user_roles WHERE department_id = <id> AND is_active = true`
+  - Check opener email lookup: `SELECT name, email FROM users WHERE name = '<username>'`
+
 ### Action Runbooks — Security Hardening + Isolation Audit + Hypervisor Evacuate (v1.57.0)
 - **`security_group_hardening`** (Runbook 21): Scans all SGs for ingress rules open to `0.0.0.0/0`/`::/0` on sensitive ports (22, 3389, 5432, 3306, 6379, 27017 by default). Dry-run returns a proposed replacement CIDR per rule using graph adjacency data (fallback `10.0.0.0/8`). Execute: DELETE violating rule → CREATE replacement rule(s) with tighter CIDRs.
   - **Parameters**: `target_project` (projects_optional), `flag_ports=[22,3389,5432,3306,6379,27017]`, `replacement_cidr_fallback="10.0.0.0/8"`

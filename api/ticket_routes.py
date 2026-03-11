@@ -289,6 +289,7 @@ class TicketCreate(BaseModel):
     project_name:  Optional[str] = None
     domain_id:     Optional[str] = None
     domain_name:   Optional[str] = None
+    assigned_to: Optional[str] = None
     requires_approval: bool = False
 
     @validator("ticket_type")
@@ -640,10 +641,12 @@ async def create_ticket(
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            assignee       = body.assigned_to or None
+            initial_status = "assigned" if assignee else "open"
             cur.execute("""
                 INSERT INTO support_tickets (
                     ticket_ref, title, description, ticket_type, status, priority,
-                    from_dept_id, to_dept_id, opened_by,
+                    from_dept_id, to_dept_id, opened_by, assigned_to,
                     customer_name, customer_email, auto_notify_customer,
                     resource_type, resource_id, resource_name,
                     project_id, project_name, domain_id, domain_name,
@@ -652,8 +655,8 @@ async def create_ticket(
                     sla_response_at, sla_resolve_at,
                     created_at, updated_at
                 ) VALUES (
-                    %s,%s,%s,%s,'open',%s,
-                    %s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,
+                    %s,%s,%s,%s,
                     %s,%s,%s,
                     %s,%s,%s,
                     %s,%s,%s,%s,
@@ -664,8 +667,8 @@ async def create_ticket(
                 )
                 RETURNING id
             """, (
-                ref, body.title, body.description, body.ticket_type, body.priority,
-                from_dept_id, body.to_dept_id, username,
+                ref, body.title, body.description, body.ticket_type, initial_status, body.priority,
+                from_dept_id, body.to_dept_id, username, assignee,
                 body.customer_name, body.customer_email, body.auto_notify_customer,
                 body.resource_type, body.resource_id, body.resource_name,
                 body.project_id, body.project_name, body.domain_id, body.domain_name,
@@ -710,6 +713,25 @@ async def create_ticket(
             send_email([body.customer_email], subj, html_body)
         except Exception as exc:
             logger.warning("Failed to auto-notify customer on ticket creation: %s", exc)
+
+    # Confirmation email to the internal user who opened the ticket
+    if SMTP_ENABLED:
+        try:
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute("SELECT email FROM users WHERE name = %s", (username,))
+                    opener_row = _cur.fetchone()
+            if opener_row and opener_row[0]:
+                subj, html_body = _render_template("ticket_created", {
+                    "ticket_ref":    ref,
+                    "title":         body.title,
+                    "priority":      body.priority,
+                    "to_dept":       ticket.get("to_dept_name", ""),
+                    "customer_name": username,
+                })
+                send_email([opener_row[0]], subj, html_body)
+        except Exception as exc:
+            logger.warning("Failed to send opener confirmation email: %s", exc)
 
     return ticket
 
@@ -790,11 +812,28 @@ async def ticket_stats(
             )
             open_count = cur.fetchone()["cnt"]
 
+            cur.execute(
+                f"SELECT COUNT(*) AS cnt FROM support_tickets "
+                f"WHERE {vis_clause} AND status IN ('resolved','closed') "
+                f"AND resolved_at::date = CURRENT_DATE",
+                vis_vals,
+            )
+            resolved_today = cur.fetchone()["cnt"]
+
+            cur.execute(
+                f"SELECT COUNT(*) AS cnt FROM support_tickets "
+                f"WHERE {vis_clause} AND created_at::date = CURRENT_DATE",
+                vis_vals,
+            )
+            opened_today = cur.fetchone()["cnt"]
+
     return {
-        "by_status":   by_status,
-        "by_priority": by_priority,
-        "sla_breached": sla_breach,
-        "open":        open_count,
+        "by_status":      by_status,
+        "by_priority":    by_priority,
+        "sla_breached":   sla_breach,
+        "open":           open_count,
+        "resolved_today": resolved_today,
+        "opened_today":   opened_today,
     }
 
 
@@ -992,6 +1031,177 @@ async def auto_create_ticket(
                   _now(), ticket["id"]))
 
     return {"ticket_id": ticket["id"], "ticket_ref": ticket["ticket_ref"], "created": True}
+
+
+# ===========================================================================
+#  ROUTES — Analytics & Bulk actions  (static paths BEFORE /{ticket_id})
+# ===========================================================================
+
+class BulkActionRequest(BaseModel):
+    action: str  # "close_stale" | "reassign" | "export_csv"
+    ticket_ids: Optional[List[int]] = None
+    assigned_to: Optional[str] = None
+    to_dept_id: Optional[int] = None
+    stale_days: int = 30
+
+
+@router.get("/analytics")
+async def ticket_analytics(
+    days: int = Query(30, ge=7, le=90),
+    user: dict = Depends(require_permission("tickets", "admin")),
+):
+    """Management analytics: resolution time, SLA breach rates, top openers, volume trend."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT d.name AS dept_name,
+                       COUNT(*) AS total,
+                       ROUND(AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600)::numeric, 1)
+                           AS avg_resolution_hours
+                FROM support_tickets t
+                JOIN departments d ON d.id = t.to_dept_id
+                WHERE t.resolved_at IS NOT NULL
+                  AND t.created_at >= NOW() - (%s || ' days')::interval
+                GROUP BY d.name
+                ORDER BY avg_resolution_hours
+            """, (days,))
+            resolution_by_dept = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT d.name AS dept_name,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN sla_resolve_breached THEN 1 ELSE 0 END) AS breached,
+                       ROUND(100.0 * SUM(CASE WHEN sla_resolve_breached THEN 1 ELSE 0 END)
+                             / NULLIF(COUNT(*), 0), 1) AS breach_pct
+                FROM support_tickets t
+                JOIN departments d ON d.id = t.to_dept_id
+                WHERE t.created_at >= NOW() - (%s || ' days')::interval
+                GROUP BY d.name
+                ORDER BY breach_pct DESC NULLS LAST
+            """, (days,))
+            sla_by_dept = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT opened_by, COUNT(*) AS count
+                FROM support_tickets
+                WHERE created_at >= NOW() - (%s || ' days')::interval
+                GROUP BY opened_by
+                ORDER BY count DESC
+                LIMIT 10
+            """, (days,))
+            top_openers = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT DATE(created_at) AS day,
+                       COUNT(*) AS opened,
+                       SUM(CASE WHEN status IN ('resolved','closed') THEN 1 ELSE 0 END) AS resolved
+                FROM support_tickets
+                WHERE created_at >= NOW() - (%s || ' days')::interval
+                GROUP BY DATE(created_at)
+                ORDER BY day
+            """, (days,))
+            volume_trend = [dict(r) for r in cur.fetchall()]
+
+    # Make dates JSON-serialisable
+    for row in volume_trend:
+        if hasattr(row.get("day"), "isoformat"):
+            row["day"] = row["day"].isoformat()
+
+    return {
+        "days": days,
+        "resolution_by_dept": resolution_by_dept,
+        "sla_by_dept": sla_by_dept,
+        "top_openers": top_openers,
+        "volume_trend": volume_trend,
+    }
+
+
+@router.post("/bulk-action")
+async def bulk_action_tickets(
+    req: BulkActionRequest,
+    user: dict = Depends(require_permission("tickets", "write")),
+):
+    """Bulk close-stale, mass-reassign, or export tickets as CSV."""
+    import csv
+    import io
+
+    username = user["username"]
+    role     = user["role"]
+    vis_clause, vis_vals = _sla_visible_filter(username, role)
+
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if req.action == "close_stale":
+                id_frag = "AND id = ANY(%s)" if req.ticket_ids else ""
+                extra   = [req.ticket_ids] if req.ticket_ids else []
+                cur.execute(
+                    f"UPDATE support_tickets "
+                    f"SET status='closed', closed_at=NOW(), updated_at=NOW() "
+                    f"WHERE {vis_clause} AND status='resolved' "
+                    f"AND resolved_at < NOW() - INTERVAL '{req.stale_days} days' "
+                    f"{id_frag} RETURNING id",
+                    vis_vals + extra,
+                )
+                affected = cur.rowcount
+
+            elif req.action == "reassign":
+                if not req.ticket_ids:
+                    raise HTTPException(status_code=400, detail="ticket_ids required for reassign")
+                cur.execute(
+                    f"UPDATE support_tickets "
+                    f"SET assigned_to=%s, status='assigned', updated_at=NOW() "
+                    f"WHERE {vis_clause} AND id = ANY(%s) "
+                    f"AND status NOT IN ('resolved','closed') RETURNING id",
+                    vis_vals + [req.assigned_to, req.ticket_ids],
+                )
+                affected = cur.rowcount
+
+            elif req.action == "export_csv":
+                id_frag = "AND t.id = ANY(%s)" if req.ticket_ids else ""
+                extra   = [req.ticket_ids] if req.ticket_ids else []
+                cur.execute(
+                    f"SELECT t.*, d.name AS to_dept_name "
+                    f"FROM support_tickets t "
+                    f"LEFT JOIN departments d ON d.id = t.to_dept_id "
+                    f"WHERE {vis_clause} {id_frag} ORDER BY t.id",
+                    vis_vals + extra,
+                )
+                rows = cur.fetchall()
+                buf = io.StringIO()
+                if rows:
+                    writer = csv.DictWriter(buf, fieldnames=rows[0].keys())
+                    writer.writeheader()
+                    writer.writerows(rows)
+                from fastapi.responses import PlainTextResponse
+                return PlainTextResponse(
+                    buf.getvalue(),
+                    media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=tickets_export.csv"},
+                )
+
+            else:
+                raise HTTPException(status_code=400, detail=f"Unknown action: {req.action}")
+
+    return {"action": req.action, "affected": affected}
+
+
+# ===========================================================================
+#  ROUTES — Dept team members
+# ===========================================================================
+
+@router.get("/team-members/{dept_id}")
+async def get_team_members(
+    dept_id: int,
+    user: dict = Depends(require_permission("tickets", "read")),
+):
+    """Return active users assigned to the given department."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT username FROM user_roles WHERE department_id = %s AND is_active = true ORDER BY username",
+                (dept_id,),
+            )
+            return {"members": [r["username"] for r in cur.fetchall()]}
 
 
 # ===========================================================================

@@ -199,21 +199,29 @@ export default function TicketsTab({
   const [showCreate, setShowCreate] = useState(false);
   const [newTicket, setNewTicket] = useState({
     title: "", description: "", ticket_type: "service_request",
-    priority: "normal", to_dept_id: 0,
+    priority: "normal", to_dept_id: 0, assigned_to: "",
     customer_name: "", customer_email: "", auto_notify_customer: false,
     requires_approval: false,
   });
   const [creating, setCreating] = useState(false);
+  const [teamMembers, setTeamMembers]       = useState<string[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
 
   // --- Departments (for dropdowns) ---
   const [depts, setDepts] = useState<Department[]>([]);
 
   // --- Admin panels ---
   const [showAdmin, setShowAdmin]   = useState(false);
-  const [adminTab, setAdminTab]     = useState<"sla" | "templates">("sla");
+  const [adminTab, setAdminTab]     = useState<"sla" | "templates" | "analytics">("sla");
   const [slaPolicy, setSlaPolicy]   = useState<SLAPolicy[]>([]);
   const [emailTpl, setEmailTpl]     = useState<EmailTemplate[]>([]);
   const [editTpl, setEditTpl]       = useState<EmailTemplate | null>(null);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
+
+  // --- Bulk selection ---
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkAssignTo, setBulkAssignTo] = useState("");
 
   // --- Toast ---
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
@@ -228,7 +236,7 @@ export default function TicketsTab({
   // ---------------------------------------------------------------------------
   const loadDepts = useCallback(async () => {
     try {
-      const data = await apiFetch<{ departments: Department[] }>("/api/navigation/departments");
+      const data = await apiFetch<{ departments: Department[] }>("/api/departments");
       setDepts(data.departments || []);
     } catch {
       // fallback — depts list not critical
@@ -398,17 +406,20 @@ export default function TicketsTab({
     }
     setCreating(true);
     try {
+      const body: Record<string, unknown> = { ...newTicket };
+      if (!body.assigned_to) delete body.assigned_to;
       await apiFetch<Ticket>("/api/tickets", {
         method: "POST",
-        body: JSON.stringify(newTicket),
+        body: JSON.stringify(body),
       });
       setShowCreate(false);
       setNewTicket({
         title: "", description: "", ticket_type: "service_request",
-        priority: "normal", to_dept_id: 0,
+        priority: "normal", to_dept_id: 0, assigned_to: "",
         customer_name: "", customer_email: "", auto_notify_customer: false,
         requires_approval: false,
       });
+      setTeamMembers([]);
       showToast("Ticket created", "success");
       loadTickets();
       loadStats();
@@ -434,12 +445,63 @@ export default function TicketsTab({
     } catch { /* */ }
   }, []);
 
+  const loadAnalytics = useCallback(async () => {
+    try {
+      const data = await apiFetch<any>("/api/tickets/analytics?days=30");
+      setAnalyticsData(data);
+    } catch { /* non-critical */ }
+  }, []);
+
   useEffect(() => {
     if (showAdmin) {
       loadSLAPolicies();
       loadTemplates();
+      if (adminTab === "analytics") loadAnalytics();
     }
-  }, [showAdmin, loadSLAPolicies, loadTemplates]);
+  }, [showAdmin, adminTab, loadSLAPolicies, loadTemplates, loadAnalytics]);
+
+  async function doBulkAction(action: string) {
+    setBulkLoading(true);
+    try {
+      const ids = [...selectedIds];
+      if (action === "export_csv") {
+        const token = localStorage.getItem("auth_token");
+        const res = await fetch(`/api/tickets/bulk-action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ action, ticket_ids: ids.length > 0 ? ids : undefined }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href = url; a.download = "tickets_export.csv"; a.click();
+        URL.revokeObjectURL(url);
+        showToast("CSV exported", "success");
+      } else if (action === "close_stale") {
+        const result = await apiFetch<{affected: number}>("/api/tickets/bulk-action", {
+          method: "POST",
+          body: JSON.stringify({ action, ticket_ids: ids.length > 0 ? ids : undefined }),
+        });
+        showToast(`${result.affected} stale ticket(s) closed`, "success");
+        setSelectedIds(new Set());
+        loadTickets(); loadStats();
+      } else if (action === "reassign") {
+        if (!bulkAssignTo.trim()) { showToast("Enter assignee username", "error"); return; }
+        if (ids.length === 0) { showToast("Select at least one ticket", "error"); return; }
+        const result = await apiFetch<{affected: number}>("/api/tickets/bulk-action", {
+          method: "POST",
+          body: JSON.stringify({ action, ticket_ids: ids, assigned_to: bulkAssignTo }),
+        });
+        showToast(`${result.affected} ticket(s) reassigned to ${bulkAssignTo}`, "success");
+        setSelectedIds(new Set()); setBulkAssignTo("");
+        loadTickets();
+      }
+    } catch (e: any) {
+      showToast(`Bulk action failed: ${e.message}`, "error");
+    } finally {
+      setBulkLoading(false);
+    }
+  }
 
   async function saveTemplate() {
     if (!editTpl) return;
@@ -501,7 +563,13 @@ export default function TicketsTab({
               {stats.sla_breached > 0 && (
                 <span className="tt-stat tt-stat-breach">SLA Breach: <strong>{stats.sla_breached}</strong></span>
               )}
-              {Object.entries(stats.by_priority).map(([k, v]) => v > 0 && (
+              {(stats as any).resolved_today > 0 && (
+                <span className="tt-stat" style={{color:"#10b981"}}>Resolved today: <strong>{(stats as any).resolved_today}</strong></span>
+              )}
+              {(stats as any).opened_today > 0 && (
+                <span className="tt-stat" style={{color:"#f59e0b"}}>Opened today: <strong>{(stats as any).opened_today}</strong></span>
+              )}
+              {Object.entries(stats.by_priority).map(([k, v]) => v > 0 && !fStatus && (
                 <span key={k} className="tt-stat" style={{ color: PRIORITY_COLORS[k] }}>
                   {k}: <strong>{v}</strong>
                 </span>
@@ -535,7 +603,8 @@ export default function TicketsTab({
           saveTemplate={saveTemplate}
           depts={depts}
           showToast={showToast}
-          reload={() => { loadSLAPolicies(); loadTemplates(); }}
+          analyticsData={analyticsData}
+          reload={() => { loadSLAPolicies(); loadTemplates(); loadAnalytics(); }}
         />
       )}
 
@@ -583,9 +652,36 @@ export default function TicketsTab({
         </div>
       ) : (
         <>
+          {/* Bulk action toolbar */}
+          {selectedIds.size > 0 && (
+            <div className="tt-bulk-toolbar">
+              <span>{selectedIds.size} selected</span>
+              <input
+                className="tt-filter-input" style={{width:160}}
+                placeholder="Assignee username"
+                value={bulkAssignTo}
+                onChange={e => setBulkAssignTo(e.target.value)}
+              />
+              <button className="tt-btn tt-btn-secondary" disabled={bulkLoading}
+                onClick={() => doBulkAction("reassign")}>↪ Reassign</button>
+              <button className="tt-btn tt-btn-secondary" disabled={bulkLoading}
+                onClick={() => doBulkAction("close_stale")}>🗄 Close Stale</button>
+              <button className="tt-btn tt-btn-secondary" disabled={bulkLoading}
+                onClick={() => doBulkAction("export_csv")}>⬇ Export CSV</button>
+              <button className="tt-btn" disabled={bulkLoading}
+                onClick={() => setSelectedIds(new Set())}>✕ Clear</button>
+            </div>
+          )}
+
           <table className="tt-table">
             <thead>
               <tr>
+                <th style={{width:32}}>
+                  <input type="checkbox"
+                    checked={selectedIds.size === tickets.length && tickets.length > 0}
+                    onChange={e => setSelectedIds(e.target.checked ? new Set(tickets.map(t => t.id)) : new Set())}
+                  />
+                </th>
                 <th>Ref</th>
                 <th>Type</th>
                 <th>Title</th>
@@ -599,7 +695,16 @@ export default function TicketsTab({
             </thead>
             <tbody>
               {tickets.map(t => (
-                <tr key={t.id} className="tt-row" onClick={() => openDetail(t)}>
+                <tr key={t.id} className={`tt-row${selectedIds.has(t.id) ? " tt-row-selected" : ""}`} onClick={() => openDetail(t)}>
+                  <td onClick={e => e.stopPropagation()} style={{textAlign:"center"}}>
+                    <input type="checkbox" checked={selectedIds.has(t.id)}
+                      onChange={e => setSelectedIds(prev => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(t.id); else next.delete(t.id);
+                        return next;
+                      })}
+                    />
+                  </td>
                   <td className="tt-ref">{t.ticket_ref}</td>
                   <td title={t.ticket_type}>{TYPE_ICONS[t.ticket_type] || "📋"}</td>
                   <td className="tt-title-cell">
@@ -664,11 +769,33 @@ export default function TicketsTab({
               </div>
               <label>Assign to team *
                 <select value={newTicket.to_dept_id || ""}
-                  onChange={e => setNewTicket(n => ({...n, to_dept_id: Number(e.target.value)}))}>
+                  onChange={e => {
+                    const deptId = Number(e.target.value);
+                    setNewTicket(n => ({ ...n, to_dept_id: deptId, assigned_to: "" }));
+                    setTeamMembers([]);
+                    if (deptId) {
+                      setLoadingMembers(true);
+                      apiFetch<{ members: string[] }>(`/api/tickets/team-members/${deptId}`)
+                        .then(d => setTeamMembers(d.members || []))
+                        .catch(() => {})
+                        .finally(() => setLoadingMembers(false));
+                    }
+                  }}>
                   <option value="">Select team…</option>
                   {depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </label>
+              {newTicket.to_dept_id > 0 && (
+                <label>Assign to user <em style={{fontSize:"0.8em",color:"#999"}}>(optional)</em>
+                  <select value={newTicket.assigned_to}
+                    onChange={e => setNewTicket(n => ({ ...n, assigned_to: e.target.value }))}>
+                    <option value="">— unassigned —</option>
+                    {loadingMembers
+                      ? <option disabled>Loading members…</option>
+                      : teamMembers.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </label>
+              )}
               <label>Customer Name
                 <input value={newTicket.customer_name}
                   onChange={e => setNewTicket(n => ({...n, customer_name: e.target.value}))} />
@@ -926,10 +1053,10 @@ function AdminPanel({
   adminTab, setAdminTab,
   slaPolicy, emailTpl,
   editTpl, setEditTpl, saveTemplate,
-  depts, showToast, reload,
+  depts, showToast, analyticsData, reload,
 }: {
-  adminTab: "sla" | "templates";
-  setAdminTab: (v: "sla" | "templates") => void;
+  adminTab: "sla" | "templates" | "analytics";
+  setAdminTab: (v: "sla" | "templates" | "analytics") => void;
   slaPolicy: SLAPolicy[];
   emailTpl: EmailTemplate[];
   editTpl: EmailTemplate | null;
@@ -937,6 +1064,7 @@ function AdminPanel({
   saveTemplate: () => void;
   depts: Department[];
   showToast: (msg: string, type?: string) => void;
+  analyticsData: any;
   reload: () => void;
 }) {
   return (
@@ -946,6 +1074,8 @@ function AdminPanel({
           onClick={() => setAdminTab("sla")}>SLA Policies</button>
         <button className={`tt-admin-tab ${adminTab === "templates" ? "active" : ""}`}
           onClick={() => setAdminTab("templates")}>Email Templates</button>
+        <button className={`tt-admin-tab ${adminTab === "analytics" ? "active" : ""}`}
+          onClick={() => setAdminTab("analytics")}>📊 Analytics</button>
       </div>
 
       {adminTab === "sla" && (
@@ -978,6 +1108,66 @@ function AdminPanel({
         </div>
       )}
 
+      {adminTab === "analytics" && (
+        <div className="tt-admin-content">
+          {!analyticsData ? (
+            <p style={{color:"#888", padding:"12px 0"}}>Loading analytics…</p>
+          ) : (
+            <div style={{display:"flex", flexDirection:"column", gap:20}}>
+              <div>
+                <h4 style={{marginBottom:8}}>📈 Volume Trend (last 30 days)</h4>
+                <div style={{display:"flex", gap:4, alignItems:"flex-end", height:80, overflowX:"auto"}}>
+                  {(analyticsData.volume_trend || []).map((row: any) => {
+                    const maxVal = Math.max(...(analyticsData.volume_trend || []).map((r: any) => r.opened || 0), 1);
+                    const h = Math.round((row.opened / maxVal) * 72);
+                    return (
+                      <div key={row.day} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,minWidth:24}} title={`${row.day}: ${row.opened} opened, ${row.resolved} resolved`}>
+                        <div style={{width:16, height:h, background:"#3b82f6", borderRadius:"2px 2px 0 0", minHeight:2}} />
+                        <span style={{fontSize:"0.6em",opacity:0.5,writingMode:"vertical-rl",transform:"rotate(180deg)",maxHeight:36,overflow:"hidden"}}>{row.day?.slice(5)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <h4 style={{marginBottom:8}}>⏱ Avg Resolution Time by Team</h4>
+                {(analyticsData.resolution_by_dept || []).map((row: any) => (
+                  <div key={row.dept_name} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <span style={{minWidth:120,fontSize:"0.88em",fontWeight:500}}>{row.dept_name}</span>
+                    <div style={{flex:1,height:14,background:"rgba(128,128,128,0.1)",borderRadius:4,overflow:"hidden"}}>
+                      <div style={{width:`${Math.min((row.avg_resolution_hours/48)*100,100)}%`,height:"100%",background:"#10b981",borderRadius:4}} />
+                    </div>
+                    <span style={{minWidth:60,fontSize:"0.82em",textAlign:"right"}}>{row.avg_resolution_hours}h</span>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <h4 style={{marginBottom:8}}>🚨 SLA Breach Rate by Team</h4>
+                {(analyticsData.sla_by_dept || []).map((row: any) => (
+                  <div key={row.dept_name} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <span style={{minWidth:120,fontSize:"0.88em",fontWeight:500}}>{row.dept_name}</span>
+                    <div style={{flex:1,height:14,background:"rgba(128,128,128,0.1)",borderRadius:4,overflow:"hidden"}}>
+                      <div style={{width:`${row.breach_pct || 0}%`,height:"100%",background:row.breach_pct>50?"#dc2626":"#f59e0b",borderRadius:4}} />
+                    </div>
+                    <span style={{minWidth:50,fontSize:"0.82em",textAlign:"right"}}>{row.breach_pct ?? 0}%</span>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <h4 style={{marginBottom:8}}>👤 Top Openers</h4>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  {(analyticsData.top_openers || []).map((row: any, i: number) => (
+                    <span key={row.opened_by} style={{padding:"4px 10px",background:"rgba(37,99,235,0.1)",borderRadius:12,fontSize:"0.85em"}}>
+                      #{i+1} {row.opened_by} <strong>({row.count})</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {adminTab === "templates" && (
         <div className="tt-admin-content">
           {editTpl ? (
@@ -991,7 +1181,35 @@ function AdminPanel({
                 <textarea rows={10} value={editTpl.html_body}
                   onChange={e => setEditTpl({...editTpl, html_body: e.target.value})} />
               </label>
-              <p className="tt-hint">Available placeholders depend on template context — e.g. &#123;&#123;ticket_ref&#125;&#125;, &#123;&#123;title&#125;&#125;, &#123;&#123;priority&#125;&#125;, &#123;&#123;customer_name&#125;&#125;</p>
+              <details style={{marginBottom:8}}>
+                <summary className="tt-hint" style={{cursor:"pointer", userSelect:"none"}}>📋 Variable reference guide (click to expand)</summary>
+                <div style={{fontSize:"0.82em", background:"rgba(128,128,128,0.07)", borderRadius:6, padding:"10px 14px", marginTop:6, lineHeight:1.8}}>
+                  <strong>Universal</strong><br/>
+                  <code>&#123;&#123;ticket_ref&#125;&#125;</code> — Ticket reference (e.g. TKT-0042)<br/>
+                  <code>&#123;&#123;title&#125;&#125;</code> — Ticket title<br/>
+                  <code>&#123;&#123;description&#125;&#125;</code> — Full description<br/>
+                  <code>&#123;&#123;priority&#125;&#125;</code> — critical / high / normal / low<br/>
+                  <code>&#123;&#123;status&#125;&#125;</code> — Current status label<br/>
+                  <code>&#123;&#123;ticket_type&#125;&#125;</code> — Ticket type slug<br/>
+                  <code>&#123;&#123;opened_by&#125;&#125;</code> — Username of submitter<br/>
+                  <code>&#123;&#123;created_at&#125;&#125;</code> — Creation timestamp<br/>
+                  <br/>
+                  <strong>Customer-facing</strong><br/>
+                  <code>&#123;&#123;customer_name&#125;&#125;</code> — Customer display name<br/>
+                  <code>&#123;&#123;customer_email&#125;&#125;</code> — Customer email address<br/>
+                  <code>&#123;&#123;portal_url&#125;&#125;</code> — Link to portal ticket view<br/>
+                  <br/>
+                  <strong>Assignment / SLA</strong><br/>
+                  <code>&#123;&#123;assigned_to&#125;&#125;</code> — Assignee username<br/>
+                  <code>&#123;&#123;to_dept_name&#125;&#125;</code> — Assigned team name<br/>
+                  <code>&#123;&#123;sla_response_at&#125;&#125;</code> — Response SLA deadline<br/>
+                  <code>&#123;&#123;sla_resolve_at&#125;&#125;</code> — Resolve SLA deadline<br/>
+                  <br/>
+                  <strong>Resolution</strong><br/>
+                  <code>&#123;&#123;resolution_note&#125;&#125;</code> — Note added on resolve<br/>
+                  <code>&#123;&#123;resolved_at&#125;&#125;</code> — Resolution timestamp<br/>
+                </div>
+              </details>
               <div className="tt-template-editor-actions">
                 <button className="tt-btn tt-btn-secondary" onClick={() => setEditTpl(null)}>Cancel</button>
                 <button className="tt-btn tt-btn-primary" onClick={saveTemplate}>Save Template</button>

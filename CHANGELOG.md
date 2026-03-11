@@ -5,7 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.59.0] - 2026-03-11
+## [1.60.0] - 2026-03-11
+
+### Added — Phase T4: Analytics & Polish
+
+#### T4.1 — Enhanced Ticket Stats (`api/ticket_routes.py`)
+- `GET /api/tickets/stats` now also returns `resolved_today` and `opened_today` counts.
+- Frontend stats bar surfaces both fields with colour-coded spans.
+
+#### T4.2 — Management Analytics Endpoint (`api/ticket_routes.py`)
+- New `GET /api/tickets/analytics?days=30` (admin-only).
+- Returns: `resolution_by_dept` (avg hours), `sla_by_dept` (breach rate %), `top_openers`
+  (top-10 submitters), `volume_trend` (daily opened/resolved series for bar chart).
+- TicketsTab Admin Panel gains a new **📊 Analytics** tab rendering inline bar charts and
+  top-opener tags from this data.
+
+#### T4.3 — Bulk Actions (`api/ticket_routes.py` + `TicketsTab.tsx`)
+- New `POST /api/tickets/bulk-action` endpoint; actions: `close_stale`, `reassign`,
+  `export_csv`.
+- `close_stale`: closes all resolved tickets older than `stale_days` (default 30); optional
+  `ticket_ids` list to restrict scope.
+- `reassign`: mass-assigns selected tickets to a named user, visibility-scoped.
+- `export_csv`: streams a CSV of visible tickets; streams as `text/csv` attachment.
+- TicketsTab: each row now has a checkbox; a bulk toolbar appears when any row is selected,
+  offering Reassign, Close Stale, and Export CSV buttons + a select-all checkbox in the header.
+
+#### T4.4 — Search Integration (`api/search.py`)
+- `GET /api/search` now includes ticket hits via a secondary direct query against
+  `support_tickets` using `websearch_to_tsquery` on title + description.
+- Results are ranked and merged into the unified result list up to `limit`.
+- Visibility is enforced inline: admins see all; others see only their own tickets or
+  tickets routed to their department.
+
+#### T4.5 — LandingDashboard Ticket Widget (`LandingDashboard.tsx`)
+- New **🎫 Support Tickets** widget (defaultVisible: true) shows 2×2 grid: Open, SLA
+  Breached, Resolved Today, Opened Today — each in a colour-coded stat tile.
+- Fetched in the existing Batch 3 `Promise.all` call alongside OS Distribution.
+- "View all tickets →" button triggers `onNavigate('tickets')`.
+
+#### T4.6 — Tab Hooks: MeteringTab Open Inquiry (`MeteringTab.tsx`)
+- Each resource row in the Resources sub-tab has a **📋** icon button.
+- Clicking opens an inline modal pre-filled with project name; user selects team and title,
+  then creates a ticket via `POST /api/tickets/_auto`.
+
+#### T4.7 — Tab Hooks: RunbooksTab Create Ticket (`RunbooksTab.tsx`)
+- Each execution row in My Executions has a **📎 Ticket** button.
+- Modal pre-fills title from runbook name + status (failed → incident, otherwise
+  service_request) and description with execution metadata.
+- Calls `POST /api/tickets/_auto` with `auto_source="runbook_execution"` and
+  `auto_source_id=execution_id`.
+
+#### T4.8 — Email Template Variable Reference Guide (`TicketsTab.tsx`)
+- Replaced with a collapsible `<details>` panel in the template editor listing all
+  `{{placeholder}}` variables grouped by: Universal, Customer-facing, Assignment/SLA,
+  Resolution.
+
+### Fixed & Enhanced (pre-release polish)
+
+#### Dept Dropdown Empty Bug (`api/navigation_routes.py`)
+- `GET /api/navigation/departments` was returning a plain list; all three ticket modals
+  (TicketsTab, MeteringTab, RunbooksTab) expected `{departments: [...]}`. Changed return to
+  wrap list in keyed object — fixes empty team dropdowns across the board.
+
+#### Team-Member Picker (`api/ticket_routes.py` + `TicketsTab.tsx`)
+- New `GET /api/tickets/team-members/{dept_id}` endpoint: returns `{members: [username, ...]}`
+  for active users in the given department (via `user_roles`).
+- Create Ticket modal: after selecting a team, an optional "Assign to user" dropdown appears
+  populated from the endpoint. If selected, `assigned_to` is included in the create payload.
+- `TicketCreate` model gains `assigned_to: Optional[str] = None`; INSERT sets initial
+  `status = 'assigned'` when `assigned_to` is provided, otherwise `'open'`.
+
+#### Opener Confirmation Email (`api/ticket_routes.py`)
+- After successful ticket creation, the `ticket_created` template is rendered and emailed to
+  the opener's address (looked up via `SELECT email FROM users WHERE name = %s`).
+- Fires only when `SMTP_ENABLED` is true; failure is logged as a warning and never raises.
+
+#### Stats Bar Stale Priority Counts (`TicketsTab.tsx`)
+- Priority breakdown (critical/high/normal/low counts) in the stats bar is now hidden when a
+  status filter is active. Previously the global priority totals were shown even when the
+  filtered view returned 0 open tickets, creating misleading numbers.
+
+
 
 ### Added — Phase T3: Auto-Ticket Triggers
 

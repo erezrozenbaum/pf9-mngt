@@ -109,12 +109,61 @@ async def search(
             ))
             total = cur.fetchone()["total"]
 
+    # --- Ticket side-query (merged by rank) ---
+    ticket_hits: list = []
+    if not type_array or "ticket" in type_array:
+        try:
+            t_role = _user.role if hasattr(_user, "role") else (_user.get("role", "") if isinstance(_user, dict) else "")
+            t_user = _user.username if hasattr(_user, "username") else (_user.get("username", "") if isinstance(_user, dict) else "")
+            if t_role in ("admin", "superadmin"):
+                t_vis = "1=1"
+                t_vals: list = []
+            else:
+                t_vis = "(opened_by = %s OR to_dept_id IN (SELECT department_id FROM user_roles WHERE username = %s))"
+                t_vals = [t_user, t_user]
+            with get_connection() as tconn:
+                with tconn.cursor(cursor_factory=RealDictCursor) as tcur:
+                    tcur.execute(
+                        f"""
+                        SELECT id::text AS doc_id,
+                               'ticket' AS doc_type,
+                               (ticket_ref || ' – ' || title) AS title,
+                               COALESCE(description, '') AS headline,
+                               created_at AS ts,
+                               project_id AS tenant_id,
+                               NULL AS domain_id,
+                               ts_rank_cd(
+                                   to_tsvector('english', title || ' ' || COALESCE(description, '')),
+                                   websearch_to_tsquery('english', %s)
+                               ) AS rank,
+                               ticket_ref, status, priority, ticket_type
+                        FROM support_tickets
+                        WHERE to_tsvector('english', title || ' ' || COALESCE(description, ''))
+                              @@ websearch_to_tsquery('english', %s)
+                          AND {t_vis}
+                        ORDER BY rank DESC
+                        LIMIT %s
+                        """,
+                        [q, q] + t_vals + [limit],
+                    )
+                    ticket_hits = [dict(r) for r in tcur.fetchall()]
+        except Exception as _te:
+            logger.warning("Ticket side-search failed: %s", _te)
+
+    if ticket_hits:
+        combined = _clean(results) + _clean(ticket_hits)
+        combined.sort(key=lambda x: float(x.get("rank") or 0), reverse=True)
+        results = combined[:limit]
+        total = int(total) + len(ticket_hits)
+    else:
+        results = _clean(results)
+
     return {
         "query": q,
         "total": total,
         "limit": limit,
         "offset": offset,
-        "results": _clean(results),
+        "results": results,
     }
 
 

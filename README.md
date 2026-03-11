@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.59.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.60.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -687,7 +687,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.59.0](CHANGELOG.md) — March 11, 2026
+**Current version:** [v1.60.0](CHANGELOG.md) — March 11, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -830,6 +830,18 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.60.0 — Phase T4: Analytics, Bulk Actions & Polish
+- ✅ **Ticket analytics**: `GET /api/tickets/analytics?days=30` — admin-only; returns `resolution_by_dept`, `sla_by_dept`, `top_openers`, and daily `volume_trend`
+- ✅ **Stats enhanced**: `/api/tickets/stats` adds `resolved_today` and `opened_today`; stats bar hides priority breakdown when a status filter is active (no stale counts)
+- ✅ **Bulk actions**: `POST /api/tickets/bulk-action` — `close_stale`, `reassign`, `export_csv`; TicketsTab gains checkbox multi-select + bulk toolbar
+- ✅ **Team-member picker**: `GET /api/tickets/team-members/{dept_id}` — optional "Assign to user" dropdown in Create Ticket modal populates with active dept members; `TicketCreate` accepts `assigned_to`, status set to `assigned` at creation if specified
+- ✅ **Opener confirmation email**: `ticket_created` template sent silently to opener's email (from `users.name` lookup) when SMTP is enabled
+- ✅ **Fixed dept dropdown**: `GET /api/navigation/departments` now returns `{departments: [...]}` — fixes empty teams in Create Ticket modal and dept filter
+- ✅ **LandingDashboard widget**: ticket KPI tile (Open / SLA Breached / Resolved Today / Opened Today) with nav link
+- ✅ **MeteringTab & RunbooksTab hooks**: 📋 and 📎 inline ticket-creation modals per resource/execution row
+- ✅ **Analytics Admin tab**: volume trend chart, resolution time table, SLA breach rate, top openers
+- ✅ **Email template variable reference guide**: collapsible panel in template editor
 
 ### v1.59.0 — Phase T3: Auto-Ticket Triggers
 - ✅ **Drift → auto-incident**: critical/warning drift events in `db_writer.py` open `auto_incident` tickets; idempotent dedup on `(auto_source, auto_source_id)` prevents duplicates

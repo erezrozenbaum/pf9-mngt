@@ -33,6 +33,7 @@ interface DashboardData {
   capacityTrends: any;
   complianceDrift: any;
   osDistribution: any;
+  ticketStats: any;
 }
 
 // ---------- Widget registry for the chooser ----------
@@ -50,7 +51,8 @@ type WidgetId =
   | 'complianceDrift'
   | 'trendlines'
   | 'capacityTrends'
-  | 'osDistribution';
+  | 'osDistribution'
+  | 'tickets';
 
 interface WidgetMeta {
   id: WidgetId;
@@ -75,6 +77,7 @@ const WIDGET_REGISTRY: WidgetMeta[] = [
   { id: 'trendlines', label: 'Trendlines', icon: '📊', description: 'Historical metric trends', defaultVisible: false },
   { id: 'capacityTrends', label: 'Capacity Trends', icon: '📐', description: 'Capacity usage over time', defaultVisible: false },
   { id: 'osDistribution', label: 'OS Distribution', icon: '💻', description: 'VM count by operating system', defaultVisible: true },
+  { id: 'tickets', label: 'Support Tickets', icon: '🎫', description: 'Open tickets, SLA breaches & today\'s activity', defaultVisible: true },
 ];
 
 const STORAGE_KEY_WIDGETS = 'pf9_dashboard_widgets';
@@ -117,6 +120,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
     capacityTrends: null,
     complianceDrift: null,
     osDistribution: null,
+    ticketStats: null,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -209,13 +213,14 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
       ]);
 
       // Batch 3: trends + analytics
-      const [trendlines, tenantRiskHeatmap, capacityTrends, complianceDrift, rvtoolsLastRun, osDistribution] = await Promise.all([
+      const [trendlines, tenantRiskHeatmap, capacityTrends, complianceDrift, rvtoolsLastRun, osDistribution, ticketStats] = await Promise.all([
         safeFetch(`${API_BASE}/dashboard/trendlines`),
         safeFetch(`${API_BASE}/dashboard/tenant-risk-heatmap`),
         safeFetch(`${API_BASE}/dashboard/capacity-trends`),
         safeFetch(`${API_BASE}/dashboard/compliance-drift`),
         safeFetch(`${API_BASE}/dashboard/rvtools-last-run`),
         safeFetch(`${API_BASE}/os-distribution`),
+        safeFetch(`${API_BASE}/api/tickets/stats`),
       ]);
 
       setData({
@@ -235,6 +240,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         capacityTrends,
         complianceDrift,
         osDistribution,
+        ticketStats,
       });
       setLastRefresh(new Date());
       setLastRVToolsRun(rvtoolsLastRun?.last_run ? rvtoolsLastRun : null);
@@ -436,6 +442,40 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         )}
 
         {/* OS Distribution Widget */}
+        {visibleWidgets.has('tickets') && data.ticketStats && (
+          <div className="dashboard-card">
+            <div className="card-header"><h3>🎫 Support Tickets</h3></div>
+            <div className="card-body" style={{padding: '16px'}}>
+              <div style={{display:'grid', gridTemplateColumns:'repeat(2,1fr)', gap:12}}>
+                <div style={{textAlign:'center', padding:12, background:'rgba(37,99,235,0.1)', borderRadius:8}}>
+                  <div style={{fontSize:'2em', fontWeight:'bold', color:'#2563eb'}}>{data.ticketStats.open}</div>
+                  <div style={{fontSize:'0.85em', opacity:0.7}}>Open</div>
+                </div>
+                <div style={{textAlign:'center', padding:12, background: data.ticketStats.sla_breached > 0 ? 'rgba(220,38,38,0.1)' : 'rgba(16,185,129,0.1)', borderRadius:8}}>
+                  <div style={{fontSize:'2em', fontWeight:'bold', color: data.ticketStats.sla_breached > 0 ? '#dc2626' : '#10b981'}}>{data.ticketStats.sla_breached}</div>
+                  <div style={{fontSize:'0.85em', opacity:0.7}}>SLA Breached</div>
+                </div>
+                <div style={{textAlign:'center', padding:12, background:'rgba(16,185,129,0.1)', borderRadius:8}}>
+                  <div style={{fontSize:'2em', fontWeight:'bold', color:'#10b981'}}>{data.ticketStats.resolved_today ?? 0}</div>
+                  <div style={{fontSize:'0.85em', opacity:0.7}}>Resolved Today</div>
+                </div>
+                <div style={{textAlign:'center', padding:12, background:'rgba(245,158,11,0.1)', borderRadius:8}}>
+                  <div style={{fontSize:'2em', fontWeight:'bold', color:'#f59e0b'}}>{data.ticketStats.opened_today ?? 0}</div>
+                  <div style={{fontSize:'0.85em', opacity:0.7}}>Opened Today</div>
+                </div>
+              </div>
+              {onNavigate && (
+                <button
+                  onClick={() => onNavigate('tickets')}
+                  style={{marginTop:12, width:'100%', padding:'6px', background:'none', border:'1px solid rgba(128,128,128,0.3)', borderRadius:6, cursor:'pointer', fontSize:'0.85em', opacity:0.8}}
+                >
+                  View all tickets →
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {visibleWidgets.has('osDistribution') && data.osDistribution && (
           <div className="dashboard-card">
             <div className="card-header">
