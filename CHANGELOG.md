@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.60.1] - 2026-03-11
+
+### Added
+
+- **`docs/TICKET_GUIDE.md`** — Comprehensive guide to the Support Ticket System (API reference,
+  ticket lifecycle & status flow, RBAC & visibility rules, SLA policies table, email template
+  variable reference, auto-ticket trigger sources, runbook integration, UI walkthrough,
+  full database schema, admin SQL recipes, and deployment/migration notes).
+- `README.md` — Added link to `docs/TICKET_GUIDE.md` in the Documentation table.
+
+---
+
 ## [1.60.0] - 2026-03-11
 
 ### Added — Phase T4: Analytics & Polish
