@@ -58,10 +58,10 @@ import re
 from collections import deque
 from typing import Optional, List, Dict, Any, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from psycopg2.extras import RealDictCursor
 
-from auth import require_permission, User
+from auth import require_permission, User, get_current_user
 from db_pool import get_connection
 
 logger = logging.getLogger("pf9.graph")
@@ -820,6 +820,57 @@ def _apply_health_scores(nodes_by_id: Dict[str, Dict]) -> None:
             elif "snapshot_protected" in badges: node["snapshot_coverage"] = "protected"
 
 
+def _trigger_health_auto_tickets(nodes_by_id: Dict[str, Dict]) -> None:
+    """
+    T3.2 — Fire auto-incident tickets for resources with critically low health scores.
+    Idempotent: the ticket helper skips creation if an open ticket already exists
+    for the same (auto_source, auto_source_id) key.
+    Threshold: health_score < 40.
+    """
+    try:
+        from ticket_routes import _auto_ticket
+        for node in nodes_by_id.values():
+            score = node.get("health_score")
+            if score is None or score >= 40:
+                continue
+            ntype = node["type"]
+            badges_str = ", ".join(node.get("badges", []))
+            if ntype == "host":
+                _auto_ticket(
+                    title=f"Hypervisor '{node['label']}' health critical (score={score})",
+                    description=(
+                        f"Host health score dropped to {score}/100. "
+                        f"Badges: {badges_str or 'none'}."
+                    ),
+                    ticket_type="auto_incident",
+                    priority="critical",
+                    to_dept_name="Engineering",
+                    auto_source="health_score",
+                    auto_source_id=f"host:{node['db_id']}",
+                    resource_type="host",
+                    resource_id=node["db_id"],
+                    resource_name=node["label"],
+                )
+            elif ntype == "vm":
+                _auto_ticket(
+                    title=f"VM '{node['label']}' health critical (score={score})",
+                    description=(
+                        f"VM health score dropped to {score}/100. "
+                        f"Badges: {badges_str or 'none'}."
+                    ),
+                    ticket_type="auto_incident",
+                    priority="high",
+                    to_dept_name="Tier2 Support",
+                    auto_source="health_score",
+                    auto_source_id=f"vm:{node['db_id']}",
+                    resource_type="vm",
+                    resource_id=node["db_id"],
+                    resource_name=node["label"],
+                )
+    except Exception as exc:
+        logger.warning("Health auto-ticket trigger failed: %s", exc)
+
+
 def _build_graph_summary(nodes_by_id: Dict[str, Dict]) -> Dict:
     """
     Compute orphan_summary, graph_health_score, tenant_summary, top_issues
@@ -1102,6 +1153,7 @@ def _build_graph(
 
     # Apply health scores + capacity pressure in-place after BFS is complete
     _apply_health_scores(nodes_by_id)
+    _trigger_health_auto_tickets(nodes_by_id)
 
     summary = _build_graph_summary(nodes_by_id)
 
@@ -1212,6 +1264,79 @@ async def get_dependency_graph(
         )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# T3.3 — Delete impact gate: request a change ticket before deleting
+# ---------------------------------------------------------------------------
+
+@router.post("/request-delete", status_code=202)
+async def request_delete_ticket(
+    root_type: str = Body(..., description="Resource type, e.g. 'vm', 'network'"),
+    root_id:   str = Body(..., description="Resource ID (UUID or integer)"),
+    reason:    str = Body("", description="Optional reason for delete request"),
+    current_user: User = Depends(require_permission("resources", "write")),
+):
+    """
+    T3.3 — Gate for high-impact deletes.
+    Creates an auto_change_request ticket (idempotent) and returns 202 with ticket_ref
+    so the caller can track approval before actually deleting the resource.
+    """
+    if root_type not in ROOT_TYPE_ALIAS:
+        raise HTTPException(status_code=400, detail=f"Invalid root_type '{root_type}'")
+    if not _is_valid_id(root_id):
+        raise HTTPException(status_code=400, detail="Invalid root_id format")
+
+    ntype = ROOT_TYPE_ALIAS[root_type]
+    resource_name = root_id
+
+    # Best-effort: fetch the resource name
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                row = FETCHERS[ntype](cur, root_id)
+                if row:
+                    resource_name = row.get("name") or row.get("hostname") or root_id
+    except Exception:
+        pass
+
+    actor = getattr(current_user, "username", "?")
+
+    try:
+        from ticket_routes import _auto_ticket
+        result = _auto_ticket(
+            title=f"Delete request: {root_type} '{resource_name}'",
+            description=(
+                f"User {actor} requested deletion of {root_type} '{resource_name}' (ID: {root_id}). "
+                f"Reason: {reason or 'not specified'}. "
+                f"Review delete-impact graph before approving."
+            ),
+            ticket_type="auto_change_request",
+            priority="high",
+            to_dept_name="Engineering",
+            auto_source="delete_impact",
+            auto_source_id=f"{root_type}:{root_id}",
+            resource_type=root_type,
+            resource_id=root_id,
+            resource_name=resource_name,
+            auto_blocked=True,
+        )
+    except Exception as exc:
+        logger.error("request-delete ticket creation failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not create change-request ticket")
+
+    return {
+        "status": "pending_change_request",
+        "ticket_id":  result.get("ticket_id"),
+        "ticket_ref": result.get("ticket_ref"),
+        "created":    result.get("created", False),
+        "message": (
+            f"Change-request ticket {result.get('ticket_ref', '?')} "
+            "created. Deletion is blocked until the ticket is resolved and approved."
+            if result.get("created")
+            else f"An existing open change-request ticket already covers this resource."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

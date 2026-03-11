@@ -5,6 +5,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.59.0] - 2026-03-11
+
+### Added — Phase T3: Auto-Ticket Triggers
+
+#### T3.1 — Drift Detection → Auto-Incident (`db_writer.py`)
+- Drift events with severity `critical` or `warning` now automatically open an `auto_incident`
+  ticket via `_auto_ticket()`.
+- Idempotent dedup: skips silently if an open ticket already exists for
+  `(auto_source="drift", auto_source_id="drift:{resource_type}:{resource_id}:{field_changed}")`.
+- Routing: critical → Engineering/critical priority; warning → Tier2 Support/high priority.
+- Hook fires inline inside `_detect_drift()` after the drift event INSERT; never blocks
+  inventory sync on failure.
+
+#### T3.2 — Health Score Drop → Auto-Incident (`api/graph_routes.py`)
+- `_trigger_health_auto_tickets(nodes_by_id)` called by `_build_graph()` after every
+  `_apply_health_scores()` pass.
+- Fires for any node with `health_score < 40`; idempotent dedup prevents ticket flood on
+  repeated graph queries.
+- Host nodes → Engineering/critical; VM nodes → Tier2 Support/high.
+
+#### T3.3 — Graph Delete Impact → Change Request Gate (`api/graph_routes.py`)
+- New endpoint `POST /api/graph/request-delete` (202): body `{root_type, root_id, reason}`.
+- Creates an `auto_change_request` ticket with `auto_blocked=true` to gate destructive
+  deletes through the approval workflow.
+- Returns `{status: "pending_change_request", ticket_id, ticket_ref, created, message}`.
+- Auth: `require_permission("resources", "write")`.
+
+#### T3.4 — Runbook Failure → Auto-Incident (`api/runbook_routes.py`)
+- `_execute_runbook()` except block now calls `_auto_ticket()` after setting `status=failed`.
+- `auto_source="runbook_failure"`, `auto_source_id=execution_id` — one ticket per execution.
+- Routes to Engineering with normal priority.
+
+#### T3.5 — Migration Wave Completion → Service Request (`api/migration_routes.py`)
+- `advance_wave_status()` creates a `service_request` ticket when `req.status == "complete"`.
+- `auto_source="migration"`, `auto_source_id=f"wave:{wave_id}"` — one ticket per wave
+  completion.
+- Routes to Engineering with normal priority.
+
+#### `_auto_ticket()` Helper (`api/ticket_routes.py`)
+- New in-process DB helper function (no HTTP round-trip) importable by all `api/` modules.
+- Accepts `to_dept_name: str` (resolved to dept ID internally) for a clean caller interface.
+- `AutoTicketCreate` Pydantic model updated: accepts either `to_dept_id` or `to_dept_name`
+  via `@root_validator(skip_on_failure=True)`.
+- `POST /api/tickets/_auto` endpoint returns `ticket_ref` in both new-ticket and
+  existing-ticket (dedup) responses.
+
+#### Frontend UI Buttons (Phase T3)
+- **`DriftDetection.tsx`**: "🎫 Create Incident Ticket" button in the event detail side-panel.
+  Calls `POST /api/tickets/_auto`; shows ticket ref on success; resets when opening a new
+  event detail.
+- **`TenantHealthView.tsx`**: "🚨 Report Incident" button in `DetailContent` for tenants with
+  `health_score < 60`. Red styling for `< 40`, amber for `40–59`; routes to Engineering or
+  Tier2 Support accordingly.
+- **`DependencyGraph.tsx`**: "🎫 Request Delete Approval" button in delete impact panel when
+  `!safe_to_delete`. Calls `POST /api/graph/request-delete` and displays ticket ref on
+  success.
+
+### Bug Fixes
+- **`AutoTicketCreate` Pydantic validator** (`api/ticket_routes.py`) — Changed from
+  `@validator("to_dept_id", always=True)` to `@root_validator(skip_on_failure=True)`. The
+  field-level validator fired before `to_dept_name` was available in Pydantic's field
+  evaluation order, causing 422 errors when only `to_dept_name` was supplied.
+- **Nav department visibility** — `department_nav_groups` (7 rows) and `department_nav_items`
+  (14 rows) applied to DB to restore Operations & Support nav group visibility for all
+  departments.
+
+### Tests
+- `test_phase_b1.py` — updated stale runbook count check from `== 16` to `== 24` to match
+  current installed runbook set.
+
+---
+
 ## [1.58.0] - 2026-03-24
 
 ### Added — Phase T1 + T2: Support Ticket System

@@ -120,6 +120,14 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Priority-sorted ticket queue scoped to the current user's department
   - Pre-filtered view (open/in-progress tickets assigned to or from current user's team)
   - `GET /api/tickets/my-queue` — returns tickets sorted by priority then SLA urgency
+- **Auto-Ticket Triggers** (v1.59.0 — NEW ✨):
+  - **Drift → Incident**: critical/warning drift events automatically open `auto_incident` tickets; idempotent dedup on `auto_source_id="drift:{type}:{id}:{field}"` prevents duplicates
+  - **Health Score Drop → Incident**: graph `health_score < 40` triggers auto-incident to Engineering (host) or Tier2 Support (VM); fires on every graph query, dedup prevents flood
+  - **Delete Impact → Change Request Gate**: `POST /api/graph/request-delete` — creates `auto_change_request` ticket with `auto_blocked=true`; returns `{status, ticket_id, ticket_ref, created, message}`
+  - **Runbook Failure → Incident**: failed runbook executions automatically open an incident ticket linked to the `execution_id`; `auto_source="runbook_failure"`
+  - **Migration Wave Complete → Service Request**: wave completion triggers a service-request ticket for documentation and sign-off; `auto_source="migration"`, `auto_source_id="wave:{wave_id}"`
+  - **UI buttons**: "🎫 Create Incident Ticket" in Drift Detection side-panel; "🚨 Report Incident" in Tenant Health detail panel (score < 60, red for < 40, amber for 40–59); "🎫 Request Delete Approval" in Graph delete-impact panel
+  - All auto-tickets: idempotent (`auto_source` + `auto_source_id` unique dedup), routed by severity, never block primary operations on failure
 - **Migration Planner — Per-Day Schedule Breakdown + Throughput Cap Fix** (v1.44.0):
   - **Engine rewrite** (`migration_engine.py`): replaced per-slot hour packing with a real GB/day throughput ceiling — `effective_gbph = (bottleneck_mbps/8) × 3600/1024 × 0.55`; `max_gb_per_day = effective_gbph × working_hours`
   - `wall_clock_hours` now `day_transfer_gb / effective_gbph` (was `day_hours_used / total_concurrent` — badly under-counted)

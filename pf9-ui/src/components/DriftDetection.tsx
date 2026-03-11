@@ -165,6 +165,8 @@ export default function DriftDetection({ selectedDomain, selectedTenant }: Drift
   const [detailEvent, setDetailEvent] = useState<DriftEvent | null>(null);
   const [ackNote, setAckNote] = useState("");
   const [ackLoading, setAckLoading] = useState(false);
+  const [ticketCreating, setTicketCreating] = useState(false);
+  const [ticketRef, setTicketRef] = useState<string | null>(null);
 
   // ── Rules ──
   const [rules, setRules] = useState<DriftRule[]>([]);
@@ -617,7 +619,7 @@ export default function DriftDetection({ selectedDomain, selectedTenant }: Drift
                         <button
                           className="drift-btn secondary"
                           style={{ padding: "4px 10px", fontSize: ".78rem" }}
-                          onClick={() => { setDetailEvent(ev); setAckNote(""); }}
+                          onClick={() => { setDetailEvent(ev); setAckNote(""); setTicketRef(null); }}
                         >
                           Details
                         </button>
@@ -819,6 +821,52 @@ export default function DriftDetection({ selectedDomain, selectedTenant }: Drift
                   {ackLoading ? "Acknowledging…" : "✓ Acknowledge"}
                 </button>
               </>
+            )}
+
+            {/* T3.1 UI — Create incident ticket from drift event */}
+            {!ticketRef ? (
+              <button
+                className="drift-btn secondary"
+                style={{ width: "100%", marginTop: 8, borderColor: "#f59e0b", color: "#f59e0b" }}
+                disabled={ticketCreating}
+                onClick={async () => {
+                  if (!detailEvent) return;
+                  setTicketCreating(true);
+                  try {
+                    const data = await apiFetch<{ ticket_ref: string; created: boolean }>(
+                      "/api/tickets/_auto",
+                      {
+                        method: "POST",
+                        body: JSON.stringify({
+                          title: `Drift: ${detailEvent.resource_type} '${detailEvent.resource_name || detailEvent.resource_id}' — ${detailEvent.field_changed} changed`,
+                          description: detailEvent.description || "",
+                          ticket_type: detailEvent.severity === "critical" ? "auto_incident" : "incident",
+                          priority: detailEvent.severity === "critical" ? "critical" : detailEvent.severity === "warning" ? "high" : "normal",
+                          to_dept_name: detailEvent.severity === "critical" ? "Engineering" : "Tier2 Support",
+                          auto_source: "drift",
+                          auto_source_id: `drift:${detailEvent.resource_type}:${detailEvent.resource_id}:${detailEvent.field_changed}`,
+                          resource_type: detailEvent.resource_type,
+                          resource_id: detailEvent.resource_id,
+                          resource_name: detailEvent.resource_name,
+                          project_id: detailEvent.project_id,
+                          project_name: detailEvent.project_name,
+                        }),
+                      }
+                    );
+                    setTicketRef(data.ticket_ref);
+                  } catch (e: any) {
+                    alert("Could not create ticket: " + (e.message || "Unknown error"));
+                  } finally {
+                    setTicketCreating(false);
+                  }
+                }}
+              >
+                {ticketCreating ? "Creating…" : "🎫 Create Incident Ticket"}
+              </button>
+            ) : (
+              <div style={{ marginTop: 8, color: "#22c55e", fontSize: ".82rem", textAlign: "center" }}>
+                ✓ Ticket {ticketRef} created / linked
+              </div>
             )}
 
             <button

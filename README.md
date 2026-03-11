@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.58.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.59.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -687,7 +687,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.58.0](CHANGELOG.md) — March 11, 2026
+**Current version:** [v1.59.0](CHANGELOG.md) — March 11, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -830,6 +830,17 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.59.0 — Phase T3: Auto-Ticket Triggers
+- ✅ **Drift → auto-incident**: critical/warning drift events in `db_writer.py` open `auto_incident` tickets; idempotent dedup on `(auto_source, auto_source_id)` prevents duplicates
+- ✅ **Health score drop → auto-incident**: graph nodes with `health_score < 40` trigger auto-incident tickets via `_build_graph()` → `_trigger_health_auto_tickets()`
+- ✅ **Delete gate → change request**: `POST /api/graph/request-delete` creates an `auto_change_request` ticket with `auto_blocked=true` before any destructive graph delete
+- ✅ **Runbook failure → auto-incident**: `_execute_runbook()` except block opens an incident ticket linked to the failed `execution_id`
+- ✅ **Migration wave complete → service request**: `advance_wave_status()` opens a service-request ticket when a wave is marked complete
+- ✅ **`_auto_ticket()` helper**: importable pure-DB function in `ticket_routes.py`; `AutoTicketCreate` model accepts either `to_dept_id` or `to_dept_name`
+- ✅ **UI buttons**: 🎫 Create Incident Ticket (Drift Detection side-panel), 🚨 Report Incident (Tenant Health panel, score < 60), 🎫 Request Delete Approval (Graph delete-impact panel)
+- 🐛 Fixed `AutoTicketCreate` Pydantic validator — changed to `@root_validator(skip_on_failure=True)` to avoid 422 errors when only `to_dept_name` is provided
+- 🐛 Fixed nav department visibility rows for Operations & Support group
 
 ### v1.58.0 — Phase T1 + T2: Support Ticket System
 - ✅ **Support Ticket lifecycle**: `support_tickets` table with ticket refs (TKT-YYYY-NNNNN), full status/priority/type model, approval gate, SLA deadlines, OpenStack resource linkage, Slack thread tracking, and escalation chain

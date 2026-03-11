@@ -1019,6 +1019,8 @@ function DetailContent({
 }) {
   const t = detail.tenant;
   const cls = scoreClass(t.health_score);
+  const [incidentLoading, setIncidentLoading] = useState(false);
+  const [incidentRef, setIncidentRef] = useState<string | null>(null);
 
   return (
     <>
@@ -1051,6 +1053,56 @@ function DetailContent({
           <p style={{ fontSize: "0.75rem", opacity: 0.7 }}>{t.project_id}</p>
         </div>
       </div>
+
+      {/* T3.2 UI — Report incident for low-health tenant */}
+      {t.health_score < 60 && (
+        <div style={{ padding: "0 16px 8px" }}>
+          {!incidentRef ? (
+            <button
+              style={{
+                width: "100%", padding: "7px 12px", borderRadius: 6,
+                border: `1px solid ${t.health_score < 40 ? "#ef4444" : "#f59e0b"}`,
+                color: t.health_score < 40 ? "#ef4444" : "#f59e0b",
+                background: "transparent", cursor: "pointer", fontSize: ".85rem",
+              }}
+              disabled={incidentLoading}
+              onClick={async () => {
+                setIncidentLoading(true);
+                try {
+                  const data = await apiFetch<{ ticket_ref: string; created: boolean }>(
+                    "/api/tickets/_auto",
+                    {
+                      method: "POST",
+                      body: JSON.stringify({
+                        title: `Health alert: tenant '${t.project_name}' score dropped to ${t.health_score}`,
+                        description: `Tenant ${t.project_name} (${t.project_id}) has a health score of ${t.health_score}. Immediate review recommended.`,
+                        ticket_type: "auto_incident",
+                        priority: t.health_score < 40 ? "critical" : "high",
+                        to_dept_name: t.health_score < 40 ? "Engineering" : "Tier2 Support",
+                        auto_source: "health_score",
+                        auto_source_id: `tenant:${t.project_id}`,
+                        project_id: t.project_id,
+                        project_name: t.project_name,
+                      }),
+                    }
+                  );
+                  setIncidentRef(data.ticket_ref);
+                } catch (e: any) {
+                  alert("Could not create incident: " + (e.message || "Unknown error"));
+                } finally {
+                  setIncidentLoading(false);
+                }
+              }}
+            >
+              {incidentLoading ? "Creating…" : "🚨 Report Incident"}
+            </button>
+          ) : (
+            <div style={{ textAlign: "center", color: "#22c55e", fontSize: ".82rem", padding: "6px 0" }}>
+              ✓ Incident {incidentRef} created / linked
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Compute & Resource Grid ── */}
       <div className="th-detail-section">

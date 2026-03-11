@@ -79,6 +79,61 @@ def _load_drift_rules(cur, resource_type: str) -> List[Dict[str, Any]]:
         return []
 
 
+def _auto_ticket_for_drift(
+    conn,
+    severity: str,
+    resource_type: str,
+    resource_id: str,
+    resource_name: str,
+    project_id: Optional[str],
+    project_name: Optional[str],
+    field_changed: str,
+    description: str,
+) -> None:
+    """
+    Create an auto-incident ticket for a drift event (best-effort).
+    Uses a deduplification key of resource_type:resource_id:field_changed so
+    only one open ticket is maintained per drifting field.
+    Only fires for critical and warning severity.
+    """
+    if severity not in ("critical", "warning"):
+        return
+
+    auto_source_id = f"drift:{resource_type}:{resource_id}:{field_changed}"
+    priority       = "high"    if severity == "critical" else "normal"
+    to_dept_name   = "Engineering" if severity == "critical" else "Tier2 Support"
+    title          = f"Drift: {resource_type} '{resource_name}' — {field_changed} changed"
+
+    try:
+        import logging
+        _log = logging.getLogger("db_writer")
+        import sys
+        import os
+        # Support calling when invoked directly (pf9_rvtools) or inside the API container
+        api_dir = os.path.join(os.path.dirname(__file__), "api")
+        if api_dir not in sys.path:
+            sys.path.insert(0, api_dir)
+
+        from ticket_routes import _auto_ticket
+        _auto_ticket(
+            title=title,
+            description=description,
+            ticket_type="auto_incident",
+            priority=priority,
+            to_dept_name=to_dept_name,
+            auto_source="drift",
+            auto_source_id=auto_source_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_name=resource_name,
+            project_id=project_id,
+            project_name=project_name,
+        )
+    except Exception as exc:
+        import logging
+        logging.getLogger("db_writer").warning("Auto-ticket for drift failed: %s", exc)
+
+
 def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
                    new_record: Dict[str, Any], rules: List[Dict[str, Any]]):
     """Compare old vs new fields and insert drift_events for any matching rules."""
@@ -115,6 +170,21 @@ def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
                 new_val,
                 rule["description"],
             ))
+
+            # T3.1 — auto-incident ticket for critical/warning drift
+            conn.cursor()  # ensure connection is still live
+            _auto_ticket_for_drift(
+                conn,
+                severity=rule["severity"],
+                resource_type=table_name,
+                resource_id=str(record_id),
+                resource_name=new_record.get("name") or new_record.get("hostname") or str(record_id),
+                project_id=new_record.get("project_id") or old_row.get("project_id"),
+                project_name=new_record.get("project_name") or old_row.get("project_name"),
+                field_changed=field,
+                description=rule["description"],
+            )
+
         except Exception as drift_err:
             # Non-fatal — log but don't break inventory sync
             import logging

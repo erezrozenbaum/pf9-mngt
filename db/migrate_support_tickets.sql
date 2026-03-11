@@ -186,6 +186,18 @@ VALUES
     ((SELECT id FROM nav_groups WHERE key = 'operations'), 'my_queue', 'My Queue',        '📥', '/my_queue', 'tickets', 2)
 ON CONFLICT (key) DO NOTHING;
 
+-- Grant Operations & Support group + items visibility to all departments
+INSERT INTO department_nav_groups (department_id, nav_group_id)
+SELECT d.id, (SELECT id FROM nav_groups WHERE key = 'operations')
+FROM departments d
+ON CONFLICT DO NOTHING;
+
+INSERT INTO department_nav_items (department_id, nav_item_id)
+SELECT d.id, ni.id
+FROM departments d, nav_items ni
+WHERE ni.key IN ('tickets', 'my_queue')
+ON CONFLICT DO NOTHING;
+
 -- ---------------------------------------------------------------------------
 -- Seed SLA policies
 -- ---------------------------------------------------------------------------

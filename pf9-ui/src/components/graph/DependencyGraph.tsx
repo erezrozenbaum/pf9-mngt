@@ -568,6 +568,9 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
   // Current root — can be changed by clicking "Explore from here" on any node
   const [currentRoot, setCurrentRoot] = useState({ type: rootType, id: rootId, label: rootLabel });
   const [rootHistory, setRootHistory] = useState<Array<{ type: string; id: string; label: string }>>([]);
+  // T3.3 — Delete-gate ticket state
+  const [deleteTicketLoading, setDeleteTicketLoading] = useState(false);
+  const [deleteTicketResult,  setDeleteTicketResult]  = useState<{ ticket_ref: string; created: boolean } | null>(null);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -664,6 +667,27 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
   }
 
   // ---- Full desktop graph --------------------------------------------------
+  // T3.3 — Request-delete ticket helper
+  async function requestDeleteTicket() {
+    setDeleteTicketLoading(true);
+    setDeleteTicketResult(null);
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/graph/request-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ root_type: currentRoot.type, root_id: currentRoot.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? `API error ${res.status}`);
+      setDeleteTicketResult({ ticket_ref: data.ticket_ref, created: data.created });
+    } catch (e: any) {
+      alert("Could not create delete-request ticket: " + e.message);
+    } finally {
+      setDeleteTicketLoading(false);
+    }
+  }
+
   return (
     <div className="graph-drawer" style={{ position: "relative" }}>
       {/* Header */}
@@ -830,6 +854,29 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
                 {graphData.delete_impact.summary.stranded_fips > 0 && (
                   <span style={{ color: "#fb923c" }}>Stranded FIPs: <b>{graphData.delete_impact.summary.stranded_fips}</b></span>
                 )}
+                {/* T3.3 — Gate: request change-request ticket before deleting */}
+                <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                  {!deleteTicketResult ? (
+                    <button
+                      style={{
+                        background: "#7f1d1d", border: "1px solid #ef4444", borderRadius: 4,
+                        color: "#fca5a5", padding: "3px 10px", fontSize: 11, cursor: "pointer",
+                        opacity: deleteTicketLoading ? 0.6 : 1,
+                      }}
+                      disabled={deleteTicketLoading}
+                      onClick={requestDeleteTicket}
+                      title="Create a change-request ticket to gate this deletion through Engineering approval"
+                    >
+                      {deleteTicketLoading ? "Creating…" : "🎫 Request Delete Approval"}
+                    </button>
+                  ) : (
+                    <span style={{ color: "#86efac", fontWeight: 600 }}>
+                      {deleteTicketResult.created
+                        ? `✓ Ticket ${deleteTicketResult.ticket_ref} created — awaiting Engineering approval`
+                        : `ℹ️ Existing ticket ${deleteTicketResult.ticket_ref} covers this resource`}
+                    </span>
+                  )}
+                </div>
               </>
           }
         </div>
