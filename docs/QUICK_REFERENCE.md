@@ -128,6 +128,15 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - **Migration Wave Complete → Service Request**: wave completion triggers a service-request ticket for documentation and sign-off; `auto_source="migration"`, `auto_source_id="wave:{wave_id}"`
   - **UI buttons**: "🎫 Create Incident Ticket" in Drift Detection side-panel; "🚨 Report Incident" in Tenant Health detail panel (score < 60, red for < 40, amber for 40–59); "🎫 Request Delete Approval" in Graph delete-impact panel
   - All auto-tickets: idempotent (`auto_source` + `auto_source_id` unique dedup), routed by severity, never block primary operations on failure
+- **Analytics & Polish — T4** (v1.60.0 — NEW ✨):
+  - `GET /api/tickets/analytics?days=30` — resolution time by dept, SLA breach rate by dept, top openers, daily volume trend (admin-only)
+  - `GET /api/tickets/stats` now returns `resolved_today` + `opened_today`; stats bar suppresses priority breakdown when a status filter is active
+  - `POST /api/tickets/bulk-action` — `close_stale` (stale_days threshold), `reassign` (assigned_to username), `export_csv` (attachment); checkbox multi-select + bulk toolbar in TicketsTab
+  - `GET /api/tickets/team-members/{dept_id}` — active users in a department; Create Ticket modal shows optional "Assign to user" dropdown; `assigned_to` stored at creation with status `assigned`
+  - Opener confirmation email: `ticket_created` template sent to the internal opener's email address (SMTP enabled, `users.name` lookup)
+  - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
+  - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
+  - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
 - **Migration Planner — Per-Day Schedule Breakdown + Throughput Cap Fix** (v1.44.0):
   - **Engine rewrite** (`migration_engine.py`): replaced per-slot hour packing with a real GB/day throughput ceiling — `effective_gbph = (bottleneck_mbps/8) × 3600/1024 × 0.55`; `max_gb_per_day = effective_gbph × working_hours`
   - `wall_clock_hours` now `day_transfer_gb / effective_gbph` (was `day_hours_used / total_concurrent` — badly under-counted)

@@ -136,6 +136,14 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
   // --- Integrations admin state --------------------------------------
   const [showIntegrations, setShowIntegrations] = useState(false);
   const [integrations, setIntegrations] = useState<any[]>([]);
+
+  // Create Ticket from execution
+  const [ticketForExec, setTicketForExec] = useState<Execution | null>(null);
+  const [execTicketTitle, setExecTicketTitle] = useState("");
+  const [execTicketDepts, setExecTicketDepts] = useState<{id:number;name:string}[]>([]);
+  const [execTicketDeptId, setExecTicketDeptId] = useState<number>(0);
+  const [execTicketNote, setExecTicketNote] = useState("");
+  const [execTicketCreating, setExecTicketCreating] = useState(false);
   const [integrLoading, setIntegrLoading] = useState(false);
   const [integrForm, setIntegrForm] = useState<any | null>(null); // null = closed
   const [integrSaving, setIntegrSaving] = useState(false);
@@ -1312,6 +1320,7 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
                     <th>Actioned</th>
                     <th>Time</th>
                     <th>Actions</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1328,11 +1337,25 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
                           👁 View
                         </button>
                       </td>
+                      <td>
+                        <button className="rb-btn small" title="Create ticket from this execution"
+                          onClick={() => {
+                            setTicketForExec(ex);
+                            setExecTicketTitle(`Runbook ${ex.status === 'failed' ? 'Failure' : 'Follow-up'}: ${ex.display_name || ex.runbook_name}`);
+                            setExecTicketNote(`Execution ID: ${ex.execution_id}\nStatus: ${ex.status}\nTriggered: ${ex.triggered_at}`);
+                            setExecTicketDeptId(0);
+                            if (execTicketDepts.length === 0) {
+                              apiFetch<{departments:{id:number;name:string}[]}>("/api/departments")
+                                .then(d => setExecTicketDepts(d.departments || []))
+                                .catch(() => {});
+                            }
+                          }}>📎 Ticket</button>
+                      </td>
                     </tr>
                   ))}
                   {myExecs.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="rb-empty-row">No executions yet — run a runbook above!</td>
+                      <td colSpan={8} className="rb-empty-row">No executions yet — run a runbook above!</td>
                     </tr>
                   )}
                 </tbody>
@@ -1918,6 +1941,72 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
 
       {/* Toast */}
       {toast && <div className={`rb-toast ${toast.type}`}>{toast.msg}</div>}
+
+      {/* Create Ticket from Execution modal */}
+      {ticketForExec && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onClick={() => setTicketForExec(null)}>
+          <div style={{background:"var(--color-surface,#fff)",borderRadius:10,padding:24,minWidth:400,maxWidth:520,boxShadow:"0 8px 32px rgba(0,0,0,0.24)"}}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{margin:"0 0 16px"}}>📎 Create Ticket from Runbook Execution</h3>
+            <p style={{fontSize:"0.88em",opacity:0.7,margin:"0 0 14px"}}>
+              Runbook: <strong>{ticketForExec.display_name || ticketForExec.runbook_name}</strong>
+              &nbsp;·&nbsp; Status: <strong>{ticketForExec.status}</strong>
+            </p>
+            <label style={{display:"block",marginBottom:10}}>
+              <span style={{fontSize:"0.85em",fontWeight:500}}>Title *</span>
+              <input style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",border:"1px solid var(--color-border,#ddd)",borderRadius:6}}
+                value={execTicketTitle} onChange={e => setExecTicketTitle(e.target.value)} />
+            </label>
+            <label style={{display:"block",marginBottom:10}}>
+              <span style={{fontSize:"0.85em",fontWeight:500}}>Assign to Team *</span>
+              <select style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",border:"1px solid var(--color-border,#ddd)",borderRadius:6}}
+                value={execTicketDeptId} onChange={e => setExecTicketDeptId(Number(e.target.value))}>
+                <option value={0}>Select team…</option>
+                {execTicketDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </label>
+            <label style={{display:"block",marginBottom:16}}>
+              <span style={{fontSize:"0.85em",fontWeight:500}}>Notes</span>
+              <textarea rows={3} style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",border:"1px solid var(--color-border,#ddd)",borderRadius:6,resize:"vertical"}}
+                value={execTicketNote} onChange={e => setExecTicketNote(e.target.value)} />
+            </label>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button style={{padding:"6px 16px",borderRadius:6,border:"1px solid var(--color-border,#ddd)",background:"none",cursor:"pointer"}}
+                onClick={() => setTicketForExec(null)}>Cancel</button>
+              <button
+                disabled={execTicketCreating || !execTicketTitle.trim() || !execTicketDeptId}
+                style={{padding:"6px 16px",borderRadius:6,border:"none",background:"#2563eb",color:"#fff",cursor:"pointer",fontWeight:600}}
+                onClick={async () => {
+                  setExecTicketCreating(true);
+                  try {
+                    await apiFetch("/api/tickets/_auto", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        title: execTicketTitle,
+                        description: execTicketNote,
+                        ticket_type: ticketForExec.status === "failed" ? "incident" : "service_request",
+                        priority: ticketForExec.status === "failed" ? "high" : "normal",
+                        to_dept_id: execTicketDeptId,
+                        auto_source: "runbook_execution",
+                        auto_source_id: ticketForExec.execution_id,
+                        resource_type: "runbook",
+                        resource_name: ticketForExec.display_name || ticketForExec.runbook_name,
+                      }),
+                    });
+                    setTicketForExec(null);
+                    showToast("Ticket created from execution", "success");
+                  } catch (e: any) {
+                    showToast(`Failed to create ticket: ${e.message}`, "error");
+                  } finally {
+                    setExecTicketCreating(false);
+                  }
+                }}
+              >{execTicketCreating ? "Creating…" : "Create Ticket"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

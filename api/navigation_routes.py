@@ -114,7 +114,7 @@ async def list_departments(
                 FROM departments
                 ORDER BY sort_order, name
             """)
-            return cur.fetchall()
+            return {"departments": cur.fetchall()}
 
 
 @router.post("/departments", status_code=201)

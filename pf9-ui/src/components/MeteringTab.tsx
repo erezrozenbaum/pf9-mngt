@@ -384,6 +384,14 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
   const [pricingSortField, setPricingSortField] = useState<string>("category");
   const [pricingSortDir, setPricingSortDir] = useState<"asc" | "desc">("asc");
 
+  // Inquiry ticket creation
+  const [inquiryFor, setInquiryFor] = useState<{project_id:string; project_name:string; vm_name:string} | null>(null);
+  const [inquiryCreating, setInquiryCreating] = useState(false);
+  const [inquiryDepts, setInquiryDepts] = useState<{id:number; name:string}[]>([]);
+  const [inquiryDeptId, setInquiryDeptId] = useState<number>(0);
+  const [inquiryTitle, setInquiryTitle] = useState("");
+  const [inquiryNote, setInquiryNote] = useState("");
+
   const handleSort = useCallback((field: string) => {
     setSortDir((prev) => (sortField === field ? (prev === "asc" ? "desc" : "asc") : "desc"));
     setSortField(field);
@@ -809,6 +817,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                   <SortHeader label="Disk %" field="disk_usage_percent" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
                   <SortHeader label="Net RX" field="network_rx_bytes" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
                   <SortHeader label="Net TX" field="network_tx_bytes" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                  <th style={{width:40}}></th>
                 </tr>
               </thead>
               <tbody>
@@ -830,10 +839,27 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                     <td>{fmtPct(r.disk_usage_percent)}</td>
                     <td>{fmtBytes(r.network_rx_bytes)}</td>
                     <td>{fmtBytes(r.network_tx_bytes)}</td>
+                    <td style={{textAlign:"center"}}>
+                      <button
+                        title={`Open inquiry ticket for ${r.project_name || r.vm_name}`}
+                        style={{background:"none",border:"none",cursor:"pointer",fontSize:"1.1em",padding:"2px 4px",borderRadius:4}}
+                        onClick={() => {
+                          setInquiryFor({project_id: r.project_id||'', project_name: r.project_name||'', vm_name: r.vm_name||''});
+                          setInquiryTitle(`Inquiry: ${r.project_name || r.vm_name}`);
+                          setInquiryNote('');
+                          setInquiryDeptId(0);
+                          if (inquiryDepts.length === 0) {
+                            apiFetch<{departments:{id:number;name:string}[]}>("/api/departments")
+                              .then(d => setInquiryDepts(d.departments || []))
+                              .catch(() => {});
+                          }
+                        }}
+                      >📋</button>
+                    </td>
                   </tr>
                 ))}
                 {resources.length === 0 && (
-                  <tr><td colSpan={16} style={{ textAlign: "center", padding: 24, color: "var(--color-text-secondary, #999)" }}>No resource metering data yet. The metering worker collects data every 15 minutes.</td></tr>
+                  <tr><td colSpan={17} style={{ textAlign: "center", padding: 24, color: "var(--color-text-secondary, #999)" }}>No resource metering data yet. The metering worker collects data every 15 minutes.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1388,6 +1414,70 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             The Chargeback Report uses per-flavor pricing when configured; otherwise fallback rates from Metering Configuration apply.
             Volumes, networks, subnets, routers, and floating IPs are counted from actual inventory — not approximated.
             Currency is taken from the pricing configuration; override with the dropdown above.
+          </div>
+        </div>
+      )}
+
+      {/* Open Inquiry modal */}
+      {inquiryFor && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onClick={() => setInquiryFor(null)}>
+          <div style={{background:"var(--color-surface,#fff)",borderRadius:10,padding:24,minWidth:380,maxWidth:480,boxShadow:"0 8px 32px rgba(0,0,0,0.24)"}}
+            onClick={e => e.stopPropagation()}>
+            <h3 style={{margin:"0 0 16px"}}>📋 Open Inquiry Ticket</h3>
+            <p style={{fontSize:"0.88em",opacity:0.7,margin:"0 0 14px"}}>
+              Project: <strong>{inquiryFor.project_name}</strong> &nbsp;·&nbsp; VM: <strong>{inquiryFor.vm_name || "—"}</strong>
+            </p>
+            <label style={{display:"block",marginBottom:10}}>
+              <span style={{fontSize:"0.85em",fontWeight:500}}>Title *</span>
+              <input style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",border:"1px solid var(--color-border,#ddd)",borderRadius:6}}
+                value={inquiryTitle} onChange={e => setInquiryTitle(e.target.value)} />
+            </label>
+            <label style={{display:"block",marginBottom:10}}>
+              <span style={{fontSize:"0.85em",fontWeight:500}}>Assign to Team *</span>
+              <select style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",border:"1px solid var(--color-border,#ddd)",borderRadius:6}}
+                value={inquiryDeptId} onChange={e => setInquiryDeptId(Number(e.target.value))}>
+                <option value={0}>Select team…</option>
+                {inquiryDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </label>
+            <label style={{display:"block",marginBottom:16}}>
+              <span style={{fontSize:"0.85em",fontWeight:500}}>Notes</span>
+              <textarea rows={3} style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",border:"1px solid var(--color-border,#ddd)",borderRadius:6,resize:"vertical"}}
+                value={inquiryNote} onChange={e => setInquiryNote(e.target.value)} />
+            </label>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button style={{padding:"6px 16px",borderRadius:6,border:"1px solid var(--color-border,#ddd)",background:"none",cursor:"pointer"}}
+                onClick={() => setInquiryFor(null)}>Cancel</button>
+              <button
+                disabled={inquiryCreating || !inquiryTitle.trim() || !inquiryDeptId}
+                style={{padding:"6px 16px",borderRadius:6,border:"none",background:"#2563eb",color:"#fff",cursor:"pointer",fontWeight:600}}
+                onClick={async () => {
+                  setInquiryCreating(true);
+                  try {
+                    await apiFetch("/api/tickets/_auto", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        title: inquiryTitle,
+                        description: inquiryNote || `Inquiry from Metering tab for project ${inquiryFor.project_name} / VM ${inquiryFor.vm_name}`,
+                        ticket_type: "service_request",
+                        priority: "normal",
+                        to_dept_id: inquiryDeptId,
+                        project_id: inquiryFor.project_id,
+                        project_name: inquiryFor.project_name,
+                        auto_source: "metering_inquiry",
+                        auto_source_id: `${inquiryFor.project_id}_${Date.now()}`,
+                      }),
+                    });
+                    setInquiryFor(null);
+                  } catch (e: any) {
+                    alert(`Failed to create ticket: ${e.message}`);
+                  } finally {
+                    setInquiryCreating(false);
+                  }
+                }}
+              >{inquiryCreating ? "Creating…" : "Create Ticket"}</button>
+            </div>
           </div>
         </div>
       )}
