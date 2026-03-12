@@ -284,6 +284,37 @@ SELECT * FROM snapshot_runs ORDER BY created_at DESC LIMIT 10;
 
 ## Troubleshooting
 
+### Snapshots / Compliance Only Show Service Tenant
+
+**Symptom**: The Snapshot tab, Compliance report, or Restore UI only lists volumes/snapshots from the `service` project — volumes in ORG1, ISP1, etc. are missing.
+
+**Root cause**: The `scheduler_worker` (runs `pf9_rvtools.py`) and `snapshot_worker` containers must be rebuilt whenever `p9_common.py` changes. If either container was built before the `session.is_admin = True` fix was in place, `cinder_volumes_all()` and `cinder_snapshots_all()` silently omit the `all_tenants=1` query parameter and only return the service-project scope.
+
+**Fix**:
+```bash
+# 1. Rebuild both workers so they pick up the latest p9_common.py
+docker compose build snapshot_worker scheduler_worker
+
+# 2. Restart them
+docker compose up -d snapshot_worker scheduler_worker
+
+# 3. Trigger an immediate full sync (don't wait until 03:00 UTC)
+docker exec pf9_scheduler_worker python pf9_rvtools.py
+
+# 4. Verify cross-tenant data is now in the DB
+docker exec pf9_db psql -U pf9 -d pf9_mgmt \
+  -c "SELECT p.name, d.name, COUNT(v.id) FROM volumes v
+      LEFT JOIN projects p ON p.id = v.project_id
+      LEFT JOIN domains d ON d.id = p.domain_id
+      GROUP BY p.name, d.name ORDER BY COUNT DESC;"
+```
+
+**Expected result**: Multiple project rows (ISP1, ORG1, supportdom, service, etc.) with non-zero volume counts.
+
+> **Note**: Also check the `/snapshots` API endpoint (Snapshot tab). If filtering by tenant returns `500 DB query failed: column reference "project_id" is ambiguous`, rebuild `pf9_api` as well (`docker compose up -d --build pf9_api`).
+
+---
+
 ### Snapshots Not Creating
 
 **Check logs**:

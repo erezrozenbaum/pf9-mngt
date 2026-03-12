@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.2] - 2026-03-12
+
+### Fixed — Cross-Tenant Snapshot Visibility
+
+#### Snapshots / Compliance / Restore Only Showed Service Tenant
+- `scheduler_worker` and `snapshot_worker` containers retained a pre-fix build of `p9_common.py` where `session.is_admin` was never set to `True`; as a result `cinder_volumes_all()` and `cinder_snapshots_all()` omitted `all_tenants=1` and only returned service-project Cinder resources
+- Both containers rebuilt so they now carry the `session.is_admin = True` assignment introduced in `p9_common.get_session_best_scope()`; all Cinder listing calls now correctly use `all_tenants=1`
+- `pf9_rvtools.py` re-run immediately after rebuild — local `volumes` and `snapshots` tables now contain data from all tenants (ISP1, ORG1, supportdom, service, …)
+- Snapshot policy assignment (`p9_snapshot_policy_assign.py`) and snapshot creation (`p9_auto_snapshots.py`) likewise pick up all-tenant volumes on next scheduler run
+
+#### Snapshot Tab — Ambiguous `project_id` Filter (HTTP 500)
+- Filtering the Snapshot tab by tenant triggered `500 DB query failed: column reference "project_id" is ambiguous`
+- The `/snapshots` query in `api/main.py` built a CTE with six LEFT JOINs (`snapshots`, `v_volumes_full`, `volumes`, `servers`, `projects`, `domains`) then appended `WHERE project_id = %s` / `WHERE domain_name = %s` without table qualifiers; PostgreSQL could not resolve which table to use
+- Filters now qualified as `s.project_id = %s` and `s.domain_name = %s` (anchored to the `snapshots s` alias)
+
+#### Docs
+- `docs/SNAPSHOT_AUTOMATION.md` — new **Troubleshooting** section: *"Snapshots / Compliance Only Show Service Tenant"* with diagnosis and step-by-step fix commands
+
+---
+
 ## [1.62.1] - 2026-03-13
 
 ### Fixed — Orphan Cleanup & Project Deletion Correctness

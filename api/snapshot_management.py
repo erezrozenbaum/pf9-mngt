@@ -207,7 +207,34 @@ def _build_compliance_from_volumes(
         for row in cur.fetchall()
     }
 
-    # ---- volumes with auto_snapshot metadata, enriched with names ----------
+    # ---- combined sources: snapshot_assignments + Cinder-metadata volumes ----
+    # 1. Management-plane assignments (UI-enrolled volumes via our assignment API)
+    cur.execute(
+        """
+        SELECT
+            sa.volume_id,
+            COALESCE(v.name,  sa.volume_name)      AS volume_name,
+            sa.project_id,
+            COALESCE(v.volume_type, '')             AS volume_type,
+            COALESCE(proj.name, sa.project_name)   AS project_name,
+            COALESCE(proj.domain_id, sa.tenant_id) AS tenant_id,
+            COALESCE(dom.name,  sa.tenant_name)    AS tenant_name,
+            v.raw_json->'attachments'->0->>'server_id' AS vm_id,
+            srv.name                                AS vm_name,
+            sa.policies                             AS policies_jsonb,
+            sa.retention_map                        AS retention_map_jsonb
+        FROM snapshot_assignments sa
+        LEFT JOIN volumes  v    ON v.id    = sa.volume_id
+        LEFT JOIN projects proj ON proj.id = sa.project_id
+        LEFT JOIN domains  dom  ON dom.id  = proj.domain_id
+        LEFT JOIN servers  srv  ON srv.id  = v.raw_json->'attachments'->0->>'server_id'
+        WHERE sa.auto_snapshot = true
+        """
+    )
+    assignment_rows = list(cur.fetchall())
+    assigned_ids = {r["volume_id"] for r in assignment_rows}
+
+    # 2. Cinder-metadata volumes (enrolled directly in Cinder, not yet via assignment UI)
     cur.execute(
         """
         SELECT
@@ -228,9 +255,39 @@ def _build_compliance_from_volumes(
         WHERE v.raw_json->'metadata'->>'auto_snapshot'
                   IN ('true', 'True', '1', 'yes')
           AND v.raw_json->'metadata'->>'snapshot_policies' IS NOT NULL
-        """
+          AND v.id != ALL(%s::text[])
+        """,
+        (list(assigned_ids) if assigned_ids else [],),
     )
-    rows = cur.fetchall()
+    cinder_rows_raw = cur.fetchall()
+
+    # Normalise Cinder-metadata rows to the same shape as assignment rows
+    cinder_rows = []
+    for r in cinder_rows_raw:
+        meta = r.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        policies_csv = meta.get("snapshot_policies", "")
+        pol_list = [p.strip() for p in policies_csv.split(",") if p.strip()]
+        ret_map = {p: (_safe_int(meta.get(f"retention_{p}")) or 0) for p in pol_list}
+        cinder_rows.append({
+            "volume_id":         r["volume_id"],
+            "volume_name":       r["volume_name"],
+            "project_id":        r["project_id"],
+            "volume_type":       r.get("volume_type") or "",
+            "project_name":      r.get("project_name") or "",
+            "tenant_id":         r.get("tenant_id") or "",
+            "tenant_name":       r.get("tenant_name") or "",
+            "vm_id":             r.get("vm_id") or "",
+            "vm_name":           r.get("vm_name") or "",
+            "policies_jsonb":    pol_list,
+            "retention_map_jsonb": ret_map,
+        })
+
+    rows = assignment_rows + cinder_rows
     now = datetime.now(timezone.utc)
     compliance_rows: List[Dict[str, Any]] = []
 
@@ -263,15 +320,19 @@ def _build_compliance_from_volumes(
         if project_id and row_project_id != project_id:
             continue
 
-        metadata = row.get("metadata") or {}
-        policies = _parse_policy_list(metadata.get("snapshot_policies"))
+        policies_raw = row.get("policies_jsonb") or []
+        if isinstance(policies_raw, str):
+            policies = _parse_policy_list(policies_raw)
+        else:
+            policies = list(policies_raw)
+        retention_map = row.get("retention_map_jsonb") or {}
         vol_id = row["volume_id"]
 
         for policy_name in policies:
             if policy_filter and policy_name != policy_filter:
                 continue
 
-            retention = _safe_int(metadata.get(f"retention_{policy_name}")) or 0
+            retention = _safe_int(retention_map.get(policy_name)) or 0
 
             # Strictly per-policy: from snapshot metadata directly
             pstat = policy_stats.get((vol_id, policy_name), {})
@@ -327,6 +388,62 @@ def _build_compliance_from_volumes(
 
 
 # ============================================================================
+# Cinder metadata sync helper
+# ============================================================================
+
+def _sync_assignment_to_cinder(
+    project_id: str,
+    volume_id: str,
+    policies: list,
+    retention_map: dict,
+    remove: bool = False,
+) -> None:
+    """
+    Write (or remove) snapshot automation metadata on a Cinder volume so that
+    the snapshot worker picks up the assignment on its next run.
+
+    On create/update: sets auto_snapshot=true, snapshot_policies=<csv>, retention_<policy>=N
+    On delete / disable: deletes those keys from Cinder metadata.
+
+    Failures are logged as warnings — the DB is the authoritative source.
+    """
+    if not project_id or not volume_id:
+        return
+    try:
+        from restore_management import RestoreOpenStackClient
+        os_client = RestoreOpenStackClient()
+        admin_session = os_client.authenticate_admin()
+
+        if remove:
+            # Delete each key individually
+            keys_to_remove = ["auto_snapshot", "snapshot_policies"] + [
+                f"retention_{p}" for p in (policies or [])
+            ]
+            for key in keys_to_remove:
+                url = os_client._cinder_url(project_id, f"/volumes/{volume_id}/metadata/{key}")
+                admin_session.delete(url, timeout=15)
+        else:
+            # POST to merge/create metadata keys (does not wipe unrelated keys)
+            metadata = {
+                "auto_snapshot": "true",
+                "snapshot_policies": ",".join(policies or []),
+            }
+            for policy, retention in (retention_map or {}).items():
+                metadata[f"retention_{policy}"] = str(retention)
+            url = os_client._cinder_url(project_id, f"/volumes/{volume_id}/metadata")
+            r = admin_session.post(url, json={"metadata": metadata}, timeout=30)
+            if r.status_code not in (200, 201):
+                logger.warning(
+                    f"Cinder metadata update for volume {volume_id} "
+                    f"returned {r.status_code}: {r.text[:200]}"
+                )
+    except Exception as e:
+        logger.warning(
+            f"Could not sync snapshot metadata to Cinder for volume {volume_id}: {e}"
+        )
+
+
+# ============================================================================
 # API Endpoint Functions
 # ============================================================================
 
@@ -343,7 +460,7 @@ def setup_snapshot_routes(app, get_db_connection):
     # Snapshot Policy Sets
     # ========================================================================
     
-    @app.get("/snapshot/policy-sets")
+    @app.get("/api/snapshot/policy-sets")
     async def get_policy_sets(
         is_global: Optional[bool] = None,
         tenant_id: Optional[str] = None,
@@ -390,7 +507,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve policy sets: {str(e)}"
             )
     
-    @app.post("/snapshot/policy-sets", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/snapshot/policy-sets", status_code=status.HTTP_201_CREATED)
     async def create_policy_set(
         policy_set: SnapshotPolicySetCreate,
         current_user: User = Depends(get_current_user),
@@ -441,7 +558,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to create policy set: {str(e)}"
             )
     
-    @app.get("/snapshot/policy-sets/{policy_set_id}")
+    @app.get("/api/snapshot/policy-sets/{policy_set_id}")
     async def get_policy_set(
         policy_set_id: int,
         current_user: User = Depends(get_current_user),
@@ -478,7 +595,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve policy set: {str(e)}"
             )
     
-    @app.patch("/snapshot/policy-sets/{policy_set_id}")
+    @app.patch("/api/snapshot/policy-sets/{policy_set_id}")
     async def update_policy_set(
         policy_set_id: int,
         updates: SnapshotPolicySetUpdate,
@@ -553,7 +670,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to update policy set: {str(e)}"
             )
     
-    @app.delete("/snapshot/policy-sets/{policy_set_id}", status_code=status.HTTP_204_NO_CONTENT)
+    @app.delete("/api/snapshot/policy-sets/{policy_set_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_policy_set(
         policy_set_id: int,
         current_user: User = Depends(get_current_user),
@@ -584,7 +701,7 @@ def setup_snapshot_routes(app, get_db_connection):
     # Snapshot Assignments
     # ========================================================================
     
-    @app.get("/snapshot/assignments")
+    @app.get("/api/snapshot/assignments")
     async def get_assignments(
         volume_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -642,7 +759,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve assignments: {str(e)}"
             )
     
-    @app.post("/snapshot/assignments", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/snapshot/assignments", status_code=status.HTTP_201_CREATED)
     async def create_assignment(
         assignment: SnapshotAssignmentCreate,
         current_user: User = Depends(get_current_user),
@@ -677,6 +794,15 @@ def setup_snapshot_routes(app, get_db_connection):
 
                 result = cur.fetchone()
 
+                # Write metadata back to Cinder so the snapshot worker picks up this volume
+                _sync_assignment_to_cinder(
+                    assignment.project_id or "",
+                    assignment.volume_id,
+                    assignment.policies or [],
+                    assignment.retention_map or {},
+                    remove=False,
+                )
+
                 return result
 
         except psycopg2.IntegrityError as e:
@@ -695,7 +821,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to create assignment: {str(e)}"
             )
     
-    @app.get("/snapshot/assignments/{volume_id}")
+    @app.get("/api/snapshot/assignments/{volume_id}")
     async def get_assignment(
         volume_id: str,
         current_user: User = Depends(get_current_user),
@@ -734,7 +860,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve assignment: {str(e)}"
             )
     
-    @app.patch("/snapshot/assignments/{volume_id}")
+    @app.patch("/api/snapshot/assignments/{volume_id}")
     async def update_assignment(
         volume_id: str,
         updates: SnapshotAssignmentUpdate,
@@ -792,6 +918,17 @@ def setup_snapshot_routes(app, get_db_connection):
                         detail=f"No assignment found for volume {volume_id}"
                     )
 
+                # Propagate the updated assignment to Cinder
+                result_auto = result.get("auto_snapshot", True)
+                result_policies = result.get("policies") or []
+                result_retention = result.get("retention_map") or {}
+                result_project = result.get("project_id") or ""
+                _sync_assignment_to_cinder(
+                    result_project, volume_id,
+                    result_policies, result_retention,
+                    remove=not result_auto,
+                )
+
                 return result
 
         except HTTPException:
@@ -802,7 +939,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to update assignment: {str(e)}"
             )
     
-    @app.delete("/snapshot/assignments/{volume_id}", status_code=status.HTTP_204_NO_CONTENT)
+    @app.delete("/api/snapshot/assignments/{volume_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_assignment(
         volume_id: str,
         current_user: User = Depends(get_current_user),
@@ -811,15 +948,31 @@ def setup_snapshot_routes(app, get_db_connection):
         """Delete a snapshot assignment"""
         try:
             with get_connection() as conn:
-                cur = conn.cursor()
+                cur = conn.cursor(cursor_factory=RealDictCursor)
 
-                cur.execute("DELETE FROM snapshot_assignments WHERE volume_id = %s", (volume_id,))
+                # Fetch before delete so we know project_id and policies for Cinder cleanup
+                cur.execute(
+                    "SELECT project_id, policies, retention_map FROM snapshot_assignments WHERE volume_id = %s",
+                    (volume_id,)
+                )
+                existing = cur.fetchone()
 
-                if cur.rowcount == 0:
+                if not existing:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail=f"No assignment found for volume {volume_id}"
                     )
+
+                cur.execute("DELETE FROM snapshot_assignments WHERE volume_id = %s", (volume_id,))
+
+                # Remove our metadata keys from Cinder
+                _sync_assignment_to_cinder(
+                    existing.get("project_id") or "",
+                    volume_id,
+                    existing.get("policies") or [],
+                    existing.get("retention_map") or {},
+                    remove=True,
+                )
 
         except HTTPException:
             raise
@@ -833,7 +986,7 @@ def setup_snapshot_routes(app, get_db_connection):
     # Snapshot Exclusions
     # ========================================================================
     
-    @app.get("/snapshot/exclusions")
+    @app.get("/api/snapshot/exclusions")
     async def get_exclusions(
         volume_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -877,7 +1030,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve exclusions: {str(e)}"
             )
     
-    @app.post("/snapshot/exclusions", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/snapshot/exclusions", status_code=status.HTTP_201_CREATED)
     async def create_exclusion(
         exclusion: SnapshotExclusionCreate,
         current_user: User = Depends(get_current_user),
@@ -924,7 +1077,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to create exclusion: {str(e)}"
             )
     
-    @app.delete("/snapshot/exclusions/{volume_id}", status_code=status.HTTP_204_NO_CONTENT)
+    @app.delete("/api/snapshot/exclusions/{volume_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_exclusion(
         volume_id: str,
         current_user: User = Depends(get_current_user),
@@ -955,7 +1108,7 @@ def setup_snapshot_routes(app, get_db_connection):
     # Snapshot Runs
     # ========================================================================
     
-    @app.get("/snapshot/runs")
+    @app.get("/api/snapshot/runs")
     async def get_runs(
         run_type: Optional[str] = None,
         status_filter: Optional[str] = None,
@@ -1000,7 +1153,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve snapshot runs: {str(e)}"
             )
     
-    @app.post("/snapshot/runs", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/snapshot/runs", status_code=status.HTTP_201_CREATED)
     async def create_run(
         run: SnapshotRunCreate,
         current_user: User = Depends(get_current_user),
@@ -1032,7 +1185,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to create snapshot run: {str(e)}"
             )
     
-    @app.get("/snapshot/runs/{run_id}")
+    @app.get("/api/snapshot/runs/{run_id}")
     async def get_run(
         run_id: int,
         current_user: User = Depends(get_current_user),
@@ -1083,8 +1236,58 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve snapshot run: {str(e)}"
             )
 
+    # ── Active Run Progress (for live polling) — MUST be before {run_id}/progress ──
+    @app.get("/api/snapshot/runs/active/progress")
+    async def get_active_run_progress(
+        current_user: User = Depends(get_current_user),
+        _has_permission: bool = Depends(require_permission("snapshot_runs", "read"))
+    ):
+        """Get progress for the currently-running snapshot run, if any."""
+        try:
+            with get_connection() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+
+                cur.execute("""
+                    SELECT id, run_type, status, total_volumes,
+                           snapshots_created, snapshots_deleted,
+                           snapshots_failed, volumes_skipped,
+                           total_batches, completed_batches, current_batch,
+                           quota_blocked, progress_pct, estimated_finish_at,
+                           started_at
+                    FROM snapshot_runs
+                    WHERE status IN ('running', 'in_progress')
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                """)
+                run = cur.fetchone()
+
+                if not run:
+                    return {"active": False, "run": None, "batches": []}
+
+                cur.execute("""
+                    SELECT batch_number, tenant_names,
+                           total_volumes, completed, status,
+                           started_at, finished_at
+                    FROM snapshot_run_batches
+                    WHERE snapshot_run_id = %s
+                    ORDER BY batch_number
+                """, (run["id"],))
+                batches = cur.fetchall()
+
+                return {
+                    "active": True,
+                    "run": dict(run),
+                    "batches": [dict(b) for b in batches],
+                }
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve active run progress: {str(e)}"
+            )
+
     # ── Snapshot Run Progress ────────────────────────────────────────
-    @app.get("/snapshot/runs/{run_id}/progress")
+    @app.get("/api/snapshot/runs/{run_id}/progress")
     async def get_run_progress(
         run_id: int,
         current_user: User = Depends(get_current_user),
@@ -1153,57 +1356,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve run progress: {str(e)}"
             )
 
-    # ── Active Run Progress (for live polling) ───────────────────────
-    @app.get("/snapshot/runs/active/progress")
-    async def get_active_run_progress(
-        current_user: User = Depends(get_current_user),
-        _has_permission: bool = Depends(require_permission("snapshot_runs", "read"))
-    ):
-        """Get progress for the currently-running snapshot run, if any."""
-        try:
-            with get_connection() as conn:
-                cur = conn.cursor(cursor_factory=RealDictCursor)
-
-                cur.execute("""
-                    SELECT id, run_type, status, total_volumes,
-                           snapshots_created, snapshots_deleted,
-                           snapshots_failed, volumes_skipped,
-                           total_batches, completed_batches, current_batch,
-                           quota_blocked, progress_pct, estimated_finish_at,
-                           started_at
-                    FROM snapshot_runs
-                    WHERE status IN ('running', 'in_progress')
-                    ORDER BY started_at DESC
-                    LIMIT 1
-                """)
-                run = cur.fetchone()
-
-                if not run:
-                    return {"active": False, "run": None, "batches": []}
-
-                cur.execute("""
-                    SELECT batch_number, tenant_names,
-                           total_volumes, completed, status,
-                           started_at, finished_at
-                    FROM snapshot_run_batches
-                    WHERE snapshot_run_id = %s
-                    ORDER BY batch_number
-                """, (run["id"],))
-                batches = cur.fetchall()
-
-                return {
-                    "active": True,
-                    "run": dict(run),
-                    "batches": [dict(b) for b in batches],
-                }
-
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve active run progress: {str(e)}"
-            )
-    
-    @app.patch("/snapshot/runs/{run_id}")
+    @app.patch("/api/snapshot/runs/{run_id}")
     async def update_run(
         run_id: int,
         status_update: str,
@@ -1280,7 +1433,7 @@ def setup_snapshot_routes(app, get_db_connection):
     # Snapshot Records
     # ========================================================================
     
-    @app.get("/snapshot/records")
+    @app.get("/api/snapshot/records")
     async def get_records(
         snapshot_run_id: Optional[int] = None,
         volume_id: Optional[str] = None,
@@ -1334,7 +1487,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to retrieve snapshot records: {str(e)}"
             )
     
-    @app.post("/snapshot/records", status_code=status.HTTP_201_CREATED)
+    @app.post("/api/snapshot/records", status_code=status.HTTP_201_CREATED)
     async def create_record(
         record: SnapshotRecordCreate,
         current_user: User = Depends(get_current_user),
@@ -1379,7 +1532,7 @@ def setup_snapshot_routes(app, get_db_connection):
     # Snapshot Compliance Report
     # ========================================================================
 
-    @app.get("/snapshot/compliance")
+    @app.get("/api/snapshot/compliance")
     async def get_snapshot_compliance(
         days: int = 2,
         tenant_id: Optional[str] = None,
@@ -1475,7 +1628,7 @@ def setup_snapshot_routes(app, get_db_connection):
     # On-Demand Snapshot Pipeline  ("Sync & Snapshot Now")
     # ========================================================================
 
-    @app.post("/snapshot/run-now", status_code=status.HTTP_202_ACCEPTED)
+    @app.post("/api/snapshot/run-now", status_code=status.HTTP_202_ACCEPTED)
     async def run_snapshot_now(
         current_user: User = Depends(get_current_user),
         _has_permission: bool = Depends(require_permission("snapshots", "admin"))
@@ -1523,7 +1676,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 return {
                     "job_id": job_id,
                     "status": "pending",
-                    "message": "Snapshot pipeline queued. The worker will pick it up within 10 seconds. Poll /snapshot/run-now/status for progress.",
+                    "message": "Snapshot pipeline queued. The worker will pick it up within 10 seconds. Poll /api/snapshot/run-now/status for progress.",
                 }
 
         except HTTPException:
@@ -1535,7 +1688,7 @@ def setup_snapshot_routes(app, get_db_connection):
                 detail=f"Failed to queue on-demand snapshot run: {str(e)}"
             )
 
-    @app.get("/snapshot/run-now/status")
+    @app.get("/api/snapshot/run-now/status")
     async def get_run_now_status(
         current_user: User = Depends(get_current_user),
         _has_permission: bool = Depends(require_permission("snapshots", "read"))

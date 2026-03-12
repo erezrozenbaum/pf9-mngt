@@ -14,8 +14,10 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: apiTarget,
-        changeOrigin: true,
-        // No rewrite — API routes are registered with /api prefix
+        changeOrigin: false,
+        // No rewrite — API routes are registered with /api prefix.
+        // changeOrigin: false preserves the browser Host header so the
+        // backend TrustedHostMiddleware sees 'localhost' (trusted).
       },
     },
   },
