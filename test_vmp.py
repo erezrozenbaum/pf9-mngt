@@ -1,10 +1,14 @@
-import requests, json
+import requests, json, os
 
-r = requests.post('http://localhost:8000/auth/login', json={'username':'TEST_ADMIN_EMAIL_PLACEHOLDER', 'password':'REDACTED_PASSWORD'})
+_user = os.environ["TEST_ADMIN_EMAIL"]
+_pass = os.environ["TEST_ADMIN_PASS"]
+_base = os.environ.get("TEST_BASE_URL", "http://localhost:8000")
+
+r = requests.post(f'{_base}/auth/login', json={'username': _user, 'password': _pass})
 token = r.json()['access_token']
 hdrs = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}
 
-res = requests.get('http://localhost:8000/api/vm-provisioning/resources',
+res = requests.get(f'{_base}/api/vm-provisioning/resources',
     params={'domain_name': 'Default', 'project_name': 'service'}, headers=hdrs, timeout=30).json()
 img = res['images'][0]
 fl = res['flavors'][0]
@@ -25,14 +29,14 @@ batch = {
         'network_id': net['id'], 'network_name': net['name'],
         'security_groups': ['default'],
         'os_username': 'ubuntu',
-        'os_password': 'REDACTED_PASSWORD'
+        'os_password': os.environ.get('TEST_VM_OS_PASSWORD', 'ChangeMe')
     }]
 }
-r2 = requests.post('http://localhost:8000/api/vm-provisioning/batches', headers=hdrs, json=batch)
+r2 = requests.post(f'{_base}/api/vm-provisioning/batches', headers=hdrs, json=batch)
 bid = r2.json().get('batch_id')
 print('Batch ID:', bid)
 
-r3 = requests.post('http://localhost:8000/api/vm-provisioning/batches/' + str(bid) + '/dry-run', headers=hdrs, timeout=60)
+r3 = requests.post(f'{_base}/api/vm-provisioning/batches/' + str(bid) + '/dry-run', headers=hdrs, timeout=60)
 print('Dry-run HTTP:', r3.status_code)
 dr = r3.json()
 print('Dry-run result:', dr.get('status'))
@@ -45,5 +49,5 @@ for q in dr.get('results', {}).get('quota', []):
     print('  Quota', q['resource'], ': need', q['needed'], 'free', q['free'], '->', q['status'])
 
 # clean up
-requests.delete('http://localhost:8000/api/vm-provisioning/batches/' + str(bid), headers=hdrs)
+requests.delete(f'{_base}/api/vm-provisioning/batches/' + str(bid), headers=hdrs)
 print('Cleaned up batch', bid)

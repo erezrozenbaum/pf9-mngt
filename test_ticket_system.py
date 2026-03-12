@@ -10,12 +10,12 @@ Run inside pf9_api container:
 Or from host (requires API reachable at localhost:8000):
     python test_ticket_system.py
 """
-import json, sys, time, re
+import json, sys, time, re, os
 import requests
 
-BASE         = "http://localhost:8000"
-ADMIN_EMAIL  = "TEST_ADMIN_EMAIL_PLACEHOLDER"
-ADMIN_PASS   = "REDACTED_PASSWORD"
+BASE         = os.environ.get("TEST_BASE_URL", "http://localhost:8000")
+ADMIN_EMAIL  = os.environ["TEST_ADMIN_EMAIL"]
+ADMIN_PASS   = os.environ["TEST_ADMIN_PASS"]
 
 # Department IDs (seeded by init.sql)
 DEPT_TIER1   = 2   # Tier1 Support

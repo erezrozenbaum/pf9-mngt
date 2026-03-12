@@ -3,12 +3,12 @@
 Phase B1 test suite — quota_adjustment + org_usage_report
 Run inside pf9_api container:  python /tmp/test_phase_b1.py
 """
-import json, sys
+import json, sys, os
 import requests
 
-BASE = "http://localhost:8000"
-ADMIN_EMAIL = "TEST_ADMIN_EMAIL_PLACEHOLDER"
-ADMIN_PASS  = "REDACTED_PASSWORD"
+BASE = os.environ.get("TEST_BASE_URL", "http://localhost:8000")
+ADMIN_EMAIL = os.environ["TEST_ADMIN_EMAIL"]
+ADMIN_PASS  = os.environ["TEST_ADMIN_PASS"]
 
 PASS = "\033[92mPASS\033[0m"
 FAIL = "\033[91mFAIL\033[0m"
@@ -173,7 +173,7 @@ if r.ok:
 
 # ── Dept-based visibility check ───────────────────────────────────────────────
 print("\n[8] Dept visibility — yehuda (Sales) sees org_usage_report, not quota_adjustment")
-rs = requests.post(f"{BASE}/auth/login", json={"username": "yehuda", "password": "REDACTED_PASSWORD"})
+rs = requests.post(f"{BASE}/auth/login", json={"username": os.environ.get("TEST_SALES_USER", "yehuda"), "password": os.environ["TEST_SALES_PASS"]})
 if rs.ok:
     sales_token = rs.json().get("access_token", "")
     HS = {"Authorization": f"Bearer {sales_token}"}
