@@ -329,20 +329,74 @@ services:
           cpus: "0.5"
           memory: 256m
 
+  # Scheduler Worker — replaces Windows Task Scheduler for:
+  #   • host_metrics_collector.py  (writes metrics cache every METRICS_INTERVAL_SECONDS)
+  #   • pf9_rvtools.py             (schedule: RVTOOLS_INTERVAL_MINUTES or RVTOOLS_SCHEDULE_TIME)
+  scheduler_worker:
+    build:
+      context: .
+      dockerfile: scheduler_worker/Dockerfile
+    container_name: pf9_scheduler_worker
+    environment:
+      # --- PF9 / OpenStack auth ---
+      PF9_AUTH_URL: ${PF9_AUTH_URL}
+      PF9_USERNAME: ${PF9_USERNAME}
+      PF9_PASSWORD: ${PF9_PASSWORD}
+      PF9_USER_DOMAIN: ${PF9_USER_DOMAIN:-Default}
+      PF9_PROJECT_NAME: ${PF9_PROJECT_NAME:-service}
+      PF9_PROJECT_DOMAIN: ${PF9_PROJECT_DOMAIN:-Default}
+      PF9_REGION_NAME: ${PF9_REGION_NAME:-region-one}
+      PF9_VERIFY_TLS: ${PF9_VERIFY_TLS:-true}
+      # --- Database (for RVTools db_writer) ---
+      PF9_DB_HOST: db
+      PF9_DB_PORT: "5432"
+      PF9_DB_NAME: ${POSTGRES_DB}
+      PF9_DB_USER: ${POSTGRES_USER}
+      PF9_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # --- PF9 hosts for metrics collection ---
+      PF9_HOSTS: ${PF9_HOSTS:-}
+      PF9_HOST_MAP: ${PF9_HOST_MAP:-}
+      # --- RVTools output ---
+      PF9_OUTPUT_DIR: /mnt/reports
+      # --- Metrics cache (shared with pf9_monitoring) ---
+      METRICS_CACHE_PATH: /tmp/cache/metrics_cache.json
+      # --- Schedule tunables ---
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      METRICS_INTERVAL_SECONDS: ${METRICS_INTERVAL_SECONDS:-60}
+      RVTOOLS_ENABLED: ${RVTOOLS_ENABLED:-true}
+      RVTOOLS_INTERVAL_MINUTES: ${RVTOOLS_INTERVAL_MINUTES:-0}
+      RVTOOLS_SCHEDULE_TIME: ${RVTOOLS_SCHEDULE_TIME:-03:00}
+      RVTOOLS_RUN_ON_START: ${RVTOOLS_RUN_ON_START:-false}
+      DEMO_MODE: ${DEMO_MODE:-false}
+    volumes:
+      - ./monitoring/cache:/tmp/cache
+      - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports
+      - app_logs:/app/logs
+    depends_on:
+      - db
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+
   # Database & LDAP Backup Worker
+  # Activate with: COMPOSE_PROFILES=backup in .env (requires NFS_BACKUP_SERVER + NFS_BACKUP_DEVICE)
   backup_worker:
+    profiles: ["backup"]
     build:
       context: ./backup_worker
     container_name: pf9_backup_worker
     environment:
-      BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
       DB_HOST: db
       DB_PORT: "5432"
       DB_NAME: ${POSTGRES_DB}
       DB_USER: ${POSTGRES_USER}
       DB_PASS: ${POSTGRES_PASSWORD}
-      NFS_BACKUP_PATH: ${NFS_BACKUP_PATH:-/backups}
+      BACKUP_PATH: /backups
       POLL_INTERVAL: ${BACKUP_POLL_INTERVAL:-3600}
+      JOB_POLL_INTERVAL: ${BACKUP_JOB_POLL_INTERVAL:-30}
       # LDAP backup settings
       LDAP_HOST: ldap
       LDAP_PORT: "389"
@@ -350,7 +404,7 @@ services:
       LDAP_ADMIN_DN: "cn=admin,${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}"
       LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
     volumes:
-      - ${BACKUP_VOLUME:-./backups}:/backups
+      - nfs_backups:/backups
     depends_on:
       - db
       - ldap
@@ -465,5 +519,13 @@ volumes:
   ldap_data:
   ldap_config:
   app_logs:
+  # NFS-backed backup volume — only created when COMPOSE_PROFILES=backup
+  # Requires NFS_BACKUP_SERVER and NFS_BACKUP_DEVICE to be set in .env
+  nfs_backups:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: "addr=${NFS_BACKUP_SERVER:-},nfsvers=${NFS_VERSION:-3},nolock,soft,rw,timeo=30"
+      device: ":${NFS_BACKUP_DEVICE:-}"
 
 

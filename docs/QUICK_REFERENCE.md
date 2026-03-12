@@ -385,14 +385,11 @@ curl -X POST http://localhost:8000/restore/cancel/<job_id> \
 
 ### Real-Time Monitoring
 ```powershell
-# Setup automated collection (Windows Task Scheduler)
-.\startup.ps1  # Includes monitoring setup
+# Check scheduler worker (runs metrics + RVTools automatically)
+docker logs pf9_scheduler_worker --tail 20
 
 # Manual metrics collection
-python host_metrics_collector.py
-
-# Check scheduled task
-schtasks /query /tn "PF9 Metrics Collection"
+docker exec pf9_scheduler_worker python host_metrics_collector.py --once
 
 # View cached metrics
 Get-Content metrics_cache.json | ConvertFrom-Json
@@ -491,11 +488,13 @@ python snapshots/p9_auto_snapshots.py --policy daily_5 --dry-run
 python snapshots/p9_snapshot_compliance_report.py --input latest_export.xlsx
 ```
 
-### Windows Task Scheduler Setup
-```
-Program/script: C:\Python313\python.exe
-Add arguments: C:\pf9-mngt\pf9_rvtools.py
-Start in: C:\pf9-mngt
+### Windows Task Scheduler
+```powershell
+# Metrics collection (auto-created by startup.ps1)
+# Every 30 minutes — "PF9 Metrics Collection"
+
+# Inventory collection (create manually)
+schtasks /create /tn "PF9 RVTools Collection" /tr "python C:\pf9-mngt\pf9_rvtools.py" /sc daily /st 02:00
 ```
 
 ### Complete One-Command Setup (Recommended)
@@ -508,9 +507,9 @@ cp .env.template .env
 .\startup.ps1
 
 # System will automatically:
-# - Collect initial metrics from PF9 hosts
-# - Setup scheduled metrics collection (every 2 minutes)
+# - Start pf9_scheduler_worker (metrics + inventory collection)
 # - Start all Docker services (DB, API, UI, Monitoring)
+# - Pre-flight NFS check if COMPOSE_PROFILES=backup
 # - Verify all services are running
 ```
 

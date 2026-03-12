@@ -564,65 +564,101 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
       const orphans = r.orphans || {};
       const deleted = r.deleted || {};
       const errs = r.errors || {};
+      const scannedTypes = Object.keys(orphans);
+      const totalFound = scannedTypes.reduce((s, k) => s + (orphans[k] || []).length, 0);
       return (
         <div className="rb-result-friendly">
+          {/* Per-type sections — shown even when 0 so user sees what was scanned */}
+          {scannedTypes.length === 0 && <p className="rb-result-empty">No resource types were scanned.</p>}
           {/* Ports */}
-          {(orphans.ports || []).length > 0 && (
+          {'ports' in orphans && (
             <div className="rb-result-sub">
-              <h6>Orphan Ports ({orphans.ports.length}){deleted.ports ? ` · ${deleted.ports.length} deleted` : ""}</h6>
-              <table className="rb-result-table">
-                <thead><tr><th>Port ID</th><th>Tenant</th><th>MAC</th><th>Created</th></tr></thead>
-                <tbody>
-                  {orphans.ports.map((p: any) => (
-                    <tr key={p.port_id}>
-                      <td title={p.port_id}>{p.port_name || p.port_id.slice(0, 8)}…</td>
-                      <td>{p.project_name || p.project_id}</td>
-                      <td>{p.mac_address}</td>
-                      <td>{formatDate(p.created_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <h6>Orphan Ports ({(orphans.ports || []).length}){deleted.ports ? ` · ${deleted.ports.length} deleted` : ""}</h6>
+              {(orphans.ports || []).length === 0
+                ? <p className="rb-result-empty">None found</p>
+                : <table className="rb-result-table">
+                    <thead><tr><th>Port ID</th><th>Tenant</th><th>MAC</th><th>Created</th></tr></thead>
+                    <tbody>
+                      {orphans.ports.map((p: any) => (
+                        <tr key={p.port_id}>
+                          <td title={p.port_id}>{p.port_name || p.port_id.slice(0, 8)}…</td>
+                          <td>{p.project_name || p.project_id}</td>
+                          <td>{p.mac_address}</td>
+                          <td>{formatDate(p.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+              }
             </div>
           )}
           {/* Volumes */}
-          {(orphans.volumes || []).length > 0 && (
+          {'volumes' in orphans && (
             <div className="rb-result-sub">
-              <h6>Orphan Volumes ({orphans.volumes.length}){deleted.volumes ? ` · ${deleted.volumes.length} deleted` : ""}</h6>
-              <table className="rb-result-table">
-                <thead><tr><th>Volume Name</th><th>Size</th><th>Tenant</th><th>Created</th></tr></thead>
-                <tbody>
-                  {orphans.volumes.map((v: any) => (
-                    <tr key={v.volume_id}>
-                      <td title={v.volume_id}>{v.name || v.volume_id.slice(0, 8)}</td>
-                      <td>{v.size_gb} GB</td>
-                      <td>{v.project_name || v.project_id}</td>
-                      <td>{formatDate(v.created_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <h6>Orphan Volumes ({(orphans.volumes || []).length}){deleted.volumes ? ` · ${deleted.volumes.length} deleted` : ""}</h6>
+              {(orphans.volumes || []).length === 0
+                ? <p className="rb-result-empty">None found</p>
+                : <table className="rb-result-table">
+                    <thead><tr><th>Volume Name</th><th>Size</th><th>Tenant</th><th>Created</th></tr></thead>
+                    <tbody>
+                      {orphans.volumes.map((v: any) => (
+                        <tr key={v.volume_id}>
+                          <td title={v.volume_id}>{v.name || v.volume_id.slice(0, 8)}</td>
+                          <td>{v.size_gb} GB</td>
+                          <td>{v.project_name || v.project_id}</td>
+                          <td>{formatDate(v.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+              }
             </div>
           )}
           {/* Floating IPs */}
-          {(orphans.floating_ips || []).length > 0 && (
+          {'floating_ips' in orphans && (
             <div className="rb-result-sub">
-              <h6>Orphan Floating IPs ({orphans.floating_ips.length}){deleted.floating_ips ? ` · ${deleted.floating_ips.length} deleted` : ""}</h6>
-              <table className="rb-result-table">
-                <thead><tr><th>Floating IP</th><th>Tenant</th><th>Created</th></tr></thead>
-                <tbody>
-                  {orphans.floating_ips.map((f: any) => (
-                    <tr key={f.fip_id}>
-                      <td>{f.floating_ip_address || f.fip_id.slice(0, 8)}</td>
-                      <td>{f.project_name || f.project_id}</td>
-                      <td>{formatDate(f.created_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <h6>Orphan Floating IPs ({(orphans.floating_ips || []).length}){deleted.floating_ips ? ` · ${deleted.floating_ips.length} deleted` : ""}</h6>
+              {(orphans.floating_ips || []).length === 0
+                ? <p className="rb-result-empty">None found</p>
+                : <table className="rb-result-table">
+                    <thead><tr><th>Floating IP</th><th>Tenant</th><th>Created</th></tr></thead>
+                    <tbody>
+                      {orphans.floating_ips.map((f: any) => (
+                        <tr key={f.fip_id}>
+                          <td>{f.floating_ip_address || f.fip_id.slice(0, 8)}</td>
+                          <td>{f.project_name || f.project_id}</td>
+                          <td>{formatDate(f.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+              }
             </div>
           )}
-          {Object.keys(orphans).length === 0 && <p className="rb-result-empty">No orphaned resources found</p>}
+          {/* Networks */}
+          {'networks' in orphans && (
+            <div className="rb-result-sub">
+              <h6>Orphan Networks ({(orphans.networks || []).length}){deleted.networks ? ` · ${deleted.networks.length} deleted` : ""}</h6>
+              {(orphans.networks || []).length === 0
+                ? <p className="rb-result-empty">None found</p>
+                : <table className="rb-result-table">
+                    <thead><tr><th>Network Name</th><th>Tenant</th><th>Reason</th><th>Subnets</th><th>Created</th></tr></thead>
+                    <tbody>
+                      {orphans.networks.map((n: any) => (
+                        <tr key={n.network_id}>
+                          <td title={n.network_id}>{n.name || n.network_id.slice(0, 8)}</td>
+                          <td>{n.project_name || n.project_id || "—"}</td>
+                          <td><span style={{ fontSize: "11px", color: n.orphan_reason === "deleted project" ? "#f59e0b" : "#9ca3af" }}>{n.orphan_reason || "—"}</span></td>
+                          <td>{n.subnet_count ?? 0}</td>
+                          <td>{formatDate(n.created_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+              }
+            </div>
+          )}
+          {scannedTypes.length > 0 && totalFound === 0 && <p className="rb-result-empty">✅ No orphaned resources found across all scanned types</p>}
           {/* Errors */}
           {Object.entries(errs).filter(([, v]) => (v as any[]).length > 0).map(([k, v]) => (
             <div className="rb-result-sub rb-result-errors" key={k}>

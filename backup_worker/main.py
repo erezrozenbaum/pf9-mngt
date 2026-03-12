@@ -25,14 +25,14 @@ import psycopg2.extras
 # ---------------------------------------------------------------------------
 # Configuration from environment
 # ---------------------------------------------------------------------------
-BACKUP_ENABLED = os.getenv("BACKUP_ENABLED", "true").lower() in ("true", "1", "yes")
 DB_HOST = os.getenv("DB_HOST", "pf9_db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "pf9_mgmt")
 DB_USER = os.getenv("DB_USER", "pf9")
 DB_PASS = os.getenv("DB_PASS", "pf9pass")
-NFS_BACKUP_PATH = os.getenv("NFS_BACKUP_PATH", "/backups")
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3600"))
+BACKUP_PATH = os.getenv("BACKUP_PATH", "/backups")
+POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3600"))      # schedule check interval
+JOB_POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "30"))  # pending job check interval
 
 # LDAP configuration for backup
 LDAP_HOST = os.getenv("LDAP_HOST", "pf9_ldap")
@@ -63,6 +63,34 @@ def _handle_signal(signum, _frame):
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
+
+
+# ---------------------------------------------------------------------------
+# Storage health check
+# ---------------------------------------------------------------------------
+def _check_storage_health() -> bool:
+    """Verify that BACKUP_PATH (NFS mount) is writable.
+
+    Writes a temporary probe file and removes it immediately.  Returns True on
+    success, False if the path is unreachable or read-only (e.g. stale NFS mount).
+    """
+    probe = os.path.join(BACKUP_PATH, ".backup_worker_probe")
+    try:
+        os.makedirs(BACKUP_PATH, exist_ok=True)
+        with open(probe, "w") as fh:
+            fh.write("ok")
+        os.remove(probe)
+        return True
+    except Exception as exc:
+        log.error(
+            "Storage health check FAILED for %s: %s — check that NFS_BACKUP_SERVER "
+            "and NFS_BACKUP_DEVICE are correct in .env and the NFS server is reachable "
+            "on port 2049.",
+            BACKUP_PATH,
+            exc,
+        )
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -136,7 +164,7 @@ def _run_backup(conn, job_id: int, backup_type: str = "manual", initiated_by: st
     """Execute pg_dump and record result in backup_history."""
     stamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     filename = f"pf9_mgmt_{stamp}.sql.gz"
-    filepath = os.path.join(NFS_BACKUP_PATH, filename)
+    filepath = os.path.join(BACKUP_PATH, filename)
 
     log.info("Starting backup job %s  →  %s", job_id, filepath)
 
@@ -382,7 +410,7 @@ def _enforce_retention(conn, target="database"):
 def _run_ldap_backup(conn, job_id: int, backup_type: str = "manual", initiated_by: str = "system"):
     """Export all LDAP entries via ldapsearch and save as compressed LDIF."""
     stamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    ldap_dir = os.path.join(NFS_BACKUP_PATH, "ldap")
+    ldap_dir = os.path.join(BACKUP_PATH, "ldap")
     os.makedirs(ldap_dir, exist_ok=True)
     filename = f"pf9_ldap_{stamp}.ldif.gz"
     filepath = os.path.join(ldap_dir, filename)
@@ -577,20 +605,36 @@ def _create_scheduled_job(conn, target="database"):
 # ---------------------------------------------------------------------------
 
 def main():
-    if not BACKUP_ENABLED:
-        log.info("Backup worker is DISABLED (BACKUP_ENABLED=false). Sleeping indefinitely.")
-        while _running:
-            time.sleep(60)
-        return
+    log.info(
+        "Backup worker starting  (poll every %d s, NFS → %s)",
+        JOB_POLL_INTERVAL,
+        BACKUP_PATH,
+    )
 
-    log.info("Backup worker starting  (poll every %d s, NFS → %s)", POLL_INTERVAL, NFS_BACKUP_PATH)
+    # Verify storage is accessible; warn but don't abort so the worker can
+    # still process pending DB/LDAP jobs once connectivity recovers.
+    if not _check_storage_health():
+        log.warning(
+            "Backup storage is not accessible at startup – backups will fail "
+            "until the storage becomes reachable. Continuing main loop …"
+        )
+    else:
+        log.info("Storage health check passed – backup path is writable.")
 
-    # Ensure backup directory exists
-    os.makedirs(NFS_BACKUP_PATH, exist_ok=True)
+    _last_schedule_check = 0.0  # force schedule check on first iteration
 
     while _running:
         conn = None
         try:
+            # Re-verify storage before processing any jobs this cycle
+            if not _check_storage_health():
+                log.warning("Backup storage unreachable – skipping this poll cycle.")
+                for _ in range(JOB_POLL_INTERVAL):
+                    if not _running:
+                        break
+                    time.sleep(1)
+                continue
+
             conn = _get_conn()
 
             # 1. Process any pending DATABASE manual / restore jobs
@@ -617,20 +661,23 @@ def main():
                     _run_ldap_backup(conn, job["id"], jtype, job.get("initiated_by", "manual"))
                 _enforce_retention(conn, "ldap")
 
-            # 3. Check scheduled backups
-            cfg = _fetch_config(conn)
+            # 3. Check scheduled backups — only every POLL_INTERVAL seconds
+            now_ts = time.time()
+            if now_ts - _last_schedule_check >= POLL_INTERVAL:
+                _last_schedule_check = now_ts
+                cfg = _fetch_config(conn)
 
-            # Database scheduled backup
-            if _should_run_scheduled(cfg, "database"):
-                job_id = _create_scheduled_job(conn, "database")
-                _run_backup(conn, job_id, "scheduled", "scheduler")
-                _enforce_retention(conn, "database")
+                # Database scheduled backup
+                if _should_run_scheduled(cfg, "database"):
+                    job_id = _create_scheduled_job(conn, "database")
+                    _run_backup(conn, job_id, "scheduled", "scheduler")
+                    _enforce_retention(conn, "database")
 
-            # LDAP scheduled backup
-            if _should_run_scheduled(cfg, "ldap"):
-                job_id = _create_scheduled_job(conn, "ldap")
-                _run_ldap_backup(conn, job_id, "scheduled", "scheduler")
-                _enforce_retention(conn, "ldap")
+                # LDAP scheduled backup
+                if _should_run_scheduled(cfg, "ldap"):
+                    job_id = _create_scheduled_job(conn, "ldap")
+                    _run_ldap_backup(conn, job_id, "scheduled", "scheduler")
+                    _enforce_retention(conn, "ldap")
 
         except Exception as exc:
             log.error("Worker loop error: %s", exc)
@@ -641,8 +688,8 @@ def main():
                 except Exception:
                     pass
 
-        # Sleep in small increments so SIGTERM is responsive
-        for _ in range(POLL_INTERVAL):
+        # Sleep in short increments so SIGTERM is responsive
+        for _ in range(JOB_POLL_INTERVAL):
             if not _running:
                 break
             time.sleep(1)

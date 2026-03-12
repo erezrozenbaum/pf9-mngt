@@ -1796,15 +1796,21 @@ async def delete_project_resource(
     client = get_client()
     client.token = None
     try:
+        # Clean up all OpenStack resources BEFORE removing the Keystone project.
+        # Once the project is deleted, provisionsrv can no longer be granted a role
+        # there, leaving resources as permanent orphans that require OpenStack admin
+        # credentials to remove.
+        cleanup_summary = client.cleanup_project_resources(project_id)
         client.delete_project(project_id)
         _log_activity(actor=actor, action="delete", resource_type="project",
                        resource_id=project_id, resource_name=resource_name,
-                       domain_name=domain_name, ip_address=client_ip, result="success")
+                       domain_name=domain_name, ip_address=client_ip, result="success",
+                       details=cleanup_summary)
         _fire_notification(event_type="resource_deleted", severity="warning",
                            summary=f"Project '{resource_name or project_id}' deleted by {actor}",
                            resource_id=project_id, resource_name=resource_name or project_id,
                            domain_name=domain_name or "", project_name=project_name or "", actor=actor)
-        return {"message": f"Project {project_id} deleted", "resource_type": "project"}
+        return {"message": f"Project {project_id} deleted", "resource_type": "project", "cleanup": cleanup_summary}
     except Exception as e:
         _log_activity(actor=actor, action="delete", resource_type="project",
                        resource_id=project_id, resource_name=resource_name,
@@ -1897,9 +1903,10 @@ async def delete_domain(
             except Exception as e:
                 errors.append(f"Failed to delete user {u.get('name', u['id'])}: {e}")
 
-        # Delete projects
+        # Delete projects (clean OS resources first to avoid orphans)
         for p in projects:
             try:
+                client.cleanup_project_resources(p["id"])
                 client.delete_project(p["id"])
             except Exception as e:
                 errors.append(f"Failed to delete project {p.get('name', p['id'])}: {e}")

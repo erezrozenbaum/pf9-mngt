@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.59.0  
-**Last Updated**: March 11, 2026  
+**Version**: 1.62.0  
+**Last Updated**: March 12, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -109,6 +109,7 @@ docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT cou
 **Check individual workers:**
 
 ```bash
+docker-compose logs pf9_scheduler_worker --tail=20
 docker-compose logs pf9_snapshot_worker --tail=20
 docker-compose logs pf9_notification_worker --tail=20
 docker-compose logs pf9_backup_worker --tail=20
@@ -281,14 +282,17 @@ The Migration Planner is a multi-stage workflow. See [MIGRATION_PLANNER_GUIDE.md
 
 ### Host metrics collection
 
-Metrics are collected from Platform9 hypervisors via Prometheus `node_exporter` (port 9388) and `libvirt_exporter` (port 9177).
+Metrics are collected from Platform9 hypervisors via Prometheus `node_exporter` (port 9388) and `libvirt_exporter` (port 9177) by the `pf9_scheduler_worker` container, which runs `host_metrics_collector.py` every 60 seconds.
 
 ```powershell
-# Run collection manually (Windows)
-python host_metrics_collector.py --once
+# Check scheduler worker logs
+docker-compose logs pf9_scheduler_worker --tail=20
 
-# Verify scheduled task
-schtasks /query /tn "PF9 Metrics Collection"
+# Run collection manually (inside container)
+docker-compose exec pf9_scheduler_worker python host_metrics_collector.py --once
+
+# Or run directly on host (still works in standalone mode)
+python host_metrics_collector.py --once
 
 # Fix monitoring if not working after startup
 .\fix_monitoring.ps1
@@ -345,28 +349,32 @@ UI → Notifications → Preferences: subscribe to event types (snapshot failure
 
 ## 10. Backup and Recovery
 
-### Enable automated backups
+The platform includes a containerised backup worker (`pf9_backup_worker`) that writes compressed `pg_dump` exports and LDAP exports to an NFS share. See [BACKUP_GUIDE.md](BACKUP_GUIDE.md) for full setup instructions.
 
-1. UI → **Backup** tab → Settings → enable Automated Backups
-2. Set schedule (daily/weekly), time (UTC), and max retention count
-3. Backups write to `./backups/` as compressed `.sql.gz` files
+### Enable NFS backup
 
-> **Before production**: Move the backup destination off the same machine.
-
-### Manual backup
-
-```bash
-docker-compose exec pf9_db pg_dump -U $POSTGRES_USER $POSTGRES_DB \
-  | gzip > backups/manual-$(date +%Y%m%d).sql.gz
+Set in `.env`:
+```dotenv
+COMPOSE_PROFILES=backup
+NFS_BACKUP_SERVER=<your-nfs-ip>
+NFS_BACKUP_DEVICE=/pf9-nfs
+NFS_VERSION=3
 ```
+Then restart with `./startup.ps1`.
+
+### Trigger a manual backup
+
+**UI**: Backup & Restore tab → Status sub-tab → **🚀 Database Backup** or **📁 LDAP Backup**
+
+The backup worker picks up the job within 30 seconds.
 
 ### Restore from backup
 
-**UI**: Backup tab → History sub-tab → click ♻️ Restore on any completed backup (superadmin only).
+**UI**: Backup & Restore → History sub-tab → click **♻️ Restore** on any completed backup (superadmin only).
 
 **CLI (emergency)**:
 ```bash
-gunzip -c backups/<backup-file>.sql.gz \
+gunzip -c /path/to/<backup-file>.sql.gz \
   | docker-compose exec -T pf9_db psql -U $POSTGRES_USER $POSTGRES_DB
 ```
 
@@ -430,8 +438,9 @@ curl -i ${PF9_AUTH_URL}/auth/tokens \
 
 **Monitoring not collecting:**
 ```powershell
+docker-compose logs pf9_scheduler_worker --tail=20
+docker-compose exec pf9_scheduler_worker python host_metrics_collector.py --once
 .\fix_monitoring.ps1
-python host_metrics_collector.py --once
 ```
 
 **Disk full:**

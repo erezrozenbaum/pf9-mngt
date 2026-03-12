@@ -81,12 +81,26 @@ class BackupHistoryItem(BaseModel):
     created_at: Optional[str] = None
 
 
+class BackupTargetStatus(BaseModel):
+    last_backup: Optional[BackupHistoryItem] = None
+    backup_count: int = 0
+    total_size_bytes: int = 0
+    running: bool = False
+    # schedule-derived fields
+    schedule_enabled: bool = False
+    schedule_type: str = "manual"      # manual / daily / weekly
+    schedule_time_utc: Optional[str] = None
+    schedule_day_of_week: Optional[int] = None
+
+
 class BackupStatusResponse(BaseModel):
     running: bool
     last_backup: Optional[BackupHistoryItem] = None
     next_scheduled: Optional[str] = None
     backup_count: int = 0
     total_size_bytes: int = 0
+    db: Optional[BackupTargetStatus] = None
+    ldap: Optional[BackupTargetStatus] = None
 
 
 # ---------------------------------------------------------------------------
@@ -253,34 +267,89 @@ async def get_backup_status(
     _perm=Depends(require_permission("backup", "read")),
     current_user: User = Depends(get_current_user),
 ):
-    """Return a compact status summary for the UI header card."""
+    """Return a compact status summary for the UI dashboard."""
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Is anything running?
-            cur.execute(
-                "SELECT * FROM backup_history WHERE status = 'running' LIMIT 1"
-            )
+            cur.execute("SELECT * FROM backup_history WHERE status = 'running' LIMIT 1")
             running_row = cur.fetchone()
 
-            # Last completed backup
+            # Last completed backup (overall)
             cur.execute(
                 "SELECT * FROM backup_history WHERE status = 'completed' "
                 "ORDER BY completed_at DESC LIMIT 1"
             )
             last_row = cur.fetchone()
 
-            # Aggregate stats
+            # Overall aggregate stats
             cur.execute(
                 "SELECT COUNT(*) AS cnt, COALESCE(SUM(file_size_bytes), 0) AS total_bytes "
                 "FROM backup_history WHERE status = 'completed'"
             )
             agg = cur.fetchone()
 
+            # Per-target last backup
+            cur.execute(
+                "SELECT * FROM backup_history WHERE status = 'completed' AND backup_target = 'database' "
+                "ORDER BY completed_at DESC LIMIT 1"
+            )
+            last_db = cur.fetchone()
+
+            cur.execute(
+                "SELECT * FROM backup_history WHERE status = 'completed' AND backup_target = 'ldap' "
+                "ORDER BY completed_at DESC LIMIT 1"
+            )
+            last_ldap = cur.fetchone()
+
+            # Per-target running
+            cur.execute(
+                "SELECT backup_target FROM backup_history WHERE status = 'running'"
+            )
+            running_targets = {r['backup_target'] for r in cur.fetchall()}
+
+            # Per-target counts + sizes
+            cur.execute(
+                "SELECT backup_target, COUNT(*) AS cnt, COALESCE(SUM(file_size_bytes), 0) AS total_bytes "
+                "FROM backup_history WHERE status = 'completed' GROUP BY backup_target"
+            )
+            target_agg = {r['backup_target']: r for r in cur.fetchall()}
+
+            # Schedule config
+            cur.execute("SELECT * FROM backup_config ORDER BY id LIMIT 1")
+            cfg = cur.fetchone()
+
+    db_agg  = target_agg.get('database', {'cnt': 0, 'total_bytes': 0})
+    ldap_agg = target_agg.get('ldap',     {'cnt': 0, 'total_bytes': 0})
+
+    db_status = BackupTargetStatus(
+        last_backup=_row_to_dict(last_db) if last_db else None,
+        backup_count=db_agg['cnt'],
+        total_size_bytes=db_agg['total_bytes'],
+        running='database' in running_targets,
+        schedule_enabled=bool(cfg and cfg.get('enabled')),
+        schedule_type=cfg['schedule_type'] if cfg else 'manual',
+        schedule_time_utc=cfg['schedule_time_utc'] if cfg else None,
+        schedule_day_of_week=cfg['schedule_day_of_week'] if cfg else None,
+    )
+
+    ldap_status = BackupTargetStatus(
+        last_backup=_row_to_dict(last_ldap) if last_ldap else None,
+        backup_count=ldap_agg['cnt'],
+        total_size_bytes=ldap_agg['total_bytes'],
+        running='ldap' in running_targets,
+        schedule_enabled=bool(cfg and cfg.get('ldap_backup_enabled')),
+        schedule_type=cfg['schedule_type'] if cfg else 'manual',
+        schedule_time_utc=cfg['schedule_time_utc'] if cfg else None,
+        schedule_day_of_week=cfg['schedule_day_of_week'] if cfg else None,
+    )
+
     return {
         "running": running_row is not None,
         "last_backup": _row_to_dict(last_row) if last_row else None,
         "backup_count": agg["cnt"],
         "total_size_bytes": agg["total_bytes"],
+        "db": db_status,
+        "ldap": ldap_status,
     }
 
 

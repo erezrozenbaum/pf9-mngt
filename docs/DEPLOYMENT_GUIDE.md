@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.3
-**Last Updated**: March 11, 2026  
+**Version**: 2.4
+**Last Updated**: March 12, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative**: See [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) for the Kubernetes design plan (not yet implemented)
@@ -98,7 +98,7 @@ Choose the topology that fits your environment.
 
 ### Option A — Single Host (Default, Recommended for Most Teams)
 
-All 14 containers run on one host. nginx handles TLS termination. This is the current tested topology.
+All core containers run on one host (14 always-on + `pf9_scheduler_worker` + optional `pf9_backup_worker` via `COMPOSE_PROFILES=backup`). nginx handles TLS termination. This is the current tested topology.
 
 ```text
                     Internet / VPN
@@ -115,7 +115,8 @@ All 14 containers run on one host. nginx handles TLS termination. This is the cu
   pf9_db   pf9_ldap  pf9_redis  pf9_monitoring
  (internal) (internal) (internal)   (:8001)
     │
-  Workers (snapshot, backup, metering, search, notifications)
+  Workers (snapshot, backup*, metering, search, notifications, scheduler)
+  (* backup_worker only when COMPOSE_PROFILES=backup)
 ```
 
 **When to use:** Single-tenant self-hosted deployments, evaluation, up to ~50 concurrent users.
@@ -418,9 +419,12 @@ docker-compose ps
 # pf9_db                    Up                 5432/tcp  (internal only, not host-exposed)
 # pf9_ldap                  Up                 389/tcp   (internal only, not host-exposed)
 # pf9_redis                 Up                 6379/tcp  (internal only)
+# pf9_scheduler_worker      Up                 (runs host_metrics_collector + pf9_rvtools)
 # pf9_notification_worker   Up                 (background worker, no port)
-# pf9_backup_worker         Up                 (background worker, no port)
 # pf9_metering_worker       Up                 (background worker, no port)
+#
+# With COMPOSE_PROFILES=backup also shows:
+# pf9_backup_worker         Up                 (background worker, no port)
 #
 # To also start dev tools (pgAdmin + phpLDAPadmin):
 #   docker compose --profile dev up -d
@@ -678,18 +682,30 @@ When not set, `POST /api/migration/projects/{id}/waves/{wave_id}/execute` return
 
 #### Database Backup Configuration
 
+Backup is opt-in via Docker Compose profiles. Set `COMPOSE_PROFILES=backup` to start
+the `pf9_backup_worker` container and mount the NFS volume.
+
 ```bash
-# Mount point inside the backup worker container
-NFS_BACKUP_PATH=/backups
+# Enable the backup worker (adds pf9_backup_worker + NFS volume to the stack)
+COMPOSE_PROFILES=backup
 
-# Host path or Docker volume mapped into the container
-BACKUP_VOLUME=./backups
+# How often (seconds) the worker polls for pending manual/restore jobs (default: 30)
+BACKUP_JOB_POLL_INTERVAL=30
 
-# How often (seconds) the worker checks for pending jobs or schedule triggers
-BACKUP_POLL_INTERVAL=30
+# How often (seconds) the worker checks the schedule to fire automatic backups (default: 3600)
+BACKUP_POLL_INTERVAL=3600
+
+# NFS server IP address
+NFS_BACKUP_SERVER=<your-nfs-server-ip>
+
+# Exported path on the NFS server
+NFS_BACKUP_DEVICE=/pf9-nfs
+
+# NFS protocol version — use 3 for Docker Desktop (v4 not supported in lightweight kernel)
+NFS_VERSION=3
 ```
 
-> **Note**: The backup worker runs as a separate container (`pf9_backup_worker`) based on PostgreSQL 16 (includes `pg_dump`/`pg_restore`). Configure schedule, retention, and NFS path via the 💾 Backup tab in the UI.
+> **Note**: The backup worker (`pf9_backup_worker`) is based on PostgreSQL 16 (`pg_dump`/`pg_restore` + `ldapsearch`/`ldapadd`) and writes compressed backups to the NFS mount at `/backups` inside the container. Configure schedule, retention, and LDAP backup via the 💾 Backup tab in the UI. See [BACKUP_GUIDE.md](BACKUP_GUIDE.md) for full setup and troubleshooting.
 
 #### Metering Configuration
 
@@ -807,6 +823,37 @@ hw_firmware_type = bios
 This ensures Nova creates the VM with the correct virtual hardware regardless of how the image was originally uploaded. The patch is idempotent — re-running on an already-patched image is safe.
 
 > **Note**: The `provisionsrv` user must **not** be an LDAP-managed user (do not add it in OpenLDAP). Keeping it Keystone-native ensures it never appears in tenant-facing user lists or is accidentally included in exports.
+
+#### Platform9 DU Super-Admin Fallback (`PF9_OS_ADMIN_*`) — Optional
+
+Certain operations — such as deleting provider/external networks whose owning project has been removed from Keystone — require a Platform9 DU-level administrator token that is outside the scope of a regular `admin`-role OpenStack user. You can supply these credentials as a fallback:
+
+```bash
+# Optional — Platform9 DU super-admin credentials
+# Required only for operations that normal admin/service tokens cannot perform
+# (e.g. deleting provider external networks left behind after tenant removal)
+PF9_OS_ADMIN_USER=admin@yourdomain.com
+PF9_OS_ADMIN_PASSWORD=your-du-admin-password
+PF9_OS_ADMIN_PROJECT=admin          # The DU admin project name (usually 'admin' or 'service')
+PF9_OS_ADMIN_DOMAIN=Default
+```
+
+**How it is used:**
+- `get_privileged_token()` tries this fallback when `provisionsrv`'s role-grant fails with Keystone 404 (e.g. the target project was already deleted)
+- The credentials are never stored; a short-lived token is obtained per-request
+- Leave all four vars empty to disable the fallback (default behaviour is unchanged)
+
+**Finding the right credentials:** The DU super-admin is the account used to initially provision the Platform9 region. Contact the person who set up the region or your Platform9 account team. You can verify the credentials work with:
+
+```powershell
+docker exec pf9_api python3 -c "
+import requests, os
+base = os.environ['PLATFORM9_URL']
+body = {'auth':{'identity':{'methods':['password'],'password':{'user':{'name':'YOUR_ADMIN_EMAIL','domain':{'name':'Default'},'password':'YOUR_ADMIN_PW'}}},'scope':{'project':{'name':'admin','domain':{'name':'Default'}}}}}
+r = requests.post(base+'/keystone/v3/auth/tokens', json=body, timeout=15)
+print(r.status_code)  # 201 = success
+"
+```
 
 ### Environment File Security
 
@@ -1362,91 +1409,61 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\d servers
 
 ### Automated Backups (Recommended)
 
-As of v1.13, the platform includes a built-in **Backup Worker** container (`pf9_backup_worker`) that automates database backups:
+The platform includes a built-in **Backup Worker** container (`pf9_backup_worker`) that
+automates database **and** LDAP backups to NFS storage.
 
-1. **Enable via UI**: Go to the 💾 **Backup** tab → **Settings** → toggle "Automated Backups" on
-2. **Set Schedule**: Choose daily or weekly, pick a UTC time, and optionally a day of week
-3. **Configure Retention**: Set max backup count and max age in days — old backups are auto-pruned
-4. **Manual Trigger**: Click "🚀 Run Backup Now" on the **Status** sub-tab for an immediate backup
-5. **Restore**: On the **History** sub-tab, click ♻️ Restore on any completed backup (superadmin only)
+**Enable it:**
+1. Set `COMPOSE_PROFILES=backup` in `.env`
+2. Set `NFS_BACKUP_SERVER`, `NFS_BACKUP_DEVICE`, `NFS_VERSION=3` in `.env`
+3. Run `./startup.ps1` — the worker starts automatically, NFS is pre-flight checked
 
-Backups are compressed `pg_dump` outputs (`.sql.gz`) written to the volume mapped at `BACKUP_VOLUME` (default: `./backups`).
+**Configure via the UI:**
+1. Go to 💾 **Backup & Restore** → **Settings**
+2. Toggle **Automated Backups** on, set schedule (daily/weekly) and UTC time
+3. Optionally enable **LDAP Scheduled Backup** to export directory entries as `.ldif.gz`
+4. Set **Retention Policy** (max count + max age in days)
 
-### Manual Backup (Legacy / Ad-Hoc)
+**Manual trigger:**
+Click **🚀 Database Backup** or **📁 LDAP Backup** on the **Status** sub-tab.
 
-```bash
-# Full backup script
-#!/bin/bash
-BACKUP_DIR="/backups/pf9-management"
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="$BACKUP_DIR/pf9-backup-$DATE.tar.gz"
+**Restore:**
+On the **History** sub-tab, click ♻️ Restore on any completed database backup (superadmin only).
 
-mkdir -p $BACKUP_DIR
+See [BACKUP_GUIDE.md](BACKUP_GUIDE.md) for full NFS setup, Docker network configuration, and troubleshooting.
 
-# 1. Database dump
-docker-compose exec -T db pg_dump -U ${POSTGRES_USER} ${POSTGRES_DB} > /tmp/pf9_db.sql
-
-# 2. LDAP backup
-docker-compose exec -T ldap slapcat > /tmp/pf9_ldap.ldif
-
-# 3. Configuration
-cp .env /tmp/pf9_env_backup.txt  # Keep secure!
-
-# 4. Create archive
-tar -czf $BACKUP_FILE \
-  /tmp/pf9_db.sql \
-  /tmp/pf9_ldap.ldif \
-  /tmp/pf9_env_backup.txt
-
-# 5. Upload to remote storage
-# aws s3 cp $BACKUP_FILE s3://your-backup-bucket/
-# gsutil cp $BACKUP_FILE gs://your-backup-bucket/
-
-# 6. Cleanup
-rm /tmp/pf9_*.{sql,ldif,txt}
-
-echo "Backup completed: $BACKUP_FILE"
-```
-
-### Backup Scheduling
+### Manual Ad-Hoc Backup
 
 ```bash
-# cron job (Linux/macOS) - runs daily at 2 AM
-0 2 * * * /path/to/backup.sh >> /var/log/pf9-backup.log 2>&1
+# Database dump (runs inside the db container)
+docker exec pf9_db pg_dump -U ${POSTGRES_USER} ${POSTGRES_DB} | gzip > pf9_mgmt_$(date +%Y%m%d_%H%M%S).sql.gz
 
-# Windows Task Scheduler
-# Use backup-win.ps1 (modify startup.ps1 for reference)
+# LDAP export
+docker exec pf9_ldap slapcat | gzip > pf9_ldap_$(date +%Y%m%d_%H%M%S).ldif.gz
+
+# .env backup (keep secure, never commit)
+cp .env .env.backup.$(date +%Y%m%d)
 ```
 
 ### Recovery Procedure
 
 ```bash
-# 1. Extract backup
-mkdir -p /tmp/restore
-tar -xzf /backups/pf9-management/pf9-backup-YYYYMMDD_HHMMSS.tar.gz -C /tmp/restore/
-
-# 2. Stop services
+# 1. Stop services
 docker-compose down
 
-# 3. Restore database
+# 2. Restore database
 docker-compose up -d db
-sleep 30  # Wait for DB to be ready
-docker-compose exec -T db psql -U ${POSTGRES_USER} ${POSTGRES_DB} < /tmp/restore/pf9_db.sql
+Start-Sleep 15
+Get-Content pf9_mgmt_YYYYMMDD_HHMMSS.sql.gz | docker exec -i pf9_db sh -c "gunzip | psql -U ${POSTGRES_USER} ${POSTGRES_DB}"
 
-# 4. Restore LDAP (if needed)
+# 3. Restore LDAP (if needed)
 docker-compose up -d ldap
-sleep 30
-docker-compose exec -T ldap slapadd -F /etc/ldap/slapd.d -l /tmp/restore/pf9_ldap.ldif
+Start-Sleep 10
+Get-Content pf9_ldap_YYYYMMDD_HHMMSS.ldif.gz | docker exec -i pf9_ldap sh -c "gunzip | slapadd -F /etc/ldap/slapd.d"
 
-# 5. Verify restoration
-docker-compose ps
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "SELECT COUNT(*) FROM servers;"
+# 4. Restart all services
+./startup.ps1
 
-# 6. Restart all services
-docker-compose up -d
-
-# 7. Cleanup
-rm -rf /tmp/restore
+# OR use the UI: Backup & Restore → History → ♻️ Restore (superadmin only)
 ```
 
 ---

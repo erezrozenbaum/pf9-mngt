@@ -44,9 +44,9 @@ This document covers:
 │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────┘ │
 │                                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────────┐│
-│  │  Host Scripts (Windows Task Scheduler)                                   ││
-│  │  • host_metrics_collector.py  (every 30 min)                            ││
-│  │  • pf9_rvtools.py            (daily at 02:00)                           ││
+│  │  pf9_scheduler_worker  (Docker container)                                ││
+│  │  • host_metrics_collector  (every 60 s → /tmp/cache/metrics_cache.json)  ││
+│  │  • pf9_rvtools.py          (configurable interval OR daily HH:MM UTC)    ││
 │  └──────────────────────────────────────────────────────────────────────────┘│
 └───────────────────────────────────┬──────────────────────────────────────────┘
                                     │
@@ -101,10 +101,11 @@ This document covers:
      │  └──────────┐
      │             ▼
      │  ┌──────────────────┐      ┌──────────────────┐
-     │  │ pf9_monitoring   │◀─────│ host_metrics_    │
-     │  │ :8001            │ cache│ collector.py     │
-     │  └──────────────────┘      │ (scrapes :9388)  │
-     │                            └───────┬──────────┘
+     │  │ pf9_monitoring   │◀─────│ pf9_scheduler_  │
+     │  │ :8001            │ cache│ worker          │
+     │  └──────────────────┘      │ (metrics+RVTools│
+     │                            │  every N min)   │
+     │                            └───────┬─────────┘
      │                                    │ Prometheus
      │                                    ▼
      │                            ┌──────────────────┐
@@ -137,8 +138,10 @@ This document covers:
 | **notification_worker** | pf9_db | TCP/PostgreSQL | Read events, log delivery | `POSTGRES_USER/PASSWORD` |
 | **notification_worker** | SMTP server | SMTP/TLS | Send emails | `SMTP_USER/PASSWORD` (optional) |
 | **backup_worker** | pf9_db | TCP/PostgreSQL | pg_dump/pg_restore | `POSTGRES_USER/PASSWORD` |
+| **backup_worker** | NFS server (:2049) | NFS v3 | Write/read backup files | — |
+| **scheduler_worker** | PF9 hosts (:9388) | HTTP | Scrape Prometheus node_exporter | — |
+| **scheduler_worker** | pf9_db | TCP/PostgreSQL | Write metrics cache + RVTools inventory | `POSTGRES_USER/PASSWORD` |
 | **search_worker** | pf9_db | TCP/PostgreSQL | Index documents for full-text search | `POSTGRES_USER/PASSWORD` |
-| **host_metrics_collector** | PF9 hosts (:9388) | HTTP | Scrape Prometheus node_exporter | — |
 
 ### Key Security Boundary
 
@@ -1111,7 +1114,7 @@ monitoring/
 │    └─ libvirt_exporter:9177 ❌ Blocked (VM metrics - requires PF9)  │
 │                     │                                                │
 │                     ▼                                                │
-│  Host Collector (Windows Task Scheduler - Every 30 min)             │
+│  pf9_scheduler_worker (Docker Container - Every 60 s)               │
 │    └─ host_metrics_collector.py                                     │
 │         ├─ Scrapes node_exporter   ✅                               │
 │         ├─ Attempts libvirt_exporter ❌                             │
@@ -1142,7 +1145,7 @@ monitoring/
 - ✅ **Host-Level Metrics**: CPU, memory, storage from node_exporter working perfectly
 - ❌ **VM-Level Metrics**: Individual VM tracking blocked - libvirt_exporter cannot connect to libvirtd
 - ✅ **Cache Persistence**: Metrics survive container restarts
-- ✅ **Automated Collection**: Windows Task Scheduler running every 30 minutes
+- ✅ **Automated Collection**: `pf9_scheduler_worker` Docker container running every 60 s
 - ✅ **UI Integration**: Monitoring tab displaying host metrics with auto-refresh
 
 **Known Limitation - VM Metrics**:
@@ -1230,7 +1233,7 @@ metering_efficiency
 
 ### Host-Based Scripts
 **Technology**: Python 3.11+
-**Deployment**: Windows host with Task Scheduler
+**Deployment**: `pf9_scheduler_worker` Docker container (periodic scripts) + standalone execution supported
 **Responsibilities**:
 - Infrastructure discovery and inventory
 - Real-time metrics collection  

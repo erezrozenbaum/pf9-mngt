@@ -538,6 +538,9 @@ async def delete_flavor(
 @router.get("/networks")
 async def list_networks(
     project_id: Optional[str] = Query(None),
+    domain_id: Optional[str] = Query(None),
+    name: Optional[str] = Query(None, description="Filter by network name (case-insensitive substring)"),
+    network_id: Optional[str] = Query(None, description="Filter by network ID (substring)"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List networks with subnet info."""
@@ -573,6 +576,14 @@ async def list_networks(
                 "subnets": subnet_map.get(nid, []),
                 "subnet_count": len(subnet_map.get(nid, [])),
             })
+
+        # Apply optional search filters
+        if name:
+            name_lower = name.lower()
+            result = [r for r in result if name_lower in r["name"].lower()]
+        if network_id:
+            nid_lower = network_id.lower()
+            result = [r for r in result if nid_lower in r["id"].lower()]
 
         return {"data": result, "count": len(result)}
     except Exception as e:
@@ -669,8 +680,24 @@ async def delete_network(
     except HTTPException:
         raise
     except Exception as e:
+        err_str = str(e)
         logger.error(f"Delete network failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Neutron 403 on a network owned by a deleted project means we have no valid
+        # owner-scoped token (project gone) and the service account lacks OpenStack
+        # admin role.  Return a 403 with a clear human-readable explanation instead
+        # of a generic 500.
+        if "403" in err_str and "delete_network" in err_str.lower():
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Cannot delete network: its owning project has been removed from "
+                    "Keystone (orphaned network). Deletion requires an OpenStack user "
+                    "with the 'admin' role. Set PF9_OS_ADMIN_USER / "
+                    "PF9_OS_ADMIN_PASSWORD / PF9_OS_ADMIN_PROJECT in .env to enable "
+                    "automated cleanup of these orphans."
+                ),
+            )
+        raise HTTPException(status_code=500, detail=err_str)
 
 
 # ---------------------------------------------------------------------------
@@ -1063,7 +1090,11 @@ async def delete_volume(
                            f"Detach first or use force=true."
                 )
 
-        client.delete_volume(volume_id, force=force)
+        client.delete_volume(
+            volume_id,
+            force=force,
+            project_id=target.get("os-vol-tenant-attr:tenant_id") if target else None,
+        )
 
         _log_activity(
             actor=actor, action="delete", resource_type="volume",

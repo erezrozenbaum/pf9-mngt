@@ -47,7 +47,8 @@ pf9-mngt is an open-source operational add-on for Platform9 / OpenStack — it g
 | **Database Admin** | pgAdmin4 | 8080 *(dev profile)* | Web-based PostgreSQL management (`--profile dev`) |
 | **Snapshot Worker** | Python | — | Automated snapshot management |
 | **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
-| **Backup Worker** | Python / PostgreSQL | — | Scheduled database backups and restores |
+| **Backup Worker** | Python / PostgreSQL | — | Scheduled DB + LDAP backups to NFS, restore *(backup profile)* |
+| **Scheduler Worker** | Python | — | Host metrics collection + RVTools inventory (runs inside Docker) |
 | **Metering Worker** | Python / PostgreSQL | — | Resource metering every 15 minutes |
 | **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
 
@@ -65,15 +66,15 @@ Redis     LDAP   pf9_db   nginx
            │
   ┌────────┼──────────────────────────────┐
   │        │         │         │          │
-Snapshot Backup  Metering   Search  Notifications
-Worker   Worker   Worker    Worker    Worker
+Snapshot Backup  Metering   Search  Notifications  Scheduler
+Worker   Worker   Worker    Worker    Worker         Worker
            │
      ┌─────┴─────┐
      │  pf9-ui   │  React / Vite (served via nginx)
      └───────────┘
 ```
 
-> Host scripts (`pf9_rvtools.py`, `host_metrics_collector.py`) run via Windows Task Scheduler for infrastructure discovery and metrics collection.
+> `pf9_scheduler_worker` (Docker container) runs `host_metrics_collector.py` (every 60 s) and `pf9_rvtools.py` (configurable interval or daily schedule) for infrastructure discovery and metrics collection. No Windows Task Scheduler dependency.
 
 ---
 
@@ -595,14 +596,19 @@ openstack volume set --property auto_snapshot=true \
                     <volume-id>
 ```
 
-### Windows Task Scheduler
+### Scheduler Worker (v1.62.0+)
 ```powershell
-# Metrics collection (auto-created by startup.ps1)
-# Every 30 minutes — "PF9 Metrics Collection"
+# Check scheduler status
+docker logs pf9_scheduler_worker --tail 30
 
-# Inventory collection (create manually)
-schtasks /create /tn "PF9 RVTools Collection" /tr "python C:\pf9-mngt\pf9_rvtools.py" /sc daily /st 02:00
+# Trigger metrics collection manually
+docker exec pf9_scheduler_worker python host_metrics_collector.py --once
+
+# Trigger RVTools collection manually
+docker exec pf9_scheduler_worker python pf9_rvtools.py
 ```
+> Metrics collection and RVTools inventory now run inside the `pf9_scheduler_worker` container automatically.
+> No Windows Task Scheduler setup is required.
 
 ---
 
@@ -692,7 +698,7 @@ pf9-mngt/
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
-**Platform:** Docker Compose with nginx TLS termination. All 14 containers have restart policies and resource limits. Redis cache, rate limiting, and structured logging active.
+**Platform:** Docker Compose with nginx TLS termination. All core containers (14) have restart policies and resource limits; a 15th `pf9_scheduler_worker` container handles automated collection, and `pf9_backup_worker` is added when `COMPOSE_PROFILES=backup` is set. Redis cache, rate limiting, and structured logging active.
 
 **Maturity:** 14 of 16 tracked features are production-grade. AI Copilot is in beta. Kubernetes deployment is a planned future option.
 
@@ -706,8 +712,8 @@ pf9-mngt/
 - Test: `curl http://localhost:8000/health`
 
 **Empty monitoring data**
-- Run: `python host_metrics_collector.py --once`
-- Check task: `schtasks /query /tn "PF9 Metrics Collection"`
+- Check scheduler: `docker logs pf9_scheduler_worker --tail 20`
+- Run once manually: `docker exec pf9_scheduler_worker python host_metrics_collector.py --once`
 - Verify node_exporter on PF9 hosts (port 9388)
 
 **Database connection errors**
@@ -722,7 +728,8 @@ pf9-mngt/
 - Run: `.\fix_monitoring.ps1`
 
 **Data synchronization issues**
-- Force sync: `python pf9_rvtools.py`
+- Force sync: `docker exec pf9_scheduler_worker python pf9_rvtools.py`
+- Or run directly: `python pf9_rvtools.py`
 - Check database via pgAdmin or CLI
 
 ---
