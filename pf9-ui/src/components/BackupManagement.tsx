@@ -45,6 +45,20 @@ interface BackupHistoryItem {
   started_at: string | null;
   completed_at: string | null;
   created_at: string | null;
+  integrity_status: string | null;      // 'valid' | 'invalid' | null (not yet checked)
+  integrity_checked_at: string | null;
+  integrity_notes: string | null;
+}
+
+interface BackupTargetStatus {
+  last_backup: BackupHistoryItem | null;
+  backup_count: number;
+  total_size_bytes: number;
+  running: boolean;
+  schedule_enabled: boolean;
+  schedule_type: string;
+  schedule_time_utc: string | null;
+  schedule_day_of_week: number | null;
 }
 
 interface BackupStatus {
@@ -53,6 +67,8 @@ interface BackupStatus {
   next_scheduled: string | null;
   backup_count: number;
   total_size_bytes: number;
+  db: BackupTargetStatus | null;
+  ldap: BackupTargetStatus | null;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -318,7 +334,7 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
       {/* ═══════════ STATUS TAB ═══════════ */}
       {subTab === "status" && (
         <>
-          {/* Status cards */}
+          {/* Top summary bar */}
           <div className="backup-status-bar">
             <div className="backup-stat">
               <div className="backup-stat-value">
@@ -348,38 +364,100 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
             </div>
           </div>
 
-          {/* Last backup detail */}
-          {backupStatus?.last_backup && (
-            <div className="backup-card">
-              <h3>Last Completed Backup</h3>
-              <div className="backup-field-row">
-                <div className="backup-field">
-                  <label>File</label>
-                  <div style={{ fontSize: "0.93rem" }}>
-                    {backupStatus.last_backup.file_name || "—"}
+          {/* Per-target panels */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+            {/* Database panel */}
+            {(() => {
+              const t = backupStatus?.db;
+              const scheduleLabel = !t ? "—"
+                : !t.schedule_enabled ? "Manual only"
+                : t.schedule_type === "daily" ? `Daily at ${t.schedule_time_utc} UTC`
+                : t.schedule_type === "weekly" ? `Weekly (${DAY_NAMES[t.schedule_day_of_week ?? 0]}) at ${t.schedule_time_utc} UTC`
+                : "Manual only";
+              return (
+                <div className="backup-card" style={{ margin: 0 }}>
+                  <h3 style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
+                    🗄️ Database Backup
+                    {t?.running && <span className="backup-badge running" style={{ fontSize: "0.75rem" }}>Running</span>}
+                    {!t?.running && t?.schedule_enabled && <span className="backup-badge completed" style={{ fontSize: "0.75rem" }}>Scheduled</span>}
+                    {!t?.running && !t?.schedule_enabled && <span className="backup-badge" style={{ fontSize: "0.75rem", background: "var(--backup-border)", color: "var(--backup-text-secondary)" }}>Manual</span>}
+                  </h3>
+                  <div className="backup-field-row" style={{ gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <div className="backup-field">
+                      <label>Schedule</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : scheduleLabel}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Backups Stored</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : `${t?.backup_count ?? 0} (${formatBytes(t?.total_size_bytes)})`}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Last Backup</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : relativeTime(t?.last_backup?.completed_at)}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Last File</label>
+                      <div style={{ fontSize: "0.88rem", wordBreak: "break-all" }}>{statusLoading ? "…" : (t?.last_backup?.file_name || "—")}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Last Size</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : formatBytes(t?.last_backup?.file_size_bytes)}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Last Duration</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : formatDuration(t?.last_backup?.duration_seconds)}</div>
+                    </div>
                   </div>
                 </div>
-                <div className="backup-field">
-                  <label>Size</label>
-                  <div style={{ fontSize: "0.93rem" }}>
-                    {formatBytes(backupStatus.last_backup.file_size_bytes)}
+              );
+            })()}
+
+            {/* LDAP panel */}
+            {(() => {
+              const t = backupStatus?.ldap;
+              const scheduleLabel = !t ? "—"
+                : !t.schedule_enabled ? "Manual only"
+                : t.schedule_type === "daily" ? `Daily at ${t.schedule_time_utc} UTC`
+                : t.schedule_type === "weekly" ? `Weekly (${DAY_NAMES[t.schedule_day_of_week ?? 0]}) at ${t.schedule_time_utc} UTC`
+                : "Manual only";
+              return (
+                <div className="backup-card" style={{ margin: 0 }}>
+                  <h3 style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
+                    📁 LDAP Backup
+                    {t?.running && <span className="backup-badge running" style={{ fontSize: "0.75rem" }}>Running</span>}
+                    {!t?.running && t?.schedule_enabled && <span className="backup-badge completed" style={{ fontSize: "0.75rem" }}>Scheduled</span>}
+                    {!t?.running && !t?.schedule_enabled && <span className="backup-badge" style={{ fontSize: "0.75rem", background: "var(--backup-border)", color: "var(--backup-text-secondary)" }}>Manual</span>}
+                  </h3>
+                  <div className="backup-field-row" style={{ gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                    <div className="backup-field">
+                      <label>Schedule</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : scheduleLabel}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Backups Stored</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : `${t?.backup_count ?? 0} (${formatBytes(t?.total_size_bytes)})`}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Last Backup</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : relativeTime(t?.last_backup?.completed_at)}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Last File</label>
+                      <div style={{ fontSize: "0.88rem", wordBreak: "break-all" }}>{statusLoading ? "…" : (t?.last_backup?.file_name || "—")}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Last Size</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : formatBytes(t?.last_backup?.file_size_bytes)}</div>
+                    </div>
+                    <div className="backup-field">
+                      <label>Last Duration</label>
+                      <div style={{ fontSize: "0.9rem" }}>{statusLoading ? "…" : formatDuration(t?.last_backup?.duration_seconds)}</div>
+                    </div>
                   </div>
                 </div>
-                <div className="backup-field">
-                  <label>Duration</label>
-                  <div style={{ fontSize: "0.93rem" }}>
-                    {formatDuration(backupStatus.last_backup.duration_seconds)}
-                  </div>
-                </div>
-                <div className="backup-field">
-                  <label>Completed</label>
-                  <div style={{ fontSize: "0.93rem" }}>
-                    {formatDate(backupStatus.last_backup.completed_at)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+              );
+            })()}
+          </div>
 
           {/* Manual trigger */}
           <div className="backup-card">
@@ -486,6 +564,7 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
                       <th>File</th>
                       <th>Size</th>
                       <th>Duration</th>
+                      <th>Integrity</th>
                       <th>Initiated By</th>
                       <th>Started</th>
                       <th>Completed</th>
@@ -516,6 +595,23 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
                         </td>
                         <td>{formatBytes(item.file_size_bytes)}</td>
                         <td>{formatDuration(item.duration_seconds)}</td>
+                        <td>
+                          {item.integrity_status === "valid" && (
+                            <span
+                              className="backup-badge completed"
+                              title={`Checked: ${formatDate(item.integrity_checked_at)}`}
+                            >✔ valid</span>
+                          )}
+                          {item.integrity_status === "invalid" && (
+                            <span
+                              className="backup-badge failed"
+                              title={item.integrity_notes || "Integrity check failed"}
+                            >✘ invalid</span>
+                          )}
+                          {!item.integrity_status && item.status === "completed" && (
+                            <span style={{ color: "var(--backup-text-secondary)", fontSize: "0.8rem" }}>—</span>
+                          )}
+                        </td>
                         <td>{item.initiated_by || "—"}</td>
                         <td>{formatDate(item.started_at)}</td>
                         <td>{formatDate(item.completed_at)}</td>
@@ -838,6 +934,32 @@ const BackupManagement: React.FC<Props> = ({ isAdmin }) => {
               </div>
             </div>
           )}
+
+          {/* Scheduler info */}
+          <div
+            className="backup-card"
+            style={{ marginTop: "16px", borderLeft: "3px solid var(--backup-primary)", background: "var(--backup-surface)" }}
+          >
+            <h3 style={{ marginBottom: "8px" }}>📅 Scheduled Inventory &amp; Metrics</h3>
+            <p style={{ color: "var(--backup-text-secondary)", fontSize: "0.9rem", margin: "0 0 8px" }}>
+              The <strong>pf9_scheduler_worker</strong> container replaces Windows Task Scheduler for
+              two automated jobs. These are configured via <code>.env</code> (restart the container to
+              apply changes):
+            </p>
+            <ul style={{ color: "var(--backup-text-secondary)", fontSize: "0.88rem", paddingLeft: "20px", margin: 0 }}>
+              <li>
+                <strong>Metrics collection</strong> — controlled by{" "}
+                <code>METRICS_INTERVAL_SECONDS</code> (default: 60 s). Set{" "}
+                <code>METRICS_ENABLED=false</code> to disable.
+              </li>
+              <li>
+                <strong>RVTools inventory</strong> — runs once daily at the time set in{" "}
+                <code>RVTOOLS_SCHEDULE_TIME</code> (default: <code>03:00</code> UTC).
+                Set <code>RVTOOLS_ENABLED=false</code> to disable or{" "}
+                <code>RVTOOLS_RUN_ON_START=true</code> to also run on container startup.
+              </li>
+            </ul>
+          </div>
         </>
       )}
 

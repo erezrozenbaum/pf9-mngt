@@ -2430,9 +2430,9 @@ INSERT INTO runbooks (name, display_name, description, category, risk_level, sup
 (
     'orphan_resource_cleanup',
     'Orphan Resource Cleanup',
-    'Finds orphaned ports, volumes, and floating IPs. Cleans up to free quota and reduce clutter.',
+    'Finds orphaned ports, volumes, floating IPs, and empty networks. Cleans up to free quota and reduce clutter.',
     'network', 'low', true,
-    '{"type":"object","properties":{"resource_types":{"type":"array","items":{"type":"string","enum":["ports","volumes","floating_ips"]},"default":["ports","volumes","floating_ips"],"description":"Which resource types to scan (ports, volumes, floating_ips)"},"age_threshold_days":{"type":"integer","default":7,"description":"Only target resources older than N days"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"},"target_domain":{"type":"string","default":"","description":"Limit to specific domain (empty = all)"}}}'
+    '{"type":"object","properties":{"resource_types":{"type":"array","items":{"type":"string","enum":["ports","volumes","floating_ips","networks"]},"default":["ports","volumes","floating_ips","networks"],"description":"Which resource types to scan (ports, volumes, floating_ips, networks)"},"age_threshold_days":{"type":"integer","default":7,"description":"Only target resources older than N days"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"},"target_domain":{"type":"string","default":"","description":"Limit to specific domain (empty = all)"}}}'
 ),
 (
     'security_group_audit',

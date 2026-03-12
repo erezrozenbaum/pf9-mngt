@@ -1368,6 +1368,7 @@ const App: React.FC = () => {
   const [networkSortBy, setNetworkSortBy] = useState("network_name");
   const [networkSortDir, setNetworkSortDir] =
     useState<"asc" | "desc">("asc");
+  const [networkSearch, setNetworkSearch] = useState("");
 
   const [subnetPage, setSubnetPage] = useState(1);
   const [subnetPageSize, setSubnetPageSize] = useState(50);
@@ -1867,6 +1868,8 @@ const App: React.FC = () => {
           params.append("domain_name", selectedDomain);
         if (selectedTenant !== "__ALL__")
           params.append("tenant_id", selectedTenant);
+        if (networkSearch.trim())
+          params.append("search", networkSearch.trim());
         params.append("page", String(networkPage));
         params.append("page_size", String(networkPageSize));
         params.append("sort_by", networkSortBy);
@@ -1898,6 +1901,7 @@ const App: React.FC = () => {
     networkPageSize,
     networkSortBy,
     networkSortDir,
+    networkSearch,
     inventoryRefreshKey,
   ]);
 
@@ -3589,6 +3593,19 @@ const App: React.FC = () => {
                     <option value="asc">Asc</option>
                     <option value="desc">Desc</option>
                   </select>
+                </label>
+                <label>
+                  Search
+                  <input
+                    type="search"
+                    placeholder="Name or ID…"
+                    value={networkSearch}
+                    onChange={(e) => {
+                      setNetworkSearch(e.target.value);
+                      setNetworkPage(1);
+                    }}
+                    style={{ padding: "4px 8px" }}
+                  />
                 </label>
               </>
             )}

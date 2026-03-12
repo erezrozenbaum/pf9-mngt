@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.62.1] - 2026-03-13
+
+### Fixed — Orphan Cleanup & Project Deletion Correctness
+
+#### Orphan Resource Cleanup — Volume Delete 400
+- Orphan runbook volume deletes were sending requests to the wrong Cinder URL (service project-scoped endpoint instead of the volume's own tenant project-scoped endpoint), causing Cinder to return `HTTP 400`
+- `runbook_routes.py`: now strips the service project ID from `cinder_endpoint` and rebuilds the URL using the volume's own `os-vol-tenant-attr:tenant_id`
+- `resource_management.py` delete-volume endpoint now passes the volume's `tenant_id` to `pf9_control.delete_volume()` for the same fix when deleting from the Resources tab
+- `pf9_control.delete_volume()` accepts an optional `project_id` parameter; auto-discovers it via `list_volumes()` if not supplied
+
+#### Orphan Resource Cleanup — External Networks with Deleted Projects
+- The orphan runbook previously skipped all `router:external=True` networks unconditionally
+- Networks whose owning Keystone project has been deleted are now surfaced as orphans with reason `"deleted project (external)"`
+
+#### Project Deletion — Cascade OS Resource Cleanup
+- Deleting a project through the Provisioning UI or a domain force-delete now triggers `cleanup_project_resources()` before the Keystone project record is removed
+- `cleanup_project_resources()` cascade-deletes all OpenStack resources owned by the project (servers, volumes, floating IPs, unattached ports, networks) while the project still exists in Keystone, preventing orphaned OS resources
+- Both `delete_project_resource` (single project) and the domain force-delete loop in `provisioning_routes.py` call this cleanup step
+
+#### Platform9 DU Admin Fallback (`PF9_OS_ADMIN_*`)
+- Added `_try_os_admin_token()` to `pf9_control.py` — reads `PF9_OS_ADMIN_USER`, `PF9_OS_ADMIN_PASSWORD`, `PF9_OS_ADMIN_PROJECT`, `PF9_OS_ADMIN_DOMAIN` env vars and authenticates as the Platform9 DU super-admin when available
+- `get_privileged_token()` now tries this fallback on provisioner Keystone 404 (e.g. when the target project has already been removed) before falling back to the service token
+- Four new optional env vars added to `.env` template: `PF9_OS_ADMIN_USER`, `PF9_OS_ADMIN_PASSWORD`, `PF9_OS_ADMIN_PROJECT` (default `admin`), `PF9_OS_ADMIN_DOMAIN` (default `Default`)
+
+#### Logging
+- `pf9_control.py`: previously silent `except` blocks in `get_privileged_token` and `delete_network` now emit `log.warning` / `log.error` with context to aid debugging
+
+---
+
+## [1.62.0] - 2026-03-13
+
+### Added — Scheduler Worker, NFS Backup Consolidation, Backup UI Improvements, Network Fixes
+
+#### Networks — Search Filters
+- **Inventory → Networks**: new "Search" input filters by network name or ID (case-insensitive substring); resets pagination on change
+- **Provisioning → Resources → Networks**: new "Search name or ID" input passes `name` param to Neutron live query; sits alongside existing Domain/Tenant selects
+
+#### Networks — Delete 403 Fix
+- Deleting a network no longer returns `403 Forbidden` when the service token is scoped to a non-admin project
+- `pf9_control.delete_network()` now retries with an admin-scoped Keystone token (`PF9_ADMIN_PROJECT_NAME`, default `admin`) on any 403 response
+
+#### Resources — Delete Impact Analysis & Dependency View
+- **"🔗 Deps" button** added to Networks, Floating IPs, Volumes, and Security Groups rows — opens an inline dependency panel (topology graph at depth 2) showing all related resources grouped by type without any deletion intent
+- **Delete confirmation** upgraded from bare "Are you sure?" to a full impact-aware modal:
+  - Pre-fetches `/api/graph?mode=delete_impact` the moment Delete is clicked (no extra user action)
+  - Shows 🚫 **Blockers** (red), 🗑 **Will also be deleted** (orange), ⚠ **Will become stranded** (yellow), or ✅ "No dependents found" before the user commits
+  - Requires typing the resource name to unlock the delete button — extra safeguard against accidental deletion
+  - Impacts loading is best-effort; if the graph API is unreachable the modal still works normally
+
+
+- "Networks" added as a selectable resource type in the **Orphan Resource Cleanup** runbook
+- Orphan criteria: `shared=false`, `router:external=false`, no subnets, no non-DHCP ports, older than `age_threshold_days`
+- `orphan_resource_cleanup` parameters schema auto-migrated on API startup to add `"networks"` to the `resource_types` enum (no manual DB migration needed)
+
+
+
+#### Infrastructure — Scheduler Worker Container
+- New `pf9_scheduler_worker` Docker container (replaces Windows Task Scheduler for periodic jobs)
+- `host_metrics_collector.py` and `pf9_rvtools.py` now run inside the container on configurable schedules
+- `RVTOOLS_INTERVAL_MINUTES=0` triggers once daily at `RVTOOLS_SCHEDULE_TIME`; any positive value runs at that interval
+- No Windows Task Scheduler configuration required after initial deployment
+
+#### Backup — NFS Backup Consolidation
+- Backup worker and NFS volume now managed via a single Docker Compose profile (`COMPOSE_PROFILES=backup`)
+- Removed `docker-compose.nfs.yml` overlay file; removed deprecated env vars `BACKUP_ENABLED`, `BACKUP_STORAGE_TYPE`, `NFS_BACKUP_PATH`, `BACKUP_VOLUME`
+- New env vars: `NFS_BACKUP_SERVER`, `NFS_BACKUP_DEVICE`, `NFS_VERSION=3` (NFSv3 is required for Docker Desktop — LinuxKit kernel does not include the NFSv4 client module)
+- `startup.ps1`: added NFS TCP pre-flight check (port 2049), stale `pf9-mngt_nfs_backups` volume auto-removal, graceful fallback prompt if NFS is unreachable
+- Split backup worker poll loop: `BACKUP_JOB_POLL_INTERVAL` (default 30 s) for pending manual/restore job checks; `BACKUP_POLL_INTERVAL` (default 3600 s) for schedule checks — manual backups now start within 30 s instead of up to 1 hour
+
+#### Backup — Status UI Enhancements
+- Backup Status tab redesigned with two per-target panels: **Database Backup** and **LDAP Backup**
+- Each panel shows: schedule badge (Running / Scheduled / Manual), schedule description, backups stored (count + total size), last backup time, last filename, last file size, last duration
+- Summary row at top retains overall running state, total backup count, total size, and last backup time
+
+#### Docs
+- New `docs/BACKUP_GUIDE.md` — comprehensive guide covering NFS setup, network configuration, environment variables, UI walkthrough, restore procedure, retention policy, and troubleshooting
+- Updated `docs/ARCHITECTURE.md` — scheduler_worker container added to service diagram and communications matrix; `host_metrics_collector` removed from Windows Task Scheduler section
+- Updated `README.md` — scheduler_worker service row added; diagram updated; Windows Task Scheduler note replaced
+- Updated `docs/DEPLOYMENT_GUIDE.md` — backup configuration section and Backup & Recovery section fully rewritten to reflect NFS consolidation
+
+---
+
 ## [1.61.0] - 2026-03-12
 
 ### Added — Phase D: Cluster Capacity Planner + Visibility Fixes

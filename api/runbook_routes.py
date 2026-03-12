@@ -49,6 +49,24 @@ def _ensure_tables():
                         with open(migration) as f:
                             cur.execute(f.read())
                         logger.info("Runbook tables created via auto-migration")
+
+                # Keep orphan_resource_cleanup schema up-to-date
+                cur.execute("""
+                    UPDATE runbooks
+                    SET parameters_schema = %s::jsonb,
+                        description = %s,
+                        updated_at = now()
+                    WHERE name = 'orphan_resource_cleanup'
+                      AND (
+                          parameters_schema IS NULL
+                          OR NOT (parameters_schema->'properties'->'resource_types'->>'default' LIKE '%%networks%%')
+                          OR parameters_schema->>'description' NOT LIKE '%%networks%%'
+                      )
+                """, (
+                    '{"type":"object","properties":{"resource_types":{"type":"array","items":{"type":"string","enum":["ports","volumes","floating_ips","networks"]},"default":["ports","volumes","floating_ips","networks"],"description":"Which resource types to scan (ports, volumes, floating_ips, networks)"},"age_threshold_days":{"type":"integer","default":7,"description":"Only target resources older than N days"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"},"target_domain":{"type":"string","default":"","description":"Limit to specific domain (empty = all)"}}}',
+                    'Finds orphaned ports, volumes, floating IPs, and empty networks. Cleans up to free quota and reduce clutter.',
+                ))
+                conn.commit()
     except Exception as e:
         logger.warning(f"Could not ensure runbook tables on startup: {e}")
 
@@ -455,10 +473,10 @@ def _engine_stuck_vm(params: dict, dry_run: bool, actor: str) -> dict:
 
 @register_engine("orphan_resource_cleanup")
 def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
-    """Find and optionally delete orphaned ports, volumes, and floating IPs."""
+    """Find and optionally delete orphaned ports, volumes, floating IPs, and networks."""
     from pf9_control import get_client
 
-    resource_types = params.get("resource_types", ["ports", "volumes", "floating_ips"])
+    resource_types = params.get("resource_types", ["ports", "volumes", "floating_ips", "networks"])
     age_days = params.get("age_threshold_days", 7)
     target_project = params.get("target_project", "")
 
@@ -467,6 +485,16 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
     headers = {"X-Auth-Token": client.token}
     project_names = _resolve_project_names(client, headers)
 
+    # Obtain a privileged (admin-project-scoped) token so that Neutron
+    # all_tenants=1 actually returns cross-tenant resources.  Falls back
+    # gracefully to the main token if the service-user approach is not
+    # configured or fails.
+    # priv_headers is used only for Neutron listing calls (no project-scoped URL).
+    # Cinder uses plain `headers` because cinder_endpoint contains the service
+    # project ID in the path and must match the token's project scope.
+    priv_token = client.get_privileged_token()  # provisionsrv or admin-project token
+    priv_headers = {"X-Auth-Token": priv_token} if priv_token else headers
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=age_days)
     result: Dict[str, Any] = {"orphans": {}, "deleted": {}, "errors": {}}
     total_found = 0
@@ -474,8 +502,8 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
 
     # --- Orphan Ports ---
     if "ports" in resource_types:
-        url = f"{client.neutron_endpoint}/v2.0/ports"
-        resp = client.session.get(url, headers=headers)
+        url = f"{client.neutron_endpoint}/v2.0/ports?all_tenants=1"
+        resp = client.session.get(url, headers=priv_headers)
         resp.raise_for_status()
         ports = resp.json().get("ports", [])
 
@@ -515,9 +543,10 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
             errors = []
             for op in orphan_ports:
                 try:
+                    del_token = client.get_privileged_token(op.get("project_id")) or client.token
                     r = client.session.delete(
                         f"{client.neutron_endpoint}/v2.0/ports/{op['port_id']}",
-                        headers=headers
+                        headers={"X-Auth-Token": del_token}
                     )
                     if r.status_code < 300:
                         deleted.append(op["port_id"])
@@ -532,6 +561,8 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
     # --- Orphan Volumes ---
     if "volumes" in resource_types:
         url = f"{client.cinder_endpoint}/volumes/detail?all_tenants=true"
+        # Cinder endpoint URL is project-scoped (contains service project_id),
+        # so we must use the service token (headers), not priv_headers.
         resp = client.session.get(url, headers=headers)
         resp.raise_for_status()
         volumes = resp.json().get("volumes", [])
@@ -568,12 +599,24 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
         if not dry_run and orphan_volumes:
             deleted = []
             errors = []
+            # Cinder endpoint is project-scoped: /cinder/v3/{service_project_id}
+            # Volumes may belong to a different tenant, so we must build the URL
+            # using the volume's own project_id and use a token scoped to that project.
+            cinder_base = client.cinder_endpoint.rsplit("/", 1)[0]  # strip service project_id
             for ov in orphan_volumes:
                 try:
-                    r = client.session.delete(
-                        f"{client.cinder_endpoint}/volumes/{ov['volume_id']}",
-                        headers=headers
+                    vol_project_id = ov.get("project_id", "")
+                    priv_vol_token = client.get_privileged_token(vol_project_id) if vol_project_id else None
+                    vol_headers = (
+                        {"X-Auth-Token": priv_vol_token, "Content-Type": "application/json"}
+                        if priv_vol_token else headers
                     )
+                    vol_url = (
+                        f"{cinder_base}/{vol_project_id}/volumes/{ov['volume_id']}"
+                        if vol_project_id else
+                        f"{client.cinder_endpoint}/volumes/{ov['volume_id']}"
+                    )
+                    r = client.session.delete(vol_url, headers=vol_headers)
                     if r.status_code < 300:
                         deleted.append(ov["volume_id"])
                         total_actioned += 1
@@ -586,8 +629,8 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
 
     # --- Orphan Floating IPs ---
     if "floating_ips" in resource_types:
-        url = f"{client.neutron_endpoint}/v2.0/floatingips"
-        resp = client.session.get(url, headers=headers)
+        url = f"{client.neutron_endpoint}/v2.0/floatingips?all_tenants=1"
+        resp = client.session.get(url, headers=priv_headers)
         resp.raise_for_status()
         fips = resp.json().get("floatingips", [])
 
@@ -622,9 +665,10 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
             errors = []
             for of_ in orphan_fips:
                 try:
+                    del_token = client.get_privileged_token(of_.get("project_id")) or client.token
                     r = client.session.delete(
                         f"{client.neutron_endpoint}/v2.0/floatingips/{of_['fip_id']}",
-                        headers=headers
+                        headers={"X-Auth-Token": del_token}
                     )
                     if r.status_code < 300:
                         deleted.append(of_["fip_id"])
@@ -635,6 +679,100 @@ def _engine_orphan_cleanup(params: dict, dry_run: bool, actor: str) -> dict:
                     errors.append({"fip_id": of_["fip_id"], "error": str(e)})
             result["deleted"]["floating_ips"] = deleted
             result["errors"]["floating_ips"] = errors
+
+    # --- Orphan Networks ---
+    if "networks" in resource_types:
+        url = f"{client.neutron_endpoint}/v2.0/networks?all_tenants=1"
+        resp = client.session.get(url, headers=priv_headers)
+        resp.raise_for_status()
+        all_networks = resp.json().get("networks", [])
+
+        # Build a map of network_id -> count of non-DHCP ports (active usage)
+        ports_url = f"{client.neutron_endpoint}/v2.0/ports?all_tenants=1"
+        ports_resp = client.session.get(ports_url, headers=priv_headers)
+        ports_resp.raise_for_status()
+        active_port_net: Dict[str, int] = {}
+        for port in ports_resp.json().get("ports", []):
+            device_owner = port.get("device_owner", "")
+            if device_owner and device_owner != "network:dhcp":
+                nid = port.get("network_id", "")
+                if nid:
+                    active_port_net[nid] = active_port_net.get(nid, 0) + 1
+
+        orphan_networks = []
+        known_project_ids = set(project_names.keys())
+        for n in all_networks:
+            nid = n.get("id", "")
+            is_external = n.get("router:external", False)
+            is_shared = n.get("shared", False)
+            # Skip shared networks — admin-controlled, dangerous to auto-delete
+            if is_shared:
+                continue
+            # Must have no active (non-DHCP) ports — protects VMs even if project is gone
+            if active_port_net.get(nid, 0) > 0:
+                continue
+            net_pid = n.get("tenant_id", "") or n.get("project_id", "")
+            if target_project and net_pid != target_project:
+                continue
+            # Age check
+            created = n.get("created_at", "")
+            if created:
+                try:
+                    ts = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                    if ts > cutoff:
+                        continue
+                except Exception:
+                    pass
+            # Orphan criteria — either:
+            #   (a) no subnets at all, OR
+            #   (b) project_id is missing / points to a deleted Keystone project
+            # External networks are normally skipped (admin-controlled), EXCEPT
+            # when their owning project has been deleted from Keystone — in that
+            # case they are genuinely orphaned and should be surfaced.
+            has_subnets = bool(n.get("subnets", []))
+            project_deleted = bool(net_pid) and net_pid not in known_project_ids
+            if is_external and not project_deleted:
+                # Active external network with a live project — skip
+                continue
+            if has_subnets and not project_deleted:
+                continue
+            reason = ("deleted project (external)" if project_deleted and is_external
+                      else "deleted project" if project_deleted
+                      else "no subnets")
+            orphan_networks.append({
+                "network_id": nid,
+                "name": n.get("name", ""),
+                "project_id": net_pid,
+                "project_name": project_names.get(net_pid, "(deleted project)" if project_deleted else "—"),
+                "subnet_count": len(n.get("subnets", [])),
+                "orphan_reason": reason,
+                "is_external": is_external,
+                "created_at": created,
+            })
+
+        result["orphans"]["networks"] = orphan_networks
+        total_found += len(orphan_networks)
+
+        if not dry_run and orphan_networks:
+            deleted = []
+            errors = []
+            for on_ in orphan_networks:
+                # Use per-project privileged token for delete to satisfy Neutron RBAC
+                del_token = client.get_privileged_token(on_.get("project_id")) or (priv_token or client.token)
+                try:
+                    r = client.session.delete(
+                        f"{client.neutron_endpoint}/v2.0/networks/{on_['network_id']}",
+                        headers={"X-Auth-Token": del_token},
+                    )
+                    if r.status_code < 300:
+                        deleted.append(on_["network_id"])
+                        total_actioned += 1
+                    else:
+                        errors.append({"network_id": on_["network_id"], "error": f"HTTP {r.status_code}"})
+                except Exception as e:
+                    errors.append({"network_id": on_["network_id"], "error": str(e)})
+            result["deleted"]["networks"] = deleted
+            result["errors"]["networks"] = errors
 
     return {
         "result": result,
@@ -5580,6 +5718,71 @@ def _render_exec_email_html(ex: dict, note: str = "") -> str:
             lines.append(section("VM Slots Remaining by Flavor", table_from_list(
                 [{"Flavor": f["flavor_name"], "vCPU": f["vcpus"], "RAM": fmt_ram(f["ram_mb"]), "Slots": f["slots_remaining"]} for f in flavors]
             )))
+
+    # ── orphan_resource_cleanup rich rendering ──────────────────
+    elif name == "orphan_resource_cleanup":
+        orphans = r.get("orphans", {})
+        deleted_map = r.get("deleted", {})
+        errors_map  = r.get("errors", {})
+        any_scanned = bool(orphans)
+        any_found = any(len(v) > 0 for v in orphans.values())
+
+        if not any_scanned:
+            lines.append('<p style="color:#10b981;">✅ No resource types were scanned.</p>')
+        else:
+            if not any_found:
+                lines.append('<p style="color:#10b981;font-weight:600;">✅ No orphaned resources found across all scanned types.</p>')
+
+            # Ports — always render section if ports was scanned
+            if "ports" in orphans:
+                ports = orphans.get("ports", [])
+                del_note = f" &middot; {len(deleted_map.get('ports', []))} deleted" if deleted_map.get("ports") else ""
+                if ports:
+                    lines.append(section(f"Orphan Ports ({len(ports)}){del_note}",
+                        table_from_list([{"Port ID": p["port_id"][:8]+"…", "Name": p.get("port_name","—"), "Tenant": p.get("project_name","—"), "MAC": p.get("mac_address","—"), "Created": p.get("created_at","")[:10]} for p in ports])
+                    ))
+                else:
+                    lines.append(section("Orphan Ports (0)", '<p style="color:#6b7280;font-size:13px;">None found</p>'))
+
+            # Volumes — always render section if volumes was scanned
+            if "volumes" in orphans:
+                vols = orphans.get("volumes", [])
+                del_note = f" &middot; {len(deleted_map.get('volumes', []))} deleted" if deleted_map.get("volumes") else ""
+                if vols:
+                    lines.append(section(f"Orphan Volumes ({len(vols)}){del_note}",
+                        table_from_list([{"Volume": v.get("name") or v["volume_id"][:8]+"…", "Size": f"{v.get('size_gb','?')} GB", "Tenant": v.get("project_name","—"), "Created": v.get("created_at","")[:10]} for v in vols])
+                    ))
+                else:
+                    lines.append(section("Orphan Volumes (0)", '<p style="color:#6b7280;font-size:13px;">None found</p>'))
+
+            # Floating IPs — always render section if fips was scanned
+            if "floating_ips" in orphans:
+                fips = orphans.get("floating_ips", [])
+                del_note = f" &middot; {len(deleted_map.get('floating_ips', []))} deleted" if deleted_map.get("floating_ips") else ""
+                if fips:
+                    lines.append(section(f"Orphan Floating IPs ({len(fips)}){del_note}",
+                        table_from_list([{"Floating IP": f.get("floating_ip_address",f["fip_id"][:8]+"…"), "Tenant": f.get("project_name","—"), "Created": f.get("created_at","")[:10]} for f in fips])
+                    ))
+                else:
+                    lines.append(section("Orphan Floating IPs (0)", '<p style="color:#6b7280;font-size:13px;">None found</p>'))
+
+            # Networks — always render section if networks was scanned
+            if "networks" in orphans:
+                nets = orphans.get("networks", [])
+                del_note = f" &middot; {len(deleted_map.get('networks', []))} deleted" if deleted_map.get("networks") else ""
+                if nets:
+                    lines.append(section(f"Orphan Networks ({len(nets)}){del_note}",
+                        table_from_list([{"Network": n.get("name") or n["network_id"][:8]+"…", "Tenant": n.get("project_name","—"), "Reason": n.get("orphan_reason","—"), "Subnets": n.get("subnet_count",0), "Created": n.get("created_at","")[:10]} for n in nets])
+                    ))
+                else:
+                    lines.append(section("Orphan Networks (0)", '<p style="color:#6b7280;font-size:13px;">None found</p>'))
+
+        # Errors section
+        for rtype, errs in errors_map.items():
+            if errs:
+                lines.append(section(f"Errors — {rtype}",
+                    "<ul style='margin:4px 0;padding-left:18px;'>" + "".join(f"<li style='font-size:12px;'>{e}</li>" for e in errs) + "</ul>"
+                ))
 
     # ── Generic fallback for other runbooks ──────────────────────
     else:

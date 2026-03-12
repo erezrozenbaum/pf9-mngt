@@ -73,6 +73,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   const [extNetworks, setExtNetworks] = useState<ExtNetOption[]>([]);
   const [filterDomainId, setFilterDomainId] = useState("");
   const [filterProjectId, setFilterProjectId] = useState("");
+  const [filterNetworkSearch, setFilterNetworkSearch] = useState("");
 
   // Create forms state
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -131,6 +132,14 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
 
   // Confirm delete
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string; type: string } | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteImpact, setDeleteImpact] = useState<any>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+
+  // Dependencies view
+  const [depsPanelResource, setDepsPanelResource] = useState<{ id: string; name: string; type: string } | null>(null);
+  const [depsData, setDepsData] = useState<any>(null);
+  const [depsLoading, setDepsLoading] = useState(false);
 
   // Audit log state
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
@@ -159,6 +168,8 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
       const params = new URLSearchParams();
       if (filterProjectId) params.set("project_id", filterProjectId);
       else if (filterDomainId) params.set("domain_id", filterDomainId);
+      if (activeSection === "networks" && filterNetworkSearch.trim())
+        params.set("name", filterNetworkSearch.trim());
       const qs = params.toString() ? `?${params.toString()}` : "";
 
       const sectionEndpoints: Record<ResourceSection, string> = {
@@ -197,7 +208,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [activeSection, filterDomainId, filterProjectId]);
+  }, [activeSection, filterDomainId, filterProjectId, filterNetworkSearch]);
 
   // Load audit log data from activity-log-export report
   const loadAuditLog = useCallback(async () => {
@@ -367,6 +378,61 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
     }
   };
 
+  // Graph types that support impact / dependency analysis
+  const GRAPH_TYPE_MAP: Record<string, string> = {
+    network: "network",
+    floating_ip: "floating_ip",
+    volume: "volume",
+    security_group: "security_group",
+  };
+
+  // Open delete confirm and pre-fetch impact analysis
+  const openDeleteConfirm = async (id: string, name: string, type: string) => {
+    setDeleteConfirm({ id, name, type });
+    setDeleteConfirmText("");
+    setDeleteImpact(null);
+    const graphType = GRAPH_TYPE_MAP[type];
+    if (!graphType) return;
+    setImpactLoading(true);
+    try {
+      const result = await apiFetch<any>(
+        `/api/graph?root_type=${graphType}&root_id=${id}&mode=delete_impact&depth=2`
+      );
+      setDeleteImpact(result);
+    } catch {
+      // impact analysis is best-effort; don't block deletion
+    } finally {
+      setImpactLoading(false);
+    }
+  };
+
+  // Open dependencies panel (topology view)
+  const openDepsPanel = async (id: string, name: string, type: string) => {
+    setDepsPanelResource({ id, name, type });
+    setDepsData(null);
+    setDepsLoading(true);
+    try {
+      const graphType = GRAPH_TYPE_MAP[type];
+      if (!graphType) { setDepsLoading(false); return; }
+      const result = await apiFetch<any>(
+        `/api/graph?root_type=${graphType}&root_id=${id}&mode=topology&depth=2`
+      );
+      setDepsData(result);
+    } catch (e: any) {
+      setDepsData({ error: e.message });
+    } finally {
+      setDepsLoading(false);
+    }
+  };
+
+  // Close all dialog state
+  const closeDeleteConfirm = () => {
+    setDeleteConfirm(null);
+    setDeleteImpact(null);
+    setDeleteConfirmText("");
+    setImpactLoading(false);
+  };
+
   // Delete handler
   const handleDelete = async (id: string, type: string) => {
     setError("");
@@ -384,11 +450,11 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
       if (!base) throw new Error("Unknown resource type");
       await apiFetch(`${base}/${id}`, { method: "DELETE" });
       setSuccess(`${type.replace("_", " ")} deleted successfully`);
-      setDeleteConfirm(null);
+      closeDeleteConfirm();
       loadData();
     } catch (e: any) {
       setError(e.message);
-      setDeleteConfirm(null);
+      closeDeleteConfirm();
     }
   };
 
@@ -919,7 +985,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               <td style={tdStyle}>{u.description || "—"}</td>
               <td style={tdStyle}>
                 {isAdmin && (
-                  <button style={btnStyle("danger", true)} onClick={() => setDeleteConfirm({ id: u.id, name: u.name, type: "user" })}>
+                  <button style={btnStyle("danger", true)} onClick={() => openDeleteConfirm(u.id, u.name, "user")}>
                     Delete
                   </button>
                 )}
@@ -951,7 +1017,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               <td style={tdStyle}><span style={statusBadge(f.instance_count > 0 ? "#3b82f6" : "#6b7280")}>{f.instance_count}</span></td>
               <td style={tdStyle}>
                 {isAdmin && (
-                  <button style={btnStyle("danger", true)} onClick={() => setDeleteConfirm({ id: f.id, name: f.name, type: "flavor" })}>
+                  <button style={btnStyle("danger", true)} onClick={() => openDeleteConfirm(f.id, f.name, "flavor")}>
                     Delete
                   </button>
                 )}
@@ -988,9 +1054,14 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               </td>
               <td style={tdStyle}>
                 {isAdmin && (
-                  <button style={btnStyle("danger", true)} onClick={() => setDeleteConfirm({ id: n.id, name: n.name, type: "network" })}>
-                    Delete
-                  </button>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button style={btnStyle("outline", true)} onClick={() => openDepsPanel(n.id, n.name, "network")} title="View dependencies">
+                      🔗 Deps
+                    </button>
+                    <button style={btnStyle("danger", true)} onClick={() => openDeleteConfirm(n.id, n.name, "network")}>
+                      Delete
+                    </button>
+                  </div>
                 )}
               </td>
             </tr>
@@ -1019,7 +1090,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               <td style={tdStyle}>{r.admin_state_up ? "Up" : "Down"}</td>
               <td style={tdStyle}>
                 {isAdmin && (
-                  <button style={btnStyle("danger", true)} onClick={() => setDeleteConfirm({ id: r.id, name: r.name, type: "router" })}>
+                  <button style={btnStyle("danger", true)} onClick={() => openDeleteConfirm(r.id, r.name, "router")}>
                     Delete
                   </button>
                 )}
@@ -1050,9 +1121,14 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               <td style={tdStyle}>{f.associated ? "🔗 Yes" : <span style={{ color: "#f59e0b" }}>⚠ Unused</span>}</td>
               <td style={tdStyle}>
                 {isAdmin && (
-                  <button style={btnStyle("danger", true)} onClick={() => setDeleteConfirm({ id: f.id, name: f.floating_ip_address, type: "floating_ip" })}>
-                    Release
-                  </button>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button style={btnStyle("outline", true)} onClick={() => openDepsPanel(f.id, f.floating_ip_address, "floating_ip")} title="View dependencies">
+                      🔗 Deps
+                    </button>
+                    <button style={btnStyle("danger", true)} onClick={() => openDeleteConfirm(f.id, f.floating_ip_address, "floating_ip")}>
+                      Release
+                    </button>
+                  </div>
                 )}
               </td>
             </tr>
@@ -1082,9 +1158,14 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               <td style={tdStyle}>{v.attached_to ? `🔗 ${v.attached_to.slice(0, 8)}...` : <span style={{ color: "#f59e0b" }}>Unattached</span>}</td>
               <td style={tdStyle}>
                 {isAdmin && (
-                  <button style={btnStyle("danger", true)} onClick={() => setDeleteConfirm({ id: v.id, name: v.name || v.id, type: "volume" })}>
-                    Delete
-                  </button>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button style={btnStyle("outline", true)} onClick={() => openDepsPanel(v.id, v.name || v.id, "volume")} title="View dependencies">
+                      🔗 Deps
+                    </button>
+                    <button style={btnStyle("danger", true)} onClick={() => openDeleteConfirm(v.id, v.name || v.id, "volume")}>
+                      Delete
+                    </button>
+                  </div>
                 )}
               </td>
             </tr>
@@ -1114,9 +1195,14 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
               <td style={tdStyle}>{sg.egress_rules}</td>
               <td style={tdStyle}>
                 {isAdmin && sg.name !== "default" && (
-                  <button style={btnStyle("danger", true)} onClick={() => setDeleteConfirm({ id: sg.id, name: sg.name, type: "security_group" })}>
-                    Delete
-                  </button>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    <button style={btnStyle("outline", true)} onClick={() => openDepsPanel(sg.id, sg.name, "security_group")} title="View dependencies">
+                      🔗 Deps
+                    </button>
+                    <button style={btnStyle("danger", true)} onClick={() => openDeleteConfirm(sg.id, sg.name, "security_group")}>
+                      Delete
+                    </button>
+                  </div>
                 )}
               </td>
             </tr>
@@ -1280,7 +1366,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
           <div
             key={s.id}
             style={navItemStyle(activeSection === s.id)}
-            onClick={() => { setActiveSection(s.id); setShowCreateForm(false); setDeleteConfirm(null); }}
+            onClick={() => { setActiveSection(s.id); setShowCreateForm(false); closeDeleteConfirm(); setDepsPanelResource(null); }}
           >
             <span>{s.icon}</span> {s.label}
           </div>
@@ -1311,6 +1397,15 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
                   <option value="">All Tenants</option>
                   {filteredProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
+                {activeSection === "networks" && (
+                  <input
+                    type="search"
+                    placeholder="Search name or ID…"
+                    value={filterNetworkSearch}
+                    onChange={(e) => setFilterNetworkSearch(e.target.value)}
+                    style={{ ...selectStyle, minWidth: "200px" }}
+                  />
+                )}
               </>
             )}
             {canCreate && isAdmin && (
@@ -1331,26 +1426,133 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
         {/* Create form */}
         {showCreateForm && renderCreateForm()}
 
-        {/* Delete confirmation */}
+        {/* Delete confirmation — impact-aware */}
         {deleteConfirm && (
-          <div style={{
-            ...formPanelStyle,
-            border: "2px solid #ef4444",
-            background: "#991b1b22",
-          }}>
-            <h4 style={{ margin: "0 0 8px", fontSize: "14px", color: "#ef4444" }}>⚠ Confirm Delete</h4>
-            <p style={{ margin: "0 0 12px", fontSize: "13px" }}>
-              Are you sure you want to delete <strong>{deleteConfirm.name}</strong> ({deleteConfirm.type.replace("_", " ")})?
-              This action cannot be undone.
+          <div style={{ ...formPanelStyle, border: "2px solid #ef4444", background: "#991b1b22" }}>
+            <h4 style={{ margin: "0 0 12px", fontSize: "14px", color: "#ef4444" }}>⚠ Confirm Delete — {deleteConfirm.type.replace(/_/g, " ")}</h4>
+
+            {/* Impact analysis */}
+            {impactLoading && (
+              <div style={{ fontSize: "12px", color: "var(--pf9-text-secondary)", marginBottom: "10px" }}>🔍 Analysing dependencies…</div>
+            )}
+            {deleteImpact && !impactLoading && (() => {
+              const impact = deleteImpact.delete_impact;
+              const nodeMap: Record<string, any> = {};
+              (deleteImpact.nodes || []).forEach((n: any) => { nodeMap[n.id] = n; });
+              return (
+                <div style={{ marginBottom: "12px" }}>
+                  {impact?.blockers?.length > 0 && (
+                    <div style={{ background: "#7f1d1d44", border: "1px solid #ef4444", borderRadius: "6px", padding: "10px", marginBottom: "8px" }}>
+                      <strong style={{ color: "#ef4444", fontSize: "12px" }}>🚫 Blockers — OpenStack may reject this delete</strong>
+                      <ul style={{ margin: "4px 0 0", paddingLeft: "18px" }}>
+                        {impact.blockers.map((b: string, i: number) => (
+                          <li key={i} style={{ fontSize: "12px", color: "#fca5a5", marginTop: "2px" }}>{b}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {impact?.cascade_node_ids?.length > 0 && (
+                    <div style={{ background: "#78350f33", border: "1px solid #f59e0b", borderRadius: "6px", padding: "10px", marginBottom: "8px" }}>
+                      <strong style={{ color: "#f59e0b", fontSize: "12px" }}>🗑 Will also be deleted ({impact.summary?.cascade_count})</strong>
+                      <ul style={{ margin: "4px 0 0", paddingLeft: "18px" }}>
+                        {impact.cascade_node_ids.slice(0, 6).map((nid: string) => {
+                          const n = nodeMap[nid];
+                          return n ? <li key={nid} style={{ fontSize: "12px", color: "#fde68a", marginTop: "2px" }}>{n.type}: {n.label}</li> : null;
+                        })}
+                        {impact.cascade_node_ids.length > 6 && <li style={{ fontSize: "11px", color: "#9ca3af" }}>…and {impact.cascade_node_ids.length - 6} more</li>}
+                      </ul>
+                    </div>
+                  )}
+                  {impact?.stranded_node_ids?.length > 0 && (
+                    <div style={{ background: "#1c191722", border: "1px solid #6b7280", borderRadius: "6px", padding: "10px", marginBottom: "8px" }}>
+                      <strong style={{ color: "#d1d5db", fontSize: "12px" }}>⚠ Will become stranded</strong>
+                      <ul style={{ margin: "4px 0 0", paddingLeft: "18px" }}>
+                        {impact.stranded_node_ids.slice(0, 6).map((nid: string) => {
+                          const n = nodeMap[nid];
+                          return n ? <li key={nid} style={{ fontSize: "12px", color: "#d1d5db", marginTop: "2px" }}>{n.type}: {n.label}</li> : null;
+                        })}
+                        {impact.stranded_node_ids.length > 6 && <li style={{ fontSize: "11px", color: "#9ca3af" }}>…and {impact.stranded_node_ids.length - 6} more</li>}
+                      </ul>
+                    </div>
+                  )}
+                  {impact?.safe_to_delete && !impact?.blockers?.length && !impact?.cascade_node_ids?.length && !impact?.stranded_node_ids?.length && (
+                    <div style={{ color: "#10b981", fontSize: "12px", marginBottom: "8px" }}>✅ No dependents found — safe to delete</div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Confirm-by-typing */}
+            <p style={{ margin: "0 0 6px", fontSize: "13px" }}>
+              Type <strong>{deleteConfirm.name}</strong> to confirm:
             </p>
+            <input
+              type="text"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder={deleteConfirm.name}
+              style={{ ...inputStyle, width: "100%", marginBottom: "12px", boxSizing: "border-box" }}
+              autoFocus
+            />
             <div style={{ display: "flex", gap: "8px" }}>
-              <button style={btnStyle("danger")} onClick={() => handleDelete(deleteConfirm.id, deleteConfirm.type)}>
+              <button
+                style={{ ...btnStyle("danger"), opacity: deleteConfirmText !== deleteConfirm.name ? 0.4 : 1, cursor: deleteConfirmText !== deleteConfirm.name ? "not-allowed" : "pointer" }}
+                disabled={deleteConfirmText !== deleteConfirm.name}
+                onClick={() => handleDelete(deleteConfirm.id, deleteConfirm.type)}
+              >
                 Yes, Delete
               </button>
-              <button style={btnStyle("outline")} onClick={() => setDeleteConfirm(null)}>
+              <button style={btnStyle("outline")} onClick={closeDeleteConfirm}>
                 Cancel
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Dependencies panel */}
+        {depsPanelResource && (
+          <div style={{ ...formPanelStyle, border: "1px solid var(--pf9-border, #374151)", marginBottom: "16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <h4 style={{ margin: 0, fontSize: "14px" }}>🔗 Dependencies — {depsPanelResource.name}</h4>
+              <button style={btnStyle("outline", true)} onClick={() => setDepsPanelResource(null)}>✕ Close</button>
+            </div>
+            {depsLoading && <div style={{ fontSize: "12px", color: "var(--pf9-text-secondary)" }}>Loading…</div>}
+            {depsData?.error && <div style={{ fontSize: "12px", color: "#ef4444" }}>{depsData.error}</div>}
+            {depsData && !depsData.error && !depsLoading && (() => {
+              const otherNodes = (depsData.nodes || []).filter((n: any) => n.id !== depsData.root);
+              if (otherNodes.length === 0) return <div style={{ fontSize: "12px", color: "var(--pf9-text-secondary)" }}>No related resources found.</div>;
+              const byType: Record<string, any[]> = {};
+              otherNodes.forEach((n: any) => {
+                if (!byType[n.type]) byType[n.type] = [];
+                byType[n.type].push(n);
+              });
+              const typeIcon: Record<string, string> = {
+                vm: "🖥", subnet: "🔲", fip: "🌐", port: "🔌", sg: "🛡",
+                volume: "💾", snapshot: "📸", router: "↔", network: "🌐", host: "🏠",
+              };
+              return (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
+                  {Object.entries(byType).map(([type, nodes]) => (
+                    <div key={type} style={{ minWidth: "180px", background: "var(--pf9-card-bg, #1f2937)", borderRadius: "6px", padding: "8px 12px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--pf9-text-secondary)", marginBottom: "6px", textTransform: "uppercase" }}>
+                        {typeIcon[type] || "◦"} {type.replace(/_/g, " ")} ({nodes.length})
+                      </div>
+                      {nodes.map((n: any) => (
+                        <div key={n.id} style={{ fontSize: "12px", padding: "2px 0", borderBottom: "1px solid var(--pf9-border, #374151)" }}>
+                          <span>{n.label}</span>
+                          {n.status && <span style={{ marginLeft: "6px", fontSize: "10px", color: n.status === "ACTIVE" || n.status === "available" ? "#10b981" : "#f59e0b" }}>({n.status})</span>}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+            {depsData && !depsData.error && (
+              <div style={{ marginTop: "10px", fontSize: "11px", color: "var(--pf9-text-secondary)" }}>
+                {depsData.node_count} node(s) · {depsData.edge_count} edge(s){depsData.truncated ? " · truncated" : ""}
+              </div>
+            )}
           </div>
         )}
 

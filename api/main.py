@@ -2090,6 +2090,7 @@ VALID_NETWORK_SORT_COLUMNS = {
 def networks(
     domain_name: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    search: Optional[str] = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500),
     sort_by: str = Query(default="network_name"),
@@ -2105,6 +2106,10 @@ def networks(
         # tenant_id == project_id
         where.append("n.project_id = %s")
         params.append(tenant_id)
+    if search:
+        where.append("(LOWER(n.name) LIKE LOWER(%s) OR n.id LIKE %s)")
+        like = f"%{search}%"
+        params.extend([like, like])
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 

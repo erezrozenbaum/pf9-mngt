@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import threading
@@ -8,6 +9,8 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from cache import cached
+
+log = logging.getLogger(__name__)
 
 
 class Pf9Client:
@@ -184,7 +187,9 @@ class Pf9Client:
         self.authenticate()
         assert self.nova_endpoint
         url = f"{self.nova_endpoint}/servers/{server_id}"
-        r = self.session.delete(url, headers=self._headers())
+        priv_token = self.get_privileged_token()
+        h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
+        r = self.session.delete(url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -285,7 +290,9 @@ class Pf9Client:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/routers/{router_id}"
-        r = self.session.delete(url, headers=self._headers())
+        priv_token = self.get_privileged_token()
+        h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
+        r = self.session.delete(url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -306,7 +313,9 @@ class Pf9Client:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/floatingips/{floatingip_id}"
-        r = self.session.delete(url, headers=self._headers())
+        priv_token = self.get_privileged_token()
+        h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
+        r = self.session.delete(url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -327,7 +336,9 @@ class Pf9Client:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/ports/{port_id}"
-        r = self.session.delete(url, headers=self._headers())
+        priv_token = self.get_privileged_token()
+        h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
+        r = self.session.delete(url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -361,12 +372,251 @@ class Pf9Client:
         r.raise_for_status()
         return r.json()
 
+    def _get_admin_project_token(self) -> Optional[str]:
+        """
+        Get a one-time token scoped to the admin project for privileged Neutron
+        operations (e.g. deleting networks owned by other tenants).
+        Uses PF9_ADMIN_PROJECT_NAME env var (default 'admin').
+        Returns None if the auth call fails.
+        """
+        import os as _os
+        admin_project = _os.getenv("PF9_ADMIN_PROJECT_NAME", "admin")
+        payload = {
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": self.username,
+                            "domain": {"name": self.user_domain},
+                            "password": self.password,
+                        }
+                    },
+                },
+                "scope": {
+                    "project": {
+                        "name": admin_project,
+                        "domain": {"name": self.project_domain},
+                    }
+                },
+            }
+        }
+        try:
+            r = self.session.post(
+                f"{self.auth_url}/auth/tokens", json=payload, timeout=15
+            )
+            if r.status_code == 201:
+                return r.headers.get("X-Subject-Token")
+        except Exception:
+            pass
+        return None
+
+    def _ensure_svc_user_admin_role(self, svc_email: str, project_id: str) -> None:
+        """
+        Ensure the snapshot service user has the 'admin' role on project_id.
+        Uses the current admin session (self.token).  Best-effort — silently
+        ignores errors so callers can still fall back to other methods.
+        """
+        self.authenticate()
+        if not self.keystone_endpoint:
+            return
+        headers = {"X-Auth-Token": self.token}
+
+        # 1. Look up service user ID
+        r = self.session.get(
+            f"{self.keystone_endpoint}/users",
+            params={"name": svc_email},
+            headers=headers,
+            timeout=30,
+        )
+        if r.status_code != 200:
+            return
+        users = r.json().get("users", [])
+        if not users:
+            return
+        user_id = users[0]["id"]
+
+        # 2. Look up admin role ID
+        r = self.session.get(
+            f"{self.keystone_endpoint}/roles",
+            params={"name": "admin"},
+            headers=headers,
+            timeout=30,
+        )
+        if r.status_code != 200:
+            return
+        roles = r.json().get("roles", [])
+        if not roles:
+            return
+        role_id = roles[0]["id"]
+
+        # 3. Assign if not already present
+        role_url = f"{self.keystone_endpoint}/projects/{project_id}/users/{user_id}/roles/{role_id}"
+        check = self.session.head(role_url, headers=headers, timeout=30)
+        if check.status_code == 204:
+            return  # already has role
+        self.session.put(role_url, headers=headers, timeout=30)
+
+    def get_privileged_token(self, project_id: Optional[str] = None) -> Optional[str]:
+        """
+        Return a Neutron-privileged auth token for cross-tenant delete operations.
+
+        When project_id is provided:
+          Uses ensure_provisioner_in_project() — the same proven path as VM
+          provisioning — to grant provisionsrv '_member_' role on the target
+          project, then authenticates as provisionsrv scoped to that project.
+          Neutron's owner check (token.project_id == resource.tenant_id) then
+          passes, allowing the delete without needing global admin privileges.
+
+        When project_id is None:
+          Falls back to trying PF9_OS_ADMIN_USER credentials (if set), then
+          the existing service-project token.
+
+        Returns the token string, or None if all methods fail.
+        """
+        if project_id:
+            try:
+                from vm_provisioning_service_user import (
+                    SERVICE_USER_EMAIL, SERVICE_USER_DOMAIN,
+                    get_provision_user_password, ensure_provisioner_in_project,
+                )
+                if not SERVICE_USER_EMAIL:
+                    return self._try_os_admin_token(project_id)
+
+                svc_password = get_provision_user_password()
+
+                # Ensure provisionsrv has _member_ role in the target project
+                # (uses the service token — same as VM provisioning, proven to work)
+                ensure_provisioner_in_project(self, project_id)
+
+                svc_domain = SERVICE_USER_DOMAIN
+                d_scope = {"id": "default"} if svc_domain.lower() == "default" else {"name": svc_domain}
+                payload = {
+                    "auth": {
+                        "identity": {
+                            "methods": ["password"],
+                            "password": {
+                                "user": {
+                                    "name": SERVICE_USER_EMAIL,
+                                    "domain": d_scope,
+                                    "password": svc_password,
+                                }
+                            },
+                        },
+                        "scope": {"project": {"id": project_id}},
+                    }
+                }
+                r = self.session.post(
+                    f"{self.auth_url}/auth/tokens", json=payload, timeout=15
+                )
+                if r.status_code == 201:
+                    return r.headers.get("X-Subject-Token")
+                log.warning(
+                    "get_privileged_token: Keystone auth for provisionsrv returned %s "
+                    "(project=%s)", r.status_code, project_id
+                )
+            except Exception as _exc:
+                log.warning(
+                    "get_privileged_token: provisioner path failed for project %s: %s — "
+                    "project may be deleted; trying OS admin fallback",
+                    project_id, _exc
+                )
+                # Project may be deleted (404 on role assignment).  Try OS admin
+                # credentials if configured — those have the OpenStack `admin` role
+                # and can delete resources in any project regardless of owner.
+                admin_tok = self._try_os_admin_token()
+                if admin_tok:
+                    return admin_tok
+
+        # Fallback: try OS admin credentials, then service-project token.
+        admin_tok = self._try_os_admin_token()
+        if admin_tok:
+            return admin_tok
+        self.authenticate()
+        return self.token
+
+    def _try_os_admin_token(self, project_id: Optional[str] = None) -> Optional[str]:
+        """
+        Authenticate with PF9_OS_ADMIN_USER / PF9_OS_ADMIN_PASSWORD, which must
+        be a user with the OpenStack 'admin' role.  Used as a last resort for
+        cross-tenant operations involving deleted-project orphans.
+
+        Set these env vars in .env to enable this path:
+          PF9_OS_ADMIN_USER       e.g. admin@pf9.net (or whatever the PF9 admin email is)
+          PF9_OS_ADMIN_PASSWORD   the admin user's password
+          PF9_OS_ADMIN_PROJECT    project to scope to (default: 'admin')
+          PF9_OS_ADMIN_DOMAIN     user domain (default: 'Default')
+        """
+        import os as _os
+        admin_user = _os.getenv("PF9_OS_ADMIN_USER", "")
+        admin_pass = _os.getenv("PF9_OS_ADMIN_PASSWORD", "")
+        if not admin_user or not admin_pass:
+            return None
+        admin_project = _os.getenv("PF9_OS_ADMIN_PROJECT", "admin")
+        admin_domain = _os.getenv("PF9_OS_ADMIN_DOMAIN", "Default")
+        try:
+            payload = {
+                "auth": {
+                    "identity": {
+                        "methods": ["password"],
+                        "password": {
+                            "user": {
+                                "name": admin_user,
+                                "domain": {"name": admin_domain},
+                                "password": admin_pass,
+                            }
+                        },
+                    },
+                    "scope": {"project": {
+                        "id": project_id,
+                    }} if project_id else {"project": {
+                        "name": admin_project,
+                        "domain": {"name": admin_domain},
+                    }},
+                }
+            }
+            r = self.session.post(
+                f"{self.auth_url}/auth/tokens", json=payload, timeout=15
+            )
+            if r.status_code == 201:
+                log.info("get_privileged_token: using OS admin user for project=%s", project_id)
+                return r.headers.get("X-Subject-Token")
+        except Exception as _exc:
+            log.warning("_try_os_admin_token failed: %s", _exc)
+        return None
+
     def delete_network(self, network_id: str) -> None:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/networks/{network_id}"
-        r = self.session.delete(url, headers=self._headers())
+
+        # Try to discover the network's owner project so we can obtain a
+        # token scoped to that project (required for cross-tenant deletes).
+        network_project_id: Optional[str] = None
+        try:
+            r = self.session.get(url, headers=self._headers(), timeout=15)
+            if r.status_code == 200:
+                net = r.json().get("network", {})
+                network_project_id = net.get("tenant_id") or net.get("project_id")
+        except Exception:
+            pass
+
+        # Build a privileged token scoped to the network's project
+        priv_token = self.get_privileged_token(network_project_id)
+        if priv_token:
+            r = self.session.delete(
+                url,
+                headers={"X-Auth-Token": priv_token, "Content-Type": "application/json"},
+            )
+        else:
+            r = self.session.delete(url, headers=self._headers())
+
         # careful: this will fail if ports exist
+        if r.status_code == 403:
+            log.error(
+                "delete_network 403 for %s — response: %s",
+                network_id, r.text[:800]
+            )
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -412,7 +662,9 @@ class Pf9Client:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/security-groups/{sg_id}"
-        r = self.session.delete(url, headers=self._headers())
+        priv_token = self.get_privileged_token()
+        h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
+        r = self.session.delete(url, headers=h)
         if r.status_code == 409:
             raise Exception(
                 "Cannot delete this security group — it is the OpenStack "
@@ -462,7 +714,9 @@ class Pf9Client:
         self.authenticate()
         assert self.neutron_endpoint
         url = f"{self.neutron_endpoint}/v2.0/security-group-rules/{rule_id}"
-        r = self.session.delete(url, headers=self._headers())
+        priv_token = self.get_privileged_token()
+        h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
+        r = self.session.delete(url, headers=h)
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
 
@@ -576,6 +830,149 @@ class Pf9Client:
         r = self.session.delete(url, headers=self._headers())
         if r.status_code not in (202, 204, 404):
             r.raise_for_status()
+
+    def cleanup_project_resources(self, project_id: str) -> Dict[str, Any]:
+        """
+        Idempotently delete all OpenStack resources owned by project_id BEFORE
+        the Keystone project itself is deleted.
+
+        Must be called while the project still exists so that
+        ensure_provisioner_in_project() can succeed (it grants _member_ role on the
+        project, giving us a project-scoped token that satisfies Neutron / Cinder
+        owner checks).
+
+        Returns a summary dict with deleted/failed counts per resource type.
+        """
+        self.authenticate()
+        summary: Dict[str, Any] = {
+            "servers": {"deleted": [], "errors": []},
+            "volumes": {"deleted": [], "errors": []},
+            "floating_ips": {"deleted": [], "errors": []},
+            "ports": {"deleted": [], "errors": []},
+            "networks": {"deleted": [], "errors": []},
+        }
+        if not project_id:
+            return summary
+
+        # Obtain a project-scoped privileged token while the project still exists.
+        priv_token = self.get_privileged_token(project_id)
+        h = {"X-Auth-Token": priv_token, "Content-Type": "application/json"} if priv_token else self._headers()
+
+        # ── 1. Servers (Nova) ──────────────────────────────────────────────
+        try:
+            url = f"{self.nova_endpoint}/servers?all_tenants=1&project_id={project_id}"
+            resp = self.session.get(url, headers=self._headers())
+            if resp.ok:
+                for srv in resp.json().get("servers", []):
+                    try:
+                        r = self.session.delete(
+                            f"{self.nova_endpoint}/servers/{srv['id']}", headers=h
+                        )
+                        if r.status_code in (202, 204, 404):
+                            summary["servers"]["deleted"].append(srv["id"])
+                        else:
+                            summary["servers"]["errors"].append({"id": srv["id"], "error": f"HTTP {r.status_code}"})
+                    except Exception as exc:
+                        summary["servers"]["errors"].append({"id": srv["id"], "error": str(exc)})
+        except Exception as exc:
+            log.warning("cleanup_project_resources: server list failed for %s: %s", project_id, exc)
+
+        # ── 2. Volumes (Cinder) ────────────────────────────────────────────
+        if self.cinder_endpoint:
+            try:
+                cinder_base = self.cinder_endpoint.rsplit("/", 1)[0]
+                vol_url = f"{cinder_base}/{project_id}/volumes/detail"
+                resp = self.session.get(vol_url, headers=h)
+                if resp.ok:
+                    for vol in resp.json().get("volumes", []):
+                        try:
+                            r = self.session.delete(
+                                f"{cinder_base}/{project_id}/volumes/{vol['id']}", headers=h
+                            )
+                            if r.status_code in (200, 202, 204, 404):
+                                summary["volumes"]["deleted"].append(vol["id"])
+                            else:
+                                summary["volumes"]["errors"].append({"id": vol["id"], "error": f"HTTP {r.status_code}"})
+                        except Exception as exc:
+                            summary["volumes"]["errors"].append({"id": vol["id"], "error": str(exc)})
+            except Exception as exc:
+                log.warning("cleanup_project_resources: volume list failed for %s: %s", project_id, exc)
+
+        # ── 3. Floating IPs (Neutron) ──────────────────────────────────────
+        try:
+            resp = self.session.get(
+                f"{self.neutron_endpoint}/v2.0/floatingips?project_id={project_id}", headers=h
+            )
+            if resp.ok:
+                for fip in resp.json().get("floatingips", []):
+                    try:
+                        r = self.session.delete(
+                            f"{self.neutron_endpoint}/v2.0/floatingips/{fip['id']}", headers=h
+                        )
+                        if r.status_code in (200, 202, 204, 404):
+                            summary["floating_ips"]["deleted"].append(fip["id"])
+                        else:
+                            summary["floating_ips"]["errors"].append({"id": fip["id"], "error": f"HTTP {r.status_code}"})
+                    except Exception as exc:
+                        summary["floating_ips"]["errors"].append({"id": fip["id"], "error": str(exc)})
+        except Exception as exc:
+            log.warning("cleanup_project_resources: floating_ip list failed for %s: %s", project_id, exc)
+
+        # ── 4. Ports (Neutron — unattached ones) ──────────────────────────
+        try:
+            resp = self.session.get(
+                f"{self.neutron_endpoint}/v2.0/ports?project_id={project_id}", headers=h
+            )
+            if resp.ok:
+                for port in resp.json().get("ports", []):
+                    # Skip DHCP / router ports — deleting them manually can corrupt
+                    # the network; they'll be removed when the network is deleted.
+                    owner = port.get("device_owner", "")
+                    if owner.startswith("network:") or owner.startswith("compute:"):
+                        continue
+                    try:
+                        r = self.session.delete(
+                            f"{self.neutron_endpoint}/v2.0/ports/{port['id']}", headers=h
+                        )
+                        if r.status_code in (202, 204, 404):
+                            summary["ports"]["deleted"].append(port["id"])
+                        else:
+                            summary["ports"]["errors"].append({"id": port["id"], "error": f"HTTP {r.status_code}"})
+                    except Exception as exc:
+                        summary["ports"]["errors"].append({"id": port["id"], "error": str(exc)})
+        except Exception as exc:
+            log.warning("cleanup_project_resources: port list failed for %s: %s", project_id, exc)
+
+        # ── 5. Networks (Neutron — delete last) ───────────────────────────
+        try:
+            resp = self.session.get(
+                f"{self.neutron_endpoint}/v2.0/networks?project_id={project_id}", headers=h
+            )
+            if resp.ok:
+                for net in resp.json().get("networks", []):
+                    try:
+                        r = self.session.delete(
+                            f"{self.neutron_endpoint}/v2.0/networks/{net['id']}", headers=h
+                        )
+                        if r.status_code in (202, 204, 404):
+                            summary["networks"]["deleted"].append(net["id"])
+                        else:
+                            summary["networks"]["errors"].append({"id": net["id"], "error": f"HTTP {r.status_code}"})
+                    except Exception as exc:
+                        summary["networks"]["errors"].append({"id": net["id"], "error": str(exc)})
+        except Exception as exc:
+            log.warning("cleanup_project_resources: network list failed for %s: %s", project_id, exc)
+
+        log.info(
+            "cleanup_project_resources: project=%s servers=%d volumes=%d fips=%d ports=%d networks=%d",
+            project_id,
+            len(summary["servers"]["deleted"]),
+            len(summary["volumes"]["deleted"]),
+            len(summary["floating_ips"]["deleted"]),
+            len(summary["ports"]["deleted"]),
+            len(summary["networks"]["deleted"]),
+        )
+        return summary
 
     # ---------------------------
     # Keystone – Users
@@ -695,18 +1092,51 @@ class Pf9Client:
         r.raise_for_status()
         return r.json().get("volumes", [])
 
-    def delete_volume(self, volume_id: str, force: bool = False) -> None:
-        """Delete a Cinder volume."""
+    def delete_volume(self, volume_id: str, force: bool = False, project_id: Optional[str] = None) -> None:
+        """Delete a Cinder volume.
+
+        project_id: the volume owner's project UUID. When provided, the Cinder
+        URL is built with the correct project scope (Cinder returns 400 when the
+        URL project_id doesn't match the volume's own project).  If omitted the
+        volume is looked up first to discover its project.
+        """
         self.authenticate()
         if not self.cinder_endpoint:
             return
-        if force:
-            # Force-delete via action
-            url = f"{self.cinder_endpoint}/volumes/{volume_id}/action"
-            r = self.session.post(url, headers=self._headers(), json={"os-force_delete": {}})
+
+        # Resolve project_id if not supplied — needed to build the correct Cinder URL.
+        if not project_id:
+            try:
+                vols = self.list_volumes(all_tenants=True)
+                match = next((v for v in vols if v.get("id") == volume_id), None)
+                if match:
+                    project_id = match.get("os-vol-tenant-attr:tenant_id") or match.get("tenant_id")
+            except Exception:
+                pass
+
+        # Build a properly project-scoped Cinder URL.
+        # cinder_endpoint = ".../cinder/v3/{service_project_id}"
+        # If the volume lives in a different project, strip and replace the project_id.
+        if project_id:
+            cinder_base = self.cinder_endpoint.rsplit("/", 1)[0]
+            priv_token = self.get_privileged_token(project_id)
+            h = {"X-Auth-Token": priv_token, "Content-Type": "application/json"} if priv_token else self._headers()
+            if force:
+                url = f"{cinder_base}/{project_id}/volumes/{volume_id}/action"
+                r = self.session.post(url, headers=h, json={"os-force_delete": {}})
+            else:
+                url = f"{cinder_base}/{project_id}/volumes/{volume_id}"
+                r = self.session.delete(url, headers=h)
         else:
-            url = f"{self.cinder_endpoint}/volumes/{volume_id}"
-            r = self.session.delete(url, headers=self._headers())
+            priv_token = self.get_privileged_token()
+            h = {"X-Auth-Token": priv_token} if priv_token else self._headers()
+            if force:
+                url = f"{self.cinder_endpoint}/volumes/{volume_id}/action"
+                r = self.session.post(url, headers=h, json={"os-force_delete": {}})
+            else:
+                url = f"{self.cinder_endpoint}/volumes/{volume_id}"
+                r = self.session.delete(url, headers=h)
+
         if r.status_code not in (200, 202, 204, 404):
             r.raise_for_status()
 
