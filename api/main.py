@@ -351,7 +351,9 @@ async def add_cache_control_headers(request: Request, call_next):
     return response
 
 # Security middleware (TrustedHost) — derive trusted hosts from ALLOWED_ORIGINS; never wildcard
-_trusted_hosts: set = set()
+# Always include localhost variants and Docker internal service names so Vite proxy and
+# container-to-container requests are accepted without 400 Bad Request.
+_trusted_hosts: set = {"localhost", "127.0.0.1", "pf9_api", "pf9_ui"}
 for _origin in ALLOWED_ORIGINS:
     try:
         _trusted_hosts.add(_origin.split("://", 1)[1].rstrip("/").split(":")[0])
@@ -1929,10 +1931,10 @@ def snapshots(
     params: List[Any] = []
 
     if domain_name:
-        where.append("domain_name = %s")
+        where.append("s.domain_name = %s")
         params.append(domain_name)
     if tenant_id:
-        where.append("project_id = %s")
+        where.append("s.project_id = %s")
         params.append(tenant_id)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
@@ -1994,7 +1996,7 @@ def snapshots(
     }
 
 
-@app.get("/snapshot-runs")
+@app.get("/api/snapshot-runs")
 def snapshot_runs(
     run_type: Optional[str] = None,
     status: Optional[str] = None,

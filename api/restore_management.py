@@ -1998,6 +1998,21 @@ def setup_restore_routes(app, db_conn_fn):
                 # Also find from ports → device_id mapping in volume attachments
                 volume_ids = [v["volume_id"] for v in volumes]
 
+                # If the volumes table has no entries for this VM (e.g. volumes from
+                # other tenants not yet synced), fall back to the server's Nova raw_json
+                # to extract volume IDs so the Cinder live query can still run.
+                if not volume_ids:
+                    vols_attached = raw.get("os-extended-volumes:volumes_attached") or []
+                    for va in vols_attached:
+                        vid = va.get("id")
+                        if vid:
+                            volume_ids.append(vid)
+                    if volume_ids:
+                        logger.info(
+                            f"VM {vm_id}: volumes not in local DB, "
+                            f"using {len(volume_ids)} IDs from server raw_json for Cinder lookup"
+                        )
+
                 # Get snapshots for these volumes from local DB
                 snapshots = []
                 if volume_ids:
@@ -2013,16 +2028,16 @@ def setup_restore_routes(app, db_conn_fn):
                     snapshots = cur.fetchall()
 
                 # Also query Cinder API directly to catch manual/recent snapshots
-                # not yet synced to the local DB
+                # not yet synced to the local DB.
+                # Use all_tenants=1 with the admin endpoint so we see snapshots from
+                # any project (tenant-project creates, service-domain admin fallback, etc.)
                 live_snapshots = []
                 try:
                     admin_session = os_client.authenticate_admin()
-                    project_id = vm.get("project_id") or ""
+                    # cinder_endpoint is scoped to the admin project after authenticate_admin()
+                    cinder_base = os_client.cinder_endpoint
                     for vol_id in volume_ids:
-                        url = os_client._cinder_url(
-                            project_id,
-                            f"/snapshots/detail?volume_id={vol_id}&status=available"
-                        )
+                        url = f"{cinder_base}/snapshots/detail?volume_id={vol_id}&status=available&all_tenants=1"
                         r = admin_session.get(url, timeout=60)
                         if r.status_code == 200:
                             for snap in r.json().get("snapshots", []):

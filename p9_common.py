@@ -329,6 +329,13 @@ def get_service_user_session(project_id, username, password, user_domain="defaul
         session.headers.update({"X-Auth-Token": token})
         return session, token
     except Exception as e:
+        # 401 scoped to a project usually means the project was deleted from Keystone
+        # (orphan project). Log as a warning only — the caller falls back to admin session.
+        import requests as _requests
+        if isinstance(e, _requests.exceptions.HTTPError) and e.response is not None and e.response.status_code == 401:
+            print(f"[keystone] WARN: 401 authenticating as {username} for project {project_id} "
+                  f"(orphan/deleted project — skipping service-user session)")
+            return None, None
         log_error("keystone", f"Failed to authenticate as {username} for project {project_id}: {e}")
         return None, None
 
@@ -375,6 +382,10 @@ def get_session_best_scope():
     _extract_endpoints_from_catalog(catalog)
 
     session.headers.update({"X-Auth-Token": token})
+    # Mark as admin so cinder_volumes_all / cinder_snapshots_all use all_tenants=1.
+    # This session always uses admin credentials (CFG["USERNAME"]) — it can see
+    # resources across all projects.
+    session.is_admin = True
     return session, token, body, "project", None
 
 
