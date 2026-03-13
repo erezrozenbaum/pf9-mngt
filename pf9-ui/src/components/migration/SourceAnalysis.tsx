@@ -158,7 +158,7 @@ interface Props {
   onViewTenantGraph?: (label: string, graphUrl: string) => void;
 }
 
-type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness" | "prepare" | "vjb" | "summary";
+type SubView = "dashboard" | "vms" | "tenants" | "cohorts" | "waves" | "networks" | "netmap" | "users" | "risk" | "plan" | "capacity" | "readiness" | "prepare" | "vjb" | "summary" | "methodology";
 
 // Phase 3 — Wave Planning types
 interface Wave {
@@ -584,6 +584,7 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
           { id: "plan" as SubView, label: "📋 Migration Plan" },
           { id: "summary" as SubView, label: "📈 Migration Summary" },
           { id: "risk" as SubView, label: "⚠️ Risk Config" },
+          { id: "methodology" as SubView, label: "📖 Methodology" },
         ]).map(t => (
           <button key={t.id} onClick={() => setSubView(t.id)}
             style={{
@@ -1088,6 +1089,11 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
       {/* ---- Migration Summary (Phase 5.0) ---- */}
       {subView === "summary" && (
         <MigrationSummaryView projectId={pid} />
+      )}
+
+      {/* ---- Methodology ---- */}
+      {subView === "methodology" && (
+        <MethodologyView />
       )}
     </div>
   );
@@ -5194,8 +5200,8 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
                                     📁 {tenantName} ({(vms as any[]).length} VMs)
                                   </div>
                                   <div style={{ display: "flex", gap: 2, flexWrap: "wrap", marginLeft: 8 }}>
-                                    {(vms as any[]).map((v: any) => (
-                                      <span key={v.vm_name} style={{
+                                    {(vms as any[]).map((v: any, vIdx: number) => (
+                                      <span key={`${v.vm_name}-${vIdx}`} style={{
                                         ...pillStyle, fontSize: "0.65rem", padding: "2px 4px",
                                         background: v.mode === "cold_required" ? "#fee2e2" : "#dcfce7",
                                         color: v.mode === "cold_required" ? "#dc2626" : "#16a34a",
@@ -8942,6 +8948,12 @@ interface MigrationSummaryData {
   total_cutover_hours: number;
   total_downtime_hours: number;
   bandwidth_mbps: number;
+  estimated_schedule_days?: number;
+  warm_eligible?: number;
+  cold_required?: number;
+  total_tenants?: number;
+  agent_count?: number;
+  total_concurrent_slots?: number;
   per_os_breakdown: Record<string, { vm_count: number; fix_hours: number; fix_rate: number }>;
   per_cohort: { cohort_name: string; vm_count: number; data_gb: number; data_copy_hours: number; fix_hours: number; downtime_hours: number }[];
   per_day: MigrationSummaryDayRow[];
@@ -9336,6 +9348,367 @@ function MigrationSummaryView({ projectId }: { projectId: number }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/*  Methodology View — Calculation Reference                          */
+/* ================================================================== */
+
+function MethodologyView() {
+  const card: React.CSSProperties = {
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    padding: "20px 24px",
+    marginBottom: 20,
+  };
+  const h2: React.CSSProperties = {
+    fontSize: "1rem",
+    fontWeight: 700,
+    color: "#1d4ed8",
+    marginBottom: 10,
+    borderBottom: "2px solid #dbeafe",
+    paddingBottom: 6,
+  };
+  const h3: React.CSSProperties = {
+    fontSize: "0.875rem",
+    fontWeight: 600,
+    color: "#374151",
+    margin: "14px 0 4px",
+  };
+  const p: React.CSSProperties = { fontSize: "0.85rem", color: "#374151", lineHeight: 1.6, margin: "4px 0" };
+  const code: React.CSSProperties = {
+    fontFamily: "monospace",
+    background: "#f3f4f6",
+    padding: "2px 6px",
+    borderRadius: 4,
+    fontSize: "0.82rem",
+  };
+  const exBox: React.CSSProperties = {
+    background: "#f0fdf4",
+    border: "1px solid #bbf7d0",
+    borderRadius: 6,
+    padding: "10px 14px",
+    marginTop: 8,
+    fontSize: "0.82rem",
+    color: "#166534",
+    lineHeight: 1.7,
+  };
+  const tbl: React.CSSProperties = {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: "0.82rem",
+    marginTop: 8,
+  };
+  const th: React.CSSProperties = {
+    background: "#1d4ed8",
+    color: "#fff",
+    padding: "5px 10px",
+    textAlign: "left",
+    fontWeight: 600,
+  };
+  const td: React.CSSProperties = { padding: "5px 10px", borderBottom: "1px solid #e5e7eb" };
+  const tdAlt: React.CSSProperties = { ...td, background: "#f3f4f6" };
+
+  return (
+    <div style={{ maxWidth: 860, paddingBottom: 32 }}>
+      <h1 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#1d4ed8", marginBottom: 4 }}>
+        📖 Calculation Methodology
+      </h1>
+      <p style={{ ...p, color: "#6b7280", marginBottom: 20 }}>
+        This reference explains exactly how every estimate in the Migration Plan and Migration Summary is
+        derived — useful for audits, stakeholder reviews, and troubleshooting unexpected values.
+      </p>
+
+      {/* 1. Warm vs Cold Classification */}
+      <div style={card}>
+        <div style={h2}>1 · Warm vs Cold Classification</div>
+        <p style={p}>
+          Every VM is assigned one of three migration modes. The decision is made per-VM when the plan is generated or recalculated.
+        </p>
+        <table style={tbl}>
+          <thead>
+            <tr>
+              <th style={th}>Mode</th>
+              <th style={th}>Trigger condition</th>
+              <th style={th}>Impact</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={td}><strong>Warm (eligible)</strong></td>
+              <td style={td}>OS does <em>not</em> match any entry in the "OS Cold Required" list AND VM is powered ON</td>
+              <td style={td}>Live data-copy while VM runs; brief cutover window only</td>
+            </tr>
+            <tr>
+              <td style={tdAlt}><strong>Warm Risky</strong></td>
+              <td style={tdAlt}>Warm-eligible but risk score ≥ configured Yellow/Red threshold</td>
+              <td style={tdAlt}>Same as warm but flagged for extra review</td>
+            </tr>
+            <tr>
+              <td style={td}><strong>Cold Required</strong></td>
+              <td style={td}>OS matches OS Cold list OR VM is poweredOff / suspended</td>
+              <td style={td}>VM must be shut down before copy; full disk copy duration contributes to downtime</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style={{ ...p, marginTop: 10 }}>
+          The OS Cold Required list is configured in the <strong>⚠️ Risk Config</strong> tab → "Cold Migration Rules" section.
+          Common cold candidates: Windows Server 2003, RHEL 5, anything with a legacy in-place agent requirement.
+        </p>
+        <div style={exBox}>
+          <strong>Example:</strong> A VM running "CentOS 7" (not in the cold list) and powered ON → <strong>warm_eligible</strong>.<br />
+          A VM running "Windows Server 2003" (in the cold list) → <strong>cold_required</strong>, regardless of power state.<br />
+          A VM that is <em>poweredOff</em> → <strong>cold_required</strong>, regardless of OS.
+        </div>
+      </div>
+
+      {/* 2. Bandwidth Model */}
+      <div style={card}>
+        <div style={h2}>2 · Bandwidth Model &amp; Bottleneck Detection</div>
+        <p style={p}>
+          Four independent throughput limits are measured or configured. The effective transfer rate is the
+          minimum (bottleneck) across all four:
+        </p>
+        <table style={tbl}>
+          <thead>
+            <tr>
+              <th style={th}>Layer</th>
+              <th style={th}>Source</th>
+              <th style={th}>Efficiency applied</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={td}>Source NIC</td>
+              <td style={td}>vSphere-reported NIC speed × source efficiency %</td>
+              <td style={td}>Typical 60–80 % (TCP overhead, other workloads)</td>
+            </tr>
+            <tr>
+              <td style={tdAlt}>WAN / Link</td>
+              <td style={tdAlt}>Configured link capacity × link efficiency %</td>
+              <td style={tdAlt}>Typical 70–90 %</td>
+            </tr>
+            <tr>
+              <td style={td}>vJailbreak Agent</td>
+              <td style={td}>Per-agent ingest rate × number of agents</td>
+              <td style={td}>Practical measured rate</td>
+            </tr>
+            <tr>
+              <td style={tdAlt}>Target Storage</td>
+              <td style={tdAlt}>Storage write IOPS × block size converted to Mbps</td>
+              <td style={tdAlt}>Ceph/Nutanix IOPS model</td>
+            </tr>
+          </tbody>
+        </table>
+        <p style={{ ...p, marginTop: 10 }}>
+          Formula: <span style={code}>effective_mbps = min(source_nic_mbps, link_mbps, agent_mbps, storage_mbps)</span>
+        </p>
+        <div style={exBox}>
+          <strong>Example:</strong> Source NIC = 4,800 Mbps · Link = 4,000 Mbps · Agent = 6,000 Mbps · Storage = 5,500 Mbps<br />
+          → Bottleneck = <strong>link at 4,000 Mbps</strong>
+        </div>
+      </div>
+
+      {/* 3. Data-Copy Time */}
+      <div style={card}>
+        <div style={h2}>3 · Data-Copy Time</div>
+        <p style={p}>
+          Only in-use disk data is counted, not the full provisioned disk size. The formula converts Mbps to GB/h:
+        </p>
+        <p style={p}>
+          <span style={code}>data_copy_hours = total_in_use_gb ÷ (bottleneck_mbps ÷ 8 × 3600 ÷ 1024)</span>
+        </p>
+        <p style={{ ...p, color: "#6b7280" }}>
+          Where <em>÷ 8</em> converts Megabits → Megabytes, and <em>× 3600 ÷ 1024</em> converts MB/s → GB/h.
+        </p>
+        <div style={exBox}>
+          <strong>Example:</strong> 172,617 GB in-use data at 4,000 Mbps bottleneck:<br />
+          4,000 ÷ 8 × 3,600 ÷ 1,024 = <strong>1,757.8 GB/h</strong><br />
+          172,617 ÷ 1,757.8 = <strong>98.2 hours</strong> of data-copy time<br />
+          <em>Divided across concurrent agent slots to get wall-clock time per day.</em>
+        </div>
+        <p style={{ ...p, marginTop: 10 }}>
+          For warm VMs the copy runs while the VM is live (Phase 1).
+          For cold VMs the VM is shut down first, so the copy time is also downtime.
+        </p>
+      </div>
+
+      {/* 4. Tech Fix Scoring */}
+      <div style={card}>
+        <div style={h2}>4 · Tech Fix Time Scoring</div>
+        <p style={p}>
+          Each VM receives a raw fix score based on factors that typically require hands-on remediation after a migration.
+          The raw score is then multiplied by an OS-specific fix-rate to produce expected fix minutes.
+        </p>
+        <h3 style={h3}>Factor Weights (configurable in Migration Summary → ⚙️ Settings)</h3>
+        <table style={tbl}>
+          <thead>
+            <tr>
+              <th style={th}>Factor</th>
+              <th style={th}>Default weight (min)</th>
+              <th style={th}>Rationale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              ["Windows OS",           20, "Driver reinstall, activation, agent re-registration"],
+              ["Each extra volume",     15, "Mount point verification, fstab/disk management"],
+              ["Each extra NIC",        10, "IP re-assignment, network profile validation"],
+              ["Cold migration mode",   15, "OS-level shutdown & validation steps"],
+              ["Risk score: YELLOW",   15, "Elevated risk → extra verification pass"],
+              ["Risk score: RED",      25, "High risk → full post-migration smoke test"],
+              ["Has snapshots",        10, "Snapshot consolidation before or after migration"],
+              ["Cross-tenant dep",     15, "Coordinate with dependent tenant's team"],
+              ["Unknown OS",            5, "Manual verification of OS type/version"],
+            ].map(([factor, weight, reason], i) => (
+              <tr key={factor as string}>
+                <td style={i % 2 === 0 ? td : tdAlt}>{factor as string}</td>
+                <td style={i % 2 === 0 ? td : tdAlt}>{weight as number}</td>
+                <td style={i % 2 === 0 ? td : tdAlt}>{reason as string}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <h3 style={h3}>OS Fix Rates (default values, configurable)</h3>
+        <table style={tbl}>
+          <thead>
+            <tr>
+              <th style={th}>OS Family</th>
+              <th style={th}>Default Fix Rate</th>
+              <th style={th}>Effect</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style={td}>Windows</td><td style={td}>50 %</td><td style={td}>Multiply raw score × 0.50</td></tr>
+            <tr><td style={tdAlt}>Linux</td><td style={tdAlt}>20 %</td><td style={tdAlt}>Multiply raw score × 0.20</td></tr>
+            <tr><td style={td}>Other / Unknown</td><td style={td}>40 %</td><td style={td}>Multiply raw score × 0.40</td></tr>
+            <tr><td style={tdAlt}>Global override</td><td style={tdAlt}>(not set)</td><td style={tdAlt}>When set, overrides all per-OS rates</td></tr>
+          </tbody>
+        </table>
+        <p style={{ ...p, marginTop: 10 }}>
+          Formula: <span style={code}>fix_minutes = raw_score × fix_rate</span><br />
+          where <span style={code}>raw_score = Σ (factor_present × factor_weight)</span>
+        </p>
+        <div style={exBox}>
+          <strong>Example — Windows VM, cold mode, 3 volumes, 2 NICs, risk YELLOW:</strong><br />
+          Raw = 20 (Windows) + 15×2 (2 extra vols) + 10×1 (1 extra NIC) + 15 (cold) + 15 (yellow) = <strong>95 raw minutes</strong><br />
+          Fix minutes = 95 × 0.50 (Windows fix rate) = <strong>47.5 minutes</strong><br />
+          Total downtime = 47.5 (fix) + 30 (cutover window) = <strong>77.5 minutes → ~1.3 h</strong>
+        </div>
+      </div>
+
+      {/* 5. Downtime Estimate */}
+      <div style={card}>
+        <div style={h2}>5 · Downtime Estimate</div>
+        <p style={p}>
+          Downtime is the period during which a VM (or its service) is unavailable to end users.
+        </p>
+        <table style={tbl}>
+          <thead>
+            <tr>
+              <th style={th}>VM Mode</th>
+              <th style={th}>Downtime formula</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={td}><strong>Warm</strong></td>
+              <td style={td}>
+                <span style={code}>cutover_minutes + fix_minutes</span><br />
+                <small style={{ color: "#6b7280" }}>Data copy runs live (no downtime during Phase 1). Downtime begins only at the cutover window.</small>
+              </td>
+            </tr>
+            <tr>
+              <td style={tdAlt}><strong>Cold</strong></td>
+              <td style={tdAlt}>
+                <span style={code}>data_copy_hours × 60 + cutover_minutes + fix_minutes</span><br />
+                <small style={{ color: "#6b7280" }}>VM must be powered off for the entire copy, so copy time is also downtime.</small>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p style={{ ...p, marginTop: 10 }}>
+          <strong>Total project downtime</strong> = sum of individual VM downtime hours across all VMs.<br />
+          The cutover window default is <strong>30 minutes</strong> per VM (configurable in Migration Summary → ⚙️ Settings).
+        </p>
+        <div style={exBox}>
+          <strong>Example — 500-VM project, all warm, avg 35 min fix time each:</strong><br />
+          Per VM = 30 (cutover) + 35 (fix) = 65 min = 1.08 h<br />
+          Total = 500 × 1.08 = <strong>542 hours of cumulative downtime</strong><br />
+          <em>(These are concurrent across tenants — the wall-clock calendar duration is much shorter.)</em>
+        </div>
+      </div>
+
+      {/* 6. Daily Schedule Packing */}
+      <div style={card}>
+        <div style={h2}>6 · Daily Schedule &amp; Calendar Packing</div>
+        <p style={p}>
+          VMs are packed into migration days using a slot-based bin-packing algorithm:
+        </p>
+        <ol style={{ ...p, paddingLeft: 20, margin: "8px 0" }}>
+          <li style={{ marginBottom: 6 }}>
+            <strong>Ordering:</strong> VMs are sorted by Cohort → Priority within cohort → disk size (largest first).
+          </li>
+          <li style={{ marginBottom: 6 }}>
+            <strong>Concurrent slots:</strong> Each working day has{" "}
+            <span style={code}>total_concurrent_slots = Σ agent_slots_per_agent × number_of_agents</span>.
+            Each VM occupies exactly 1 slot for its estimated duration.
+          </li>
+          <li style={{ marginBottom: 6 }}>
+            <strong>Day fill:</strong> VMs are assigned to the current day until the wall-clock time
+            (longest running VM's estimated hours) exceeds the configured working hours/day limit, then a new day starts.
+          </li>
+          <li style={{ marginBottom: 6 }}>
+            <strong>Wall-clock per day:</strong>{" "}
+            <span style={code}>wall_clock_hours = max(estimated_hours across VMs assigned to that day)</span>
+          </li>
+          <li>
+            <strong>VM estimated hours:</strong> warm VMs use Phase 1 (copy) hours; cold VMs use full copy
+            duration. Both then add cutover time. Fix time is separate and often parallelised by the ops team.
+          </li>
+        </ol>
+        <div style={exBox}>
+          <strong>Example:</strong> 12 concurrent slots, working day = 8 h, 30 VMs of varying sizes.<br />
+          Day 1: 12 VMs assigned (12 slots filled), largest VM takes 6.2 h → wall-clock = 6.2 h<br />
+          Day 2: next 12 VMs, largest takes 4.8 h → wall-clock = 4.8 h<br />
+          Day 3: remaining 6 VMs → wall-clock = largest among them<br />
+          Total schedule = 3 days × project_duration_days calculation adds non-working days.
+        </div>
+      </div>
+
+      {/* 7. Risk Scoring */}
+      <div style={card}>
+        <div style={h2}>7 · Risk Score &amp; Risk Categories</div>
+        <p style={p}>
+          Risk scoring is calculated independently from fix scoring and uses the same configurable weight table.
+          The raw risk score determines the risk category (GREEN / YELLOW / RED):
+        </p>
+        <table style={tbl}>
+          <thead>
+            <tr>
+              <th style={th}>Category</th>
+              <th style={th}>Risk score threshold (default)</th>
+              <th style={th}>Recommended action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td style={td}>🟢 GREEN</td><td style={td}>0 – 29</td><td style={td}>Standard migration, no extra steps</td></tr>
+            <tr><td style={tdAlt}>🟡 YELLOW</td><td style={tdAlt}>30 – 59</td><td style={tdAlt}>Pre-migration review, validate app team availability</td></tr>
+            <tr><td style={td}>🔴 RED</td><td style={td}>60+</td><td style={td}>Architecture review, rollback plan, smoke testing required</td></tr>
+          </tbody>
+        </table>
+        <p style={{ ...p, marginTop: 10 }}>
+          Thresholds and factor weights are fully configurable in the <strong>⚠️ Risk Config</strong> tab.
+        </p>
+      </div>
+
+      <p style={{ fontSize: "0.78rem", color: "#9ca3af", marginTop: 8 }}>
+        All formulas and default values reflect the current system configuration.
+        Override any value in <strong>⚠️ Risk Config</strong> or <strong>Migration Summary → ⚙️ Settings</strong> to recalculate instantly.
+      </p>
     </div>
   );
 }

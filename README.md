@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.61.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.63.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -37,7 +37,7 @@ pf9-mngt is an open-source operational add-on for Platform9 / OpenStack — it g
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
 | **nginx (TLS proxy)** | nginx:1.27-alpine | 80/443 | HTTPS termination, HTTP→HTTPS redirect, reverse proxy to API and UI |
-| **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 28+ management tabs + admin panel |
+| **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 30+ management tabs + admin panel |
 | **Backend API** | FastAPI / Gunicorn / Python | 8000 | 155+ REST endpoints, RBAC middleware, 4 workers + --max-requests 1000 |
 | **Redis** | redis:7-alpine | internal | OpenStack inventory/quota cache (60–300 s TTL, allkeys-lru, 128 MiB cap) |
 | **LDAP Server** | OpenLDAP | internal | Enterprise authentication directory (not exposed to host) |
@@ -371,10 +371,11 @@ A 15-minute explainer video walking through the UI and key features:
 - **Central Activity Log**: Full audit trail for all provisioning and domain operations
 - **DB Persistence**: `networks_config` + `networks_created` JSONB columns in `provisioning_jobs` store full input and output network details
 
-### 📋 Reports & Resource Management *(v1.17 → v1.40)*
+### 📋 Reports & Resource Management *(v1.17 → v1.63)*
 - **20 Report Types**: VM Report, Tenant Quota Usage, Domain Overview, Snapshot Compliance, Flavor Usage, Metering Summary, Resource Inventory, User/Role Audit, Idle Resources, Security Group Audit, Capacity Planning, Backup Status, Activity Log, Network Topology, Cost Allocation, Drift Summary, **Image Usage by Tenant** *(v1.40)*, **Flavor Usage by Tenant Detail** *(v1.40)*
 - **BFV-aware reporting** *(v1.40)*: Image and Flavor by Tenant reports resolve instances booted from volume via Cinder `volume_image_metadata` — full VM counts including BFV workloads
 - **CSV Export**: All reports support one-click CSV download
+- **RVTools Exports Browser** *(v1.63)*: "📁 RVTools Exports" sub-tab inside Reports — file list (filename, size, date) with one-click authenticated download + run history table showing the last 100 `inventory_runs` entries (started, finished, duration, status badge)
 - **Resource Provisioning Tool**: Full CRUD for Users, Flavors, Networks, Routers, Floating IPs, Volumes, Security Groups across tenants
 - **Quota Management**: View and live-edit compute, network, and storage quotas per tenant
 - **Safety Protections**: Last-user guard, in-use flavor check, attached-volume block, default SG protection
@@ -394,12 +395,12 @@ A 15-minute explainer video walking through the UI and key features:
 - **Paginated Results**: Relevance-ranked results with highlighted keyword snippets and metadata pill cards
 - **Indexer Dashboard**: Real-time stats on document counts, last run time, and per-type health
 
-### 📋 Policy-as-Code Runbooks *(v1.21 → v1.57)*
-- **Runbook Catalogue**: Browse 24 built-in operational runbooks with schema-driven parameter forms:
+### 📋 Policy-as-Code Runbooks *(v1.21 → v1.61)*
+- **Runbook Catalogue**: Browse 25 built-in operational runbooks with schema-driven parameter forms:
   - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)* — identifies over-provisioned VMs and suggests/executes flavor downsizing with pre-snapshot safety, **DR Drill** *(v1.56)* — clone DR-tagged VMs into isolated network, verify boot, auto-teardown, **Hypervisor Maintenance Evacuate** *(v1.57, Phase C2)* — drain a hypervisor before maintenance: live-migrate all VMs (graph-depth ordered), cold-migrate fallback, disable host after drain
   - **Security**: Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast, **Security Group Hardening** *(v1.57, Phase C)* — replaces 0.0.0.0/0 rules with graph-derived CIDRs, **Network Isolation Audit** *(v1.57)* — scans shared networks, cross-tenant routers, CIDR overlaps, and unexpected FIPs, **Image Lifecycle Audit** *(v1.57)* — scores images by age + EOL OS + FIP exposure
   - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, **Quota Adjustment** *(v1.53)* — sets Nova/Neutron/Cinder quota with billing gate + dry-run diff
-  - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)* — full usage + cost report with email-ready HTML body, **Capacity Forecast** *(v1.55)* — linear regression on cluster vCPU/RAM history, projects days to 80% capacity
+  - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)* — full usage + cost report with email-ready HTML body, **Capacity Forecast** *(v1.55)* — linear regression on cluster vCPU/RAM history, projects days to 80% capacity, **Cluster Capacity Planner** *(v1.61)* — HA-aware cluster capacity analysis: reserves N+1/N+2 host headroom, 70% safe-operating threshold, forecasts days to capacity, recommends minimum host spec for 6-month runway, per-flavor VM slot table
   - **Provisioning**: **Tenant Offboarding** *(v1.56)* — 10-step customer exit: FIP release → VM stop → port cleanup → Keystone disable → metadata tagging → CRM notification → final report email
 - **Department Visibility** *(v1.52)*: Admins control which departments see each runbook via a live checkbox matrix in the UI; non-admin users receive only the runbooks their department is allowed to trigger
 - **External Integrations** *(v1.52)*: Connect billing gates, CRM systems, or generic webhooks. `auth_credential` Fernet-encrypted at rest. Action runbooks call `_call_billing_gate()` for pre-authorization before applying changes — silently skips if no integration is configured
@@ -411,6 +412,18 @@ A 15-minute explainer video walking through the UI and key features:
 - **Full Audit Trail**: Every execution records trigger user, approver, timestamps, parameters, results, items found/actioned
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern — add new runbooks with zero framework changes
 
+### 🕸️ Cloud Dependency Graph *(v1.47 → v1.51)*
+- **BFS Graph Engine**: `GET /api/graph` — given any resource (VM, volume, network, tenant, snapshot, SG, FIP, subnet, port, host, image, domain), returns the full node+edge dependency graph up to 3 hops; 150-node cap with `truncated` flag
+- **12 Node Types, 15 Edge Types**: All relationships derived from the existing DB schema with no schema changes required
+- **Health Score Engine** *(v1.51)*: Every node shows a coloured 0–100 score circle; VM/volume/host each have tailored deduction rules for error states, missing snapshots, drift, and resource pressure; capacity pressure tinting on host nodes
+- **Blast Radius Mode** *(v1.51)*: Click 💥 to highlight all resources impacted if the selected node fails; animated edges + node dimming; summary banner showing affected VMs, tenants, FIPs, and volumes
+- **Delete Impact Mode** *(v1.51)*: Click 🗑 to preview cascade deletions, stranded resources, and OpenStack blockers before any destructive action
+- **Orphan Detection** *(v1.51)*: Surfaces orphaned volumes (unattached), floating IPs (no port), security groups (unused), and dangling snapshots; visible in Tenant Health Panel
+- **Tenant Health Panel** *(v1.51)*: Environment health score, critical/degraded VM counts, orphan count, expandable top-issues list shown above the canvas in Topology mode
+- **VMware Migration Graph** *(v1.48)*: RVTools-side dependency graph with VM, disk, and portgroup/VLAN nodes; migration status rings (🟢 complete / 🟡 in progress / 🔴 failed); view from any Migration Planner tenant row or cohort expansion
+- **ReactFlow UI** (`DependencyGraph.tsx`): Dagre hierarchical layout, 12 color-coded node types, depth pills (1/2/3), type filter checkboxes, **🔍 Explore from here** re-rooting with ← Back breadcrumb; **🔗 Open in tab**, **📸 Create Snapshot**, and **🚀 View in Migration Planner** quick actions on any node
+- **Auto-Ticket Integration** *(v1.59)*: Graph node health score < 40 triggers `auto_incident` ticket; `POST /api/graph/request-delete` creates an `auto_change_request` before any destructive delete
+
 ### 🤖 Ops Copilot — AI Infrastructure Assistant *(v1.24)*
 - **Three-Tier Architecture**: Built-in intent engine (zero setup) → Ollama (local LLM) → OpenAI/Anthropic (external LLM)
 - **40+ Built-in Intents**: Inventory counts, VM power states, capacity metrics, error VMs, down hosts, networking (networks, subnets, routers, floating IPs), snapshot/drift/compliance summaries, user lists, role assignments, activity logs, runbook status, and full infrastructure overview — all powered by live SQL queries
@@ -421,10 +434,21 @@ A 15-minute explainer video walking through the UI and key features:
 - **Feedback & History**: Per-answer thumbs up/down, conversation history persisted per user with automatic trimming
 - **Automatic Fallback**: If the LLM backend fails, seamlessly falls back to the built-in intent engine
 
-### 📈 28-Tab Management Dashboard
+### 🎫 Support Ticket System *(v1.58 → v1.60)*
+- **Full Ticket Lifecycle**: Ticket refs (TKT-YYYY-NNNNN); 5 types (incident, service_request, change_request, auto_incident, auto_change_request); full status/priority/type model; approval gate; SLA deadlines; OpenStack resource linkage
+- **35+ API Endpoints** at `/api/tickets`: create, list, get, update, assign, escalate, approve/reject, resolve/reopen/close, comment thread, SLA policies, email templates, analytics, bulk actions
+- **SLA Daemon**: Background asyncio task (15-min interval) — breach detection, Slack/Teams notification, auto-escalate on breach, activity comment logged
+- **Auto-Ticket Triggers** *(v1.59)*: Critical/warning drift events → `auto_incident`; health score < 40 → `auto_incident`; graph delete intent → `auto_change_request` with `auto_blocked` gate; runbook failure → `auto_incident` linked to execution; migration wave complete → `service_request`
+- **Ticket Analytics** *(v1.60)*: Resolution time by dept, SLA breach rate, top openers, daily volume trend; **LandingDashboard KPI tile** (Open / SLA Breached / Resolved Today / Opened Today)
+- **Bulk Actions** *(v1.60)*: `close_stale`, `reassign`, `export_csv` via checkbox multi-select toolbar
+- **Integration**: Trigger runbooks from a ticket and attach results; `email-customer` action via named HTML templates; inline ticket creation from Metering and Runbooks rows; team-member assignment at creation
+- **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
+- **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
+
+### 📈 30+ Tab Management Dashboard
 A single engineering console covering every operational surface:
 
-> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot**
+> Servers · Volumes · Snapshots · Networks · Security Groups · Subnets · Ports · Floating IPs · Domains · Projects · Flavors · Images · Hypervisors · Users · Roles · Snapshot Policies · History · Audit · Monitoring · Restore · Restore Audit · Notifications · Metering · Customer Provisioning · Domain Management · Activity Log · Reports · Resource Management · **Ops Search** · **Runbooks** · **Ops Copilot** · **Tickets** · **Dependency Graph**
 
 <details>
 <summary><strong>Landing Dashboard Widgets</strong></summary>
@@ -694,7 +718,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.61.0](CHANGELOG.md) — March 12, 2026
+**Current version:** [v1.63.0](CHANGELOG.md) — March 13, 2026
 
 **Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
 
@@ -838,6 +862,32 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.63.0 — RVTools Export Browser + Migration Planner PDF Fixes
+- ✅ **RVTools Exports Browser** — "📁 RVTools Exports" sub-tab inside Reports: file list (filename, size, date) with one-click authenticated download + run history table showing the last 100 `inventory_runs` entries (started, finished, duration, status badge)
+- ✅ **`GET /api/reports/rvtools/files`** — lists all `reports/*.xlsx` exports with metadata; **`GET /api/reports/rvtools/files/{filename}`** — authenticated binary download; **`GET /api/reports/rvtools/runs`** — returns last 100 rows from `inventory_runs`
+- ✅ **Scheduler per-run log files** — `_run_rvtools_sync()` captures stdout/stderr to `logs/rvtools_<timestamp>.log` per run
+- ✅ **Migration Planner PDF export fixes** — Fix/Downtime columns now show correct values; Power State column added to All VMs sheet; table overflow prevented; `NameError` for `get_risk_color` resolved; KPI bar totals accurate
+- ✅ **`.gitignore` hardening** — `reports/*.xlsx`, `reports/*.csv`, `reports/*.json` protected from accidental commit
+
+### v1.62.2 — Cross-Tenant Snapshot Visibility + Snapshot Tab Fix
+- ✅ **Cross-tenant snapshot fix** — `scheduler_worker` and `snapshot_worker` containers rebuilt with `session.is_admin = True`; all Cinder listing calls now correctly use `all_tenants=1`; volumes and snapshots from all tenants visible in Snapshot, Compliance, and Restore tabs
+- 🐛 **Snapshot tab 500 fix** — `project_id` filter ambiguity in snapshots query resolved by qualifying as `s.project_id` / `s.domain_name`
+
+### v1.62.1 — Orphan Cleanup + Project Deletion Cascade
+- ✅ **Orphan cleanup volume delete fix** — volume delete no longer returns HTTP 400; URL rebuilt using the volume's own `tenant_id`; delete-volume in Resources tab similarly fixed
+- ✅ **External network orphan detection** — networks whose Keystone project was deleted are now surfaced as orphans with reason `"deleted project (external)"`
+- ✅ **Project deletion cascade cleanup** — `cleanup_project_resources()` called before Keystone project removal; cascade-deletes servers, volumes, FIPs, ports, and networks to prevent orphaned OS resources
+- ✅ **Platform9 DU admin fallback** — `_try_os_admin_token()` reads `PF9_OS_ADMIN_*` env vars as privileged fallback on provisioner Keystone 404
+
+### v1.62.0 — Scheduler Worker + Delete Impact Analysis + Backup UI
+- ✅ **Scheduler Worker container** (`pf9_scheduler_worker`) — replaces Windows Task Scheduler; `host_metrics_collector.py` and `pf9_rvtools.py` run inside the container on configurable schedules; no Windows Task Scheduler configuration required after deployment
+- ✅ **Delete Impact Analysis** — Delete confirmation for Networks, FIPs, Volumes, and Security Groups pre-fetches the dependency graph and shows 🚫 Blockers, 🗑 Cascade deletes, ⚠ Stranded resources; requires typing the resource name to unlock the delete button
+- ✅ **"🔗 Deps" button** — inline dependency panel (graph depth 2) on Networks, FIPs, Volumes, and Security Groups rows for topology inspection without deletion intent
+- ✅ **Networks orphan detection** — "Networks" added as selectable type in Orphan Resource Cleanup runbook (no subnets, no non-DHCP ports, non-shared, non-external, older than `age_threshold_days`)
+- ✅ **Backup NFS consolidation** — `docker-compose.nfs.yml` removed; backup + NFS now a single `COMPOSE_PROFILES=backup` profile; split poll loops (30 s for manual jobs, 3600 s for schedule checks)
+- ✅ **Backup Status UI redesign** — two per-target panels (Database + LDAP) each showing schedule badge, description, stored count + size, last backup time/filename/duration
+- ✅ **Networks search filters** — substring search added in Inventory → Networks and Provisioning → Resources → Networks
 
 ### v1.61.0 — Phase D: Cluster Capacity Planner + Visibility Fixes
 - ✅ **New runbook `cluster_capacity_planner`** (Runbook #25) — HA-aware cluster capacity analysis: reserves N+1 or N+2 host capacity, applies a 70% safe-operating threshold, forecasts when a new host must be added at current growth rate, recommends minimum host spec for a 6-month runway, and produces a per-flavor VM slot table
@@ -1212,7 +1262,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 130+ commits, 26 releases, 12 containerized services, 170+ API endpoints — built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 130+ commits, 26 releases, 15 containerized services, 170+ API endpoints — built alongside regular responsibilities.
 
 ---
 
@@ -1224,4 +1274,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.50.0 | **Last Updated**: March 10, 2026
+**Project Status**: Active Development | **Version**: 1.63.0 | **Last Updated**: March 13, 2026

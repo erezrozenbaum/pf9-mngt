@@ -4701,3 +4701,72 @@ Request body:
 ```
 
 Returns existing ticket if `idempotency_key` already exists (200), or creates new ticket (201).
+
+---
+
+## Reports — RVTools Export Endpoints (v1.63.0)
+
+All three endpoints require `reports:read` permission (granted to all five roles by default).
+
+### List RVTools Export Files
+**GET** `/api/reports/rvtools/files`  
+*Requires: `reports:read`*
+
+Returns all `.xlsx` files found in `$PF9_OUTPUT_DIR` (default `/mnt/reports`), sorted newest-first.
+
+Response:
+```json
+{
+  "files": [
+    {
+      "filename": "p9_rvtools_2026-03-13_03-00-00.xlsx",
+      "size_bytes": 2143580,
+      "modified_at": "2026-03-13T03:00:42+00:00"
+    }
+  ]
+}
+```
+
+---
+
+### Download an RVTools Export
+**GET** `/api/reports/rvtools/files/{filename}`  
+*Requires: `reports:read`*
+
+Streams the requested `.xlsx` file as a `FileResponse` with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
+
+**Security**: Filenames containing `..`, `/`, or the OS path separator are rejected with `400 Bad Request`. File must exist in `$PF9_OUTPUT_DIR` or a `404` is returned.
+
+Response: Binary file stream with `Content-Disposition: attachment; filename="{filename}"`.
+
+---
+
+### List RVTools Run History
+**GET** `/api/reports/rvtools/runs?limit=50`  
+*Requires: `reports:read`*
+
+Returns the most recent rows from the `inventory_runs` table, ordered by `started_at DESC`.
+
+Query params:
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `limit` | int | 50 | Number of rows to return (1–500) |
+
+Response:
+```json
+{
+  "runs": [
+    {
+      "id": 42,
+      "source": "pf9_rvtools",
+      "started_at": "2026-03-13T03:00:01+00:00",
+      "finished_at": "2026-03-13T03:01:05+00:00",
+      "status": "success",
+      "duration_seconds": 64,
+      "host_name": "pf9_scheduler_worker",
+      "notes": "domains=35, projects=35, users=116, roles=12"
+    }
+  ]
+}
+```
+

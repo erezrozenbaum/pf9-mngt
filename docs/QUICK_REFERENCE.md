@@ -137,6 +137,18 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
+- **RVTools Exports Browser** (v1.63.0 — NEW ✨):
+  - "📁 RVTools Exports" sub-tab inside the Reports tab — visible to all roles (inherits `reports:read`)
+  - **File list table**: filename, date (UTC), size in MB, ⬇ Download — sorted newest-first; authenticated blob download
+  - **Run History table**: started, finished, duration, status badge (green=success/blue=running/red=failed), source, notes; last 100 `inventory_runs` rows by default
+  - **API endpoints**: `GET /api/reports/rvtools/files`, `GET /api/reports/rvtools/files/{filename}`, `GET /api/reports/rvtools/runs?limit=50` (all require `reports:read`)
+  - **Scheduler logging**: each `pf9_rvtools.py` run writes stdout+stderr to `/app/logs/rvtools_YYYYMMDD_HHMMSSZ.log` inside the container
+- **Migration Planner PDF Fixes** (v1.63.0):
+  - `Fix(h)` and `Downtime(h)` columns added to both the Plan PDF daily schedule (11 cols) and Summary PDF daily schedule (15 cols)
+  - Power State column added to Plan PDF daily schedule (`On`/`Off`/`Susp`); VM Name, Tenant, OS now word-wrap correctly in cells
+  - KPI `total_downtime_hours` corrected — no longer overridden by cutover-only value; now includes fix hours + migration downtime
+  - `NameError: name 's_cell' is not defined` (500 on PDF download) fixed
+  - `.gitignore` updated: `reports/` and `/reports/` patterns added to protect hourly RVTools exports from commits
 - **Migration Planner — Per-Day Schedule Breakdown + Throughput Cap Fix** (v1.44.0):
   - **Engine rewrite** (`migration_engine.py`): replaced per-slot hour packing with a real GB/day throughput ceiling — `effective_gbph = (bottleneck_mbps/8) × 3600/1024 × 0.55`; `max_gb_per_day = effective_gbph × working_hours`
   - `wall_clock_hours` now `day_transfer_gb / effective_gbph` (was `day_hours_used / total_concurrent` — badly under-counted)

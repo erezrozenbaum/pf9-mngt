@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.63.0] - 2026-03-13
+
+### Added / Fixed — Migration Planner PDF Improvements, RVTools Export Browser, Scheduler Run Logging
+
+#### Migration Planner — PDF Daily Schedule: Fix & Downtime Columns (`api/migration_routes.py`, `api/export_reports.py`)
+- `get_migration_summary` — `per_day` loop now builds `vm_detail_map` and `vm_timing_map` from the plan, computing per-day `fix_hours` and `downtime_hours` (was missing entirely); both fields now present in every `per_day` entry in the Summary API response
+- **Summary PDF Section 4 (Daily Schedule)** — 15-column table now includes `Fix(h)` and `Downtime(h)` columns after the Warm column; column widths adjusted accordingly (`cw_day` array updated)
+- **Plan PDF Daily Schedule** (`generate_pdf_report`) — 11-column table now includes `Fix(h)` and `Downtime(h)` as final two columns; `_pwr_label()` helper defined inline for power state display
+
+#### Migration Planner — PDF Daily Schedule: Text Overflow + Power State Column (`api/export_reports.py`)
+- **VM Name, Tenant, and OS columns** were rendering raw strings without wrapping, causing cell overflow and column crush at small widths
+- All three columns now wrap content using `Paragraph(text, s_cell8)` for correct word-wrap within the cell
+- **Power State column** added as the 5th column (`On` / `Off` / `Susp`) pulled from `v_data.get("power_state")`
+- Column widths updated: `cw_sched = [1.2, 3.0, 5.0, 2.2, 1.5, 4.0, 1.5, 1.5, 1.5, 1.4, 1.7] * cm`; numeric alignment now starts at col 6: `("ALIGN", (6, 0), (-1, -1), "RIGHT")`
+
+#### Migration Planner — KPI Total Downtime Fix (`api/migration_routes.py`)
+- The `plan_ps` variable was overriding `total_downtime_hours` with the cutover-only value from the raw plan serialization, discarding the richer `compute_project_fix_summary` value that includes fix time as well as migration downtime
+- Removed the `plan_ps` override; KPI `total_downtime_hours` now always reflects the correct full downtime (migration + fix hours) from `compute_project_fix_summary`
+
+#### Migration Planner — PDF `NameError` Fix (`api/export_reports.py`)
+- `generate_pdf_report` (plan PDF) referenced `s_cell` in three `Paragraph(...)` calls for Tenant, VM Name, and OS; `s_cell` is only defined in `generate_summary_pdf_report` — the plan PDF only has `s_cell7` / `s_cell8`
+- All three references changed to `s_cell8`, eliminating the `NameError: name 's_cell' is not defined` 500 error on plan PDF download
+
+#### `.gitignore` — Protect `reports/` Folder
+- The `reports/` folder (hourly RVTools Excel exports) was missing from `.gitignore`; only `C:/Reports/` and `/Reports/` were listed
+- Added both `reports/` and `/reports/` patterns to prevent accidental commits of large binary export files
+
+---
+
+#### Reports Tab — RVTools Exports Sub-Tab (`pf9-ui/src/components/ReportsTab.tsx`)
+- New **"📁 RVTools Exports"** sub-tab alongside the existing "📊 Reports Catalog" in the Reports tab
+- **File list table**: filename, date (UTC), size in MB, ⬇ Download button — sorted newest-first; blob download using auth header to preserve RBAC
+- **Run History table**: started, finished, duration, status badge (green/blue/red), source, notes — shows the last 100 `inventory_runs` rows by default
+- **↻ Refresh** button reloads both tables on demand; data loads automatically when the tab is first opened
+- Inherits `reports:read` permission — available to all roles (viewer, operator, technical, admin, superadmin)
+
+#### API — RVTools File & Run Endpoints (`api/reports.py`)
+Three new endpoints appended to the `/api/reports` router (all require `reports:read`):
+
+- **`GET /api/reports/rvtools/files`** — lists all `.xlsx` files in `$PF9_OUTPUT_DIR` (default `/mnt/reports`)  
+  Returns `{ files: [{ filename, size_bytes, modified_at }] }` sorted newest first.
+
+- **`GET /api/reports/rvtools/files/{filename}`** — streams a single Excel export as a `FileResponse`  
+  Path-traversal protection: rejects filenames containing `..`, `/`, or `os.sep`. Returns 404 if the file is absent.
+
+- **`GET /api/reports/rvtools/runs?limit=50`** — returns the most recent inventory run records from the `inventory_runs` table  
+  Response: `{ runs: [{ id, source, started_at, finished_at, status, duration_seconds, host_name, notes }] }`  
+  `limit` 1–500, default 50. Rows ordered by `started_at DESC`.
+
+Also added `REPORTS_DIR = os.getenv("PF9_OUTPUT_DIR", "/mnt/reports")` module-level constant and `FileResponse` import; no new DB migrations required.
+
+#### Scheduler Worker — Per-Run Log Files (`scheduler_worker/main.py`)
+- `_run_rvtools_sync()` now captures both stdout and stderr from the `pf9_rvtools.py` subprocess into a timestamped log file
+- Log files written to `/app/logs/rvtools_YYYYMMDD_HHMMSSZ.log` inside the container (volume-mounted at `c:\pf9-mngt\logs`)
+- Log header includes script path and run start timestamp; footer includes exit code and finish timestamp
+- Non-zero exit code still raises `RuntimeError` and is recorded in the `inventory_runs` table as before
+- Container `/app/logs` directory already volume-mounted in `docker-compose.yml` — no compose changes needed
+
+---
+
 ## [1.62.2] - 2026-03-12
 
 ### Fixed — Cross-Tenant Snapshot Visibility
