@@ -22,7 +22,7 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
-    HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+    HRFlowable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -53,6 +53,7 @@ def generate_excel_report(plan: Dict[str, Any], project_name: str) -> bytes:
     _sheet_per_tenant(wb, plan)
     _sheet_daily_schedule(wb, plan)
     _sheet_all_vms(wb, plan)
+    _sheet_methodology(wb)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -294,6 +295,139 @@ def _sheet_all_vms(wb, plan: Dict):
     _set_col_widths(ws, [28, 20, 16, 5, 6, 8, 6, 8, 9, 10, 22, 8, 4, 20, 14, 13, 6, 8, 9, 9, 10])
 
 
+# ── Sheet 5: Methodology ─────────────────────────────────────────────────────
+
+def _sheet_methodology(wb):
+    """Add a Methodology reference sheet explaining all calculations."""
+    ws = wb.create_sheet("Methodology")
+    ws.sheet_view.showGridLines = False
+
+    def _title_row(ws, row: int, text: str):
+        ws.merge_cells(f"A{row}:D{row}")
+        c = ws.cell(row=row, column=1, value=text)
+        c.font = Font(bold=True, name="Calibri", size=12, color=_WHITE)
+        c.fill = PatternFill("solid", fgColor=_BLUE)
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.row_dimensions[row].height = 20
+
+    def _sub_row(ws, row: int, label: str, detail: str, alt: bool = False):
+        fill = PatternFill("solid", fgColor="F3F4F6") if alt else PatternFill()
+        c1 = ws.cell(row=row, column=1, value=label)
+        c1.font = Font(bold=True, name="Calibri", size=9)
+        c1.fill = fill
+        c1.border = _thin_border()
+        c1.alignment = Alignment(vertical="top", wrap_text=True)
+
+        ws.merge_cells(f"B{row}:D{row}")
+        c2 = ws.cell(row=row, column=2, value=detail)
+        c2.font = Font(name="Calibri", size=9)
+        c2.fill = fill
+        c2.border = _thin_border()
+        c2.alignment = Alignment(vertical="top", wrap_text=True)
+        ws.row_dimensions[row].height = 36
+
+    # Title
+    ws.merge_cells("A1:D1")
+    t = ws["A1"]
+    t.value = "Platform9 Migration Planner — Calculation Methodology"
+    t.font = Font(bold=True, name="Calibri", size=14, color=_BLUE)
+    t.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 28
+    ws.append([])  # blank row 2
+
+    rows = [
+        # (section_title, [(label, detail), ...])
+        ("1. Warm vs Cold Classification", [
+            ("Warm Eligible",
+             "OS does NOT appear in the OS Cold Required list AND VM is powered ON. "
+             "Live data-copy runs while the VM is active; only the cutover window causes downtime."),
+            ("Cold Required",
+             "OS matches an entry in the Risk Config → Cold Migration Rules list, OR the VM is "
+             "poweredOff / suspended. The VM is shut down before the copy begins, so the entire "
+             "copy duration adds to downtime."),
+            ("Warm Risky",
+             "Warm-eligible but the VM's risk score meets or exceeds the Yellow/Red threshold. "
+             "Treated identically to Warm for timing but flagged for extra review."),
+        ]),
+        ("2. Bandwidth Model & Bottleneck", [
+            ("Formula",
+             "effective_mbps = min(source_nic_mbps, link_mbps, agent_mbps, storage_mbps)\n"
+             "Each layer has an efficiency factor applied (e.g. source NIC × 0.70 for TCP overhead)."),
+            ("Example",
+             "Source NIC = 4,800 Mbps · Link = 4,000 Mbps · Agent = 6,000 Mbps · Storage = 5,500 Mbps"
+             " → Bottleneck = link at 4,000 Mbps"),
+        ]),
+        ("3. Data-Copy Time", [
+            ("Formula",
+             "data_copy_hours = total_in_use_gb ÷ (bottleneck_mbps ÷ 8 × 3600 ÷ 1024)\n"
+             "Where ÷8 converts Mb→MB and ×3600÷1024 converts MB/s → GB/h."),
+            ("Example",
+             "172,617 GB at 4,000 Mbps:\n"
+             " 4,000 ÷ 8 × 3,600 ÷ 1,024 = 1,757.8 GB/h\n"
+             " 172,617 ÷ 1,757.8 = 98.2 hours total data-copy time"),
+        ]),
+        ("4. Tech Fix Time Scoring", [
+            ("Factor Weights (defaults)",
+             "Windows OS: +20 min | Extra volume (each): +15 min | Extra NIC (each): +10 min\n"
+             "Cold mode: +15 min | Risk YELLOW: +15 min | Risk RED: +25 min\n"
+             "Has snapshots: +10 min | Cross-tenant dep: +15 min | Unknown OS: +5 min"),
+            ("OS Fix Rates (defaults)",
+             "Windows 50% · Linux 20% · Other 40%\n"
+             "Global override: when set, replaces all per-OS rates."),
+            ("Formula",
+             "raw_score = Σ (factor_present × factor_weight)\n"
+             "fix_minutes = raw_score × fix_rate"),
+            ("Example",
+             "Windows VM, cold mode, 3 volumes (2 extra), 2 NICs (1 extra), risk YELLOW:\n"
+             " Raw = 20 + 15×2 + 10×1 + 15 + 15 = 95\n"
+             " Fix = 95 × 0.50 = 47.5 min → Total downtime = 47.5 + 30 (cutover) = 77.5 min"),
+        ]),
+        ("5. Downtime Estimate", [
+            ("Warm VMs",
+             "downtime = cutover_minutes + fix_minutes\n"
+             "Data copy is live (no user-visible downtime during Phase 1)."),
+            ("Cold VMs",
+             "downtime = data_copy_hours × 60 + cutover_minutes + fix_minutes\n"
+             "VM is shut down for the entire copy phase."),
+            ("Total Project Downtime",
+             "Sum of individual VM downtime hours across all VMs.\n"
+             "These are concurrent across tenants; wall-clock calendar time is much shorter."),
+        ]),
+        ("6. Daily Schedule Packing", [
+            ("Algorithm",
+             "1. Sort VMs: Cohort order → priority within cohort → disk size (largest first)\n"
+             "2. Assign VMs to current day until wall-clock hours exceed working_hours_per_day\n"
+             "3. Wall-clock per day = max(estimated_hours) among VMs assigned that day\n"
+             "4. concurrent_slots = total agent slots across all vJailbreak agents"),
+            ("Example",
+             "12 concurrent slots, 8-hour working day, 30 VMs of varying size:\n"
+             " Day 1: 12 VMs → largest takes 6.2h → wall-clock = 6.2h\n"
+             " Day 2: next 12 VMs → largest = 4.8h\n"
+             " Day 3: remaining 6 VMs"),
+        ]),
+        ("7. Risk Score & Categories", [
+            ("Thresholds (default)",
+             "GREEN: 0 – 29 → standard migration\n"
+             "YELLOW: 30 – 59 → pre-migration review required\n"
+             "RED: 60+ → architecture review + rollback plan required"),
+            ("Configuration",
+             "All thresholds and factor weights are configurable in the Risk Config tab."),
+        ]),
+    ]
+
+    r = 3
+    for section_title, entries in rows:
+        _title_row(ws, r, section_title)
+        r += 1
+        for idx, (label, detail) in enumerate(entries):
+            _sub_row(ws, r, label, detail, alt=(idx % 2 == 0))
+            r += 1
+        ws.append([])
+        r += 1
+
+    _set_col_widths(ws, [28, 30, 30, 20])
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PDF report
 # ══════════════════════════════════════════════════════════════════════════════
@@ -316,6 +450,10 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
     s_body    = ParagraphStyle("Body",     parent=styles["Normal"],  fontSize=9,  spaceAfter=4)
     s_caption = ParagraphStyle("Caption",  parent=styles["Normal"],  fontSize=8,  textColor=colors.grey, spaceAfter=8)
     s_footer  = ParagraphStyle("Footer",   parent=styles["Normal"],  fontSize=8,  textColor=colors.grey, alignment=TA_CENTER)
+    # Small wrap styles for table cells with potentially long content
+    s_cell7   = ParagraphStyle("Cell7",    parent=styles["Normal"],  fontSize=7,  leading=8)
+    s_cell8   = ParagraphStyle("Cell8",    parent=styles["Normal"],  fontSize=8,  leading=9)
+    s_legend  = ParagraphStyle("Legend",   parent=styles["Normal"],  fontSize=7.5, textColor=colors.HexColor("#374151"), spaceAfter=6, leading=11)
 
     _HDR  = colors.HexColor("#1D4ED8")
     _HDR_LT = colors.HexColor("#DBEAFE")
@@ -388,10 +526,30 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
         ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
     ]))
     story.append(t_sum)
-    story.append(Spacer(1, 0.4 * cm))
+    story.append(Paragraph(
+        "<b>What the numbers mean:</b>  "
+        "<b>Warm Eligible</b> — VM is copied live while running; downtime = cutover window + tech fix time only.  "
+        "<b>Cold Required</b> — VM is powered off before copy; downtime = full copy + cutover + tech fix time.  "
+        "<b>Warm Risky</b> — live copy is possible but carries elevated risk flags requiring extra review; same downtime model as Warm.  "
+        "<b>Concurrent Slots</b> — how many VMs can migrate simultaneously, one slot per vJailbreak agent channel.  "
+        "<b>Total Downtime (h)</b> — sum of per-VM downtime hours (cutover + fix for warm; copy + cutover + fix for cold); "
+        "not a wall-clock duration since VMs migrate in parallel.",
+
+        s_legend,
+    ))
+    story.append(Spacer(1, 0.3 * cm))
 
     # ── Per-Tenant Assessment ──────────────────────────────────────────────
     story.append(Paragraph("Per-Tenant Assessment", s_h2))
+    story.append(Paragraph(
+        "One row per source tenant/OrgVDC.  "
+        "<b>Phase1 (h)</b> — initial data-copy duration (VM stays running for warm; offline for cold).  "
+        "<b>Cutover (h)</b> — final switchover window. For warm VMs: cutover + tech fix time = total downtime. "
+        "For cold VMs: copy + cutover + tech fix time = total downtime.  "
+        "<b>Avg Risk</b> — mean risk score across all VMs in this tenant (see Risk Config tab for thresholds).  "
+        "Rows shaded red = tenant has cold-required VMs; yellow = has warm-risky VMs.",
+        s_legend,
+    ))
 
     tenant_header = [
         "Tenant", "OrgVDC", "VMs", "vCPU", "RAM (GB)",
@@ -402,8 +560,8 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
         has_cold = tp.get("cold_count", 0) > 0
         has_risky = tp.get("warm_risky_count", 0) > 0
         tenant_rows.append([
-            tp.get("tenant_name", ""),
-            tp.get("org_vdc", "") or "—",
+            Paragraph(tp.get("tenant_name", ""), s_cell8),
+            Paragraph(tp.get("org_vdc", "") or "—", s_cell8),
             tp.get("vm_count", 0),
             tp.get("total_vcpu", 0),
             round(tp.get("total_ram_mb", 0) / 1024, 1) if tp.get("total_ram_mb") else 0,
@@ -416,7 +574,8 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
             round(float(tp.get("avg_risk_score", 0)), 1),
         ])
 
-    cw_tenant = [4.5*cm, 3*cm, 1.5*cm, 1.5*cm, 2*cm, 2*cm, 2*cm, 1.5*cm, 1.5*cm, 2.5*cm, 2.5*cm, 2*cm]
+    # Total = 26.3 cm (landscape A4 usable = 26.7 cm)
+    cw_tenant = [4.5*cm, 3.5*cm, 1.3*cm, 1.5*cm, 2*cm, 2*cm, 2*cm, 1.3*cm, 1.3*cm, 2.2*cm, 2.2*cm, 2*cm]
     t_tenant = Table(tenant_rows, colWidths=cw_tenant, repeatRows=1)
     style_tenant = [
         ("BACKGROUND", (0, 0), (-1, 0), _HDR),
@@ -445,12 +604,41 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
     # ── Daily Schedule ─────────────────────────────────────────────────────
     story.append(Paragraph("Daily Migration Schedule (Estimated)", s_h2))
     story.append(Paragraph(
-        f"VMs ordered by tenant → priority → disk size. "
-        f"Each day fills {ps.get('total_concurrent_slots', '?')} concurrent slots.",
+        f"VMs are ordered by cohort → priority → disk size and packed into working days. "
+        f"Each day runs up to {ps.get('total_concurrent_slots', '?')} VMs concurrently (one slot per vJailbreak agent channel). "
+        f"Wall-clock time = time to push all that day\u2019s data through the shared network pipe.",
         s_caption,
     ))
+    story.append(Paragraph(
+        "<b>Column guide:</b>  "
+        "<b>Mode</b> — warm eligible (VM stays online; only the cutover window = downtime) / "
+        "warm risky (same, flagged for review) / cold required (VM shut down before copy; full copy is downtime).  "
+        "<b>Power</b> — current power state of the VM in the source environment (On / Off / Susp).  "
+        "<b>OS</b> — operating system family and version (e.g. Windows Server 2022, Ubuntu 22.04).  "
+        "<b>In Use (GB)</b> — actual data bytes transferred over the network for this VM.  "
+        "<b>Copy (h)</b> — time to transfer data: Phase\u00a01 live copy for warm VMs; full offline copy for cold VMs.  "
+        "<b>Cutover (h)</b> — final switchover window (VM briefly offline). This is the <i>only</i> migration downtime for warm VMs.  "
+        "<b>Fix (h)</b> — estimated post-migration tech fix time (NIC rename, disk UUID, app validation \u2014 weighted by OS fix rate).  "
+        "<b>Downtime (h)</b> — total business-impact period: cutover + fix for warm; copy + cutover + fix for cold.",
+        s_legend,
+    ))
 
-    sched_header = ["Day", "Tenant", "VM Name", "Mode", "OS Family", "Disk (GB)", "In Use (GB)", "VM Est. Hours"]
+    # Build VM timing lookup from tenant_plans for enriching daily schedule rows
+    _vm_timing: Dict[tuple, Dict] = {}
+    for _tp in plan.get("tenant_plans", []):
+        for _vm in _tp.get("vms", []):
+            _vm_timing[(_vm.get("vm_name"), _tp.get("tenant_name"))] = _vm
+
+    def _pwr_label(raw: str) -> str:
+        r = (raw or "").lower()
+        if "on" in r:   return "On"
+        if "off" in r:  return "Off"
+        if "sus" in r:  return "Susp"
+        return raw or "—"
+
+    # Cols: Day | Tenant | VM Name | Mode | Power | OS | In Use(GB) | Copy(h) | Cutover(h) | Fix(h) | Downtime(h)
+    sched_header = ["Day", "Tenant", "VM Name", "Mode", "Power", "OS",
+                    "In Use\n(GB)", "Copy\n(h)", "Cutover\n(h)", "Fix\n(h)", "Downtime\n(h)"]
     sched_rows = [sched_header]
     day_header_row_indices: list = []
     for day in plan.get("daily_schedule", []):
@@ -461,21 +649,33 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
         sched_rows.append([
             f"Day {day_num}",
             f"{vm_cnt} VM{'s' if vm_cnt != 1 else ''}  \u2014  Wall-clock: {wall_h}h",
-            "", "", "", "", "", "",
+            "", "", "", "", "", "", "", "", "",
         ])
         for vm in day.get("vms", []):
+            v_data    = _vm_timing.get((vm.get("vm_name"), vm.get("tenant_name")), {})
+            is_cold   = "cold" in (vm.get("mode") or "")
+            copy_h    = round(float(v_data.get("cold_total_hours", 0) or 0), 2) if is_cold else round(float(v_data.get("warm_phase1_hours", 0) or 0), 2)
+            cutover_h = round(float(v_data.get("warm_cutover_hours", 0) or 0), 2)
+            mig_dn_h  = round(float(v_data.get("cold_downtime_hours", 0) or 0), 2) if is_cold else round(float(v_data.get("warm_downtime_hours", 0) or 0), 2)
+            fix_h     = round(float(v_data.get("fix_hours", 0) or 0), 2)
+            os_str    = f"{v_data.get('os_family', '') or ''} {v_data.get('os_version', '') or ''}".strip() or (vm.get("os_family") or "\u2014")
+            pwr_str   = _pwr_label(v_data.get("power_state") or vm.get("power_state"))
             sched_rows.append([
                 "",
-                vm.get("tenant_name", ""),
-                vm.get("vm_name", ""),
+                Paragraph(vm.get("tenant_name", ""), s_cell8),
+                Paragraph(vm.get("vm_name", ""), s_cell8),
                 (vm.get("mode", "") or "").replace("_", " "),
-                vm.get("os_family", ""),
-                round(float(vm.get("disk_gb", 0)), 1),
+                pwr_str,
+                Paragraph(os_str, s_cell8),
                 round(float(vm.get("in_use_gb", 0)), 1),
-                round(float(vm.get("estimated_hours", 0)), 2),
+                copy_h,
+                cutover_h,
+                fix_h,
+                round(mig_dn_h + fix_h, 2),
             ])
 
-    cw_sched = [1.8*cm, 4*cm, 7*cm, 3*cm, 2.5*cm, 2*cm, 2.5*cm, 2.5*cm]
+    # Landscape A4 usable ~26.5cm; 11 cols: 1.2+3.0+5.0+2.2+1.5+4.0+1.5+1.5+1.5+1.4+1.7 = 24.5cm
+    cw_sched = [1.2*cm, 3.0*cm, 5.0*cm, 2.2*cm, 1.5*cm, 4.0*cm, 1.5*cm, 1.5*cm, 1.5*cm, 1.4*cm, 1.7*cm]
     t_sched = Table(sched_rows, colWidths=cw_sched, repeatRows=1)
     style_sched = [
         ("BACKGROUND", (0, 0), (-1, 0), _HDR),
@@ -485,13 +685,13 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, _GREY_P]),
         ("GRID",       (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
         ("VALIGN",     (0, 0), (-1, -1), "TOP"),
-        ("ALIGN",      (5, 0), (-1, -1), "RIGHT"),
+        ("ALIGN",      (6, 0), (-1, -1), "RIGHT"),   # numeric cols shifted by 1 (Power added)
         ("LEFTPADDING",  (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ("TOPPADDING",   (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
     ]
-    # Day header rows: light blue background, bold, span all cols
+    # Day header rows: light blue background, bold, span cols 1 onward
     for dhi in day_header_row_indices:
         style_sched.append(("BACKGROUND", (0, dhi), (-1, dhi), _HDR_LT))
         style_sched.append(("FONTNAME",   (0, dhi), (-1, dhi), "Helvetica-Bold"))
@@ -512,37 +712,56 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
     # ── All VMs ────────────────────────────────────────────────────────────
     from reportlab.platypus import PageBreak
     story.append(PageBreak())
-    story.append(Paragraph("All VMs — Full Inventory", s_h2))
+    story.append(Paragraph("All VMs — Full Inventory with Timing", s_h2))
     story.append(Paragraph(
-        "Complete VM list with all key properties for migration planning.",
+        "Complete VM-by-VM assessment. Full hardware detail (vCPU, RAM, NICs, IP) is available in the Excel export.",
         s_caption,
+    ))
+    story.append(Paragraph(
+        "<b>Column guide:</b>  "
+        "<b>OS</b> — operating system family and version (e.g. Windows Server 2022, Ubuntu 22.04). Full hardware details available in the Excel export.  "
+        "<b>Mode</b> — warm eligible / warm risky / cold required (row shading matches: red = cold, yellow = warm risky).  "
+        "<b>Risk</b> — GREEN / YELLOW / RED complexity score (cell shaded accordingly).  "
+        "<b>Disk (GB)</b> — total provisioned storage.  "
+        "<b>In Use (GB)</b> — actual data transferred over the wire.  "
+        "<b>Copy (h)</b> — Phase 1 live copy for warm VMs; full offline copy for cold VMs.  "
+        "<b>Cutover (h)</b> — final switchover window (only migration downtime for warm VMs).  "
+        "<b>Fix (h)</b> — estimated post-migration tech fix time (NIC, disk, app validation) weighted by OS fix rate.  "
+        "<b>Downtime (h)</b> — total business-impact: cutover + fix for warm; copy + cutover + fix for cold.",
+        s_legend,
     ))
 
     vm_all_header = [
-        "VM Name", "Tenant", "vCPU", "RAM\n(MB)", "Disk\n(GB)", "In Use\n(GB)",
-        "OS", "IP Address", "Network", "Power", "Mode", "Risk",
+        "VM Name", "Tenant", "OS", "Mode", "Risk",
+        "Disk\n(GB)", "In Use\n(GB)", "Copy\n(h)", "Cutover\n(h)", "Fix\n(h)", "Downtime\n(h)",
     ]
     vm_all_rows = [vm_all_header]
     for tp in plan.get("tenant_plans", []):
         for vm in tp.get("vms", []):
-            mode = vm.get("migration_mode", "")
-            risk = vm.get("risk_category", "")
+            mode    = vm.get("migration_mode", "")
+            risk    = vm.get("risk_category", "")
+            is_cold = "cold" in mode
+            os_str  = f"{vm.get('os_family','') or ''} {vm.get('os_version','') or ''}".strip() or "—"
+            copy_h    = round(float(vm.get("cold_total_hours",    0) or 0), 2) if is_cold else round(float(vm.get("warm_phase1_hours",  0) or 0), 2)
+            cutover_h = round(float(vm.get("warm_cutover_hours",  0) or 0), 2)
+            mig_dn_h  = round(float(vm.get("cold_downtime_hours", 0) or 0), 2) if is_cold else round(float(vm.get("warm_downtime_hours", 0) or 0), 2)
+            fix_h     = round(float(vm.get("fix_hours",           0) or 0), 2)
             vm_all_rows.append([
-                vm.get("vm_name", ""),
-                tp.get("tenant_name", ""),
-                vm.get("cpu_count", ""),
-                vm.get("ram_mb", ""),
-                round(float(vm.get("total_disk_gb", 0) or 0), 1),
-                round(float(vm.get("in_use_gb", 0) or 0), 1),
-                f"{vm.get('os_family','') or ''} {vm.get('os_version','') or ''}".strip() or "—",
-                vm.get("primary_ip", "") or "—",
-                vm.get("network_name", "") or "—",
-                vm.get("power_state", "") or "—",
+                Paragraph(vm.get("vm_name", ""), s_cell7),
+                Paragraph(tp.get("tenant_name", ""), s_cell7),
+                Paragraph(os_str, s_cell7),
                 (mode or "").replace("_", " "),
                 risk or "—",
+                round(float(vm.get("total_disk_gb", 0) or 0), 1),
+                round(float(vm.get("in_use_gb",    0) or 0), 1),
+                copy_h,
+                cutover_h,
+                fix_h,
+                round(mig_dn_h + fix_h, 2),
             ])
 
-    cw_all = [6*cm, 3.5*cm, 1.3*cm, 1.8*cm, 1.8*cm, 1.8*cm, 3.3*cm, 3*cm, 4*cm, 2*cm, 2.8*cm, 1.7*cm]
+    # 11 cols — total ~22.1 cm, fits landscape A4 usable width of 26.7 cm
+    cw_all = [4.0*cm, 2.5*cm, 2.5*cm, 2.2*cm, 1.3*cm, 1.5*cm, 1.5*cm, 1.8*cm, 1.8*cm, 1.5*cm, 1.7*cm]
     t_all = Table(vm_all_rows, colWidths=cw_all, repeatRows=1)
     style_all = [
         ("BACKGROUND", (0, 0), (-1, 0), _HDR),
@@ -552,29 +771,33 @@ def generate_pdf_report(plan: Dict[str, Any], project_name: str) -> bytes:
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, _GREY_P]),
         ("GRID",       (0, 0), (-1, -1), 0.4, colors.HexColor("#D1D5DB")),
         ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN",      (2, 0), (5, -1), "CENTER"),
-        ("ALIGN",      (11, 0), (11, -1), "CENTER"),
+        ("ALIGN",      (5, 0), (10, -1), "RIGHT"),
         ("LEFTPADDING",  (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ("TOPPADDING",   (0, 0), (-1, -1), 2),
         ("BOTTOMPADDING",(0, 0), (-1, -1), 2),
     ]
-    # Colour rows by mode/risk
+    # Colour rows by mode (col 3) / risk cell (col 4)
     for ri, vm_row in enumerate(vm_all_rows[1:], 1):
-        mode_str = vm_row[10] if len(vm_row) > 10 else ""
-        risk_str = vm_row[11] if len(vm_row) > 11 else ""
+        mode_str = vm_row[3] if len(vm_row) > 3 else ""
+        risk_str = vm_row[4] if len(vm_row) > 4 else ""
         if "cold" in mode_str:
             style_all.append(("BACKGROUND", (0, ri), (-1, ri), _RED_P))
         elif "risky" in mode_str:
             style_all.append(("BACKGROUND", (0, ri), (-1, ri), _YEL_P))
         elif risk_str == "RED":
-            style_all.append(("BACKGROUND", (11, ri), (11, ri), _RED_P))
+            style_all.append(("BACKGROUND", (4, ri), (4, ri), _RED_P))
         elif risk_str == "YELLOW":
-            style_all.append(("BACKGROUND", (11, ri), (11, ri), _YEL_P))
+            style_all.append(("BACKGROUND", (4, ri), (4, ri), _YEL_P))
         elif risk_str == "GREEN":
-            style_all.append(("BACKGROUND", (11, ri), (11, ri), _GRN_P))
+            style_all.append(("BACKGROUND", (4, ri), (4, ri), _GRN_P))
     t_all.setStyle(TableStyle(style_all))
     story.append(t_all)
+
+    # ── Methodology ────────────────────────────────────────────────────────
+    from reportlab.platypus import PageBreak
+    story.append(PageBreak())
+    story += _pdf_methodology_section(s_h2, s_body, s_caption, _HDR, _GREY_P, _HDR_LT, colors)
 
     # ── Footer page numbers via onLaterPages ───────────────────────────────
     def _footer(canvas, doc):
@@ -724,6 +947,8 @@ def generate_summary_excel_report(summary: Dict[str, Any], project_name: str) ->
     ws4.freeze_panes = "A2"
     _set_col_widths(ws4, [22, 8, 12, 14, 12, 14])
 
+    _sheet_methodology(wb)
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -731,13 +956,21 @@ def generate_summary_excel_report(summary: Dict[str, Any], project_name: str) ->
 
 def generate_summary_pdf_report(summary: Dict[str, Any], project_name: str) -> bytes:
     """
-    Generate a management-level migration summary PDF (A4 portrait) containing:
-    KPI overview, daily schedule table, OS breakdown, and cohort breakdown.
+    Management-level migration summary PDF (landscape A4).
+    Sections:
+      1. Project Scope — VM mode distribution + risk distribution + infrastructure stats
+      2. Key Migration Estimates — KPI table with description column
+      3. Per-Tenant Migration Plan — tenant-by-tenant breakdown
+      4. Daily Migration Schedule
+      5. Cohort Breakdown
+      6. OS Family Breakdown & Fix Rates
+      7. Calculation Methodology
+      Appendix: Detailed Methodology Reference
     """
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
-        pagesize=A4,
+        pagesize=landscape(A4),
         rightMargin=1.5 * cm,
         leftMargin=1.5 * cm,
         topMargin=2.0 * cm,
@@ -746,9 +979,11 @@ def generate_summary_pdf_report(summary: Dict[str, Any], project_name: str) -> b
     )
 
     styles = getSampleStyleSheet()
-    s_title   = ParagraphStyle("SumTitle",  parent=styles["Title"],   fontSize=17, spaceAfter=4,  textColor=colors.HexColor("#1D4ED8"))
-    s_h2      = ParagraphStyle("SumH2",     parent=styles["Heading2"],fontSize=11, spaceAfter=4,  textColor=colors.HexColor("#1E40AF"), spaceBefore=12)
-    s_caption = ParagraphStyle("SumCap",    parent=styles["Normal"],  fontSize=8,  textColor=colors.grey, spaceAfter=6)
+    s_title  = ParagraphStyle("ST",  parent=styles["Title"],   fontSize=18, spaceAfter=4,   textColor=colors.HexColor("#1D4ED8"))
+    s_h2     = ParagraphStyle("SH2", parent=styles["Heading2"],fontSize=12, spaceAfter=4,   textColor=colors.HexColor("#1E40AF"), spaceBefore=14)
+    s_caption= ParagraphStyle("SC",  parent=styles["Normal"],  fontSize=8,  textColor=colors.grey, spaceAfter=5)
+    s_legend = ParagraphStyle("SL",  parent=styles["Normal"],  fontSize=8,  textColor=colors.HexColor("#374151"), spaceAfter=6, leading=11)
+    s_cell   = ParagraphStyle("SK",  parent=styles["Normal"],  fontSize=8,  leading=10)
 
     _HDR    = colors.HexColor("#1D4ED8")
     _HDR_LT = colors.HexColor("#DBEAFE")
@@ -759,50 +994,237 @@ def generate_summary_pdf_report(summary: Dict[str, Any], project_name: str) -> b
 
     story: list = []
 
-    # ── Title ──────────────────────────────────────────────────────────────
+    def _tbl_base(extra=None):
+        base = [
+            ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8.5),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
+            ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#D1D5DB")),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]
+        return TableStyle(base + (extra or []))
+
+    # ── Pull summary data ─────────────────────────────────────────────────────
+    total_vms        = int(summary.get("total_vms", 0) or 0)
+    total_prov_gb    = round(float(summary.get("total_provisioned_gb") or 0), 1)
+    total_data_gb    = round(float(summary.get("total_data_gb") or 0), 1)
+    data_copy_h      = round(float(summary.get("data_copy_hours") or 0), 2)
+    fix_h_total      = round(float(summary.get("total_fix_hours") or 0), 2)
+    downtime_h_total = round(float(summary.get("total_downtime_hours") or 0), 2)
+    bandwidth        = summary.get("bandwidth_mbps", "—")
+    warm_eligible    = int(summary.get("warm_eligible", 0) or 0)
+    warm_risky       = int(summary.get("warm_risky", 0) or 0)
+    cold_required    = int(summary.get("cold_required", 0) or 0)
+    total_tenants    = int(summary.get("total_tenants", 0) or 0)
+    agent_count      = int(summary.get("agent_count", 0) or 0)
+    total_slots      = int(summary.get("total_concurrent_slots", 0) or 0)
+    migration_days   = len(summary.get("per_day") or [])
+    vm_risk_dist     = summary.get("vm_risk_dist", {})
+    risk_green       = int(vm_risk_dist.get("GREEN", 0) or 0)
+    risk_yellow      = int(vm_risk_dist.get("YELLOW", 0) or 0)
+    risk_red         = int(vm_risk_dist.get("RED", 0) or 0)
+
+    def _pct(n):
+        return f"{n / max(total_vms, 1) * 100:.0f}%"
+
+    # ── Title ─────────────────────────────────────────────────────────────────
     story.append(Paragraph("Migration Summary Report", s_title))
-    story.append(Paragraph(f"<b>Project:</b> {project_name}", styles["Normal"]))
     story.append(Paragraph(
-        f"Generated: {datetime.utcnow().strftime('%B %d, %Y  %H:%M UTC')}",
+        f"<b>Project:</b> {project_name}     "
+        f"<b>Generated:</b> {datetime.utcnow().strftime('%B %d, %Y  %H:%M UTC')}",
         s_caption,
     ))
-    story.append(HRFlowable(width="100%", thickness=1, color=_HDR, spaceAfter=10))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=_HDR, spaceAfter=10))
 
-    # ── KPI table ──────────────────────────────────────────────────────────
-    story.append(Paragraph("Key Metrics", s_h2))
-    migration_days = len(summary.get("per_day") or [])
-    kpi_data = [
-        ["Metric", "Value"],
-        ["Total VMs in Scope",      str(summary.get("total_vms", "—"))],
-        ["In-Use Data (GB)",         str(round(float(summary.get("total_data_gb") or 0), 1))],
-        ["Total Provisioned (GB)",   str(round(float(summary.get("total_provisioned_gb") or 0), 1))],
-        ["Migration Days",           str(migration_days)],
-        ["Est. Data-Copy Time (h)",  str(round(float(summary.get("data_copy_hours") or 0), 2))],
-        ["Est. Tech Fix Time (h)",   str(round(float(summary.get("total_fix_hours") or 0), 2))],
-        ["Est. Total Downtime (h)",  str(round(float(summary.get("total_downtime_hours") or 0), 2))],
-        ["Effective Bandwidth (Mbps)", str(summary.get("bandwidth_mbps", "—"))],
+    # ── Section 1: Project Scope ──────────────────────────────────────────────
+    story.append(Paragraph("1  ·  Project Scope", s_h2))
+    story.append(Paragraph(
+        "Infrastructure overview, VM migration mode distribution, and risk classification at a glance. "
+        "<b>Warm Eligible</b> — live copy while VM stays online; only the brief cutover window is downtime. "
+        "<b>Warm Risky</b> — same approach, but flagged for extra review due to risk factors. "
+        "<b>Cold Required</b> — VM shut down before copy; the full copy duration is downtime.",
+        s_legend,
+    ))
+
+    # Infrastructure stats (left panel)
+    infra_data = [
+        ["Infrastructure", ""],
+        ["Total VMs in Scope",    str(total_vms)],
+        ["Total Tenants",         str(total_tenants)],
+        ["Migration Cohorts",     str(len(summary.get("per_cohort") or []))],
+        ["Migration Days (est.)", str(migration_days)],
+        ["Migration Agents",      str(agent_count)],
+        ["Concurrent Slots",      str(total_slots)],
+        ["Bandwidth (Mbps)",      str(bandwidth)],
     ]
-    t_kpi = Table(kpi_data, colWidths=[8.5 * cm, 5.0 * cm])
-    t_kpi.setStyle(TableStyle([
-        ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
-        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
-        ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",      (0, 0), (-1, -1), 9),
-        ("FONTNAME",      (0, 1), (0, -1), "Helvetica-Bold"),
-        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
-        ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
-        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    story.append(t_kpi)
-    story.append(Spacer(1, 0.4 * cm))
+    t_infra = Table(infra_data, colWidths=[4.5*cm, 3.0*cm])
+    infra_extra = [
+        ("SPAN",       (0, 0), (-1, 0)),
+        ("ALIGN",      (0, 0), (-1, 0), "CENTER"),
+        ("FONTNAME",   (0, 1), (0, -1), "Helvetica-Bold"),
+        ("ALIGN",      (1, 1), (1, -1), "RIGHT"),
+    ]
+    t_infra.setStyle(_tbl_base(infra_extra))
 
-    # ── Daily Schedule ─────────────────────────────────────────────────────
-    story.append(Paragraph("Daily Migration Schedule", s_h2))
-    day_hdr = [["Day", "Cohort", "Tenants", "VMs", "GB", "Wall-h", "Agent-h", "Cold", "Warm", "🔴 Red", "🟡 Yel", "🟢 Grn", "Cap⚠"]]
+    # VM Mode distribution (centre panel)
+    mode_data = [
+        ["VM Migration Mode", "Count", "%"],
+        ["Warm Eligible",     str(warm_eligible), _pct(warm_eligible)],
+        ["Warm Risky",        str(warm_risky),    _pct(warm_risky)],
+        ["Cold Required",     str(cold_required), _pct(cold_required)],
+        ["TOTAL",             str(total_vms),     "100%"],
+    ]
+    t_mode = Table(mode_data, colWidths=[5.0*cm, 2.5*cm, 2.0*cm])
+    mode_style = _tbl_base([
+        ("ALIGN",     (1, 0), (-1, -1), "CENTER"),
+        ("FONTNAME",  (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("BACKGROUND",(0, -1), (-1, -1), _HDR_LT),
+    ])
+    if warm_risky > 0:
+        mode_style.add("BACKGROUND", (0, 2), (-1, 2), _YEL_P)
+    if cold_required > 0:
+        mode_style.add("BACKGROUND", (0, 3), (-1, 3), _RED_P)
+    t_mode.setStyle(mode_style)
+
+    # Risk distribution (right panel)
+    risk_data = [
+        ["Risk Category",     "Count", "%"],
+        ["GREEN — low risk",  str(risk_green),  _pct(risk_green)],
+        ["YELLOW — review",   str(risk_yellow), _pct(risk_yellow)],
+        ["RED — high risk",   str(risk_red),    _pct(risk_red)],
+        ["TOTAL",             str(total_vms),   "100%"],
+    ]
+    t_risk = Table(risk_data, colWidths=[5.5*cm, 2.5*cm, 2.0*cm])
+    risk_style = _tbl_base([
+        ("ALIGN",     (1, 0), (-1, -1), "CENTER"),
+        ("FONTNAME",  (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("BACKGROUND",(0, -1), (-1, -1), _HDR_LT),
+    ])
+    if risk_green > 0:
+        risk_style.add("BACKGROUND", (0, 1), (-1, 1), _GRN_P)
+    if risk_yellow > 0:
+        risk_style.add("BACKGROUND", (0, 2), (-1, 2), _YEL_P)
+    if risk_red > 0:
+        risk_style.add("BACKGROUND", (0, 3), (-1, 3), _RED_P)
+    t_risk.setStyle(risk_style)
+
+    # Side-by-side outer table (infra: 7.5cm | gap 0.5 | mode: 9.5cm | gap 0.5 | risk: 10.0cm) = 28cm…
+    # Keep to 26.0cm: infra(7.5) + gap(0.5) + mode(9.5) + gap(0.5) + risk(10.0) = 28 — too wide
+    # Adjust: infra(7.5) + gap(0.3) + mode(8.5) + gap(0.3) + risk(10.0) = 26.6cm ✓
+    outer_scope = Table([[t_infra, "", t_mode, "", t_risk]],
+                        colWidths=[7.5*cm, 0.3*cm, 9.5*cm, 0.3*cm, 10.0*cm])
+    outer_scope.setStyle(TableStyle([
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("TOPPADDING",    (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(outer_scope)
+    story.append(Spacer(1, 0.3 * cm))
+
+    # ── Section 2: Key Migration Estimates ────────────────────────────────────
+    story.append(Paragraph("2  ·  Key Migration Estimates", s_h2))
+    story.append(Paragraph(
+        "All time figures are cumulative totals across all VMs. "
+        "Because VMs migrate concurrently, elapsed calendar time is significantly less — see the Daily Schedule for wall-clock hours.",
+        s_legend,
+    ))
+    kpi_data = [
+        ["Metric", "Value", "What this means"],
+        ["Total In-Use Data (GB)",      str(total_data_gb),
+         "Actual bytes to transfer over the wire. Excludes unallocated disk space. "
+         f"Storage utilisation: {round(total_data_gb/max(total_prov_gb,1)*100,0):.0f}% of {total_prov_gb} GB provisioned."],
+        ["Est. Data-Copy Time (h)",     str(data_copy_h),
+         f"Total in-use GB \u00f7 {bandwidth} Mbps bandwidth (converted to GB/h). "
+         "Cumulative pipeline time — parallel copies overlap in calendar time."],
+        ["Est. Tech Fix Time (h)",      str(fix_h_total),
+         "Hands-on remediation after migration: Windows NIC/driver rename, disk-UUID updates, "
+         "app validation. Weighted by OS-family fix rate. Configurable in Risk Config."],
+        ["Est. Total Downtime (h)",     str(downtime_h_total),
+         "Sum of per-VM business-impact periods. "
+         "Warm VM downtime = cutover + fix only. Cold VM downtime = full copy + cutover + fix. "
+         "Parallel execution reduces real calendar exposure."],
+        ["Effective Bandwidth (Mbps)",  str(bandwidth),
+         "Bottleneck throughput across source NIC, WAN/LAN link, migration agent, and storage I/O. "
+         "Adjust in Project Settings to model real-world conditions."],
+    ]
+    t_kpi = Table(kpi_data, colWidths=[6.5*cm, 2.5*cm, 17.5*cm])
+    kpi_style = _tbl_base([
+        ("FONTNAME",   (0, 1), (0, -1), "Helvetica-Bold"),
+        ("ALIGN",      (1, 0), (1, -1), "RIGHT"),
+        ("FONTSIZE",   (2, 1), (2, -1), 8),
+        ("TEXTCOLOR",  (2, 1), (2, -1), colors.HexColor("#374151")),
+    ])
+    kpi_style.add("BACKGROUND", (0, 4), (-1, 4), _RED_P)   # downtime row highlighted
+    t_kpi.setStyle(kpi_style)
+    story.append(t_kpi)
+    story.append(Spacer(1, 0.2 * cm))
+
+    # ── Section 3: Per-Tenant Migration Plan ──────────────────────────────────
+    per_tenant = summary.get("per_tenant", [])
+    if per_tenant:
+        story.append(PageBreak())
+        story.append(Paragraph("3  ·  Per-Tenant Migration Plan", s_h2))
+        story.append(Paragraph(
+            "Each row is one tenant (business unit or vCD organization). "
+            "<b>Cold</b> — VMs migrated offline (full shutdown + copy). "
+            "<b>Warm</b> — VMs migrated live with cutover-only migration downtime. "
+            "<b>Fix (h)</b> — estimated post-migration remediation time for this tenant. "
+            "<b>Downtime (h)</b> — total business-impact hours (cutover + fix for warm; copy + cutover + fix for cold). "
+            "Rows shaded red have \u226550% cold VMs; yellow have any cold VMs.",
+            s_legend,
+        ))
+        ten_hdr = [["Tenant", "Cohort", "VMs", "Cold", "Warm", "Data (GB)", "Fix (h)", "Downtime (h)"]]
+        ten_rows = [[
+            Paragraph(t.get("tenant_name", ""), s_cell),
+            Paragraph(t.get("cohort_name", "") or "Unassigned", s_cell),
+            t.get("vm_count", 0),
+            t.get("cold_count", 0),
+            t.get("warm_count", 0),
+            str(round(float(t.get("data_gb") or 0), 1)),
+            str(round(float(t.get("fix_hours") or 0), 2)),
+            str(round(float(t.get("downtime_hours") or 0), 2)),
+        ] for t in per_tenant]
+        t_ten = Table(ten_hdr + ten_rows,
+                      colWidths=[5.5*cm, 4.5*cm, 1.5*cm, 1.5*cm, 1.5*cm, 2.5*cm, 2.5*cm, 3.0*cm],
+                      repeatRows=1)
+        ten_style = _tbl_base([
+            ("ALIGN",   (2, 0), (-1, -1), "RIGHT"),
+            ("FONTNAME",(0, 1), (0, -1), "Helvetica-Bold"),
+        ])
+        for ri, r in enumerate(ten_rows, 1):
+            cold_c = int(r[3] or 0)
+            vm_c   = int(r[2] or 0)
+            if cold_c > 0 and vm_c > 0:
+                ten_style.add("BACKGROUND", (0, ri), (-1, ri),
+                              _RED_P if cold_c / vm_c >= 0.5 else _YEL_P)
+        t_ten.setStyle(ten_style)
+        story.append(t_ten)
+        story.append(Spacer(1, 0.3 * cm))
+
+    # ── Section 4: Daily Migration Schedule ──────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("4  ·  Daily Migration Schedule", s_h2))
+    story.append(Paragraph(
+        "One row per migration day. "
+        "<b>Wall-h</b> — elapsed wall-clock hours from first VM start to last VM finish on that day. "
+        "<b>Agent-h</b> — cumulative agent hours consumed (VMs may run in parallel so this can exceed Wall-h). "
+        "<b>Cold / Warm</b> — VM counts by migration mode on that day. "
+        "<b>Fix (h)</b> — total estimated post-migration tech fix hours for all VMs on that day. "
+        "<b>Downtime (h)</b> — total business-impact hours on that day: cutover + fix for warm VMs; copy + cutover + fix for cold VMs. "
+        "<b>Risk Red / Yel / Grn</b> — VM counts by risk category. "
+        "<b>Cap!</b> — YES if this day\u2019s VM count exceeds the configured concurrent-slot capacity.",
+        s_legend,
+    ))
+    day_hdr = [["Day", "Cohort", "Tenants", "VMs", "Data\n(GB)", "Wall-h", "Agent-h",
+                "Cold", "Warm", "Fix\n(h)", "Downtime\n(h)", "Risk\nRed", "Risk\nYel", "Risk\nGrn", "Cap!"]]
     day_rows: list = []
     over_rows: list = []
     for day in summary.get("per_day") or []:
@@ -811,8 +1233,8 @@ def generate_summary_pdf_report(summary: Dict[str, Any], project_name: str) -> b
         if over:
             over_rows.append(ri)
         day_rows.append([
-            day.get("day", ""),
-            (day.get("cohort_name") or "")[:18],
+            str(day.get("day", "")),
+            Paragraph((day.get("cohort_name") or "")[:24], s_cell),
             day.get("tenant_count", 0),
             day.get("vm_count", 0),
             str(round(float(day.get("total_gb") or 0), 1)),
@@ -820,101 +1242,91 @@ def generate_summary_pdf_report(summary: Dict[str, Any], project_name: str) -> b
             str(round(float(day.get("total_agent_hours") or 0), 2)),
             day.get("cold_count", 0),
             day.get("warm_count", 0),
+            str(round(float(day.get("fix_hours") or 0), 2)),
+            str(round(float(day.get("downtime_hours") or 0), 2)),
             day.get("risk_red", 0),
             day.get("risk_yellow", 0),
             day.get("risk_green", 0),
             "YES" if over else "",
         ])
-
-    cw_day = [1.0*cm, 3.5*cm, 1.5*cm, 1.3*cm, 1.5*cm, 1.6*cm, 1.7*cm,
-              1.2*cm, 1.2*cm, 1.3*cm, 1.2*cm, 1.3*cm, 1.3*cm]
+    # Landscape A4 usable ~26.5cm; 15 cols total
+    cw_day = [1.0*cm, 5.0*cm, 1.3*cm, 1.2*cm, 1.8*cm, 1.5*cm, 1.8*cm,
+              1.2*cm, 1.2*cm, 1.8*cm, 2.2*cm, 1.2*cm, 1.2*cm, 1.2*cm, 1.0*cm]
     t_day = Table(day_hdr + day_rows, colWidths=cw_day, repeatRows=1)
-    day_style = [
-        ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
-        ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
-        ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE",      (0, 0), (-1, -1), 7.5),
-        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
-        ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#D1D5DB")),
-        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN",         (2, 0), (-1, -1), "CENTER"),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 3),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 3),
-        ("TOPPADDING",    (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-    ]
+    day_style = _tbl_base([("ALIGN", (2, 0), (-1, -1), "CENTER")])
     for ri in over_rows:
-        day_style.append(("BACKGROUND", (0, ri), (-1, ri), _RED_P))
-        day_style.append(("TEXTCOLOR",  (12, ri), (12, ri), colors.HexColor("#DC2626")))
-    t_day.setStyle(TableStyle(day_style))
+        day_style.add("BACKGROUND", (0, ri), (-1, ri), _RED_P)
+        day_style.add("TEXTCOLOR",  (12, ri), (12, ri), colors.HexColor("#DC2626"))
+    t_day.setStyle(day_style)
     story.append(t_day)
-    story.append(Spacer(1, 0.4 * cm))
+    story.append(Spacer(1, 0.3 * cm))
 
-    # ── OS Breakdown ───────────────────────────────────────────────────────
-    os_raw = summary.get("per_os_breakdown") or {}
-    os_items_pdf = os_raw.items() if isinstance(os_raw, dict) else [(e.get("os_family",""), e) for e in os_raw]
-    os_items_pdf = list(os_items_pdf)
-    if os_items_pdf:
-        story.append(Paragraph("OS Family Breakdown", s_h2))
-        os_hdr = [["OS Family", "VM Count", "Fix Rate", "Fix Hours"]]
-        os_rows = [[
-            fam,
-            entry.get("vm_count", 0),
-            f"{float(entry.get('fix_rate', 0)):.0%}",
-            str(round(float(entry.get("fix_hours") or 0), 2)),
-        ] for fam, entry in os_items_pdf]
-        t_os = Table(os_hdr + os_rows, colWidths=[5*cm, 3*cm, 3*cm, 4*cm])
-        t_os.setStyle(TableStyle([
-            ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
-            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
-            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE",      (0, 0), (-1, -1), 9),
-            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
-            ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
-            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN",         (1, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-            ("TOPPADDING",    (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ]))
-        story.append(t_os)
-        story.append(Spacer(1, 0.4 * cm))
-
-    # ── Cohort Breakdown ───────────────────────────────────────────────────
+    # ── Section 5: Cohort Breakdown ───────────────────────────────────────────
     cohorts = summary.get("per_cohort") or []
     if cohorts:
-        story.append(Paragraph("Cohort Breakdown", s_h2))
-        coh_hdr = [["Cohort", "VMs", "Data (GB)", "Data-Copy (h)", "Fix Hours", "Downtime (h)"]]
+        story.append(Paragraph("5  ·  Cohort Breakdown", s_h2))
+        story.append(Paragraph(
+            "A cohort is a logical grouping of tenants migrated in the same wave. "
+            "<b>Data-Copy (h)</b> — pipeline time to copy all cohort VMs. "
+            "<b>Fix (h)</b> — post-migration remediation hours. "
+            "<b>Downtime (h)</b> — total per-VM business-impact hours across this cohort.",
+            s_legend,
+        ))
+        coh_hdr = [["Cohort", "VMs", "Data (GB)", "Data-Copy (h)", "Fix (h)", "Downtime (h)"]]
         coh_rows = [[
-            c.get("cohort_name", ""),
+            Paragraph(c.get("cohort_name", ""), s_cell),
             c.get("vm_count", 0),
             str(round(float(c.get("data_gb") or 0), 1)),
             str(round(float(c.get("data_copy_hours") or 0), 2)),
             str(round(float(c.get("fix_hours") or 0), 2)),
             str(round(float(c.get("downtime_hours") or 0), 2)),
         ] for c in cohorts]
-        t_coh = Table(coh_hdr + coh_rows, colWidths=[4.5*cm, 2.2*cm, 3*cm, 3.5*cm, 3*cm, 3.5*cm])
-        t_coh.setStyle(TableStyle([
-            ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
-            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
-            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE",      (0, 0), (-1, -1), 9),
-            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors.white, _GREY_P]),
-            ("GRID",          (0, 0), (-1, -1), 0.5, colors.HexColor("#D1D5DB")),
-            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN",         (1, 0), (-1, -1), "CENTER"),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 6),
-            ("TOPPADDING",    (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        t_coh = Table(coh_hdr + coh_rows, colWidths=[8.0*cm, 2.5*cm, 3.5*cm, 4.0*cm, 3.5*cm, 4.0*cm])
+        t_coh.setStyle(_tbl_base([
+            ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+            ("ALIGN",    (1, 0), (-1, -1), "RIGHT"),
         ]))
         story.append(t_coh)
-        story.append(Spacer(1, 0.4 * cm))
+        story.append(Spacer(1, 0.3 * cm))
 
-    # ── Methodology ────────────────────────────────────────────────────────
+    # ── Section 6: OS Family Breakdown ───────────────────────────────────────
+    os_raw = summary.get("per_os_breakdown") or {}
+    os_items_pdf = list(os_raw.items() if isinstance(os_raw, dict) else
+                        [(e.get("os_family", ""), e) for e in os_raw])
+    if os_items_pdf:
+        story.append(Paragraph("6  ·  OS Family Breakdown & Fix Rates", s_h2))
+        story.append(Paragraph(
+            "<b>Fix Rate</b> — percentage of VMs in this OS family expected to require post-migration remediation. "
+            "Configurable under Risk Config. "
+            "<b>Fix (h)</b> — total estimated remediation hours for all affected VMs in this OS family.",
+            s_legend,
+        ))
+        os_notes = {
+            "windows": "NIC adapter rename (vmxnet3\u2192virtio), disk drive-letter reassignment, possible service re-activation",
+            "linux":   "Minimal changes: usually only fstab UUID updates and network interface name rebinding",
+        }
+        os_hdr = [["OS Family", "VM Count", "Fix Rate", "Fix (h)", "Typical remediation steps"]]
+        os_rows = [[
+            Paragraph(fam.title(), s_cell),
+            entry.get("vm_count", 0),
+            f"{float(entry.get('fix_rate', 0)):.0%}",
+            str(round(float(entry.get("fix_hours") or 0), 2)),
+            Paragraph(os_notes.get(fam.lower(), "OS-specific remediation may apply"), s_cell),
+        ] for fam, entry in os_items_pdf]
+        t_os = Table(os_hdr + os_rows, colWidths=[3.5*cm, 2.5*cm, 2.5*cm, 2.5*cm, 15.5*cm])
+        t_os.setStyle(_tbl_base([
+            ("ALIGN",    (1, 0), (3, -1), "CENTER"),
+            ("FONTNAME", (0, 1), (0, -1), "Helvetica-Bold"),
+        ]))
+        story.append(t_os)
+        story.append(Spacer(1, 0.3 * cm))
+
+    # ── Section 7: Methodology (summary) ─────────────────────────────────────
     methodology = summary.get("methodology") or {}
     if methodology:
-        story.append(Paragraph("Calculation Methodology", s_h2))
-        method_body = ParagraphStyle("MBody", parent=styles["Normal"], fontSize=8, spaceAfter=5, leading=11)
+        story.append(PageBreak())
+        story.append(Paragraph("7  ·  Calculation Methodology", s_h2))
+        s_method = ParagraphStyle("SM", parent=styles["Normal"], fontSize=9, spaceAfter=6, leading=13)
         labels = {
             "data_copy": "Data-Copy Time",
             "fix_time":  "Tech Fix Time",
@@ -923,19 +1335,132 @@ def generate_summary_pdf_report(summary: Dict[str, Any], project_name: str) -> b
         }
         for key, label in labels.items():
             if key in methodology:
-                story.append(Paragraph(f"<b>{label}:</b> {methodology[key]}", method_body))
+                story.append(Paragraph(f"<b>{label}:</b> {methodology[key]}", s_method))
+        story.append(Spacer(1, 0.3 * cm))
 
-    # ── Footer ─────────────────────────────────────────────────────────────
+    # ── Appendix: Detailed Methodology Reference ──────────────────────────────
+    story.append(PageBreak())
+    s_h2_m  = ParagraphStyle("SH2m", parent=styles["Heading2"], fontSize=11, spaceAfter=4,
+                              textColor=colors.HexColor("#1E40AF"), spaceBefore=12)
+    s_cap_m = ParagraphStyle("SCm",  parent=styles["Normal"],  fontSize=8,
+                              textColor=colors.grey, spaceAfter=6)
+    story.append(Paragraph("Appendix: Detailed Methodology Reference", s_h2_m))
+    story += _pdf_methodology_section(s_h2_m, styles["Normal"], s_cap_m, _HDR, _GREY_P, _HDR_LT, colors)
+
+    # ── Footer ────────────────────────────────────────────────────────────────
     def _footer(canvas, doc):
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.grey)
-        txt = f"Platform9 Migration Summary  ·  {project_name}  ·  Page {doc.page}"
-        canvas.drawCentredString(A4[0] / 2, 0.7 * cm, txt)
+        txt = f"Platform9 Migration Summary  \u00b7  {project_name}  \u00b7  Page {doc.page}"
+        canvas.drawCentredString(landscape(A4)[0] / 2, 0.7 * cm, txt)
         canvas.restoreState()
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buf.getvalue()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Shared PDF helper — Methodology section
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _pdf_methodology_section(s_h2, s_body, s_caption, _HDR, _GREY_P, _HDR_LT, colors_mod) -> list:
+    """Return a list of ReportLab flowables explaining all calculation methodologies."""
+    story = []
+    story.append(Paragraph("Calculation Methodology", s_h2))
+    story.append(Paragraph(
+        "This section documents every formula used to produce the estimates in this report.",
+        s_caption,
+    ))
+
+    _W1, _W2 = 5.5 * cm, 13.5 * cm  # label / detail column widths
+
+    sections = [
+        ("1. Warm vs Cold Classification", [
+            ("Warm Eligible",
+             "OS does NOT appear in the OS Cold Required list AND VM is powered ON. "
+             "Live data-copy runs while the VM is active. "
+             "Downtime = cutover window + tech fix time (no downtime during Phase 1 data copy)."),
+            ("Cold Required",
+             "OS matches an entry in the Risk Config → Cold Migration Rules list, OR the VM is "
+             "poweredOff / suspended. VM is shut down before copy. "
+             "Downtime = full copy duration + cutover window + tech fix time."),
+            ("Warm Risky",
+             "Warm-eligible but risk score meets/exceeds Yellow or Red threshold. "
+             "Same downtime model as Warm Eligible: cutover + fix time."),
+        ]),
+        ("2. Bandwidth Model", [
+            ("Formula",
+             "effective_mbps = min(source_nic_mbps, link_mbps, agent_mbps, storage_mbps)"),
+            ("Example",
+             "Source=4,800 · Link=4,000 · Agent=6,000 · Storage=5,500 Mbps → bottleneck = link at 4,000 Mbps"),
+        ]),
+        ("3. Data-Copy Time", [
+            ("Formula",
+             "data_copy_hours = total_in_use_gb ÷ (bottleneck_mbps ÷ 8 × 3600 ÷ 1024)"),
+            ("Example",
+             "172,617 GB at 4,000 Mbps → 1,757.8 GB/h → 98.2 h total data-copy time"),
+        ]),
+        ("4. Tech Fix Scoring", [
+            ("Factor weights",
+             "Windows: +20 min | Extra volume ea: +15 | Extra NIC ea: +10 | Cold mode: +15 | "
+             "Risk YELLOW: +15 | Risk RED: +25 | Snapshots: +10 | Cross-tenant dep: +15 | Unknown OS: +5"),
+            ("OS Fix Rates",
+             "Windows 50% · Linux 20% · Other 40% (global override replaces all when set)"),
+            ("Formula",
+             "raw = Σ factor_weights; fix_minutes = raw × fix_rate"),
+            ("Example",
+             "Windows, cold, 2 extra vols, 1 extra NIC, YELLOW: raw=20+30+10+15+15=90; fix=90×0.50=45 min"),
+        ]),
+        ("5. Downtime Estimate", [
+            ("Warm VMs",  "downtime = cutover_minutes + fix_minutes  (copy is live, no user impact)"),
+            ("Cold VMs",  "downtime = data_copy_hours×60 + cutover_minutes + fix_minutes  (VM offline during copy)"),
+            ("Total",     "Sum of all VM downtime hours. Concurrent across tenants; wall-clock is much shorter."),
+        ]),
+        ("6. Daily Schedule", [
+            ("Algorithm",
+             "VMs ordered Cohort→Priority→disk size (largest first). Assigned to current day until "
+             "wall-clock time (max VM hours) exceeds working_hours_per_day; then new day starts."),
+            ("Concurrency",
+             "concurrent_slots = total agent slots across all vJailbreak agents. Each VM uses 1 slot."),
+        ]),
+        ("7. Risk Categories", [
+            ("GREEN",  "Risk score 0–29 → standard migration"),
+            ("YELLOW", "Risk score 30–59 → pre-migration review required"),
+            ("RED",    "Risk score 60+ → architecture review + rollback plan required"),
+        ]),
+    ]
+
+    for sec_title, entries in sections:
+        story.append(Paragraph(f"<b>{sec_title}</b>", s_body))
+        tbl_data = [["Topic", "Detail"]]
+        for label, detail in entries:
+            tbl_data.append([label, detail])
+        t = Table(tbl_data, colWidths=[_W1, _W2])
+        style = [
+            ("BACKGROUND",    (0, 0), (-1, 0), _HDR),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors_mod.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("FONTNAME",      (0, 1), (0, -1), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [colors_mod.white, _GREY_P]),
+            ("GRID",          (0, 0), (-1, -1), 0.4, colors_mod.HexColor("#D1D5DB")),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
+            ("TOPPADDING",    (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("WORDWRAP",      (0, 0), (-1, -1), 1),
+        ]
+        t.setStyle(TableStyle(style))
+        story.append(t)
+        story.append(Spacer(1, 0.25 * cm))
+
+    story.append(Paragraph(
+        "All default values are configurable in Risk Config and Migration Summary → Settings.",
+        s_caption,
+    ))
+    return story
 
 
 # ══════════════════════════════════════════════════════════════════════════════

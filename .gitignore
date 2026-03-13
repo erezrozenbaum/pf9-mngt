@@ -35,9 +35,11 @@ CSV_exports/
 *_RVTools_*.xlsx
 *_Snapshot_Compliance_*.xlsx
 
-# Windows Reports directory (RVTools outputs)
+# RVTools output directories (local exports - never commit)
 C:/Reports/
 /Reports/
+/reports/
+reports/
 
 # IDE and editor files
 .vscode/

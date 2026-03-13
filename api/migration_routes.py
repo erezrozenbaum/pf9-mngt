@@ -3154,6 +3154,7 @@ async def export_report_pdf(project_id: str):
     """Download a full migration plan report as a PDF (landscape A4)."""
     with _get_conn() as conn:
         project = _get_project(project_id, conn)
+        fix_settings = _get_fix_settings(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT * FROM migration_tenants
@@ -3187,6 +3188,11 @@ async def export_report_pdf(project_id: str):
 
     plan["executive_summary"] = project.get("executive_summary", "") or ""
     plan["technical_notes"] = project.get("technical_notes", "") or ""
+    # Enrich each planned VM with tech fix time so the PDF can display Fix(h) and accurate Downtime(h)
+    for _tp in plan.get("tenant_plans", []):
+        for _vm in _tp.get("vms", []):
+            _fr = compute_vm_fix_time(_vm, fix_settings)
+            _vm["fix_hours"] = round(_fr["fix_minutes"] / 60, 2)
     pdf_bytes = generate_pdf_report(plan, project["name"])
     safe_name = project["name"].replace(" ", "_")
     return StreamingResponse(
@@ -8610,6 +8616,38 @@ async def get_migration_summary(project_id: str):
             })
         per_cohort.sort(key=lambda x: x["cohort_name"])
 
+        # Per-tenant breakdown
+        tenant_map_t: dict = {}
+        for vm in vms:
+            tn = vm.get("tenant_name") or "Unknown"
+            if tn not in tenant_map_t:
+                tenant_map_t[tn] = {"tenant_name": tn, "cohort_name": vm.get("cohort_name") or "Unassigned", "vm_list": []}
+            tenant_map_t[tn]["vm_list"].append(vm)
+        per_tenant: list = []
+        for tn_key, tdata in tenant_map_t.items():
+            t_vms = tdata["vm_list"]
+            t_sum = compute_project_fix_summary(t_vms, settings, bw_mbps)
+            cold_c = sum(1 for v in t_vms if "cold" in (v.get("migration_mode") or ""))
+            per_tenant.append({
+                "tenant_name":    tn_key,
+                "cohort_name":    tdata["cohort_name"],
+                "vm_count":       len(t_vms),
+                "cold_count":     cold_c,
+                "warm_count":     len(t_vms) - cold_c,
+                "data_gb":        t_sum["total_data_gb"],
+                "fix_hours":      t_sum["total_fix_hours"],
+                "downtime_hours": t_sum["total_downtime_hours"],
+            })
+        per_tenant.sort(key=lambda x: (x["cohort_name"] or "", x["tenant_name"] or ""))
+
+        # VM mode and risk distribution
+        warm_risky_c    = sum(1 for v in vms if (v.get("migration_mode") or "") == "warm_risky")
+        warm_eligible_c = sum(1 for v in vms if (v.get("migration_mode") or "") == "warm_eligible")
+        cold_required_c = sum(1 for v in vms if "cold" in (v.get("migration_mode") or ""))
+        risk_green_c    = sum(1 for v in vms if v.get("risk_category") == "GREEN")
+        risk_yellow_c   = sum(1 for v in vms if v.get("risk_category") == "YELLOW")
+        risk_red_c      = sum(1 for v in vms if v.get("risk_category") == "RED")
+
         # Per-day breakdown via full migration plan generation
         # Build risk lookup from the detailed VM query (has risk_category)
         vm_risk: dict = {v["vm_name"]: (v.get("risk_category") or "GREEN") for v in vms}
@@ -8621,6 +8659,13 @@ async def get_migration_summary(project_id: str):
                 project_settings=project,
                 bottleneck_mbps=bw_mbps,
             )
+            # Build lookups for per-VM fix time and migration timing
+            vm_detail_map: dict = {v["vm_name"]: v for v in vms}
+            vm_timing_map: dict = {}
+            for _tp in plan.get("tenant_plans", []):
+                for _vm in _tp.get("vms", []):
+                    vm_timing_map[_vm.get("vm_name")] = _vm
+
             for day in plan.get("daily_schedule", []):
                 day_vms = day.get("vms", [])
                 tenants_set = {v["tenant_name"] for v in day_vms}
@@ -8630,6 +8675,20 @@ async def get_migration_summary(project_id: str):
                 green  = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "GREEN")
                 yellow = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "YELLOW")
                 red    = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "RED")
+                # Per-day fix and downtime totals
+                day_fix_h = 0.0
+                day_dn_h  = 0.0
+                for dv in day_vms:
+                    vname   = dv.get("vm_name")
+                    vdetail = vm_detail_map.get(vname, dv)
+                    fix_r   = compute_vm_fix_time(vdetail, settings)
+                    fh      = fix_r["fix_minutes"] / 60
+                    day_fix_h += fh
+                    vt       = vm_timing_map.get(vname, {})
+                    is_cold  = "cold" in (dv.get("mode") or "")
+                    mig_dn_h = float(vt.get("cold_downtime_hours", 0) or 0) if is_cold \
+                               else float(vt.get("warm_downtime_hours", 0) or 0)
+                    day_dn_h += mig_dn_h + fh
                 per_day.append({
                     "day":               day["day"],
                     "cohort_name":       day.get("cohort_name", ""),
@@ -8640,6 +8699,8 @@ async def get_migration_summary(project_id: str):
                     "total_agent_hours": round(float(day.get("total_estimated_hours") or 0), 2),
                     "cold_count":        cold,
                     "warm_count":        warm,
+                    "fix_hours":         round(day_fix_h, 2),
+                    "downtime_hours":    round(day_dn_h, 2),
                     "risk_green":        green,
                     "risk_yellow":       yellow,
                     "risk_red":          red,
@@ -8674,12 +8735,29 @@ async def get_migration_summary(project_id: str):
             ),
         }
 
+        # Use the plan's project_summary for schedule/scope fields (agent count, slot count, etc.)
+        # but keep compute_project_fix_summary()'s total_downtime_hours which correctly includes
+        # fix time:  warm = cutover + fix,  cold = copy + cutover + fix.
+        plan_ps = plan.get("project_summary", {})
+        summary["total_vms"] = plan_ps.get("total_vms", summary["total_vms"])
+
         return {
             **summary,
             "total_provisioned_gb": total_provisioned_gb,
+            "estimated_schedule_days": plan_ps.get("estimated_schedule_days", len(per_day)),
+            "warm_eligible": plan_ps.get("warm_eligible", warm_eligible_c),
+            "warm_risky":    warm_risky_c,
+            "cold_required": plan_ps.get("cold_required", cold_required_c),
+            "total_tenants": plan_ps.get("total_tenants", 0),
+            "agent_count": plan_ps.get("agent_count", 0),
+            "total_concurrent_slots": plan_ps.get("total_concurrent_slots", 0),
+            "bottleneck_mbps": bw_mbps,
             "per_cohort":    per_cohort,
+            "per_tenant":    per_tenant,
             "per_day":       per_day,
             "bandwidth_mbps": bw_mbps,
+            "vm_mode_dist":  {"warm_eligible": warm_eligible_c, "warm_risky": warm_risky_c, "cold_required": cold_required_c},
+            "vm_risk_dist":  {"GREEN": risk_green_c, "YELLOW": risk_yellow_c, "RED": risk_red_c},
             "methodology":   methodology,
         }
 

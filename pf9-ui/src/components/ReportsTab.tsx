@@ -67,13 +67,39 @@ const CATEGORY_ICONS: Record<string, string> = {
   audit: "📝",
 };
 
+interface RVToolsFile {
+  filename:    string;
+  size_bytes:  number;
+  modified_at: string;
+}
+
+interface RVToolsRun {
+  id:               number;
+  source:           string;
+  started_at:       string | null;
+  finished_at:      string | null;
+  status:           string;
+  duration_seconds: number | null;
+  host_name:        string | null;
+  notes:            string | null;
+}
+
 export default function ReportsTab({ isAdmin }: Props) {
+  const [activeView, setActiveView] = useState<"catalog" | "rvtools">("catalog");
+
   const [catalog, setCatalog] = useState<ReportDef[]>([]);
   const [selectedReport, setSelectedReport] = useState<ReportDef | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [reportData, setReportData] = useState<any[] | null>(null);
   const [exporting, setExporting] = useState(false);
+
+  // RVTools state
+  const [rvFiles, setRvFiles]         = useState<RVToolsFile[]>([]);
+  const [rvRuns, setRvRuns]           = useState<RVToolsRun[]>([]);
+  const [rvLoading, setRvLoading]     = useState(false);
+  const [rvError, setRvError]         = useState("");
+  const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   // Filter params
   const [filterCategory, setFilterCategory] = useState("");
@@ -108,6 +134,50 @@ export default function ReportsTab({ isAdmin }: Props) {
   }, []);
 
   const categories = Array.from(new Set(catalog.map((r) => r.category)));
+
+  // Load RVTools data whenever that tab is opened
+  const loadRVTools = useCallback(async () => {
+    setRvLoading(true);
+    setRvError("");
+    try {
+      const [filesResp, runsResp] = await Promise.all([
+        apiFetch<{ files: RVToolsFile[] }>("/api/reports/rvtools/files"),
+        apiFetch<{ runs: RVToolsRun[] }>("/api/reports/rvtools/runs?limit=100"),
+      ]);
+      setRvFiles(filesResp.files);
+      setRvRuns(runsResp.runs);
+    } catch (e: any) {
+      setRvError(e.message);
+    } finally {
+      setRvLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView === "rvtools") loadRVTools();
+  }, [activeView, loadRVTools]);
+
+  const downloadRVToolsFile = useCallback(async (filename: string) => {
+    setDownloadingFile(filename);
+    try {
+      const token = getToken();
+      const res = await fetch(`${API_BASE}/api/reports/rvtools/files/${encodeURIComponent(filename)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      const url  = window.URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href     = url;
+      a.download = filename;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setRvError(e.message);
+    } finally {
+      setDownloadingFile(null);
+    }
+  }, []);
 
   const filteredCatalog = catalog.filter((r) => {
     if (filterCategory && r.category !== filterCategory) return false;
@@ -343,6 +413,158 @@ export default function ReportsTab({ isAdmin }: Props) {
 
   return (
     <div style={containerStyle}>
+      {/* Tab bar */}
+      <div style={{ display: "flex", gap: "0", marginBottom: "24px", borderBottom: "2px solid var(--pf9-border, #d1d5db)" }}>
+        {(["catalog", "rvtools"] as const).map((view) => (
+          <button
+            key={view}
+            onClick={() => setActiveView(view)}
+            style={{
+              padding: "10px 24px",
+              border: "none",
+              background: "transparent",
+              fontWeight: activeView === view ? 700 : 400,
+              fontSize: "14px",
+              color: activeView === view ? "#3b82f6" : "var(--pf9-text-secondary, #9ca3af)",
+              borderBottom: activeView === view ? "2px solid #3b82f6" : "2px solid transparent",
+              marginBottom: "-2px",
+              cursor: "pointer",
+              transition: "all 0.15s",
+            }}
+          >
+            {view === "catalog" ? "📊 Reports Catalog" : "📁 RVTools Exports"}
+          </button>
+        ))}
+      </div>
+
+      {/* ===== RVTools Exports view ===== */}
+      {activeView === "rvtools" && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "20px" }}>📁 RVTools Exports</h2>
+              <p style={{ margin: "4px 0 0", color: "var(--pf9-text-secondary, #9ca3af)", fontSize: "13px" }}>
+                Hourly inventory snapshots — click a file to download
+              </p>
+            </div>
+            <button
+              style={{ ...btnStyle("primary"), opacity: rvLoading ? 0.6 : 1 }}
+              onClick={loadRVTools}
+              disabled={rvLoading}
+            >
+              {rvLoading ? "Refreshing..." : "↻ Refresh"}
+            </button>
+          </div>
+
+          {rvError && (
+            <div style={{ padding: "10px 16px", borderRadius: "8px", background: "#991b1b33", color: "#ef4444", marginBottom: "16px", fontSize: "13px" }}>
+              {rvError}
+            </div>
+          )}
+
+          {/* File list */}
+          <div style={{ ...sectionStyle, marginBottom: "24px" }}>
+            <h3 style={{ margin: "0 0 14px", fontSize: "15px", fontWeight: 600 }}>
+              Excel Files ({rvFiles.length})
+            </h3>
+            {rvLoading && rvFiles.length === 0 ? (
+              <div style={{ color: "var(--pf9-text-secondary, #9ca3af)", padding: "20px 0", textAlign: "center" }}>Loading...</div>
+            ) : rvFiles.length === 0 ? (
+              <div style={{ color: "var(--pf9-text-secondary, #9ca3af)", padding: "20px 0", textAlign: "center" }}>No export files found.</div>
+            ) : (
+              <div style={tableContainerStyle}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Filename", "Date (UTC)", "Size", ""].map((h) => (
+                        <th key={h} style={thStyle}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rvFiles.map((f, i) => (
+                      <tr key={f.filename} style={{ background: i % 2 === 0 ? "transparent" : "var(--pf9-row-alt, #f9fafb)" }}>
+                        <td style={tdStyle} title={f.filename}>{f.filename}</td>
+                        <td style={tdStyle}>{new Date(f.modified_at).toLocaleString()}</td>
+                        <td style={tdStyle}>{(f.size_bytes / 1024 / 1024).toFixed(1)} MB</td>
+                        <td style={{ ...tdStyle, textAlign: "right" }}>
+                          <button
+                            style={{
+                              padding: "4px 12px",
+                              borderRadius: "5px",
+                              border: "1px solid #3b82f6",
+                              background: "transparent",
+                              color: "#3b82f6",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              cursor: downloadingFile === f.filename ? "wait" : "pointer",
+                              opacity: downloadingFile === f.filename ? 0.5 : 1,
+                            }}
+                            onClick={() => downloadRVToolsFile(f.filename)}
+                            disabled={downloadingFile === f.filename}
+                          >
+                            {downloadingFile === f.filename ? "…" : "⬇ Download"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Run history */}
+          <div style={sectionStyle}>
+            <h3 style={{ margin: "0 0 14px", fontSize: "15px", fontWeight: 600 }}>
+              Run History ({rvRuns.length})
+            </h3>
+            {rvRuns.length === 0 && !rvLoading ? (
+              <div style={{ color: "var(--pf9-text-secondary, #9ca3af)", padding: "20px 0", textAlign: "center" }}>No run records found.</div>
+            ) : (
+              <div style={tableContainerStyle}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["Started (UTC)", "Finished", "Duration", "Status", "Source", "Notes"].map((h) => (
+                        <th key={h} style={thStyle}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rvRuns.map((r, i) => (
+                      <tr key={r.id} style={{ background: i % 2 === 0 ? "transparent" : "var(--pf9-row-alt, #f9fafb)" }}>
+                        <td style={tdStyle}>{r.started_at ? new Date(r.started_at).toLocaleString() : "—"}</td>
+                        <td style={tdStyle}>{r.finished_at ? new Date(r.finished_at).toLocaleString() : "—"}</td>
+                        <td style={tdStyle}>{r.duration_seconds != null ? `${r.duration_seconds}s` : "—"}</td>
+                        <td style={tdStyle}>
+                          <span style={{
+                            display: "inline-block",
+                            padding: "2px 8px",
+                            borderRadius: "10px",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            background: r.status === "success" ? "#10b98125" : r.status === "running" ? "#3b82f625" : "#ef444425",
+                            color:      r.status === "success" ? "#10b981"   : r.status === "running" ? "#3b82f6"   : "#ef4444",
+                          }}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td style={tdStyle}>{r.source || "—"}</td>
+                        <td style={{ ...tdStyle, maxWidth: "340px" }} title={r.notes || ""}>{r.notes ? r.notes.slice(0, 80) + (r.notes.length > 80 ? "…" : "") : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ===== Reports Catalog view ===== */}
+      {activeView === "catalog" && (
+        <>
       {/* Header */}
       <div style={headerStyle}>
         <div>
@@ -629,6 +851,8 @@ export default function ReportsTab({ isAdmin }: Props) {
         >
           No reports match your search.
         </div>
+      )}
+        </>
       )}
     </div>
   );

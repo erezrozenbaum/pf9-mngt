@@ -336,6 +336,24 @@ async def get_demo_mode():
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Generic exception handler — ensures 500 responses are returned *inside* the
+# CORS middleware chain so the browser receives Access-Control-Allow-Origin.
+# Without this, Starlette's outermost ServerErrorMiddleware returns a bare 500
+# that bypasses CORSMiddleware, causing the browser to report a CORS error.
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    import traceback, logging
+    logging.getLogger("pf9.api").error(
+        "Unhandled exception on %s %s: %s",
+        request.method, request.url.path,
+        "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+    )
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "path": request.url.path},
+    )
+
 # Performance monitoring middleware
 app.add_middleware(PerformanceMiddleware, metrics=performance_metrics)
 
@@ -368,7 +386,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
-    expose_headers=["Content-Type", "X-Request-ID"],
+    expose_headers=["Content-Type", "Content-Disposition", "X-Request-ID"],
 )
 
 # RBAC middleware (enforces read/write permissions by resource)

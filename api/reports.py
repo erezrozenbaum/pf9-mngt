@@ -25,16 +25,20 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import mimetypes
+import os
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, get_current_user, User
 from db_pool import get_connection
 from pf9_control import get_client
+
+REPORTS_DIR = os.getenv("PF9_OUTPUT_DIR", "/mnt/reports")
 
 logger = logging.getLogger("pf9.reports")
 
@@ -2096,3 +2100,78 @@ async def report_flavor_by_tenant(
     except Exception as e:
         logger.error(f"Report flavor-by-tenant failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# RVTools Export Files
+# ---------------------------------------------------------------------------
+
+@router.get("/rvtools/files")
+async def list_rvtools_files(
+    user: User = Depends(require_permission("reports", "read")),
+):
+    """List all RVTools Excel exports available for download."""
+    if not os.path.isdir(REPORTS_DIR):
+        return {"files": []}
+    files = []
+    for fname in sorted(os.listdir(REPORTS_DIR), reverse=True):
+        if not fname.endswith(".xlsx"):
+            continue
+        fpath = os.path.join(REPORTS_DIR, fname)
+        try:
+            stat = os.stat(fpath)
+            files.append({
+                "filename": fname,
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            })
+        except OSError:
+            continue
+    return {"files": files}
+
+
+@router.get("/rvtools/files/{filename}")
+async def download_rvtools_file(
+    filename: str,
+    user: User = Depends(require_permission("reports", "read")),
+):
+    """Download a single RVTools Excel export."""
+    # Prevent path traversal
+    if os.sep in filename or "/" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    fpath = os.path.join(REPORTS_DIR, filename)
+    if not os.path.isfile(fpath):
+        raise HTTPException(status_code=404, detail="File not found")
+    media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return FileResponse(fpath, media_type=media_type, filename=filename)
+
+
+@router.get("/rvtools/runs")
+async def list_rvtools_runs(
+    limit: int = Query(50, ge=1, le=500),
+    user: User = Depends(require_permission("reports", "read")),
+):
+    """Return the most recent RVTools inventory run log entries."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, source, started_at, finished_at, status,
+                       duration_seconds, host_name, notes
+                FROM inventory_runs
+                ORDER BY started_at DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cur.fetchall()
+    result = []
+    for r in rows:
+        result.append({
+            "id":               r["id"],
+            "source":           r["source"],
+            "started_at":       r["started_at"].isoformat() if r["started_at"] else None,
+            "finished_at":      r["finished_at"].isoformat() if r["finished_at"] else None,
+            "status":           r["status"],
+            "duration_seconds": r["duration_seconds"],
+            "host_name":        r["host_name"],
+            "notes":            r["notes"],
+        })
+    return {"runs": result}

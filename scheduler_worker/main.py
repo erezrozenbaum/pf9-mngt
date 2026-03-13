@@ -152,14 +152,31 @@ def _next_scheduled_run(schedule_hhmm: str) -> datetime:
 def _run_rvtools_sync() -> None:
     """Run pf9_rvtools.py as an isolated subprocess so global state is clean each time."""
     script = os.path.join(os.path.dirname(__file__), "pf9_rvtools.py")
-    result = subprocess.run(
-        [sys.executable, script],
-        timeout=7200,  # 2-hour hard limit
-    )
+
+    # Per-run log file: /app/logs/rvtools_YYYYMMDD_HHMMSS.log
+    log_dir = os.path.join(os.path.dirname(__file__), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    log_path = os.path.join(log_dir, f"rvtools_{ts}.log")
+
+    log.info("RVTools: writing run log to %s", log_path)
+    with open(log_path, "w", encoding="utf-8") as lf:
+        lf.write(f"# RVTools run started at {datetime.now(timezone.utc).isoformat()}\n")
+        lf.write(f"# Script: {script}\n\n")
+        result = subprocess.run(
+            [sys.executable, script],
+            timeout=7200,  # 2-hour hard limit
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+        )
+        lf.write(f"\n\n# Exit code: {result.returncode}\n")
+        lf.write(f"# Run finished at {datetime.now(timezone.utc).isoformat()}\n")
+
     if result.returncode != 0:
         raise RuntimeError(
-            f"pf9_rvtools.py exited with return code {result.returncode}"
+            f"pf9_rvtools.py exited with return code {result.returncode} — see {log_path}"
         )
+    log.info("RVTools: run log saved to %s", log_path)
 
 
 async def rvtools_loop(executor: ThreadPoolExecutor) -> None:

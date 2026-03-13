@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.62.0  
-**Last Updated**: March 12, 2026  
+**Version**: 1.63.0  
+**Last Updated**: March 13, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -454,6 +454,27 @@ docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 ---
 
 ## Appendix: Feature History by Version
+
+### RVTools Export Browser, Scheduler Logging, Migration Planner PDF Fixes (v1.63.0 ✅ Complete)
+
+#### Migration Planner PDF — Daily Schedule fixes
+- `get_migration_summary` (`api/migration_routes.py`) — `per_day` entries now include `fix_hours` and `downtime_hours` (were missing); computed from `vm_timing_map` + `vm_detail_map` built once per plan
+- **Summary PDF Section 4** (`generate_summary_pdf_report`) — 15-column daily table now includes `Fix(h)` and `Downtime(h)` columns
+- **Plan PDF Daily Schedule** (`generate_pdf_report`) — 11-column table now includes `Fix(h)` and `Downtime(h)` as final two columns; **Power State** column added (5th col: `On`/`Off`/`Susp`); VM Name, Tenant, OS columns wrapped with `Paragraph(text, s_cell8)` to prevent cell overflow; `NameError: name 's_cell' is not defined` (500 on PDF download) fixed — all three `Paragraph` refs corrected to `s_cell8`
+- **KPI total downtime** — removed `plan_ps` override that was replacing `total_downtime_hours` with the cutover-only value; KPI now reflects the full downtime including fix hours from `compute_project_fix_summary`
+
+#### `.gitignore` — `reports/` folder protection
+- Added `reports/` and `/reports/` patterns — prevents accidentally committing hourly RVTools Excel exports (confirmed zero git history for `reports/` before the fix)
+
+#### RVTools Export Browser — added directly to the existing **Reports tab** as a second sub-tab ("📁 RVTools Exports") — no new top-level tab added.
+- **File list table** — filename, date (UTC), size in MB, ⬇ Download button; files served from `/mnt/reports`; authenticated blob download via Bearer token
+- **Run History table** — shows last 100 rows from `inventory_runs` with started, finished, duration, colour-coded status badge, source, and notes columns
+- **Path traversal protection** — `GET /api/reports/rvtools/files/{filename}` rejects any filename containing `..`, `/`, or `os.sep`
+- **Scheduler run logs** — `_run_rvtools_sync()` now captures stdout+stderr into `/app/logs/rvtools_YYYYMMDD_HHMMSSZ.log`
+- **No new DB tables** — uses existing `inventory_runs` table; no migration required
+- **RBAC** — `reports:read` already granted to all 5 roles
+
+---
 
 ### Graph: Health Scores, Orphan Detection, Blast Radius & Delete Safety (v1.51.0 ✅ Complete)
 

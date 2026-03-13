@@ -54,11 +54,12 @@ This is the **frontend UI component** of the Platform9 Management System, built 
 
 ## 🌟 Features
 
-### 14 Management Tabs
+### 30+ Management Tabs
 - **Infrastructure**: Servers, Volumes, Snapshots, Networks, Subnets, Ports, Floating IPs
 - **Platform**: Domains, Projects, Flavors, Images, Hypervisors
 - **Management**: Users (with roles), History, Audit, Monitoring
 - **Admin Panel**: User management, roles, permissions, system audit (admin/superadmin only)
+- **Reports**: 20-report catalog with JSON preview + CSV export; **RVTools Exports** sub-tab with file browser and run history *(v1.63)*
 
 ### Role-Based UI
 - **Dynamic Tab Visibility**: Admin tab only visible to admin/superadmin users
