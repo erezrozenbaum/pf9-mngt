@@ -102,3 +102,29 @@ jobs:
   # A future sprint will wire these up against a docker-compose test stack
   # using GitHub Actions services + seeded test data (Phase O4 / Phase F1).
   # -------------------------------------------------------------------------
+
+  # -------------------------------------------------------------------------
+  # Job 4: Unit tests (no live stack required)
+  # Runs tests/test_health.py against a live API (skipped in CI since there
+  # is no stack) and the pure JWT unit tests which need no services at all.
+  # The health/metrics integration tests are skipped automatically unless
+  # the stack is reachable; JWT unit tests always run.
+  # -------------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests (JWT)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest python-jose requests
+
+      - name: Run JWT unit tests
+        run: python -m pytest tests/test_auth.py::TestJWTHelpers -v

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.65.3  
+**Version**: 1.65.4  
 **Last Updated**: March 15, 2026  
 **Audience**: System administrators and platform operators
 
@@ -141,8 +141,8 @@ objectClass: inetOrgPerson
 uid: jsmith
 cn: John Smith
 sn: Smith
-mail: jsmith@company.com
-userPassword: TemporaryPassword123!
+mail: jsmith@example.com
+userPassword: <your-temporary-password>
 EOF
 ```
 
@@ -325,7 +325,7 @@ SMTP_ENABLED=true
 SMTP_HOST=your-mail-server.com
 SMTP_PORT=587
 SMTP_USE_TLS=true
-SMTP_FROM_ADDRESS=pf9-mgmt@yourcompany.com
+SMTP_FROM_ADDRESS=pf9-mgmt@example.com
 
 # Restart worker
 docker compose restart pf9_notification_worker
@@ -2363,7 +2363,7 @@ allow_origins=["*"]  # Should be restricted
 ```python
 allow_origins=[
     "http://localhost:5173",  # Development
-    "https://pf9-mgmt.company.com",  # Production
+    "https://pf9-mgmt.example.com",  # Production
     os.getenv("ALLOWED_ORIGINS", "").split(",")
 ]
 ```

@@ -12,6 +12,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.65.4] - 2026-03-15
+
+### Fixed
+
+#### `pf9_ui` container reported `(unhealthy)` in production despite nginx serving traffic normally (`docker-compose.prod.yml`)
+- The `pf9_ui` healthcheck used `wget -qO- http://localhost:80`. On Alpine Linux, `localhost` resolves to `::1` (IPv6 first), but nginx binds only IPv4 (`0.0.0.0:80`), so the connection was refused even though nginx was working correctly. Changed the healthcheck to use `http://127.0.0.1:80` (explicit IPv4 loopback). Container now reports `(healthy)` immediately after the first check interval.
+
+### Added
+
+#### Automated test suite — `tests/test_health.py` and `tests/test_auth.py`
+- `tests/test_health.py` (9 tests): verifies `/health` returns 200, contains `{"status":"ok"}` and a `timestamp` field, is accessible without authentication, and returns `Content-Type: application/json`; verifies `/metrics` returns 200 unauthenticated; verifies `/api/metrics` and `/api/tenants` correctly reject unauthenticated requests with 401/403.
+- `tests/test_auth.py` (5 unit + 9 conditional integration tests): JWT unit tests use `python-jose` directly with no live stack — valid token decodes, expired/tampered/wrong-secret tokens are rejected, and `auth.py` is verified to use `hmac.compare_digest` (constant-time) for the default-admin password check. Integration tests for login, token-based access, and session revocation run only when `TEST_ADMIN_EMAIL`/`TEST_ADMIN_PASSWORD` env vars are provided.
+- CI job `unit-tests` added to `.github/workflows/ci.yml`: installs `pytest python-jose requests` and runs all JWT unit tests on every push/PR with no live stack required.
+
 ## [1.65.3] - 2026-03-15
 
 ### Fixed
@@ -1666,7 +1680,7 @@ Fix: introduced a dedicated `provisionsrv` Keystone service account (native Keys
 #### New Environment Variables
 | Variable | Description |
 |---|---|
-| `PROVISION_SERVICE_USER_EMAIL` | Keystone username for provisionsrv (e.g. `provisionsrv@domain.com`) |
+| `PROVISION_SERVICE_USER_EMAIL` | Keystone username for provisionsrv (e.g. `provisionsrv@example.com`) |
 | `PROVISION_SERVICE_USER_DOMAIN` | Keystone domain (default `Default`) |
 | `PROVISION_PASSWORD_KEY` | Fernet key for password decryption |
 | `PROVISION_USER_PASSWORD_ENCRYPTED` | Fernet-encrypted provisionsrv password |

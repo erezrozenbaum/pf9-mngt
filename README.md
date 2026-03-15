@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.65.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.65.4-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -559,7 +559,7 @@ cd pf9-mngt
 ### 2. Environment Configuration
 ```bash
 # Platform9 Authentication
-PF9_USERNAME=your-service-account@company.com
+PF9_USERNAME=your-service-account@example.com
 PF9_PASSWORD=your-secure-password
 PF9_AUTH_URL=https://your-cluster.platform9.com/keystone/v3
 PF9_USER_DOMAIN=Default
@@ -718,7 +718,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.65.3](CHANGELOG.md) — March 15, 2026
+**Current version:** [v1.65.4](CHANGELOG.md) — March 15, 2026
 
 **Development phase:** Production-hardened and ready for deployment. CI pipeline active, CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -763,10 +763,10 @@ pf9-mngt/
 **Environment file format — CRITICAL:**
 ```bash
 # ✅ CORRECT
-PF9_USERNAME=user@company.com
+PF9_USERNAME=user@example.com
 
 # ❌ WRONG
-PF9_USERNAME="user@company.com"
+PF9_USERNAME="user@example.com"
 ```
 
 **Security checklist for first-time setup:**
@@ -862,6 +862,10 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.65.4 — Production Healthcheck Fix & Automated Test Suite
+- ✅ **`pf9_ui` healthcheck fixed** — Alpine Linux resolves `localhost` to `::1` (IPv6), but nginx binds IPv4 only; changed healthcheck to `http://127.0.0.1:80` so the container correctly reports `(healthy)` in production
+- ✅ **Automated test suite added** — `tests/test_health.py` (9 tests) and `tests/test_auth.py` (JWT unit tests + conditional integration tests) added; CI now runs JWT unit tests on every push/PR with no live stack required
 
 ### v1.65.3 — Snapshot Worker Startup Performance Fix
 - **"Sync & Snapshot Now" no longer slow after restart** — snapshot worker now checks on-demand triggers first on every loop cycle; 60-second startup grace period prevents scheduled tasks from blocking the first on-demand run.
@@ -1306,4 +1310,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.65.3 | **Last Updated**: March 15, 2026
+**Project Status**: Production Ready | **Version**: 1.65.4 | **Last Updated**: March 15, 2026
