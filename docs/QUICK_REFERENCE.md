@@ -137,7 +137,10 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Snapshot Worker Startup Performance Fix** (v1.65.3 — NEW ✅):
+- **Production Healthcheck Fix & Automated Test Suite** (v1.65.4 — NEW ✅):
+  - **`pf9_ui` healthcheck fixed** — Alpine `localhost` resolves to `::1` (IPv6); nginx binds IPv4 only; changed to `http://127.0.0.1:80` — container now reports `(healthy)` in production
+  - **Automated test suite** — `tests/test_health.py` and `tests/test_auth.py` added; JWT unit tests run in CI on every push/PR; integration tests for login/logout/token revocation run with credentials
+- **Snapshot Worker Startup Performance Fix** (v1.65.3):
   - **"Sync & Snapshot Now" no longer slow after restart** — on-demand trigger check moved to top of scheduler loop; 60-second startup grace period prevents the full scheduled pipeline (policy-assign + RVTools + auto-snapshot) from blocking the first on-demand run after a container restart
 - **Snapshot Restore Bug Fix & Code Cleanup** (v1.65.2):
   - **"Sync & Snapshot Now" fixed** — the button now correctly reaches the API; missing `/api` prefix on `run-now` fetch calls caused a 405 (nginx forwarded to the React UI instead of the backend)
@@ -292,7 +295,7 @@ cp .env.template .env
 
 # 2. Edit .env with your actual credentials (CRITICAL: NO QUOTES around values)
 # CORRECT format:
-PF9_USERNAME=your-service-account@company.com
+PF9_USERNAME=your-service-account@example.com
 PF9_PASSWORD=your-secure-password
 PF9_AUTH_URL=https://your-cluster.platform9.com/keystone/v3
 PF9_USER_DOMAIN=Default
@@ -503,7 +506,7 @@ curl http://localhost:8001/auto-setup
 ```
 
 # INCORRECT format (don't use):
-# PF9_USERNAME="your-service-account@company.com"
+# PF9_USERNAME="your-service-account@example.com"
 
 # 3. Verify .env file is ignored by git
 git status  # Should not show .env file
@@ -882,9 +885,9 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8000/tenant-health/quo
 # Notification endpoints
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/smtp-status"             # SMTP connection status
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/preferences"              # List user notification preferences
-curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"event_type":"drift_critical","email":"user@company.com","enabled":true,"severity_min":"warning","delivery_mode":"immediate"}' "http://localhost:8000/notifications/preferences"  # Create/update preference
+curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"event_type":"drift_critical","email":"user@example.com","enabled":true,"severity_min":"warning","delivery_mode":"immediate"}' "http://localhost:8000/notifications/preferences"  # Create/update preference
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/history?limit=50"         # Delivery history
-curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"recipient":"admin@company.com"}' "http://localhost:8000/notifications/test-email"  # Send test email (admin only)
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"recipient":"admin@example.com"}' "http://localhost:8000/notifications/test-email"  # Send test email (admin only)
 curl -H "Authorization: Bearer <token>" "http://localhost:8000/notifications/admin/stats"              # Admin delivery statistics
 
 # Metering endpoints (v1.15 + v1.15.1 - Admin/Superadmin)
