@@ -137,7 +137,11 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Production Hardening** (v1.64.0 — NEW ✅):
+- **CI Pipeline + CORS + DB Indexes** (v1.65.0 — NEW ✅):
+  - **GitHub Actions CI** — `.github/workflows/ci.yml`: Python syntax check + flake8 + `docker compose config` validation on every push/PR
+  - **CORS production mode** — set `APP_ENV=production` to restrict `ALLOWED_ORIGINS` to nginx proxy only; dev origins excluded automatically
+  - **DB performance indexes** — `db/migrate_indexes.sql`: 8 indexes on `inventory_runs`, `activity_log`, `snapshots`, `migration_vms`, `tickets`, `runbook_executions`; applied on API startup
+- **Production Hardening** (v1.64.0):
   - **Docker Secrets** — DB, LDAP, SMTP, and JWT credentials moved from env vars to Docker Secrets; `docker-compose.prod.yml` wires them automatically
   - **LDAP FD leak fix** — `auth.py` LDAP methods (`get_all_users`, `create_user`, `delete_user`, `change_password`) now close connections in `finally` blocks
   - **Log rotation** — `RotatingFileHandler` added to all workers (10 MB × 5 backups); no more unbounded log files

@@ -718,9 +718,9 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.64.0](CHANGELOG.md) — March 15, 2026
+**Current version:** [v1.65.0](CHANGELOG.md) — March 15, 2026
 
-**Development phase:** Production-hardened and ready for deployment. Phases A–M complete. Port lockdown, Docker Secrets, log rotation, LDAP connection safety, nginx production config, and CORS hardening all implemented in v1.64.0.
+**Development phase:** Production-hardened and ready for deployment. CI pipeline active, CORS restricted in production mode, database performance indexes applied automatically on startup.
 
 **Platform:** Docker Compose with nginx TLS termination. All core containers (14) have restart policies and resource limits; a 15th `pf9_scheduler_worker` container handles automated collection, and `pf9_backup_worker` is added when `COMPOSE_PROFILES=backup` is set. Redis cache, rate limiting, and structured logging active.
 
@@ -862,6 +862,11 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.65.0 — CI Pipeline, CORS Hardening, DB Performance Indexes
+- ✅ **GitHub Actions CI** — `.github/workflows/ci.yml` runs on every push and PR: Python syntax check across all `.py` files, `flake8` critical-error scan, and `docker compose config` validation for both dev and prod overlays
+- ✅ **CORS production restriction** — when `APP_ENV=production`, dev-only origins (`localhost:5173`, `:3000`, `:8000`) are removed from `ALLOWED_ORIGINS`; only the nginx TLS proxy origins are accepted
+- ✅ **Database performance indexes** — `db/migrate_indexes.sql` adds 8 `CREATE INDEX IF NOT EXISTS` statements on `inventory_runs`, `activity_log`, `snapshots`, `migration_vms`, `tickets`, and `runbook_executions`; applied automatically on API startup
 
 ### v1.64.0 — Production Hardening Sprint
 - ✅ **Docker Secrets** — all sensitive credentials (DB password, LDAP bind password, SMTP password, JWT secret) migrated from environment variables to Docker Secrets; `docker-compose.prod.yml` wires them via `secrets:` blocks
@@ -1284,4 +1289,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.64.0 | **Last Updated**: March 15, 2026
+**Project Status**: Production Ready | **Version**: 1.65.0 | **Last Updated**: March 15, 2026

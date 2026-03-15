@@ -227,16 +227,23 @@ DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 # Security configuration
 ADMIN_USERNAME = os.getenv("PF9_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("PF9_ADMIN_PASSWORD")
+_PROD_MODE = os.getenv("APP_ENV", "").lower() == "production"
+
+# Production: only the nginx TLS proxy origin is valid.
+# Development: Vite dev server and direct API access are also allowed.
 ALLOWED_ORIGINS = [
-    "http://localhost:5173",   # React UI (Vite dev server)
-    "http://127.0.0.1:5173",  # React UI via 127.0.0.1
-    "http://localhost:3000",   # Alt dev port
-    "http://127.0.0.1:3000",
-    "http://localhost:8000",   # Direct API access
-    "http://127.0.0.1:8000",
-    "https://localhost",       # nginx TLS proxy (production)
-    "http://localhost",        # nginx HTTP (port 80)
+    "https://localhost",   # nginx TLS proxy (production + dev)
+    "http://localhost",    # nginx HTTP (port 80)
 ]
+if not _PROD_MODE:
+    ALLOWED_ORIGINS += [
+        "http://localhost:5173",   # Vite dev server
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",   # Alt dev port
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",   # Direct API access
+        "http://127.0.0.1:8000",
+    ]
 # Allow extra origins via comma-separated env var, e.g. PF9_ALLOWED_ORIGINS=https://myhost:5173
 for _extra in os.getenv("PF9_ALLOWED_ORIGINS", os.getenv("PF9_ALLOWED_ORIGIN", "")).split(","):
     _extra = _extra.strip()
@@ -573,6 +580,20 @@ async def startup_event():
     setup_snapshot_routes(app, db_conn)
     # Setup restore management routes
     setup_restore_routes(app, db_conn)
+
+    # Apply performance indexes migration (idempotent — CREATE INDEX IF NOT EXISTS)
+    try:
+        _idx_sql = os.path.join(os.path.dirname(__file__), "..", "db", "migrate_indexes.sql")
+        if os.path.exists(_idx_sql):
+            with open(_idx_sql) as _f:
+                _sql = _f.read()
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(_sql)
+            logger.info("Performance indexes migration applied")
+    except Exception as _exc:
+        logger.warning("Performance indexes migration skipped: %s", _exc)
+
     print(f"PF9 Management API started - Authentication: {'Enabled' if ENABLE_AUTHENTICATION else 'Disabled'}")
 
     # SLA daemon: check for breached SLA deadlines every 15 minutes
