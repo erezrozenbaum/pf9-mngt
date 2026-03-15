@@ -10,8 +10,13 @@ COPY . .
 
 # Bake the API base URL so the compiled JS makes absolute API calls via nginx.
 # Override VITE_API_BASE_URL at build time if your API lives at a different path.
-ARG VITE_API_BASE_URL=""
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+# Leave VITE_API_BASE and VITE_MONITORING_BASE unset (empty string default in
+# config.ts) so the built JS uses relative paths through the nginx proxy.
+# Override here only if your API lives at a non-standard path.
+ARG VITE_API_BASE=""
+ARG VITE_MONITORING_BASE=""
+ENV VITE_API_BASE=${VITE_API_BASE}
+ENV VITE_MONITORING_BASE=${VITE_MONITORING_BASE}
 
 RUN npm run build
 

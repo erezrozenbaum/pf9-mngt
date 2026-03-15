@@ -5313,7 +5313,7 @@ interface OvercommitProfile {
 }
 
 interface QuotaResult {
-  profile: string;
+  profile: string | OvercommitProfile;
   totals_allocated: { vcpu: number; ram_gb: number; ram_used_gb: number; disk_tb: number };
   totals_recommended: { vcpu: number; ram_gb: number; disk_tb: number };
   per_tenant: Array<{
@@ -5487,10 +5487,6 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
       setMsg("Overcommit profile updated.");
       setTimeout(() => setMsg(""), 3000);
     } catch (e: any) { setError(e.message); }
-  };
-
-  const saveInventory = async () => {
-    // Legacy: no longer used — inventory is read live from PCD
   };
 
   const addNodeProfile = async () => {
@@ -6098,7 +6094,6 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
   const [readinessScore, setReadinessScore] = useState<number | null>(null);
   const [gaps, setGaps] = useState<PcdGap[]>([]);
   const [running, setRunning] = useState(false);
-  const [savingSettings, setSavingSettings] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [sizingData, setSizingData] = useState<any>(null);
@@ -6107,7 +6102,7 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
 
   const loadGaps = async () => {
     try {
-      const g = await apiFetch(`/api/migration/projects/${projectId}/pcd-gaps?resolved=false`);
+      const g = await apiFetch<any>(`/api/migration/projects/${projectId}/pcd-gaps?resolved=false`);
       setGaps(g.gaps || []);
       if (g.readiness_score != null) setReadinessScore(Number(g.readiness_score));
     } catch { /* silent */ }
@@ -6116,12 +6111,12 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
   const loadCapacity = async () => {
     setCapacityError("");
     try {
-      const qr = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const qr = await apiFetch<any>(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
       if (qr?.quota) setQuotaSummary(qr.quota.totals_recommended);
-      const sr = await apiFetch(`/api/migration/projects/${projectId}/node-sizing`).catch(() => null);
+      const sr = await apiFetch<any>(`/api/migration/projects/${projectId}/node-sizing`).catch(() => null);
       if (sr?.sizing) {
         // Enrich sizing with live cluster data so node count reflects actual inventory
-        const lr = await apiFetch(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
+        const lr = await apiFetch<any>(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
         setSizingData(lr?.live?.node_count ? { ...sr.sizing, _live: lr.live } : sr.sizing);
       }
     } catch (e: any) { setCapacityError(e.message); }
@@ -6129,7 +6124,7 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
 
   const loadProject = async () => {
     try {
-      const resp = await apiFetch(`/api/migration/projects/${projectId}`);
+      const resp = await apiFetch<any>(`/api/migration/projects/${projectId}`);
       const p = resp.project || resp;
       if (p.pcd_auth_url) setPcdUrl(p.pcd_auth_url);
       if (p.pcd_region) setPcdRegion(p.pcd_region || "region-one");
@@ -6144,25 +6139,11 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  const saveSettings = async () => {
-    setSavingSettings(true);
-    setError("");
-    try {
-      await apiFetch(`/api/migration/projects/${projectId}/pcd-settings`, {
-        method: "PATCH",
-        body: JSON.stringify({ pcd_auth_url: pcdUrl.trim() || null, pcd_region: pcdRegion.trim() || "region-one" }),
-      });
-      setMsg("PCD settings saved.");
-      setTimeout(() => setMsg(""), 3000);
-    } catch (e: any) { setError(e.message); }
-    setSavingSettings(false);
-  };
-
   const runAnalysis = async () => {
     setRunning(true);
     setError("");
     try {
-      const result = await apiFetch(`/api/migration/projects/${projectId}/pcd-gap-analysis`, { method: "POST" });
+      const result = await apiFetch<any>(`/api/migration/projects/${projectId}/pcd-gap-analysis`, { method: "POST" });
       if (result.readiness_score != null) setReadinessScore(Number(result.readiness_score));
       await loadGaps();
       setMsg(`Gap analysis complete. Found ${(result.gap_counts?.total ?? (result.gaps || []).length)} gaps (${result.gap_counts?.critical ?? 0} critical).`);
@@ -8965,7 +8946,6 @@ function MigrationSummaryView({ projectId }: { projectId: number }) {
   const [summary, setSummary] = React.useState<MigrationSummaryData | null>(null);
   const [settings, setSettings] = React.useState<FixSettings | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const [settingsLoading, setSettingsLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [editSettings, setEditSettings] = React.useState<Partial<FixSettings>>({});
   const [saving, setSaving] = React.useState(false);
@@ -9006,9 +8986,6 @@ function MigrationSummaryView({ projectId }: { projectId: number }) {
   };
 
   const downloadSummaryBlob = async (ext: "xlsx" | "pdf") => {
-    const mime = ext === "xlsx"
-      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      : "application/pdf";
     const filename = `migration-summary-${projectId}.${ext}`;
     try {
       const token = getToken();

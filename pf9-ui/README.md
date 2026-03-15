@@ -147,9 +147,10 @@ pf9-ui/
 Create `.env` in `pf9-ui/` directory (optional):
 
 ```bash
-# API endpoints (defaults shown)
-VITE_API_URL=http://localhost:8000
-VITE_MONITORING_URL=http://localhost:8001
+# API endpoints — leave empty for relative-path requests (recommended)
+# Set to an absolute URL only if your dev API runs on a different host
+VITE_API_BASE=
+VITE_MONITORING_BASE=
 ```
 
 ### Vite Configuration
@@ -159,6 +160,7 @@ The `vite.config.ts` is pre-configured for React development with:
 - Development server on port 5173
 - Hot Module Replacement (HMR)
 - TypeScript support
+- **Full API proxy** — all routes handled by the FastAPI backend (`/auth`, `/api`, `/metrics/`, `/domains`, `/tenants`, `/servers`, etc.) are proxied to `VITE_API_BASE` (default `http://pf9_api:8000`); `/metrics/` routes are proxied to `VITE_MONITORING_BASE` (default `http://pf9_monitoring:8001`). This mirrors the production nginx routing exactly so dev and prod behave identically.
 
 ## 🎨 Styling
 

@@ -602,7 +602,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
         fetch(`${API_BASE}/api/nav/groups`, { headers }),
         fetch(`${API_BASE}/api/nav/items`, { headers }),
       ]);
-      if (dRes.ok) setDepartments(await dRes.json());
+      if (dRes.ok) setDepartments((await dRes.json()).departments || []);
       if (gRes.ok) setNavGroups(await gRes.json());
       if (iRes.ok) setNavItems(await iRes.json());
     } catch (e) { console.warn('Failed to load dept/nav data', e); }
