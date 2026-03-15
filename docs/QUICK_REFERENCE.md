@@ -137,7 +137,9 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Snapshot Restore Bug Fix & Code Cleanup** (v1.65.2 — NEW ✅):
+- **Snapshot Worker Startup Performance Fix** (v1.65.3 — NEW ✅):
+  - **"Sync & Snapshot Now" no longer slow after restart** — on-demand trigger check moved to top of scheduler loop; 60-second startup grace period prevents the full scheduled pipeline (policy-assign + RVTools + auto-snapshot) from blocking the first on-demand run after a container restart
+- **Snapshot Restore Bug Fix & Code Cleanup** (v1.65.2):
   - **"Sync & Snapshot Now" fixed** — the button now correctly reaches the API; missing `/api` prefix on `run-now` fetch calls caused a 405 (nginx forwarded to the React UI instead of the backend)
   - **Dead code removed** — 3 unauthenticated probe endpoints removed; duplicate route block removed; last `print()` replaced with `logger.info()`; dead `db_conn` parameter plumbing removed from snapshot/restore setup
   - **Redundant commits cleaned up** — 6 leftover `conn.commit()` calls removed from `integration_routes.py` and `runbook_routes.py`

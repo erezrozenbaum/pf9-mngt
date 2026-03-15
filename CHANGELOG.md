@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.65.3] - 2026-03-15
+
+### Fixed
+
+#### "Sync & Snapshot Now" was very slow to start after a fresh container restart (`snapshots/snapshot_scheduler.py`)
+- The snapshot worker's main loop initialized `next_policy_assign`, `next_auto_snapshots`, and `next_compliance_report` to `0`, so on every fresh start it immediately ran the full policy-assign + RVTools + auto-snapshot sequence (potentially minutes of blocking work) before checking for on-demand triggers. On-demand jobs now wait up to only 10 seconds: scheduled tasks are deferred by a 60-second startup grace period, and `check_on_demand_trigger()` is moved to the top of the loop so it runs before scheduled tasks on every iteration.
+
 ## [1.65.2] - 2026-03-15
 
 ### Fixed
