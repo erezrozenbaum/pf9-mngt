@@ -18,6 +18,13 @@
   - Immediately rotate in Platform9 console
   - Update local `.env`
 
+- [x] **Docker Secrets support implemented** *(Phase J5)*
+  - `api/secret_helper.py` reads from `/run/secrets/<name>` with env-var fallback
+  - Production: populate `secrets/db_password`, `secrets/ldap_admin_password`,
+    `secrets/pf9_password`, `secrets/jwt_secret` (see `secrets/README.md`)
+  - Development: leave secret files empty — falls back to `.env` vars automatically
+  - `secrets/*` is gitignored (only `secrets/README.md` is tracked)
+
 ### Database Security
 
 - [ ] **Unique database password set**
@@ -127,9 +134,19 @@
 
 ### Network Security
 
-- [ ] **TLS verification enabled**
-  - `PF9_VERIFY_TLS=true` in `.env`
-  - Except in dev/testing environments
+- [x] **TLS termination via nginx** *(Phase C)*
+  - HTTP (port 80) redirected to HTTPS (port 443)
+  - HSTS, X-Frame-Options, X-Content-Type-Options headers added
+
+- [x] **Production port hardening** *(Phase M2.2 / I.1)*
+  - `docker-compose.prod.yml` sets `ports: []` for `pf9_api` (8000), `pf9_ui` (5173/80), and `pf9_monitoring` (8001)
+  - Only nginx TLS proxy (80/443) is bound to host; all backend services are internal-only
+  - Verify: `docker compose -f docker-compose.yml -f docker-compose.prod.yml ps` shows no 8000/8001/5173 host ports
+
+- [x] **nginx prod config uses correct UI port** *(Phase M2.1)*
+  - `nginx/nginx.prod.conf` proxies `pf9_ui:80` (production nginx build)
+  - `docker-compose.prod.yml` bind-mounts `nginx.prod.conf` over the baked-in dev config
+  - Dev `nginx/nginx.conf` unchanged (still proxies `pf9_ui:5173` for Vite dev server)
 
 - [ ] **ALLOWED_ORIGIN configured**
   - `PF9_ALLOWED_ORIGIN=https://your-domain.com`

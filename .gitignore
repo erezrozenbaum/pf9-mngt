@@ -3,8 +3,10 @@
 .env.local
 .env.*.local
 
-# Secret files (contains passwords)
-secrets/
+# Secret files (contains passwords) — individual files are gitignored,
+# but the README is tracked for documentation.
+secrets/*
+!secrets/README.md
 
 # Python cache
 __pycache__/

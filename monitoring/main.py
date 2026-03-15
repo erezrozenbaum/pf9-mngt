@@ -76,6 +76,8 @@ async def monitoring_access_log(request: Request, call_next):
 ALLOWED_ORIGINS = [
     "http://localhost:5173",  # React UI
     "http://localhost:3000",  # Development
+    "https://localhost",      # nginx TLS proxy (production)
+    "http://localhost",       # nginx HTTP (port 80)
     os.getenv("PF9_ALLOWED_ORIGIN", "http://localhost:5173")
 ]
 ALLOWED_ORIGINS = [origin for origin in ALLOWED_ORIGINS if origin]

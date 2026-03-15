@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from cache import cached
+from secret_helper import read_secret
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class Pf9Client:
     def __init__(self) -> None:
         self.auth_url = os.environ["PF9_AUTH_URL"].rstrip("/")
         self.username = os.environ["PF9_USERNAME"]
-        self.password = os.environ["PF9_PASSWORD"]
+        self.password = read_secret("pf9_password", env_var="PF9_PASSWORD")
         self.user_domain = os.getenv("PF9_USER_DOMAIN", "Default")
         self.project_name = os.environ["PF9_PROJECT_NAME"]
         self.project_domain = os.getenv("PF9_PROJECT_DOMAIN", "Default")

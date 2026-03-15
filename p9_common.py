@@ -921,7 +921,7 @@ def neutron_list(session: requests.Session, resource: str):
 
 def ensure_admin_role_for_service_user():
     """
-    Ensure snapshot@ccc.co.il has admin role in every tenant/project.
+    Ensure the snapshot service account has admin role in every tenant/project.
     Uses Keystone session and credentials from CFG.
     """
     try:

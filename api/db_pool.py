@@ -24,6 +24,8 @@ from contextlib import contextmanager
 import psycopg2
 from psycopg2 import pool
 
+from secret_helper import read_secret
+
 logger = logging.getLogger("pf9.db_pool")
 
 # ---------------------------------------------------------------------------
@@ -38,13 +40,13 @@ POOL_MAX_CONN = int(os.getenv("DB_POOL_MAX_CONN", "10"))
 
 
 def _db_params() -> dict:
-    """Return database connection parameters from environment."""
+    """Return database connection parameters from environment / Docker secrets."""
     return dict(
         host=os.getenv("PF9_DB_HOST", "db"),
         port=int(os.getenv("PF9_DB_PORT", "5432")),
         dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
         user=os.getenv("PF9_DB_USER", "pf9"),
-        password=os.getenv("PF9_DB_PASSWORD", ""),
+        password=read_secret("db_password", env_var="PF9_DB_PASSWORD"),
     )
 
 

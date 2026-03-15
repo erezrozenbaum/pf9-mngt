@@ -1,5 +1,6 @@
 """
-One-time setup script: create provisionsrv@ccc.co.il in PCD Keystone.
+One-time setup script: create the provisionsrv service account in PCD Keystone.
+Configure the account email via the PROVISION_SERVICE_USER_EMAIL env var.
 Run inside the API container:
   docker exec pf9_api python3 /app/setup_provision_user.py
 

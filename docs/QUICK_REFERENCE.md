@@ -137,7 +137,15 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **RVTools Exports Browser** (v1.63.0 — NEW ✨):
+- **Production Hardening** (v1.64.0 — NEW ✅):
+  - **Docker Secrets** — DB, LDAP, SMTP, and JWT credentials moved from env vars to Docker Secrets; `docker-compose.prod.yml` wires them automatically
+  - **LDAP FD leak fix** — `auth.py` LDAP methods (`get_all_users`, `create_user`, `delete_user`, `change_password`) now close connections in `finally` blocks
+  - **Log rotation** — `RotatingFileHandler` added to all workers (10 MB × 5 backups); no more unbounded log files
+  - **nginx prod config** — `nginx/nginx.prod.conf` targets `pf9_ui:80` (Dockerfile.prod); dev `nginx.conf` unchanged (Vite :5173)
+  - **Port hardening** — `docker-compose.prod.yml` suppresses `pf9_api:8000`, `pf9_ui:5173`, `pf9_monitoring:8001` host ports; all traffic via TLS nginx
+  - **CORS fix** — `https://localhost` added to `ALLOWED_ORIGINS` in API and monitoring services
+  - **`startup_prod.ps1`** — production startup script with Secrets pre-flight check and port-isolation verification
+- **RVTools Exports Browser** (v1.63.0):
   - "📁 RVTools Exports" sub-tab inside the Reports tab — visible to all roles (inherits `reports:read`)
   - **File list table**: filename, date (UTC), size in MB, ⬇ Download — sorted newest-first; authenticated blob download
   - **Run History table**: started, finished, duration, status badge (green=success/blue=running/red=failed), source, notes; last 100 `inventory_runs` rows by default

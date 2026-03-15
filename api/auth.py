@@ -28,6 +28,8 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 
+from secret_helper import read_secret
+
 from db_pool import get_connection
 
 # Configuration from environment
@@ -37,7 +39,7 @@ LDAP_PORT = int(os.getenv("LDAP_PORT", "389"))
 LDAP_BASE_DN = os.getenv("LDAP_BASE_DN", "dc=pf9mgmt,dc=local")
 LDAP_USER_DN = os.getenv("LDAP_USER_DN", "ou=users,dc=pf9mgmt,dc=local")
 
-_jwt_env = os.getenv("JWT_SECRET_KEY", "")
+_jwt_env = read_secret("jwt_secret", env_var="JWT_SECRET_KEY")
 if not _jwt_env:
     _jwt_env = secrets.token_urlsafe(48)
     logger.warning(
@@ -180,13 +182,14 @@ class LDAPAuthenticator:
 
     def get_all_users(self) -> List[Dict[str, Any]]:
         """Get all users from LDAP"""
+        conn = None
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
             
             # Bind as admin first
             admin_dn = f"cn=admin,{self.base_dn}"
-            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', '')
+            admin_password = read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD")
             conn.simple_bind_s(admin_dn, admin_password)
             
             # Search for all users
@@ -207,22 +210,28 @@ class LDAPAuthenticator:
                         'lastName': attrs.get('sn', [b''])[0].decode() if 'sn' in attrs else ''
                     })
             
-            conn.unbind_s()
             return users
             
         except Exception as e:
             logger.error("Error getting all LDAP users: %s", e)
             return []
+        finally:
+            if conn is not None:
+                try:
+                    conn.unbind_s()
+                except Exception:
+                    pass
 
     def create_user(self, username: str, email: str, password: str, full_name: str = None) -> bool:
         """Create a new user in LDAP"""
+        conn = None
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
             
             # Bind as admin
             admin_dn = f"cn=admin,{self.base_dn}"
-            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', '')
+            admin_password = read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD")
             conn.simple_bind_s(admin_dn, admin_password)
             
             # Prepare user entry
@@ -249,57 +258,72 @@ class LDAPAuthenticator:
                 user_attrs.append(('givenName', [first_name.encode()]))
             
             conn.add_s(user_dn, user_attrs)
-            conn.unbind_s()
-            
             logger.info("User %s created successfully in LDAP", username)
             return True
 
         except Exception as e:
             logger.error("Error creating user %s in LDAP: %s", username, e)
             return False
+        finally:
+            if conn is not None:
+                try:
+                    conn.unbind_s()
+                except Exception:
+                    pass
 
     def delete_user(self, username: str) -> bool:
         """Delete a user from LDAP"""
+        conn = None
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
             
             # Bind as admin
             admin_dn = f"cn=admin,{self.base_dn}"
-            admin_password = os.getenv('LDAP_ADMIN_PASSWORD', '')
+            admin_password = read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD")
             conn.simple_bind_s(admin_dn, admin_password)
             
             # Delete user
             user_dn = f"cn={username},{self.user_dn}"
             conn.delete_s(user_dn)
-            conn.unbind_s()
-            
             logger.info("User %s deleted successfully from LDAP", username)
             return True
 
         except Exception as e:
             logger.error("Error deleting user %s from LDAP: %s", username, e)
             return False
+        finally:
+            if conn is not None:
+                try:
+                    conn.unbind_s()
+                except Exception:
+                    pass
 
     def change_password(self, username: str, new_password: str) -> bool:
         """Reset a user's LDAP password (admin operation using SSHA hash)."""
         import base64
+        conn = None
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
             admin_dn = f"cn=admin,{self.base_dn}"
-            conn.simple_bind_s(admin_dn, os.getenv('LDAP_ADMIN_PASSWORD', ''))
+            conn.simple_bind_s(admin_dn, read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD"))
             salt = secrets.token_bytes(4)
             h = hashlib.sha1(new_password.encode('utf-8') + salt)
             hashed = '{SSHA}' + base64.b64encode(h.digest() + salt).decode()
             user_dn = f"cn={username},{self.user_dn}"
             conn.modify_s(user_dn, [(ldap.MOD_REPLACE, 'userPassword', [hashed.encode('utf-8')])])
-            conn.unbind_s()
             logger.info("Password changed for user %s", username)
             return True
         except Exception as e:
             logger.error("Error changing password for %s: %s", username, e)
             return False
+        finally:
+            if conn is not None:
+                try:
+                    conn.unbind_s()
+                except Exception:
+                    pass
 
 # JWT Token Management
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):

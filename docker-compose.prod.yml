@@ -3,11 +3,11 @@
 #
 # What this changes vs. docker-compose.yml:
 #   - dev tools (pgAdmin, phpLDAPadmin) moved to opt-in "dev" profile
-#   - PostgreSQL and LDAP ports NOT bound to host
-#   - API: 4 Gunicorn workers + worker recycling
+#   - PostgreSQL, LDAP, Redis, API, UI, and monitoring ports NOT bound to host
+#     (all traffic must pass through the nginx TLS reverse proxy on 80/443)
+#   - API: 4 Gunicorn workers + worker recycling + rate-limiter on
 #   - UI: nginx production build (Dockerfile.prod) instead of Vite dev server
-#   - Redis rate-limiter enabled by default
-#   - Redis port NOT bound to host
+#   - nginx: uses nginx.prod.conf (UI upstream on :80, no HMR websocket upgrade)
 
 services:
 
@@ -31,8 +31,10 @@ services:
 
   # -------------------------------------------------------------------------
   # API — 4 workers, worker recycling, rate-limiter on by default
+  #       port NOT bound to host — all access via nginx TLS proxy
   # -------------------------------------------------------------------------
   pf9_api:
+    ports: []
     command: >
       gunicorn main:app
       -w 4
@@ -48,11 +50,13 @@ services:
   # -------------------------------------------------------------------------
   # UI — nginx production build (two-stage: npm build → nginx:alpine)
   #      Requires pf9-ui/Dockerfile.prod
+  #      port NOT bound to host — accessed only via nginx TLS proxy
   # -------------------------------------------------------------------------
   pf9_ui:
     build:
       context: ./pf9-ui
       dockerfile: Dockerfile.prod
+    ports: []
     environment: {}    # Remove VITE_API_TARGET — not needed in prod nginx build
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:80"]
@@ -60,3 +64,17 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+
+  # -------------------------------------------------------------------------
+  # Monitoring — port NOT bound to host in production
+  # -------------------------------------------------------------------------
+  pf9_monitoring:
+    ports: []
+
+  # -------------------------------------------------------------------------
+  # nginx — use prod config (UI upstream on :80, no Vite HMR upgrade)
+  # -------------------------------------------------------------------------
+  nginx:
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro

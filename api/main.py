@@ -234,6 +234,8 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:8000",   # Direct API access
     "http://127.0.0.1:8000",
+    "https://localhost",       # nginx TLS proxy (production)
+    "http://localhost",        # nginx HTTP (port 80)
 ]
 # Allow extra origins via comma-separated env var, e.g. PF9_ALLOWED_ORIGINS=https://myhost:5173
 for _extra in os.getenv("PF9_ALLOWED_ORIGINS", os.getenv("PF9_ALLOWED_ORIGIN", "")).split(","):

@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.63.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.64.0-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -718,9 +718,9 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.63.0](CHANGELOG.md) — March 13, 2026
+**Current version:** [v1.64.0](CHANGELOG.md) — March 15, 2026
 
-**Development phase:** Active feature development. Phases A–E complete. Pre-production hardening (port lockdown, off-machine backups, log rotation) is planned before first production deployment.
+**Development phase:** Production-hardened and ready for deployment. Phases A–M complete. Port lockdown, Docker Secrets, log rotation, LDAP connection safety, nginx production config, and CORS hardening all implemented in v1.64.0.
 
 **Platform:** Docker Compose with nginx TLS termination. All core containers (14) have restart policies and resource limits; a 15th `pf9_scheduler_worker` container handles automated collection, and `pf9_backup_worker` is added when `COMPOSE_PROFILES=backup` is set. Redis cache, rate limiting, and structured logging active.
 
@@ -862,6 +862,16 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.64.0 — Production Hardening Sprint
+- ✅ **Docker Secrets** — all sensitive credentials (DB password, LDAP bind password, SMTP password, JWT secret) migrated from environment variables to Docker Secrets; `docker-compose.prod.yml` wires them via `secrets:` blocks
+- ✅ **LDAP FD leak fix** — `get_all_users()`, `create_user()`, `delete_user()`, `change_password()` in `auth.py` now close LDAP connections in `finally` blocks — eliminates file-descriptor exhaustion under error conditions
+- ✅ **Log rotation** — `logging.handlers.RotatingFileHandler` added to API, scheduler, backup, and metering workers; log files cap at 10 MB × 5 backups
+- ✅ **nginx production config** — `nginx/nginx.prod.conf` routes UI traffic to `pf9_ui:80` (Dockerfile.prod nginx) instead of the Vite dev port `:5173`; `docker-compose.prod.yml` mounts it automatically
+- ✅ **Port hardening** — `docker-compose.prod.yml` suppresses host-exposed ports for `pf9_api`, `pf9_ui`, and `pf9_monitoring`; all traffic flows exclusively through the TLS nginx reverse-proxy
+- ✅ **CORS fix** — `https://localhost` added to `ALLOWED_ORIGINS` in both `api/main.py` and `monitoring/main.py`; fixes CORS preflight failures when accessing the stack via browser on the same host
+- ✅ **Source file cleanup** — domain-specific email placeholders removed from `api/vm_provisioning_service_user.py`, `api/setup_provision_user.py`, and `p9_common.py`; replaced with generic `yourdomain.com` form
+- ✅ **`startup_prod.ps1`** — new production startup script: verifies Docker Secrets, runs pre-flight checks, starts the prod-profile stack, and confirms port isolation
 
 ### v1.63.0 — RVTools Export Browser + Migration Planner PDF Fixes
 - ✅ **RVTools Exports Browser** — "📁 RVTools Exports" sub-tab inside Reports: file list (filename, size, date) with one-click authenticated download + run history table showing the last 100 `inventory_runs` entries (started, finished, duration, status badge)
@@ -1274,4 +1284,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Active Development | **Version**: 1.63.0 | **Last Updated**: March 13, 2026
+**Project Status**: Production Ready | **Version**: 1.64.0 | **Last Updated**: March 15, 2026
