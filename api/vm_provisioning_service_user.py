@@ -9,7 +9,7 @@ Why this exists
 ---------------
 OpenStack resolves every resource lookup (Security Groups, Networks, Cinder
 volumes) against the **project scope baked into the auth token**.  The main
-service account (`erez@ccc.co.il`) is scoped to the `service` project, so
+service account (configured via `PF9_USERNAME` env var) is scoped to the `service` project, so
 using its token to provision resources into `ORG1` fails with "SG not found",
 "network not found", or Cinder 400 Malformed URL.
 

@@ -3,21 +3,29 @@
 ## 🛡️ Security Status Overview
 
 **Last Updated**: March 2026
-**Security Level**: 🟡 **MEDIUM** - RBAC implemented, additional hardening recommended
+**Security Level**: � **HIGH** — Active hardening in place; production-ready with TLS, RBAC, injection mitigations, session revocation, and Docker secrets support.
 
 ### ✅ **Implemented Security Features**
 
 1. **LDAP Authentication**: Enterprise OpenLDAP integration with configurable directory structure
 2. **Role-Based Access Control (RBAC)**: 5-tier permission system (Viewer, Operator, Admin, Superadmin, Technical) with middleware enforcement
 3. **JWT Token Management**: Secure Bearer token authentication with 480-minute sessions
-4. **Permission Enforcement**: Automatic resource-level permission checks on all endpoints
-5. **Audit Logging**: Complete authentication and authorization event tracking (90-day retention)
-6. **User Management**: LDAP user creation, role assignment, and permission management
-7. **Environment-Based Configuration**: Credentials properly externalized to `.env` file
-8. **SQL Injection Prevention**: Parameterized queries throughout codebase
-9. **Git Security**: Credentials excluded from version control via .gitignore
-10. **Type Safety**: TypeScript usage in UI prevents certain classes of vulnerabilities
-11. **Multi-Factor Authentication (MFA)**: TOTP-based 2FA with Google Authenticator, backup recovery codes, and two-step JWT challenge flow
+4. **Session Revocation**: All sessions tracked in `user_sessions` table; logout immediately invalidates the token server-side (Phase B4)
+5. **Permission Enforcement**: Automatic resource-level permission checks on all endpoints
+6. **Audit Logging**: Complete authentication and authorization event tracking (90-day retention)
+7. **User Management**: LDAP user creation, role assignment, and permission management
+8. **Docker Secrets Support**: Critical credentials (DB password, LDAP password, PF9 password, JWT key) read from `/run/secrets/` files in production with env-var fallback for dev (Phase J5)
+9. **SQL Injection Prevention**: Parameterized queries throughout codebase
+10. **LDAP Injection Prevention**: All LDAP filter values escaped with `ldap.filter.escape_filter_chars()` (Phase A3)
+11. **Command Injection Prevention**: All SSH commands use `shlex.quote()` + allowlist validation (Phase A4)
+12. **XSS Prevention**: DOMPurify applied to all user-generated HTML rendered in the UI (Phase B1)
+13. **Git Security**: Credentials excluded from version control via .gitignore; `secrets/` directory gitignored with exception for README
+14. **Type Safety**: TypeScript usage in UI prevents certain classes of vulnerabilities
+15. **Multi-Factor Authentication (MFA)**: TOTP-based 2FA with Google Authenticator, backup recovery codes, and two-step JWT challenge flow
+16. **CORS Hardening**: `allow_origins` derived from `ALLOWED_ORIGINS` env var; wildcard `*` removed (Phase B3)
+17. **Webhook HMAC Verification**: Incoming webhook payloads validated with HMAC-SHA256 signature (Phase E3)
+18. **Backup Integrity**: HMAC-SHA256 checksums stored and verified for backup archives (Phase E5)
+19. **LDAP File Descriptor Safety**: All LDAP connection methods use `try/finally` to guarantee `conn.unbind_s()` on both success and exception paths (Phase M2.3)
 
 ---
 
@@ -268,7 +276,25 @@ curl -X GET "http://localhost:8000/auth/audit?action=permission_denied&days=30" 
 
 ## 🔧 Production Security Configuration
 
-### Required Environment Variables
+### Option A: Docker Secrets (Recommended for Production)
+
+Sensitive credentials are read from files under `./secrets/` (mounted into the container
+at `/run/secrets/<name>`). See [secrets/README.md](../secrets/README.md) for the full
+mapping. The API falls back to environment variables when the file is empty, so dev
+environments still work with just a `.env` file.
+
+```bash
+# Production setup
+printf 'your-db-password'       > secrets/db_password
+printf 'your-ldap-admin-pass'   > secrets/ldap_admin_password
+printf 'your-pf9-api-password'  > secrets/pf9_password
+python -c "import secrets; print(secrets.token_urlsafe(48), end='')" > secrets/jwt_secret
+
+# Verify — secrets/ is gitignored except README
+git status secrets/
+```
+
+### Option B: Environment Variables (Dev / Legacy)
 
 Create `.env` file with secure configuration:
 
@@ -384,24 +410,29 @@ server {
 
 ## 🚨 Security Hardening Recommendations
 
-### Priority 1: Critical (Fix Before Production)
+### Priority 1: Critical (Production Checklist)
 
-1. **Change Default Passwords**
-  - [ ] Set secure `LDAP_ADMIN_PASSWORD` in `.env` file
+1. **Change Default Passwords** (required before first deploy)
+  - [ ] Set secure `LDAP_ADMIN_PASSWORD` in `.env` file (or `secrets/ldap_admin_password`)
    - [ ] Change all default user passwords
-   - [ ] Generate secure `JWT_SECRET_KEY` (64+ characters)
+   - [x] Generate secure `JWT_SECRET_KEY` — reads from `secrets/jwt_secret` with env-var fallback
    - [ ] Use strong `POSTGRES_PASSWORD` (32+ characters)
 
-2. **Restrict CORS Policy**
-   - [ ] Replace `allow_origins=["*"]` with specific domains
-   - [ ] Set `CORS_ORIGINS` environment variable
-   - [ ] Test with production domain
+2. **Restrict CORS Policy** ✅ *(Phase B3)*
+   - [x] `allow_origins` derived from `ALLOWED_ORIGINS` env var — wildcard `*` removed
+   - [x] `TrustedHostMiddleware` added to reject requests with unexpected Host headers
 
-3. **Implement HTTPS** ✅ *(deployed in Phase C)*
+3. **Implement HTTPS** ✅ *(Phase C)*
    - [x] nginx reverse proxy deployed — see `nginx/` directory
    - [x] HTTP→HTTPS redirect on port 80
    - [x] HSTS, X-Frame-Options, X-Content-Type-Options headers added
+   - [x] All API/UI/monitoring ports closed in `docker-compose.prod.yml` — only nginx 80/443 exposed (Phase M2.2)
    - [ ] Replace `nginx/certs/server.crt` / `server.key` with a real CA-signed certificate for production
+
+4. **Docker Secrets** ✅ *(Phase J5)*
+   - [x] `api/secret_helper.py` reads from `/run/secrets/` with env-var fallback
+   - [x] DB password, LDAP admin password, PF9 password, JWT key all use `read_secret()`
+   - [x] `secrets/` directory gitignored; placeholder files included so Docker starts without errors
 
 ### Priority 2: High (Recommended)
 

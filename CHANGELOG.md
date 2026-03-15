@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.64.0] - 2026-03-15
+
+### Fixed / Security — Production Hardening
+
+#### Fix: Production UI returned 502 Bad Gateway on every page load (`nginx/nginx.prod.conf` — new file)
+- The dev nginx config proxied the UI container on port 5173 (Vite dev server). The production build serves on port 80 instead, so every request through the nginx reverse proxy failed with 502.
+- Added a separate `nginx/nginx.prod.conf` that proxies `pf9_ui:80` (production two-stage build).
+- `docker-compose.prod.yml` now bind-mounts this config over the baked-in dev config at runtime.
+
+#### Security: Backend ports no longer exposed to host in production (`docker-compose.prod.yml`)
+- In development, ports 8000 (API), 5173 (UI), and 8001 (Monitoring) are bound to the host for convenience.
+- In production those same ports remained open, allowing anyone on the network to hit the API and monitoring endpoints directly — bypassing the nginx TLS proxy entirely.
+- `docker-compose.prod.yml` now sets `ports: []` for `pf9_api`, `pf9_ui`, and `pf9_monitoring`. All traffic in production must go through nginx on 443.
+
+#### Fix: LDAP connections leaked open file descriptors on errors (`api/auth.py`)
+- `get_all_users()`, `create_user()`, `delete_user()`, and `change_password()` all opened an LDAP connection and closed it only on the happy path. Any exception thrown after bind but before unbind would leave the file descriptor open indefinitely, eventually exhausting the process's FD limit under load or repeated errors.
+- All four methods refactored to use `try/finally` — the LDAP connection is always released regardless of whether the operation succeeds or raises.
+
+#### Fix: OpenLDAP image version pinned to prevent silent breaking upgrades (`docker-compose.yml`)
+- The compose file previously pulled `osixia/openldap:latest`. A `docker compose pull` mid-deployment could upgrade to a new major version with breaking configuration changes and no warning.
+- Image pinned to `osixia/openldap:1.5.0`.
+
+#### Fix: Container log rotation added — prevents disk exhaustion on long-running deployments (`docker-compose.yml`)
+- No log rotation was configured on any container. On a production host running for weeks or months, json-file logs grow without bound and can fill the disk.
+- Added `logging: driver: "json-file"` with `max-size` and `max-file` limits on all 11 services: 50 MB × 5 files for the API, 20 MB × 3 files for UI/Monitoring/workers, 10 MB × 3 files for LDAP/Redis/nginx.
+
+#### Security: Docker Secrets support — sensitive credentials read from secret files with env-var fallback (`api/secret_helper.py`, `api/auth.py`, `api/db_pool.py`, `api/pf9_control.py`)
+- Passwords and keys were read directly from environment variables, which are visible in `docker inspect` output, container process listings, and logging frameworks that dump env at startup.
+- New `api/secret_helper.py` provides `read_secret(name, env_var, default)`: reads from the Docker Secrets file at `/run/secrets/<name>` first; falls back to the environment variable if the file is absent or empty. This means dev still works with `.env` and production can use Docker Secrets without any code changes.
+- Wired up for all four sensitive values: database password (`db_pool.py`), LDAP admin password and JWT signing key (`auth.py`), and Platform9 service password (`pf9_control.py`).
+- `docker-compose.yml` has the top-level `secrets:` block and `pf9_api` is wired to all four secrets.
+- `secrets/` directory contains empty placeholder files so `docker compose up` works in dev without populating them. `.gitignore` excludes the secret files but tracks `secrets/README.md` which explains the setup.
+
+#### Docs: Security guide updated to reflect all active mitigations (`docs/SECURITY.md`, `docs/SECURITY_CHECKLIST.md`)
+- `SECURITY.md` overall status raised to 🟢 HIGH; implemented features list expanded to cover session revocation, LDAP injection prevention, command injection prevention, XSS (DOMPurify), CORS hardening, webhook HMAC validation, backup integrity, Docker Secrets, and LDAP FD safety. "Production Security Configuration" section now shows Option A (Docker Secrets, recommended) and Option B (env vars).
+- `SECURITY_CHECKLIST.md` updated with completed entries for Docker Secrets, TLS nginx proxy, port hardening, and production nginx config.
+
+---
+
 ## [1.63.0] - 2026-03-13
 
 ### Added / Fixed — Migration Planner PDF Improvements, RVTools Export Browser, Scheduler Run Logging

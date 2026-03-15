@@ -147,6 +147,18 @@ services:
       - ldap
       - redis
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    # J5: Docker secrets — mounted at /run/secrets/<name> when files exist.
+    # Falls back to environment variables if secret files are absent (dev mode).
+    secrets:
+      - db_password
+      - ldap_admin_password
+      - pf9_password
+      - jwt_secret
     healthcheck:   # C5
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -170,6 +182,11 @@ services:
     depends_on:
       - pf9_api
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     healthcheck:   # C5
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173"]
       interval: 30s
@@ -201,6 +218,11 @@ services:
     depends_on:
       - pf9_api
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 30s
@@ -265,7 +287,7 @@ services:
 
   # LDAP Directory Service for Authentication
   ldap:
-    image: osixia/openldap:latest
+    image: osixia/openldap:1.5.0
     container_name: pf9_ldap
     environment:
       LDAP_ORGANISATION: "${LDAP_ORGANISATION:-Platform9 Management}"
@@ -282,6 +304,11 @@ services:
       - ldap_data:/var/lib/ldap
       - ldap_config:/etc/ldap/slapd.d
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "sh", "-c", "ldapsearch -x -D \"$$LDAP_ADMIN_DN\" -w \"$$LDAP_ADMIN_PASSWORD\" -H ldap://localhost -b $$LDAP_BASE_DN -s base"]
       interval: 30s
@@ -323,6 +350,11 @@ services:
     depends_on:
       - db
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -375,6 +407,11 @@ services:
     depends_on:
       - db
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -409,6 +446,11 @@ services:
       - db
       - ldap
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -453,6 +495,11 @@ services:
       - pf9_monitoring
       - pf9_api
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -474,6 +521,11 @@ services:
     depends_on:
       - db
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -486,6 +538,11 @@ services:
     container_name: pf9_redis
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -507,6 +564,11 @@ services:
       - pf9_api
       - pf9_ui
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -528,4 +590,24 @@ volumes:
       o: "addr=${NFS_BACKUP_SERVER:-},nfsvers=${NFS_VERSION:-3},nolock,soft,rw,timeo=30"
       device: ":${NFS_BACKUP_DEVICE:-}"
 
-
+# ---------------------------------------------------------------------------
+# Docker Secrets — optional but recommended for production.
+# Create each file under ./secrets/ (which is in .gitignore).
+# Example:
+#   echo "supersecret" > secrets/db_password
+#   echo "my-ldap-pass" > secrets/ldap_admin_password
+#   echo "my-pf9-pass"  > secrets/pf9_password
+#   echo "my-jwt-key"   > secrets/jwt_secret
+#
+# When the secret files exist the API will read them instead of the
+# corresponding environment variables (see api/secret_helper.py).
+# ---------------------------------------------------------------------------
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  ldap_admin_password:
+    file: ./secrets/ldap_admin_password
+  pf9_password:
+    file: ./secrets/pf9_password
+  jwt_secret:
+    file: ./secrets/jwt_secret

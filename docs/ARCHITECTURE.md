@@ -1531,30 +1531,27 @@ graph TD
 
 **Production Requirements**:
 - Restricted CORS policy (configure `CORS_ORIGINS` in `.env`)
-- HTTPS/TLS encryption via reverse proxy
-- Secure `.env` file permissions
+- HTTPS/TLS encryption via reverse proxy (nginx — see `nginx/nginx.prod.conf`)
+- Docker Secrets for sensitive credentials (`secrets/db_password`, `ldap_admin_password`, `pf9_password`, `jwt_secret`) — see `secrets/README.md`
+- Secure `.env` file permissions (`chmod 600 .env`) if not using Docker Secrets
 - Regular credential rotation
 
 ### Network Security
-**Current Topology**:
+**Development Topology** (default `docker-compose.yml`):
 ```
-Internet → [No TLS] → Services
-              ↓
-        [HTTP Only]
-              ↓
-    Platform9 Cluster
+Internet → [No TLS, direct ports] → pf9_api:8000, pf9_ui:5173, pf9_monitoring:8001
 ```
 
-**Recommended Topology**:
+**Production Topology** (`docker-compose.yml` + `docker-compose.prod.yml`):
 ```
-Internet → [Reverse Proxy + TLS] → [Internal Network] → Services
-                     ↓
-              [Certificate Management]
-                     ↓
-             [Encrypted Communication] 
-                     ↓
-            Platform9 Cluster (HTTPS)
+Internet → nginx (443/TLS) → [Docker internal network] → pf9_api:8000
+                                                        → pf9_ui:80  (prod build)
+                                                        → pf9_monitoring:8001 (internal)
 ```
+
+In production, `docker-compose.prod.yml` sets `ports: []` for `pf9_api`, `pf9_ui`, and `pf9_monitoring` — these services are reachable only on the internal Docker network. All external traffic goes through nginx on port 443.
+
+> **Note on UI port**: In development, `pf9_ui` runs the Vite dev server on `:5173`. In production (`Dockerfile.prod`), it builds static assets served by an nginx process on `:80`. Architecture diagrams showing `:5173` describe the development configuration.
 
 ## 🔧 Configuration Management
 

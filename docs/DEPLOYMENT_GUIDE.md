@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.4
-**Last Updated**: March 12, 2026  
+**Version**: 2.5
+**Last Updated**: March 15, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative**: See [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) for the Kubernetes design plan (not yet implemented)
@@ -1763,7 +1763,7 @@ The setting is stored in the database (`copilot_config` table) and takes effect 
 ### Pre-Production Checklist
 
 - [ ] All default passwords changed
-- [ ] JWT secret regenerated (min 64 chars) and set as `JWT_SECRET_KEY` in `.env`
+- [ ] JWT secret regenerated (min 64 chars) and set as `JWT_SECRET_KEY` in `.env` (or Docker Secret)
 - [ ] LDAP admin password secured
 - [ ] SSL/TLS certificates installed (nginx reverse proxy)
 - [ ] Firewall rules configured — only ports 80/443 exposed externally
@@ -1778,6 +1778,9 @@ The setting is stored in the database (`copilot_config` table) and takes effect 
 - [ ] Monitoring & alerting configured
 - [ ] Access control policies documented
 - [ ] Incident response plan created
+- [ ] Docker Secrets configured (or `.env` permissions locked to `600`)
+- [ ] Container log rotation verified (already set in `docker-compose.yml`)
+- [ ] OpenLDAP image version pinned (already `osixia/openldap:1.5.0` in compose)
 
 ---
 
@@ -1912,10 +1915,40 @@ See [SECURITY.md](SECURITY.md) for the nginx TLS configuration.
 Combine all changes into a single `docker-compose.prod.yml` and deploy with:
 
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 This keeps the base compose file intact for development while applying all production overrides cleanly.
+
+#### 8. Docker Secrets (recommended for production credentials)
+
+Environment variables are visible in `docker inspect` output, process listings, and tools that dump env at startup. Docker Secrets mount credentials as files inside the container and are never exposed in docker inspect.
+
+The application reads secrets via `api/secret_helper.py`: it checks `/run/secrets/<name>` first and falls back to the environment variable if the file is absent or empty. This means **dev keeps working with `.env` unchanged** — you only need to populate the secret files on production hosts.
+
+**Secret files and their env-var equivalents:**
+
+| Secret file | Environment variable | Used by |
+|---|---|---|
+| `secrets/db_password` | `POSTGRES_PASSWORD` / `PF9_DB_PASSWORD` | Database connection |
+| `secrets/ldap_admin_password` | `LDAP_ADMIN_PASSWORD` | LDAP admin operations |
+| `secrets/pf9_password` | `PF9_PASSWORD` | Platform9 API authentication |
+| `secrets/jwt_secret` | `JWT_SECRET_KEY` | JWT token signing |
+
+**Production setup:**
+
+```bash
+# Populate the secret files (never commit these values)
+echo -n "$(openssl rand -base64 32)" > secrets/db_password
+echo -n "your-ldap-admin-password"  > secrets/ldap_admin_password
+echo -n "your-pf9-service-password" > secrets/pf9_password
+echo -n "$(openssl rand -base64 64)" > secrets/jwt_secret
+
+# Lock permissions
+chmod 600 secrets/db_password secrets/ldap_admin_password secrets/pf9_password secrets/jwt_secret
+```
+
+The `secrets/` directory ships with empty placeholder files. `.gitignore` excludes all secret files but tracks `secrets/README.md`. See [secrets/README.md](../secrets/README.md) for the full reference.
 
 ---
 
@@ -1925,12 +1958,11 @@ See [SECURITY.md](SECURITY.md) and [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md
 
 ```bash
 # Key actions:
-# 1. Enforce JWT_SECRET_KEY (must be set — app warns but does not enforce on startup)
+# 1. Populate secrets/ files (see Docker Secrets section above) OR set chmod 600 .env
 # 2. Enable LDAP over TLS (LDAPS port 636) or use stunnel
 # 3. Rate-limit /auth/login endpoint (slowapi is already imported)
 # 4. Remove or gate debug endpoints in api/main.py (/simple-test, /test-users-db)
-# 5. Set file permissions: chmod 600 .env
-# 6. Ensure backups volume is encrypted at rest
+# 5. Ensure backups volume is encrypted at rest
 ```
 
 ---
@@ -1971,6 +2003,6 @@ See [SECURITY.md](SECURITY.md) and [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md
 
 ---
 
-**Last Updated**: March 11, 2026  
+**Last Updated**: March 15, 2026  
 **Maintained By**: Erez Rozenbaum & Community Contributors  
 **License**: MIT

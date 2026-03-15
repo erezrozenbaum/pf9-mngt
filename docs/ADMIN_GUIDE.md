@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.63.0  
-**Last Updated**: March 13, 2026  
+**Version**: 1.64.0  
+**Last Updated**: March 15, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -17,10 +17,10 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 
 | Task | How | Permission |
 |------|-----|------------|
-| Start all services | `docker-compose up -d` | Host access |
-| Stop all services | `docker-compose down` | Host access |
-| Check service health | `docker-compose ps` | Host access |
-| View logs | `docker-compose logs <service>` | Host access |
+| Start all services | `docker compose up -d` | Host access |
+| Stop all services | `docker compose down` | Host access |
+| Check service health | `docker compose ps` | Host access |
+| View logs | `docker compose logs <service>` | Host access |
 | Add a user | UI → Users → Add | Superadmin |
 | Reset a password | UI → Users → 🔑 | Superadmin |
 | Trigger snapshot run | UI → Snapshot Policies → Run Now | Admin |
@@ -57,7 +57,7 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 
 ```bash
 # Start all 14 containers
-docker-compose up -d
+docker compose up -d
 
 # Windows full automated deployment (first time or after config changes)
 .\deployment.ps1
@@ -69,7 +69,7 @@ docker-compose up -d
 Allow 30–60 seconds for all containers to reach healthy status. Verify:
 
 ```bash
-docker-compose ps
+docker compose ps
 # All containers should show Up or Up (healthy)
 ```
 
@@ -93,35 +93,35 @@ curl http://localhost:8000/health
 # Expected: {"status":"healthy",...}
 
 # All container states
-docker-compose ps
+docker compose ps
 
 # Live resource usage
 docker stats --no-stream
 
 # Redis cache
-docker-compose exec pf9_redis redis-cli ping
+docker compose exec pf9_redis redis-cli ping
 # Expected: PONG
 
 # Database
-docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM servers;"
+docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM servers;"
 ```
 
 **Check individual workers:**
 
 ```bash
-docker-compose logs pf9_scheduler_worker --tail=20
-docker-compose logs pf9_snapshot_worker --tail=20
-docker-compose logs pf9_notification_worker --tail=20
-docker-compose logs pf9_backup_worker --tail=20
-docker-compose logs pf9_metering_worker --tail=20
-docker-compose logs pf9_search_worker --tail=20
+docker compose logs pf9_scheduler_worker --tail=20
+docker compose logs pf9_snapshot_worker --tail=20
+docker compose logs pf9_notification_worker --tail=20
+docker compose logs pf9_backup_worker --tail=20
+docker compose logs pf9_metering_worker --tail=20
+docker compose logs pf9_search_worker --tail=20
 ```
 
 **If a container is in Exiting state:**
 
 ```bash
-docker-compose logs <container-name> --tail=50
-docker-compose restart <container-name>
+docker compose logs <container-name> --tail=50
+docker compose restart <container-name>
 ```
 
 ---
@@ -133,7 +133,7 @@ docker-compose restart <container-name>
 1. Create the user in LDAP:
 
 ```bash
-docker-compose exec pf9_ldap ldapadd -x \
+docker compose exec pf9_ldap ldapadd -x \
   -D "cn=admin,${LDAP_BASE_DN}" \
   -w "${LDAP_ADMIN_PASSWORD}" << 'EOF'
 dn: uid=jsmith,ou=users,dc=company,dc=local
@@ -160,7 +160,7 @@ Superadmin only. Action is fully audit-logged.
 3. For immediate revocation set `active=false` in `user_roles` table:
 
 ```bash
-docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
   -c "UPDATE user_roles SET active=false WHERE username='jsmith';"
 ```
 
@@ -183,14 +183,14 @@ Permissions are stored in the `role_permissions` table. `superadmin` always has 
 **View current permissions:**
 
 ```bash
-docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
   -c "SELECT role, resource, action FROM role_permissions ORDER BY role, resource;"
 ```
 
 **Add a permission to a role:**
 
 ```bash
-docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
   -c "INSERT INTO role_permissions (role, resource, action) VALUES ('operator', 'snapshots', 'write') ON CONFLICT DO NOTHING;"
 ```
 
@@ -286,10 +286,10 @@ Metrics are collected from Platform9 hypervisors via Prometheus `node_exporter` 
 
 ```powershell
 # Check scheduler worker logs
-docker-compose logs pf9_scheduler_worker --tail=20
+docker compose logs pf9_scheduler_worker --tail=20
 
 # Run collection manually (inside container)
-docker-compose exec pf9_scheduler_worker python host_metrics_collector.py --once
+docker compose exec pf9_scheduler_worker python host_metrics_collector.py --once
 
 # Or run directly on host (still works in standalone mode)
 python host_metrics_collector.py --once
@@ -328,7 +328,7 @@ SMTP_USE_TLS=true
 SMTP_FROM_ADDRESS=pf9-mgmt@yourcompany.com
 
 # Restart worker
-docker-compose restart pf9_notification_worker
+docker compose restart pf9_notification_worker
 ```
 
 ### Enable Slack / Teams
@@ -375,7 +375,7 @@ The backup worker picks up the job within 30 seconds.
 **CLI (emergency)**:
 ```bash
 gunzip -c /path/to/<backup-file>.sql.gz \
-  | docker-compose exec -T pf9_db psql -U $POSTGRES_USER $POSTGRES_DB
+  | docker compose exec -T pf9_db psql -U $POSTGRES_USER $POSTGRES_DB
 ```
 
 ---
@@ -388,7 +388,7 @@ gunzip -c /path/to/<backup-file>.sql.gz \
 
 **CLI**:
 ```bash
-docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
   -c "SELECT timestamp, username, action, resource_type, ip_address FROM auth_audit ORDER BY timestamp DESC LIMIT 50;"
 ```
 
@@ -406,27 +406,27 @@ docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
 
 **API not responding:**
 ```bash
-docker-compose logs pf9_api --tail=50
-docker-compose restart pf9_api
+docker compose logs pf9_api --tail=50
+docker compose restart pf9_api
 ```
 
 **UI shows “Failed to fetch”:**
 ```bash
 curl http://localhost:8000/health
-docker-compose logs pf9_api | grep -i cors
+docker compose logs pf9_api | grep -i cors
 ```
 
 **Login failures:**
 ```bash
-docker-compose exec pf9_ldap ldapwhoami -x \
+docker compose exec pf9_ldap ldapwhoami -x \
   -D "cn=admin,${LDAP_BASE_DN}" -w "${LDAP_ADMIN_PASSWORD}"
-docker-compose logs pf9_api | grep -i "auth\|ldap\|token"
+docker compose logs pf9_api | grep -i "auth\|ldap\|token"
 ```
 
 **Workers not running:**
 ```bash
-docker-compose ps
-docker-compose restart pf9_snapshot_worker pf9_notification_worker pf9_backup_worker
+docker compose ps
+docker compose restart pf9_snapshot_worker pf9_notification_worker pf9_backup_worker
 ```
 
 **Platform9 connection 401:**
@@ -438,17 +438,17 @@ curl -i ${PF9_AUTH_URL}/auth/tokens \
 
 **Monitoring not collecting:**
 ```powershell
-docker-compose logs pf9_scheduler_worker --tail=20
-docker-compose exec pf9_scheduler_worker python host_metrics_collector.py --once
+docker compose logs pf9_scheduler_worker --tail=20
+docker compose exec pf9_scheduler_worker python host_metrics_collector.py --once
 .\fix_monitoring.ps1
 ```
 
 **Disk full:**
 ```bash
 docker system df
-docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
+docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
   -c "SELECT pg_size_pretty(pg_database_size('${POSTGRES_DB}'));"
-docker-compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANALYZE;"
+docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANALYZE;"
 ```
 
 ---
@@ -1580,10 +1580,10 @@ Get-Content monitoring\cache\metrics_cache.json | ConvertFrom-Json
 3. **Monitoring service errors**:
    ```bash
    # Check monitoring container logs
-   docker-compose logs pf9_monitoring
+   docker compose logs pf9_monitoring
    
    # Verify cache file is mounted
-   docker-compose exec pf9_monitoring ls -la /tmp/cache/metrics_cache.json
+   docker compose exec pf9_monitoring ls -la /tmp/cache/metrics_cache.json
    ```
 
 **Performance Optimization**:
@@ -1808,11 +1808,11 @@ chmod 600 .env
 #### 3. Deploy Services
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Verify deployment
-docker-compose ps
-docker-compose logs -f pf9_api  # Check for errors
+docker compose ps
+docker compose logs -f pf9_api  # Check for errors
 ```
 
 #### 4. Initial Data Collection
@@ -2841,12 +2841,12 @@ curl -I http://localhost:5173
 #### Container Status
 ```bash
 # Check all containers
-docker-compose ps
+docker compose ps
 
 # View container logs
-docker-compose logs pf9_api
-docker-compose logs pf9_ui
-docker-compose logs pf9_db
+docker compose logs pf9_api
+docker compose logs pf9_ui
+docker compose logs pf9_db
 ```
 
 ### Common Issues
@@ -2861,7 +2861,7 @@ docker-compose logs pf9_db
 **Solutions**:
 ```bash
 # Verify credentials
-docker-compose logs pf9_api | grep -i auth
+docker compose logs pf9_api | grep -i auth
 
 # Test Platform9 connectivity
 curl -k https://your-platform9-cluster.com/keystone/v3
@@ -2872,10 +2872,10 @@ curl -k https://your-platform9-cluster.com/keystone/v3
 **Solutions**:
 ```bash
 # Restart database
-docker-compose restart pf9_db
+docker compose restart pf9_db
 
 # Check database logs
-docker-compose logs pf9_db
+docker compose logs pf9_db
 
 # Verify database connectivity
 docker exec pf9_api psql -h db -U pf9 -d pf9_mgmt -c "SELECT 1;"
@@ -2902,16 +2902,16 @@ services:
 #### API Logs
 ```bash
 # Real-time monitoring
-docker-compose logs -f pf9_api
+docker compose logs -f pf9_api
 
 # Error filtering
-docker-compose logs pf9_api | grep ERROR
+docker compose logs pf9_api | grep ERROR
 ```
 
 #### Database Logs
 ```bash
 # PostgreSQL logs
-docker-compose logs pf9_db
+docker compose logs pf9_db
 
 # Query performance
 docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT * FROM pg_stat_activity;"
@@ -3053,11 +3053,11 @@ Smart Queries execute read-only SQL against live database tables — no indexing
 git pull origin main
 
 # Rebuild containers
-docker-compose build --no-cache
+docker compose build --no-cache
 
 # Restart services
-docker-compose down
-docker-compose up -d
+docker compose down
+docker compose up -d
 ```
 
 #### Database Updates
@@ -3306,7 +3306,7 @@ jobs:
       - uses: actions/checkout@v2
       - name: Run tests
         run: |
-          docker-compose -f docker-compose.test.yml up --abort-on-container-exit
+          docker compose -f docker-compose.test.yml up --abort-on-container-exit
       - name: Security scan
         run: |
           docker run --rm -v $(pwd):/app securecodewarrior/docker-scout /app

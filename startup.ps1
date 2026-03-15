@@ -15,8 +15,8 @@ Set-Location $ScriptDir
 if ($StopOnly) {
     Write-Host "Stopping services and cleaning up..." -ForegroundColor Yellow
 
-    # Stop Docker services (COMPOSE_PROFILES in .env is read automatically by docker-compose)
-    docker-compose down
+    # Stop Docker services (COMPOSE_PROFILES in .env is read automatically by docker compose)
+    docker compose down
     
     # Remove legacy scheduled tasks if they still exist from a previous setup
     @("PF9 Metrics Collection", "PF9 RVTools Export") | ForEach-Object {
@@ -90,7 +90,7 @@ $isDemoMode = ($envCheckMap['DEMO_MODE'] -eq 'true')
 
 # Step 1: Stop any running services
 Write-Host "1. Stopping existing services..." -ForegroundColor Yellow
-docker-compose down 2>$null | Out-Null
+docker compose down 2>$null | Out-Null
 
 # Step 2: Remove legacy Windows Scheduled Tasks (metrics + rvtools now run inside Docker)
 Write-Host "2. Checking for legacy Windows Scheduled Tasks..." -ForegroundColor Yellow
@@ -150,9 +150,13 @@ if ($staleVol) {
     docker volume rm pf9-mngt_nfs_backups 2>$null | Out-Null
 }
 
+# Production note: to run with production overrides (closed ports, prod nginx config):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Populate secrets/ files before using production mode — see secrets/README.md
+
 Write-Host "3. Starting Docker services..." -ForegroundColor Yellow
 try {
-    docker-compose up -d
+    docker compose up -d
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ All services started successfully" -ForegroundColor Green
     } else {
@@ -236,6 +240,6 @@ if ($allGood) {
 } else {
     Write-Host "=== ISSUES DETECTED ===" -ForegroundColor Red
     Write-Host "Some services may not be running correctly." -ForegroundColor Red
-    Write-Host "Check logs with: docker-compose logs <service_name>" -ForegroundColor Yellow
+    Write-Host "Check logs with: docker compose logs <service_name>" -ForegroundColor Yellow
     exit 1
 }
