@@ -154,9 +154,9 @@ if ($staleVol) {
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 # Populate secrets/ files before using production mode — see secrets/README.md
 
-Write-Host "3. Starting Docker services..." -ForegroundColor Yellow
+Write-Host "3. Building and starting Docker services..." -ForegroundColor Yellow
 try {
-    docker compose up -d
+    docker compose up -d --build
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ All services started successfully" -ForegroundColor Green
     } else {

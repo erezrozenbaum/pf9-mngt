@@ -458,11 +458,20 @@ def main():
 
     log("Snapshot scheduler starting...")
 
-    next_policy_assign = 0
-    next_auto_snapshots = 0
-    next_compliance_report = 0
+    # Give a 60-second startup grace period before the first scheduled run so
+    # that on-demand triggers raised immediately after a restart are picked up
+    # within one polling cycle (≤ 10 s) rather than waiting for the full
+    # policy-assign + rvtools + auto-snapshot sequence to finish first.
+    _startup_grace = time.time() + 60
+    next_policy_assign = _startup_grace
+    next_auto_snapshots = _startup_grace
+    next_compliance_report = _startup_grace
 
     while True:
+        # On-demand triggers checked FIRST so they are never blocked by
+        # long-running scheduled tasks during the same loop iteration.
+        check_on_demand_trigger()
+
         now = time.time()
         if now >= next_policy_assign:
             run_policy_assign()
@@ -484,9 +493,6 @@ def main():
             # Run compliance report generation (uses latest RVTools data)
             run_compliance_report()
             next_compliance_report = now + COMPLIANCE_REPORT_INTERVAL_MINUTES * 60
-
-        # Check for on-demand triggers from the API
-        check_on_demand_trigger()
 
         time.sleep(10)
 
