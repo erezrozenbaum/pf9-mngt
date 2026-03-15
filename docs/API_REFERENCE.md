@@ -768,7 +768,7 @@ Query Parameters:
 ## On-Demand Snapshot Pipeline
 
 ### Trigger Pipeline
-**POST** `/snapshot/run-now` (Admin only, `snapshots:admin`)  
+**POST** `/api/snapshot/run-now` (Admin only, `snapshots:admin`)  
 Triggers the full snapshot pipeline on demand: policy assignment → inventory sync → auto snapshots → inventory sync. Returns immediately with a job ID.
 
 **Response** (202 Accepted):
@@ -776,7 +776,7 @@ Triggers the full snapshot pipeline on demand: policy assignment → inventory s
 {
   "job_id": "abc-123",
   "status": "pending",
-  "message": "Snapshot pipeline queued. The worker will pick it up within 10 seconds. Poll /snapshot/run-now/status for progress."
+  "message": "Snapshot pipeline queued. The worker will pick it up within 10 seconds. Poll /api/snapshot/run-now/status for progress."
 }
 ```
 
@@ -786,7 +786,7 @@ Triggers the full snapshot pipeline on demand: policy assignment → inventory s
 ```
 
 ### Get Pipeline Status
-**GET** `/snapshot/run-now/status` (Authenticated, `snapshots:read`)  
+**GET** `/api/snapshot/run-now/status` (Authenticated, `snapshots:read`)  
 Returns the status of the most recent on-demand snapshot pipeline run.
 
 **Response**:

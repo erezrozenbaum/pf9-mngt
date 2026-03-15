@@ -222,10 +222,10 @@ In addition to the hourly scheduler, admins can trigger the full snapshot pipeli
 
 **UI**: On the **Delete & Restore** tab → Screen 1, click the **🔄 Sync & Snapshot Now** button. A real-time progress bar shows each step (policy assignment → inventory sync → auto snapshots → inventory sync).
 
-**API**: `POST /snapshot/run-now` (requires `snapshots:admin` — admin or superadmin role)
+**API**: `POST /api/snapshot/run-now` (requires `snapshots:admin` — admin or superadmin role)
 
 ```bash
-curl -X POST http://localhost:8000/snapshot/run-now \
+curl -X POST http://localhost:8000/api/snapshot/run-now \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -234,11 +234,11 @@ Response (202 Accepted):
 {
   "job_id": "abc-123",
   "status": "running",
-  "message": "Snapshot pipeline started. Poll /snapshot/run-now/status for progress."
+  "message": "Snapshot pipeline started. Poll /api/snapshot/run-now/status for progress."
 }
 ```
 
-**Poll status**: `GET /snapshot/run-now/status` (requires `snapshots:read`)
+**Poll status**: `GET /api/snapshot/run-now/status` (requires `snapshots:read`)
 
 ```json
 {

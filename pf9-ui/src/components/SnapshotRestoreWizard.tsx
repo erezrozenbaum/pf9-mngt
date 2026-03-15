@@ -356,7 +356,7 @@ const SnapshotRestoreWizard: React.FC = () => {
     setSyncStatus("running");
     setSyncSteps([]);
     try {
-      await apiFetch<any>("/snapshot/run-now", { method: "POST" });
+      await apiFetch<any>("/api/snapshot/run-now", { method: "POST" });
     } catch (e: any) {
       setSyncStatus("failed");
       setSyncRunning(false);
@@ -365,7 +365,7 @@ const SnapshotRestoreWizard: React.FC = () => {
     // start polling
     syncPollingRef.current = window.setInterval(async () => {
       try {
-        const st = await apiFetch<any>("/snapshot/run-now/status");
+        const st = await apiFetch<any>("/api/snapshot/run-now/status");
         setSyncSteps(st.steps || []);
         setSyncStatus(st.status);
         if (st.status !== "running" && st.status !== "pending") {

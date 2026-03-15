@@ -66,7 +66,6 @@ def _ensure_tables():
                     '{"type":"object","properties":{"resource_types":{"type":"array","items":{"type":"string","enum":["ports","volumes","floating_ips","networks"]},"default":["ports","volumes","floating_ips","networks"],"description":"Which resource types to scan (ports, volumes, floating_ips, networks)"},"age_threshold_days":{"type":"integer","default":7,"description":"Only target resources older than N days"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"},"target_domain":{"type":"string","default":"","description":"Limit to specific domain (empty = all)"}}}',
                     'Finds orphaned ports, volumes, floating IPs, and empty networks. Cleans up to free quota and reduce clutter.',
                 ))
-                conn.commit()
     except Exception as e:
         logger.warning(f"Could not ensure runbook tables on startup: {e}")
 
@@ -5162,7 +5161,6 @@ async def set_runbook_visibility(
                     "VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     (runbook_name, dept_id),
                 )
-        conn.commit()
     return {"runbook_name": runbook_name, "dept_ids": body.dept_ids}
 
 

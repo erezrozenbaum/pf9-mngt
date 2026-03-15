@@ -248,7 +248,6 @@ async def create_integration(
                 body.enabled, body.timeout_seconds, body.verify_ssl,
             ))
             row = cur.fetchone()
-        conn.commit()
     return _row_public(dict(row))
 
 
@@ -309,7 +308,6 @@ async def update_integration(
                 values,
             )
             row = cur.fetchone()
-        conn.commit()
     return _row_public(dict(row))
 
 
@@ -327,7 +325,6 @@ async def delete_integration(
             deleted = cur.fetchone()
             if not deleted:
                 raise HTTPException(404, f"Integration '{name}' not found")
-        conn.commit()
     return None
 
 
@@ -381,7 +378,6 @@ async def test_integration(
                 "last_test_status = %s, updated_at = now() WHERE name = %s",
                 (test_status, name),
             )
-        conn.commit()
 
     return {
         "name": name,

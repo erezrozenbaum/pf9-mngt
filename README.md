@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.65.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.65.2-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -718,7 +718,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.65.1](CHANGELOG.md) — March 15, 2026
+**Current version:** [v1.65.2](CHANGELOG.md) — March 15, 2026
 
 **Development phase:** Production-hardened and ready for deployment. CI pipeline active, CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -862,6 +862,11 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.65.2 — Snapshot Restore Bug Fix & Code Cleanup
+- ✅ **"Sync & Snapshot Now" fixed** — the button in the Snapshot Restore wizard now correctly triggers the snapshot pipeline; the `/api` prefix was missing from the two `run-now` fetch calls, causing nginx to return a 405 instead of reaching the API
+- ✅ **Dead code removed** — three unauthenticated probe endpoints removed from the API; a duplicate block of 5 route handlers removed; the last `print()` replaced with structured logging; unused `db_conn` parameter plumbing removed from snapshot and restore route setup
+- ✅ **Redundant commits cleaned up** — 6 leftover `conn.commit()` calls removed from `integration_routes.py` and `runbook_routes.py` (the connection-pool context manager commits automatically)
 
 ### v1.65.1 — Production & Dev Stack Fixes
 - ✅ **Production Docker build unblocked** — `startup_prod.ps1` now completes successfully; the UI image builds without `tsc` strict-mode errors
@@ -1298,4 +1303,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.65.1 | **Last Updated**: March 15, 2026
+**Project Status**: Production Ready | **Version**: 1.65.2 | **Last Updated**: March 15, 2026
