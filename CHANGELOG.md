@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.65.0] - 2026-03-15
+
+### Added — CI Pipeline, CORS Hardening, Database Performance Indexes
+
+#### CI: GitHub Actions workflow added — syntax and compose validation on every push and PR (`.github/workflows/ci.yml`)
+- Every push to `dev` or `master`, and every PR targeting those branches, now runs two automated checks.
+- **Lint & Syntax job**: Python 3.12 is installed, all `.py` files outside of `.venv` and `node_modules` are compiled with `py_compile`, and `flake8` is run with `--select=E9,F63,F7,F82` to catch syntax errors, invalid escape sequences, and undefined names before they reach the running container.
+- **Docker Compose validation job**: A stub `.env` is generated and `docker compose config --quiet` is run against both the base `docker-compose.yml` and the production overlay `docker-compose.prod.yml`. Catches broken service definitions, missing build contexts, and compose syntax errors immediately on every change.
+- Exits non-zero on any error, blocking merges of broken code.
+- Integration tests (which require a live API and seeded database) are documented in the workflow with manual run instructions; full live-stack CI is a planned follow-on.
+
+#### Security: CORS origins restricted in production — dev ports excluded when `APP_ENV=production` (`api/main.py`, `monitoring/main.py`)
+- The API and monitoring services previously included `http://localhost:5173`, `http://localhost:3000`, and `http://localhost:8000` in `ALLOWED_ORIGINS` unconditionally.
+- In a production deployment all traffic flows through the nginx TLS reverse proxy (`https://localhost`). The dev-only ports are neither listening nor reachable, but having them in the CORS allowlist is unnecessarily permissive.
+- When `APP_ENV=production`, `ALLOWED_ORIGINS` is trimmed to only `https://localhost` and `http://localhost`. Dev origins are retained when `APP_ENV` is anything else (including unset), so no local workflow change is needed.
+- The `PF9_ALLOWED_ORIGINS` environment variable still works in both modes for adding custom production host names.
+
+#### Performance: Database indexes added for high-traffic query paths (`db/migrate_indexes.sql`)
+- Query analysis identified several tables used heavily by the dashboard, audit, reporting, and ticket views that had no supporting indexes.
+- Eight partial or composite indexes added: `inventory_runs(started_at DESC)`, `activity_log(user_id, created_at DESC)`, `activity_log(created_at DESC)`, `snapshots(project_id, created_at DESC)`, `migration_vms(project_id)`, `tickets(status, department_id)`, `tickets(due_date)` (partial — only non-null rows), `runbook_executions(runbook_id, started_at DESC)`.
+- All use `CREATE INDEX IF NOT EXISTS` — safely re-runnable with no schema changes or downtime.
+- Migration is applied automatically on API startup via the existing `startup_event()` handler. Errors are logged as warnings and do not prevent the API from starting.
+
+---
+
 ## [1.64.0] - 2026-03-15
 
 ### Fixed / Security — Production Hardening

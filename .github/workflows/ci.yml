@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+    branches: [dev, master]
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Job 1: Python syntax & static analysis
+  # Catches broken imports, syntax errors, and undefined names.
+  # Runs in seconds with no dependencies on secrets or live services.
+  # -------------------------------------------------------------------------
+  lint:
+    name: Lint & Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lint dependencies
+        run: pip install flake8
+
+      - name: Syntax check — all Python files
+        run: |
+          echo "=== Python syntax check ==="
+          find . -name "*.py" \
+            -not -path "./.venv/*" \
+            -not -path "./__pycache__/*" \
+            -not -path "./*/node_modules/*" \
+            | xargs python -m py_compile
+          echo "All files pass syntax check."
+
+      - name: Flake8 — critical errors only (E9, F63, F7, F82)
+        run: |
+          # E9xx  : syntax errors that prevent compilation
+          # F63x  : invalid escape sequences / assert misuse
+          # F7xx  : syntax / statement errors
+          # F82x  : undefined names (catches missing imports before runtime)
+          flake8 . \
+            --select=E9,F63,F7,F82 \
+            --exclude=.venv,__pycache__,node_modules,pf9-ui \
+            --count \
+            --show-source \
+            --statistics
+
+  # -------------------------------------------------------------------------
+  # Job 2: Docker Compose config validation
+  # Verifies the compose files parse cleanly and all image/context references
+  # resolve — catches typos in service names, missing build contexts, etc.
+  # -------------------------------------------------------------------------
+  compose-validate:
+    name: Docker Compose Config Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create stub .env (required for compose config to parse)
+        run: |
+          cp .env.example .env 2>/dev/null || cat > .env << 'EOF'
+          PF9_AUTH_URL=http://stub
+          PF9_TENANT=stub
+          PF9_USERNAME=stub
+          PF9_PASSWORD=stub
+          PF9_REGION=stub
+          PF9_DB_HOST=stub
+          PF9_DB_PORT=5432
+          PF9_DB_NAME=stub
+          PF9_DB_USER=stub
+          PF9_DB_PASSWORD=stub
+          LDAP_ADMIN_PASSWORD=stub
+          JWT_SECRET_KEY=stub-secret-for-ci-only-not-real
+          SMTP_HOST=stub
+          SMTP_PORT=587
+          SMTP_USER=stub
+          SMTP_PASS=stub
+          EOF
+
+      - name: Validate base compose
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Validate prod compose overlay
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+
+  # -------------------------------------------------------------------------
+  # Job 3: Integration tests (live-stack)
+  # NOTE: These require a real PF9 endpoint + seeded DB and are NOT run in
+  # standard CI. Run them manually before merging to master:
+  #
+  #   docker cp test_ticket_system.py pf9_api:/tmp/
+  #   docker exec pf9_api python /tmp/test_ticket_system.py
+  #
+  # A future sprint will wire these up against a docker-compose test stack
+  # using GitHub Actions services + seeded test data (Phase O4 / Phase F1).
+  # -------------------------------------------------------------------------

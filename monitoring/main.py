@@ -73,13 +73,24 @@ async def monitoring_access_log(request: Request, call_next):
     return response
 
 # Security configuration
+_PROD_MODE = os.getenv("APP_ENV", "").lower() == "production"
+
+# Production: only the nginx TLS proxy origin is valid.
+# Development: Vite dev server is also allowed.
 ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # React UI
-    "http://localhost:3000",  # Development
-    "https://localhost",      # nginx TLS proxy (production)
-    "http://localhost",       # nginx HTTP (port 80)
-    os.getenv("PF9_ALLOWED_ORIGIN", "http://localhost:5173")
+    "https://localhost",   # nginx TLS proxy (production + dev)
+    "http://localhost",    # nginx HTTP (port 80)
 ]
+if not _PROD_MODE:
+    ALLOWED_ORIGINS += [
+        "http://localhost:5173",   # Vite dev server
+        "http://localhost:3000",   # Alt dev port
+    ]
+_extra_origin = os.getenv("PF9_ALLOWED_ORIGIN", os.getenv("PF9_ALLOWED_ORIGINS", ""))
+for _extra in _extra_origin.split(","):
+    _extra = _extra.strip()
+    if _extra and _extra not in ALLOWED_ORIGINS:
+        ALLOWED_ORIGINS.append(_extra)
 ALLOWED_ORIGINS = [origin for origin in ALLOWED_ORIGINS if origin]
 
 # Rate limiting
