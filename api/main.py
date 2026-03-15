@@ -297,19 +297,6 @@ def verify_admin_credentials(credentials: HTTPBasicCredentials = Depends(securit
     
     return True
 
-# ---------------------------------------------------------------------------
-# DB connection helper (inside Docker: host defaults to "db")
-# Uses connection pool for concurrency safety.
-# ---------------------------------------------------------------------------
-def db_conn():
-    """Return a connection from the pool.
-    Prefer `with get_connection() as conn:` for automatic cleanup.
-    If you use db_conn() directly, you MUST close in a finally block.
-    """
-    from db_pool import get_pool
-    return get_pool().getconn()
-
-
 app = FastAPI(title=APP_NAME)
 
 @app.on_event("shutdown")
@@ -577,9 +564,9 @@ async def startup_event():
     import asyncio
     initialize_default_admin()
     # Setup snapshot management routes
-    setup_snapshot_routes(app, db_conn)
+    setup_snapshot_routes(app)
     # Setup restore management routes
-    setup_restore_routes(app, db_conn)
+    setup_restore_routes(app)
 
     # Apply performance indexes migration (idempotent — CREATE INDEX IF NOT EXISTS)
     try:
@@ -594,7 +581,7 @@ async def startup_event():
     except Exception as _exc:
         logger.warning("Performance indexes migration skipped: %s", _exc)
 
-    print(f"PF9 Management API started - Authentication: {'Enabled' if ENABLE_AUTHENTICATION else 'Disabled'}")
+    logger.info("PF9 Management API started — Authentication: %s", "Enabled" if ENABLE_AUTHENTICATION else "Disabled")
 
     # SLA daemon: check for breached SLA deadlines every 15 minutes
     async def _sla_daemon():
@@ -3607,11 +3594,6 @@ def list_hypervisors(
     }
 
 
-@app.get("/test-simple")
-def test_simple():
-    return {"message": "simple test works"}
-
-
 # -----------------------------------------------------------------------
 # DB-backed monitoring fallback (when monitoring service has no live data)
 # -----------------------------------------------------------------------
@@ -3770,12 +3752,6 @@ def monitoring_summary():
             "max_memory_usage": float(h.get("max_memory_usage", 0) or 0),
         }
     }
-
-
-@app.get("/test-history")
-def test_history():
-    """Simple test endpoint to verify history functionality works"""
-    return {"message": "History test endpoint works", "status": "ok"}
 
 
 # ---------------------------------------------------------------------------
@@ -5124,238 +5100,6 @@ async def log_user_access_activity(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error logging user access: {str(e)}")
-
-
-# Test endpoint to verify history endpoints are loaded
-@app.get("/test-history-endpoints")
-def test_history_endpoints():
-    """Test endpoint to verify history functionality is working"""
-    return {
-        "status": "success",
-        "message": "History endpoints are loaded and working",
-        "available_endpoints": [
-            "/history/recent-changes",
-            "/history/most-changed", 
-            "/history/by-timeframe",
-            "/history/resource/{resource_type}/{resource_id}",
-            "/audit/compliance-report",
-            "/audit/change-patterns",
-            "/audit/resource-timeline/{resource_type}"
-        ]
-    }
-
-
-@app.get("/roles/{role_id}")
-@limiter.limit("60/minute")
-async def get_role_details(request: Request, role_id: str):
-    """Get detailed information about a specific role"""
-    try:
-        with get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Get role details
-                cur.execute("""
-                    SELECT 
-                        r.id, r.name, r.description, r.domain_id, r.last_seen_at, r.raw_json,
-                        d.name as domain_name
-                    FROM roles r
-                    LEFT JOIN domains d ON d.id = r.domain_id
-                    WHERE r.id = %s
-                """, (role_id,))
-                role = cur.fetchone()
-            
-                if not role:
-                    raise HTTPException(status_code=404, detail="Role not found")
-                
-                role_data = dict(role)
-            
-                # Get users with this role
-                cur.execute("""
-                    SELECT 
-                        ra.user_id, ra.user_name, ra.project_id, ra.project_name,
-                        ra.domain_id, ra.domain_name, ra.inherited
-                    FROM role_assignments ra
-                    WHERE ra.role_id = %s
-                    ORDER BY ra.user_name, ra.project_name
-                """, (role_id,))
-                role_data['assignments'] = [dict(row) for row in cur.fetchall()]
-            
-            return {
-                "status": "success",
-                "data": role_data
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving role details: {str(e)}")
-
-
-@app.get("/user-activity-summary")
-@limiter.limit("20/minute")
-async def get_user_activity_summary(request: Request):
-    """Get user activity summary using the database view"""
-    try:
-        with get_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
-                    SELECT * FROM v_user_activity_summary
-                    ORDER BY activity_last_30d DESC, user_name
-                """)
-                summary = [dict(row) for row in cur.fetchall()]
-            
-            return {
-                "status": "success",
-                "data": summary,
-                "count": len(summary)
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving user activity summary: {str(e)}")
-
-
-@app.get("/role-assignments")
-@limiter.limit("30/minute")
-async def get_role_assignments(
-    request: Request,
-    user_id: Optional[str] = None,
-    role_id: Optional[str] = None,
-    project_id: Optional[str] = None,
-    domain_id: Optional[str] = None,
-    limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0)
-):
-    """Get role assignments with optional filtering"""
-    try:
-        with get_connection() as conn:
-            query = """
-                SELECT 
-                    ra.id, ra.role_id, ra.user_id, ra.group_id, 
-                    ra.project_id, ra.domain_id, ra.inherited,
-                    ra.user_name, ra.role_name, ra.project_name, ra.domain_name,
-                    ra.last_seen_at
-                FROM role_assignments ra
-                WHERE 1=1
-            """
-            params = []
-        
-            if user_id:
-                query += " AND ra.user_id = %s"
-                params.append(user_id)
-            if role_id:
-                query += " AND ra.role_id = %s"
-                params.append(role_id)
-            if project_id:
-                query += " AND ra.project_id = %s"
-                params.append(project_id)
-            if domain_id:
-                query += " AND ra.domain_id = %s"
-                params.append(domain_id)
-            
-            query += """
-                ORDER BY ra.user_name, ra.role_name, ra.project_name
-                LIMIT %s OFFSET %s
-            """
-            params.extend([limit, offset])
-        
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(query, params)
-                assignments = [dict(row) for row in cur.fetchall()]
-            
-                # Get total count with same filters
-                count_query = "SELECT COUNT(*) FROM role_assignments WHERE 1=1"
-                count_params = []
-                if user_id:
-                    count_query += " AND user_id = %s"
-                    count_params.append(user_id)
-                if role_id:
-                    count_query += " AND role_id = %s"
-                    count_params.append(role_id)
-                if project_id:
-                    count_query += " AND project_id = %s"
-                    count_params.append(project_id)
-                if domain_id:
-                    count_query += " AND domain_id = %s"
-                    count_params.append(domain_id)
-                
-                cur.execute(count_query, count_params)
-                total = cur.fetchone()[0]
-            
-            return {
-                "status": "success",
-                "data": assignments,
-                "pagination": {
-                    "total": total,
-                    "limit": limit,
-                    "offset": offset,
-                    "count": len(assignments)
-                }
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving role assignments: {str(e)}")
-
-
-@app.post("/admin/user-access-log")
-@limiter.limit("60/minute")
-async def log_user_access_activity(
-    request: Request,
-    admin_creds: HTTPBasicCredentials = Depends(security)
-):
-    """Log user access activity (admin only)"""
-    verify_admin_credentials(admin_creds)
-    
-    try:
-        body = await request.json()
-        required_fields = ['user_id', 'user_name', 'action']
-        
-        for field in required_fields:
-            if field not in body:
-                raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
-        
-        with get_connection() as conn:
-        
-            # Import the logging function
-            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from db_writer import log_user_access
-        
-            log_user_access(
-                conn,
-                user_id=body['user_id'],
-                user_name=body['user_name'], 
-                action=body['action'],
-                resource_type=body.get('resource_type'),
-                resource_id=body.get('resource_id'),
-                project_id=body.get('project_id'),
-                success=body.get('success', True),
-                ip_address=body.get('ip_address'),
-                user_agent=body.get('user_agent'),
-                details=body.get('details')
-            )
-        
-            return {"status": "success", "message": "User access logged successfully"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error logging user access: {str(e)}")
-
-
-# Test endpoint to verify history endpoints are loaded
-@app.get("/test-history-endpoints")
-def test_history_endpoints():
-    """Test endpoint to verify history functionality is working"""
-    return {
-        "status": "success",
-        "message": "History endpoints are loaded and working",
-        "available_endpoints": [
-            "/history/recent-changes",
-            "/history/most-changed", 
-            "/history/by-timeframe",
-            "/history/resource/{resource_type}/{resource_id}",
-            "/audit/compliance-report",
-            "/audit/change-patterns",
-            "/audit/resource-timeline/{resource_type}"
-        ]
-    }
-
-
 
 
 # ---------------------------------------------------------------------------

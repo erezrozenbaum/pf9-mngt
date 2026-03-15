@@ -447,13 +447,9 @@ def _sync_assignment_to_cinder(
 # API Endpoint Functions
 # ============================================================================
 
-def setup_snapshot_routes(app, get_db_connection):
+def setup_snapshot_routes(app):
     """
     Setup all snapshot management routes
-    
-    Args:
-        app: FastAPI application instance
-        get_db_connection: Function to get database connection
     """
     
     # ========================================================================

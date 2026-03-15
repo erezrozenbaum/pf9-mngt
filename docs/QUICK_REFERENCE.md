@@ -137,7 +137,11 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Production & Dev Stack Fixes** (v1.65.1 — NEW ✅):
+- **Snapshot Restore Bug Fix & Code Cleanup** (v1.65.2 — NEW ✅):
+  - **"Sync & Snapshot Now" fixed** — the button now correctly reaches the API; missing `/api` prefix on `run-now` fetch calls caused a 405 (nginx forwarded to the React UI instead of the backend)
+  - **Dead code removed** — 3 unauthenticated probe endpoints removed; duplicate route block removed; last `print()` replaced with `logger.info()`; dead `db_conn` parameter plumbing removed from snapshot/restore setup
+  - **Redundant commits cleaned up** — 6 leftover `conn.commit()` calls removed from `integration_routes.py` and `runbook_routes.py`
+- **Production & Dev Stack Fixes** (v1.65.1):
   - **Login from any IP** — `config.ts` defaults changed to `""` (relative paths); `Dockerfile.prod` build-arg names corrected so `VITE_API_BASE`/`VITE_MONITORING_BASE` are no longer always `undefined`
   - **nginx prod routing rewrite** — `nginx/nginx.prod.conf` fully rewritten: `pf9_monitoring` upstream added, `^~ /metrics/` beats regex, `/restore/` and `/static/` locations added, `Host: localhost` proxy header fixes TrustedHostMiddleware 400
   - **Admin Tools blank pages** — `UserManagement.tsx` now unwraps the `departments` array correctly (was storing whole response object, causing `.map()` crash)
@@ -232,7 +236,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 #### Advanced Snapshot Management
 - **Cross-Tenant Snapshots**: Snapshots created in correct tenant projects via dedicated service user
 - **Automated Snapshot Creation**: Policy-driven with hourly scheduling (default 60 min, configurable)
-- **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" button on Restore tab + `POST /snapshot/run-now` API
+- **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" button on Restore tab + `POST /api/snapshot/run-now` API
 - **Metadata-Driven Policies**: Volume-level configuration via OpenStack metadata
 - **Multi-Policy Support**: Volumes support multiple concurrent policies (daily_5, monthly_1st, monthly_15th)
 - **Compliance Monitoring**: SLA tracking and policy adherence reporting with tenant/domain aggregation

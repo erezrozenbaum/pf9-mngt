@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.65.1  
+**Version**: 1.65.2  
 **Last Updated**: March 15, 2026  
 **Audience**: System administrators and platform operators
 
@@ -214,7 +214,7 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
 
 **API**:
 ```bash
-curl -X POST http://localhost:8000/snapshot/run-now \
+curl -X POST http://localhost:8000/api/snapshot/run-now \
   -H "Authorization: Bearer <admin-token>"
 ```
 
@@ -1347,7 +1347,7 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 - **Audit & Compliance**: 90-day authentication event tracking and permission logging
 - **Comprehensive Inventory Management**: Real-time tracking of VMs, volumes, snapshots, networks, subnets, ports, floating IPs, security groups, security group rules, hypervisors, flavors, and images
 - **Automated Snapshot Management**: Policy-driven snapshot creation with cross-tenant support via dedicated service user, configurable retention periods, and hourly scheduling (default 60 min)
-- **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" UI button and `POST /snapshot/run-now` API for immediate policy assignment and snapshot creation
+- **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" UI button and `POST /api/snapshot/run-now` API for immediate policy assignment and snapshot creation
 - **Compliance Reporting**: Detailed compliance reports with policy adherence tracking
 - **Multi-Tenant Resource Administration**: Domain and project-level filtering with role-based permissions
 - **Complete RVTools Parity**: Full infrastructure visibility including ports and floating IP tracking

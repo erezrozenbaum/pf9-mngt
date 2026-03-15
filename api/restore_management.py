@@ -25,7 +25,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Optional
 
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import HTTPException, Depends
@@ -588,8 +588,7 @@ class RestorePlanner:
     and validating against live OpenStack state.
     """
 
-    def __init__(self, db_conn_fn: Callable, os_client: RestoreOpenStackClient):
-        self.db_conn_fn = db_conn_fn
+    def __init__(self, os_client: RestoreOpenStackClient):
         self.os_client = os_client
 
     def build_plan(self, req: RestorePlanRequest, username: str) -> dict:
@@ -1143,8 +1142,7 @@ class RestoreExecutor:
     Designed to run as a background asyncio task inside the API process.
     """
 
-    def __init__(self, db_conn_fn: Callable, os_client: RestoreOpenStackClient):
-        self.db_conn_fn = db_conn_fn
+    def __init__(self, os_client: RestoreOpenStackClient):
         self.os_client = os_client
 
     async def execute_job(self, job_id: str):
@@ -1774,12 +1772,12 @@ class RestoreExecutor:
 # Route setup — called from main.py
 # ============================================================================
 
-def setup_restore_routes(app, db_conn_fn):
+def setup_restore_routes(app):
     """Register all restore API routes on the FastAPI app."""
 
     os_client = RestoreOpenStackClient()
-    planner = RestorePlanner(db_conn_fn, os_client)
-    executor = RestoreExecutor(db_conn_fn, os_client)
+    planner = RestorePlanner(os_client)
+    executor = RestoreExecutor(os_client)
 
     # ------------------------------------------------------------------
     # Startup: recover stale jobs left in PENDING/RUNNING from a crash

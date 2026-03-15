@@ -12,6 +12,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.65.2] - 2026-03-15
+
+### Fixed
+
+#### "Sync & Snapshot Now" button returned 405 Method Not Allowed and the snapshot pipeline could not be triggered (`pf9-ui/src/components/SnapshotRestoreWizard.tsx`)
+- The **Snapshot Restore** wizard's "Sync & Snapshot Now" button triggered `POST /snapshot/run-now` and polled `GET /snapshot/run-now/status`. The backend registers these routes under `/api/snapshot/run-now` and `/api/snapshot/run-now/status`. Without the `/api` prefix, requests were matched by nginx as SPA routes and forwarded to the React UI container, which returned 405. Every other snapshot component (`SnapshotAuditTrail`, `SnapshotPolicyManager`, `SnapshotComplianceReport`) already used the `/api/snapshot/...` prefix correctly.
+- Fixed both fetch calls in `SnapshotRestoreWizard.tsx` to include the `/api` prefix.
+
+### Changed
+
+#### Dead code and redundant patterns removed — no behaviour change (`api/main.py`, `api/integration_routes.py`, `api/runbook_routes.py`, `api/snapshot_management.py`, `api/restore_management.py`)
+- **`api/main.py`**: removed three unauthenticated probe endpoints (`GET /test-simple`, `GET /test-history`, `GET /test-history-endpoints`) that returned static strings and were reachable without authentication. Removed a duplicate block of 5 route handlers that were defined twice; FastAPI always used the first definition. Replaced the last remaining `print()` call in `startup_event()` with a structured `logger.info()`. Removed the `db_conn()` helper function and updated the two callers (`setup_snapshot_routes`, `setup_restore_routes`) to not pass it — both functions already used `get_connection()` from `db_pool` directly.
+- **`api/integration_routes.py`**: removed 4 redundant `conn.commit()` calls inside `with get_connection() as conn:` blocks — the context manager commits automatically on clean exit.
+- **`api/runbook_routes.py`**: removed 2 redundant `conn.commit()` calls inside `with get_connection() as conn:` blocks.
+- **`api/snapshot_management.py`**: removed unused `get_db_connection` parameter from `setup_snapshot_routes()`.
+- **`api/restore_management.py`**: removed unused `db_conn_fn` parameter from `RestorePlanner.__init__`, `RestoreExecutor.__init__`, and `setup_restore_routes()`; cleaned up the now-unused `Callable` import from `typing`.
+
 ## [1.65.1] - 2026-03-15
 
 ### Fixed
