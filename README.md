@@ -3,7 +3,7 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.64.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.65.1-blue.svg)](CHANGELOG.md)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -718,7 +718,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.65.0](CHANGELOG.md) — March 15, 2026
+**Current version:** [v1.65.1](CHANGELOG.md) — March 15, 2026
 
 **Development phase:** Production-hardened and ready for deployment. CI pipeline active, CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -862,6 +862,15 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.65.1 — Production & Dev Stack Fixes
+- ✅ **Production Docker build unblocked** — `startup_prod.ps1` now completes successfully; the UI image builds without `tsc` strict-mode errors
+- ✅ **Login from external IP fixed** — `config.ts` defaults changed to `""` (empty string); all API calls now use relative paths through nginx, eliminating CORS errors regardless of the client's IP or hostname
+- ✅ **nginx routing complete** — production config rewritten to cover all 50+ FastAPI routes: monitoring service upstream, `/restore/`, `/static/`, every resource path, and `^~ /metrics/` prefix to correctly route monitoring requests before the regex block
+- ✅ **TrustedHostMiddleware 400 fixed** — nginx now rewrites `Host: localhost` before proxying, so FastAPI accepts requests from any external IP
+- ✅ **Admin Tools tabs fixed** — Departments, LDAP Users, and Visibility pages now load correctly; departments response was being stored as an object instead of an array
+- ✅ **Dev stack fully functional** — Vite proxy rewritten to forward all API and monitoring paths; `localhost:5173` now works identically to the production nginx proxy
+- ✅ **Prod/dev image conflict resolved** — prod UI image tagged as `pf9-mngt-pf9_ui-prod`; switching between stacks no longer overwrites each other's built image
 
 ### v1.65.0 — CI Pipeline, CORS Hardening, DB Performance Indexes
 - ✅ **GitHub Actions CI** — `.github/workflows/ci.yml` runs on every push and PR: Python syntax check across all `.py` files, `flake8` critical-error scan, and `docker compose config` validation for both dev and prod overlays
@@ -1289,4 +1298,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.65.0 | **Last Updated**: March 15, 2026
+**Project Status**: Production Ready | **Version**: 1.65.1 | **Last Updated**: March 15, 2026

@@ -56,6 +56,7 @@ services:
     build:
       context: ./pf9-ui
       dockerfile: Dockerfile.prod
+    image: pf9-mngt-pf9_ui-prod
     ports: []
     environment: {}    # Remove VITE_API_TARGET — not needed in prod nginx build
     healthcheck:

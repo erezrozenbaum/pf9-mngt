@@ -177,6 +177,7 @@ services:
     container_name: pf9_ui
     environment:
       VITE_API_TARGET: http://pf9_api:8000
+      VITE_MONITORING_TARGET: http://pf9_monitoring:8001
     ports:
       - "5173:5173"
     depends_on:

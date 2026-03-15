@@ -137,7 +137,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **CI Pipeline + CORS + DB Indexes** (v1.65.0 — NEW ✅):
+- **Production & Dev Stack Fixes** (v1.65.1 — NEW ✅):
+  - **Login from any IP** — `config.ts` defaults changed to `""` (relative paths); `Dockerfile.prod` build-arg names corrected so `VITE_API_BASE`/`VITE_MONITORING_BASE` are no longer always `undefined`
+  - **nginx prod routing rewrite** — `nginx/nginx.prod.conf` fully rewritten: `pf9_monitoring` upstream added, `^~ /metrics/` beats regex, `/restore/` and `/static/` locations added, `Host: localhost` proxy header fixes TrustedHostMiddleware 400
+  - **Admin Tools blank pages** — `UserManagement.tsx` now unwraps the `departments` array correctly (was storing whole response object, causing `.map()` crash)
+  - **Vite dev proxy rewrite** — `vite.config.ts` now proxies all API and monitoring paths matching nginx; `VITE_MONITORING_TARGET` added to `docker-compose.yml`
+  - **Prod/dev image conflict** — `docker-compose.prod.yml` uses `image: pf9-mngt-pf9_ui-prod` so prod and dev UI images never overwrite each other
+- **CI Pipeline + CORS + DB Indexes** (v1.65.0):
   - **GitHub Actions CI** — `.github/workflows/ci.yml`: Python syntax check + flake8 + `docker compose config` validation on every push/PR
   - **CORS production mode** — set `APP_ENV=production` to restrict `ALLOWED_ORIGINS` to nginx proxy only; dev origins excluded automatically
   - **DB performance indexes** — `db/migrate_indexes.sql`: 8 indexes on `inventory_runs`, `activity_log`, `snapshots`, `migration_vms`, `tickets`, `runbook_executions`; applied on API startup

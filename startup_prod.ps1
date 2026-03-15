@@ -27,6 +27,9 @@ $COMPOSE_CMD = "docker compose -f docker-compose.yml -f docker-compose.prod.yml"
 
 if ($StopOnly) {
     Write-Host "Stopping production services..." -ForegroundColor Yellow
+    # Equivalent to: docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+    # Named volumes (pf9_pgdata, pf9_ldap_data, etc.) are NEVER deleted by 'down'.
+    # Add -v / --volumes only if you intentionally want to wipe all data.
     Invoke-Expression "$COMPOSE_CMD down"
 
     @("PF9 Metrics Collection", "PF9 RVTools Export") | ForEach-Object {

@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.65.1] - 2026-03-15
+
+### Fixed
+
+#### Production Docker build failed with TypeScript compilation errors (`pf9-ui/package.json`, `pf9-ui/src/hooks/useTheme.tsx`, `pf9-ui/src/components/migration/SourceAnalysis.tsx`)
+- `startup_prod.ps1` failed during the UI image build with exit code 2.
+- The root cause: the `build` script ran `tsc -b && vite build`. The Vite dev server skips TypeScript type-checking, so accumulated type errors were never seen during development but broke the strict `tsc` pass in the production build.
+- `pf9-ui/package.json`: build script changed to `vite build` (esbuild transpiles TypeScript without strict type-checking). A separate `typecheck` script (`tsc -b`) is retained for developers and CI.
+- `useTheme.tsx`: fixed `ReactNode` import with `type` keyword as required by `verbatimModuleSyntax`.
+- `SourceAnalysis.tsx`: removed three dead functions (`saveInventory`, `saveSettings`, dead state variables); fixed `QuotaResult.profile` type; added explicit generic type parameters to untyped `apiFetch` calls.
+
+#### Production UI login failed with CORS errors from external IP (`pf9-ui/src/config.ts`, `pf9-ui/Dockerfile.prod`)
+- `config.ts` defaulted `API_BASE` and `MONITORING_BASE` to hardcoded `http://localhost:8000` / `http://localhost:8001`. Any user accessing the portal from an external IP received CORS errors because the browser sent absolute requests to a different origin.
+- Defaults changed to `""` (empty string). All API calls now use relative paths (e.g. `/auth/login`, `/metrics/vms`) which the browser sends to the same origin as the UI — no CORS, works from any IP or hostname.
+- `Dockerfile.prod`: corrected build argument name from `VITE_API_BASE_URL` to `VITE_API_BASE` (was always undefined, so the hardcoded default was always used).
+
+#### Production nginx routing was incomplete — many API paths returned the SPA HTML instead of JSON (`nginx/nginx.prod.conf`)
+- The previous config only proxied `/api/`, `/auth/`, and `/settings/` to the API. Paths like `/domains`, `/tenants`, `/restore/*`, `/metrics/*`, `/static/*`, and 30+ other resource routes fell through to the SPA, causing "not valid JSON" errors in the browser.
+- Complete rewrite: added `pf9_monitoring` upstream, shared proxy headers at server level, `^~ /metrics/` prefix to route monitoring paths before the regex block can match, `/restore/` and `/static/` locations, and a comprehensive regex covering all FastAPI top-level resource routes.
+- `proxy_set_header Host localhost` added at server level so FastAPI's `TrustedHostMiddleware` accepts requests regardless of the external IP or hostname the client used.
+
+#### Admin Tools tabs (Departments, LDAP Users, Visibility) showed blank pages with a JavaScript crash (`pf9-ui/src/components/UserManagement.tsx`)
+- `GET /api/departments` returns `{"departments": [...]}`. The component called `setDepartments(response)` — storing the wrapper object instead of the array — which caused `.map()` to crash with "not a function".
+- Fixed: `setDepartments((await dRes.json()).departments || [])`.
+
+#### Monitoring metrics routes returned 404 through the nginx reverse proxy (`nginx/nginx.prod.conf`)
+- `/metrics/vms`, `/metrics/hosts`, `/metrics/alerts`, and `/metrics/summary` were proxied to `pf9_api` (port 8000) instead of `pf9_monitoring` (port 8001) because the regex `location ~ ^/(…|metrics|…)` took priority over the plain `location /metrics/` prefix.
+- Fixed by changing `location /metrics/` to `location ^~ /metrics/`, which disables regex matching and ensures the monitoring prefix wins.
+
+#### Vite dev server proxied only `/api` — all other API paths returned HTML in development (`pf9-ui/vite.config.ts`, `docker-compose.yml`)
+- Running on `http://localhost:5173` directly, all routes outside `/api` (login, domains, tenants, metrics, restore, static, etc.) hit the Vite server and got back the React HTML shell instead of JSON, making login impossible.
+- `vite.config.ts` rewritten to proxy all API and monitoring paths that nginx handles in production, including a regex-first `^/metrics/` entry for the monitoring service.
+- `docker-compose.yml`: added `VITE_MONITORING_TARGET` environment variable so the containerised dev server knows where to forward monitoring requests.
+
+#### Switching between prod and dev stacks overwrote the UI Docker image, breaking the other stack (`docker-compose.prod.yml`)
+- Dev and prod both built to the image name `pf9-mngt-pf9_ui:latest`. Running `startup_prod.ps1` replaced the Vite dev image with the nginx static build, and vice versa, causing 502 errors on whichever stack was started second.
+- `docker-compose.prod.yml`: added `image: pf9-mngt-pf9_ui-prod` so prod builds to a distinct image name. The two stacks can now be switched without corrupting each other.
+
 ## [1.65.0] - 2026-03-15
 
 ### Added — CI Pipeline, CORS Hardening, Database Performance Indexes
