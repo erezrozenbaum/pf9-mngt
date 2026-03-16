@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `api/db_pool.py`, `api/vm_provisioning_service_user.py`: added `# noqa: F824` to `global` declarations used for read-only double-check locking; the variable is assigned in a different function, correct by design.
 - `db_writer.py`: replaced undefined bare `conn` with `cur.connection` inside `_detect_drift`; `conn` was never in scope at that call site.
 - `.github/workflows/ci.yml`: added a step to create stub secret files (`secrets/db_password`, `secrets/ldap_admin_password`, `secrets/pf9_password`, `secrets/jwt_secret`) before `docker compose up` in the integration-test job. Docker Compose bind-mounts these files at startup; without them the runner fails with "bind source path does not exist".
+- `tests/seed_ci.py`: the login check now retries for up to 60 seconds on HTTP 503 responses. FastAPI's `/health` endpoint becomes reachable before the database finishes running startup migrations; the retry loop prevents a false CI failure during this brief window.
 
 ## [1.65.4] - 2026-03-15
 

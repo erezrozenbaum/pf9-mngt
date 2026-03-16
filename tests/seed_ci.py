@@ -88,10 +88,20 @@ def main():
     if not ADMIN_PASS:
         print("  ⚠️  ADMIN_PASS not set — skipping login check")
     else:
-        status, body = _post_json(
-            f"{API_URL}/auth/login",
-            {"username": ADMIN_USER, "password": ADMIN_PASS},
-        )
+        # Retry login with backoff — API may return 503 briefly while the DB
+        # finishes initialising even after the /health endpoint starts responding.
+        login_deadline = time.time() + 60
+        status, body = 503, {}
+        while time.time() < login_deadline:
+            status, body = _post_json(
+                f"{API_URL}/auth/login",
+                {"username": ADMIN_USER, "password": ADMIN_PASS},
+            )
+            if status != 503:
+                break
+            print("  ⏳ API returned 503 (DB still initialising) — retrying in 5 s…")
+            time.sleep(5)
+
         if status == 200 and "access_token" in body:
             token = body["access_token"]
             user = body.get("user", {})
