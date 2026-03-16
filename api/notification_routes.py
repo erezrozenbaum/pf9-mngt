@@ -19,8 +19,11 @@ from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, get_current_user
 from db_pool import get_connection
+import os
+
 from smtp_helper import (
-    SMTP_ENABLED, SMTP_HOST, SMTP_PORT,
+    SMTP_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS,
+    SMTP_FROM_ADDRESS, SMTP_FROM_NAME, SMTP_USERNAME,
     send_email as smtp_send_email,
 )
 from webhook_helper import (

@@ -131,7 +131,7 @@ def ensure_provisioner_in_project(admin_client, project_id: str) -> None:
     Raises RuntimeError if the provisionsrv user cannot be found in Keystone
     (i.e. setup has not been run yet).
     """
-    global _role_cache
+    global _role_cache  # noqa: F824
     if project_id in _role_cache:
         return  # already verified this run
 

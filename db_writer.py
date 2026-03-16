@@ -172,9 +172,8 @@ def _detect_drift(cur, table_name: str, record_id: str, old_row: Dict[str, Any],
             ))
 
             # T3.1 — auto-incident ticket for critical/warning drift
-            conn.cursor()  # ensure connection is still live
             _auto_ticket_for_drift(
-                conn,
+                cur.connection,
                 severity=rule["severity"],
                 resource_type=table_name,
                 resource_id=str(record_id),

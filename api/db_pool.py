@@ -71,7 +71,7 @@ def init_pool(minconn: int = None, maxconn: int = None):
 
 def get_pool() -> pool.ThreadedConnectionPool:
     """Return the pool singleton, creating it on first call."""
-    global _pool
+    global _pool  # noqa: F824
     if _pool is None:
         with _pool_lock:
             if _pool is None:          # double-check after acquiring lock

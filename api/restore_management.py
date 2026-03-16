@@ -1171,7 +1171,8 @@ class RestoreExecutor:
         try:
             session = self.os_client.authenticate_service_user(project_id)
         except Exception as e:
-            self._with_conn(lambda c: self._fail_job(c, job_id, f"Authentication failed: {e}"))
+            _err = str(e)
+            self._with_conn(lambda c: self._fail_job(c, job_id, f"Authentication failed: {_err}"))
             return
 
         # Track created resources for rollback
@@ -1207,13 +1208,14 @@ class RestoreExecutor:
                     lambda c: self._update_step_status(c, job_id, step_id, "SUCCEEDED", details=result)
                 )
             except Exception as e:
-                logger.error(f"Step {step_name} failed for job {job_id}: {e}")
+                _err = str(e)
+                logger.error(f"Step {step_name} failed for job {job_id}: {_err}")
                 self._with_conn(
-                    lambda c: self._update_step_status(c, job_id, step_id, "FAILED", error=str(e))
+                    lambda c: self._update_step_status(c, job_id, step_id, "FAILED", error=_err)
                 )
                 # Attempt cleanup
                 await self._cleanup_resources(session, project_id, created_resources)
-                self._with_conn(lambda c: self._fail_job(c, job_id, f"Step {step_name} failed: {e}"))
+                self._with_conn(lambda c: self._fail_job(c, job_id, f"Step {step_name} failed: {_err}"))
                 return
 
         # All steps succeeded
@@ -2686,7 +2688,8 @@ def setup_restore_routes(app):
             try:
                 session = os_client.authenticate_service_user(job["project_id"])
             except Exception as e:
-                executor._with_conn(lambda c: executor._fail_job(c, new_job_id, f"Authentication failed: {e}"))
+                _err = str(e)
+                executor._with_conn(lambda c: executor._fail_job(c, new_job_id, f"Authentication failed: {_err}"))
                 return
 
             # Start with existing resources
@@ -2713,13 +2716,14 @@ def setup_restore_routes(app):
                         lambda c: executor._update_step_status(c, new_job_id, step_id, "SUCCEEDED", details=result)
                     )
                 except Exception as e:
-                    logger.error(f"Retry step {step_name} failed for job {new_job_id}: {e}")
+                    _err = str(e)
+                    logger.error(f"Retry step {step_name} failed for job {new_job_id}: {_err}")
                     executor._with_conn(
-                        lambda c: executor._update_step_status(c, new_job_id, step_id, "FAILED", error=str(e))
+                        lambda c: executor._update_step_status(c, new_job_id, step_id, "FAILED", error=_err)
                     )
                     await executor._cleanup_resources(session, job["project_id"], created_resources)
                     executor._with_conn(
-                        lambda c: executor._fail_job(c, new_job_id, f"Step {step_name} failed: {e}")
+                        lambda c: executor._fail_job(c, new_job_id, f"Step {step_name} failed: {_err}")
                     )
                     return
 
