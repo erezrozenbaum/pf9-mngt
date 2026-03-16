@@ -56,7 +56,7 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 ## 1. System Startup
 
 ```bash
-# Start all 14 containers
+# Start all services
 docker compose up -d
 
 # Windows full automated deployment (first time or after config changes)
@@ -3094,25 +3094,14 @@ find $BACKUP_DIR -name "*.gz" -mtime +30 -delete
 
 ## Code Quality Issues
 
-### Critical Security Issues
+### Resolved Security Items ✅
 
-#### 1. Credential Exposure
-- **Location**: `docker-compose.yml`, `p9_common.py`
-- **Issue**: Hardcoded production credentials
-- **Risk**: HIGH - Complete infrastructure access
-- **Fix**: Use environment variables and secrets management
-
-#### 2. SQL Injection Risk
-- **Location**: `api/main.py` various query functions
-- **Issue**: Some dynamic SQL construction
-- **Risk**: MEDIUM - Data exposure
-- **Fix**: Use parameterized queries consistently
-
-#### 3. CORS Configuration
-- **Location**: `api/main.py`
-- **Issue**: `allow_origins=["*"]` too permissive
-- **Risk**: MEDIUM - Cross-origin attacks
-- **Fix**: Restrict to specific domains
+| Item | Status | Resolved In |
+|------|--------|-------------|
+| Hardcoded credentials (`docker-compose.yml`, `p9_common.py`) | ✅ Replaced with Docker Secrets (`/run/secrets/`) | v1.50.0 |
+| CORS wildcard `allow_origins=["*"]` | ✅ Restricted to configured origins | v1.50.0 |
+| SQL injection risk in dynamic queries | ✅ Parameterized queries enforced throughout | v1.50.0 |
+| Missing authentication & authorization | ✅ LDAP + JWT + granular RBAC permission matrix | v1.50.0 |
 
 ### Code Duplication Issues
 
@@ -3140,17 +3129,12 @@ find $BACKUP_DIR -name "*.gz" -mtime +30 -delete
 - **Impact**: Slow response times with large datasets
 - **Fix**: Add database indexes on commonly filtered columns
 
-### Documentation Issues
+### Documentation Status ✅
 
-#### 1. Missing API Documentation
-- **Issue**: No comprehensive API documentation
-- **Impact**: Developer experience, integration difficulty
-- **Fix**: Complete OpenAPI/Swagger documentation
-
-#### 2. Deployment Documentation
-- **Issue**: Basic deployment instructions only
-- **Impact**: Production deployment challenges
-- **Fix**: Comprehensive deployment guide with security considerations
+| Item | Status |
+|------|--------|
+| API documentation | ✅ `docs/API_REFERENCE.md` — full endpoint reference with RBAC requirements per endpoint |
+| Deployment guide | ✅ `docs/DEPLOYMENT_GUIDE.md` v2.5 — production hardening, TLS, secrets, multi-arch |
 
 ---
 
@@ -3295,22 +3279,30 @@ def test_server_list():
 ```
 
 #### 2. CI/CD Pipeline
-```yaml
-# .github/workflows/ci.yml
-name: CI/CD
-on: [push, pull_request]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Run tests
-        run: |
-          docker compose -f docker-compose.test.yml up --abort-on-container-exit
-      - name: Security scan
-        run: |
-          docker run --rm -v $(pwd):/app securecodewarrior/docker-scout /app
+
+The pipeline is defined in two workflow files under `.github/workflows/`:
+
+**CI workflow — `.github/workflows/ci.yml`** (triggers on every `push` and `pull_request`):
+
+| Job | What it does |
+|-----|-------------|
+| `lint` | `flake8 --select=E9,F63,F7,F82` + `python -m py_compile` on every `.py` file |
+| `compose-validate` | `docker compose config` for both dev and prod overlays — catches YAML errors before any container starts |
+| `unit-tests` | 14 fast tests (JWT helpers + container watchdog logic) — no live stack needed |
+| `integration-tests` | Full Docker Compose stack, waits for healthy API, runs `tests/seed_ci.py` smoke test, then full `pytest tests/` suite |
+
+**Release workflow — `.github/workflows/release.yml`** (triggers when CI fully passes on `master`/`main`):
+
+1. **Create tag** — parses version from `CHANGELOG.md`, creates the git tag and GitHub Release with changelog notes
+2. **Publish images** — builds all 9 service images for `linux/amd64` + `linux/arm64` and pushes to `ghcr.io/erezrozenbaum/pf9-mngt-<service>:<version>`; uses the built-in `GITHUB_TOKEN`, no extra secrets required
+
+**To pin a specific release version in production:**
+```bash
+# In .env
+PF9_IMAGE_TAG=v1.66.0
 ```
+
+For a full reference see [`docs/CI_CD_GUIDE.md`](CI_CD_GUIDE.md).
 
 #### 3. Code Quality Tools
 ```yaml
@@ -3334,27 +3326,21 @@ repos:
 
 ## Conclusion
 
-The Platform9 Management System provides valuable infrastructure visibility and management capabilities. However, several critical security and architectural improvements are needed before production deployment:
+The Platform9 Management System is a production-ready infrastructure management platform. Previously identified security gaps — hardcoded credentials, missing authentication, and open CORS — were resolved in v1.50.0 with Docker Secrets, LDAP-backed JWT authentication, and a granular RBAC permission matrix.
 
-### Immediate Actions Required:
-1. **Remove hardcoded credentials** from all configuration files
-2. **Implement proper secret management**
-3. **Restrict CORS policy** to specific origins
-4. **Add authentication and authorization**
-5. **Implement comprehensive input validation**
+### Security Features Implemented ✅
 
-### Medium-term Improvements:
-1. **Database optimization** with proper indexing
-2. **Connection pooling** implementation
-3. **Comprehensive monitoring** and alerting
-4. **Automated testing** and CI/CD pipeline
-5. **Code consolidation** to eliminate duplication
+| Feature | Detail |
+|---------|--------|
+| **Secrets management** | Docker Secrets at `/run/secrets/`; no credentials in source or `.env` |
+| **Authentication** | LDAP-backed login with JWT session tokens and MFA support |
+| **Authorization** | Editable RBAC matrix — Superadmin, Admin, Operator, Viewer roles |
+| **TLS & network security** | nginx TLS termination; LDAP and DB ports not exposed to host |
+| **Audit trail** | Full change history; deletion events; restore audit records |
+| **Log management** | Structured logging + log rotation across all services |
 
-### Long-term Enhancements:
-1. **Multi-cluster support** for complex environments
-2. **Role-based access control** for different user types
-3. **Advanced reporting** with business intelligence features
-4. **Mobile-responsive interface** improvements
-5. **Integration capabilities** with other management tools
-
-This system has strong foundational architecture but requires security hardening and operational improvements before production use.
+### Ongoing Development (Non-blocking)
+1. **Multi-cluster support** for complex multi-region environments
+2. **Mobile-responsive interface** refinements for field use
+3. **Additional integration connectors** (CRM, billing, custom webhooks)
+4. **Code consolidation** — UI component library unification

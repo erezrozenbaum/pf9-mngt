@@ -1089,16 +1089,18 @@ metering_worker/
 - Host-based data aggregation via Prometheus node_exporter
 - Auto-setup detection and management
 - UI integration with monitoring dashboard
+- Container health watchdog — polls Docker Engine via Unix socket, sends SMTP alerts when containers exit unexpectedly or become unhealthy
 
 ```python
 # Monitoring Structure
 monitoring/
-├── main.py              # FastAPI monitoring service
-├── prometheus_client.py # Prometheus integration
-├── models.py           # Data models for metrics
-├── requirements.txt    # Dependencies
-├── entrypoint.sh       # Container startup script
-├── Dockerfile          # Container configuration
+├── main.py                # FastAPI monitoring service
+├── container_watchdog.py  # Docker health watchdog (daemon thread)
+├── prometheus_client.py   # Prometheus integration
+├── models.py              # Data models for metrics
+├── requirements.txt       # Dependencies
+├── entrypoint.sh          # Container startup script
+├── Dockerfile             # Container configuration
 └── cache/
     └── metrics_cache.json # Persistent cache storage
 ```
@@ -1549,7 +1551,7 @@ Internet → nginx (443/TLS) → [Docker internal network] → pf9_api:8000
                                                         → pf9_monitoring:8001 (internal)
 ```
 
-In production, `docker-compose.prod.yml` sets `ports: []` for `pf9_api`, `pf9_ui`, and `pf9_monitoring` — these services are reachable only on the internal Docker network. All external traffic goes through nginx on port 443.
+In production, `docker-compose.prod.yml` sets `ports: []` for `pf9_api`, `pf9_ui`, and `pf9_monitoring` — these services are reachable only on the internal Docker network. All external traffic goes through nginx on port 443. In addition, the prod overlay sets `image:` overrides for all nine custom services to pull pre-built images from `ghcr.io/erezrozenbaum/pf9-mngt-<service>:${PF9_IMAGE_TAG:-latest}` — production hosts do not need to build from source. Set `PF9_IMAGE_TAG` in `.env` to pin a specific release version.
 
 > **Note on UI port**: In development, `pf9_ui` runs the Vite dev server on `:5173`. In production (`Dockerfile.prod`), it builds static assets served by an nginx process on `:80`. Architecture diagrams showing `:5173` describe the development configuration.
 

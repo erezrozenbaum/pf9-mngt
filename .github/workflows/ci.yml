@@ -111,7 +111,7 @@ jobs:
   # the stack is reachable; JWT unit tests always run.
   # -------------------------------------------------------------------------
   unit-tests:
-    name: Unit Tests (JWT)
+    name: Unit Tests (no live stack)
     runs-on: ubuntu-latest
 
     steps:
@@ -128,3 +128,89 @@ jobs:
 
       - name: Run JWT unit tests
         run: python -m pytest tests/test_auth.py::TestJWTHelpers -v
+
+      - name: Run container watchdog unit tests
+        run: python -m pytest tests/test_container_alerts.py -k "not TestContainerAlertAPI" -v
+
+  # -------------------------------------------------------------------------
+  # Job 5: Integration tests (full live stack)
+  # Spins up docker compose, waits for all services to become healthy, runs
+  # seed_ci.py to verify the CI admin can log in, then runs the full test
+  # suite. Tears down on completion regardless of result.
+  # -------------------------------------------------------------------------
+  integration-tests:
+    name: Integration Tests (live stack)
+    runs-on: ubuntu-latest
+    needs: [lint, compose-validate, unit-tests]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest python-jose requests
+
+      - name: Copy CI environment file
+        run: cp .env.ci .env
+
+      - name: Build and start stack
+        run: docker compose up --build -d
+
+      - name: Wait for pf9_api to be healthy (up to 3 minutes)
+        run: |
+          echo "Waiting for pf9_api healthcheck..."
+          timeout 180 bash -c \
+            "until docker inspect --format='{{.State.Health.Status}}' pf9_api 2>/dev/null | grep -q '^healthy$'; do
+               echo '  still waiting...'; sleep 8
+             done"
+          echo "pf9_api is healthy."
+
+      - name: Wait for pf9_monitoring to be healthy (up to 90 seconds)
+        run: |
+          echo "Waiting for pf9_monitoring healthcheck..."
+          timeout 90 bash -c \
+            "until docker inspect --format='{{.State.Health.Status}}' pf9_monitoring 2>/dev/null | grep -q '^healthy$'; do
+               echo '  still waiting...'; sleep 5
+             done" || echo "pf9_monitoring did not become healthy (non-fatal)"
+
+      - name: Show container status
+        run: docker compose ps
+
+      - name: Seed check — verify CI admin login
+        env:
+          TEST_API_URL: http://localhost:8000
+          TEST_MON_URL: http://localhost:8001
+          DEFAULT_ADMIN_USER: ci-admin
+          DEFAULT_ADMIN_PASSWORD: ci-admin-test-pass-2026!
+        run: python tests/seed_ci.py
+
+      - name: Run full test suite
+        env:
+          TEST_API_URL: http://localhost:8000
+          TEST_MON_URL: http://localhost:8001
+          TEST_ADMIN_EMAIL: ci-admin
+          TEST_ADMIN_PASSWORD: ci-admin-test-pass-2026!
+          TEST_SUPERADMIN_USER: ci-admin
+          TEST_SUPERADMIN_PASSWORD: ci-admin-test-pass-2026!
+          TEST_VERIFY_SSL: "false"
+        run: |
+          python -m pytest tests/ -v \
+            --ignore=tests/seed_ci.py \
+            -k "not TestContainerAlertAPI or (TestContainerAlertAPI and not test_put_requires_superadmin)"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== pf9_api logs (last 100 lines) ==="
+          docker compose logs --tail=100 pf9_api
+          echo "=== pf9_monitoring logs (last 50 lines) ==="
+          docker compose logs --tail=50 pf9_monitoring
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v

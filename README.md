@@ -3,7 +3,8 @@
 **Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.65.4-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.66.0-blue.svg)](CHANGELOG.md)
+[![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
@@ -575,6 +576,9 @@ POSTGRES_DB=pf9_mgmt
 # Monitoring
 PF9_HOSTS=<HOST_IP_1>,<HOST_IP_2>,<HOST_IP_3>
 METRICS_CACHE_TTL=60
+
+# Production image version (docker-compose.prod.yml)
+PF9_IMAGE_TAG=latest    # Pin to a release tag (e.g. v1.66.0) to lock images from ghcr.io
 ```
 
 ### 3. Manual Docker Setup
@@ -712,15 +716,16 @@ pf9-mngt/
 | [Linux Deployment](docs/LINUX_DEPLOYMENT_GUIDE.md) | Running pf9-mngt on Linux instead of Windows |
 | [Migration Planner Guide](docs/MIGRATION_PLANNER_GUIDE.md) | Comprehensive operator guide for all Migration Planner phases |
 | [Support Ticket System Guide](docs/TICKET_GUIDE.md) | Full reference for the ticket lifecycle, API, SLA, email templates, and auto-tickets |
+| [CI/CD Guide](docs/CI_CD_GUIDE.md) | CI pipeline, release process, and Docker image publishing |
 | [Contributing](CONTRIBUTING.md) | Contribution guidelines |
 
 ---
 
 ## �️ Project Status
 
-**Current version:** [v1.65.4](CHANGELOG.md) — March 15, 2026
+**Current version:** [v1.66.0](CHANGELOG.md) — May 2026
 
-**Development phase:** Production-hardened and ready for deployment. CI pipeline active, CORS restricted in production mode, database performance indexes applied automatically on startup.
+**Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
 **Platform:** Docker Compose with nginx TLS termination. All core containers (14) have restart policies and resource limits; a 15th `pf9_scheduler_worker` container handles automated collection, and `pf9_backup_worker` is added when `COMPOSE_PROFILES=backup` is set. Redis cache, rate limiting, and structured logging active.
 
@@ -862,6 +867,11 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.66.0 — Container Alerting, Full CI Pipeline & Docker Image Publishing
+- ✅ **Container restart alerting** — monitoring watchdog emails the configured alert address when any container crashes or goes unhealthy; alert email is configurable in the Admin panel
+- ✅ **Full integration test pipeline** — GitHub Actions now spins up the complete Docker stack and runs pytest against live endpoints on every push; unit tests (14) run without needing a live stack
+- ✅ **Docker images published to ghcr.io** — all 9 service images are built for `linux/amd64` + `linux/arm64` and pushed to `ghcr.io/erezrozenbaum/pf9-mngt-<service>` on each release; use `PF9_IMAGE_TAG` in `.env` to pin a specific version
 
 ### v1.65.4 — Production Healthcheck Fix & Automated Test Suite
 - ✅ **`pf9_ui` healthcheck fixed** — Alpine Linux resolves `localhost` to `::1` (IPv6), but nginx binds IPv4 only; changed healthcheck to `http://127.0.0.1:80` so the container correctly reports `(healthy)` in production

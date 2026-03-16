@@ -151,7 +151,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - **nginx prod routing rewrite** — `nginx/nginx.prod.conf` fully rewritten: `pf9_monitoring` upstream added, `^~ /metrics/` beats regex, `/restore/` and `/static/` locations added, `Host: localhost` proxy header fixes TrustedHostMiddleware 400
   - **Admin Tools blank pages** — `UserManagement.tsx` now unwraps the `departments` array correctly (was storing whole response object, causing `.map()` crash)
   - **Vite dev proxy rewrite** — `vite.config.ts` now proxies all API and monitoring paths matching nginx; `VITE_MONITORING_TARGET` added to `docker-compose.yml`
-  - **Prod/dev image conflict** — `docker-compose.prod.yml` uses `image: pf9-mngt-pf9_ui-prod` so prod and dev UI images never overwrite each other
+  - **Prod/dev image conflict** — `docker-compose.prod.yml` previously had `image: pf9-mngt-pf9_ui-prod`; now all services use `ghcr.io/erezrozenbaum/pf9-mngt-<service>:${PF9_IMAGE_TAG:-latest}` so prod images are always pre-built and versioned
 - **CI Pipeline + CORS + DB Indexes** (v1.65.0):
   - **GitHub Actions CI** — `.github/workflows/ci.yml`: Python syntax check + flake8 + `docker compose config` validation on every push/PR
   - **CORS production mode** — set `APP_ENV=production` to restrict `ALLOWED_ORIGINS` to nginx proxy only; dev origins excluded automatically
@@ -317,7 +317,7 @@ cd pf9-mngt
 
 # Configure .env file (see above)
 
-# One-command complete setup
+# One-command complete setup (dev / local)
 .\startup.ps1
 
 # Verify services are running
@@ -328,6 +328,15 @@ docker-compose ps
 # - API + Docs: http://localhost:8000/docs  
 # - Monitoring API: http://localhost:8001
 # - Database Admin: http://localhost:8080
+```
+
+```powershell
+# Production deployment — uses pre-built images from ghcr.io
+# 1. Set PF9_IMAGE_TAG=<version> in .env (e.g. PF9_IMAGE_TAG=v1.66.0), or leave as 'latest'
+# 2. Pull images
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+# 3. Start stack
+.\startup_prod.ps1
 ```
 
 ---
@@ -1007,6 +1016,7 @@ docker-compose up -d
 
 ### New Monitoring Components
 - [`monitoring/main.py`](../monitoring/main.py) - FastAPI monitoring service
+- [`monitoring/container_watchdog.py`](../monitoring/container_watchdog.py) - Container health watchdog (alerts on crash/unhealthy)
 - [`monitoring/models.py`](../monitoring/models.py) - Pydantic data models
 - [`monitoring/prometheus_client.py`](../monitoring/prometheus_client.py) - Prometheus integration
 - [`monitoring/Dockerfile`](../monitoring/Dockerfile) - Containerization
@@ -1028,9 +1038,11 @@ PF9_PASSWORD=<password>
 PF9_PROJECT_NAME=service
 PF9_REGION_NAME=region-one
 
-# Monitoring Configuration (NEW)
+# Monitoring Configuration
 PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
 METRICS_CACHE_TTL=60
+WATCHDOG_INTERVAL=60      # Docker container poll interval (seconds)
+WATCHDOG_COOLDOWN=1800    # Min seconds between repeat alerts per container
 
 # Email Notification Configuration (v1.11)
 SMTP_ENABLED=true

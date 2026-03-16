@@ -119,6 +119,8 @@ prometheus_client = PrometheusClient(
 @app.on_event("startup")
 async def startup_event():
     """Initialize the application"""
+    from container_watchdog import start_watchdog
+    start_watchdog()
     logger.info("PF9 Monitoring Service started", extra={"context": {"cache": "/tmp/cache/metrics_cache.json"}})
     
     # Ensure we have a cache file with some default data if none exists

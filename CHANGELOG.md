@@ -12,6 +12,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.66.0] - 2026-03-16
+
+### Added
+
+#### Container restart alerting with UI-configurable email
+- New background watchdog thread inside the `pf9_monitoring` container polls the Docker Engine API via Unix socket every 60 seconds (configurable via `WATCHDOG_INTERVAL`). When a container exits with a non-zero code or is reported `(unhealthy)` by its Docker healthcheck, an SMTP alert is sent to a configurable address. A recovery notification is sent when the container returns to a healthy state. A per-container cooldown (default 30 minutes, `WATCHDOG_COOLDOWN`) prevents alert storms on crash-loops.
+- New `GET /settings/container-alert` endpoint (public — used by the monitoring watchdog so it can fetch the email without an auth session). New `PUT /admin/settings/container-alert` endpoint (superadmin only) persists the alert email to the `app_settings` table.
+- New **Container Alerts** tab in the admin panel, visible to superadmin only. Superadmins can set or clear the alert email; admins see a read-only view.
+- `docker-compose.yml`: Docker socket (`/var/run/docker.sock:ro`) and SMTP/watchdog env vars added to `pf9_monitoring`. `docker-compose.prod.yml`: Docker socket volume added to prod overlay.
+- `tests/test_container_alerts.py`: unit tests for unhealthy-container detection (exit codes, `(unhealthy)` status string), cooldown logic, recovery alerting, and graceful degradation when Docker socket is absent; integration tests for API round-trip, auth enforcement, and email validation.
+
+#### Full CI integration test pipeline
+- New `integration-tests` job in `.github/workflows/ci.yml`: builds the full Docker Compose stack, waits for `pf9_api` to report healthy, runs `tests/seed_ci.py` to verify the CI admin login, then runs the complete `pytest tests/` suite. Tears down the stack on completion. Requires `lint`, `compose-validate`, and `unit-tests` to pass first.
+- `.env.ci`: committed stub-credential environment file used exclusively by the CI stack (no real secrets — only valid inside ephemeral GitHub Actions containers).
+- `tests/seed_ci.py`: readiness and smoke-test script run after `docker compose up`; polls health endpoints, verifies CI admin login, and exits non-zero if the stack is not ready for testing.
+- `unit-tests` CI job now also runs `test_container_alerts.py` watchdog unit tests (no live stack needed).
+- `release.yml` trigger changed from PR-merge to `workflow_run` on the CI workflow completing; release tags are only created when CI (including integration tests) fully passes.
+
+#### Docker images published to GitHub Container Registry
+- `release.yml` extended with a new `publish-images` job that runs after the release tag is created. Builds nine service images (`api`, `ui`, `monitoring`, `backup-worker`, `metering-worker`, `scheduler-worker`, `search-worker`, `notification-worker`, `nginx`) and pushes them to `ghcr.io/$OWNER/pf9-mngt-<service>` using `docker/build-push-action`. Each image is tagged with the release version and `latest`.
+- Multi-platform builds: `linux/amd64` and `linux/arm64` via `docker/setup-qemu-action` and `docker/setup-buildx-action`. Images run on Intel/AMD servers and ARM hosts (AWS Graviton, Apple Silicon) without modification.
+- `docker-compose.prod.yml`: all custom services now have an `image:` override pointing to their `ghcr.io` counterpart. Set `PF9_IMAGE_TAG` in `.env` to pin a specific release version (defaults to `latest`). Pull with `docker compose -f docker-compose.yml -f docker-compose.prod.yml pull` before starting the stack. Worker services (`backup_worker`, `metering_worker`, `scheduler_worker`, `search_worker`, `notification_worker`, `snapshot_worker`) gain prod overlay entries with their image references.
+- Image publishing is gated: the `publish-images` job only runs when the `release` job creates a new tag, and `release` only runs when CI fully passes.
+
 ## [1.65.4] - 2026-03-15
 
 ### Fixed
