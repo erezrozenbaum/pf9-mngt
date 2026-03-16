@@ -1,3 +1,9 @@
+-- Allow the script to continue past individual statement errors.
+-- This is intentional: some CREATE OR REPLACE VIEW statements may reference
+-- objects defined later in the file; those views will be created later or
+-- fail silently, but all CREATE TABLE statements are independent and must run.
+\set ON_ERROR_STOP 0
+
 -- Basic tenants/projects/domains
 CREATE TABLE IF NOT EXISTS domains (
     id          TEXT PRIMARY KEY,
