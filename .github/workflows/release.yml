@@ -17,7 +17,7 @@ jobs:
       contents: write
     outputs:
       tag: ${{ steps.changelog.outputs.tag }}
-      tag_created: ${{ steps.create-tag.outcome == 'success' }}
+      tag_created: ${{ steps.create-tag.outputs.created }}
 
     steps:
       - name: Checkout code
@@ -64,6 +64,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a ${{ steps.changelog.outputs.tag }} -m "Release ${{ steps.changelog.outputs.tag }}"
           git push origin ${{ steps.changelog.outputs.tag }}
+          echo "created=true" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         if: steps.changelog.outputs.exists == 'false'

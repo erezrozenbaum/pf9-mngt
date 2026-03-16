@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.66.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.66.2-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -1333,4 +1333,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.66.1 | **Last Updated**: March 16, 2026
+**Project Status**: Production Ready | **Version**: 1.66.2 | **Last Updated**: March 16, 2026
