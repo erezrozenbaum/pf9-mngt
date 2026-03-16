@@ -1431,7 +1431,7 @@ def list_domains():
     return {"items": rows}
 
 
-@app.get("/tenants")
+@app.get("/api/tenants")
 def list_tenants(domain_name: Optional[str] = None):
     """
     List tenants (projects) optionally filtered by domain_name.
