@@ -423,6 +423,12 @@ sudo systemctl status pf9-mngt
 
 2. **Docker socket**: If you see "permission denied" errors with `docker compose`, ensure your user is in the `docker` group or use `sudo`.
 
+   The monitoring service also mounts the Docker socket read-only (`/var/run/docker.sock:ro`) to power the container health watchdog. On Linux this requires the `docker` group to own the socket (the default on most distros). If the watchdog logs show a permission error, verify:
+   ```bash
+   ls -la /var/run/docker.sock   # should be owned by root:docker
+   groups                        # your user should include "docker"
+   ```
+
 3. **SELinux (RHEL/CentOS)**: If SELinux is enforcing, you may need `:Z` suffix on bind mounts or configure SELinux policies:
    ```bash
    # Quick fix (development only):

@@ -587,6 +587,16 @@ PF9_HOSTS=10.0.1.10,10.0.1.11,10.0.1.12
 METRICS_CACHE_TTL=60
 # Cache time-to-live in seconds (default: 60)
 # Metrics are cached for this duration
+
+# Container Health Alerting
+# The monitoring service watches all Docker containers via the Unix socket.
+# When a container exits with a non-zero code or becomes (unhealthy), an
+# email alert is sent to the address configured in Admin → Container Alerts.
+WATCHDOG_INTERVAL=60      # How often to poll Docker Engine (seconds, default: 60)
+WATCHDOG_COOLDOWN=1800    # Minimum seconds between repeat alerts per container (default: 1800)
+# SMTP must also be configured (see Email Notification Configuration below)
+# The Docker socket is mounted read-only: /var/run/docker.sock:/var/run/docker.sock:ro
+# On Linux, ensure the monitoring container has access to the Docker socket group
 ```
 
 #### UI Configuration (Optional)
@@ -1160,8 +1170,11 @@ docker volume prune -f
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "VACUUM ANALYZE;"
 
 # Monthly: Update container images
-docker-compose pull
-docker-compose up -d
+# For production (pulls pre-built images from ghcr.io; set PF9_IMAGE_TAG in .env first):
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# For dev/local builds:
+# docker-compose pull && docker-compose up -d
 
 # Quarterly: Review and rotate credentials
 # See: Environment Configuration → Rotating Secrets
@@ -1485,8 +1498,11 @@ cat CHANGELOG.md
 # 4. Stop current services
 docker-compose down
 
-# 5. Rebuild images
-docker-compose build
+# 5. Get the new images
+# Production — update PF9_IMAGE_TAG in .env to the new version, then pull:
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+# Dev/local — rebuild from source:
+# docker-compose build
 
 # 6. Run migrations (if any)
 docker-compose up -d db
@@ -1915,8 +1931,14 @@ See [SECURITY.md](SECURITY.md) for the nginx TLS configuration.
 Combine all changes into a single `docker-compose.prod.yml` and deploy with:
 
 ```bash
+# Pull pre-built service images from ghcr.io (set PF9_IMAGE_TAG=v1.66.0 in .env to pin a version)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+
+# Start the stack
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
+
+The production overlay sets `image:` overrides for all nine custom services pointing to `ghcr.io/erezrozenbaum/pf9-mngt-<service>:${PF9_IMAGE_TAG:-latest}`. Set `PF9_IMAGE_TAG` in `.env` to pin a specific release and avoid accidental upgrades. Leave it unset (or set to `latest`) to always pull the most recent published image.
 
 This keeps the base compose file intact for development while applying all production overrides cleanly.
 

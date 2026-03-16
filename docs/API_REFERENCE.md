@@ -1750,6 +1750,39 @@ Response:
 }
 ```
 
+### Get Container Alert Email
+**GET** `/settings/container-alert`  
+*Public — no authentication required* (the monitoring watchdog calls this on every poll cycle)
+
+Returns the email address that receives container health alerts.
+
+Response:
+```json
+{ "value": "ops@example.com" }
+```
+
+An empty string means alerting is disabled.
+
+### Update Container Alert Email
+**PUT** `/admin/settings/container-alert`  
+*Requires: superadmin role*
+
+Sets the email address for container health alerts. Send an empty string to disable.
+
+Request:
+```json
+{ "value": "ops@example.com" }
+```
+
+Response:
+```json
+{ "status": "success", "value": "ops@example.com" }
+```
+
+Errors:
+- `400` — value is not a valid email address
+- `403` — caller is not superadmin
+
 ### Get User Preferences
 **GET** `/user-preferences`  
 *Requires authentication*

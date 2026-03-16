@@ -581,6 +581,19 @@ async def startup_event():
     except Exception as _exc:
         logger.warning("Performance indexes migration skipped: %s", _exc)
 
+    # Apply container alerts migration (idempotent)
+    try:
+        _ca_sql = os.path.join(os.path.dirname(__file__), "..", "db", "migrate_container_alerts.sql")
+        if os.path.exists(_ca_sql):
+            with open(_ca_sql) as _f:
+                _sql = _f.read()
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(_sql)
+            logger.info("Container alerts migration applied")
+    except Exception as _exc:
+        logger.warning("Container alerts migration skipped: %s", _exc)
+
     logger.info("PF9 Management API started — Authentication: %s", "Enabled" if ENABLE_AUTHENTICATION else "Disabled")
 
     # SLA daemon: check for breached SLA deadlines every 15 minutes
@@ -5214,6 +5227,55 @@ async def upload_branding_logo(
     except Exception as e:
         logger.error(f"Failed to save logo URL to DB: {e}")
     return {"status": "success", "logo_url": logo_url}
+
+
+# ---------------------------------------------------------------------------
+# Container Alert Settings  (public GET, superadmin PUT)
+# ---------------------------------------------------------------------------
+
+@app.get("/settings/container-alert")
+def get_container_alert():
+    """
+    Return the container health alert email address.
+    Public endpoint — used by the monitoring watchdog (no session needed).
+    """
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT value FROM app_settings WHERE key = 'container_alert_email'")
+            row = cur.fetchone()
+            return {"value": row["value"] if row else ""}
+    except Exception as e:
+        logger.error("Failed to fetch container alert setting: %s", e)
+        return {"value": ""}
+
+
+@app.put("/admin/settings/container-alert")
+@limiter.limit("10/minute")
+def update_container_alert(
+    request: Request,
+    payload: dict,
+    current_user: User = Depends(require_authentication),
+):
+    """Update the container health alert email address. Superadmin only."""
+    if current_user.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Superadmin role required")
+    email = payload.get("value", "").strip()
+    if email and "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO app_settings (key, value, updated_at, updated_by)
+                   VALUES ('container_alert_email', %s, now(), %s)
+                   ON CONFLICT (key) DO UPDATE
+                   SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                (email, current_user.username),
+            )
+        return {"status": "success", "value": email}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update setting: {e}")
 
 
 # Serve static files (uploaded logos)

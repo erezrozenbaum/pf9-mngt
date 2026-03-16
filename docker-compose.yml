@@ -211,11 +211,26 @@ services:
       METRICS_CACHE_TTL: ${METRICS_CACHE_TTL:-60}
       # Logging
       LOG_FILE: /app/logs/pf9_monitoring.log
+      # === Container Restart Alerting ===
+      API_BASE_URL: http://pf9_api:8000
+      WATCHDOG_INTERVAL: ${WATCHDOG_INTERVAL:-60}
+      WATCHDOG_COOLDOWN: ${WATCHDOG_COOLDOWN:-1800}
+      DOCKER_SOCKET: /var/run/docker.sock
+      # SMTP (shared with pf9_api — alerts sent directly from monitoring)
+      SMTP_ENABLED: ${SMTP_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_ADDRESS: ${SMTP_FROM_ADDRESS:-pf9-mgmt@example.com}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Platform9 Management}
     ports:
       - "8001:8001"
     volumes:
       - "./monitoring/cache:/tmp/cache"
       - "./logs:/app/logs"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
     depends_on:
       - pf9_api
     restart: unless-stopped

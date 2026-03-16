@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir aiohttp aiofiles
 
 # Copy monitoring service files  
-COPY main.py prometheus_client.py models.py entrypoint.sh ./
+COPY main.py prometheus_client.py models.py entrypoint.sh container_watchdog.py ./
 RUN chmod +x entrypoint.sh
 
 # Run monitoring service

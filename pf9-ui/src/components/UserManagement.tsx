@@ -12,6 +12,98 @@ type UserManagementProps = {
 };
 
 // ---------------------------------------------------------------------------
+// Container Alert Settings Sub-Component (superadmin only)
+// ---------------------------------------------------------------------------
+const ContainerAlertSettings: React.FC<{ user?: AuthUser | null }> = ({ user }) => {
+  const [email, setEmail] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const isSuperadmin = user?.role === 'superadmin';
+
+  useEffect(() => {
+    fetch(`${API_BASE}/settings/container-alert`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => setEmail(d.value ?? ''))
+      .catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    const token = localStorage.getItem('auth_token') || '';
+    if (!token) { setMsg('⚠️ Please log in first'); return; }
+    setSaving(true); setMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/admin/settings/container-alert`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ value: email }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      setMsg('✅ Alert email saved');
+      setTimeout(() => setMsg(''), 4000);
+    } catch (e: any) { setMsg(`⚠️ ${e.message}`); }
+    finally { setSaving(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '8px 12px', borderRadius: '6px',
+    border: '1px solid var(--color-border, #ddd)', boxSizing: 'border-box',
+    background: isSuperadmin ? 'var(--color-surface, #fff)' : 'var(--color-surface-muted, #f3f4f6)',
+    color: 'var(--color-text-primary, #333)', fontSize: '14px',
+  };
+
+  return (
+    <div style={{ maxWidth: '600px' }}>
+      <h3 style={{ marginTop: 0, marginBottom: '16px' }}>🔔 Container Health Alerts</h3>
+      <p style={{ fontSize: '13px', color: 'var(--color-text-secondary, #888)', marginBottom: '20px' }}>
+        When enabled, the monitoring service polls the Docker Engine every minute and sends an
+        email when a container exits with a non-zero code or becomes unhealthy.  A recovery
+        notification is sent when the container returns to a healthy state.
+      </p>
+      {!isSuperadmin && (
+        <div style={{ padding: '10px 14px', borderRadius: '6px', background: '#fef3c7', color: '#92400e', marginBottom: '16px', fontSize: '13px' }}>
+          ⚠️ View-only — superadmin access required to change this setting.
+        </div>
+      )}
+      {msg && (
+        <div style={{ padding: '10px', borderRadius: '6px', marginBottom: '16px',
+          background: msg.startsWith('✅') ? '#dcfce7' : '#fee2e2',
+          color: msg.startsWith('✅') ? '#166534' : '#991b1b' }}>{msg}
+        </div>
+      )}
+      <div style={{ marginBottom: '16px' }}>
+        <label style={{ fontWeight: 600, fontSize: '13px', marginBottom: '4px', display: 'block', color: 'var(--color-text-primary, #333)' }}>
+          Alert Email Address
+        </label>
+        <input
+          type="email"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          disabled={!isSuperadmin}
+          placeholder="alerts@example.com"
+          style={inputStyle}
+        />
+        <p style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
+          Leave blank to disable container health alerts.  Make sure SMTP is configured in
+          the deployment environment variables.
+        </p>
+      </div>
+      {isSuperadmin && (
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            padding: '10px 24px', background: '#2563eb', color: 'white', border: 'none',
+            borderRadius: '6px', cursor: saving ? 'wait' : 'pointer', fontWeight: 600, fontSize: '14px',
+          }}
+        >
+          {saving ? 'Saving...' : '💾 Save Alert Email'}
+        </button>
+      )}
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Branding Settings Sub-Component
 // ---------------------------------------------------------------------------
 const BrandingSettings: React.FC = () => {
@@ -1619,9 +1711,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 'vmp_history', label: 'VM Provisioning', icon: '🖥️', adminOnly: true },
           { id: 'rb_approvals', label: 'Runbook Approvals', icon: '✅', adminOnly: true },
           { id: 'rb_policies', label: 'Runbook Policies', icon: '📐', adminOnly: true },
-          { id: 'data_reset', label: 'Data Reset', icon: '⚠️', adminOnly: true }
+          { id: 'data_reset', label: 'Data Reset', icon: '⚠️', adminOnly: true },
+          { id: 'container_alerts', label: 'Container Alerts', icon: '🔔', adminOnly: true, superadminOnly: true }
         ]
-          .filter(tab => !tab.adminOnly || (user && (user.role === 'admin' || user.role === 'superadmin')))
+          .filter(tab =>
+            (!tab.adminOnly || (user && (user.role === 'admin' || user.role === 'superadmin'))) &&
+            (!(tab as any).superadminOnly || (user && user.role === 'superadmin'))
+          )
           .map(tab => (
           <button
             key={tab.id}
@@ -2456,6 +2552,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
       {/* Branding Settings */}
       {activeTab === 'branding' && <BrandingSettings />}
+
+      {/* Container Alert Settings */}
+      {activeTab === 'container_alerts' && <ContainerAlertSettings user={user} />}
 
       {/* ────── RUNBOOK EXECUTIONS ────── */}
       {activeTab === 'rb_executions' && (

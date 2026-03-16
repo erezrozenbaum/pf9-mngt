@@ -8,6 +8,10 @@
 #   - API: 4 Gunicorn workers + worker recycling + rate-limiter on
 #   - UI: nginx production build (Dockerfile.prod) instead of Vite dev server
 #   - nginx: uses nginx.prod.conf (UI upstream on :80, no HMR websocket upgrade)
+#   - All custom services: image: override pointing to ghcr.io pre-built images
+#     Set PF9_IMAGE_TAG in your .env to pin a specific release (e.g. v1.66.0).
+#     Defaults to "latest" if not set.
+#     Pull images with: docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 
 services:
 
@@ -34,6 +38,7 @@ services:
   #       port NOT bound to host — all access via nginx TLS proxy
   # -------------------------------------------------------------------------
   pf9_api:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-api:${PF9_IMAGE_TAG:-latest}
     ports: []
     command: >
       gunicorn main:app
@@ -56,7 +61,7 @@ services:
     build:
       context: ./pf9-ui
       dockerfile: Dockerfile.prod
-    image: pf9-mngt-pf9_ui-prod
+    image: ghcr.io/erezrozenbaum/pf9-mngt-ui:${PF9_IMAGE_TAG:-latest}
     ports: []
     environment: {}    # Remove VITE_API_TARGET — not needed in prod nginx build
     healthcheck:
@@ -70,12 +75,37 @@ services:
   # Monitoring — port NOT bound to host in production
   # -------------------------------------------------------------------------
   pf9_monitoring:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-monitoring:${PF9_IMAGE_TAG:-latest}
     ports: []
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
 
   # -------------------------------------------------------------------------
   # nginx — use prod config (UI upstream on :80, no Vite HMR upgrade)
   # -------------------------------------------------------------------------
   nginx:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-nginx:${PF9_IMAGE_TAG:-latest}
     volumes:
       - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
+
+  # -------------------------------------------------------------------------
+  # Worker services — use pre-built images from ghcr.io in production
+  # -------------------------------------------------------------------------
+  backup_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-backup-worker:${PF9_IMAGE_TAG:-latest}
+
+  metering_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-metering-worker:${PF9_IMAGE_TAG:-latest}
+
+  scheduler_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-scheduler-worker:${PF9_IMAGE_TAG:-latest}
+
+  search_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-search-worker:${PF9_IMAGE_TAG:-latest}
+
+  notification_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-notification-worker:${PF9_IMAGE_TAG:-latest}
+
+  snapshot_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-snapshot-worker:${PF9_IMAGE_TAG:-latest}
+
