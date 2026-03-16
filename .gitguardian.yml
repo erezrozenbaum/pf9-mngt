@@ -1,0 +1,8 @@
+version: 2
+
+# Ignore the committed CI stub credentials file.
+# .env.ci contains only placeholder/stub values used exclusively inside
+# ephemeral GitHub Actions containers. No real secrets are in this file.
+# The CI admin password is now generated dynamically per-run (never committed).
+ignore-paths:
+  - .env.ci

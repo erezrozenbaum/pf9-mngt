@@ -158,13 +158,21 @@ jobs:
       - name: Copy CI environment file
         run: cp .env.ci .env
 
+      - name: Generate per-run CI admin password
+        # A fresh random password is generated each run and written into .env.
+        # Nothing password-like is ever committed to the repository.
+        run: |
+          CI_PASS="ci-run-$(openssl rand -hex 16)"
+          echo "DEFAULT_ADMIN_PASSWORD=${CI_PASS}" >> .env
+          echo "CI_ADMIN_PASS=${CI_PASS}" >> "$GITHUB_ENV"
+
       - name: Create stub secret files for Docker Compose
         run: |
           mkdir -p secrets
-          echo "ci-db-password-stub"      > secrets/db_password
-          echo "ci-ldap-password-stub"    > secrets/ldap_admin_password
-          echo "ci-pf9-password-stub"     > secrets/pf9_password
-          echo "ci-jwt-secret-stub-2026!" > secrets/jwt_secret
+          echo "ci-db-password-stub"   > secrets/db_password
+          echo "ci-ldap-password-stub" > secrets/ldap_admin_password
+          echo "ci-pf9-password-stub"  > secrets/pf9_password
+          echo "ci-jwt-secret-stub"    > secrets/jwt_secret
 
       - name: Build and start stack
         run: docker compose up --build -d
@@ -194,7 +202,7 @@ jobs:
           TEST_API_URL: http://localhost:8000
           TEST_MON_URL: http://localhost:8001
           DEFAULT_ADMIN_USER: ci-admin
-          DEFAULT_ADMIN_PASSWORD: ci-admin-test-pass-2026!
+          DEFAULT_ADMIN_PASSWORD: ${{ env.CI_ADMIN_PASS }}
         run: python tests/seed_ci.py
 
       - name: Run full test suite
@@ -202,9 +210,9 @@ jobs:
           TEST_API_URL: http://localhost:8000
           TEST_MON_URL: http://localhost:8001
           TEST_ADMIN_EMAIL: ci-admin
-          TEST_ADMIN_PASSWORD: ci-admin-test-pass-2026!
+          TEST_ADMIN_PASSWORD: ${{ env.CI_ADMIN_PASS }}
           TEST_SUPERADMIN_USER: ci-admin
-          TEST_SUPERADMIN_PASSWORD: ci-admin-test-pass-2026!
+          TEST_SUPERADMIN_PASSWORD: ${{ env.CI_ADMIN_PASS }}
           TEST_VERIFY_SSL: "false"
         run: |
           python -m pytest tests/ -v \
