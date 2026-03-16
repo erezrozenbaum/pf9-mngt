@@ -72,16 +72,17 @@ Only runs after Jobs 1–3 all pass. Spins up the complete stack on the GitHub A
 **Step-by-step:**
 
 1. Copies `.env.ci` → `.env` (stub credentials, safe to commit — see [`.env.ci`](../.env.ci))
-2. `docker compose up --build -d`
-3. Polls `pf9_api` container health every 10 s, up to 180 s
-4. Polls `pf9_monitoring` container health, up to 90 s (non-fatal — monitoring may lag)
-5. Runs `tests/seed_ci.py`:
+2. Creates stub secret files in `secrets/` (`db_password`, `ldap_admin_password`, `pf9_password`, `jwt_secret`) required by Docker Compose's `secrets:` bind-mounts
+3. `docker compose up --build -d`
+4. Polls `pf9_api` container health every 10 s, up to 180 s
+5. Polls `pf9_monitoring` container health, up to 90 s (non-fatal — monitoring may lag)
+6. Runs `tests/seed_ci.py`:
    - Waits for `GET /health` → 200 on both services
    - Verifies `POST /auth/login` with the CI admin user succeeds and returns an `access_token`
    - Verifies `GET /api/tenants` returns 200 with the token
-6. Runs full `pytest tests/` with CI env vars set
-7. On any failure: dumps `docker compose logs` for all services
-8. `docker compose down -v` in an `always()` cleanup step
+7. Runs full `pytest tests/` with CI env vars set
+8. On any failure: dumps `docker compose logs` for all services
+9. `docker compose down -v` in an `always()` cleanup step
 
 **CI admin authentication** — no LDAP seeding is needed. `auth.py` checks `DEFAULT_ADMIN_USER`
 / `DEFAULT_ADMIN_PASSWORD` via `hmac.compare_digest` before performing any LDAP lookup.

@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docker-compose.prod.yml`: all custom services now have an `image:` override pointing to their `ghcr.io` counterpart. Set `PF9_IMAGE_TAG` in `.env` to pin a specific release version (defaults to `latest`). Pull with `docker compose -f docker-compose.yml -f docker-compose.prod.yml pull` before starting the stack. Worker services (`backup_worker`, `metering_worker`, `scheduler_worker`, `search_worker`, `notification_worker`, `snapshot_worker`) gain prod overlay entries with their image references.
 - Image publishing is gated: the `publish-images` job only runs when the `release` job creates a new tag, and `release` only runs when CI fully passes.
 
+### Fixed
+
+#### Pre-existing lint errors and CI pipeline bootstrap fixes
+- `api/notification_routes.py`: added missing `import os` and imported `SMTP_USE_TLS`, `SMTP_FROM_ADDRESS`, `SMTP_FROM_NAME`, `SMTP_USERNAME` from `smtp_helper` — these were referenced but never imported, causing an F821 undefined-name flake8 error and a runtime `NameError` on the `/notifications/smtp-status` endpoint.
+- `api/restore_management.py`: lambda closures in `except` blocks captured the exception variable by reference after the block ended. Fixed by binding `_err = str(e)` before the lambda, resolving both the flake8 F821 warning and the scoping edge case.
+- `api/db_pool.py`, `api/vm_provisioning_service_user.py`: added `# noqa: F824` to `global` declarations used for read-only double-check locking; the variable is assigned in a different function, correct by design.
+- `db_writer.py`: replaced undefined bare `conn` with `cur.connection` inside `_detect_drift`; `conn` was never in scope at that call site.
+- `.github/workflows/ci.yml`: added a step to create stub secret files (`secrets/db_password`, `secrets/ldap_admin_password`, `secrets/pf9_password`, `secrets/jwt_secret`) before `docker compose up` in the integration-test job. Docker Compose bind-mounts these files at startup; without them the runner fails with "bind source path does not exist".
+
 ## [1.65.4] - 2026-03-15
 
 ### Fixed
