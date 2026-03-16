@@ -137,7 +137,11 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Production Healthcheck Fix & Automated Test Suite** (v1.65.4 — NEW ✅):
+- **Container Alerting, Full CI Pipeline & Docker Image Publishing** (v1.66.0 — NEW ✅):
+  - **Container restart alerting** — monitoring watchdog polls Docker socket every 60 s; emails alert address on crash/unhealthy; recovery notification on return to healthy; configurable via `PUT /admin/settings/container-alert` (superadmin) / `GET /settings/container-alert` (public); Admin panel UI tab
+  - **Full integration test pipeline** — GitHub Actions now spins up the full Docker Compose stack and runs `pytest tests/` against live endpoints on every push; seed check verifies CI admin login; 38 tests in suite
+  - **Docker images on ghcr.io** — all 9 service images auto-built for `linux/amd64` + `linux/arm64` and pushed to `ghcr.io/erezrozenbaum/pf9-mngt-<service>` on each release; pin via `PF9_IMAGE_TAG` in `.env`
+- **Production Healthcheck Fix & Automated Test Suite** (v1.65.4):
   - **`pf9_ui` healthcheck fixed** — Alpine `localhost` resolves to `::1` (IPv6); nginx binds IPv4 only; changed to `http://127.0.0.1:80` — container now reports `(healthy)` in production
   - **Automated test suite** — `tests/test_health.py` and `tests/test_auth.py` added; JWT unit tests run in CI on every push/PR; integration tests for login/logout/token revocation run with credentials
 - **Snapshot Worker Startup Performance Fix** (v1.65.3):

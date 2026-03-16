@@ -710,7 +710,7 @@ src/
 **Port**: 8000
 **Workers**: 4 uvicorn workers via Gunicorn (`-w 4`, `--max-requests 1000 --max-requests-jitter 100` to recycle workers and prevent memory growth)
 **Responsibilities**:
-- RESTful API endpoints (150+ routes across infrastructure, analytics, tenant health, notifications, restore, metering, and migration planning)
+- RESTful API endpoints (170+ routes across infrastructure, analytics, tenant health, notifications, restore, metering, migration planning, and ticket system)
 - Database operations via connection pool (psycopg2 ThreadedConnectionPool)
 - Platform9 integration proxy
 - Administrative operations
@@ -737,7 +737,7 @@ api/
 └── Dockerfile          # Container configuration (gunicorn CMD)
 ```
 
-**API Endpoints** (140+ total across modules):
+**API Endpoints** (170+ total across modules):
 
 **Dashboard Analytics Endpoints** (api/dashboards.py - 14 endpoints):
 ```python

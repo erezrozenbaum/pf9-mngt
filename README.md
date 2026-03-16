@@ -1,6 +1,6 @@
 # Platform9 Management System
 
-**Engineering Teams Add-On Platform: Operational Automation & Day-to-Day Management for Platform9**
+**Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.66.0-blue.svg)](CHANGELOG.md)
@@ -8,7 +8,7 @@
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
-pf9-mngt is an open-source operational add-on for Platform9 / OpenStack — it gives engineering and MSP teams automated snapshots, VM restore, full inventory persistence, and day-to-day monitoring in a single self-hosted stack.
+pf9-mngt is an open-source operational management platform for Platform9 / OpenStack — it gives engineering and MSP teams automated snapshots, VM restore, full inventory persistence, and day-to-day monitoring in a single self-hosted stack.
 
 ---
 
@@ -39,7 +39,7 @@ pf9-mngt is an open-source operational add-on for Platform9 / OpenStack — it g
 |---------|-------|------|---------|
 | **nginx (TLS proxy)** | nginx:1.27-alpine | 80/443 | HTTPS termination, HTTP→HTTPS redirect, reverse proxy to API and UI |
 | **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 30+ management tabs + admin panel |
-| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 155+ REST endpoints, RBAC middleware, 4 workers + --max-requests 1000 |
+| **Backend API** | FastAPI / Gunicorn / Python | 8000 | 170+ REST endpoints, RBAC middleware, 4 workers + --max-requests 1000 |
 | **Redis** | redis:7-alpine | internal | OpenStack inventory/quota cache (60–300 s TTL, allkeys-lru, 128 MiB cap) |
 | **LDAP Server** | OpenLDAP | internal | Enterprise authentication directory (not exposed to host) |
 | **LDAP Admin** | phpLDAPadmin | 8081 *(dev profile)* | Web-based LDAP management (`--profile dev`) |
@@ -92,13 +92,15 @@ Worker   Worker   Worker    Worker    Worker         Worker
 | Notifications (SMTP + Slack + Teams) | ✅ Production |
 | Drift Detection | ✅ Production |
 | Ops Assistant — Full-Text Search & Smart Queries | ✅ Production |
-| Runbooks (24 built-in, dept visibility, approval workflows) | ✅ Production |
+| Runbooks (25 built-in, dept visibility, approval workflows) | ✅ Production |
 | External Integrations Framework (billing gate, CRM, webhooks) | ✅ Production |
 | Dependency Graph: Health Scores, Blast Radius, Delete Impact | ✅ Production |
 | Backup & Restore (DB) with Integrity Validation | ✅ Production |
 | Inventory Versioning & Diff | ✅ Production |
 | AI Ops Copilot | 🔶 Beta |
 | Migration Planner (end-to-end) | ✅ Production |
+| Support Ticket System (SLA, auto-tickets, approvals) | ✅ Production |
+| Container Restart Alerting | ✅ Production |
 | Kubernetes Deployment | ⬜ Planned |
 | Tenant Self-Service Portal | ⬜ Planned |
 
@@ -108,9 +110,9 @@ Worker   Worker   Worker    Worker    Worker         Worker
 
 The conversation around VMware alternatives is real and growing. For MSPs and enterprise teams evaluating their options, Platform9 on OpenStack is genuinely worth looking at. Solid technology, strong business model, and a credible path for organizations managing private and hybrid cloud at scale.
 
-We are currently in the evaluation phase — testing Platform9 as a potential direction for our infrastructure. During that process, like any serious evaluation, you go beyond the demo and start stress-testing real operational workflows. That is where engineering gaps become visible — not because the platform is lacking, but because MSP and enterprise operations have very specific day-to-day requirements that take time for any platform to fully mature into.
+This project was built during a serious Platform9 evaluation — testing Platform9 as a potential direction for our infrastructure. During that process, like any serious evaluation, you go beyond the demo and start stress-testing real operational workflows. That is where engineering gaps become visible — not because the platform is lacking, but because MSP and enterprise operations have very specific day-to-day requirements that take time for any platform to fully mature into.
 
-Rather than pause the evaluation, we chose to solve the gaps ourselves and reach a better, more informed decision point. The result is pf9-mngt. Building it has given us far deeper insight into the platform than any standard assessment would have. Whatever direction we ultimately choose, this process has been worth it.
+Rather than pause the evaluation, we chose to solve the gaps ourselves and reach a better, more informed decision point. The result is pf9-mngt. What started as an evaluation tool grew into a production-grade platform in its own right — 409+ commits, 121 releases, 15 containerized services, full CI pipeline, and Docker images published to ghcr.io.
 
 This entire project was built using AI as a genuine engineering partner — what some call vibe coding, but applied to a real production problem with real architectural decisions. One person, clear intent, and the right AI workflow can ship something with genuine depth. That is worth demonstrating.
 
@@ -723,7 +725,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.66.0](CHANGELOG.md) — May 2026
+**Current version:** [v1.66.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -1308,7 +1310,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 130+ commits, 26 releases, 15 containerized services, 170+ API endpoints — built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 409+ commits, 121 releases, 15 containerized services, 170+ API endpoints — built alongside regular responsibilities.
 
 ---
 
@@ -1320,4 +1322,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.65.4 | **Last Updated**: March 15, 2026
+**Project Status**: Production Ready | **Version**: 1.66.0 | **Last Updated**: March 16, 2026
