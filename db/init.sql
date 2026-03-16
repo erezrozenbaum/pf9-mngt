@@ -1,26 +1,3 @@
--- =====================================================================
--- VIEW: v_most_changed_resources (for compliance/audit UI)
--- =====================================================================
--- This view summarizes the most recently changed resources (servers, volumes, snapshots, deletions).
-CREATE OR REPLACE VIEW v_most_changed_resources AS
-SELECT
-    resource_type,
-    resource_id,
-    resource_name,
-    project_id,
-    project_name,
-    domain_id,
-    domain_name,
-    status,
-    created_at,
-    modified_at,
-    deleted_at,
-    change_type,
-    recorded_at,
-    COUNT(*) OVER (PARTITION BY resource_type, resource_id) AS change_count,
-    recorded_at AS last_change
-FROM v_recent_changes
-ORDER BY recorded_at DESC;
 -- Basic tenants/projects/domains
 CREATE TABLE IF NOT EXISTS domains (
     id          TEXT PRIMARY KEY,
@@ -1483,6 +1460,30 @@ SELECT
     dh.deleted_at,
     'deleted'
 FROM deletions_history dh;
+
+-- =====================================================================
+-- VIEW: v_most_changed_resources (for compliance/audit UI)
+-- =====================================================================
+-- This view summarizes the most recently changed resources (servers, volumes, snapshots, deletions).
+CREATE OR REPLACE VIEW v_most_changed_resources AS
+SELECT
+    resource_type,
+    resource_id,
+    resource_name,
+    project_id,
+    project_name,
+    domain_id,
+    domain_name,
+    status,
+    created_at,
+    modified_at,
+    deleted_at,
+    change_type,
+    recorded_at,
+    COUNT(*) OVER (PARTITION BY resource_type, resource_id) AS change_count,
+    recorded_at AS last_change
+FROM v_recent_changes
+ORDER BY recorded_at DESC;
 
 -- =====================================================================
 -- Security Groups (Neutron)

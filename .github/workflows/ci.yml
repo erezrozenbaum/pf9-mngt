@@ -228,6 +228,8 @@ jobs:
           docker compose logs --tail=100 pf9_api
           echo "=== pf9_monitoring logs (last 50 lines) ==="
           docker compose logs --tail=50 pf9_monitoring
+          echo "=== pf9_db logs (last 50 lines) ==="
+          docker compose logs --tail=50 db
 
       - name: Tear down stack
         if: always()
