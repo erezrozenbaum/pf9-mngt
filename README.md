@@ -725,7 +725,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.66.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.66.2](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -869,6 +869,17 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.66.2 — Cluster-Level Scoping & Unassigned VM Surface
+- ✅ **Cluster exclusion toggle** — click any cluster pill in the Tenants tab to exclude or re-include that cluster from all wave planning; excluded clusters show as red strikethrough pills; VMs on excluded clusters display a `⊘` badge on the VMs tab
+- ✅ **Unassigned VM group** — a synthetic ⚠️ `(Unassigned)` row appears in the Tenants tab when any VMs lack a tenant; cluster pills in that row are interactive so the cluster can be excluded in one click without re-running detection
+- ✅ **New `PATCH /projects/{id}/clusters/scope` endpoint** — bulk-toggle `include_in_plan` on `migration_clusters`; `GET /vms` extended with `cluster_in_scope` boolean field
+- Requires: `db/migrate_cluster_scoping.sql` applied to the DB once (`docker exec -i pf9_db psql ... < db/migrate_cluster_scoping.sql`)
+
+### v1.66.1 — VMware Cluster Column in Migration Planner
+- ✅ **Cluster column on Tenants tab** — shows all VMware clusters hosting that tenant's VMs as filterable pills; new **All Clusters** filter dropdown lets you scope the tenants list to a single vCenter cluster
+- ✅ **Cluster column on VMs tab** — each VM row now shows its VMware cluster name alongside the Tenant column; existing All Clusters dropdown on VMs tab is now also loaded when switching to the Tenants sub-tab
+- No DB migration, no new endpoints — `cluster` was already stored per-VM from the `vInfo` RVTools sheet; the tenant response is extended with a computed `vm_clusters` array
 
 ### v1.66.0 — Container Alerting, Full CI Pipeline & Docker Image Publishing
 - ✅ **Container restart alerting** — monitoring watchdog emails the configured alert address when any container crashes or goes unhealthy; alert email is configurable in the Admin panel
@@ -1322,4 +1333,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.66.0 | **Last Updated**: March 16, 2026
+**Project Status**: Production Ready | **Version**: 1.66.1 | **Last Updated**: March 16, 2026

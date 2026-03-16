@@ -177,7 +177,7 @@ This is the calendar time required to drain the day's entire data payload throug
 - **Project Summary** — parameters, totals, risk breakdown
 - **Per-Tenant Assessment** — cohort-grouped tenant table with target mapping
 - **Daily Schedule** — day-by-day VM list with cohort separator rows
-- **All VMs** — full VM inventory with risk, mode, disk, OS
+- **All VMs** — full VM inventory with risk, mode, disk, OS, and VMware cluster name
 
 ---
 
@@ -187,10 +187,61 @@ This is the calendar time required to drain the day's entire data payload throug
 
 In the **👥 Tenants** sub-tab:
 - Toggle each tenant **In Scope** / **Out of Scope**. Out-of-scope tenants are excluded from the schedule and plan.
+- The **Clusters** column shows the VMware clusters that host that tenant's VMs (e.g. `Cluster-Prod`, `Cluster-DR`). Use the **All Clusters** filter dropdown to scope the view to a single vCenter cluster.
 - Set **Migration Priority** (integer, lower = earlier) to control cohort auto-assign ordering.
 - Set **Target Domain Name**, **Target Project Name**, and optional descriptions — these map to PCD's domain/project structure.
 - Use **🔍 Find & Replace** to bulk-rename target fields across all tenants at once. Affected rows revert to unconfirmed for review.
 - Use **✓ Confirm All** to bulk-confirm mappings once reviewed.
+
+### Cluster-Level Scoping
+
+In addition to scoping individual tenants, you can **exclude an entire VMware cluster** from the migration plan:
+- In the Tenants tab, each cluster pill in the **Clusters** column is an interactive toggle button.
+- **Click a blue pill** to exclude that cluster — the pill turns red with a strikethrough and a `⊘` prefix, and all VMs on that cluster are immediately omitted from wave calculations.
+- **Click the red pill** to re-include the cluster.
+- A `⊘` badge also appears in the **Cluster** column of the VMs tab for any VM whose cluster is excluded.
+- Exclusion is persisted in `migration_clusters.include_in_plan` — it survives page refresh and container restarts.
+
+> **vSphere environments**: excluding a cluster **automatically cascades** to all tenants whose `org_vdc` matches the cluster name (in vSphere, `org_vdc` is set to the cluster name during detection). This means the Networks tab and Cohorts auto-assignment will **immediately hide those tenants** as soon as the cluster is excluded — no separate tenant-level action needed. Re-including the cluster reverses the cascade only for tenants that were automatically excluded by it (user-set exclusions are preserved).
+>
+> **vCD environments**: tenant-level `include_in_plan` is controlled directly from the tenant row (vCD tenants already have explicit OrgVDC values). Cluster exclusion cascade does not apply.
+
+### Empty Tenant Creation (vSphere)
+
+For vSphere environments you can **pre-create an empty tenant** before moving VMs into it:
+
+1. In the **🏢 Tenants** sub-tab, click **+ Add Tenant Rule**.
+2. Enter a **Tenant Name** — this is the only required field.
+3. Detection Method + Pattern are optional. Leave them blank to create an empty shell; fill them in if you want Re-run Detection to automatically assign matching VMs to this tenant in the future.
+4. Click **Add**.
+
+The tenant is created with `vm_count = 0` and `detection_method = manual`. You can then manually reassign VMs to it from the VMs tab.
+
+### Unassigned VM Group
+
+If any VMs have no detected tenant after detection runs, a synthetic **⚠️ (Unassigned)** row appears at the top of the Tenants tab (amber background). It shows the VM count and cluster pills for those VMs. You can:
+- **Exclude the cluster** directly from the Unassigned row without re-running detection.
+- **Manually assign** the VMs to a tenant (see below).
+
+### Manual VM Reassignment
+
+If the auto-detected tenant grouping is wrong, or you need to split a detected tenant across two logical tenants:
+
+1. Switch to the **🖥️ VMs** sub-tab.
+2. **Check the boxes** on the rows you want to move. A select-all checkbox is in the table header. Selected rows highlight blue.
+3. Click **↪ Move to Tenant…** in the toolbar that appears above the table.
+4. In the modal, choose the destination from the dropdown:
+   - An **existing tenant** (it will receive the VMs and its vm_count will be recalculated).
+   - **— Unassign —** to clear tenant assignment (moves the VMs to the Unassigned group).
+   - **+ Create new tenant…** to provision a brand-new tenant row — type the new name in the text field that appears.
+5. Click **Move VMs**.
+
+**What happens under the hood:**
+- The selected VMs get `manually_assigned = true` in the database.
+- Re-running detection (via **Re-run Detection** button) will **skip manually-assigned VMs** — they will never be overwritten by auto-detection.
+- VMs that were manually assigned show a 🔒 *manual* badge in the Tenant cell on the VMs tab.
+- `vm_count` is recalculated on both the source tenant(s) and the target tenant atomically.
+- To clear the manual lock and allow re-detection to reassign a VM, reassign it back to its correct tenant or unassign it and re-run detection.
 
 ### Network Mapping
 

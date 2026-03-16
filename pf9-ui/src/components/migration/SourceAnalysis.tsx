@@ -117,6 +117,8 @@ interface Tenant {
   used_disk_gb?: number | null;
   est_migration_hours?: number | null;
   network_type_counts?: Record<string, number> | null;
+  vm_clusters?: string[] | null;
+  is_unassigned_group?: boolean;
 }
 
 // Phase 3.0 — Tenant Ease Score
@@ -265,6 +267,13 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
   const [fixOverrideSaving, setFixOverrideSaving] = useState<Record<number, boolean>>({});
   const [fixOverrideLocal, setFixOverrideLocal] = useState<Record<number, number | null>>({});;
 
+  /* VM Reassignment ---- */
+  const [vmSelectedIds, setVmSelectedIds] = useState<Set<number>>(new Set());
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [reassignTarget, setReassignTarget] = useState("");
+  const [reassignNewName, setReassignNewName] = useState("");
+  const [reassignSaving, setReassignSaving] = useState(false);
+
   /* ---- Networks ---- */
   const [networks, setNetworks] = useState<NetworkSummary[]>([]);
 
@@ -376,6 +385,31 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
     finally { setFixOverrideSaving(prev => ({ ...prev, [vmId]: false })); }
   };
 
+  const reassignVMs = async () => {
+    setReassignSaving(true);
+    setError("");
+    try {
+      const targetName = reassignTarget === "__new__"
+        ? reassignNewName.trim() || null
+        : reassignTarget || null;
+      await apiFetch(`/api/migration/projects/${pid}/vms/reassign`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          vm_ids: Array.from(vmSelectedIds),
+          tenant_name: targetName,
+          create_if_missing: reassignTarget === "__new__",
+        }),
+      });
+      setReassignOpen(false);
+      setReassignTarget("");
+      setReassignNewName("");
+      setVmSelectedIds(new Set());
+      await loadVMs();
+      await loadTenants();
+    } catch (e: any) { setError(e.message); }
+    finally { setReassignSaving(false); }
+  };
+
   const loadTenants = useCallback(async () => {
     try {
       const data = await apiFetch<{ tenants: Tenant[] }>(`/api/migration/projects/${pid}/tenants`);
@@ -414,7 +448,7 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
   useEffect(() => { loadStats(); loadTenants(); loadNetworks(); }, [loadStats, loadTenants, loadNetworks]);
   useEffect(() => { loadVMs(); }, [loadVMs]);
   useEffect(() => {
-    if (subView === "dashboard" || subView === "vms") { loadHosts(); loadClusters(); }
+    if (subView === "dashboard" || subView === "vms" || subView === "tenants") { loadHosts(); loadClusters(); }
   }, [subView, loadHosts, loadClusters]);
   useEffect(() => {
     if (subView === "risk") { loadRiskConfig(); }
@@ -648,11 +682,98 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
             <span style={{ fontSize: "0.85rem", color: "#6b7280" }}>{vmTotal} VMs</span>
           </div>
 
+          {/* Reassign toolbar */}
+          {vmSelectedIds.size > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8,
+                          background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6,
+                          padding: "6px 10px" }}>
+              <span style={{ fontSize: "0.85rem", color: "#1d4ed8", fontWeight: 600 }}>
+                {vmSelectedIds.size} VM{vmSelectedIds.size > 1 ? "s" : ""} selected
+              </span>
+              <button onClick={() => setReassignOpen(true)}
+                style={{ fontSize: "0.8rem", padding: "3px 10px", borderRadius: 4,
+                         border: "1px solid #3b82f6", background: "#3b82f6", color: "white",
+                         cursor: "pointer" }}>
+                ↪ Move to Tenant…
+              </button>
+              <button onClick={() => setVmSelectedIds(new Set())}
+                style={{ fontSize: "0.8rem", padding: "3px 10px", borderRadius: 4,
+                         border: "1px solid #d1d5db", background: "white", cursor: "pointer" }}>
+                Clear
+              </button>
+            </div>
+          )}
+
+          {/* Reassign modal */}
+          {reassignOpen && (
+            <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+                          zIndex: 1000, display: "flex", alignItems: "center",
+                          justifyContent: "center" }}
+                 onClick={() => { if (!reassignSaving) { setReassignOpen(false); setReassignTarget(""); setReassignNewName(""); } }}>
+              <div style={{ background: "white", borderRadius: 8, padding: 24, width: 420,
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.18)", position: "relative" }}
+                   onClick={e => e.stopPropagation()}>
+                <h3 style={{ margin: "0 0 16px", fontSize: "1rem" }}>
+                  ↪ Move {vmSelectedIds.size} VM{vmSelectedIds.size > 1 ? "s" : ""} to Tenant
+                </h3>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: "block", fontSize: "0.85rem", marginBottom: 4,
+                                  color: "#374151", fontWeight: 500 }}>Target tenant</label>
+                  <select value={reassignTarget} onChange={e => setReassignTarget(e.target.value)}
+                          style={{ ...inputStyle, width: "100%" }}>
+                    <option value="">— Unassign (remove from tenant) —</option>
+                    {tenants.filter(t => !t.is_unassigned_group).map(t => (
+                      <option key={t.id} value={t.tenant_name}>
+                        {t.tenant_name}{t.org_vdc ? ` (${t.org_vdc})` : ""}
+                      </option>
+                    ))}
+                    <option value="__new__">+ Create new tenant…</option>
+                  </select>
+                </div>
+                {reassignTarget === "__new__" && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: "block", fontSize: "0.85rem", marginBottom: 4,
+                                    color: "#374151", fontWeight: 500 }}>New tenant name</label>
+                    <input value={reassignNewName} onChange={e => setReassignNewName(e.target.value)}
+                           placeholder="e.g. Finance-DR"
+                           style={{ ...inputStyle, width: "100%" }} />
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+                  <button onClick={() => { setReassignOpen(false); setReassignTarget(""); setReassignNewName(""); }}
+                          disabled={reassignSaving}
+                          style={{ padding: "6px 16px", borderRadius: 4, border: "1px solid #d1d5db",
+                                   background: "white", cursor: "pointer" }}>
+                    Cancel
+                  </button>
+                  <button onClick={reassignVMs} disabled={reassignSaving ||
+                            (reassignTarget === "__new__" && !reassignNewName.trim())}
+                          style={{ padding: "6px 16px", borderRadius: 4, border: "none",
+                                   background: (reassignSaving || (reassignTarget === "__new__" && !reassignNewName.trim()))
+                                     ? "#93c5fd" : "#2563eb",
+                                   color: "white", cursor: "pointer", fontWeight: 600 }}>
+                    {reassignSaving ? "Moving…" : "Move VMs"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Table */}
           <div style={{ overflowX: "auto" }}>
             <table style={tableStyle}>
               <thead>
                 <tr>
+                  <th style={{ ...thStyle, width: 28 }}>
+                    <input type="checkbox"
+                      title="Select all visible VMs"
+                      checked={vms.length > 0 && vms.every(v => v.id != null && vmSelectedIds.has(v.id!))}
+                      onChange={e => {
+                        if (e.target.checked)
+                          setVmSelectedIds(new Set(vms.filter(v => v.id != null).map(v => v.id!)));
+                        else setVmSelectedIds(new Set());
+                      }} />
+                  </th>
                   <th style={{ ...thStyle, width: 30 }}></th>
                   {[
                     { key: "vm_name", label: "VM Name" },
@@ -669,6 +790,7 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
                     { key: "power_state", label: "Power" },
                     { key: "network_name", label: "Network" },
                     { key: "tenant_name", label: "Tenant" },
+                    { key: "cluster", label: "Cluster", noSort: true },
                     { key: "risk_category", label: "Risk" },
                     { key: "migration_mode", label: "Mode" },
                     { key: "migration_status", label: "Status" },
@@ -692,8 +814,21 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
               <tbody>
                 {vms.map(vm => (
                   <React.Fragment key={vm.vm_id}>
-                    <tr style={{ borderBottom: "1px solid var(--border, #e5e7eb)", cursor: "pointer" }}
+                    <tr style={{ borderBottom: "1px solid var(--border, #e5e7eb)", cursor: "pointer",
+                                 background: vm.id != null && vmSelectedIds.has(vm.id) ? "#eff6ff" : undefined }}
                         onClick={() => toggleVmExpand(vm)}>
+                      <td style={tdStyle} onClick={e => e.stopPropagation()}>
+                        <input type="checkbox"
+                          checked={vm.id != null && vmSelectedIds.has(vm.id)}
+                          onChange={() => {
+                            if (vm.id == null) return;
+                            setVmSelectedIds(prev => {
+                              const n = new Set(prev);
+                              n.has(vm.id!) ? n.delete(vm.id!) : n.add(vm.id!);
+                              return n;
+                            });
+                          }} />
+                      </td>
                       <td style={tdStyle}>
                         <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>
                           {expandedVm === vm.vm_name ? "▼" : "▶"}
@@ -761,6 +896,20 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
                       <td style={tdStyle}>
                         {vm.tenant_name || <span style={{ color: "#d1d5db" }}>—</span>}
                         {vm.org_vdc && <div style={{ fontSize: "0.7rem", color: "#9ca3af" }}>{vm.org_vdc}</div>}
+                        {(vm as any).manually_assigned && (
+                          <div style={{ fontSize: "0.65rem", color: "#7c3aed" }}
+                               title="Manually assigned — re-detection will skip this VM">🔒 manual</div>
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, fontSize: "0.8rem" }}>
+                        {vm.cluster
+                          ? <span
+                              style={{ color: (vm as any).cluster_in_scope === false ? "#dc2626" : "#0369a1" }}
+                              title={(vm as any).cluster_in_scope === false ? "⊘ Cluster excluded from plan" : vm.cluster}>
+                              {(vm as any).cluster_in_scope === false && <span style={{ marginRight: 2 }}>⊘</span>}
+                              {vm.cluster}
+                            </span>
+                          : <span style={{ color: "#d1d5db" }}>—</span>}
                       </td>
                       <td style={tdStyle}>
                         {vm.risk_category ? (
@@ -811,7 +960,7 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
                     {/* ── Expanded detail row ── */}
                     {expandedVm === vm.vm_name && (
                       <tr>
-                        <td colSpan={21} style={{ padding: "8px 16px 12px 40px", background: "var(--card-bg, #f9fafb)" }}>
+                        <td colSpan={23} style={{ padding: "8px 16px 12px 40px", background: "var(--card-bg, #f9fafb)" }}>
                           {detailLoading ? (
                             <span style={{ color: "#6b7280" }}>Loading details...</span>
                           ) : (
@@ -1006,7 +1155,7 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
                   </React.Fragment>
                 ))}
                 {vms.length === 0 && (
-                  <tr><td colSpan={20} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+                  <tr><td colSpan={21} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
                     No VMs found. Upload RVTools data first.
                   </td></tr>
                 )}
@@ -1027,7 +1176,7 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
 
       {/* ---- Tenants ---- */}
       {subView === "tenants" && (
-        <TenantsView tenants={tenants} projectId={pid} onRefresh={() => { loadTenants(); loadStats(); }} onViewTenantGraph={onViewTenantGraph} />
+        <TenantsView tenants={tenants} clusters={clusters} projectId={pid} onRefresh={() => { loadTenants(); loadStats(); }} onViewTenantGraph={onViewTenantGraph} />
       )}
 
       {/* ---- Cohorts ---- */}
@@ -1284,8 +1433,8 @@ function DashboardView({ stats, hosts, clusters, tenants }: {
 /*  Tenants View  (Phase 2A — Scoping · Phase 2B — Target Mapping)   */
 /* ================================================================== */
 
-function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
-  tenants: Tenant[]; projectId: number; onRefresh: () => void;
+function TenantsView({ tenants, clusters, projectId, onRefresh, onViewTenantGraph }: {
+  tenants: Tenant[]; clusters: any[]; projectId: number; onRefresh: () => void;
   onViewTenantGraph?: (label: string, graphUrl: string) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -1341,6 +1490,7 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
   const [tenantFilterEase, setTenantFilterEase] = useState<"all" | "Easy" | "Medium" | "Hard">("all");
   const [tenantFilterCohort, setTenantFilterCohort] = useState<string>("all");
   const [tenantFilterNetType, setTenantFilterNetType] = useState<string>("all");
+  const [tenantFilterCluster, setTenantFilterCluster] = useState<string>("all");
 
   /* ---- Bulk-scope state ---- */
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -1406,6 +1556,19 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
     } catch (e: any) { setError(e.message); }
   };
 
+  const toggleClusterScope = async (clusterName: string) => {
+    const clusterObj = clusters.find((c: any) => c.cluster_name === clusterName);
+    if (!clusterObj?.id) return;
+    const newInclude = clusterObj.include_in_plan === false; // toggle
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/clusters/scope`, {
+        method: "PATCH",
+        body: JSON.stringify({ cluster_ids: [clusterObj.id], include_in_plan: newInclude }),
+      });
+      onRefresh();
+    } catch (e: any) { setError((e as any).message); }
+  };
+
   const startEdit = (t: Tenant) => {
     setEditId(t.id);
     setEditName(t.tenant_name);
@@ -1451,15 +1614,15 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
   };
 
   const addTenant = async () => {
-    if (!newName.trim() || !newPattern.trim()) return;
+    if (!newName.trim()) return;  // pattern is optional — creates an empty tenant
     setError("");
     try {
       await apiFetch(`/api/migration/projects/${projectId}/tenants`, {
         method: "POST",
         body: JSON.stringify({
           tenant_name: newName.trim(),
-          detection_method: newMethod,
-          pattern_value: newPattern.trim(),
+          detection_method: newPattern.trim() ? newMethod : null,
+          pattern_value: newPattern.trim() || null,
         }),
       });
       setNewName("");
@@ -1523,6 +1686,11 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
         if (!counts) return false;
         return (counts[tenantFilterNetType] ?? 0) > 0;
       });
+    }
+    if (tenantFilterCluster !== "all") {
+      list = list.filter(t =>
+        (t.vm_clusters || []).includes(tenantFilterCluster)
+      );
     }
             list.sort((a: any, b: any) => {
       let av: any, bv: any;
@@ -1631,8 +1799,15 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
           <option value="standard">Standard</option>
           <option value="isolated">Isolated</option>
         </select>
-        {(tenantFilterScope !== "all" || tenantFilterEase !== "all" || tenantFilterCohort !== "all" || tenantFilterNetType !== "all") && (
-          <button onClick={() => { setTenantFilterScope("all"); setTenantFilterEase("all"); setTenantFilterCohort("all"); setTenantFilterNetType("all"); }}
+        <select value={tenantFilterCluster} onChange={e => setTenantFilterCluster(e.target.value)}
+          style={{ ...inputStyle, maxWidth: 160 }}>
+          <option value="all">All Clusters</option>
+          {clusters.map(c => (
+            <option key={c.cluster_name} value={c.cluster_name}>{c.cluster_name}</option>
+          ))}
+        </select>
+        {(tenantFilterScope !== "all" || tenantFilterEase !== "all" || tenantFilterCohort !== "all" || tenantFilterNetType !== "all" || tenantFilterCluster !== "all") && (
+          <button onClick={() => { setTenantFilterScope("all"); setTenantFilterEase("all"); setTenantFilterCohort("all"); setTenantFilterNetType("all"); setTenantFilterCluster("all"); }}
             style={btnSmall}>✕ Clear Filters</button>
         )}
         <span style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#6b7280" }}>
@@ -1735,14 +1910,17 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
       {/* Add Tenant Rule form */}
       {showAdd && (
         <div style={{ ...sectionStyle, marginBottom: 12 }}>
+          <div style={{ fontSize: "0.78rem", color: "#6b7280", marginBottom: 6 }}>
+            Tenant Name is required. Detection method + pattern are optional — leave blank to create an empty tenant and move VMs into it manually.
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
             <div>
-              <label style={labelStyle}>Tenant Name</label>
+              <label style={labelStyle}>Tenant Name <span style={{ color: "#dc2626" }}>*</span></label>
               <input value={newName} onChange={e => setNewName(e.target.value)}
                 style={inputStyle} placeholder="e.g. customer-acme" />
             </div>
             <div>
-              <label style={labelStyle}>Detection Method</label>
+              <label style={labelStyle}>Detection Method <span style={{ color: "#9ca3af", fontWeight: 400 }}>(optional)</span></label>
               <select value={newMethod} onChange={e => setNewMethod(e.target.value)} style={inputStyle}>
                 <option value="folder_path">Folder Path Contains</option>
                 <option value="resource_pool">Resource Pool Contains</option>
@@ -1752,11 +1930,11 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
               </select>
             </div>
             <div>
-              <label style={labelStyle}>Pattern / Value</label>
+              <label style={labelStyle}>Pattern / Value <span style={{ color: "#9ca3af", fontWeight: 400 }}>(optional)</span></label>
               <input value={newPattern} onChange={e => setNewPattern(e.target.value)}
                 style={inputStyle} placeholder="e.g. acme" />
             </div>
-            <button onClick={addTenant} style={btnPrimary}>Add</button>
+            <button onClick={addTenant} style={btnPrimary} disabled={!newName.trim()}>Add</button>
           </div>
         </div>
       )}
@@ -1773,6 +1951,7 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
               {([
                 { key: "tenant_name",        label: "Tenant"        },
                 { key: "org_vdc",            label: "OrgVDC",       noSort: true },
+                { key: "vm_clusters",        label: "Clusters",     noSort: true },
                 { key: "vm_count",           label: "VMs"           },
                 { key: "total_vcpu",         label: "vCPU (alloc)"  },
                 { key: "total_ram_gb",       label: "RAM GB (alloc)"},
@@ -1819,6 +1998,42 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
                 background: included ? undefined : "var(--card-bg, #f9fafb)",
               };
               const rowKey = t.id ?? tIdx;
+
+              // ── Synthetic "Unassigned" row for VMs with no tenant detection ──
+              if (t.is_unassigned_group) {
+                return (
+                  <tr key="unassigned-group" style={{ borderBottom: "1px solid #fde68a", background: "#fffbeb" }}>
+                    <td style={{ ...tdStyle, textAlign: "center" }}></td>
+                    <td style={{ ...tdStyle, textAlign: "center" }} title="VMs with no tenant — not in plan">⚠️</td>
+                    <td style={tdStyle}>
+                      <strong style={{ color: "#d97706" }}>(Unassigned)</strong>
+                      <div style={{ fontSize: "0.75rem", color: "#92400e", fontStyle: "italic" }}>{t.exclude_reason}</div>
+                    </td>
+                    <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>—</td>
+                    <td style={{ ...tdStyle, fontSize: "0.75rem" }}>
+                      {t.vm_clusters && t.vm_clusters.length > 0
+                        ? <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+                            {t.vm_clusters.map(cl => {
+                              const clObj = clusters.find((c: any) => c.cluster_name === cl);
+                              const excl = clObj?.include_in_plan === false;
+                              return (
+                                <button key={cl} onClick={() => toggleClusterScope(cl)}
+                                  title={excl ? "⊘ Cluster excluded — click to re-include" : `Exclude cluster "${cl}" from plan`}
+                                  style={{ ...pillStyle, background: excl ? "#fee2e2" : "#fef3c7", color: excl ? "#dc2626" : "#d97706", fontSize: "0.68rem", border: excl ? "1px solid #fca5a5" : "1px solid #fde68a", cursor: "pointer", textDecoration: excl ? "line-through" : "none" }}>
+                                  {excl ? "⊘ " : ""}{cl.length > 18 ? cl.slice(0, 16) + "…" : cl}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        : <span style={{ color: "#d1d5db" }}>—</span>}
+                    </td>
+                    <td style={tdStyle}>{t.vm_count}</td>
+                    <td colSpan={17} style={{ ...tdStyle, color: "#78350f", fontSize: "0.8rem" }}>
+                      Run <strong>Re-run Detection</strong> to assign these VMs to a tenant, or exclude their cluster using the cluster pill above.
+                    </td>
+                  </tr>
+                );
+              }
               if (editId === t.id) {
                 return (
                   <React.Fragment key={rowKey}>
@@ -1900,7 +2115,7 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
                     {!editInclude && (
                       <tr key={`${rowKey}-reason`} style={{ background: "#fff7ed" }}>
                         <td colSpan={2} />
-                        <td colSpan={19} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
+                        <td colSpan={20} style={{ ...tdStyle, paddingTop: 4, paddingBottom: 8 }}>
                           <label style={{ ...labelStyle, display: "inline", marginRight: 8 }}>Exclude reason:</label>
                           <input value={editExcludeReason}
                             onChange={e => setEditExcludeReason(e.target.value)}
@@ -1928,6 +2143,24 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
                     )}
                   </td>
                   <td style={{ ...tdStyle, fontSize: "0.8rem", color: "#6b7280" }}>{t.org_vdc || "—"}</td>
+                  <td style={{ ...tdStyle, fontSize: "0.75rem" }}>
+                    {t.vm_clusters && t.vm_clusters.length > 0
+                      ? <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+                          {t.vm_clusters.map(cl => {
+                            const clObj = clusters.find((c: any) => c.cluster_name === cl);
+                            const excl = clObj?.include_in_plan === false;
+                            return (
+                              <button key={cl}
+                                onClick={() => toggleClusterScope(cl)}
+                                title={excl ? `⊘ Cluster excluded — click to re-include` : `Exclude cluster "${cl}" from plan`}
+                                style={{ ...pillStyle, background: excl ? "#fee2e2" : "#e0f2fe", color: excl ? "#dc2626" : "#0369a1", fontSize: "0.68rem", border: excl ? "1px solid #fca5a5" : "1px solid #bae6fd", cursor: "pointer", textDecoration: excl ? "line-through" : "none" }}>
+                                {excl ? "⊘ " : ""}{cl.length > 18 ? cl.slice(0, 16) + "…" : cl}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      : <span style={{ color: "#d1d5db" }}>—</span>}
+                  </td>
                   <td style={tdStyle}>{t.vm_count}</td>
                   <td style={tdStyle}>{t.total_vcpu || 0}</td>
                   <td style={tdStyle}>{t.total_ram_mb ? (t.total_ram_mb / 1024).toFixed(0) : "0"}</td>
@@ -2087,7 +2320,7 @@ function TenantsView({ tenants, projectId, onRefresh, onViewTenantGraph }: {
               );
             })}
             {displayTenants.length === 0 && (
-              <tr><td colSpan={22} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
+              <tr><td colSpan={23} style={{ ...tdStyle, textAlign: "center", color: "#6b7280" }}>
                 {tenants.length === 0
                   ? "No tenants detected. Add rules above or run assessment."
                   : `No tenants match "${tenantSearch}".`}

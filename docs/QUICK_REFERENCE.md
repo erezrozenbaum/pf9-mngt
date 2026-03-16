@@ -137,7 +137,19 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Container Alerting, Full CI Pipeline & Docker Image Publishing** (v1.66.0 — NEW ✅):
+- **Cluster-Level Scoping & Unassigned VM Surface** (v1.66.2 — UPDATED ✅):
+  - **Cluster exclusion toggle** — click any cluster pill in the Tenants tab to exclude/re-include a VMware cluster from wave planning; excluded clusters display as red strikethrough pills; VMs on excluded clusters show a `⊘` badge on the VMs tab Cluster column
+  - **Cascade to tenants (vSphere)** — excluding a cluster automatically sets `include_in_plan=false` on all tenants whose `org_vdc` matches the cluster name; Networks and Cohorts tabs immediately reflect the exclusion; re-including cascades back only for auto-excluded tenants (sentinel = `'Cluster excluded from plan'`)
+  - **Manual VM reassignment** — checkboxes on VMs tab + "Move to Tenant…" modal; `PATCH /vms/reassign` body `{vm_ids, tenant_name, create_if_missing}`; `manually_assigned=true` VMs are never overwritten by re-detection; empty `vm_ids` allowed when `create_if_missing=true`
+  - **Empty tenant creation (vSphere)** — `POST /api/migration/projects/{id}/tenants` body `{tenant_name, detection_method?, pattern_value?}`; "Add Tenant Rule" form only requires tenant name — detection rule is optional
+  - **Unassigned VM group** — synthetic ⚠️ `(Unassigned)` row appended to Tenants tab when VMs exist without a tenant; cluster pills are interactive for direct exclusion before re-detection
+  - **New endpoints**: `PATCH /api/migration/projects/{id}/clusters/scope`, `POST /api/migration/projects/{id}/tenants`, `PATCH /api/migration/projects/{id}/vms/reassign`; VM list response extended with `cluster_in_scope: bool`
+  - **Requires one-time DB migration**: `docker exec -i pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB < db/migrate_cluster_scoping.sql`
+- **VMware Cluster Column in Migration Planner** (v1.66.1):
+  - **Tenants tab** — new Clusters column + All Clusters filter dropdown; shows every VMware cluster hosting that tenant's VMs; filter scopes the tenants list to one cluster
+  - **VMs tab** — new Cluster column per VM row (alongside Tenant); cluster data now also loaded when switching to the Tenants sub-tab
+  - No DB migration required — `cluster` was already stored per-VM from the `vInfo` RVTools sheet
+- **Container Alerting, Full CI Pipeline & Docker Image Publishing** (v1.66.0):
   - **Container restart alerting** — monitoring watchdog polls Docker socket every 60 s; emails alert address on crash/unhealthy; recovery notification on return to healthy; configurable via `PUT /admin/settings/container-alert` (superadmin) / `GET /settings/container-alert` (public); Admin panel UI tab
   - **Full integration test pipeline** — GitHub Actions now spins up the full Docker Compose stack and runs `pytest tests/` against live endpoints on every push; seed check verifies CI admin login; 38 tests in suite
   - **Docker images on ghcr.io** — all 9 service images auto-built for `linux/amd64` + `linux/arm64` and pushed to `ghcr.io/erezrozenbaum/pf9-mngt-<service>` on each release; pin via `PF9_IMAGE_TAG` in `.env`

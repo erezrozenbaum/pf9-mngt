@@ -173,7 +173,25 @@ try {
 
 # ── Step 5: Wait for services ─────────────────────────────────────────────
 Write-Host "4. Waiting for services to be ready..." -ForegroundColor Yellow
-Start-Sleep 20   # Prod UI build + nginx needs a bit more time to initialize
+# Poll API health endpoint instead of a fixed sleep — prints a dot every 2 s
+$maxWait = 90   # seconds
+$elapsed = 0
+$ready   = $false
+# Poll via docker exec to avoid nginx HTTP→HTTPS redirect and TLS cert issues
+Write-Host -NoNewline "   Polling API health "
+while ($elapsed -lt $maxWait) {
+    $result = docker exec pf9_api python -c "import urllib.request,sys; urllib.request.urlopen('http://localhost:8000/health'); sys.exit(0)" 2>$null
+    if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+    Write-Host -NoNewline "."
+    Start-Sleep 2
+    $elapsed += 2
+}
+Write-Host ""   # newline after dots
+if ($ready) {
+    Write-Host "   ✓ API is healthy (${elapsed}s)" -ForegroundColor Green
+} else {
+    Write-Host "   ⚠ API not yet responding after ${maxWait}s — continuing anyway" -ForegroundColor Yellow
+}
 
 # ── Step 6: Verify services ───────────────────────────────────────────────
 Write-Host "5. Verifying services..." -ForegroundColor Yellow

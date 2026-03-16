@@ -402,6 +402,20 @@ class UpdateVMRequest(BaseModel):
     app_group: Optional[str] = None
 
 
+class VMReassignRequest(BaseModel):
+    vm_ids: List[int]
+    tenant_name: Optional[str] = None  # None = unassign
+    create_if_missing: bool = False
+
+    @validator("tenant_name")
+    def _strip_tenant_name(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v:
+                return None
+        return v
+
+
 class UpdateTenantRequest(BaseModel):
     tenant_name: Optional[str] = None
     org_vdc: Optional[str] = None
@@ -1913,7 +1927,9 @@ def _run_tenant_detection(project_id: str, cur):
     # Get all VMs
     cur.execute("""
         SELECT vm_name, folder_path, resource_pool, vapp_name, annotation, cluster
-        FROM migration_vms WHERE project_id = %s
+        FROM migration_vms
+        WHERE project_id = %s
+          AND (manually_assigned IS NULL OR manually_assigned = false)
     """, (project_id,))
     vms = [dict(row) for row in cur.fetchall()]
 
@@ -1921,6 +1937,20 @@ def _run_tenant_detection(project_id: str, cur):
     tenant_map: Dict[str, Dict] = {}
     for vm in vms:
         assignment = assign_tenant(vm, detection_config)
+
+        # For plain-vSphere detection methods (not vCD, not cluster-as-tenant),
+        # use the VM's cluster as the org_vdc discriminator when no org_vdc was
+        # already determined.  This prevents same-named tenants on different
+        # clusters from collapsing into one row, and also ensures the
+        # ON CONFLICT (project_id, tenant_name, org_vdc) upsert works correctly
+        # (PostgreSQL treats NULLs as distinct in unique constraints, so
+        # NULL-org_vdc rows would silently duplicate on every re-run).
+        if (
+            assignment.detection_method not in ("vcd_folder", "cluster")
+            and assignment.org_vdc is None
+            and vm.get("cluster")
+        ):
+            assignment.org_vdc = vm["cluster"]
 
         # Update VM
         cur.execute("""
@@ -1989,6 +2019,18 @@ def _run_tenant_detection(project_id: str, cur):
           AND mt.tenant_name = sub.tenant_name
           AND coalesce(mt.org_vdc, '') = sub.ovdc
     """, (project_id, project_id))
+
+    # Remove stale auto-detected tenants whose org_vdc is NULL and now have
+    # zero VMs (they were split into cluster-specific rows by the fix above on
+    # re-detection).  Rows where the user already confirmed target settings are
+    # kept so no manual configuration is lost.
+    cur.execute("""
+        DELETE FROM migration_tenants
+        WHERE project_id = %s
+          AND org_vdc IS NULL
+          AND vm_count = 0
+          AND (target_confirmed IS NULL OR target_confirmed = false)
+    """, (project_id,))
 
 
 # =====================================================================
@@ -2064,7 +2106,15 @@ async def list_vms(
                 params.extend([pattern, pattern, pattern])
 
             cur.execute(f"""
-                SELECT * FROM migration_vms
+                SELECT migration_vms.*,
+                       COALESCE((
+                           SELECT mc.include_in_plan
+                           FROM migration_clusters mc
+                           WHERE mc.project_id = migration_vms.project_id
+                             AND mc.cluster_name = migration_vms.cluster
+                           LIMIT 1
+                       ), true) AS cluster_in_scope
+                FROM migration_vms
                 {where}
                 ORDER BY {sort_by} {sort_dir}
                 LIMIT %s OFFSET %s
@@ -2075,6 +2125,107 @@ async def list_vms(
             total = cur.fetchone()["cnt"]
 
     return {"status": "ok", "total": total, "vms": vms}
+
+
+# NOTE: /vms/reassign MUST be registered before /vms/{vm_id} so FastAPI
+# does not swallow the literal "reassign" segment as a vm_id path parameter.
+@router.patch("/projects/{project_id}/vms/reassign",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def reassign_vms(project_id: str, req: VMReassignRequest, user=Depends(get_current_user)):
+    """Manually move VMs to a different (or new) tenant.
+    Sets manually_assigned=true so re-running detection skips them.
+    Pass tenant_name=null to unassign (move to Unassigned group).
+    """
+    actor = user.username if user else "system"
+    if not req.vm_ids and not req.create_if_missing:
+        raise HTTPException(status_code=400, detail="vm_ids required")
+    if req.vm_ids and len(req.vm_ids) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 VMs per reassign request")
+    if req.create_if_missing and not (req.tenant_name or "").strip():
+        raise HTTPException(status_code=400, detail="tenant_name required when create_if_missing is true")
+    if req.tenant_name and len(req.tenant_name) > 255:
+        raise HTTPException(status_code=400, detail="tenant_name exceeds maximum length")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Collect current tenant+org_vdc for affected VMs so we can
+            # recalculate vm_count on both source and target tenant rows.
+            cur.execute("""
+                SELECT id, tenant_name, org_vdc FROM migration_vms
+                WHERE project_id = %s AND id = ANY(%s::bigint[])
+            """, (project_id, req.vm_ids))
+            old_rows = cur.fetchall()
+
+            # Determine the target org_vdc: use the majority org_vdc of the
+            # selected VMs (most common org_vdc wins, falls back to None).
+            target_org_vdc = None
+            if req.tenant_name and req.vm_ids:
+                cur.execute("""
+                    SELECT org_vdc FROM migration_vms
+                    WHERE project_id = %s AND id = ANY(%s::bigint[])
+                      AND org_vdc IS NOT NULL AND org_vdc != ''
+                    GROUP BY org_vdc ORDER BY count(*) DESC LIMIT 1
+                """, (project_id, req.vm_ids))
+                cl_row = cur.fetchone()
+                target_org_vdc = cl_row["org_vdc"] if cl_row else None
+
+            # Upsert the target tenant row when creating a new tenant.
+            # NOTE: ON CONFLICT with (project_id, tenant_name, org_vdc) silently
+            # fails when org_vdc IS NULL (two NULLs are not equal in PG unique
+            # indexes). Use WHERE NOT EXISTS with IS NOT DISTINCT FROM instead.
+            if req.tenant_name and req.create_if_missing:
+                cur.execute("""
+                    INSERT INTO migration_tenants
+                        (project_id, tenant_name, org_vdc, detection_method, vm_count,
+                         target_domain_name, target_project_name, target_display_name,
+                         target_domain_description, target_confirmed)
+                    SELECT %s, %s, %s, 'manual', 0, %s, %s, %s, %s, false
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM migration_tenants
+                        WHERE project_id = %s AND tenant_name = %s
+                          AND (org_vdc IS NOT DISTINCT FROM %s)
+                    )
+                """, (project_id, req.tenant_name, target_org_vdc,
+                      req.tenant_name, req.tenant_name, req.tenant_name, req.tenant_name,
+                      project_id, req.tenant_name, target_org_vdc))
+
+            # Move the VMs (only when vm_ids are provided).
+            if req.vm_ids:
+                cur.execute("""
+                    UPDATE migration_vms
+                    SET tenant_name     = %s,
+                        org_vdc         = %s,
+                        manually_assigned = true,
+                        updated_at      = now()
+                    WHERE project_id = %s AND id = ANY(%s::bigint[])
+                """, (req.tenant_name, target_org_vdc, project_id, req.vm_ids))
+
+            # Recalculate vm_count on all affected tenant rows (sources + target).
+            affected = set()
+            for r in old_rows:
+                if r["tenant_name"]:
+                    affected.add((r["tenant_name"], r["org_vdc"]))
+            if req.tenant_name:
+                affected.add((req.tenant_name, target_org_vdc))
+
+            for (tname, ovdc) in affected:
+                cur.execute("""
+                    UPDATE migration_tenants
+                    SET vm_count = (
+                        SELECT count(*) FROM migration_vms
+                        WHERE project_id = %s AND tenant_name = %s
+                          AND (org_vdc = %s OR (org_vdc IS NULL AND %s IS NULL))
+                    )
+                    WHERE project_id = %s AND tenant_name = %s
+                      AND (org_vdc = %s OR (org_vdc IS NULL AND %s IS NULL))
+                """, (project_id, tname, ovdc, ovdc,
+                      project_id, tname, ovdc, ovdc))
+
+    _log_activity(actor=actor, action="reassign_vms", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"vm_ids": req.vm_ids, "target_tenant": req.tenant_name})
+    return {"status": "ok", "moved": len(req.vm_ids) if req.vm_ids else 0}
 
 
 @router.patch("/projects/{project_id}/vms/{vm_id}",
@@ -2115,6 +2266,7 @@ async def update_vm(project_id: str, vm_id: str, req: UpdateVMRequest, user = De
 
 @router.get("/projects/{project_id}/tenants", dependencies=[Depends(require_permission("migration", "read"))])
 async def list_tenants(project_id: str):
+    # (body unchanged — see below)
     with _get_conn() as conn:
         _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -2169,7 +2321,18 @@ async def list_tenants(project_id: str):
                               AND mn.network_type IS NOT NULL
                             GROUP BY mn.network_type
                         ) _nt
-                    ) AS network_type_counts
+                    ) AS network_type_counts,
+                    (
+                        SELECT COALESCE(
+                            array_agg(DISTINCT v2.cluster ORDER BY v2.cluster)
+                            FILTER (WHERE v2.cluster IS NOT NULL AND v2.cluster <> ''),
+                            ARRAY[]::text[]
+                        )
+                        FROM migration_vms v2
+                        WHERE v2.tenant_name = t.tenant_name
+                          AND v2.project_id  = t.project_id
+                          AND (v2.org_vdc = t.org_vdc OR (v2.org_vdc IS NULL AND t.org_vdc IS NULL))
+                    ) AS vm_clusters
                 FROM migration_tenants t
                 LEFT JOIN vm_agg a
                     ON a.tenant_name = t.tenant_name
@@ -2178,7 +2341,125 @@ async def list_tenants(project_id: str):
                 ORDER BY t.vm_count DESC
             """, (project_id, project_id))
             tenants = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+            # Synthetic row for VMs that were never assigned to any tenant.
+            # These are invisible to tenant-based scoping, so we surface them
+            # explicitly so the operator knows they exist.
+            cur.execute("""
+                SELECT
+                    count(*) AS vm_count,
+                    COALESCE(
+                        array_agg(DISTINCT cluster ORDER BY cluster)
+                        FILTER (WHERE cluster IS NOT NULL AND cluster <> ''),
+                        ARRAY[]::text[]
+                    ) AS vm_clusters
+                FROM migration_vms
+                WHERE project_id = %s
+                  AND (tenant_name IS NULL OR tenant_name = '')
+                  AND (template IS NULL OR template = false)
+            """, (project_id,))
+            unassigned_row = cur.fetchone()
+            if unassigned_row and unassigned_row["vm_count"] > 0:
+                tenants.append({
+                    "id": None,
+                    "project_id": project_id,
+                    "tenant_name": "(Unassigned)",
+                    "org_vdc": None,
+                    "vm_count": unassigned_row["vm_count"],
+                    "vm_clusters": list(unassigned_row["vm_clusters"] or []),
+                    "include_in_plan": False,
+                    "exclude_reason": "VMs with no tenant detected — run Re-run Detection or check RVTools data",
+                    "detection_method": None,
+                    "total_vcpu": None,
+                    "total_ram_mb": None,
+                    "total_disk_gb": None,
+                    "total_in_use_gb": None,
+                    "used_vcpu": None,
+                    "used_ram_gb": None,
+                    "used_disk_gb": None,
+                    "est_migration_hours": None,
+                    "network_type_counts": None,
+                    "is_unassigned_group": True,
+                })
     return {"status": "ok", "tenants": tenants}
+
+
+# ---------------------------------------------------------------------------
+# Create empty tenant (vSphere: no detection rule needed; vCD: optional rule)
+# ---------------------------------------------------------------------------
+
+class CreateTenantRequest(BaseModel):
+    tenant_name: str
+    detection_method: Optional[str] = None
+    pattern_value: Optional[str] = None
+
+
+@router.post("/projects/{project_id}/tenants",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_tenant(project_id: str, req: CreateTenantRequest, user=Depends(get_current_user)):
+    """Create an empty tenant (org_vdc=NULL).
+    For vSphere: just provide tenant_name — no detection rule needed.
+    For vCD:     detection_method + pattern_value are optional but allow
+                 Re-run Detection to auto-assign matching VMs.
+    """
+    actor = user.username if user else "system"
+    tenant_name = (req.tenant_name or "").strip()
+    if not tenant_name:
+        raise HTTPException(status_code=400, detail="tenant_name required")
+    if len(tenant_name) > 255:
+        raise HTTPException(status_code=400, detail="tenant_name exceeds maximum length")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # NULL-safe check — PostgreSQL treats two NULLs as DISTINCT in a
+            # UNIQUE index, so ON CONFLICT would silently create duplicates.
+            cur.execute("""
+                INSERT INTO migration_tenants
+                    (project_id, tenant_name, org_vdc, detection_method, vm_count,
+                     target_domain_name, target_project_name, target_display_name,
+                     target_domain_description, target_confirmed)
+                SELECT %s, %s, NULL, 'manual', 0, %s, %s, %s, %s, false
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM migration_tenants
+                    WHERE project_id = %s AND tenant_name = %s AND org_vdc IS NULL
+                )
+                RETURNING *
+            """, (project_id, tenant_name,
+                  tenant_name, tenant_name, tenant_name, tenant_name,
+                  project_id, tenant_name))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=409,
+                                    detail=f"Tenant '{tenant_name}' already exists in this project")
+
+            # Optionally register a detection rule so Re-run Detection assigns
+            # matching VMs to this tenant automatically.
+            if req.detection_method and (req.pattern_value or "").strip():
+                cur.execute("""
+                    SELECT id, detection_config FROM migration_tenant_rules
+                    WHERE project_id = %s ORDER BY id DESC LIMIT 1
+                """, (project_id,))
+                rules_row = cur.fetchone()
+                if rules_row:
+                    raw = rules_row["detection_config"]
+                    config = raw if isinstance(raw, dict) else json.loads(raw)
+                    custom_rules = config.get("custom_rules", [])
+                    custom_rules.append({
+                        "tenant_name": tenant_name,
+                        "field": req.detection_method,
+                        "pattern": req.pattern_value.strip(),
+                    })
+                    config["custom_rules"] = custom_rules
+                    cur.execute("""
+                        UPDATE migration_tenant_rules SET detection_config = %s
+                        WHERE id = %s
+                    """, (json.dumps(config), rules_row["id"]))
+
+    _log_activity(actor=actor, action="create_tenant", resource_type="migration_tenant",
+                  resource_id=project_id,
+                  details={"tenant_name": tenant_name, "detection_method": req.detection_method})
+    return {"status": "ok", "tenant": _serialize_row(dict(row))}
 
 
 @router.patch("/projects/{project_id}/tenants/{tenant_id:int}",
@@ -2646,6 +2927,61 @@ async def list_clusters(project_id: str):
             """, (project_id,))
             clusters = [_serialize_row(dict(r)) for r in cur.fetchall()]
     return {"status": "ok", "clusters": clusters}
+
+
+class ClusterScopeRequest(BaseModel):
+    cluster_ids: List[int]
+    include_in_plan: bool
+    exclude_reason: Optional[str] = None
+
+
+@router.patch("/projects/{project_id}/clusters/scope",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def scope_clusters(project_id: str, req: ClusterScopeRequest, user=Depends(get_current_user)):
+    """Include or exclude clusters from the migration plan."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            for cid in req.cluster_ids:
+                cur.execute("""
+                    UPDATE migration_clusters
+                    SET include_in_plan = %s,
+                        exclude_reason  = %s
+                    WHERE id = %s AND project_id = %s
+                    RETURNING cluster_name
+                """, (req.include_in_plan,
+                      req.exclude_reason if not req.include_in_plan else None,
+                      cid, project_id))
+                row = cur.fetchone()
+                if row:
+                    cluster_name = row["cluster_name"]
+                    if not req.include_in_plan:
+                        # Cascade exclusion to all tenants whose org_vdc matches
+                        # the cluster name (vSphere: org_vdc = cluster_name after
+                        # detection). This ensures Networks/Cohorts also hide them.
+                        cur.execute("""
+                            UPDATE migration_tenants
+                            SET include_in_plan = false,
+                                exclude_reason  = 'Cluster excluded from plan'
+                            WHERE project_id = %s
+                              AND org_vdc = %s
+                              AND include_in_plan = true
+                        """, (project_id, cluster_name))
+                    else:
+                        # Re-include only tenants excluded by THIS cascade
+                        # (sentinel = 'Cluster excluded from plan').
+                        cur.execute("""
+                            UPDATE migration_tenants
+                            SET include_in_plan = true,
+                                exclude_reason  = NULL
+                            WHERE project_id = %s
+                              AND org_vdc = %s
+                              AND exclude_reason = 'Cluster excluded from plan'
+                        """, (project_id, cluster_name))
+    _log_activity(actor=actor, action="scope_clusters", resource_type="migration_project",
+                  resource_id=project_id, details={"cluster_ids": req.cluster_ids, "include": req.include_in_plan})
+    return {"status": "ok", "updated": len(req.cluster_ids)}
 
 
 @router.get("/projects/{project_id}/stats", dependencies=[Depends(require_permission("migration", "read"))])
@@ -4192,6 +4528,11 @@ async def get_node_sizing(
                   AND t.include_in_plan = true
                   AND NOT COALESCE(v.exclude_from_migration, false)
                   AND NOT COALESCE(v.template, false)
+                  AND COALESCE((
+                      SELECT mc.include_in_plan FROM migration_clusters mc
+                      WHERE mc.project_id = v.project_id AND mc.cluster_name = v.cluster
+                      LIMIT 1
+                  ), true) = true
             """, (project_id,))
             vm_row = dict(cur.fetchone() or {})
 

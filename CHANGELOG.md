@@ -12,6 +12,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.66.2] - 2026-03-16
+
+### Added
+
+#### Cluster-level scoping in Migration Planner
+- **Cluster exclusion toggle**: individual VMware clusters can be excluded from the migration plan by clicking their pill in the Tenants tab. A new `PATCH /api/migration/projects/{id}/clusters/scope` endpoint (body: `{cluster_ids, include_in_plan, exclude_reason}`) updates the `include_in_plan` boolean on `migration_clusters`. Wave node-sizing and all planning queries respect this flag — VMs on excluded clusters are omitted from wave calculations.
+- **Cluster exclusion cascades to tenants** (vSphere): when a cluster is excluded, all `migration_tenants` rows whose `org_vdc` matches that cluster name are automatically set to `include_in_plan=false` with `exclude_reason='Cluster excluded from plan'`. Re-including the cluster reverses the cascade only for rows tagged with that sentinel, preserving any independent user-set exclusions. This ensures the Networks and Cohorts tabs immediately reflect cluster exclusions for vSphere environments (vCD already worked via tenant-level exclusion).
+- **`cluster_in_scope` field on VM list**: `GET /api/migration/projects/{id}/vms` now returns a `cluster_in_scope: bool` field for every row (computed via correlated subquery against `migration_clusters`). VMs whose cluster has been excluded show a `⊘` badge in red on the VMs tab Cluster column.
+- **Unassigned VM group**: the tenants list (`GET /api/migration/projects/{id}/tenants`) now appends a synthetic `(Unassigned)` row (with `is_unassigned_group: true`) when VMs exist without a tenant assignment. The row is shown with an amber ⚠️ warning header, a vm_count badge, and interactive cluster pills — allowing cluster-level exclusion of unassigned VMs directly from the Tenants tab without running re-detection.
+- **Interactive cluster pills**: cluster pills in view-mode tenant rows are now `<button>` elements. Clicking toggles the cluster between included (blue pill) and excluded (red pill with strikethrough and `⊘` prefix); the page refreshes automatically. The `PATCH /clusters/scope` endpoint is called with a single cluster ID per click.
+- **DB migration** (`db/migrate_cluster_scoping.sql`): adds `include_in_plan BOOLEAN DEFAULT true` and `exclude_reason TEXT` to `migration_clusters`, and `manually_assigned BOOLEAN DEFAULT false` to `migration_vms`. Run once:
+  ```
+  docker exec -i pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB < db/migrate_cluster_scoping.sql
+  ```
+
+#### Manual VM reassignment between tenants
+- **VM selection checkboxes** on the VMs tab: a checkbox column is added to every row (plus a select-all header checkbox). Selected rows are highlighted in blue.
+- **"Move to Tenant…" toolbar**: appears above the table when one or more VMs are selected. Shows the selected count and exposes two actions — Move to Tenant… and Clear selection.
+- **Reassign modal**: a focused modal lists all existing tenants in a dropdown (plus `— Unassign —` to clear tenant assignment) and a `+ Create new tenant…` option at the bottom. When "Create new tenant…" is chosen, an inline text input appears for the new tenant name.
+- **New tenant creation**: passing `create_if_missing: true` to the backend causes the new `migration_tenants` row to be created with `detection_method = "manual"` and `vm_count` seeded from the selected VMs. The target `org_vdc` is auto-derived from the majority `org_vdc` of the selected VMs (not the cluster column — ensures correct vCD org_vdc values are preserved).
+- **Empty vm_ids with `create_if_missing`**: the reassign endpoint now accepts `vm_ids: []` when `create_if_missing: true`, allowing creation of an empty tenant shell via the reassign modal without moving any VMs immediately.
+- **`manually_assigned` flag**: VMs that were manually moved have `manually_assigned = true` in the DB. The VMs tab shows a 🔒 *manual* badge in the Tenant column on those rows. Detection re-runs (`_run_tenant_detection`) now filter out `manually_assigned = true` VMs so manual placements are never overwritten.
+- **`vm_count` recalculation**: after each reassign, `vm_count` is recalculated on both the source tenant(s) and the target tenant in a single transaction.
+- **New endpoint**: `PATCH /api/migration/projects/{id}/vms/reassign` — body `{ vm_ids: int[], tenant_name: string|null, create_if_missing: bool }`.
+
+#### Empty tenant creation without detection rule (vSphere)
+- **New endpoint**: `POST /api/migration/projects/{id}/tenants` — body `{tenant_name, detection_method?, pattern_value?}`. Creates an empty tenant (0 VMs, `detection_method=manual`, `org_vdc=NULL`). Detection rule is optional — for vSphere users who want to create a target tenant and move VMs into it manually without re-running auto-detection.
+- **Frontend "Add Tenant Rule" form**: the Detection Method and Pattern fields are now clearly marked as optional. The Add button is enabled as soon as a tenant name is typed — no pattern required. If a pattern is provided, it is stored as a custom detection rule for future re-runs.
+- Uses `WHERE NOT EXISTS (... AND org_vdc IS NULL)` instead of `ON CONFLICT` to safely handle `NULL` org_vdc (two NULLs are not considered equal in PostgreSQL unique indexes, causing silent duplicate inserts with `ON CONFLICT`).
+
+### Fixed
+
+- **`reassign_vms` org_vdc derivation**: `target_org_vdc` for a new tenant is now taken from the VMs' `org_vdc` column (not `cluster`). For vCD environments this preserves the real OrgVDC name; for vSphere it behaves identically since `org_vdc = cluster` after detection.
+- **`reassign_vms` NULL-safe INSERT**: replaced `ON CONFLICT (project_id, tenant_name, org_vdc) DO NOTHING` with `WHERE NOT EXISTS (... IS NOT DISTINCT FROM ...)` to prevent silent duplicate tenant creation when `org_vdc IS NULL`.
+
+
+## [1.66.1] - 2026-03-16
+
+### Added
+
+#### VMware cluster column in Migration Planner (Tenants & VMs tabs)
+- The **🏢 Tenants** sub-tab now shows a **Clusters** column listing every VMware cluster that hosts VMs belonging to that tenant (e.g. `Cluster-Prod`, `Cluster-DR`). Values come from a new `array_agg(DISTINCT cluster)` subquery on `migration_vms` — no schema change required, `cluster` was already stored per-VM from the `vInfo` sheet.
+- The **🖥️ VMs** sub-tab gains a **Cluster** column showing the individual VM's VMware cluster placement.
+- Both tabs support filtering by cluster: Tenants tab has a new **All Clusters** dropdown (populated from the existing `/clusters` endpoint); VMs tab existing **All Clusters** dropdown was already wired and now also triggers a tenant-subview load of cluster data.
+- Backend: `GET /api/migration/projects/{id}/tenants` response extended with `vm_clusters: string[]` field — fully backward compatible.
+- No Docker volumes, DB migrations, or new endpoints required.
+
+### Fixed
+
+#### Cluster-aware tenant detection for plain-vSphere environments
+- **Root cause**: In plain vSphere (no vCD), tenant detection relies on folder path, resource pool, vApp name, or VM name prefix matching. Two VMs on different clusters but in identically-named folders/pools were merged into a single `migration_tenants` row, making it impossible to scope a tenant to one cluster.
+- **Fix**: After `assign_tenant()` returns, `_run_tenant_detection` now sets `org_vdc = vm.cluster` when `detection_method` is not `vcd_folder` or `cluster` and `org_vdc` was not already determined by the `orgvdc_detection` config. This turns tenant identity into `(name, cluster)` instead of `(name, NULL)` for plain-vSphere environments.
+- **vCD environments**: completely unaffected. vCD tenants always use `detection_method = "vcd_folder"` with `org_vdc` set to the explicit OrgVDC name and are excluded from the fix by a method guard.
+- **Secondary bug fixed**: `ON CONFLICT (project_id, tenant_name, org_vdc)` previously never matched on `org_vdc = NULL` rows (PostgreSQL treats multiple NULLs as distinct in unique constraints), so re-running detection would silently insert duplicate tenant rows. Setting a non-NULL cluster string makes the upsert idempotent.
+- **Stale-row cleanup**: after the totals update in `_run_tenant_detection`, zero-VM NULL-org_vdc rows that were not yet confirmed by the user (`target_confirmed = false`) are automatically deleted, preventing ghost rows after the first re-detection on upgraded projects.
+- No schema change required. Users can re-run detection via the existing **Re-run Detection** button to split previously merged tenants.
+
 ## [1.66.0] - 2026-03-16
 
 ### Added

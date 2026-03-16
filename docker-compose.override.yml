@@ -1,0 +1,39 @@
+# docker-compose.override.yml — dev port bindings (auto-loaded by `docker compose up`)
+#
+# Docker Compose automatically merges this file when NO explicit -f flags are used
+# (i.e. the dev `startup.ps1` which runs `docker compose up -d --build`).
+#
+# The prod startup uses `-f docker-compose.yml -f docker-compose.prod.yml` which
+# bypasses auto-loading of this file, so these ports are NEVER exposed in production.
+#
+# Why this file exists:
+#   Docker Compose concatenates sequence fields (ports, volumes, ...) rather than
+#   replacing them when merging overlay files.  `ports: []` in docker-compose.prod.yml
+#   cannot remove port bindings already defined in docker-compose.yml.  The only
+#   reliable pattern is to keep the base file port-free and add dev bindings here.
+
+services:
+
+  db:
+    ports:
+      - "5432:5432"
+
+  pgadmin:
+    ports:
+      - "8080:80"
+
+  pf9_api:
+    ports:
+      - "8000:8000"
+
+  pf9_ui:
+    ports:
+      - "5173:5173"
+
+  pf9_monitoring:
+    ports:
+      - "8001:8001"
+
+  phpldapadmin:
+    ports:
+      - "${LDAP_ADMIN_PORT:-8081}:80"
