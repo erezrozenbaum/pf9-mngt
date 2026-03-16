@@ -24,7 +24,7 @@ API_URL = os.getenv("TEST_API_URL", "http://localhost:8000").rstrip("/")
 MON_URL = os.getenv("TEST_MON_URL", "http://localhost:8001").rstrip("/")
 ADMIN_USER = os.getenv("DEFAULT_ADMIN_USER", os.getenv("TEST_ADMIN_USER", "ci-admin"))
 ADMIN_PASS = os.getenv("DEFAULT_ADMIN_PASSWORD", os.getenv("TEST_ADMIN_PASSWORD", ""))
-TIMEOUT = int(os.getenv("SEED_TIMEOUT", "120"))   # seconds to wait for services
+TIMEOUT = int(os.getenv("SEED_TIMEOUT", "300"))   # seconds to wait for services
 
 
 def _get(url, token=None, timeout=10):
@@ -90,7 +90,8 @@ def main():
     else:
         # Retry login with backoff — API may return 503 briefly while the DB
         # finishes initialising even after the /health endpoint starts responding.
-        login_deadline = time.time() + 60
+        # GitHub Actions runners can be slow; allow up to 3 minutes.
+        login_deadline = time.time() + 180
         status, body = 503, {}
         while time.time() < login_deadline:
             status, body = _post_json(
