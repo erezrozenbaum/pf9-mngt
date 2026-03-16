@@ -166,13 +166,15 @@ jobs:
           echo "DEFAULT_ADMIN_PASSWORD=${CI_PASS}" >> .env
           echo "CI_ADMIN_PASS=${CI_PASS}" >> "$GITHUB_ENV"
 
-      - name: Create stub secret files for Docker Compose
+      - name: Create secret files for Docker Compose (from .env values)
+        # Extract the actual values from .env so the secret files match exactly
+        # what PostgreSQL and the other services are initialised with.
         run: |
           mkdir -p secrets
-          echo "ci-db-password-stub"   > secrets/db_password
-          echo "ci-ldap-password-stub" > secrets/ldap_admin_password
-          echo "ci-pf9-password-stub"  > secrets/pf9_password
-          echo "ci-jwt-secret-stub"    > secrets/jwt_secret
+          grep '^POSTGRES_PASSWORD='   .env | cut -d'=' -f2- > secrets/db_password
+          grep '^LDAP_ADMIN_PASSWORD=' .env | cut -d'=' -f2- > secrets/ldap_admin_password
+          grep '^PF9_PASSWORD='        .env | cut -d'=' -f2- > secrets/pf9_password
+          grep '^JWT_SECRET_KEY='      .env | cut -d'=' -f2- > secrets/jwt_secret
 
       - name: Build and start stack
         run: docker compose up --build -d
