@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.67.0  
+**Version**: 1.68.0  
 **Last Updated**: March 17, 2026  
 **Audience**: System administrators and platform operators
 
@@ -1793,7 +1793,7 @@ copy .env.template .env
 
 # --- Production startup ---
 # All traffic via nginx TLS (443 only); pre-built ghcr.io images; 4 API workers
-# Set PF9_IMAGE_TAG=v1.67.0 in .env to pin the release version
+# Set PF9_IMAGE_TAG=v1.68.0 in .env to pin the release version
 .\startup_prod.ps1
 .\startup_prod.ps1 -StopOnly    # to stop
 ```
@@ -3336,7 +3336,7 @@ The pipeline is defined in two workflow files under `.github/workflows/`:
 **To pin a specific release version in production:**
 ```bash
 # In .env
-PF9_IMAGE_TAG=v1.67.0
+PF9_IMAGE_TAG=v1.68.0
 ```
 
 For a full reference see [`docs/CI_CD_GUIDE.md`](CI_CD_GUIDE.md).

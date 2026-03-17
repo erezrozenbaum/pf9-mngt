@@ -3,9 +3,9 @@ services:
     image: postgres:16
     container_name: pf9_db
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: "${POSTGRES_USER:?ERROR: POSTGRES_USER must be set in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD must be set in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:?ERROR: POSTGRES_DB must be set in .env}"
     # Port binding added by docker-compose.override.yml for dev (auto-loaded).
     volumes:
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -60,13 +60,13 @@ services:
       # === LDAP Authentication Configuration ===
       LDAP_SERVER: ldap
       LDAP_PORT: "389"
-      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD:?ERROR: LDAP_ADMIN_PASSWORD must be set in .env}"
       LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}
       LDAP_USER_DN: ${LDAP_USER_DN:-ou=users,dc=pf9mgmt,dc=local}
       LDAP_GROUP_DN: ${LDAP_GROUP_DN:-ou=groups,dc=pf9mgmt,dc=local}
 
       # === JWT Configuration ===
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY must be set in .env}"
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
 

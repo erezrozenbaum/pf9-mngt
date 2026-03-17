@@ -137,6 +137,11 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
+- **Security Hardening Sprint** (v1.68.0 — NEW ✨):
+  - **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline sanitized via `DOMPurify.sanitize()` with `ALLOWED_TAGS: ["mark"]`; eliminates stored XSS via search index
+  - **SMTP TLS enforcement** — `api/smtp_helper.py` and `notifications/main.py` now set `ctx.check_hostname = True` + `ctx.verify_mode = ssl.CERT_REQUIRED`; prevents silent acceptance of invalid certificates
+  - **VM OS password lifecycle** — `os_password` wiped from DB (`os_password=''`) after successful provisioning; minimum length raised 6 → 8 characters
+  - **docker-compose.yml fail-fast guards** — `POSTGRES_PASSWORD`, `POSTGRES_USER`, `POSTGRES_DB`, `JWT_SECRET_KEY`, `LDAP_ADMIN_PASSWORD` use `${VAR:?ERROR:...}` syntax; startup blocked if any secret is empty
 - **Wave Approval Gates, VM Dependency Auto-Import & Maintenance Window Scheduling** (v1.67.0 — NEW ✨):
   - **Wave Approval Gates** — each migration wave now requires explicit approval before advancing to pre-checks-passed; operators request approval (triggers notifications); admins approve or reject inline with a comment; approval status badge (⏳ pending / ✅ approved / ❌ rejected); "Pass Checks" button locked until approved
   - **VM Dependency Auto-Import** — detects implicit VM dependencies from RDM disk sharing (confidence 0.95) and shared-datastore co-location (confidence 0.70); dry-run preview before committing; source badges (💽 RDM / 🗄 DS); auto-imports managed independently from manually entered dependencies

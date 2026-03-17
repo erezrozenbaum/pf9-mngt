@@ -244,13 +244,19 @@ class LDAPAuthenticator:
             last_name = name_parts[1] if len(name_parts) > 1 else first_name
             
             user_dn = f"cn={username},{self.user_dn}"
+            # Hash the password with SSHA before writing to LDAP
+            # (same algorithm used by change_password)
+            import base64
+            salt = secrets.token_bytes(4)
+            h = hashlib.sha1(password.encode('utf-8') + salt)
+            hashed_password = '{SSHA}' + base64.b64encode(h.digest() + salt).decode()
             user_attrs = [
                 ('objectclass', [b'person', b'inetOrgPerson']),
                 ('cn', [username.encode()]),
                 ('sn', [last_name.encode()]),
                 ('uid', [username.encode()]),
                 ('mail', [email.encode()]),
-                ('userPassword', [password.encode()]),
+                ('userPassword', [hashed_password.encode('utf-8')]),
                 ('description', [b'Created via management system'])
             ]
             

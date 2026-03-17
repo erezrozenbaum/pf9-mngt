@@ -11,12 +11,14 @@ Runs as a long-lived container.  Responsibilities:
 """
 
 import datetime
+import contextlib
 import glob
 import logging
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 import psycopg2
@@ -33,6 +35,9 @@ DB_PASS = os.getenv("DB_PASS", "pf9pass")
 BACKUP_PATH = os.getenv("BACKUP_PATH", "/backups")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3600"))      # schedule check interval
 JOB_POLL_INTERVAL = int(os.getenv("JOB_POLL_INTERVAL", "30"))  # pending job check interval
+
+# Stable advisory lock ID for coordinating scheduled backups across replicas
+_BACKUP_SCHED_LOCK_ID = 9876543
 
 # LDAP configuration for backup
 LDAP_HOST = os.getenv("LDAP_HOST", "pf9_ldap")
@@ -404,6 +409,32 @@ def _enforce_retention(conn, target="database"):
 
 
 # ---------------------------------------------------------------------------
+# LDAP helpers
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _ldap_password_file(password: str):
+    """Write the LDAP admin password to a private temp file and yield its path.
+
+    Using ``ldapsearch -y <file>`` instead of ``-w <password>`` prevents the
+    credential from appearing in the process argument list (visible via ps aux).
+    The file is created with mode 0o600 and unconditionally deleted on exit.
+    """
+    pwf = tempfile.NamedTemporaryFile(mode='w', suffix='.pwd', delete=False)
+    try:
+        pwf.write(password)
+        pwf.flush()
+        pwf.close()
+        os.chmod(pwf.name, 0o600)
+        yield pwf.name
+    finally:
+        try:
+            os.unlink(pwf.name)
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # LDAP backup / restore
 # ---------------------------------------------------------------------------
 
@@ -422,21 +453,22 @@ def _run_ldap_backup(conn, job_id: int, backup_type: str = "manual", initiated_b
     try:
         # ldapsearch exports all entries under base DN
         ldap_uri = f"ldap://{LDAP_HOST}:{LDAP_PORT}"
-        search_cmd = [
-            "ldapsearch", "-x",
-            "-H", ldap_uri,
-            "-D", LDAP_ADMIN_DN,
-            "-w", LDAP_ADMIN_PASSWORD,
-            "-b", LDAP_BASE_DN,
-            "-LLL",                   # plain LDIF, no comments
-        ]
+        with _ldap_password_file(LDAP_ADMIN_PASSWORD) as pwd_file:
+            search_cmd = [
+                "ldapsearch", "-x",
+                "-H", ldap_uri,
+                "-D", LDAP_ADMIN_DN,
+                "-y", pwd_file,
+                "-b", LDAP_BASE_DN,
+                "-LLL",                   # plain LDIF, no comments
+            ]
 
-        with open(filepath, "wb") as outf:
-            search = subprocess.Popen(search_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            gzip_proc = subprocess.Popen(["gzip"], stdin=search.stdout, stdout=outf, stderr=subprocess.PIPE)
-            search.stdout.close()
-            _, gzip_err = gzip_proc.communicate(timeout=600)
-            search.wait(timeout=10)
+            with open(filepath, "wb") as outf:
+                search = subprocess.Popen(search_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                gzip_proc = subprocess.Popen(["gzip"], stdin=search.stdout, stdout=outf, stderr=subprocess.PIPE)
+                search.stdout.close()
+                _, gzip_err = gzip_proc.communicate(timeout=600)
+                search.wait(timeout=10)
 
         if search.returncode != 0:
             stderr_out = search.stderr.read().decode("utf-8", "replace")[:500] if search.stderr else ""
@@ -497,18 +529,19 @@ def _run_ldap_restore(conn, job_id: int, source_path: str):
         gunzip = subprocess.Popen(["gunzip", "-c", source_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         # Step 2: ldapadd (use -c to continue on errors for entries that already exist)
-        ldapadd = subprocess.Popen(
-            [
-                "ldapadd", "-x", "-c",
-                "-H", ldap_uri,
-                "-D", LDAP_ADMIN_DN,
-                "-w", LDAP_ADMIN_PASSWORD,
-            ],
-            stdin=gunzip.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        )
-        gunzip.stdout.close()
-        add_out, add_err = ldapadd.communicate(timeout=600)
-        gunzip.wait(timeout=10)
+        with _ldap_password_file(LDAP_ADMIN_PASSWORD) as pwd_file:
+            ldapadd = subprocess.Popen(
+                [
+                    "ldapadd", "-x", "-c",
+                    "-H", ldap_uri,
+                    "-D", LDAP_ADMIN_DN,
+                    "-y", pwd_file,
+                ],
+                stdin=gunzip.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            gunzip.stdout.close()
+            add_out, add_err = ldapadd.communicate(timeout=600)
+            gunzip.wait(timeout=10)
 
         duration = time.time() - start
 
@@ -665,19 +698,32 @@ def main():
             now_ts = time.time()
             if now_ts - _last_schedule_check >= POLL_INTERVAL:
                 _last_schedule_check = now_ts
-                cfg = _fetch_config(conn)
+                # Acquire a non-blocking advisory lock so that only one worker
+                # replica fires the scheduled backup when multiple are running.
+                with conn.cursor() as _lc:
+                    _lc.execute("SELECT pg_try_advisory_lock(%s)", (_BACKUP_SCHED_LOCK_ID,))
+                    locked = _lc.fetchone()[0]
 
-                # Database scheduled backup
-                if _should_run_scheduled(cfg, "database"):
-                    job_id = _create_scheduled_job(conn, "database")
-                    _run_backup(conn, job_id, "scheduled", "scheduler")
-                    _enforce_retention(conn, "database")
+                if locked:
+                    try:
+                        cfg = _fetch_config(conn)
 
-                # LDAP scheduled backup
-                if _should_run_scheduled(cfg, "ldap"):
-                    job_id = _create_scheduled_job(conn, "ldap")
-                    _run_ldap_backup(conn, job_id, "scheduled", "scheduler")
-                    _enforce_retention(conn, "ldap")
+                        # Database scheduled backup
+                        if _should_run_scheduled(cfg, "database"):
+                            job_id = _create_scheduled_job(conn, "database")
+                            _run_backup(conn, job_id, "scheduled", "scheduler")
+                            _enforce_retention(conn, "database")
+
+                        # LDAP scheduled backup
+                        if _should_run_scheduled(cfg, "ldap"):
+                            job_id = _create_scheduled_job(conn, "ldap")
+                            _run_ldap_backup(conn, job_id, "scheduled", "scheduler")
+                            _enforce_retention(conn, "ldap")
+                    finally:
+                        with conn.cursor() as _uc:
+                            _uc.execute("SELECT pg_advisory_unlock(%s)", (_BACKUP_SCHED_LOCK_ID,))
+                else:
+                    log.debug("Another worker holds the schedule lock; skipping this cycle.")
 
         except Exception as exc:
             log.error("Worker loop error: %s", exc)

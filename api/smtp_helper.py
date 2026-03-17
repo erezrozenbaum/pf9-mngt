@@ -47,6 +47,8 @@ def _do_send(msg, to_addrs: List[str]) -> None:
     """Low-level SMTP transport.  Raises smtplib exceptions on failure."""
     if SMTP_USE_TLS:
         ctx = ssl.create_default_context()
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
             server.ehlo()
             server.starttls(context=ctx)

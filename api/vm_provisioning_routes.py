@@ -365,8 +365,8 @@ class VmRowRequest(BaseModel):
 
     @validator("os_password")
     def validate_pw(cls, v):
-        if len(v) < 6:
-            raise ValueError("os_password min 6 characters")
+        if len(v) < 8:
+            raise ValueError("os_password min 8 characters")
         return v
 
 
@@ -827,7 +827,7 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                     cur.execute(
                         """UPDATE vm_provisioning_vms
                            SET status='complete', pcd_server_ids=%s, assigned_ips=%s,
-                               console_log=%s, error_msg=NULL
+                               console_log=%s, error_msg=NULL, os_password=''
                            WHERE id=%s""",
                         (Json(server_ids), Json(assigned_ips), console if count == 1 else None, vm_id),
                     )

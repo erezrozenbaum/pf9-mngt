@@ -11,6 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import DOMPurify from "dompurify";
 import { API_BASE } from "../config";
 
 /* ── API helper ─────────────────────────────────────────────── */
@@ -1173,11 +1174,11 @@ export default function OpsSearch({ isAdmin, onNavigateToReport }: Props) {
                 </span>
               </div>
 
-              {/* Headline snippet (HTML from ts_headline) */}
+              {/* Headline snippet (HTML from ts_headline — sanitized before render) */}
               {doc.headline && (
                 <div
                   style={{ fontSize: "0.85rem", color: "#475569", marginBottom: 6, lineHeight: 1.5 }}
-                  dangerouslySetInnerHTML={{ __html: doc.headline }}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(doc.headline, { ALLOWED_TAGS: ["mark"], ALLOWED_ATTR: [] }) }}
                 />
               )}
 

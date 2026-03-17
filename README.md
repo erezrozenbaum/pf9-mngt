@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.67.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.68.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -728,7 +728,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.67.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.68.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -872,6 +872,13 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.68.0 — Security Hardening Sprint
+- ✅ **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline now sanitized via `DOMPurify.sanitize()` with a strict `ALLOWED_TAGS: ["mark"]` allowlist (was unsanitized raw HTML from `ts_headline`)
+- ✅ **VM provisioning — plaintext OS password cleared** — `os_password` is erased from the `vm_provisioning_vms` DB row immediately after successful provisioning (cloud-init already uses it; no need to retain it)
+- ✅ **VM provisioning — OS password minimum length** — raised from 6 to 8 characters (rejects 7-char passwords with HTTP 422)
+- ✅ **SMTP TLS certificate enforcement** — both `api/smtp_helper.py` and `notifications/main.py` now explicitly set `ctx.check_hostname = True` and `ctx.verify_mode = ssl.CERT_REQUIRED` instead of relying on Python version defaults
+- ✅ **docker-compose.yml fail-fast guards** — `POSTGRES_PASSWORD`, `POSTGRES_USER`, `POSTGRES_DB`, `LDAP_ADMIN_PASSWORD`, and `JWT_SECRET_KEY` now use `${VAR:?ERROR: VAR must be set in .env}` syntax; Docker Compose will refuse to start if any are empty
 
 ### v1.67.0 — Wave Approval Gates, VM Dependency Auto-Import & Maintenance Window Scheduling
 - ✅ **Wave Approval Gates** — each migration wave now requires explicit approval before it can advance to pre-checks-passed. A new approval workflow lets operators request approval (triggering notifications) and admins approve or reject inline with a comment. Waves display an approval status badge (⏳ pending / ✅ approved / ❌ rejected) and the "Pass Checks" button is locked until approval is granted.
@@ -1351,4 +1358,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.67.0 | **Last Updated**: March 17, 2026
+**Project Status**: Production Ready | **Version**: 1.68.0 | **Last Updated**: March 17, 2026

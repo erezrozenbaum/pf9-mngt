@@ -14,6 +14,7 @@ Usage:
 """
 
 import os
+import stat
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,13 @@ def read_secret(name: str, env_var: str = None, default: str = "") -> str:
     """
     secret_path = os.path.join(_SECRETS_DIR, name)
     if os.path.isfile(secret_path):
+        # Warn if the secret file is readable by group or others
+        file_mode = os.stat(secret_path).st_mode & 0o777
+        if file_mode & 0o077:
+            logger.warning(
+                "Secret file %s has insecure permissions (%o). Expected 0600 or 0400.",
+                secret_path, file_mode,
+            )
         try:
             with open(secret_path, "r", encoding="utf-8") as fh:
                 value = fh.read().strip()

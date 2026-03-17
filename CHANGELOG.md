@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.68.0] - 2026-03-17
+
+### Security
+
+#### OpsSearch XSS Fix
+- **`dangerouslySetInnerHTML` sanitization** — `OpsSearch.tsx` now wraps `doc.headline` in `DOMPurify.sanitize(doc.headline, { ALLOWED_TAGS: ["mark"], ALLOWED_ATTR: [] })` before rendering. The `<mark>` allowlist matches the PostgreSQL `ts_headline()` output (`StartSel=<mark>, StopSel=</mark>`). Previously, unsanitized HTML from the search index was rendered directly, creating a stored XSS vector.
+
+#### SMTP TLS Certificate Enforcement
+- **`api/smtp_helper.py`** — Added `ctx.check_hostname = True` and `ctx.verify_mode = ssl.CERT_REQUIRED` after `ssl.create_default_context()` in `_do_send()`. Prevents silent acceptance of invalid or self-signed certificates.
+- **`notifications/main.py`** — Same two lines added to the notification worker's `send_email()` function.
+
+#### VM Provisioning — OS Password Lifecycle
+- **Password wipe on completion** — `_execute_batch_thread()` now sets `os_password=''` in the success `UPDATE` query. The password is already consumed by cloud-init at VM boot; there is no reason to retain it in the database.
+- **Minimum length** — `os_password` validator raised from 6 to 8 characters; 7-character passwords now return HTTP 422.
+
+#### Docker Compose Startup Guards
+- **Fail-fast required-var syntax** — `POSTGRES_PASSWORD`, `POSTGRES_USER`, `POSTGRES_DB`, `JWT_SECRET_KEY`, and `LDAP_ADMIN_PASSWORD` in `docker-compose.yml` now use `${VAR:?ERROR: VAR must be set in .env}`. Docker Compose will refuse to start if any of these secrets are empty or unset.
+
+#### LDAP Password Exposure via Process Arguments
+- **`backup_worker/main.py`** — `_run_ldap_backup()` and `_run_ldap_restore()` no longer pass the admin password as `-w <password>` on the `ldapsearch`/`ldapadd` command line (visible in `ps aux`). Instead, a `_ldap_password_file()` context manager writes the password to a `0o600` temporary file and passes it via the `-y <file>` flag; the file is deleted on exit.
+
+#### LDAP `create_user` Plaintext Password Storage
+- **`api/auth.py`** — `create_user()` now hashes the password with `{SSHA}` (SHA-1 + 4-byte random salt, same scheme as `change_password()`) before storing it as `userPassword` in OpenLDAP. Previously the attribute was set to the cleartext password.
+
+#### Password Complexity Policy
+- **`api/resource_management.py`** — `AddUserRequest.password` minimum length raised from 6 to 8 characters. A Pydantic `@validator` now enforces at least one uppercase letter, one digit, and one special character (`!@#$%^&*()_+-=[]{}|;:,.<>?`). Requests that fail any rule return HTTP 422 with a descriptive message.
+
+#### Rate Limit on Password Reset Endpoint
+- **`api/main.py`** — `POST /auth/users/{username}/password` is now decorated with `@limiter.limit("5/minute")`. Previously the endpoint had no rate limit, enabling brute-force or credential-stuffing attacks against the reset flow.
+
+#### Secret File Permission Warning
+- **`api/secret_helper.py`** — `read_secret()` now checks `os.stat(path).st_mode & 0o077` after locating a file-based secret. If any group or other permission bits are set, a warning is logged (`"Secret file <path> has insecure permissions (<mode>). Expected 0600 or 0400."`). The file is still read so the application starts; the warning surfaces the misconfiguration for operator remediation.
+
+#### Backup Worker Distributed Scheduling Lock
+- **`backup_worker/main.py`** — The scheduled-backup decision path (`_should_run_scheduled`) is now wrapped in a PostgreSQL advisory lock (`pg_try_advisory_lock(9876543)` / `pg_advisory_unlock`). In multi-replica deployments, at most one worker instance will execute a scheduled backup at a time; the others skip silently when the lock is held.
+
+#### JWT Config Validator — "should" → "must"
+- **`api/config_validator.py`** — The validation message for a short `JWT_SECRET_KEY` was changed from "should be at least 32 characters" to "must be at least 32 characters", making it clear this is a blocking requirement (it is already in the `errors` list, which prevents startup).
+
+---
+
 ## [1.67.0] - 2026-03-17
 
 ### Added

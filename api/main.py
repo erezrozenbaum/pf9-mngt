@@ -1100,6 +1100,7 @@ async def delete_user(request: Request, username: str, current_user: User = Depe
         )
 
 @app.post("/auth/users/{username}/password")
+@limiter.limit("5/minute")
 async def reset_user_password(
     username: str,
     request: Request,

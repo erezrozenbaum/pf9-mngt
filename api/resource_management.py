@@ -104,12 +104,24 @@ def _notify(event_type: str, summary: str, severity: str = "info",
 
 class AddUserRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=255)
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
     email: str = ""
     description: str = ""
     role: str = Field("member", description="Role: admin, member, or reader")
     project_id: str = Field(..., description="Tenant to assign the user to")
     domain_id: str = Field(..., description="Domain the user belongs to")
+
+    @validator("password")
+    def validate_password(cls, v):
+        if len(v) < 8:
+            raise ValueError("password must be at least 8 characters")
+        if not any(c.isupper() for c in v):
+            raise ValueError("password must contain at least one uppercase letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("password must contain at least one digit")
+        if not any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in v):
+            raise ValueError("password must contain at least one special character")
+        return v
 
     @validator("role")
     def validate_role(cls, v):

@@ -72,7 +72,7 @@ class ConfigValidator:
         # Validate JWT secret length
         jwt_secret = os.getenv("JWT_SECRET_KEY", "")
         if jwt_secret and len(jwt_secret) < 32:
-            errors.append("JWT_SECRET_KEY should be at least 32 characters for security")
+            errors.append("JWT_SECRET_KEY must be at least 32 characters for security")
         
         # Validate ports
         db_port = os.getenv("PF9_DB_PORT", "5432")
