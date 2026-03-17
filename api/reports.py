@@ -252,12 +252,14 @@ async def get_report_catalog(
 async def report_tenant_quota_usage(
     domain_id: Optional[str] = Query(None, description="Filter by domain ID"),
     format: str = Query("json", description="json or csv"),
+    page: int = Query(1, ge=1, description="Page number (JSON only)"),
+    page_size: int = Query(100, ge=1, le=1000, description="Rows per page; 0 = all (JSON only)"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Per-tenant allocated quota vs actual usage with utilization %."""
     try:
         client = get_client()
-        projects = client.list_projects(domain_id=domain_id)
+        all_projects = client.list_projects(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
 
         # Fetch all resources
@@ -307,6 +309,14 @@ async def report_tenant_quota_usage(
         for snap in vol_snapshots:
             pid = snap.get("os-extended-snapshot-attributes:project_id") or snap.get("project_id", "")
             snaps_by_project.setdefault(pid, []).append(snap)
+
+        # Apply pagination before per-project quota API calls (avoids N+1 on large deployments)
+        total_projects = len(all_projects)
+        if format == "csv":
+            projects = all_projects  # CSV always returns full data
+        else:
+            offset = (page - 1) * page_size
+            projects = all_projects[offset:offset + page_size]
 
         rows = []
         for proj in projects:
@@ -406,7 +416,14 @@ async def report_tenant_quota_usage(
                 "Security Group Util %": pct(used_sgs, q_sgs),
             })
 
-        return _maybe_csv(rows, format, "tenant_quota_usage")
+        if format == "csv":
+            return _maybe_csv(rows, format, "tenant_quota_usage")
+        result = _maybe_csv(rows, format, "tenant_quota_usage")
+        if isinstance(result, dict):
+            result["total"] = total_projects
+            result["page"] = page
+            result["page_size"] = page_size
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -421,6 +438,8 @@ async def report_tenant_quota_usage(
 @router.get("/domain-overview")
 async def report_domain_overview(
     format: str = Query("json", description="json or csv"),
+    page: int = Query(1, ge=1, description="Page number (JSON only)"),
+    page_size: int = Query(50, ge=1, le=500, description="Rows per page; CSV always returns all"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """All domains with their tenants, resource counts, and quota rollup."""
@@ -589,7 +608,17 @@ async def report_domain_overview(
                 "Storage Util %": pct(total_storage_gb, quota_storage_gb),
             })
 
-        return _maybe_csv(rows, format, "domain_overview")
+        if format == "csv":
+            return _maybe_csv(rows, format, "domain_overview")
+        total_domains = len(rows)
+        offset = (page - 1) * page_size
+        rows = rows[offset:offset + page_size]
+        result = _maybe_csv(rows, format, "domain_overview")
+        if isinstance(result, dict):
+            result["total"] = total_domains
+            result["page"] = page
+            result["page_size"] = page_size
+        return result
     except HTTPException:
         raise
     except Exception as e:

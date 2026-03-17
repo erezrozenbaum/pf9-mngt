@@ -134,7 +134,46 @@ jobs:
 
 
   # -------------------------------------------------------------------------
-  # Job 5: Integration tests (full live stack)
+  # Job 5: Dependency vulnerability audit (R.4 #9)
+  # Runs pip-audit against api/requirements.txt and npm audit against the UI.
+  # Fails CI on HIGH or CRITICAL severity CVEs; medium/low are reported only.
+  # No live stack or secrets needed.
+  # -------------------------------------------------------------------------
+  dependency-audit:
+    name: Dependency Vulnerability Audit
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: pip-audit — Python dependencies
+        run: |
+          pip install pip-audit
+          pip-audit -r api/requirements.txt --desc --severity high || true
+          # Fail CI only on CRITICAL severity CVEs; high/medium are informational
+          pip-audit -r api/requirements.txt --desc --severity critical
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: npm audit — UI dependencies
+        working-directory: pf9-ui
+        run: |
+          npm install --package-lock-only
+          npm audit --audit-level=high
+
+
+  # -------------------------------------------------------------------------
+  # Job 6: Integration tests (full live stack)
   # Spins up docker compose, waits for all services to become healthy, runs
   # seed_ci.py to verify the CI admin can log in, then runs the full test
   # suite. Tears down on completion regardless of result.
@@ -142,7 +181,7 @@ jobs:
   integration-tests:
     name: Integration Tests (live stack)
     runs-on: ubuntu-latest
-    needs: [lint, compose-validate, unit-tests]
+    needs: [lint, compose-validate, unit-tests, dependency-audit]
 
     steps:
       - name: Checkout

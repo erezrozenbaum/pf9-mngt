@@ -54,6 +54,8 @@ reports/
 
 # Internal planning documents (not for public repo)
 _plans/
+improvements_plan.md
+docs_remediation_plan.md
 
 # Logs
 *.log

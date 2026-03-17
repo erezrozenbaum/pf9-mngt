@@ -137,7 +137,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **R.2 Bug Fixes Sprint** (v1.69.0 — NEW ✨):
+- **Performance, Security & Code Quality** (v1.70.0 — NEW ✨):
+  - **Report pagination** — `tenant-quota-usage` and `domain-overview` endpoints accept `page`/`page_size`; project slice applied before per-project quota API calls; JSON includes `total`/`page`/`page_size`; CSV unaffected
+  - **Upload row cap** — bulk onboarding Excel rejects any sheet > 2,000 rows with HTTP 400
+  - **Dependency version bounds** — `httpx`, `redis`, `Jinja2`, `openpyxl`, `reportlab`, `openai`, `anthropic` pinned with `<N.0.0` upper bounds
+  - **Copilot markdown** — `renderMarkdown()` replaced with `marked.parse()` + `DOMPurify.sanitize()` (marked v14)
+  - **CI dependency audit** — `dependency-audit` job: `pip-audit` (critical=fail) + `npm audit --audit-level=high`; integration tests gated on it
+- **R.2 Bug Fixes Sprint** (v1.69.0):
   - **Performance metrics `IndexError`** — `get_endpoint_stats()` returns `{}` on empty histogram; prevents crash on cold-start endpoints
   - **Phase 4A `migration_flavor_staging` table** — `startup_event()` applies `migrate_phase4_preparation.sql` idempotently; no more 500 on fresh deployments
   - **ISO timestamp `Z`-suffix parse error** — `host_metrics_collector.py` strips `Z` before `fromisoformat()`; fixes `ValueError` on Python < 3.11

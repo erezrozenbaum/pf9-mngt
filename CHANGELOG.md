@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.70.0] - 2026-03-17
+
+### Performance
+
+#### API — Reports: Pagination on Tenant-Quota and Domain-Overview Endpoints
+- **`api/reports.py`** — `/reports/tenant-quota-usage` and `/reports/domain-overview` now accept `page` (default 1) and `page_size` (default 100/50, max 1000/500) query parameters. The project slice is applied **before** per-project quota API calls, reducing the number of OpenStack quota round-trips proportionally to the page size. CSV responses bypass pagination and continue to return the full data set. JSON responses include `total`, `page`, and `page_size` metadata fields.
+
+#### API — Onboarding: Excel Upload Row Cap
+- **`api/onboarding_routes.py`** — `rows_as_dicts()` (inner helper of `_parse_excel()`) now raises HTTP 400 immediately with a descriptive message if any sheet exceeds `MAX_UPLOAD_ROWS = 2000` data rows. Prevents memory exhaustion from oversized Excel uploads before validation begins.
+
+### Code Quality
+
+#### API — Dependency Version Bounds
+- **`api/requirements.txt`** — Added `<N.0.0` upper bounds to all open-ended major dependencies: `httpx<1.0.0`, `redis<6.0.0`, `Jinja2<4.0.0`, `openpyxl<4.0.0`, `reportlab<5.0.0`, `openai<2.0.0`, `anthropic<1.0.0`. Prevents a silent breaking upgrade in the Docker build when a dependency releases a new major version.
+
+#### UI — Copilot: Replace Custom Markdown Renderer with marked.js
+- **`pf9-ui/src/components/CopilotPanel.tsx`** — Replaced the ~30-line hand-rolled `renderMarkdown()` (regex table parser, list detection, bold/italic transforms) with `marked.parse()` from **marked v14**. Output is still sanitised through `DOMPurify.sanitize()`. Fixes table rendering failures on nested pipes and edge-case list corruption.
+- **`pf9-ui/package.json`** — Added `marked ^14.0.0` to dependencies and `@types/marked ^6.0.0` to devDependencies.
+
+#### CI — Dependency Vulnerability Scanning
+- **`.github/workflows/ci.yml`** — Added a new `dependency-audit` job (needs: lint) that runs:
+  - `pip-audit -r api/requirements.txt --severity critical` (critical = fail; high = warn only)
+  - `npm audit --audit-level=high` in `pf9-ui/`
+  - The `integration-tests` job is now gated on `dependency-audit` passing.
+
 ## [1.69.0] - 2026-03-17
 
 ### Fixed

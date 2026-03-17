@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.69.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.70.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -577,7 +577,7 @@ PF9_HOSTS=<HOST_IP_1>,<HOST_IP_2>,<HOST_IP_3>
 METRICS_CACHE_TTL=60
 
 # Production image version (docker-compose.prod.yml)
-PF9_IMAGE_TAG=latest    # Pin to a release tag (e.g. v1.69.0) to lock images from ghcr.io
+PF9_IMAGE_TAG=latest    # Pin to a release tag (e.g. v1.70.0) to lock images from ghcr.io
 ```
 
 ### 3. Manual Docker Setup
@@ -721,7 +721,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.69.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.70.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -865,6 +865,13 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.70.0 — Performance, Security & Code Quality
+- ✅ **Report pagination** — `/reports/tenant-quota-usage` and `/reports/domain-overview` now accept `page`/`page_size` query parameters; the project slice is applied before per-project quota API calls for large deployments (100+ tenants). JSON responses include `total`, `page`, and `page_size` metadata. CSV export always returns full data.
+- ✅ **Upload row cap** — Bulk onboarding Excel upload rejects any sheet exceeding 2,000 data rows with HTTP 400, preventing memory exhaustion from oversized files.
+- ✅ **Dependency version bounds** — All open-ended major-version dependencies in `api/requirements.txt` now have `<N.0.0` upper bounds, preventing silent breaking upgrades during Docker image builds.
+- ✅ **Copilot markdown (marked.js)** — Replaced the hand-rolled `renderMarkdown()` in `CopilotPanel` with `marked.parse()` + `DOMPurify.sanitize()`. Fixes table rendering on nested pipes and edge-case list corruption.
+- ✅ **Dependency vulnerability scanning in CI** — New `dependency-audit` CI job runs `pip-audit` (critical = fail, high = warn) on Python requirements and `npm audit --audit-level=high` for the frontend. Integration tests are now gated on this job.
 
 ### v1.69.0 — R.2 Bug Fixes Sprint
 - ✅ **Performance metrics `IndexError`** — `get_endpoint_stats()` now guards against empty `sorted_durations`, preventing a crash on cold-start endpoints.
@@ -1363,4 +1370,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.69.0 | **Last Updated**: March 17, 2026
+**Project Status**: Production Ready | **Version**: 1.70.0 | **Last Updated**: March 17, 2026

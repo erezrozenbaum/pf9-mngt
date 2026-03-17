@@ -566,6 +566,8 @@ def _parse_excel(raw: bytes) -> Dict[str, Any]:
     if missing:
         raise HTTPException(status_code=400, detail=f"Missing sheets: {', '.join(sorted(missing))}")
 
+    MAX_UPLOAD_ROWS = 2000  # guard against memory exhaustion from huge files
+
     def rows_as_dicts(sheet_name: str) -> List[Dict]:
         # Case-insensitive sheet lookup
         ws = next((wb[s] for s in wb.sheetnames if s.lower() == sheet_name.lower()), None)
@@ -580,6 +582,12 @@ def _parse_excel(raw: bytes) -> Dict[str, Any]:
             if all(v is None or _str(v) == "" for v in row):
                 continue
             result.append(dict(zip(headers, row)))
+            if len(result) >= MAX_UPLOAD_ROWS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Sheet '{sheet_name}' exceeds {MAX_UPLOAD_ROWS} data rows. "
+                           f"Split into smaller files.",
+                )
         return result
 
     # ── customers ──

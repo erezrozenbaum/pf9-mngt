@@ -14,6 +14,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
+import { marked } from "marked";
 import { API_BASE } from "../config";
 import "./CopilotPanel.css";
 
@@ -77,51 +78,10 @@ const BACKEND_LABELS: Record<string, { icon: string; label: string }> = {
 let msgCounter = 0;
 const nextId = () => `m-${++msgCounter}`;
 
-/** Minimal Markdown → HTML (bold, italic, tables, bullet lists, line breaks) */
+/** Render Markdown to sanitized HTML using marked.js + DOMPurify. */
 function renderMarkdown(md: string): string {
-  let html = md;
-
-  // Markdown table → HTML table (before other transforms)
-  if (md.includes("|")) {
-    const lines = md.split("\n");
-    let inTable = false;
-    const out: string[] = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
-        const cells = trimmed.slice(1, -1).split("|").map((c) => c.trim());
-        if (cells.every((c) => /^-+$/.test(c))) continue;
-        if (!inTable) {
-          inTable = true;
-          out.push("<table>");
-          out.push("<tr>" + cells.map((c) => `<th>${c}</th>`).join("") + "</tr>");
-        } else {
-          out.push("<tr>" + cells.map((c) => `<td>${c}</td>`).join("") + "</tr>");
-        }
-      } else {
-        if (inTable) {
-          out.push("</table>");
-          inTable = false;
-        }
-        out.push(line);
-      }
-    }
-    if (inTable) out.push("</table>");
-    html = out.join("\n");
-  }
-
-  // Bullet lists: lines starting with "- "
-  html = html.replace(/^- (.+)$/gm, "<li>$1</li>");
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
-
-  // bold **text**
-  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  // italic *text*
-  html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  // line breaks
-  html = html.replace(/\n/g, "<br/>");
-
-  return html;
+  const html = marked.parse(md, { async: false }) as string;
+  return DOMPurify.sanitize(html);
 }
 
 // ── Component ──────────────────────────────────────────────────────────────

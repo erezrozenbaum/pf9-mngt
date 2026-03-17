@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.69.0  
+**Version**: 1.70.0  
 **Last Updated**: March 17, 2026  
 **Audience**: System administrators and platform operators
 
@@ -490,6 +490,16 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.70.0 — Performance, Security & Code Quality (✅ Complete)
+
+- **Report pagination** — `/reports/tenant-quota-usage` and `/reports/domain-overview` accept `page`/`page_size` params; project slice applied before per-project quota API calls; JSON responses include `total`, `page`, `page_size`; CSV always returns full data
+- **Upload row cap** — `rows_as_dicts()` in `_parse_excel()` raises HTTP 400 when any sheet exceeds `MAX_UPLOAD_ROWS = 2000`; prevents memory exhaustion before validation begins
+- **Dependency version bounds** — `httpx`, `redis`, `Jinja2`, `openpyxl`, `reportlab`, `openai`, `anthropic` all pinned with `<N.0.0` upper bounds in `api/requirements.txt`
+- **Copilot markdown** — `renderMarkdown()` replaced with `marked.parse()` + `DOMPurify.sanitize()` (marked v14); fixes nested-pipe table failures and edge-case list corruption
+- **Dependency audit in CI** — new `dependency-audit` job runs `pip-audit` (critical=fail, high=warn) + `npm audit --audit-level=high`; `integration-tests` gated on it
+
+---
 
 ### R.2 Bug Fixes Sprint (v1.69.0 ✅ Complete)
 
@@ -1821,7 +1831,7 @@ copy .env.template .env
 
 # --- Production startup ---
 # All traffic via nginx TLS (443 only); pre-built ghcr.io images; 4 API workers
-# Set PF9_IMAGE_TAG=v1.69.0 in .env to pin the release version
+# Set PF9_IMAGE_TAG=v1.70.0 in .env to pin the release version
 .\startup_prod.ps1
 .\startup_prod.ps1 -StopOnly    # to stop
 ```

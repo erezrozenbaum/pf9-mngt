@@ -5,11 +5,11 @@ psycopg2-binary==2.9.7
 python-dotenv==1.0.1
 pydantic==2.9.2
 requests==2.32.3
-httpx>=0.27.0
+httpx>=0.27.0,<1.0.0
 paramiko==3.4.0
 aiofiles==24.1.0
 slowapi==0.1.9
-redis>=5.0.0
+redis>=5.0.0,<6.0.0
 
 # Authentication and Authorization dependencies
 python-ldap==3.4.3
@@ -23,12 +23,12 @@ pyotp==2.9.0
 qrcode[pil]==7.4.2
 
 # Email templating
-Jinja2>=3.1.0
+Jinja2>=3.1.0,<4.0.0
 
 # Excel export
-openpyxl>=3.1.0
-reportlab>=4.0.0
+openpyxl>=3.1.0,<4.0.0
+reportlab>=4.0.0,<5.0.0
 
 # Ops Copilot — LLM backends (optional: only needed if using external LLMs)
-openai>=1.0.0
-anthropic>=0.20.0
+openai>=1.0.0,<2.0.0
+anthropic>=0.20.0,<1.0.0
