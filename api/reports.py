@@ -70,7 +70,7 @@ def _rows_to_csv(rows: list, filename: str) -> StreamingResponse:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys(), quoting=csv.QUOTE_ALL)
     writer.writeheader()
     for row in rows:
         clean: Dict[str, Any] = {}

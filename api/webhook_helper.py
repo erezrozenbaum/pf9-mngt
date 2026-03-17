@@ -25,17 +25,33 @@ post_event(event_type, subject, body_text) -> dict
 import json
 import logging
 import os
+import urllib.parse
 import urllib.request
 import urllib.error
 from typing import Optional
 
 logger = logging.getLogger("pf9_webhook")
 
+
+def _valid_webhook_url(url: str) -> str:
+    """Return *url* if it is a valid https URL; otherwise log a warning and return ''."""
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        logger.warning(
+            "Webhook URL rejected (must be https with non-empty host): %s",
+            url[:80],
+        )
+        return ""
+    return url
+
+
 # ---------------------------------------------------------------------------
 # Configuration (single source of truth)
 # ---------------------------------------------------------------------------
-SLACK_WEBHOOK_URL: str = os.getenv("SLACK_WEBHOOK_URL", "")
-TEAMS_WEBHOOK_URL: str = os.getenv("TEAMS_WEBHOOK_URL", "")
+SLACK_WEBHOOK_URL: str = _valid_webhook_url(os.getenv("SLACK_WEBHOOK_URL", ""))
+TEAMS_WEBHOOK_URL: str = _valid_webhook_url(os.getenv("TEAMS_WEBHOOK_URL", ""))
 
 SLACK_ENABLED: bool = bool(SLACK_WEBHOOK_URL)
 TEAMS_ENABLED: bool = bool(TEAMS_WEBHOOK_URL)

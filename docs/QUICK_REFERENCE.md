@@ -137,13 +137,21 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Performance, Security & Code Quality** (v1.70.0 — NEW ✨):
+- **Dependency Security Patches & Quality Fixes** (v1.71.0 — NEW ✨):
+  - **Webhook URL validation** — `SLACK_WEBHOOK_URL`/`TEAMS_WEBHOOK_URL` validated at startup; non-`https` or empty-host URLs rejected
+  - **CSV export quoting** — all CSV downloads use `QUOTE_ALL`; prevents column corruption in Excel on fields with commas or newlines
+  - **Ticket approval note max length** — `ApproveRejectRequest.note` capped at 5,000 characters (HTTP 422 on violation)
+  - **Python CVE upgrades** — `fastapi`, `requests`, `python-ldap`, `python-jose`, `python-multipart` upgraded to resolve 13 CVEs
+  - **npm transitive CVEs** — `flatted`, `minimatch`, `rollup` forced to patched versions via `package.json` overrides
+  - **Release pipeline** — Docker images now built/pushed before GitHub Release is created
+  - **CI audit tooling** — `pip-audit --severity` replaced; `npm audit` fix corrected
+- **Performance, Security & Code Quality** (v1.70.0):
   - **Report pagination** — `tenant-quota-usage` and `domain-overview` endpoints accept `page`/`page_size`; project slice applied before per-project quota API calls; JSON includes `total`/`page`/`page_size`; CSV unaffected
   - **Upload row cap** — bulk onboarding Excel rejects any sheet > 2,000 rows with HTTP 400
   - **Dependency version bounds** — `httpx`, `redis`, `Jinja2`, `openpyxl`, `reportlab`, `openai`, `anthropic` pinned with `<N.0.0` upper bounds
   - **Copilot markdown** — `renderMarkdown()` replaced with `marked.parse()` + `DOMPurify.sanitize()` (marked v14)
   - **CI dependency audit** — `dependency-audit` job: `pip-audit` (critical=fail) + `npm audit --audit-level=high`; integration tests gated on it
-- **R.2 Bug Fixes Sprint** (v1.69.0):
+- **Bug Fixes Sprint** (v1.69.0):
   - **Performance metrics `IndexError`** — `get_endpoint_stats()` returns `{}` on empty histogram; prevents crash on cold-start endpoints
   - **Phase 4A `migration_flavor_staging` table** — `startup_event()` applies `migrate_phase4_preparation.sql` idempotently; no more 500 on fresh deployments
   - **ISO timestamp `Z`-suffix parse error** — `host_metrics_collector.py` strips `Z` before `fromisoformat()`; fixes `ValueError` on Python < 3.11
@@ -151,7 +159,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - **Metering worker duplicate rows** — `pg_try_advisory_lock(8765432)` at cycle start; replicas skip when another holds the lock
   - **Backup worker silent `pg_dump` failure** — size < 1 KB check after `pg_dump` exits; corrupt output raises `RuntimeError` and triggers cleanup
   - **SLA daemon task leak on shutdown** — `_sla_task` module variable; `shutdown_event()` cancels and awaits it cleanly
-- **Security Hardening Sprint** (v1.68.0 — NEW ✨):
+- **Security Hardening Sprint** (v1.68.0):
   - **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline sanitized via `DOMPurify.sanitize()` with `ALLOWED_TAGS: ["mark"]`; eliminates stored XSS via search index
   - **SMTP TLS enforcement** — `api/smtp_helper.py` and `notifications/main.py` now set `ctx.check_hostname = True` + `ctx.verify_mode = ssl.CERT_REQUIRED`; prevents silent acceptance of invalid certificates
   - **LDAP `create_user` SSHA hash** — `create_user()` now hashes password with `{SSHA}` before storing in OpenLDAP (was plaintext `userPassword`)

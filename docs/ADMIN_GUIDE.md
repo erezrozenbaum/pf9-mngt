@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.70.0  
+**Version**: 1.71.0  
 **Last Updated**: March 17, 2026  
 **Audience**: System administrators and platform operators
 
@@ -491,6 +491,18 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 
 ## Appendix: Feature History by Version
 
+### v1.71.0 — Dependency Security Patches & Quality Fixes (✅ Complete)
+
+- **Webhook URL validation** — `SLACK_WEBHOOK_URL` and `TEAMS_WEBHOOK_URL` validated at startup via `urllib.parse.urlparse()`; non-`https` or empty-host URLs are rejected with a warning and the channel is disabled
+- **CSV export quoting** — `csv.DictWriter` in `api/reports.py` now uses `quoting=csv.QUOTE_ALL`; prevents column corruption when fields contain commas or newlines in Excel
+- **Ticket approval note capped** — `ApproveRejectRequest.note` enforces `max_length=5000`; HTTP 422 on violation
+- **Python CVE upgrades** — `fastapi`, `requests`, `python-ldap`, `python-jose`, `python-multipart` upgraded to resolve 13 CVEs
+- **npm transitive CVE overrides** — `flatted`, `minimatch`, `rollup` forced to patched versions via `package.json` overrides
+- **Release pipeline corrected** — all 9 Docker images are built and pushed before GitHub Release tag is created
+- **CI audit tooling corrected** — `pip-audit` `--severity` flag removed (dropped in 2.9+); `npm audit` no longer regenerates lock file before auditing
+
+---
+
 ### v1.70.0 — Performance, Security & Code Quality (✅ Complete)
 
 - **Report pagination** — `/reports/tenant-quota-usage` and `/reports/domain-overview` accept `page`/`page_size` params; project slice applied before per-project quota API calls; JSON responses include `total`, `page`, `page_size`; CSV always returns full data
@@ -501,7 +513,7 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 
 ---
 
-### R.2 Bug Fixes Sprint (v1.69.0 ✅ Complete)
+### v1.69.0 — Bug Fixes Sprint (✅ Complete)
 
 - **Performance metrics `IndexError`** — `get_endpoint_stats()` returns `{}` immediately when `sorted_durations` is empty; prevents index crash on cold-start endpoints
 - **Phase 4A `migration_flavor_staging` table** — `startup_event()` applies `migrate_phase4_preparation.sql` (idempotent); flavor-staging endpoints no longer 500 on a fresh deployment
@@ -513,7 +525,7 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 
 ---
 
-### Security Hardening Sprint — R.1 Complete (v1.68.0 ✅ Complete)
+### v1.68.0 — Security Hardening Sprint (✅ Complete)
 
 - **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline sanitized via `DOMPurify.sanitize()` with `ALLOWED_TAGS: ["mark"]`; eliminates stored XSS from `ts_headline` output
 - **SMTP TLS enforcement** — `api/smtp_helper.py` and `notifications/main.py` now set `ctx.check_hostname = True` + `ctx.verify_mode = ssl.CERT_REQUIRED`

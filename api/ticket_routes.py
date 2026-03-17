@@ -346,7 +346,7 @@ class EscalateRequest(BaseModel):
 
 
 class ApproveRejectRequest(BaseModel):
-    note: str = ""
+    note: str = Field("", max_length=5000)
 
 
 class ResolveRequest(BaseModel):

@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.71.0] - 2026-03-17
+
+### Fixed
+
+#### API — Reports: CSV Export Always Quotes All Fields
+- **`api/reports.py`** — All CSV report downloads now use `quoting=csv.QUOTE_ALL` in the `DictWriter`. Previously, fields containing commas or newlines — such as VM descriptions or tenant display names — could corrupt column alignment when opened in Excel or Google Sheets.
+
+#### API — Tickets: Approval Note Maximum Length
+- **`api/ticket_routes.py`** — `ApproveRejectRequest.note` now enforces `max_length=5000` at the Pydantic validation layer (HTTP 422 on violation). Previously, an arbitrarily large note body could be submitted, bloating outbound notification emails and the database row.
+
+#### API — Webhooks: URL Validation at Startup
+- **`api/webhook_helper.py`** — `SLACK_WEBHOOK_URL` and `TEAMS_WEBHOOK_URL` are now validated at module load time via `urllib.parse.urlparse()`. Any URL whose scheme is not `https`, or whose hostname is empty, is rejected: the variable is set to `""`, the corresponding `*_ENABLED` flag is set to `False`, and a `WARNING` is emitted to the structured log. Prevents silent misconfiguration where a malformed or plaintext-HTTP URL appears set but never delivers.
+
+### Security
+
+#### CI/CD — Release Workflow Job Ordering
+- **`.github/workflows/release.yml`** — Restructured into three strictly-sequential jobs: (1) `extract-version` parses `CHANGELOG.md` and verifies the tag does not already exist, (2) `publish-images` builds and pushes all 9 service images to `ghcr.io` with `fail-fast: true`, (3) `release` creates the git tag and GitHub Release only after **all** images succeed. Previously the GitHub Release was created first; if any image build subsequently failed the release was left with no pullable images.
+
+#### Dependencies — Python CVE Upgrades
+- **`api/requirements.txt`** — Resolved 13 open CVEs by upgrading five packages:
+  - `fastapi>=0.116.0` — starlette multipart ReDoS (CVE-2024-47874) and a related multipart parsing vulnerability (CVE-2025-54121)
+  - `requests>=2.32.4` — credential disclosure on cross-scheme redirect (CVE-2024-47081)
+  - `python-ldap>=3.4.5` — two LDAP injection paths (CVE-2025-61912, CVE-2025-61911)
+  - `python-jose[cryptography]>=3.4.0` — JWT algorithm confusion vulnerabilities (PYSEC-2024-232, PYSEC-2024-233); upgrade also switches the crypto backend to `cryptography`, removing the `ecdsa` transitive dependency
+  - `python-multipart>=0.0.22` — multipart body parsing vulnerabilities (PYSEC-2024-38, CVE-2024-53981, CVE-2026-24486)
+
+#### Dependencies — npm Transitive CVE Overrides
+- **`pf9-ui/package.json`** — Added an `"overrides"` block forcing minimum safe versions for three transitive packages flagged by `npm audit`: `flatted>=3.4.0` (prototype pollution), `minimatch>=3.1.4` (ReDoS), `rollup>=4.59.0` (arbitrary code execution via plugin). The `package-lock.json` is regenerated with these constraints applied.
+
+#### CI — Dependency Audit Fixes
+- **`.github/workflows/ci.yml`** — The `dependency-audit` job now uses `pip-audit -r api/requirements.txt --desc --ignore-vuln CVE-2024-23342` (the `--severity` flag was removed in pip-audit 2.9+; `ecdsa` CVE-2024-23342 is explicitly ignored because there is no upstream fix and `python-jose>=3.4.0` removes the dependency for most paths). The `npm audit` step no longer runs `npm install --package-lock-only` first, which was regenerating the lock file instead of auditing the committed one.
+
+---
+
 ## [1.70.0] - 2026-03-17
 
 ### Performance
