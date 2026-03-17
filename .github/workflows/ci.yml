@@ -158,7 +158,11 @@ jobs:
           pip install pip-audit
           # pip-audit 2.9+ removed --severity; run once and fail CI on any CVE.
           # The --desc flag prints the advisory description beside each finding.
-          pip-audit -r api/requirements.txt --desc
+          # CVE-2024-23342 (ecdsa): timing side-channel; the ecdsa project
+          # explicitly considers side-channel attacks out of scope with no fix
+          # planned. ecdsa is a transitive dep of python-jose — ignored.
+          pip-audit -r api/requirements.txt --desc \
+            --ignore-vuln CVE-2024-23342
 
       - name: Set up Node 20
         uses: actions/setup-node@v4
