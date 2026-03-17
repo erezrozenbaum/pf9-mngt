@@ -140,7 +140,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Security Hardening Sprint** (v1.68.0 — NEW ✨):
   - **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline sanitized via `DOMPurify.sanitize()` with `ALLOWED_TAGS: ["mark"]`; eliminates stored XSS via search index
   - **SMTP TLS enforcement** — `api/smtp_helper.py` and `notifications/main.py` now set `ctx.check_hostname = True` + `ctx.verify_mode = ssl.CERT_REQUIRED`; prevents silent acceptance of invalid certificates
-  - **VM OS password lifecycle** — `os_password` wiped from DB (`os_password=''`) after successful provisioning; minimum length raised 6 → 8 characters
+  - **LDAP `create_user` SSHA hash** — `create_user()` now hashes password with `{SSHA}` before storing in OpenLDAP (was plaintext `userPassword`)
+  - **LDAP backup password exposure** — `_run_ldap_backup/restore()` uses `-y <tempfile>` instead of `-w <password>`; password no longer visible in `ps aux`
+  - **Password complexity policy** — `AddUserRequest` min length 6→8; uppercase + digit + special char required; HTTP 422 with descriptive message
+  - **Rate limit on password reset** — `POST /auth/users/{username}/password` limited to 5 requests/minute
+  - **Secret file permission warning** — `read_secret()` warns when secret file has group/other readable bits set (checks `0o077`)
+  - **Backup worker distributed lock** — `pg_try_advisory_lock(9876543)` wraps scheduled-backup check; prevents duplicate runs in multi-replica deployments
+  - **VM OS password lifecycle** — `os_password` wiped from DB after successful provisioning; minimum length raised 6 → 8 characters
   - **docker-compose.yml fail-fast guards** — `POSTGRES_PASSWORD`, `POSTGRES_USER`, `POSTGRES_DB`, `JWT_SECRET_KEY`, `LDAP_ADMIN_PASSWORD` use `${VAR:?ERROR:...}` syntax; startup blocked if any secret is empty
 - **Wave Approval Gates, VM Dependency Auto-Import & Maintenance Window Scheduling** (v1.67.0 — NEW ✨):
   - **Wave Approval Gates** — each migration wave now requires explicit approval before advancing to pre-checks-passed; operators request approval (triggers notifications); admins approve or reject inline with a comment; approval status badge (⏳ pending / ✅ approved / ❌ rejected); "Pass Checks" button locked until approved

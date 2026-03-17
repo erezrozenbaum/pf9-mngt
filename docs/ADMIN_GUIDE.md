@@ -491,6 +491,22 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 
 ## Appendix: Feature History by Version
 
+### Security Hardening Sprint — R.1 Complete (v1.68.0 ✅ Complete)
+
+- **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline sanitized via `DOMPurify.sanitize()` with `ALLOWED_TAGS: ["mark"]`; eliminates stored XSS from `ts_headline` output
+- **SMTP TLS enforcement** — `api/smtp_helper.py` and `notifications/main.py` now set `ctx.check_hostname = True` + `ctx.verify_mode = ssl.CERT_REQUIRED`
+- **LDAP `create_user` SSHA hash** — `create_user()` now stores `{SSHA}` hashed password (was plaintext `userPassword`)
+- **LDAP backup password exposure** — `_run_ldap_backup/restore()` uses `-y <0o600 tempfile>` instead of `-w <password>` on the subprocess command line
+- **Password complexity policy** — `AddUserRequest` min length 6→8; validator requires uppercase + digit + special char; HTTP 422 with descriptive message on failure
+- **Rate limit on password reset** — `POST /auth/users/{username}/password` decorated with `@limiter.limit("5/minute")`
+- **Secret file permission warning** — `read_secret()` warns when secret file has group/other read bits set
+- **Backup worker distributed lock** — `pg_try_advisory_lock(9876543)` wraps scheduled-backup decision; prevents duplicate backups in multi-replica deployments
+- **VM OS password lifecycle** — `os_password` wiped from DB after successful provisioning; minimum length raised 6→8
+- **docker-compose.yml fail-fast guards** — `${VAR:?ERROR:...}` for 5 critical env vars; startup blocked if any are empty
+- **JWT config validator** — `JWT_SECRET_KEY` length message changed from "should" to "must" (already a blocking `errors` entry)
+
+---
+
 ### RVTools Export Browser, Scheduler Logging, Migration Planner PDF Fixes (v1.63.0 ✅ Complete)
 
 #### Migration Planner PDF — Daily Schedule fixes

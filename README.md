@@ -873,12 +873,18 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
-### v1.68.0 — Security Hardening Sprint
+### v1.68.0 — Security Hardening Sprint (Complete R.1)
 - ✅ **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline now sanitized via `DOMPurify.sanitize()` with a strict `ALLOWED_TAGS: ["mark"]` allowlist (was unsanitized raw HTML from `ts_headline`)
-- ✅ **VM provisioning — plaintext OS password cleared** — `os_password` is erased from the `vm_provisioning_vms` DB row immediately after successful provisioning (cloud-init already uses it; no need to retain it)
-- ✅ **VM provisioning — OS password minimum length** — raised from 6 to 8 characters (rejects 7-char passwords with HTTP 422)
 - ✅ **SMTP TLS certificate enforcement** — both `api/smtp_helper.py` and `notifications/main.py` now explicitly set `ctx.check_hostname = True` and `ctx.verify_mode = ssl.CERT_REQUIRED` instead of relying on Python version defaults
-- ✅ **docker-compose.yml fail-fast guards** — `POSTGRES_PASSWORD`, `POSTGRES_USER`, `POSTGRES_DB`, `LDAP_ADMIN_PASSWORD`, and `JWT_SECRET_KEY` now use `${VAR:?ERROR: VAR must be set in .env}` syntax; Docker Compose will refuse to start if any are empty
+- ✅ **LDAP `create_user` plaintext password** — `create_user()` now stores `{SSHA}` hashed password (same scheme as `change_password()`); was storing cleartext in `userPassword`
+- ✅ **LDAP backup password exposure** — `_run_ldap_backup/restore()` now uses `-y <tempfile>` instead of `-w <password>` on the command line; password no longer visible in `ps aux`
+- ✅ **Password complexity policy** — `AddUserRequest` min length raised 6→8, new validator requires uppercase + digit + special character; failures return HTTP 422 with a descriptive message
+- ✅ **Rate limit on password reset** — `POST /auth/users/{username}/password` now has `@limiter.limit("5/minute")` (was unlimited)
+- ✅ **Secret file permission warning** — `read_secret()` logs a warning when a secret file has group/other read bits set; directs operator to fix permissions to 0600/0400
+- ✅ **Backup worker distributed lock** — `pg_try_advisory_lock` wraps the scheduled-backup decision path; prevents duplicate backups in multi-replica deployments
+- ✅ **VM provisioning — plaintext OS password cleared** — `os_password` erased from DB row after successful provisioning (cloud-init already consumed it; no need to retain it)
+- ✅ **VM provisioning — OS password minimum length** — raised from 6 to 8 characters
+- ✅ **docker-compose.yml fail-fast guards** — `POSTGRES_PASSWORD`, `POSTGRES_USER`, `POSTGRES_DB`, `LDAP_ADMIN_PASSWORD`, and `JWT_SECRET_KEY` now use `${VAR:?ERROR: VAR must be set in .env}` syntax; Docker Compose refuses to start if any are empty
 
 ### v1.67.0 — Wave Approval Gates, VM Dependency Auto-Import & Maintenance Window Scheduling
 - ✅ **Wave Approval Gates** — each migration wave now requires explicit approval before it can advance to pre-checks-passed. A new approval workflow lets operators request approval (triggering notifications) and admins approve or reject inline with a comment. Waves display an approval status badge (⏳ pending / ✅ approved / ❌ rejected) and the "Pass Checks" button is locked until approval is granted.
