@@ -5,12 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-# Changelog
+## [1.67.0] - 2026-03-17
 
-All notable changes to this project will be documented in this file.
+### Added
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+#### Wave Approval Gates
+- **Approval status on migration waves**: each wave now carries an `approval_status` (`pending_approval` | `approved` | `rejected`). Advancing a wave to pre-checks-passed is blocked (HTTP 409) until an approver explicitly approves it, preventing unreviewed waves from being executed.
+- **Wave approval API**: three new endpoints — `GET /projects/{id}/waves/{wid}/approval` (read current state), `POST /projects/{id}/waves/{wid}/request-approval` (sends an approval-request notification to configured recipients), `POST /projects/{id}/waves/{wid}/approval` (admin decision: `approved` / `rejected`, with optional comment). Uses existing `migration:write` / `migration:admin` RBAC tiers.
+- **Notification events**: `wave_approval_requested`, `wave_approval_granted`, and `wave_approval_rejected` added so webhook/email subscribers receive real-time approval lifecycle updates.
+- **Wave Approval UI**: each wave card in the Wave Planner now shows an approval status badge (⏳ pending / ✅ approved / ❌ rejected). The "Pass Checks" advance button is locked (🔒) until approval is granted. A "🔔 Request Approval" button triggers the notification; an inline "▾ Approve" toggle reveals a comment box and Approve / Reject buttons for admins.
+
+#### VM Dependency Auto-Import
+- **Dependency source tracking**: `migration_vm_dependencies` now records `dep_source` (`manual` | `rdm` | `shared_datastore`) and a `confidence` score (0.0–1.0) for every row, making it clear which dependencies were entered by hand versus detected automatically.
+- **Auto-detection engine**: scans the VM inventory for two implicit dependency patterns:
+  - *RDM disks* — VMs sharing an RDM LUN within the same tenant become mutual dependents (confidence 0.95).
+  - *Shared datastore* — VMs co-located on the same shared datastore (excluding local/ISO/scratch/backup stores) become mutual dependents (confidence 0.70).
+  - Pairs are deduplicated (the higher-confidence entry is retained on conflict); a dry-run mode returns the would-be changes without writing to the database.
+- **API routes**: `POST /projects/{id}/vm-dependencies/auto-import` (run detection, accepts `dry_run` and `min_confidence` query params); `DELETE /projects/{id}/vm-dependencies/auto-imported` (bulk-remove all auto-detected rows, leaving manual entries untouched).
+- **Dependency source filter**: `GET /projects/{id}/vm-dependencies` now accepts `dep_source` and `min_confidence` query params to narrow results.
+- **Dependency source badges in VM rows**: dependency chips in the expanded VM row now show the source inline (`💽 RDM 95%`, `🗄 DS 70%`, or a `manual` blue pill), making it easy to see which links were discovered automatically.
+- **Auto-Import toolbar in Wave Planner**: "🔍 Auto-Import Deps" button runs a dry-run and shows a preview banner with pair counts per source type; "✅ Import" confirms; "🗑 Clear Auto-Deps" bulk-removes all auto-detected rows (with confirmation).
+
+#### Maintenance Window Scheduling
+- **Maintenance windows**: a new `maintenance_windows` table stores recurring time bands per project (and optionally per cohort). Each window records a day-of-week (0–6, or `NULL` for every day), a start/end time, a timezone (IANA), and an active flag. Cross-midnight windows (end earlier than start) are supported.
+- **Per-project scheduling toggle**: `migration_projects` gains a `use_maintenance_windows` flag. When enabled, the Auto-Build Waves action automatically assigns a `scheduled_start` / `scheduled_end` to each generated wave by walking forward through the next available calendar windows.
+- **Maintenance Window API** (all require `migration:write`): `GET/POST /projects/{id}/maintenance-windows`, `PATCH/DELETE /projects/{id}/maintenance-windows/{mw_id}`, `GET /projects/{id}/maintenance-windows/preview` (returns the next N upcoming time slots given the current window configuration).
+- **Maintenance Window UI in Wave Planner**: a new "🗓 Maint. Windows" toolbar button opens a collapsible panel with: a "Use maintenance windows" checkbox (updates the project flag), a CRUD table of configured windows (label, day, start/end time, timezone, active toggle), an inline "Add window" form, and a "📅 Preview next slots" strip showing the next 8 upcoming calendar bands.
+
+### Changed
+- Auto-Build Waves now persists `scheduled_start` and `scheduled_end` on each wave in the same INSERT operation when maintenance-window scheduling is active.
+
+### Migration
+Apply the DB migration before deploying this version:
+```
+docker exec -i pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB < db/migrate_wave_approvals.sql
+```
+
+## [1.66.3] - 2026-03-17
+
+### Fixed
+
+#### CI/CD pipeline hardening
+- **`release.yml` branch ref**: the checkout step now uses `${{ github.event.workflow_run.head_branch }}` instead of the hardcoded `master`. Release builds now work correctly if the default branch is ever renamed to `main` (or any other name) without any workflow edits required.
+- **`release.yml` CHANGELOG regex**: the version extraction pattern is tightened to `\d+\.\d+\.\d+(?=\])` — a closing `]` is required. Malformed changelog headers (e.g. `## [1.66.3 - 2026-03-17`) no longer silently produce a wrong version string that could overwrite an existing release tag.
+
+#### Infrastructure
+- **Redis healthcheck** (`docker-compose.yml`): the `redis` service now includes a Docker healthcheck (`redis-cli ping`, 30 s interval, 5 s timeout, 3 retries). Services that declare `depends_on: redis: condition: service_healthy` will not start until Redis is confirmed reachable, preventing startup-race connection failures.
+- **DB connection timeout** (`api/db_pool.py`): `_db_params()` now passes `connect_timeout=10` to psycopg2. Without this, gunicorn workers block indefinitely when the database is temporarily unreachable (e.g. during a rolling restart), causing the entire API process to hang until the OS TCP timeout (≥2 minutes) fires.
+
+#### Migration Planner input validation
+- **`VMReassignRequest.vm_ids` length guard** (`api/migration_routes.py`): `vm_ids` is now declared as `Field(default_factory=list, max_length=1000)`. Pydantic now rejects payloads with more than 1 000 VM IDs with HTTP 422 before they reach the 500-item business-logic check, returning a structured validation error instead of a plain 400.
+- **`CreateTenantRequest.detection_method` type** (`api/migration_routes.py`): the field is now typed as `Optional[Literal["vcd_folder","vapp_name","folder_path","resource_pool","cluster"]]` instead of bare `Optional[str]`. FastAPI returns HTTP 422 with a clear error message when an unrecognised detection method is supplied; previously the value was silently stored and caused a downstream runtime failure during re-detection.
+- **Cluster exclusion sentinel** (`api/migration_routes.py` — `scope_clusters()`): the sentinel value used to tag tenant rows that were cascade-excluded via cluster is now parameterised as `f'Cluster exclusion: {cluster_name}'` (was the static string `'Cluster excluded from plan'`). The re-include guard matches the same parameterised value, making it impossible for a tenant that was independently excluded by the user (with a custom `exclude_reason`) to be accidentally re-included when a cluster is re-scoped.
 
 ## [1.66.2] - 2026-03-16
 

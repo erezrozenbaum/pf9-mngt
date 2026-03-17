@@ -59,6 +59,10 @@ VALID_EVENT_TYPES = [
     "vm_provisioning_rejected",
     "vm_provisioning_completed",
     "vm_provisioning_failed",
+    # Phase T — Wave Approval
+    "wave_approval_requested",
+    "wave_approval_granted",
+    "wave_approval_rejected",
 ]
 
 VALID_SEVERITIES = ["info", "warning", "critical"]

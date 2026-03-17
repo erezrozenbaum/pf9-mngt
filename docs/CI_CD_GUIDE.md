@@ -100,8 +100,8 @@ not just on a git push).
 
 ### Job 5 — Create Release Tag
 
-1. Parses the latest version from `CHANGELOG.md` (e.g. `1.66.0`)
-2. Checks if the tag `v1.66.0` already exists in git
+1. Parses the latest version from `CHANGELOG.md` (e.g. `1.67.0`)
+2. Checks if the tag `v1.67.0` already exists in git
 3. If new: creates an annotated git tag and pushes it, then creates a GitHub Release with the
    changelog section as release notes
 
@@ -124,7 +124,7 @@ Runs only when Job 5 creates a new tag. Builds **nine service images** in parall
 Each image is pushed with two tags:
 
 ```
-ghcr.io/erezrozenbaum/pf9-mngt-<service>:v1.66.0   ← version pin
+ghcr.io/erezrozenbaum/pf9-mngt-<service>:v1.67.0   ← version pin
 ghcr.io/erezrozenbaum/pf9-mngt-<service>:latest     ← floating latest
 ```
 
@@ -142,7 +142,7 @@ Production deployments can pull pre-built images instead of building from source
 
 ```bash
 # 1. Set the version in .env (or leave as 'latest')
-echo "PF9_IMAGE_TAG=v1.66.0" >> .env
+echo "PF9_IMAGE_TAG=v1.67.0" >> .env
 
 # 2. Pull images
 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
@@ -154,7 +154,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 The `PF9_IMAGE_TAG` variable controls which version is pulled. It defaults to `latest` if
-not set. Pin it to a specific release (e.g. `v1.66.0`) to prevent silent upgrades.
+not set. Pin it to a specific release (e.g. `v1.67.0`) to prevent silent upgrades.
 
 **Dev / local:** `docker-compose.yml` has no `image:` overrides — it always builds from
 source. `startup.ps1` and `docker compose up --build` work exactly as before.

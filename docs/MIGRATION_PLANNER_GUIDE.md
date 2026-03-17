@@ -1,6 +1,6 @@
 # Migration Planner — Operator Guide
 
-> **Version**: v1.42.0 | **Last Updated**: 2026-03-05
+> **Version**: v1.67.0 | **Last Updated**: 2026-03-17
 > Complete reference for the pf9-mngt Migration Planner — from RVTools ingestion through wave execution.
 
 ---
@@ -18,10 +18,13 @@
 9. [Phase 4B — PCD Auto-Provisioning](#phase-4b--pcd-auto-provisioning)
 10. [vJailbreak Handoff Exports](#vjailbreak-handoff-exports)
 11. [Phase 5.0 — Migration Summary & Fix Time](#phase-50--migration-summary--fix-time)
-12. [End-to-End Workflow](#end-to-end-workflow)
-13. [API Reference](#api-reference)
-14. [Database Schema](#database-schema)
-15. [Troubleshooting](#troubleshooting)
+12. [Wave Approval Gates](#wave-approval-gates)
+13. [VM Dependency Auto-Import](#vm-dependency-auto-import)
+14. [Maintenance Window Scheduling](#maintenance-window-scheduling)
+15. [End-to-End Workflow](#end-to-end-workflow)
+16. [API Reference](#api-reference)
+17. [Database Schema](#database-schema)
+18. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -1059,6 +1062,240 @@ This means the `vPartition` sheet was absent or empty in the uploaded RVTools fi
 ### Re-uploading RVTools after creating waves
 
 `DELETE /projects/{id}/rvtools` (Clear RVTools Data) will also remove all network mappings, cohorts, waves, and wave VM assignments — the entire planning state is reset. Export your current plan first if you need a record.
+
+---
+
+## Wave Approval Gates
+
+Every migration wave now requires explicit approval before it can advance past the planning stage. This ensures no wave is executed without a reviewer signing off on the VM list, timing, and risk.
+
+### Approval Lifecycle
+
+| Status | Meaning |
+|---|---|
+| `pending_approval` | Default state when a wave is created or reset |
+| `approved` | An admin has reviewed and signed off |
+| `rejected` | An admin has rejected; the wave must be revised before re-requesting |
+
+### Requesting Approval
+
+1. Open the **Wave Planner** tab and expand a wave card.
+2. Click **🔔 Request Approval** — this fires a `wave_approval_requested` notification to all subscribers configured in the Notification Webhooks settings.
+3. The wave badge updates to ⏳ **Pending**.
+
+### Approving or Rejecting a Wave (Admin)
+
+1. On the wave card, click **▾ Approve** to expand the inline decision panel.
+2. Optionally enter a comment, then click **Approve** or **Reject**.
+3. On approval, the `wave_approval_granted` notification fires and the **Pass Checks** button is now unlocked.
+4. On rejection, the `wave_approval_rejected` notification fires. The wave returns to `pending_approval` and the requester must revise and re-request.
+
+### Gated Advance
+
+Attempting to advance a wave to `pre_checks_passed` via the API (or by clicking **Pass Checks** in the UI) while `approval_status != 'approved'` returns **HTTP 409** with a clear error message. The UI button shows a 🔒 lock icon when approval is missing.
+
+### API Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/projects/{id}/waves/{wid}/approval` | Get current approval record |
+| `POST` | `/projects/{id}/waves/{wid}/request-approval` | Send approval-request notification |
+| `POST` | `/projects/{id}/waves/{wid}/approval` | Submit decision (`approved` / `rejected`, optional `comment`) |
+
+**Required role:** `migration:write` to request; `migration:admin` to decide.
+
+---
+
+## VM Dependency Auto-Import
+
+Manually entering VM dependencies is error-prone for large environments. The auto-import engine scans your inventory and derives dependencies from observable infrastructure signals.
+
+### Detection Patterns
+
+| Pattern | Source badge | Confidence | Logic |
+|---|---|---|---|
+| **RDM disk sharing** | 💽 RDM | 0.95 | Two or more VMs reference the same RDM LUN SCSI identifier within the same tenant. Moving one without the other would break the shared disk. |
+| **Shared datastore** | 🗄 DS | 0.70 | Two or more VMs reside on the same shared datastore (local, ISO, scratch, and backup datastores are excluded by name pattern). |
+
+The engine deduplicates pairs — if the same VM pair would be imported from two signals, the row with the higher confidence score is kept.
+
+### Running Auto-Import
+
+1. In the **Wave Planner** toolbar, click **🔍 Auto-Import Deps**.
+2. A **dry-run preview banner** appears showing the pair counts by source type and a sample of the pairs that would be created. No data is written at this stage.
+3. Click **✅ Import** in the banner to confirm and write the dependencies.
+4. The wave VM dependency chips refresh and now show source badges alongside each link.
+
+### Managing Auto-Detected Dependencies
+
+- **View by source**: on the VMs tab, expand any VM row — dependency chips show a coloured badge (`💽 RDM 95%`, `🗄 DS 70%`, or `manual` in blue).
+- **Remove auto-detected only**: click **🗑 Clear Auto-Deps** in the toolbar. This bulk-deletes all rows with `dep_source != 'manual'`, leaving hand-entered dependencies untouched.
+- **Minimum confidence filter**: the `GET /projects/{id}/vm-dependencies` endpoint accepts `?min_confidence=0.9` to return only high-confidence rows.
+
+### API Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/projects/{id}/vm-dependencies/auto-import` | Run detection (`dry_run`, `min_confidence` params) |
+| `DELETE` | `/projects/{id}/vm-dependencies/auto-imported` | Bulk-delete all auto-detected rows |
+| `GET` | `/projects/{id}/vm-dependencies` | List deps; supports `dep_source`, `min_confidence` filters |
+
+---
+
+## Maintenance Window Scheduling
+
+For environments where migrations must occur within specific change-control windows, the planner can automatically schedule each wave into the next available time slot.
+
+### Defining Maintenance Windows
+
+1. In the Wave Planner toolbar click **📅 Maint. Windows** to open the panel.
+2. Enable the **Use maintenance windows** checkbox. This patches the `use_maintenance_windows` flag on the project.
+3. Click **+ Add Window** and fill in:
+   - **Label** — a human-readable name (e.g. "SAT night")
+   - **Day of week** — 0 (Monday) to 6 (Sunday), or *Any day*
+   - **Start time / End time** — 24-hour format; cross-midnight windows are supported (e.g. 22:00–02:00)
+   - **Timezone** — any IANA timezone (e.g. `America/New_York`, `Europe/London`, `UTC`)
+   - **Notes** — optional free text
+4. Click **Save**. The window appears in the CRUD table and the preview strip updates.
+
+### Viewing Upcoming Slots
+
+The **📅 Preview next slots** strip (below the toggle) shows the next 8 upcoming calendar bands given your current window configuration. Use this to verify the windows are configured correctly before running Auto-Build.
+
+### Scheduling Waves
+
+When `use_maintenance_windows` is enabled and you run **Auto-Build Waves**, the engine automatically assigns `scheduled_start` / `scheduled_end` to each wave by walking forward through the upcoming calendar slots. Waves are assigned in order (Wave 1 gets the nearest slot, Wave 2 the next, etc.).
+
+> **Note:** Changing or adding maintenance windows after waves have already been built does **not** automatically re-schedule existing waves. Re-run Auto-Build (or manually set dates via `PATCH /waves/{wid}`) to apply new windows.
+
+### API Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/projects/{id}/maintenance-windows` | List all maintenance windows |
+| `POST` | `/projects/{id}/maintenance-windows` | Create a new window |
+| `PATCH` | `/projects/{id}/maintenance-windows/{mw_id}` | Update a window |
+| `DELETE` | `/projects/{id}/maintenance-windows/{mw_id}` | Delete a window |
+| `GET` | `/projects/{id}/maintenance-windows/preview` | Return next N upcoming slots |
+
+**Required role:** `migration:write` for all operations.
+
+---
+
+## Wave Approval Gates
+
+Every migration wave requires explicit approval before it can advance past the planning stage. This ensures no wave is executed without a reviewer signing off on the VM list, timing, and risk.
+
+### Approval Lifecycle
+
+| Status | Meaning |
+|---|---|
+| `pending_approval` | Default state when a wave is created or reset |
+| `approved` | An admin has reviewed and signed off |
+| `rejected` | An admin has rejected; the wave must be revised before re-requesting |
+
+### Requesting Approval
+
+1. Open the **Wave Planner** tab and expand a wave card.
+2. Click **🔔 Request Approval** — this fires a `wave_approval_requested` notification to all subscribers configured in the Notification Webhooks settings.
+3. The wave badge updates to ⏳ **Pending**.
+
+### Approving or Rejecting a Wave (Admin)
+
+1. On the wave card, click **▾ Approve** to expand the inline decision panel.
+2. Optionally enter a comment, then click **Approve** or **Reject**.
+3. On approval, the `wave_approval_granted` notification fires and the **Pass Checks** button is unlocked.
+4. On rejection, the `wave_approval_rejected` notification fires. The wave returns to `pending_approval` and the requester must revise and re-request.
+
+### Gated Advance
+
+Attempting to advance a wave to `pre_checks_passed` while `approval_status != 'approved'` returns **HTTP 409**. The UI **Pass Checks** button shows a 🔒 lock icon when approval is missing.
+
+### API Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/projects/{id}/waves/{wid}/approval` | Get current approval record |
+| `POST` | `/projects/{id}/waves/{wid}/request-approval` | Send approval-request notification |
+| `POST` | `/projects/{id}/waves/{wid}/approval` | Submit decision (`approved` / `rejected`, optional `comment`) |
+
+**Required role:** `migration:write` to request; `migration:admin` to decide.
+
+---
+
+## VM Dependency Auto-Import
+
+Manually entering VM dependencies is error-prone for large environments. The auto-import engine scans your inventory and derives dependencies from observable infrastructure signals.
+
+### Detection Patterns
+
+| Pattern | Source badge | Confidence | Logic |
+|---|---|---|---|
+| **RDM disk sharing** | 💽 RDM | 0.95 | Two or more VMs reference the same RDM LUN within the same tenant. Moving one without the other would break the shared disk. |
+| **Shared datastore** | 🗄 DS | 0.70 | Two or more VMs reside on the same shared datastore (local, ISO, scratch, and backup datastores are excluded by name pattern). |
+
+The engine deduplicates pairs — if the same VM pair would be imported from two signals, the row with the higher confidence score is kept.
+
+### Running Auto-Import
+
+1. In the **Wave Planner** toolbar, click **🔍 Auto-Import Deps**.
+2. A **dry-run preview banner** appears showing pair counts by source type and sample pairs. No data is written at this stage.
+3. Click **✅ Import** in the banner to confirm and write the dependencies.
+4. Dependency chips in expanded VM rows refresh and show source badges.
+
+### Managing Auto-Detected Dependencies
+
+- **View by source**: expand any VM row — dependency chips show a coloured badge (`💽 RDM 95%`, `🗄 DS 70%`, or `manual` in blue).
+- **Remove auto-detected only**: click **🗑 Clear Auto-Deps** in the toolbar. This bulk-deletes all rows with `dep_source != 'manual'`, leaving hand-entered dependencies untouched.
+- **Minimum confidence filter**: `GET /projects/{id}/vm-dependencies?min_confidence=0.9` returns only high-confidence rows.
+
+### API Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/projects/{id}/vm-dependencies/auto-import` | Run detection (`dry_run`, `min_confidence` params) |
+| `DELETE` | `/projects/{id}/vm-dependencies/auto-imported` | Bulk-delete all auto-detected rows |
+| `GET` | `/projects/{id}/vm-dependencies` | List deps; supports `dep_source`, `min_confidence` filters |
+
+---
+
+## Maintenance Window Scheduling
+
+For environments where migrations must occur within specific change-control windows, the planner can automatically schedule each wave into the next available time slot.
+
+### Defining Maintenance Windows
+
+1. In the Wave Planner toolbar click **🗓 Maint. Windows** to open the panel.
+2. Enable the **Use maintenance windows** checkbox to activate scheduling for the project.
+3. Click **+ Add Window** and fill in:
+   - **Label** — a human-readable name (e.g. "SAT night")
+   - **Day of week** — 0 (Monday) to 6 (Sunday), or *Any day*
+   - **Start time / End time** — 24-hour format; cross-midnight windows are supported (e.g. 22:00–02:00)
+   - **Timezone** — any IANA timezone (e.g. `America/New_York`, `Europe/London`, `UTC`)
+   - **Notes** — optional free text
+4. Click **Save**. The window appears in the table and the preview strip updates.
+
+### Viewing Upcoming Slots
+
+The **📅 Preview next slots** strip shows the next 8 upcoming calendar bands given your current window configuration. Use this to verify windows are correct before running Auto-Build.
+
+### Scheduling Waves
+
+When `use_maintenance_windows` is enabled and you click **Auto-Build Waves**, the engine assigns `scheduled_start` / `scheduled_end` to each wave by walking forward through the upcoming calendar slots. Waves are assigned in order (Wave 1 gets the nearest slot, Wave 2 the next, and so on).
+
+> **Note:** Changing windows after building waves does **not** automatically re-schedule existing waves. Re-run Auto-Build (or manually set dates via `PATCH /waves/{wid}`) to apply the new schedule.
+
+### API Reference
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/projects/{id}/maintenance-windows` | List all maintenance windows |
+| `POST` | `/projects/{id}/maintenance-windows` | Create a new window |
+| `PATCH` | `/projects/{id}/maintenance-windows/{mw_id}` | Update a window |
+| `DELETE` | `/projects/{id}/maintenance-windows/{mw_id}` | Delete a window |
+| `GET` | `/projects/{id}/maintenance-windows/preview` | Return next N upcoming slots |
+
+**Required role:** `migration:write` for all operations.
 
 ---
 

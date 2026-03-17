@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.66.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.67.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -191,6 +191,9 @@ Migrating hundreds of VMs from VMware to PCD is not just "move the disks." You n
 - Full wave lifecycle — planned → confirmed → in-progress → complete, with timestamps and transition guards
 - Per-wave pre-flight checklists — network mapped, target project set, VMs assessed, no critical gaps, agent reachable, snapshot baseline
 - Wave Planner UI — VM migration funnel, per-cohort wave cards, VM assignment tables, preflight status panel, dry-run preview before committing
+- **Wave Approval Gates** — each wave requires explicit approval before advancing to execution; approval request notifications, inline approve/reject with comment, gated advance button; approval status badge (⏳ pending / ✅ approved / ❌ rejected)
+- **VM Dependency Auto-Import** — automatically detects implicit VM dependencies from RDM disk sharing (confidence 0.95) and shared-datastore co-location (confidence 0.70); dry-run preview before committing; source badges (💽 RDM / 🗄 DS) distinguish auto-imports from manually entered dependencies
+- **Maintenance Window Scheduling** — define recurring per-project maintenance windows (day-of-week, start/end time, timezone, cross-midnight support); Auto-Build Waves stamps each wave with `scheduled_start`/`scheduled_end` from the next available slot; preview strip shows next 8 upcoming calendar bands
 
 **⚙️ PCD Data Enrichment (Network Map, Flavor Staging, Image Checklist)**
 - Source → PCD network mapping with VLAN IDs, confirmed status, Find & Replace, Confirm All; subnet details panel per row (CIDR, gateway, DNS, DHCP pool)
@@ -725,7 +728,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.66.2](CHANGELOG.md) — March 2026
+**Current version:** [v1.67.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -869,6 +872,21 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.67.0 — Wave Approval Gates, VM Dependency Auto-Import & Maintenance Window Scheduling
+- ✅ **Wave Approval Gates** — each migration wave now requires explicit approval before it can advance to pre-checks-passed. A new approval workflow lets operators request approval (triggering notifications) and admins approve or reject inline with a comment. Waves display an approval status badge (⏳ pending / ✅ approved / ❌ rejected) and the "Pass Checks" button is locked until approval is granted.
+- ✅ **VM Dependency Auto-Import** — the Wave Planner can now automatically detect implicit VM dependencies from RDM disk sharing (confidence 0.95) and shared-datastore co-location (confidence 0.70). A dry-run preview shows what would be imported before committing; auto-detected dependencies are shown with source badges (💽 RDM / 🗄 DS) and can be bulk-removed independently of manually entered ones.
+- ✅ **Maintenance Window Scheduling** — recurring maintenance windows can be defined per project (day-of-week, start/end time, timezone, cross-midnight support). When enabled, Auto-Build Waves automatically assigns a `scheduled_start` / `scheduled_end` to each wave from the next available window slot. A preview strip shows the next 8 upcoming calendar bands.
+- Requires: `db/migrate_wave_approvals.sql` applied once (`docker exec -i pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB < db/migrate_wave_approvals.sql`)
+
+### v1.66.3 — CI/CD Pipeline Hardening & Input Validation Fixes
+- ✅ **`release.yml` branch ref fix** — checkout now uses `${{ github.event.workflow_run.head_branch }}` instead of hardcoded `master`, so release jobs trigger correctly from any configured default branch
+- ✅ **`release.yml` CHANGELOG regex tightened** — version extraction now requires a closing `]` in the header pattern, preventing malformed headers from producing spurious version strings
+- ✅ **Redis healthcheck** — `redis` service in `docker-compose.yml` now includes a Docker healthcheck (`redis-cli ping`) so dependent services wait until Redis is confirmed reachable before starting
+- ✅ **DB connection timeout** — `_db_params()` in `p9_common.py` passes `connect_timeout=10` to psycopg2, preventing indefinite hangs when the database host is unreachable
+- ✅ **`VMReassignRequest.vm_ids` length guard** — `Field(max_length=1000)` rejects oversized payloads with HTTP 422 before any DB work is attempted
+- ✅ **`CreateTenantRequest.detection_method` typed** — changed to `Optional[Literal["org_vdc", "vapp", "folder", "resource_pool", "cluster", "vm_prefix"]]`; unrecognised values now return HTTP 422 instead of being silently stored
+- ✅ **Cluster exclusion sentinel parameterised** — sentinel value changed from the static string `'Cluster excluded from plan'` to `f'Cluster exclusion: {cluster_name}'` for precise per-cluster reversibility
 
 ### v1.66.2 — Cluster-Level Scoping & Unassigned VM Surface
 - ✅ **Cluster exclusion toggle** — click any cluster pill in the Tenants tab to exclude or re-include that cluster from all wave planning; excluded clusters show as red strikethrough pills; VMs on excluded clusters display a `⊘` badge on the VMs tab

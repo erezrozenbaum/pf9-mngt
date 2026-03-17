@@ -47,6 +47,7 @@ def _db_params() -> dict:
         dbname=os.getenv("PF9_DB_NAME", "pf9_mgmt"),
         user=os.getenv("PF9_DB_USER", "pf9"),
         password=read_secret("db_password", env_var="PF9_DB_PASSWORD"),
+        connect_timeout=10,
     )
 
 

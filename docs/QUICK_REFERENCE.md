@@ -137,6 +137,21 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
+- **Wave Approval Gates, VM Dependency Auto-Import & Maintenance Window Scheduling** (v1.67.0 — NEW ✨):
+  - **Wave Approval Gates** — each migration wave now requires explicit approval before advancing to pre-checks-passed; operators request approval (triggers notifications); admins approve or reject inline with a comment; approval status badge (⏳ pending / ✅ approved / ❌ rejected); "Pass Checks" button locked until approved
+  - **VM Dependency Auto-Import** — detects implicit VM dependencies from RDM disk sharing (confidence 0.95) and shared-datastore co-location (confidence 0.70); dry-run preview before committing; source badges (💽 RDM / 🗄 DS); auto-imports managed independently from manually entered dependencies
+  - **Maintenance Window Scheduling** — recurring per-project windows (day-of-week, start/end time, timezone, cross-midnight); Auto-Build Waves stamps `scheduled_start`/`scheduled_end` from next available slot; preview strip shows next 8 upcoming calendar bands
+  - **New DB table**: `maintenance_windows`; new columns: `migration_waves.approval_status/approved_by/approved_at/approval_comment`, `migration_vm_dependencies.dep_source/confidence`, `migration_projects.use_maintenance_windows`
+  - **New endpoints (10)**: wave approve/reject/request-approval, maintenance window CRUD, dependency auto-import dry-run/commit — all `401`-gated
+  - **Requires one-time DB migration**: `docker exec -i pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB < db/migrate_wave_approvals.sql`
+- **CI/CD Pipeline Hardening & Input Validation Fixes** (v1.66.3):
+  - **`release.yml` branch ref fix** — checkout uses `${{ github.event.workflow_run.head_branch }}` instead of hardcoded `master`
+  - **`release.yml` CHANGELOG regex tightened** — version extraction requires closing `]` in header pattern, prevents malformed headers producing wrong version strings
+  - **Redis healthcheck** — `docker-compose.yml` `redis` service has a Docker healthcheck (`redis-cli ping`); dependent services wait until Redis is confirmed reachable
+  - **DB connection timeout** — `_db_params()` in `p9_common.py` passes `connect_timeout=10` to psycopg2; prevents indefinite hang when DB is unreachable
+  - **`VMReassignRequest.vm_ids` length guard** — `Field(max_length=1000)` rejects oversized payloads with HTTP 422
+  - **`CreateTenantRequest.detection_method` typed** — `Optional[Literal[...]]` returns HTTP 422 for unrecognised values instead of silently storing invalid data
+  - **Cluster exclusion sentinel parameterised** — sentinel changed to `f'Cluster exclusion: {cluster_name}'` for precise per-cluster reversibility
 - **Cluster-Level Scoping & Unassigned VM Surface** (v1.66.2 — UPDATED ✅):
   - **Cluster exclusion toggle** — click any cluster pill in the Tenants tab to exclude/re-include a VMware cluster from wave planning; excluded clusters display as red strikethrough pills; VMs on excluded clusters show a `⊘` badge on the VMs tab Cluster column
   - **Cascade to tenants (vSphere)** — excluding a cluster automatically sets `include_in_plan=false` on all tenants whose `org_vdc` matches the cluster name; Networks and Cohorts tabs immediately reflect the exclusion; re-including cascades back only for auto-excluded tenants (sentinel = `'Cluster excluded from plan'`)

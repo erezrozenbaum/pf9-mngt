@@ -2604,3 +2604,239 @@ def compute_project_fix_summary(vms: List[dict], settings: Optional[dict],
         "per_os_breakdown":    per_os,
         "settings_used":       s,
     }
+
+
+# ====================================================================
+# PHASE T.B — VM DEPENDENCY AUTO-IMPORT
+# ====================================================================
+
+def detect_auto_dependencies(
+    project_id: str,
+    conn,
+    min_confidence: float = 0.50,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Scan the project's VM inventory for implicit dependencies inferred from
+    vSphere data already stored in migration_vms:
+
+    1. **RDM disks** — Any VM with rdm_disk_count > 0 likely shares a LUN with
+       other VMs in the same tenant.  We create mutual dependencies between all
+       such RDM-using VMs within a tenant (confidence 0.95).
+
+    2. **Shared datastore heuristic** — VMs that share a datastore whose name
+       does *not* look like a local / ISO / scratch store (filtered by common
+       patterns) are considered co-located and dependent (confidence 0.70).
+
+    Returns a summary dict: {created, skipped_existing, sources, pairs_found}.
+    When dry_run=True nothing is written to the DB (summary still computed).
+    """
+    from psycopg2.extras import RealDictCursor
+
+    pairs: List[dict] = []  # [{vm_id, depends_on_vm_id, dep_source, confidence}]
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        # ------------------------------------------------------------------
+        # 1. RDM-based dependencies
+        # ------------------------------------------------------------------
+        cur.execute("""
+            SELECT v.id AS vm_id, v.tenant_id
+            FROM migration_vms v
+            JOIN migration_tenants t ON v.tenant_id = t.id
+            WHERE v.project_id = %s
+              AND COALESCE(v.rdm_disk_count, 0) > 0
+              AND t.include_in_plan = true
+            ORDER BY v.tenant_id, v.id
+        """, (project_id,))
+        rdm_rows = cur.fetchall()
+
+        # Group by tenant_id — all RDM VMs within a tenant are mutual dependents
+        from itertools import groupby as _groupby
+        for _, group in _groupby(rdm_rows, key=lambda r: r["tenant_id"]):
+            vm_ids = [r["vm_id"] for r in group]
+            for i, a in enumerate(vm_ids):
+                for b in vm_ids[i + 1:]:
+                    if 0.95 >= min_confidence:
+                        pairs.append({
+                            "vm_id": a, "depends_on_vm_id": b,
+                            "dep_source": "rdm", "confidence": 0.95,
+                        })
+                        pairs.append({
+                            "vm_id": b, "depends_on_vm_id": a,
+                            "dep_source": "rdm", "confidence": 0.95,
+                        })
+
+        # ------------------------------------------------------------------
+        # 2. Shared-datastore heuristic
+        # ------------------------------------------------------------------
+        # Exclude obviously-local/ISO/scratch datastores by name pattern
+        _EXCLUDE_DS = re.compile(
+            r'(?i)(local|scratch|iso|cdrom|cd.rom|temp|tmp|backup|snapshot|nfs.iso)',
+        )
+        cur.execute("""
+            SELECT v.id AS vm_id, v.tenant_id, v.datastore
+            FROM migration_vms v
+            JOIN migration_tenants t ON v.tenant_id = t.id
+            WHERE v.project_id = %s
+              AND v.datastore IS NOT NULL
+              AND v.datastore != ''
+              AND t.include_in_plan = true
+        """, (project_id,))
+        ds_rows = cur.fetchall()
+
+        # Build: {(tenant_id, datastore): [vm_id, ...]}
+        ds_map: Dict[tuple, List[int]] = {}
+        for row in ds_rows:
+            if _EXCLUDE_DS.search(row["datastore"] or ""):
+                continue
+            key = (row["tenant_id"], row["datastore"])
+            ds_map.setdefault(key, []).append(row["vm_id"])
+
+        for (_, _ds_name), vm_ids in ds_map.items():
+            if len(vm_ids) < 2:
+                continue
+            for i, a in enumerate(vm_ids):
+                for b in vm_ids[i + 1:]:
+                    if 0.70 >= min_confidence:
+                        pairs.append({
+                            "vm_id": a, "depends_on_vm_id": b,
+                            "dep_source": "shared_datastore", "confidence": 0.70,
+                        })
+                        pairs.append({
+                            "vm_id": b, "depends_on_vm_id": a,
+                            "dep_source": "shared_datastore", "confidence": 0.70,
+                        })
+
+    # Deduplicate: prefer higher confidence for the same (vm_id, depends_on_vm_id)
+    best: Dict[tuple, dict] = {}
+    for p in pairs:
+        key = (p["vm_id"], p["depends_on_vm_id"])
+        if key not in best or p["confidence"] > best[key]["confidence"]:
+            best[key] = p
+    pairs = list(best.values())
+
+    created = 0
+    skipped_existing = 0
+    sources: Dict[str, int] = {}
+
+    if not dry_run:
+        with conn.cursor() as cur:
+            for p in pairs:
+                try:
+                    cur.execute("""
+                        INSERT INTO migration_vm_dependencies
+                            (project_id, vm_id, depends_on_vm_id, dependency_type,
+                             dep_source, confidence)
+                        VALUES (%s, %s, %s, 'auto_detected', %s, %s)
+                        ON CONFLICT (vm_id, depends_on_vm_id) DO NOTHING
+                    """, (project_id, p["vm_id"], p["depends_on_vm_id"],
+                          p["dep_source"], p["confidence"]))
+                    if cur.rowcount:
+                        created += 1
+                        sources[p["dep_source"]] = sources.get(p["dep_source"], 0) + 1
+                    else:
+                        skipped_existing += 1
+                except Exception:
+                    skipped_existing += 1
+    else:
+        # Dry-run: count how many would be inserted
+        with conn.cursor() as cur:
+            for p in pairs:
+                cur.execute("""
+                    SELECT 1 FROM migration_vm_dependencies
+                    WHERE vm_id = %s AND depends_on_vm_id = %s
+                """, (p["vm_id"], p["depends_on_vm_id"]))
+                if cur.fetchone():
+                    skipped_existing += 1
+                else:
+                    created += 1
+                    sources[p["dep_source"]] = sources.get(p["dep_source"], 0) + 1
+
+    return {
+        "pairs_found": len(pairs),
+        "created": created,
+        "skipped_existing": skipped_existing,
+        "sources": sources,
+    }
+
+
+# ====================================================================
+# PHASE T.C — MAINTENANCE WINDOW HELPERS
+# ====================================================================
+
+def _load_windows(project_id: str, conn) -> List[dict]:
+    """Load all active maintenance windows for a project from the DB."""
+    from psycopg2.extras import RealDictCursor
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT id, label, day_of_week, start_time, end_time, timezone
+            FROM maintenance_windows
+            WHERE project_id = %s AND is_active = true
+            ORDER BY COALESCE(day_of_week, 7), start_time
+        """, (project_id,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+def next_window_start(windows: List[dict], after_date) -> Optional[dict]:
+    """
+    Given a list of maintenance-window dicts (from _load_windows) and a
+    starting date, return the earliest upcoming window slot as:
+        {"start": datetime, "end": datetime, "label": str}
+
+    Windows may cross midnight (end_time < start_time).
+    Timezone handling uses the `timezone` field of the first window that fires;
+    times are returned as timezone-aware datetimes.  Returns None when no
+    active windows are configured.
+    """
+    if not windows:
+        return None
+
+    from datetime import date as date_cls, time as time_cls, datetime as dt_cls
+    from datetime import timedelta
+
+    # Normalise after_date to a date object
+    if isinstance(after_date, dt_cls):
+        probe = after_date.date()
+    else:
+        probe = after_date  # already a date
+
+    # Try up to 14 days ahead before giving up
+    for day_offset in range(14):
+        candidate = probe + timedelta(days=day_offset)
+        dow = candidate.weekday()  # 0=Mon … 6=Sun
+
+        for w in windows:
+            if w["day_of_week"] is not None and w["day_of_week"] != dow:
+                continue
+
+            try:
+                tz_name = w.get("timezone") or "UTC"
+                try:
+                    from zoneinfo import ZoneInfo
+                    tz = ZoneInfo(tz_name)
+                except Exception:
+                    import pytz
+                    tz = pytz.timezone(tz_name)
+
+                # parse start/end — may be time objects already (psycopg2) or strings
+                def _to_time(v) -> time_cls:
+                    if isinstance(v, time_cls):
+                        return v
+                    h, m = str(v)[:5].split(":")
+                    return time_cls(int(h), int(m))
+
+                t_start = _to_time(w["start_time"])
+                t_end = _to_time(w["end_time"])
+
+                starts = dt_cls.combine(candidate, t_start).replace(tzinfo=tz)
+                # Cross-midnight: end is the next day
+                if t_end <= t_start:
+                    ends = dt_cls.combine(candidate + timedelta(days=1), t_end).replace(tzinfo=tz)
+                else:
+                    ends = dt_cls.combine(candidate, t_end).replace(tzinfo=tz)
+
+                return {"start": starts, "end": ends, "label": w.get("label", "")}
+            except Exception:
+                continue
+
+    return None

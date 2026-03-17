@@ -107,8 +107,8 @@ class TestRouteOrdering:
         # The cascade UPDATE must target migration_tenants and reference org_vdc
         assert "UPDATE migration_tenants" in src, \
             "scope_clusters must cascade to migration_tenants"
-        assert "Cluster excluded from plan" in src, \
-            "scope_clusters must use sentinel 'Cluster excluded from plan' for reversibility"
+        assert "Cluster exclusion:" in src, \
+            "scope_clusters must use parameterised sentinel 'Cluster exclusion: {name}' for reversibility"
 
     def test_unit_reassign_uses_org_vdc_not_cluster(self):
         """reassign_vms must derive target_org_vdc from the org_vdc column, not cluster."""

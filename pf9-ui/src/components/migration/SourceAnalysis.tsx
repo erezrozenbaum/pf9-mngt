@@ -1139,8 +1139,20 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
                                     ? <span style={{ color: "#9ca3af", fontSize: "0.8rem" }}>No dependencies. This VM migrates independently.</span>
                                     : <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                                         {vmDeps.map(d => (
-                                          <span key={d.id} style={{ ...pillStyle, background: "#e5e7eb", color: "#374151", fontSize: "0.78rem" }}>
+                                          <span key={d.id} style={{ ...pillStyle,
+                                            background: (d.dep_source && d.dep_source !== "manual") ? "#fffbeb" : "#e5e7eb",
+                                            color: (d.dep_source && d.dep_source !== "manual") ? "#92400e" : "#374151",
+                                            fontSize: "0.78rem", display: "flex", alignItems: "center", gap: 4 }}>
                                             must wait for → <strong>{d.depends_on_vm_name}</strong>
+                                            {d.dep_source && d.dep_source !== "manual"
+                                              ? <span style={{ fontSize: "0.7rem", background: "#fcd34d", color: "#78350f",
+                                                  padding: "1px 4px", borderRadius: 4, marginLeft: 2 }}>
+                                                  {d.dep_source === "rdm" ? "💽 RDM" : d.dep_source === "shared_datastore" ? "🗄 DS" : d.dep_source}
+                                                  {d.confidence != null ? ` ${Math.round(Number(d.confidence) * 100)}%` : ""}
+                                                </span>
+                                              : <span style={{ fontSize: "0.7rem", background: "#dbeafe", color: "#1d4ed8",
+                                                  padding: "1px 4px", borderRadius: 4, marginLeft: 2 }}>manual</span>
+                                            }
                                           </span>
                                         ))}
                                       </div>
@@ -4301,6 +4313,32 @@ function WavePlannerView({ projectId, project, tenants }: {
   const [deletingWave, setDeletingWave] = useState<number | null>(null);
   const [resettingWaves, setResettingWaves] = useState(false);
 
+  // Wave approval (Phase T / A8–A11)
+  const [requestingApproval, setRequestingApproval] = useState<number | null>(null);
+  const [decidingApproval, setDecidingApproval] = useState<Record<number, string | null>>({});
+  const [waveApprovalComment, setWaveApprovalComment] = useState<Record<number, string>>({});
+  const [expandedApproval, setExpandedApproval] = useState<number | null>(null);
+
+  // Dependency auto-import (Phase T / B7–B9)
+  const [autoImportPreview, setAutoImportPreview] = useState<any>(null);
+  const [runningAutoImport, setRunningAutoImport] = useState(false);
+  const [clearingAutoImport, setClearingAutoImport] = useState(false);
+
+  // Maintenance windows (Phase T / C10–C12)
+  const [showMaintPanel, setShowMaintPanel] = useState(false);
+  const [maintWindows, setMaintWindows] = useState<any[]>([]);
+  const [maintWindowsLoading, setMaintWindowsLoading] = useState(false);
+  const [maintPreview, setMaintPreview] = useState<any[]>([]);
+  const [maintPreviewLoading, setMaintPreviewLoading] = useState(false);
+  const [useMaintenanceWindows, setUseMaintenanceWindows] = useState(!!project.use_maintenance_windows);
+  const [savingMaintFlag, setSavingMaintFlag] = useState(false);
+  const [newWindow, setNewWindow] = useState({
+    label: "", day_of_week: "" as string | number,
+    start_time: "22:00", end_time: "02:00", timezone: "UTC", is_active: true,
+  });
+  const [addingWindow, setAddingWindow] = useState(false);
+  const [deletingWindow, setDeletingWindow] = useState<number | null>(null);
+
   // Compute effective daily transfer capacity (GB/working-day) from project bandwidth settings
   // Mirrors compute_bandwidth_model() in migration_engine.py — all speeds normalised to Mbps first
   const dailyCapacityGb = (() => {
@@ -4420,6 +4458,117 @@ function WavePlannerView({ projectId, project, tenants }: {
     finally { setLoadingAuto(false); }
   };
 
+  // Wave approval helpers (Phase T / A8–A11)
+  const requestWaveApproval = async (waveId: number) => {
+    setRequestingApproval(waveId);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/waves/${waveId}/request-approval`,
+        { method: "POST" });
+      await loadData();
+    } catch (e: any) { setError(e.message); }
+    finally { setRequestingApproval(null); }
+  };
+
+  const decideWaveApproval = async (waveId: number, decision: string) => {
+    setDecidingApproval(d => ({ ...d, [waveId]: decision }));
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/waves/${waveId}/approval`, {
+        method: "POST",
+        body: JSON.stringify({ decision, comment: waveApprovalComment[waveId] ?? "" }),
+      });
+      setWaveApprovalComment(c => ({ ...c, [waveId]: "" }));
+      setExpandedApproval(null);
+      await loadData();
+    } catch (e: any) { setError(e.message); }
+    finally { setDecidingApproval(d => ({ ...d, [waveId]: null })); }
+  };
+
+  // Dependency auto-import helpers (Phase T / B7–B9)
+  const runAutoImportDeps = async (dryRun: boolean) => {
+    setRunningAutoImport(true);
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/vm-dependencies/auto-import`, {
+        method: "POST",
+        body: JSON.stringify({ dry_run: dryRun, min_confidence: 0.50 }),
+      });
+      if (dryRun) {
+        setAutoImportPreview(r);
+      } else {
+        setAutoImportPreview(null);
+        setError("");
+      }
+    } catch (e: any) { setError(e.message); }
+    finally { setRunningAutoImport(false); }
+  };
+
+  const clearAutoImportedDeps = async () => {
+    if (!window.confirm("Delete all auto-imported dependencies? Manually-added dependencies will not be affected.")) return;
+    setClearingAutoImport(true);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/vm-dependencies/auto-imported`,
+        { method: "DELETE" });
+      setAutoImportPreview(null);
+    } catch (e: any) { setError(e.message); }
+    finally { setClearingAutoImport(false); }
+  };
+
+  // Maintenance window helpers (Phase T / C10–C12)
+  const loadMaintWindows = async () => {
+    setMaintWindowsLoading(true);
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/maintenance-windows`);
+      setMaintWindows(r.windows ?? []);
+    } catch { /* ignore */ }
+    finally { setMaintWindowsLoading(false); }
+  };
+
+  const loadMaintPreview = async () => {
+    setMaintPreviewLoading(true);
+    try {
+      const r = await apiFetch<any>(`/api/migration/projects/${projectId}/maintenance-windows/preview?num_windows=8`);
+      setMaintPreview(r.windows ?? []);
+    } catch { /* ignore */ }
+    finally { setMaintPreviewLoading(false); }
+  };
+
+  const toggleMaintFlag = async (val: boolean) => {
+    setSavingMaintFlag(true);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ use_maintenance_windows: val }),
+      });
+      setUseMaintenanceWindows(val);
+    } catch (e: any) { setError(e.message); }
+    finally { setSavingMaintFlag(false); }
+  };
+
+  const addMaintWindow = async () => {
+    setAddingWindow(true);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/maintenance-windows`, {
+        method: "POST",
+        body: JSON.stringify({
+          ...newWindow,
+          day_of_week: newWindow.day_of_week === "" ? null : Number(newWindow.day_of_week),
+        }),
+      });
+      setNewWindow({ label: "", day_of_week: "", start_time: "22:00", end_time: "02:00", timezone: "UTC", is_active: true });
+      await loadMaintWindows();
+    } catch (e: any) { setError(e.message); }
+    finally { setAddingWindow(false); }
+  };
+
+  const deleteMaintWindow = async (mwId: number) => {
+    if (!window.confirm("Delete this maintenance window?")) return;
+    setDeletingWindow(mwId);
+    try {
+      await apiFetch(`/api/migration/projects/${projectId}/maintenance-windows/${mwId}`, { method: "DELETE" });
+      setMaintWindows(ws => ws.filter(w => w.id !== mwId));
+    } catch (e: any) { setError(e.message); }
+    finally { setDeletingWindow(null); }
+  };
+
   const totalVms = funnel?.total ?? 0;
   const migratedVms = funnel?.migrated ?? 0;
   const assignedVms = funnel?.assigned ?? 0;
@@ -4504,11 +4653,180 @@ function WavePlannerView({ projectId, project, tenants }: {
         <button onClick={loadData} disabled={loading} style={btnSecondary}>
           🔄 Refresh
         </button>
+        {/* Dependency Auto-Import (Phase T / B7–B9) */}
+        <button onClick={() => runAutoImportDeps(true)} disabled={runningAutoImport} style={btnSecondary}
+          title="Scan VM inventory for RDM and shared-datastore dependencies">
+          {runningAutoImport ? "Scanning…" : "🔍 Auto-Import Deps"}
+        </button>
+        <button onClick={clearAutoImportedDeps} disabled={clearingAutoImport} style={{ ...btnSecondary, color: "#b45309" }}
+          title="Remove all auto-detected dependencies (keeps manual ones)">
+          {clearingAutoImport ? "Clearing…" : "🗑 Clear Auto-Deps"}
+        </button>
+        {/* Maintenance Windows (Phase T / C10) */}
+        <button
+          onClick={() => { setShowMaintPanel(v => { if (!v) loadMaintWindows(); return !v; }); }}
+          style={{ ...btnSecondary, ...(useMaintenanceWindows ? { borderColor: "#34d399", color: "#065f46" } : {}) }}>
+          🗓 {showMaintPanel ? "Hide Windows" : "Maint. Windows"}{useMaintenanceWindows ? " ✓" : ""}
+        </button>
         <span style={{ marginLeft: "auto", fontSize: "0.85rem", color: "#6b7280" }}>
           {waves.length} wave{waves.length !== 1 ? "s" : ""}
           {selectedCohortId ? ` in ${cohorts.find(c => c.id === selectedCohortId)?.name ?? "cohort"}` : ""}
         </span>
       </div>
+
+      {/* ---- Dependency Auto-Import Preview (Phase T / B7) ---- */}
+      {autoImportPreview && (
+        <div style={{ ...sectionStyle, marginBottom: 12, background: "#fffbeb", border: "1px solid #fcd34d" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, color: "#92400e" }}>🔍 Dependency Scan Results (dry run)</span>
+            <span style={{ fontSize: "0.85rem", color: "#78350f" }}>
+              Found <strong>{autoImportPreview.pairs_found}</strong> pairs →
+              <strong> {autoImportPreview.created}</strong> new,
+              <strong> {autoImportPreview.skipped_existing}</strong> already exist
+              {autoImportPreview.sources && Object.keys(autoImportPreview.sources).length > 0 && (
+                <> — Sources: {Object.entries(autoImportPreview.sources as Record<string, number>).map(([k, v]) =>
+                  `${k} (${v})`).join(", ")}</>
+              )}
+            </span>
+            <button onClick={() => runAutoImportDeps(false)} disabled={runningAutoImport || autoImportPreview.created === 0}
+              style={{ ...btnSmall, background: "#f59e0b", color: "#fff", border: "none", fontSize: "0.78rem" }}>
+              {runningAutoImport ? "Importing…" : `✅ Import ${autoImportPreview.created} new deps`}
+            </button>
+            <button onClick={() => setAutoImportPreview(null)} style={{ ...btnSmall, fontSize: "0.78rem" }}>✕ Dismiss</button>
+          </div>
+        </div>
+      )}
+
+      {/* ---- Maintenance Windows Panel (Phase T / C10–C12) ---- */}
+      {showMaintPanel && (
+        <div style={{ ...sectionStyle, marginBottom: 16, background: "#f0fdf4", border: "1px solid #86efac" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+            <h4 style={{ margin: 0 }}>🗓 Maintenance Windows</h4>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.85rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={useMaintenanceWindows} disabled={savingMaintFlag}
+                onChange={e => toggleMaintFlag(e.target.checked)} />
+              Use maintenance windows for wave scheduling
+              {savingMaintFlag && <span style={{ color: "#6b7280", fontSize: "0.75rem" }}>Saving…</span>}
+            </label>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <button onClick={loadMaintPreview} disabled={maintPreviewLoading} style={{ ...btnSmall, fontSize: "0.75rem" }}>
+                {maintPreviewLoading ? "…" : "📅 Preview next slots"}
+              </button>
+            </div>
+          </div>
+
+          {/* Calendar preview strip */}
+          {maintPreview.length > 0 && (
+            <div style={{ marginBottom: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {maintPreview.map((slot: any, i: number) => (
+                <div key={i} style={{ padding: "4px 10px", borderRadius: 6, background: "#dcfce7",
+                  border: "1px solid #86efac", fontSize: "0.78rem", color: "#166534" }}>
+                  <strong>{new Date(slot.start).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</strong>
+                  &nbsp;{new Date(slot.start).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                  &nbsp;—&nbsp;{new Date(slot.end).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                  {slot.label && <span style={{ marginLeft: 4, color: "#4ade80" }}>({slot.label})</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {maintPreview.length === 0 && !maintPreviewLoading && showMaintPanel && maintWindows.length > 0 && (
+            <p style={{ fontSize: "0.8rem", color: "#6b7280", margin: "0 0 8px" }}>
+              Click "Preview next slots" to see upcoming maintenance windows.
+            </p>
+          )}
+
+          {/* Windows table */}
+          {maintWindowsLoading
+            ? <p style={{ fontSize: "0.85rem", color: "#6b7280" }}>Loading…</p>
+            : (
+              <>
+                {maintWindows.length > 0 && (
+                  <table style={{ ...tableStyle, marginBottom: 10 }}>
+                    <thead>
+                      <tr>
+                        <th style={thStyleSm}>Label</th>
+                        <th style={thStyleSm}>Day</th>
+                        <th style={thStyleSm}>Start</th>
+                        <th style={thStyleSm}>End</th>
+                        <th style={thStyleSm}>Timezone</th>
+                        <th style={thStyleSm}>Active</th>
+                        <th style={thStyleSm}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {maintWindows.map((w: any) => (
+                        <tr key={w.id}>
+                          <td style={tdStyleSm}>{w.label || <span style={{ color: "#9ca3af" }}>—</span>}</td>
+                          <td style={tdStyleSm}>{w.day_of_week != null
+                            ? ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][w.day_of_week]
+                            : <em style={{ color: "#6b7280" }}>Any day</em>}</td>
+                          <td style={tdStyleSm}>{String(w.start_time).substring(0, 5)}</td>
+                          <td style={tdStyleSm}>{String(w.end_time).substring(0, 5)}</td>
+                          <td style={tdStyleSm}>{w.timezone}</td>
+                          <td style={tdStyleSm}>{w.is_active ? "✅" : "—"}</td>
+                          <td style={tdStyleSm}>
+                            <button onClick={() => deleteMaintWindow(w.id)}
+                              disabled={deletingWindow === w.id}
+                              style={{ ...btnSmall, color: "#ef4444", borderColor: "#ef4444", fontSize: "0.72rem" }}>
+                              {deletingWindow === w.id ? "…" : "🗑️"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {maintWindows.length === 0 && (
+                  <p style={{ fontSize: "0.82rem", color: "#6b7280", margin: "0 0 8px" }}>No maintenance windows configured.</p>
+                )}
+
+                {/* Add new window form */}
+                <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap",
+                  padding: "8px", background: "#fff", borderRadius: 6, border: "1px solid #d1fae5" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.72rem", color: "#374151", marginBottom: 2 }}>Label</label>
+                    <input value={newWindow.label} onChange={e => setNewWindow(n => ({ ...n, label: e.target.value }))}
+                      placeholder="e.g. Weekend MW" style={{ ...inputStyle, width: 120, padding: "3px 6px", fontSize: "0.8rem" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.72rem", color: "#374151", marginBottom: 2 }}>Day</label>
+                    <select value={newWindow.day_of_week} onChange={e => setNewWindow(n => ({ ...n, day_of_week: e.target.value }))}
+                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem" }}>
+                      <option value="">Any day</option>
+                      <option value="0">Mon</option><option value="1">Tue</option><option value="2">Wed</option>
+                      <option value="3">Thu</option><option value="4">Fri</option><option value="5">Sat</option>
+                      <option value="6">Sun</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.72rem", color: "#374151", marginBottom: 2 }}>Start</label>
+                    <input type="time" value={newWindow.start_time} onChange={e => setNewWindow(n => ({ ...n, start_time: e.target.value }))}
+                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 90 }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.72rem", color: "#374151", marginBottom: 2 }}>End</label>
+                    <input type="time" value={newWindow.end_time} onChange={e => setNewWindow(n => ({ ...n, end_time: e.target.value }))}
+                      style={{ ...inputStyle, padding: "3px 6px", fontSize: "0.8rem", width: 90 }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.72rem", color: "#374151", marginBottom: 2 }}>Timezone</label>
+                    <input value={newWindow.timezone} onChange={e => setNewWindow(n => ({ ...n, timezone: e.target.value }))}
+                      placeholder="UTC" style={{ ...inputStyle, width: 110, padding: "3px 6px", fontSize: "0.8rem" }} />
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.8rem" }}>
+                    <input type="checkbox" checked={newWindow.is_active} onChange={e => setNewWindow(n => ({ ...n, is_active: e.target.checked }))} />
+                    Active
+                  </label>
+                  <button onClick={addMaintWindow} disabled={addingWindow}
+                    style={{ ...btnPrimary, padding: "4px 12px", fontSize: "0.8rem" }}>
+                    {addingWindow ? "Adding…" : "+ Add"}
+                  </button>
+                </div>
+              </>
+            )
+          }
+        </div>
+      )}
 
       {/* ---- Auto-Build Panel ---- */}
       {showAutoPanel && (
@@ -4732,6 +5050,26 @@ function WavePlannerView({ projectId, project, tenants }: {
                     }}>
                       {WAVE_STATUS_LABELS[wave.status] ?? wave.status}
                     </span>
+                    {/* Approval badge */}
+                    {wave.approval_status === "approved" && (
+                      <span style={{ padding: "2px 8px", borderRadius: 12, fontSize: "0.72rem",
+                        fontWeight: 600, background: "#dcfce7", color: "#166534" }}
+                        title={wave.approved_by ? `Approved by ${wave.approved_by}${wave.approved_at ? " on " + new Date(wave.approved_at).toLocaleString() : ""}` : undefined}>
+                        ✅ Approved
+                      </span>
+                    )}
+                    {wave.approval_status === "rejected" && (
+                      <span style={{ padding: "2px 8px", borderRadius: 12, fontSize: "0.72rem",
+                        fontWeight: 600, background: "#fef2f2", color: "#dc2626" }}>
+                        ❌ Approval Rejected
+                      </span>
+                    )}
+                    {wave.approval_status === "pending_approval" && (
+                      <span style={{ padding: "2px 8px", borderRadius: 12, fontSize: "0.72rem",
+                        fontWeight: 600, background: "#fffbeb", color: "#d97706" }}>
+                        ⏳ Awaiting Approval
+                      </span>
+                    )}
                     {/* Cohort badge */}
                     {wave.cohort_name && (
                       <span style={{ fontSize: "0.75rem", color: "#6b7280", background: "#f3f4f6",
@@ -4766,23 +5104,53 @@ function WavePlannerView({ projectId, project, tenants }: {
                 {/* Action buttons */}
                 <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                   {/* Advance status */}
-                  {nextStatuses.map(ns => (
-                    <button key={ns} onClick={() => advanceWave(wave.id, ns)}
-                      disabled={advancingWave === wave.id}
-                      style={{
-                        ...btnSmall,
-                        background: ns === "complete" ? "#22c55e" : ns === "executing" ? "#f59e0b" :
-                          ns === "failed" || ns === "cancelled" ? "#ef4444" : "#3b82f6",
-                        color: "#fff", border: "none", fontWeight: 600, fontSize: "0.75rem",
-                      }}>
-                      {advancingWave === wave.id ? "…" : (
-                        ns === "executing" ? "▶️ Start" : ns === "complete" ? "✅ Complete" :
-                        ns === "pre_checks_passed" ? "✅ Pass Checks" : ns === "validating" ? "🔍 Validate" :
-                        ns === "failed" ? "❌ Fail" : ns === "cancelled" ? "🚫 Cancel" :
-                        ns === "planned" ? "↩ Reopen" : ns
-                      )}
+                  {nextStatuses.map(ns => {
+                    const needsApproval = ns === "pre_checks_passed" && wave.approval_status !== "approved";
+                    return (
+                      <button key={ns}
+                        onClick={() => advanceWave(wave.id, ns)}
+                        disabled={advancingWave === wave.id || needsApproval}
+                        title={needsApproval ? "Wave must be approved before passing pre-flight checks" : undefined}
+                        style={{
+                          ...btnSmall,
+                          background: needsApproval ? "#d1d5db" :
+                            ns === "complete" ? "#22c55e" : ns === "executing" ? "#f59e0b" :
+                            ns === "failed" || ns === "cancelled" ? "#ef4444" : "#3b82f6",
+                          color: needsApproval ? "#6b7280" : "#fff",
+                          border: needsApproval ? "1px solid #d1d5db" : "none",
+                          fontWeight: 600, fontSize: "0.75rem",
+                          cursor: needsApproval ? "not-allowed" : "pointer",
+                        }}>
+                        {advancingWave === wave.id ? "…" : (
+                          ns === "executing" ? "▶️ Start" : ns === "complete" ? "✅ Complete" :
+                          ns === "pre_checks_passed" ? (needsApproval ? "🔒 Pass Checks" : "✅ Pass Checks") :
+                          ns === "validating" ? "🔍 Validate" :
+                          ns === "failed" ? "❌ Fail" : ns === "cancelled" ? "🚫 Cancel" :
+                          ns === "planned" ? "↩ Reopen" : ns
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  {/* Request Approval button — shown when pending */}
+                  {wave.approval_status === "pending_approval" && (
+                    <button
+                      onClick={() => requestWaveApproval(wave.id)}
+                      disabled={requestingApproval === wave.id}
+                      style={{ ...btnSmall, fontSize: "0.75rem", background: "#fffbeb",
+                        border: "1px solid #fcd34d", color: "#92400e" }}>
+                      {requestingApproval === wave.id ? "…" : "🔔 Request Approval"}
                     </button>
-                  ))}
+                  )}
+
+                  {/* Approval decision toggle */}
+                  {(wave.approval_status === "pending_approval" || wave.approval_status === "rejected") && (
+                    <button
+                      onClick={() => setExpandedApproval(expandedApproval === wave.id ? null : wave.id)}
+                      style={{ ...btnSmall, fontSize: "0.75rem" }}>
+                      {expandedApproval === wave.id ? "▴ Approve" : "▾ Approve"}
+                    </button>
+                  )}
 
                   {/* Pre-flight toggle */}
                   <button onClick={() => loadPreflights(wave.id)}
@@ -4807,6 +5175,41 @@ function WavePlannerView({ projectId, project, tenants }: {
                   )}
                 </div>
               </div>
+
+              {/* Approval decision panel */}
+              {expandedApproval === wave.id && (
+                <div style={{ borderTop: "1px solid var(--border, #e5e7eb)", padding: "10px 16px",
+                  background: "#fffbeb", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#92400e" }}>
+                    🔐 Wave Approval Decision:
+                  </span>
+                  {wave.approval_comment && wave.approval_status === "rejected" && (
+                    <span style={{ fontSize: "0.8rem", color: "#dc2626", flex: "1 1 100%", marginBottom: 4 }}>
+                      Previous rejection reason: {wave.approval_comment}
+                    </span>
+                  )}
+                  <input
+                    type="text"
+                    placeholder="Optional comment…"
+                    value={waveApprovalComment[wave.id] ?? ""}
+                    onChange={e => setWaveApprovalComment(c => ({ ...c, [wave.id]: e.target.value }))}
+                    style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #fcd34d",
+                      background: "#fff", fontSize: "0.82rem", flex: "1", minWidth: 160 }}
+                  />
+                  <button
+                    onClick={() => decideWaveApproval(wave.id, "approved")}
+                    disabled={!!decidingApproval[wave.id]}
+                    style={{ ...btnSmall, background: "#10b981", color: "#fff", border: "none", fontSize: "0.75rem" }}>
+                    {decidingApproval[wave.id] === "approved" ? "Approving…" : "✅ Approve"}
+                  </button>
+                  <button
+                    onClick={() => decideWaveApproval(wave.id, "rejected")}
+                    disabled={!!decidingApproval[wave.id]}
+                    style={{ ...btnSmall, background: "#fef2f2", color: "#dc2626", border: "1px solid #fca5a5", fontSize: "0.75rem" }}>
+                    {decidingApproval[wave.id] === "rejected" ? "Rejecting…" : "❌ Reject"}
+                  </button>
+                </div>
+              )}
 
               {/* Pre-flight checklist */}
               {isPreflightsExpanded && wavePreflights.length > 0 && (

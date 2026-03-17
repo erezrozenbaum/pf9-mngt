@@ -81,13 +81,13 @@ import logging
 import re
 import traceback
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 
 from auth import require_permission, get_current_user
 
@@ -122,6 +122,10 @@ from migration_engine import (
     compute_vm_fix_time,
     compute_project_fix_summary,
     DEFAULT_FIX_WEIGHTS,
+    # Phase T — Auto-Import + Maintenance Windows
+    detect_auto_dependencies,
+    next_window_start,
+    _load_windows,
 )
 from export_reports import (
     generate_excel_report, generate_pdf_report,
@@ -391,6 +395,7 @@ class UpdateProjectRequest(BaseModel):
     target_vms_per_day: Optional[int] = None
     executive_summary: Optional[str] = None
     technical_notes: Optional[str] = None
+    use_maintenance_windows: Optional[bool] = None
 
 
 class UpdateVMRequest(BaseModel):
@@ -403,7 +408,7 @@ class UpdateVMRequest(BaseModel):
 
 
 class VMReassignRequest(BaseModel):
-    vm_ids: List[int]
+    vm_ids: List[int] = Field(default_factory=list, max_length=1000)
     tenant_name: Optional[str] = None  # None = unassign
     create_if_missing: bool = False
 
@@ -2390,7 +2395,7 @@ async def list_tenants(project_id: str):
 
 class CreateTenantRequest(BaseModel):
     tenant_name: str
-    detection_method: Optional[str] = None
+    detection_method: Optional[Literal["vcd_folder", "vapp_name", "folder_path", "resource_pool", "cluster"]] = None
     pattern_value: Optional[str] = None
 
 
@@ -2956,6 +2961,9 @@ async def scope_clusters(project_id: str, req: ClusterScopeRequest, user=Depends
                 row = cur.fetchone()
                 if row:
                     cluster_name = row["cluster_name"]
+                    # Sentinel includes the cluster name so it cannot collide with
+                    # an operator-supplied exclude_reason.  Format: "Cluster exclusion: <name>"
+                    sentinel = f"Cluster exclusion: {cluster_name}"
                     if not req.include_in_plan:
                         # Cascade exclusion to all tenants whose org_vdc matches
                         # the cluster name (vSphere: org_vdc = cluster_name after
@@ -2963,22 +2971,22 @@ async def scope_clusters(project_id: str, req: ClusterScopeRequest, user=Depends
                         cur.execute("""
                             UPDATE migration_tenants
                             SET include_in_plan = false,
-                                exclude_reason  = 'Cluster excluded from plan'
+                                exclude_reason  = %s
                             WHERE project_id = %s
                               AND org_vdc = %s
                               AND include_in_plan = true
-                        """, (project_id, cluster_name))
+                        """, (sentinel, project_id, cluster_name))
                     else:
                         # Re-include only tenants excluded by THIS cascade
-                        # (sentinel = 'Cluster excluded from plan').
+                        # (match exact sentinel to avoid clearing operator-set reasons).
                         cur.execute("""
                             UPDATE migration_tenants
                             SET include_in_plan = true,
                                 exclude_reason  = NULL
                             WHERE project_id = %s
                               AND org_vdc = %s
-                              AND exclude_reason = 'Cluster excluded from plan'
-                        """, (project_id, cluster_name))
+                              AND exclude_reason = %s
+                        """, (project_id, cluster_name, sentinel))
     _log_activity(actor=actor, action="scope_clusters", resource_type="migration_project",
                   resource_id=project_id, details={"cluster_ids": req.cluster_ids, "include": req.include_in_plan})
     return {"status": "ok", "updated": len(req.cluster_ids)}
@@ -5191,33 +5199,37 @@ async def update_vm_mode_override(project_id: str, vm_id: int, req: VMModeOverri
 
 @router.get("/projects/{project_id}/vm-dependencies",
             dependencies=[Depends(require_permission("migration", "read"))])
-async def list_vm_dependencies(project_id: str, vm_id: Optional[int] = Query(None)):
-    """List VM dependencies for a project, optionally filtered by vm_id."""
+async def list_vm_dependencies(
+    project_id: str,
+    vm_id: Optional[int] = Query(None),
+    dep_source: Optional[str] = Query(None),           # 'manual' | 'auto_imported' | 'rdm' | 'shared_datastore'
+    min_confidence: Optional[float] = Query(None),     # 0.0–1.0
+):
+    """List VM dependencies for a project, optionally filtered by vm_id, dep_source, or min_confidence."""
     with _get_conn() as conn:
         _get_project(project_id, conn)
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            where = "WHERE d.project_id = %s"
+            params: List[Any] = [project_id]
             if vm_id is not None:
-                cur.execute("""
-                    SELECT d.*,
-                           v1.vm_name AS vm_name,
-                           v2.vm_name AS depends_on_vm_name
-                    FROM migration_vm_dependencies d
-                    JOIN migration_vms v1 ON d.vm_id = v1.id
-                    JOIN migration_vms v2 ON d.depends_on_vm_id = v2.id
-                    WHERE d.project_id = %s AND d.vm_id = %s
-                    ORDER BY d.created_at
-                """, (project_id, vm_id))
-            else:
-                cur.execute("""
-                    SELECT d.*,
-                           v1.vm_name AS vm_name,
-                           v2.vm_name AS depends_on_vm_name
-                    FROM migration_vm_dependencies d
-                    JOIN migration_vms v1 ON d.vm_id = v1.id
-                    JOIN migration_vms v2 ON d.depends_on_vm_id = v2.id
-                    WHERE d.project_id = %s
-                    ORDER BY v1.vm_name, d.created_at
-                """, (project_id,))
+                where += " AND d.vm_id = %s"
+                params.append(vm_id)
+            if dep_source is not None:
+                where += " AND d.dep_source = %s"
+                params.append(dep_source)
+            if min_confidence is not None:
+                where += " AND COALESCE(d.confidence, 1.0) >= %s"
+                params.append(min_confidence)
+            cur.execute(f"""
+                SELECT d.*,
+                       v1.vm_name AS vm_name,
+                       v2.vm_name AS depends_on_vm_name
+                FROM migration_vm_dependencies d
+                JOIN migration_vms v1 ON d.vm_id = v1.id
+                JOIN migration_vms v2 ON d.depends_on_vm_id = v2.id
+                {where}
+                ORDER BY v1.vm_name, d.created_at
+            """, params)
             deps = [_serialize_row(dict(r)) for r in cur.fetchall()]
     return {"status": "ok", "dependencies": deps}
 
@@ -7205,7 +7217,7 @@ async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveReq
     """Advance (or regress) a wave's status through the lifecycle."""
     with _get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT status FROM migration_waves WHERE id=%s AND project_id=%s",
+            cur.execute("SELECT status, approval_status FROM migration_waves WHERE id=%s AND project_id=%s",
                         (wave_id, project_id))
             row = cur.fetchone()
             if not row:
@@ -7216,6 +7228,11 @@ async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveReq
                 raise HTTPException(status_code=400,
                     detail=f"Cannot transition from '{current_status}' to '{req.status}'. "
                            f"Allowed: {allowed}")
+            # T.A: wave must be approved before it can advance past planning
+            if req.status == "pre_checks_passed" and row.get("approval_status") != "approved":
+                raise HTTPException(status_code=409,
+                    detail="Wave must be approved before advancing. "
+                           "Use POST /waves/{id}/request-approval to request sign-off.")
             extras = ""
             if req.status == "executing":
                 extras = ", started_at=now()"
@@ -7269,7 +7286,7 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
     pool is used as a single implicit cohort.
     """
     with _get_conn() as conn:
-        _get_project(project_id, conn)
+        project_row = _get_project(project_id, conn)
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Always include t.cohort_id on each VM so we can group later
@@ -7309,6 +7326,11 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
                 ORDER BY cohort_order NULLS LAST, id
             """, (project_id,))
             ordered_cohorts = [dict(r) for r in cur.fetchall()]
+
+        # Load maintenance windows now (same connection, before it closes)
+        maint_windows: List[Dict] = []
+        if project_row.get("use_maintenance_windows"):
+            maint_windows = _load_windows(project_id, conn)
 
     vm_name_map = {v["id"]: v["vm_name"] for v in all_vms}
 
@@ -7389,6 +7411,21 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
         "cohort_count": len(cohort_plans),
     }
 
+    # -----------------------------------------------------------------
+    # Maintenance-window scheduling (Phase T / C8)
+    # Assign each wave a sequential scheduled_start from the next
+    # available maintenance window, probing forward day-by-day.
+    # -----------------------------------------------------------------
+    if maint_windows:
+        from datetime import date as _mw_date, timedelta as _mw_td
+        probe = _mw_date.today()
+        for w in all_preview_waves:
+            slot = next_window_start(maint_windows, probe)
+            if slot:
+                w["scheduled_start"] = slot["start"].isoformat()
+                w["scheduled_end"] = slot["end"].isoformat()
+                probe = slot["start"].date() + _mw_td(days=1)
+
     if req.dry_run:
         combined_result["dry_run"] = True
         return {"status": "ok", **combined_result}
@@ -7411,13 +7448,18 @@ async def auto_build_waves(project_id: str, req: AutoWaveRequest,
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     INSERT INTO migration_waves
-                        (project_id, wave_number, name, wave_type, cohort_id, status)
-                    VALUES (%s,%s,%s,%s,%s,'planned')
+                        (project_id, wave_number, name, wave_type, cohort_id, status,
+                         scheduled_start, scheduled_end)
+                    VALUES (%s,%s,%s,%s,%s,'planned',%s,%s)
                     ON CONFLICT (project_id, wave_number) DO UPDATE SET
                         name=EXCLUDED.name, wave_type=EXCLUDED.wave_type,
-                        cohort_id=EXCLUDED.cohort_id, updated_at=now()
+                        cohort_id=EXCLUDED.cohort_id,
+                        scheduled_start=EXCLUDED.scheduled_start,
+                        scheduled_end=EXCLUDED.scheduled_end,
+                        updated_at=now()
                     RETURNING id, wave_number
-                """, (project_id, wave_number, wave_name, w["wave_type"], cohort_id_for_wave))
+                """, (project_id, wave_number, wave_name, w["wave_type"], cohort_id_for_wave,
+                       w.get("scheduled_start"), w.get("scheduled_end")))
                 wave_row = cur.fetchone()
                 wave_id = wave_row["id"]
 
@@ -9979,4 +10021,337 @@ async def clear_vjb_push_tasks(project_id: str, user=Depends(get_current_user)):
                   resource_type="migration_project", resource_id=project_id,
                   details={"deleted": count})
     return {"status": "ok", "deleted": count}
+
+
+# =====================================================================
+# PHASE T.A — WAVE APPROVAL GATES
+# =====================================================================
+
+class WaveApprovalRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+    comment: Optional[str] = None
+
+
+@router.get("/projects/{project_id}/waves/{wave_id}/approval",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_wave_approval(project_id: str, wave_id: int):
+    """Return the current approval state for a wave."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, name, approval_status, approved_by, approved_at, approval_comment
+                FROM migration_waves
+                WHERE id = %s AND project_id = %s
+            """, (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+    return {"status": "ok", "approval": _serialize_row(dict(row))}
+
+
+@router.post("/projects/{project_id}/waves/{wave_id}/request-approval",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def request_wave_approval(project_id: str, wave_id: int,
+                                user=Depends(get_current_user)):
+    """Ask an admin to approve this wave before execution can proceed."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_waves
+                SET approval_status = 'pending_approval',
+                    approved_by = NULL,
+                    approved_at = NULL,
+                    approval_comment = NULL
+                WHERE id = %s AND project_id = %s
+                RETURNING id, name
+            """, (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave_name = row["name"]
+
+    _log_activity(actor=actor, action="request_wave_approval",
+                  resource_type="migration_wave", resource_id=str(wave_id),
+                  details={"wave_name": wave_name, "project_id": project_id})
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="wave_approval_requested",
+            summary=f"Wave approval requested for '{wave_name}' by {actor}",
+            severity="info",
+            resource_id=project_id, actor=actor,
+            template_vars={"wave_id": wave_id, "wave_name": wave_name, "requested_by": actor},
+        )
+    except Exception:
+        pass
+    return {"status": "ok", "wave_id": wave_id, "approval_status": "pending_approval"}
+
+
+@router.post("/projects/{project_id}/waves/{wave_id}/approval",
+             dependencies=[Depends(require_permission("migration", "admin"))])
+async def decide_wave_approval(project_id: str, wave_id: int,
+                               body: WaveApprovalRequest,
+                               user=Depends(get_current_user)):
+    """Approve or reject a wave. Requires migration:admin."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if body.decision == "approved":
+                cur.execute("""
+                    UPDATE migration_waves
+                    SET approval_status  = 'approved',
+                        approved_by      = %s,
+                        approved_at      = now(),
+                        approval_comment = %s
+                    WHERE id = %s AND project_id = %s
+                    RETURNING id, name
+                """, (actor, body.comment, wave_id, project_id))
+            else:
+                cur.execute("""
+                    UPDATE migration_waves
+                    SET approval_status  = 'rejected',
+                        approved_by      = %s,
+                        approved_at      = now(),
+                        approval_comment = %s
+                    WHERE id = %s AND project_id = %s
+                    RETURNING id, name
+                """, (actor, body.comment, wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave_name = row["name"]
+
+    _log_activity(actor=actor, action=f"wave_approval_{body.decision}",
+                  resource_type="migration_wave", resource_id=str(wave_id),
+                  details={"decision": body.decision, "comment": body.comment or "",
+                           "wave_name": wave_name})
+    try:
+        from provisioning_routes import _fire_notification
+        et = "wave_approval_granted" if body.decision == "approved" else "wave_approval_rejected"
+        _fire_notification(
+            event_type=et,
+            summary=f"Wave '{wave_name}' {body.decision} by {actor}"
+                    + (f": {body.comment}" if body.comment else ""),
+            severity="info" if body.decision == "approved" else "warning",
+            resource_id=project_id, actor=actor,
+        )
+    except Exception:
+        pass
+    return {"status": "ok", "decision": body.decision, "approved_by": actor}
+
+
+# =====================================================================
+# PHASE T.B — VM DEPENDENCY AUTO-IMPORT
+# =====================================================================
+
+class AutoImportDepsRequest(BaseModel):
+    dry_run: bool = False
+    min_confidence: float = 0.50  # discard auto-detected pairs below this threshold
+
+
+@router.post("/projects/{project_id}/vm-dependencies/auto-import",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def auto_import_vm_dependencies(project_id: str, req: AutoImportDepsRequest,
+                                      user=Depends(get_current_user)):
+    """
+    Detect and import VM dependencies automatically from RVtools data:
+    - RDM disks: VMs with rdm_disk_count > 0 are flagged as mutual dependents
+      within the same tenant (confidence 0.95, dep_source='rdm').
+    - Shared datastores: VMs sharing a non-standard datastore within the same
+      tenant (heuristic, confidence 0.70, dep_source='shared_datastore').
+
+    Pass dry_run=true to see what would be imported without writing to DB.
+    """
+    actor = getattr(user, "username", "system")
+    from migration_engine import detect_auto_dependencies
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        result = detect_auto_dependencies(
+            project_id=project_id,
+            conn=conn,
+            min_confidence=req.min_confidence,
+            dry_run=req.dry_run,
+        )
+
+    if not req.dry_run:
+        _log_activity(actor=actor, action="auto_import_vm_dependencies",
+                      resource_type="migration_project", resource_id=project_id,
+                      details=result)
+    return {"status": "ok", "dry_run": req.dry_run, **result}
+
+
+@router.delete("/projects/{project_id}/vm-dependencies/auto-imported",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_auto_imported_dependencies(project_id: str,
+                                            user=Depends(get_current_user)):
+    """Bulk-delete all auto-imported (non-manual) dependencies for the project."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM migration_vm_dependencies
+                WHERE project_id = %s AND dep_source != 'manual'
+            """, (project_id,))
+            deleted = cur.rowcount
+
+    _log_activity(actor=actor, action="delete_auto_deps",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"deleted": deleted})
+    return {"status": "ok", "deleted": deleted}
+
+
+# =====================================================================
+# PHASE T.C — MAINTENANCE WINDOW SCHEDULING
+# =====================================================================
+
+class MaintenanceWindowCreate(BaseModel):
+    label: str
+    day_of_week: Optional[int] = None          # 0=Mon … 6=Sun; None = any day
+    start_time: str                             # "HH:MM"
+    end_time: str                               # "HH:MM"
+    timezone: str = "UTC"
+    cohort_id: Optional[int] = None
+    is_active: bool = True
+    notes: Optional[str] = None
+
+
+class MaintenanceWindowUpdate(BaseModel):
+    label: Optional[str] = None
+    day_of_week: Optional[int] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    timezone: Optional[str] = None
+    cohort_id: Optional[int] = None
+    is_active: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+@router.get("/projects/{project_id}/maintenance-windows",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_maintenance_windows(project_id: str):
+    """List all maintenance windows for the project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM maintenance_windows
+                WHERE project_id = %s
+                ORDER BY COALESCE(day_of_week, 7), start_time
+            """, (project_id,))
+            windows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "windows": windows}
+
+
+@router.post("/projects/{project_id}/maintenance-windows",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_maintenance_window(project_id: str, req: MaintenanceWindowCreate,
+                                    user=Depends(get_current_user)):
+    """Create a maintenance window."""
+    actor = getattr(user, "username", "system")
+    if req.day_of_week is not None and req.day_of_week not in range(7):
+        raise HTTPException(status_code=422, detail="day_of_week must be 0 (Mon) through 6 (Sun)")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO maintenance_windows
+                    (project_id, cohort_id, label, day_of_week, start_time, end_time,
+                     timezone, is_active, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (project_id, req.cohort_id, req.label, req.day_of_week,
+                  req.start_time, req.end_time, req.timezone, req.is_active, req.notes))
+            window = _serialize_row(dict(cur.fetchone()))
+    _log_activity(actor=actor, action="create_maintenance_window",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"label": req.label, "window_id": window["id"]})
+    return {"status": "ok", "window": window}
+
+
+@router.patch("/projects/{project_id}/maintenance-windows/{mw_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_maintenance_window(project_id: str, mw_id: int,
+                                    req: MaintenanceWindowUpdate,
+                                    user=Depends(get_current_user)):
+    """Update a maintenance window field."""
+    actor = getattr(user, "username", "system")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates]
+    params = list(updates.values()) + [mw_id, project_id]
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"UPDATE maintenance_windows SET {', '.join(set_clauses)} "
+                "WHERE id = %s AND project_id = %s RETURNING *",
+                params)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Maintenance window not found")
+            window = _serialize_row(dict(row))
+    _log_activity(actor=actor, action="update_maintenance_window",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"window_id": mw_id, **updates})
+    return {"status": "ok", "window": window}
+
+
+@router.delete("/projects/{project_id}/maintenance-windows/{mw_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_maintenance_window(project_id: str, mw_id: int,
+                                    user=Depends(get_current_user)):
+    """Delete a maintenance window."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM maintenance_windows WHERE id = %s AND project_id = %s",
+                (mw_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Maintenance window not found")
+    _log_activity(actor=actor, action="delete_maintenance_window",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"window_id": mw_id})
+    return {"status": "ok"}
+
+
+@router.get("/projects/{project_id}/maintenance-windows/preview",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def preview_maintenance_windows(
+    project_id: str,
+    start_date: str = Query(..., description="ISO date YYYY-MM-DD"),
+    num_windows: int = Query(8, ge=1, le=52),
+):
+    """Return the next N upcoming window slots from start_date."""
+    from datetime import date as date_cls
+    from migration_engine import next_window_start, _load_windows
+
+    try:
+        after = date_cls.fromisoformat(start_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="start_date must be YYYY-MM-DD")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        windows = _load_windows(project_id, conn)
+
+    if not windows:
+        return {"status": "ok", "slots": []}
+
+    slots = []
+    cur_date = after
+    while len(slots) < num_windows:
+        slot = next_window_start(windows, cur_date)
+        if slot is None:
+            break
+        slots.append({"start": slot["start"].isoformat(), "end": slot["end"].isoformat(),
+                      "label": slot.get("label", "")})
+        # advance past this slot to find the next distinct one
+        from datetime import timedelta as td
+        cur_date = slot["end"].date() + td(days=1)
+
+    return {"status": "ok", "slots": slots}
 

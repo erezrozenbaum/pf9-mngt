@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.66.1  
-**Last Updated**: March 16, 2026  
+**Version**: 1.67.0  
+**Last Updated**: March 17, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -3299,7 +3299,7 @@ The pipeline is defined in two workflow files under `.github/workflows/`:
 **To pin a specific release version in production:**
 ```bash
 # In .env
-PF9_IMAGE_TAG=v1.66.0
+PF9_IMAGE_TAG=v1.67.0
 ```
 
 For a full reference see [`docs/CI_CD_GUIDE.md`](CI_CD_GUIDE.md).

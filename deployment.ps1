@@ -805,7 +805,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_onboarding_v1381.sql"; Desc="Bulk Customer Onboarding v1.38.1: drop department_tag; add subscription_id + full quota columns; add network_kind/type/physical/pool fields; add user_password"},
     @{File="db\migrate_tech_fix.sql"; Desc="Migration Planner Phase 5.0 v1.42.0: tech_fix_minutes_override column on migration_vms + migration_fix_settings table (per-project fix weights and OS fix rates)"},
     @{File="db\migrate_phase4d.sql"; Desc="Migration Planner Phase 4D v1.43.0: vjb_api_url/vjb_namespace/vjb_bearer_token on migration_projects + migration_vjailbreak_push_tasks table"},
-    @{File="db\migrate_cluster_scoping.sql"; Desc="Migration Planner v1.66.2: cluster include_in_plan/exclude_reason columns + VM manually_assigned column"}
+    @{File="db\migrate_cluster_scoping.sql"; Desc="Migration Planner v1.66.2: cluster include_in_plan/exclude_reason columns + VM manually_assigned column"},
+    @{File="db\migrate_wave_approvals.sql"; Desc="Migration Planner v1.67.0: wave approval_status/approved_by/approved_at/approval_comment, VM dep dep_source/confidence, maintenance_windows table, use_maintenance_windows flag on projects"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."
