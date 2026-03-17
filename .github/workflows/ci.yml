@@ -171,9 +171,7 @@ jobs:
 
       - name: npm audit — UI dependencies
         working-directory: pf9-ui
-        run: |
-          npm install --package-lock-only
-          npm audit --audit-level=high
+        run: npm audit --audit-level=high
 
 
   # -------------------------------------------------------------------------
