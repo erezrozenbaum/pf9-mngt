@@ -303,7 +303,6 @@ _sla_task: asyncio.Task = None
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global _sla_task
     if _sla_task and not _sla_task.done():
         _sla_task.cancel()
         try:

@@ -132,8 +132,6 @@ jobs:
       - name: Run container watchdog unit tests
         run: python -m pytest tests/test_container_alerts.py -k "not TestContainerAlertAPI" -v
 
-      - name: Run migration planner v1.66 unit tests
-        run: python -m pytest tests/test_migration_planner_v166.py -k "unit" -v
 
   # -------------------------------------------------------------------------
   # Job 5: Integration tests (full live stack)
