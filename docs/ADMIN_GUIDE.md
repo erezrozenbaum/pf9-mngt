@@ -55,33 +55,69 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 
 ## 1. System Startup
 
-```bash
-# Start all services
-docker compose up -d
+The system has two operating modes. Use the correct one for your context.
 
-# Windows full automated deployment (first time or after config changes)
+### First-Time Setup (either mode)
+
+```powershell
+# Run once after cloning or after .env changes — provisions DB, LDAP, secrets, runs all migrations
 .\deployment.ps1
-
-# Quick restart
-.\startup.ps1
 ```
 
-Allow 30–60 seconds for all containers to reach healthy status. Verify:
+---
+
+### Development Mode
+
+`startup.ps1` uses `docker-compose.yml` + `docker-compose.override.yml` (auto-merged by Docker Compose).
+All service ports are exposed directly on the host for easy debugging.
+
+```powershell
+.\startup.ps1          # start services + metrics collector
+.\startup.ps1 -StopOnly  # stop everything
+```
+
+| Service | Dev URL |
+|---------|----------|
+| UI (Vite dev server) | http://localhost:5173 |
+| API / Swagger Docs | http://localhost:8000/docs |
+| Monitoring | http://localhost:8001/health |
+| pgAdmin | http://localhost:8080 |
+| LDAP Admin (phpLDAPadmin) | http://localhost:8081 |
+| PostgreSQL | localhost:5432 |
+
+---
+
+### Production Mode
+
+`startup_prod.ps1` uses `docker-compose.yml` + `docker-compose.prod.yml`.
+All internal ports are **not** bound to the host — all traffic routes through nginx TLS (port 443).
+Pre-built images are pulled from `ghcr.io` using the `PF9_IMAGE_TAG` value in `.env`.
+
+```powershell
+.\startup_prod.ps1           # start production stack
+.\startup_prod.ps1 -StopOnly # stop everything
+```
+
+Key differences vs. dev:
+- **UI**: Built React bundle (`Dockerfile.prod`) served via nginx — no Vite dev server
+- **API**: 4 Gunicorn workers with request recycling and rate limiting enabled
+- **Ports**: Only `80` and `443` exposed; all other ports are internal only
+- **Images**: Uses pre-built `ghcr.io/erezrozenbaum/pf9-mngt-*:${PF9_IMAGE_TAG:-latest}`
+
+| Service | Prod URL |
+|---------|----------|
+| UI | https://\<hostname\> |
+| API (via nginx proxy) | https://\<hostname\>/api/ |
+| pgAdmin / LDAP Admin | Not exposed (use `--profile dev` override only) |
+
+---
+
+Allow 30–60 seconds for all containers to reach healthy status after either startup:
 
 ```bash
 docker compose ps
 # All containers should show Up or Up (healthy)
 ```
-
-Service URLs after startup:
-
-| Service | URL |
-|---------|-----|
-| UI | https://\<host\> (port 443 in production, 5173 in dev) |
-| API Docs | http://\<host\>:8000/docs |
-| Monitoring | http://\<host\>:8001/health |
-| pgAdmin | http://\<host\>:8080 (`--profile dev` only) |
-| LDAP Admin | http://\<host\>:8081 (`--profile dev` only) |
 
 ---
 
@@ -1744,21 +1780,22 @@ git clone <repository-url>
 cd pf9-mngt
 
 # Configure credentials (one-time setup)
-cp .env.template .env
-# Edit .env with your Platform9 credentials
+copy .env.template .env
+# Edit .env with your Platform9 credentials, DB passwords, and LDAP settings
 
-# Complete automated setup
+# First-time provisioning: creates DB schema, seeds LDAP, runs all migrations
+.\deployment.ps1
+
+# --- Development startup (local/lab use) ---
+# Exposes all ports directly; uses Vite dev server; auto-merges docker-compose.override.yml
 .\startup.ps1
+.\startup.ps1 -StopOnly    # to stop
 
-# This automatically:
-# - Starts all Docker services (DB, API, UI, Monitoring) 
-# - Collects initial metrics from PF9 hosts
-# - Sets up scheduled metrics collection (every 2 minutes)
-# - Verifies all services are operational
-# - Zero manual intervention required after .env setup
-
-# To stop everything
-.\startup.ps1 -StopOnly
+# --- Production startup ---
+# All traffic via nginx TLS (443 only); pre-built ghcr.io images; 4 API workers
+# Set PF9_IMAGE_TAG=v1.67.0 in .env to pin the release version
+.\startup_prod.ps1
+.\startup_prod.ps1 -StopOnly    # to stop
 ```
 
 #### Option 2: Manual Docker Setup
