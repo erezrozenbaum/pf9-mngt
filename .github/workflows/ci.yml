@@ -156,9 +156,9 @@ jobs:
       - name: pip-audit — Python dependencies
         run: |
           pip install pip-audit
-          pip-audit -r api/requirements.txt --desc --severity high || true
-          # Fail CI only on CRITICAL severity CVEs; high/medium are informational
-          pip-audit -r api/requirements.txt --desc --severity critical
+          # pip-audit 2.9+ removed --severity; run once and fail CI on any CVE.
+          # The --desc flag prints the advisory description beside each finding.
+          pip-audit -r api/requirements.txt --desc
 
       - name: Set up Node 20
         uses: actions/setup-node@v4
