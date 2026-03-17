@@ -1097,17 +1097,7 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
                 📸 Create Snapshot
               </button>
             )}
-            {!graphUrl && (selectedNode.type === "vm" || selectedNode.type === "tenant") && onNavigate && (
-              <button
-                className="graph-view-deps-btn"
-                style={{ marginTop: 6, borderColor: "#f59e0b", color: "#f59e0b" }}
-                onClick={() => {
-                  onNavigate("migration_planner", selectedNode.db_id, selectedNode.type);
-                }}
-              >
-                🚀 View in Migration Planner
-              </button>
-            )}
+
           </div>
         )}
       </div>
