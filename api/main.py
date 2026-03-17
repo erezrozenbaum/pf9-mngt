@@ -86,9 +86,6 @@ from copilot import router as copilot_router
 # Bulk Customer Onboarding endpoints
 from onboarding_routes import router as onboarding_router
 
-# Migration Planner endpoints
-from migration_routes import router as migration_router
-
 # Cloud Dependency Graph endpoints
 from graph_routes import router as graph_router
 
@@ -327,7 +324,6 @@ app.include_router(integration_router)
 app.include_router(copilot_router)
 app.include_router(onboarding_router)
 app.include_router(vm_provisioning_router)
-app.include_router(migration_router)
 app.include_router(graph_router)
 app.include_router(ticket_router)
 
