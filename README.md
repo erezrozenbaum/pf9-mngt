@@ -98,7 +98,7 @@ Worker   Worker   Worker    Worker    Worker         Worker
 | Backup & Restore (DB) with Integrity Validation | ✅ Production |
 | Inventory Versioning & Diff | ✅ Production |
 | AI Ops Copilot | ✅ Production |
-| Migration Planner (end-to-end) | ✅ Production |
+| Migration Planner (end-to-end) | 🔒 Proprietary |
 | Support Ticket System (SLA, auto-tickets, approvals) | ✅ Production |
 | Container Restart Alerting | ✅ Production |
 | Kubernetes Deployment | ⬜ Planned |
@@ -260,12 +260,6 @@ Every service is containerized. That means **you decide**:
 
 ### Snapshot Restore Audit
 ![Snapshot Restore Audit](docs/images/Snapshot-restore-audit.png)
-
-### Migration Planner — Project Setup & Cohort Configuration
-![Migration Planner Setup](docs/images/Migration-planner-setup.png)
-
-### Migration Planner — Wave Plan Creation
-![Migration Planner Wave Plan](docs/images/Migration-planner-plan-creation.png)
 
 ---
 
@@ -583,7 +577,7 @@ PF9_HOSTS=<HOST_IP_1>,<HOST_IP_2>,<HOST_IP_3>
 METRICS_CACHE_TTL=60
 
 # Production image version (docker-compose.prod.yml)
-PF9_IMAGE_TAG=latest    # Pin to a release tag (e.g. v1.66.0) to lock images from ghcr.io
+PF9_IMAGE_TAG=latest    # Pin to a release tag (e.g. v1.69.0) to lock images from ghcr.io
 ```
 
 ### 3. Manual Docker Setup
@@ -719,7 +713,6 @@ pf9-mngt/
 | [Quick Reference](docs/QUICK_REFERENCE.md) | Common commands and URLs cheat sheet |
 | [Kubernetes Migration](docs/KUBERNETES_MIGRATION_GUIDE.md) | K8s migration planning guide |
 | [Linux Deployment](docs/LINUX_DEPLOYMENT_GUIDE.md) | Running pf9-mngt on Linux instead of Windows |
-| [Migration Planner Guide](docs/MIGRATION_PLANNER_GUIDE.md) | Comprehensive operator guide for all Migration Planner phases |
 | [Support Ticket System Guide](docs/TICKET_GUIDE.md) | Full reference for the ticket lifecycle, API, SLA, email templates, and auto-tickets |
 | [CI/CD Guide](docs/CI_CD_GUIDE.md) | CI pipeline, release process, and Docker image publishing |
 | [Contributing](CONTRIBUTING.md) | Contribution guidelines |
@@ -875,7 +868,6 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ### v1.69.0 — R.2 Bug Fixes Sprint
 - ✅ **Performance metrics `IndexError`** — `get_endpoint_stats()` now guards against empty `sorted_durations`, preventing a crash on cold-start endpoints.
-- ✅ **Phase 4A `migration_flavor_staging` table** — `startup_event()` applies `migrate_phase4_preparation.sql` idempotently so flavor-staging endpoints never return a 500 on fresh deployments.
 - ✅ **ISO timestamp `Z`-suffix parse error** — `host_metrics_collector.py` now calls `.replace("Z", "+00:00")` before `datetime.fromisoformat()`; fixes `ValueError` on Python < 3.11.
 - ✅ **Scheduler worker task leak on SIGTERM** — `async_main()` `finally` block explicitly cancels and awaits all asyncio tasks before shutting down the thread executor.
 - ✅ **Metering worker duplicate rows** — `run_collection_cycle()` acquires a `pg_try_advisory_lock(8765432)` at the start of each cycle; scaled replicas skip if another holds the lock.
@@ -899,7 +891,6 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 - ✅ **Wave Approval Gates** — each migration wave now requires explicit approval before it can advance to pre-checks-passed. A new approval workflow lets operators request approval (triggering notifications) and admins approve or reject inline with a comment. Waves display an approval status badge (⏳ pending / ✅ approved / ❌ rejected) and the "Pass Checks" button is locked until approval is granted.
 - ✅ **VM Dependency Auto-Import** — the Wave Planner can now automatically detect implicit VM dependencies from RDM disk sharing (confidence 0.95) and shared-datastore co-location (confidence 0.70). A dry-run preview shows what would be imported before committing; auto-detected dependencies are shown with source badges (💽 RDM / 🗄 DS) and can be bulk-removed independently of manually entered ones.
 - ✅ **Maintenance Window Scheduling** — recurring maintenance windows can be defined per project (day-of-week, start/end time, timezone, cross-midnight support). When enabled, Auto-Build Waves automatically assigns a `scheduled_start` / `scheduled_end` to each wave from the next available window slot. A preview strip shows the next 8 upcoming calendar bands.
-- Requires: `db/migrate_wave_approvals.sql` applied once (`docker exec -i pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB < db/migrate_wave_approvals.sql`)
 
 ### v1.66.3 — CI/CD Pipeline Hardening & Input Validation Fixes
 - ✅ **`release.yml` branch ref fix** — checkout now uses `${{ github.event.workflow_run.head_branch }}` instead of hardcoded `master`, so release jobs trigger correctly from any configured default branch
@@ -914,7 +905,6 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 - ✅ **Cluster exclusion toggle** — click any cluster pill in the Tenants tab to exclude or re-include that cluster from all wave planning; excluded clusters show as red strikethrough pills; VMs on excluded clusters display a `⊘` badge on the VMs tab
 - ✅ **Unassigned VM group** — a synthetic ⚠️ `(Unassigned)` row appears in the Tenants tab when any VMs lack a tenant; cluster pills in that row are interactive so the cluster can be excluded in one click without re-running detection
 - ✅ **New `PATCH /projects/{id}/clusters/scope` endpoint** — bulk-toggle `include_in_plan` on `migration_clusters`; `GET /vms` extended with `cluster_in_scope` boolean field
-- Requires: `db/migrate_cluster_scoping.sql` applied to the DB once (`docker exec -i pf9_db psql ... < db/migrate_cluster_scoping.sql`)
 
 ### v1.66.1 — VMware Cluster Column in Migration Planner
 - ✅ **Cluster column on Tenants tab** — shows all VMware clusters hosting that tenant's VMs as filterable pills; new **All Clusters** filter dropdown lets you scope the tenants list to a single vCenter cluster
@@ -1361,7 +1351,7 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 **Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 409+ commits, 121 releases, 15 containerized services, 170+ API endpoints — built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 422+ commits, 110 releases, 15 containerized services, 170+ API endpoints — built alongside regular responsibilities.
 
 ---
 
@@ -1373,4 +1363,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.68.0 | **Last Updated**: March 17, 2026
+**Project Status**: Production Ready | **Version**: 1.69.0 | **Last Updated**: March 17, 2026
