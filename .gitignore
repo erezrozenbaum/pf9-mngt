@@ -90,6 +90,18 @@ pf9-ui/node_modules/
 RESUME_*.md
 MIGRATION_PLANNER_PHASES.md
 
+# Migration Planner — proprietary feature, not for public repo
+api/migration_engine.py
+api/migration_routes.py
+db/migrate_migration_*.sql
+db/migrate_wave_*.sql
+db/migrate_phase4*.sql
+docs/MIGRATION_PLANNER_GUIDE.md
+docs/images/Migration-planner-*.png
+pf9-ui/src/components/MigrationPlannerTab.tsx
+pf9-ui/src/components/migration/
+tests/test_migration_planner_v166.py
+
 # Internal planning documents (not for public repo)
 improvements_plan.md
 RUNBOOKS_PLAN.md

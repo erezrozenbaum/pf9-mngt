@@ -1931,7 +1931,7 @@ See [SECURITY.md](SECURITY.md) for the nginx TLS configuration.
 Combine all changes into a single `docker-compose.prod.yml` and deploy with:
 
 ```bash
-# Pull pre-built service images from ghcr.io (set PF9_IMAGE_TAG=v1.68.0 in .env to pin a version)
+# Pull pre-built service images from ghcr.io (set PF9_IMAGE_TAG=v1.69.0 in .env to pin a version)
 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 
 # Start the stack

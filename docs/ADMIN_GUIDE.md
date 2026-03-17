@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.68.0  
+**Version**: 1.69.0  
 **Last Updated**: March 17, 2026  
 **Audience**: System administrators and platform operators
 
@@ -490,6 +490,18 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 ---
 
 ## Appendix: Feature History by Version
+
+### R.2 Bug Fixes Sprint (v1.69.0 ✅ Complete)
+
+- **Performance metrics `IndexError`** — `get_endpoint_stats()` returns `{}` immediately when `sorted_durations` is empty; prevents index crash on cold-start endpoints
+- **Phase 4A `migration_flavor_staging` table** — `startup_event()` applies `migrate_phase4_preparation.sql` (idempotent); flavor-staging endpoints no longer 500 on a fresh deployment
+- **ISO timestamp `Z`-suffix parse error** — `host_metrics_collector.py` calls `.replace("Z", "+00:00")` before `datetime.fromisoformat()`; fixes `ValueError` on Python < 3.11
+- **Scheduler worker task leak on SIGTERM** — `async_main()` `finally` block cancels and awaits all asyncio tasks before shutting down the thread executor
+- **Metering worker duplicate rows** — `run_collection_cycle()` acquires `pg_try_advisory_lock(8765432)` at cycle start; replicas skip if another holds the lock
+- **Backup worker silent `pg_dump` failure** — file-size check (< 1 KB) after `pg_dump` exits; suspiciously small output raises `RuntimeError` and triggers cleanup
+- **SLA daemon task leaked on API shutdown** — `_sla_task` module variable stores the `asyncio.Task`; `shutdown_event()` cancels and awaits it on API teardown
+
+---
 
 ### Security Hardening Sprint — R.1 Complete (v1.68.0 ✅ Complete)
 
@@ -1809,7 +1821,7 @@ copy .env.template .env
 
 # --- Production startup ---
 # All traffic via nginx TLS (443 only); pre-built ghcr.io images; 4 API workers
-# Set PF9_IMAGE_TAG=v1.68.0 in .env to pin the release version
+# Set PF9_IMAGE_TAG=v1.69.0 in .env to pin the release version
 .\startup_prod.ps1
 .\startup_prod.ps1 -StopOnly    # to stop
 ```
@@ -3352,7 +3364,7 @@ The pipeline is defined in two workflow files under `.github/workflows/`:
 **To pin a specific release version in production:**
 ```bash
 # In .env
-PF9_IMAGE_TAG=v1.68.0
+PF9_IMAGE_TAG=v1.69.0
 ```
 
 For a full reference see [`docs/CI_CD_GUIDE.md`](CI_CD_GUIDE.md).

@@ -58,7 +58,7 @@ class HostMetricsCollector:
                 for vm_id, data in state.get('vm_cpu', {}).items():
                     self._prev_vm_cpu_totals[vm_id] = {
                         'vcpu_time': data['vcpu_time'],
-                        'wall_time': datetime.fromisoformat(data['wall_time'])
+                        'wall_time': datetime.fromisoformat(data['wall_time'].replace("Z", "+00:00"))
                     }
                 print(f"Loaded CPU state: {len(self._prev_cpu_totals)} hosts, {len(self._prev_vm_cpu_totals)} VMs")
         except Exception as e:

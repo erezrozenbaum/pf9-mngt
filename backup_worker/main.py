@@ -205,6 +205,12 @@ def _run_backup(conn, job_id: int, backup_type: str = "manual", initiated_by: st
         duration = time.time() - start
         size = os.path.getsize(filepath)
 
+        # Guard against silently empty/truncated output (pg_dump can exit 0 on some errors)
+        if size < 1024:
+            raise RuntimeError(
+                f"Backup file is suspiciously small ({size} bytes) — likely corrupt or empty"
+            )
+
         _update_job(
             conn, job_id,
             status="completed",

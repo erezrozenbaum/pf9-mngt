@@ -137,6 +137,14 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
+- **R.2 Bug Fixes Sprint** (v1.69.0 — NEW ✨):
+  - **Performance metrics `IndexError`** — `get_endpoint_stats()` returns `{}` on empty histogram; prevents crash on cold-start endpoints
+  - **Phase 4A `migration_flavor_staging` table** — `startup_event()` applies `migrate_phase4_preparation.sql` idempotently; no more 500 on fresh deployments
+  - **ISO timestamp `Z`-suffix parse error** — `host_metrics_collector.py` strips `Z` before `fromisoformat()`; fixes `ValueError` on Python < 3.11
+  - **Scheduler worker task leak on SIGTERM** — `finally` block cancels and awaits all asyncio tasks before executor shutdown
+  - **Metering worker duplicate rows** — `pg_try_advisory_lock(8765432)` at cycle start; replicas skip when another holds the lock
+  - **Backup worker silent `pg_dump` failure** — size < 1 KB check after `pg_dump` exits; corrupt output raises `RuntimeError` and triggers cleanup
+  - **SLA daemon task leak on shutdown** — `_sla_task` module variable; `shutdown_event()` cancels and awaits it cleanly
 - **Security Hardening Sprint** (v1.68.0 — NEW ✨):
   - **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline sanitized via `DOMPurify.sanitize()` with `ALLOWED_TAGS: ["mark"]`; eliminates stored XSS via search index
   - **SMTP TLS enforcement** — `api/smtp_helper.py` and `notifications/main.py` now set `ctx.check_hostname = True` + `ctx.verify_mode = ssl.CERT_REQUIRED`; prevents silent acceptance of invalid certificates

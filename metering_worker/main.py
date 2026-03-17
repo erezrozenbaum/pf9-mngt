@@ -636,6 +636,16 @@ def run_collection_cycle():
     conn = None
     try:
         conn = get_conn()
+
+        # Distributed lock: prevent two replicas from collecting simultaneously.
+        # Lock ID 8765432 is arbitrary and unique to the metering worker.
+        with conn.cursor() as _cur:
+            _cur.execute("SELECT pg_try_advisory_lock(8765432)")
+            got_lock = _cur.fetchone()[0]
+        if not got_lock:
+            log.info("Another metering worker holds the lock – skipping this cycle")
+            return
+
         cfg = load_config(conn)
 
         if not cfg.get("enabled", True):

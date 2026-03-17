@@ -157,6 +157,8 @@ class PerformanceMetrics:
             return None
         
         sorted_durations = sorted(durations)
+        if not sorted_durations:
+            return {}
         return {
             "endpoint": endpoint,
             "request_count": count,

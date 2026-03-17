@@ -5,7 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.68.0] - 2026-03-17
+## [1.69.0] - 2026-03-17
+
+### Fixed
+
+#### API — Performance Metrics: defensive guard against empty histogram
+- **`api/performance_metrics.py`** — `get_endpoint_stats()` now returns `{}` immediately if `sorted_durations` is empty after sorting, preventing a potential `IndexError` on percentile slicing when an endpoint has never recorded a timing sample after a cold restart.
+
+#### API — Phase 4A Flavor-Staging Table Always Available
+- **`api/main.py`** `startup_event()` — Added application of `db/migrate_phase4_preparation.sql` at API startup (idempotent `CREATE TABLE IF NOT EXISTS`). Previously, `migration_routes._ensure_tables()` ran at import time before the database was ready, causing Phase 4A / flavor-staging endpoints to return an unhandled 500 `UndefinedTable` error on a fresh deployment.
+
+#### Host Metrics Collector — ISO Timestamp Parsing
+- **`host_metrics_collector.py`** — `_load_cpu_state()` now calls `.replace("Z", "+00:00")` before `datetime.fromisoformat()` when restoring `wall_time` values from the JSON state file. Fixes a `ValueError` on Python < 3.11 when the serialized timestamp had a `Z` suffix.
+
+#### Scheduler Worker — Asyncio Tasks Cancelled on Shutdown
+- **`scheduler_worker/main.py`** `async_main()` — The `finally` block now explicitly cancels all running tasks and awaits `asyncio.gather(*tasks, return_exceptions=True)` after setting the shutdown flag. Previously, tasks were only expected to exit via the `_running` flag but executor-backed `run_in_executor` calls could remain orphaned on SIGTERM.
+
+#### Metering Worker — Distributed Lock Prevents Duplicate Collection
+- **`metering_worker/main.py`** `run_collection_cycle()` — Added `SELECT pg_try_advisory_lock(8765432)` at the start of each collection cycle. If another metering replica already holds the lock, the current cycle is skipped with a log message. This prevents duplicate metering rows when the worker is scaled to two or more replicas.
+
+#### Backup Worker — Detect Empty / Corrupt Output Before Recording Success
+- **`backup_worker/main.py`** `_run_backup()` — Added a file-size check after `pg_dump` exits: if the output file is smaller than 1 KB it is treated as corrupt and raises `RuntimeError`, triggering the existing cleanup path that deletes the partial file and marks the job as failed. Catches the rare case where `pg_dump` exits 0 but writes no content.
+
+#### API — SLA Daemon Task Cancelled on Shutdown
+- **`api/main.py`** — The asyncio `Task` returned by `asyncio.create_task(_sla_daemon())` is now stored in a module-level `_sla_task` variable. The `shutdown_event()` handler cancels and awaits it on API shutdown, preventing the task from being leaked in the event loop.
+
+
 
 ### Security
 

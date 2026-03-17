@@ -286,6 +286,12 @@ async def async_main() -> None:
 
         await asyncio.gather(*tasks)
     finally:
+        # Explicitly cancel any still-running tasks so run_in_executor threads
+        # are interrupted and do not become orphans on the next restart.
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         executor.shutdown(wait=False)
         log.info("PF9 Scheduler Worker stopped.")
 

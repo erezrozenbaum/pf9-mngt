@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.68.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.69.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -728,7 +728,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.68.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.69.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -872,6 +872,15 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.69.0 — R.2 Bug Fixes Sprint
+- ✅ **Performance metrics `IndexError`** — `get_endpoint_stats()` now guards against empty `sorted_durations`, preventing a crash on cold-start endpoints.
+- ✅ **Phase 4A `migration_flavor_staging` table** — `startup_event()` applies `migrate_phase4_preparation.sql` idempotently so flavor-staging endpoints never return a 500 on fresh deployments.
+- ✅ **ISO timestamp `Z`-suffix parse error** — `host_metrics_collector.py` now calls `.replace("Z", "+00:00")` before `datetime.fromisoformat()`; fixes `ValueError` on Python < 3.11.
+- ✅ **Scheduler worker task leak on SIGTERM** — `async_main()` `finally` block explicitly cancels and awaits all asyncio tasks before shutting down the thread executor.
+- ✅ **Metering worker duplicate rows** — `run_collection_cycle()` acquires a `pg_try_advisory_lock(8765432)` at the start of each cycle; scaled replicas skip if another holds the lock.
+- ✅ **Backup worker silent `pg_dump` failure** — output file is checked for < 1 KB size after `pg_dump` exits; suspiciously small files raise `RuntimeError` and trigger the cleanup path.
+- ✅ **SLA daemon task leaked on API shutdown** — `asyncio.Task` returned by `create_task(_sla_daemon())` stored as `_sla_task`; `shutdown_event()` cancels and awaits it cleanly.
 
 ### v1.68.0 — Security Hardening Sprint (Complete R.1)
 - ✅ **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline now sanitized via `DOMPurify.sanitize()` with a strict `ALLOWED_TAGS: ["mark"]` allowlist (was unsanitized raw HTML from `ts_headline`)
