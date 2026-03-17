@@ -1,7 +1,7 @@
-name: Create Release Tag
+name: Release
 
-# Triggers after the CI workflow completes on master/main.
-# The release is only created when CI passes (all jobs including integration tests).
+# Triggers after the CI workflow completes successfully on master/main.
+# Flow: extract version → build & push Docker images → create GitHub release.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -9,15 +9,21 @@ on:
     branches: [master, main]
 
 jobs:
-  release:
+  # ---------------------------------------------------------------------------
+  # Job 1: Parse the latest version from CHANGELOG.md and check whether a
+  # release tag already exists. All downstream jobs use these outputs so the
+  # version is determined exactly once.
+  # ---------------------------------------------------------------------------
+  extract-version:
+    name: Extract Version from CHANGELOG
     # Only run when the CI workflow that triggered this actually succeeded
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     outputs:
+      version: ${{ steps.changelog.outputs.version }}
       tag: ${{ steps.changelog.outputs.tag }}
-      tag_created: ${{ steps.create-tag.outputs.created }}
+      exists: ${{ steps.changelog.outputs.exists }}
+      notes: ${{ steps.changelog.outputs.notes }}
 
     steps:
       - name: Checkout code
@@ -29,7 +35,6 @@ jobs:
       - name: Extract version from CHANGELOG.md
         id: changelog
         run: |
-          # Parse the latest version from CHANGELOG.md
           VERSION=$(grep -oP '## \[\K\d+\.\d+\.\d+(?=\])' CHANGELOG.md | head -1)
           if [ -z "$VERSION" ]; then
             echo "No version found in CHANGELOG.md"
@@ -40,58 +45,37 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
-          # Check if tag already exists
+          # Check if this version was already released
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Tag $TAG already exists, skipping"
+            echo "Tag $TAG already exists — skipping release pipeline."
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Will create tag: $TAG"
+            echo "New version detected: $TAG"
           fi
 
-          # Extract changelog section for release notes
-          # Get content between this version header and the next version header
+          # Extract release notes: content between this version header and the next
           NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
-          # Write multi-line output
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Create Git Tag
-        id: create-tag
-        if: steps.changelog.outputs.exists == 'false'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a ${{ steps.changelog.outputs.tag }} -m "Release ${{ steps.changelog.outputs.tag }}"
-          git push origin ${{ steps.changelog.outputs.tag }}
-          echo "created=true" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub Release
-        if: steps.changelog.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.changelog.outputs.tag }}
-          name: Release ${{ steps.changelog.outputs.tag }}
-          body: ${{ steps.changelog.outputs.notes }}
-          draft: false
-          prerelease: false
-
   # ---------------------------------------------------------------------------
-  # Publish Docker images to GitHub Container Registry (ghcr.io).
-  # Only runs when a new release tag is actually created by the job above.
-  # Builds linux/amd64 and linux/arm64 images for all custom services.
+  # Job 2: Build and push all Docker images to GitHub Container Registry.
+  # Runs in a matrix (one runner per service) so all images build in parallel.
+  # Must succeed before the release is created — if any image fails to build
+  # the release is not published.
   # ---------------------------------------------------------------------------
   publish-images:
-    name: Publish Docker Images to ghcr.io
-    needs: [release]
-    if: needs.release.outputs.tag_created == 'true'
+    name: Build & Push ${{ matrix.service }} image
+    needs: [extract-version]
+    if: needs.extract-version.outputs.exists == 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - service: api
@@ -147,5 +131,42 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/pf9-mngt-${{ matrix.service }}:${{ needs.release.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/pf9-mngt-${{ matrix.service }}:${{ needs.extract-version.outputs.tag }}
             ghcr.io/${{ github.repository_owner }}/pf9-mngt-${{ matrix.service }}:latest
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Create the Git tag and GitHub Release.
+  # Only runs after ALL image builds succeed (needs the full publish-images
+  # matrix). This guarantees users never see a release whose images are broken.
+  # ---------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: [extract-version, publish-images]
+    if: needs.extract-version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_branch }}
+
+      - name: Create Git Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a ${{ needs.extract-version.outputs.tag }} \
+            -m "Release ${{ needs.extract-version.outputs.tag }}"
+          git push origin ${{ needs.extract-version.outputs.tag }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.extract-version.outputs.tag }}
+          name: Release ${{ needs.extract-version.outputs.tag }}
+          body: ${{ needs.extract-version.outputs.notes }}
+          draft: false
+          prerelease: false
