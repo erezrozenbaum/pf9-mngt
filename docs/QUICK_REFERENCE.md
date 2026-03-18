@@ -137,7 +137,12 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Dependency Security Patches & Quality Fixes** (v1.71.0 — NEW ✨):
+- **Migration Planner Restored & Production Startup Fixes** (v1.72.0 — NEW ✨):
+  - **Migration Planner restored** — `migration_routes.py`, `migration_engine.py`, `MigrationPlannerTab.tsx`, `ProjectSetup.tsx`, `SourceAnalysis.tsx` re-added; `.gitignore` exclusion block removed so CI builds include them
+  - **`startup_prod.ps1` fixed** — `up -d --build` → `pull` + `up -d`; stops local rebuilds overwriting `ghcr.io` images on production start
+  - **nginx `/tenants` routing** — `location = /tenants` rewrite to `/api/tenants` added; fixes 404 on Migration Planner Projects page
+  - **API migration router** — `migration_router` registered in `main.py`; `GET /tenants` alias route added
+- **Dependency Security Patches & Quality Fixes** (v1.71.0):
   - **Webhook URL validation** — `SLACK_WEBHOOK_URL`/`TEAMS_WEBHOOK_URL` validated at startup; non-`https` or empty-host URLs rejected
   - **CSV export quoting** — all CSV downloads use `QUOTE_ALL`; prevents column corruption in Excel on fields with commas or newlines
   - **Ticket approval note max length** — `ApproveRejectRequest.note` capped at 5,000 characters (HTTP 422 on violation)

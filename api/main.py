@@ -92,6 +92,9 @@ from graph_routes import router as graph_router
 # Support Ticket system (T1+T2)
 from ticket_routes import router as ticket_router, run_sla_checks as _run_sla_checks
 
+# Migration Planner endpoints
+from migration_routes import router as migration_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -326,6 +329,7 @@ app.include_router(onboarding_router)
 app.include_router(vm_provisioning_router)
 app.include_router(graph_router)
 app.include_router(ticket_router)
+app.include_router(migration_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")
@@ -1496,9 +1500,13 @@ VALID_SERVER_SORT_COLUMNS = {
 }
 
 
-# Backwards-compatible alias (older UI used /projects)
+# Backwards-compatible aliases
 @app.get("/projects")
 def list_projects(domain_name: Optional[str] = None):
+    return list_tenants(domain_name=domain_name)
+
+@app.get("/tenants")
+def list_tenants_alias(domain_name: Optional[str] = None):
     return list_tenants(domain_name=domain_name)
 
 

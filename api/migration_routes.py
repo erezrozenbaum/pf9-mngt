@@ -1,0 +1,10357 @@
+"""
+Migration Planner API  Γאפ  Phase 1 + Phase 2
+=============================================
+CRUD for migration projects, RVTools XLSX upload/parse, tenant detection,
+VM listing, risk scoring, project lifecycle management.
+
+Phase 1 Routes:
+  POST   /api/migration/projects              Create project
+  GET    /api/migration/projects              List projects
+  GET    /api/migration/projects/{id}         Get project detail
+  PATCH  /api/migration/projects/{id}         Update project settings
+  DELETE /api/migration/projects/{id}         Delete project (cascade)
+  POST   /api/migration/projects/{id}/archive Archive + purge
+
+  POST   /api/migration/projects/{id}/upload  Upload RVTools XLSX
+  POST   /api/migration/projects/{id}/reparse Re-parse from stored data
+
+  GET    /api/migration/projects/{id}/vms     List VMs (filters, sort, pagination)
+  PATCH  /api/migration/projects/{id}/vms/{vm_id}  Update VM overrides
+
+  GET    /api/migration/projects/{id}/tenants       Detected tenants
+  PATCH  /api/migration/projects/{id}/tenants/{tid} Confirm/edit/scope tenant
+
+  GET    /api/migration/projects/{id}/hosts         Source hosts
+  GET    /api/migration/projects/{id}/clusters       Source clusters
+  GET    /api/migration/projects/{id}/stats          Summary stats
+
+  POST   /api/migration/projects/{id}/assess        Run risk + mode scoring
+  GET    /api/migration/projects/{id}/risk-config    Get risk rules
+  PUT    /api/migration/projects/{id}/risk-config    Update risk rules
+
+  POST   /api/migration/projects/{id}/reset-assessment  Clear computed results
+  POST   /api/migration/projects/{id}/reset-plan        Clear wave/prep data
+
+  POST   /api/migration/projects/{id}/approve       Approve project (gate)
+
+  GET    /api/migration/projects/{id}/bandwidth      Bandwidth model
+  GET    /api/migration/projects/{id}/agent-recommendation  Agent sizing
+
+  GET    /api/migration/projects/{id}/export-plan   JSON migration plan
+  GET    /api/migration/projects/{id}/export-report.xlsx  Excel report
+  GET    /api/migration/projects/{id}/export-report.pdf   PDF report
+  GET    /api/migration/projects/{id}/export-summary.xlsx Migration summary Excel (4 sheets)
+  GET    /api/migration/projects/{id}/export-summary.pdf  Migration summary PDF
+
+Phase 2A Γאפ Tenant Scoping:
+  PATCH  /api/migration/projects/{id}/tenants/bulk-scope   Bulk include/exclude
+  GET    /api/migration/projects/{id}/tenant-filters       List auto-exclude patterns
+  POST   /api/migration/projects/{id}/tenant-filters       Add auto-exclude pattern
+  DELETE /api/migration/projects/{id}/tenant-filters/{fid} Remove pattern
+
+Phase 2C Γאפ Quota & Overcommit:
+  GET    /api/migration/overcommit-profiles                   List profiles
+  PATCH  /api/migration/projects/{id}/overcommit-profile      Set active profile
+  GET    /api/migration/projects/{id}/quota-requirements      Compute per-tenant quota
+
+Phase 2D Γאפ PCD Node Sizing:
+  GET    /api/migration/projects/{id}/node-profiles           List node profiles
+  POST   /api/migration/projects/{id}/node-profiles           Create/update profile
+  DELETE /api/migration/projects/{id}/node-profiles/{pid}     Delete profile
+  GET    /api/migration/projects/{id}/node-inventory          Get current inventory
+  PUT    /api/migration/projects/{id}/node-inventory          Upsert inventory
+  GET    /api/migration/projects/{id}/node-sizing             HA-aware sizing result
+
+Phase 2E Γאפ PCD Readiness:
+  PATCH  /api/migration/projects/{id}/pcd-settings            Store PCD connection settings
+  POST   /api/migration/projects/{id}/pcd-gap-analysis        Run gap analysis
+  GET    /api/migration/projects/{id}/pcd-gaps                List gap results
+  PATCH  /api/migration/projects/{id}/pcd-gaps/{gid}/resolve  Mark gap resolved
+
+Phase 2.8 Γאפ Pre-Phase 3 Polish:
+  GET    /api/migration/projects/{id}/pcd-auto-detect-profile Detect dominant PCD node type from hypervisors
+  GET    /api/migration/projects/{id}/export-gaps-report.xlsx PCD Readiness action report (Excel)
+  GET    /api/migration/projects/{id}/export-gaps-report.pdf  PCD Readiness action report (PDF)
+"""
+
+import os
+import io
+import json
+import logging
+import re
+import traceback
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Literal, Optional
+
+import psycopg2
+from psycopg2.extras import RealDictCursor, Json
+from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, validator
+
+from auth import require_permission, get_current_user
+
+from migration_engine import (
+    build_column_map,
+    extract_row,
+    classify_os_family,
+    extract_os_version,
+    extract_vlan_id,
+    classify_network_type,
+    assign_tenant,
+    compute_risk,
+    classify_migration_mode,
+    compute_bandwidth_model,
+    recommend_agent_sizing,
+    estimate_vm_time,
+    generate_migration_plan,
+    summarize_rvtools_stats,
+    COLUMN_ALIASES,
+    # Phase 2
+    compute_quota_requirements,
+    compute_node_sizing,
+    analyze_pcd_gaps,
+    OVERCOMMIT_PRESETS,
+    # Phase 3.0
+    compute_tenant_ease_scores,
+    auto_assign_cohorts,
+    # Phase 3 Γאפ Wave Planning
+    build_wave_plan,
+    PREFLIGHT_CHECKS,
+    # Phase 5.0 Γאפ Tech Fix Time
+    compute_vm_fix_time,
+    compute_project_fix_summary,
+    DEFAULT_FIX_WEIGHTS,
+    # Phase T Γאפ Auto-Import + Maintenance Windows
+    detect_auto_dependencies,
+    next_window_start,
+    _load_windows,
+)
+from export_reports import (
+    generate_excel_report, generate_pdf_report,
+    generate_gaps_excel_report, generate_gaps_pdf_report,
+    generate_summary_excel_report, generate_summary_pdf_report,
+)
+
+logger = logging.getLogger("migration_planner")
+
+router = APIRouter(prefix="/api/migration", tags=["migration"])
+
+# ---------------------------------------------------------------------------
+# DB helpers
+# ---------------------------------------------------------------------------
+def _get_conn():
+    from db_pool import get_connection
+    return get_connection()
+
+
+def _ensure_tables():
+    """Run migration if tables don't exist yet."""
+    from db_pool import get_connection
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'migration_projects'
+                )
+            """)
+            if not cur.fetchone()[0]:
+                migration = os.path.join(
+                    os.path.dirname(__file__), "..", "db", "migrate_migration_planner.sql"
+                )
+                if os.path.exists(migration):
+                    with open(migration) as f:
+                        cur.execute(f.read())
+                    logger.info("Migration planner tables created")
+
+
+def _ensure_activity_log_table():
+    from db_pool import get_connection
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'activity_log'
+                )
+            """)
+            if not cur.fetchone()[0]:
+                migration = os.path.join(
+                    os.path.dirname(__file__), "..", "db", "migrate_activity_log.sql"
+                )
+                if os.path.exists(migration):
+                    with open(migration) as f:
+                        cur.execute(f.read())
+
+
+def _ensure_phase4_tables():
+    """Run Phase 4A migration if tables don't exist yet (idempotent)."""
+    from db_pool import get_connection
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'migration_flavor_staging'
+                )
+            """)
+            if not cur.fetchone()[0]:
+                migration = os.path.join(
+                    os.path.dirname(__file__), "..", "db", "migrate_phase4_preparation.sql"
+                )
+                if os.path.exists(migration):
+                    with open(migration) as f:
+                        cur.execute(f.read())
+                    logger.info("Phase 4A tables created")
+
+
+# Run on import
+try:
+    _ensure_tables()
+except Exception as e:
+    logger.warning(f"Could not ensure migration tables on startup: {e}")
+
+try:
+    _ensure_activity_log_table()
+except Exception as e:
+    logger.warning(f"Could not ensure activity_log table: {e}")
+
+try:
+    _ensure_phase4_tables()
+except Exception as e:
+    logger.warning(f"Could not ensure phase4 tables on startup: {e}")
+
+
+def _ensure_prep_approval_tables():
+    """Ensure prep approval columns and table exist (idempotent, SQL inlined)."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'migration_prep_approvals'
+                )
+            """)
+            if not cur.fetchone()[0]:
+                cur.execute("""
+                    DO $$ BEGIN ALTER TABLE migration_projects ADD COLUMN prep_approval_status TEXT;
+                    EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+                """)
+                cur.execute("""
+                    DO $$ BEGIN ALTER TABLE migration_projects ADD COLUMN prep_requested_by TEXT;
+                    EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+                """)
+                cur.execute("""
+                    DO $$ BEGIN ALTER TABLE migration_projects ADD COLUMN prep_approved_by TEXT;
+                    EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+                """)
+                cur.execute("""
+                    DO $$ BEGIN ALTER TABLE migration_projects ADD COLUMN prep_approved_at TIMESTAMPTZ;
+                    EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS migration_prep_approvals (
+                        id          BIGSERIAL   PRIMARY KEY,
+                        project_id  TEXT        NOT NULL REFERENCES migration_projects(project_id) ON DELETE CASCADE,
+                        approver    TEXT        NOT NULL,
+                        decision    TEXT        NOT NULL,
+                        comment     TEXT,
+                        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+                    );
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_prep_approvals_project
+                        ON migration_prep_approvals(project_id, created_at DESC);
+                """)
+                logger.info("Prep approval tables created")
+
+
+try:
+    _ensure_prep_approval_tables()
+except Exception as e:
+    logger.warning(f"Could not ensure prep approval tables on startup: {e}")
+
+
+def _ensure_narrative_columns():
+    """Ensure executive_summary and technical_notes columns exist on migration_projects."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE migration_projects ADD COLUMN executive_summary TEXT;
+                EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+            """)
+            cur.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE migration_projects ADD COLUMN technical_notes TEXT;
+                EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+            """)
+
+
+try:
+    _ensure_narrative_columns()
+except Exception as e:
+    logger.warning(f"Could not ensure narrative columns on startup: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Activity log helper
+# ---------------------------------------------------------------------------
+def _log_activity(
+    actor: str, action: str, resource_type: str,
+    resource_id: str = None, resource_name: str = None,
+    details: dict = None, result: str = "success", error_message: str = None,
+):
+    try:
+        from db_pool import get_connection
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO activity_log
+                        (actor, action, resource_type, resource_id, resource_name,
+                         details, result, error_message)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (actor, action, resource_type, resource_id, resource_name,
+                      Json(details or {}), result, error_message))
+    except Exception as e:
+        logger.error(f"Failed to write activity log: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
+class CreateProjectRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    topology_type: Optional[str] = "local"
+    # Source side
+    source_nic_speed_gbps: Optional[float] = 10.0
+    source_usable_pct: Optional[float] = 40.0
+    # Transport link
+    link_speed_gbps: Optional[float] = None
+    link_usable_pct: Optional[float] = 60.0
+    source_upload_mbps: Optional[float] = None
+    dest_download_mbps: Optional[float] = None
+    estimated_rtt_ms: Optional[float] = None
+    rtt_category: Optional[str] = None
+    # PCD / Agent side
+    target_ingress_speed_gbps: Optional[float] = 10.0
+    target_usable_pct: Optional[float] = 40.0
+    pcd_storage_write_mbps: Optional[float] = 500.0
+    # Agent profile
+    agent_count: Optional[int] = 2
+    agent_concurrent_vms: Optional[int] = 5
+    agent_vcpu_per_slot: Optional[int] = 2
+    agent_ram_base_gb: Optional[float] = 2.0
+    agent_ram_per_slot_gb: Optional[float] = 1.0
+    agent_nic_speed_gbps: Optional[float] = 10.0
+    agent_nic_usable_pct: Optional[float] = 70.0
+    agent_disk_buffer_factor: Optional[float] = 1.2
+    # Warm migration
+    daily_change_rate_pct: Optional[float] = 5.0
+
+    @validator("name")
+    def name_not_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Project name cannot be empty")
+        return v.strip()
+
+    @validator("topology_type")
+    def valid_topology(cls, v):
+        allowed = ("local", "cross_site_dedicated", "cross_site_internet")
+        if v and v not in allowed:
+            raise ValueError(f"topology must be one of {allowed}")
+        return v
+
+
+class UpdateProjectRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    topology_type: Optional[str] = None
+    source_nic_speed_gbps: Optional[float] = None
+    source_usable_pct: Optional[float] = None
+    link_speed_gbps: Optional[float] = None
+    link_usable_pct: Optional[float] = None
+    source_upload_mbps: Optional[float] = None
+    dest_download_mbps: Optional[float] = None
+    estimated_rtt_ms: Optional[float] = None
+    rtt_category: Optional[str] = None
+    target_ingress_speed_gbps: Optional[float] = None
+    target_usable_pct: Optional[float] = None
+    pcd_storage_write_mbps: Optional[float] = None
+    agent_count: Optional[int] = None
+    agent_concurrent_vms: Optional[int] = None
+    agent_vcpu_per_slot: Optional[int] = None
+    agent_ram_base_gb: Optional[float] = None
+    agent_ram_per_slot_gb: Optional[float] = None
+    agent_nic_speed_gbps: Optional[float] = None
+    agent_nic_usable_pct: Optional[float] = None
+    agent_disk_buffer_factor: Optional[float] = None
+    daily_change_rate_pct: Optional[float] = None
+    migration_duration_days: Optional[int] = None
+    working_hours_per_day: Optional[float] = None
+    working_days_per_week: Optional[int] = None
+    target_vms_per_day: Optional[int] = None
+    executive_summary: Optional[str] = None
+    technical_notes: Optional[str] = None
+    use_maintenance_windows: Optional[bool] = None
+
+
+class UpdateVMRequest(BaseModel):
+    exclude_from_migration: Optional[bool] = None
+    exclude_reason: Optional[str] = None
+    manual_mode_override: Optional[str] = None
+    priority: Optional[int] = None
+    tenant_name: Optional[str] = None
+    app_group: Optional[str] = None
+
+
+class VMReassignRequest(BaseModel):
+    vm_ids: List[int] = Field(default_factory=list, max_length=1000)
+    tenant_name: Optional[str] = None  # None = unassign
+    create_if_missing: bool = False
+
+    @validator("tenant_name")
+    def _strip_tenant_name(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v:
+                return None
+        return v
+
+
+class UpdateTenantRequest(BaseModel):
+    tenant_name: Optional[str] = None
+    org_vdc: Optional[str] = None
+    confirmed: Optional[bool] = None
+    # Phase 2A Γאפ scoping
+    include_in_plan: Optional[bool] = None
+    exclude_reason: Optional[str] = None
+    # Phase 2B Γאפ target mapping
+    target_domain_name: Optional[str] = None
+    target_project_name: Optional[str] = None
+    target_display_name: Optional[str] = None         # project description / friendly name
+    target_domain_description: Optional[str] = None  # domain description
+    target_confirmed: Optional[bool] = None  # true = user reviewed/confirmed the target names
+    # Legacy aliases (kept for backwards compat)
+    target_domain: Optional[str] = None
+    target_project: Optional[str] = None
+    notes: Optional[str] = None
+    # Phase 2.10D Γאפ priority
+    migration_priority: Optional[int] = None
+    # Phase 2.10G Γאפ cohort assignment
+    cohort_id: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.10 request models
+# ---------------------------------------------------------------------------
+
+class VMStatusUpdateRequest(BaseModel):
+    status: str  # not_started|assigned|in_progress|migrated|failed|skipped
+    status_note: Optional[str] = None
+
+
+class VMBulkStatusRequest(BaseModel):
+    vm_ids: List[int]
+    status: str
+    status_note: Optional[str] = None
+
+
+class VMModeOverrideRequest(BaseModel):
+    override: Optional[str] = None  # 'warm' | 'cold' | None (= clear override)
+
+
+class VMDependencyRequest(BaseModel):
+    depends_on_vm_id: int
+    dependency_type: Optional[str] = "must_complete_before"
+    notes: Optional[str] = None
+
+
+class NetworkMappingCreateRequest(BaseModel):
+    source_network_name: str
+    target_network_name: Optional[str] = None
+    target_network_id: Optional[str] = None
+    vlan_id: Optional[int] = None
+    network_kind: Optional[str] = "physical_managed"  # physical_managed | physical_l2 | virtual
+    notes: Optional[str] = None
+
+
+class NetworkMappingUpdateRequest(BaseModel):
+    target_network_name: Optional[str] = None
+    target_network_id: Optional[str] = None
+    vlan_id: Optional[int] = None
+    network_kind: Optional[str] = None
+    # Phase 4A.1 Γאפ subnet detail fields
+    cidr: Optional[str] = None
+    gateway_ip: Optional[str] = None
+    dns_nameservers: Optional[List[str]] = None
+    allocation_pool_start: Optional[str] = None
+    allocation_pool_end: Optional[str] = None
+    dhcp_enabled: Optional[bool] = None
+    is_external: Optional[bool] = None
+    subnet_details_confirmed: Optional[bool] = None
+    notes: Optional[str] = None
+    confirmed: Optional[bool] = None
+
+
+# ΓפאΓפא Phase 4A Pydantic models ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+
+class FlavorStagingUpdateRequest(BaseModel):
+    target_flavor_name: Optional[str] = None
+    skip: Optional[bool] = None
+    existing_flavor_id: Optional[str] = None
+    confirmed: Optional[bool] = None
+
+
+class FlavorBulkRenameRequest(BaseModel):
+    find: str
+    replace: str = ""
+    case_sensitive: bool = False
+    preview_only: bool = True
+
+
+class ImageRequirementUpdateRequest(BaseModel):
+    glance_image_id: Optional[str] = None
+    glance_image_name: Optional[str] = None
+    confirmed: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class TenantUserCreateRequest(BaseModel):
+    tenant_id: int
+    user_type: str          # 'service_account' | 'tenant_owner'
+    username: str
+    email: Optional[str] = None
+    role: str = "admin"     # 'admin' | 'member' | 'reader'
+    is_existing_user: bool = False
+    notes: Optional[str] = None
+
+
+class TenantUserUpdateRequest(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    is_existing_user: Optional[bool] = None
+    password_must_change: Optional[bool] = None
+    confirmed: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class CreateCohortRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    cohort_order: Optional[int] = 999
+    scheduled_start: Optional[str] = None  # ISO date string
+    scheduled_end: Optional[str] = None
+    owner_name: Optional[str] = None
+    depends_on_cohort_id: Optional[int] = None
+    overcommit_profile_override: Optional[str] = None
+    agent_slots_override: Optional[int] = None
+    schedule_duration_days: Optional[int] = None   # planned working days for this cohort
+    target_vms_per_day: Optional[int] = None        # per-cohort VMs/day override
+    notes: Optional[str] = None
+
+
+class UpdateCohortRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    cohort_order: Optional[int] = None
+    status: Optional[str] = None
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+    owner_name: Optional[str] = None
+    depends_on_cohort_id: Optional[int] = None
+    overcommit_profile_override: Optional[str] = None
+    agent_slots_override: Optional[int] = None
+    schedule_duration_days: Optional[int] = None
+    target_vms_per_day: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class AssignTenantsToCohortRequest(BaseModel):
+    tenant_ids: List[int]
+
+
+class AutoAssignGuardrails(BaseModel):
+    max_vms_per_cohort: int = 9999
+    max_disk_tb_per_cohort: float = 9999.0
+    max_avg_risk: float = 100.0
+    min_os_support_rate: float = 0.0
+    risk_threshold: float = 70.0   # for riskiest_last strategy
+    pilot_size: int = 5            # for pilot_bulk strategy
+
+
+class AutoAssignRequest(BaseModel):
+    strategy: str = "easiest_first"  # easiest_first | riskiest_last | pilot_bulk | balanced_load | os_first | by_priority
+    num_cohorts: int = 3
+    guardrails: AutoAssignGuardrails = AutoAssignGuardrails()
+    ease_weights: Optional[Dict[str, float]] = None
+    dry_run: bool = True
+    create_cohorts_if_missing: bool = False  # create cohorts 1..num_cohorts if fewer exist
+    cohort_profiles: Optional[List[Dict[str, Any]]] = None  # [{name, max_vms}] for ramp mode
+
+
+# ---------------------------------------------------------------------------
+# Helper: get project or 404
+# ---------------------------------------------------------------------------
+def _get_project(project_id: str, conn) -> Dict[str, Any]:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM migration_projects WHERE project_id = %s", (project_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Migration project not found")
+        return dict(row)
+
+
+# =====================================================================
+# PROJECT CRUD
+# =====================================================================
+
+@router.post("/projects", dependencies=[Depends(require_permission("migration", "write"))])
+async def create_project(req: CreateProjectRequest, user = Depends(get_current_user)):
+    """Create a new migration project."""
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_projects (
+                    name, description, topology_type,
+                    source_nic_speed_gbps, source_usable_pct,
+                    link_speed_gbps, link_usable_pct,
+                    source_upload_mbps, dest_download_mbps,
+                    estimated_rtt_ms, rtt_category,
+                    target_ingress_speed_gbps, target_usable_pct,
+                    pcd_storage_write_mbps,
+                    agent_count, agent_concurrent_vms,
+                    agent_vcpu_per_slot, agent_ram_base_gb, agent_ram_per_slot_gb,
+                    agent_nic_speed_gbps, agent_nic_usable_pct, agent_disk_buffer_factor,
+                    daily_change_rate_pct,
+                    created_by
+                ) VALUES (
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s,
+                    %s
+                )
+                RETURNING *
+            """, (
+                req.name, req.description, req.topology_type,
+                req.source_nic_speed_gbps, req.source_usable_pct,
+                req.link_speed_gbps, req.link_usable_pct,
+                req.source_upload_mbps, req.dest_download_mbps,
+                req.estimated_rtt_ms, req.rtt_category,
+                req.target_ingress_speed_gbps, req.target_usable_pct,
+                req.pcd_storage_write_mbps,
+                req.agent_count, req.agent_concurrent_vms,
+                req.agent_vcpu_per_slot, req.agent_ram_base_gb, req.agent_ram_per_slot_gb,
+                req.agent_nic_speed_gbps, req.agent_nic_usable_pct, req.agent_disk_buffer_factor,
+                req.daily_change_rate_pct,
+                actor,
+            ))
+            project = dict(cur.fetchone())
+
+            # Seed default risk config
+            cur.execute("""
+                INSERT INTO migration_risk_config (project_id) VALUES (%s)
+            """, (project["project_id"],))
+
+            # Seed default tenant detection rules
+            cur.execute("""
+                INSERT INTO migration_tenant_rules (project_id) VALUES (%s)
+            """, (project["project_id"],))
+
+
+    _log_activity(actor=actor, action="create", resource_type="migration_project",
+                  resource_id=project["project_id"], resource_name=req.name)
+
+    return {"status": "ok", "project": _serialize_row(project)}
+
+
+@router.get("/projects", dependencies=[Depends(require_permission("migration", "read"))])
+async def list_projects(
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """List migration projects with optional status filter."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            where = "WHERE 1=1"
+            params: list = []
+            if status:
+                where += " AND status = %s"
+                params.append(status)
+
+            cur.execute(f"""
+                SELECT mp.*,
+                       (SELECT count(*) FROM migration_vms mv WHERE mv.project_id = mp.project_id) as vm_count,
+                       (SELECT count(*) FROM migration_tenants mt WHERE mt.project_id = mp.project_id) as tenant_count
+                FROM migration_projects mp
+                {where}
+                ORDER BY mp.created_at DESC
+                LIMIT %s OFFSET %s
+            """, params + [limit, offset])
+            projects = [dict(r) for r in cur.fetchall()]
+
+            cur.execute(f"SELECT count(*) as cnt FROM migration_projects {where}", params)
+            total = cur.fetchone()["cnt"]
+
+    return {"status": "ok", "total": total, "projects": [_serialize_row(p) for p in projects]}
+
+
+@router.get("/projects/{project_id}", dependencies=[Depends(require_permission("migration", "read"))])
+async def get_project(project_id: str):
+    """Get detailed project info."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # VM counts by risk
+            cur.execute("""
+                SELECT risk_category, count(*) as cnt
+                FROM migration_vms WHERE project_id = %s AND NOT exclude_from_migration
+                GROUP BY risk_category
+            """, (project_id,))
+            risk_summary = {r["risk_category"]: r["cnt"] for r in cur.fetchall() if r["risk_category"]}
+
+            # VM counts by mode
+            cur.execute("""
+                SELECT migration_mode, count(*) as cnt
+                FROM migration_vms WHERE project_id = %s AND NOT exclude_from_migration
+                GROUP BY migration_mode
+            """, (project_id,))
+            mode_summary = {r["migration_mode"]: r["cnt"] for r in cur.fetchall() if r["migration_mode"]}
+
+            # Totals
+            cur.execute("""
+                SELECT count(*) as total_vms,
+                       coalesce(sum(total_disk_gb), 0) as total_disk_gb,
+                       coalesce(sum(ram_mb), 0) as total_ram_mb,
+                       coalesce(sum(cpu_count), 0) as total_vcpu,
+                       count(*) FILTER (WHERE exclude_from_migration) as excluded_vms
+                FROM migration_vms WHERE project_id = %s
+            """, (project_id,))
+            totals = dict(cur.fetchone())
+
+            # Tenant count
+            cur.execute("SELECT count(*) as cnt FROM migration_tenants WHERE project_id = %s", (project_id,))
+            totals["tenant_count"] = cur.fetchone()["cnt"]
+
+    result = _serialize_row(project)
+    result["risk_summary"] = risk_summary
+    result["mode_summary"] = mode_summary
+    result["totals"] = _serialize_row(totals)
+    return {"status": "ok", "project": result}
+
+
+@router.patch("/projects/{project_id}", dependencies=[Depends(require_permission("migration", "write"))])
+async def update_project(project_id: str, req: UpdateProjectRequest, user = Depends(get_current_user)):
+    """Update project settings (topology, bandwidth, agents)."""
+    actor = user.username if user else "system"
+
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clauses = []
+    params = []
+    for key, val in updates.items():
+        set_clauses.append(f"{key} = %s")
+        params.append(val)
+    set_clauses.append("updated_at = now()")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)  # 404 check
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_projects
+                SET {', '.join(set_clauses)}
+                WHERE project_id = %s
+                RETURNING *
+            """, params + [project_id])
+            project = dict(cur.fetchone())
+
+    _log_activity(actor=actor, action="update", resource_type="migration_project",
+                  resource_id=project_id, details=updates)
+
+    return {"status": "ok", "project": _serialize_row(project)}
+
+
+@router.delete("/projects/{project_id}", dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_project(project_id: str, user = Depends(get_current_user)):
+    """Delete a migration project and all associated data (CASCADE)."""
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_projects WHERE project_id = %s", (project_id,))
+
+    _log_activity(actor=actor, action="delete", resource_type="migration_project",
+                  resource_id=project_id, resource_name=project["name"])
+
+    return {"status": "ok", "message": f"Project '{project['name']}' and all data deleted"}
+
+
+@router.post("/projects/{project_id}/archive", dependencies=[Depends(require_permission("migration", "admin"))])
+async def archive_project(project_id: str, user = Depends(get_current_user)):
+    """Archive project summary then purge full data."""
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Build summary
+            cur.execute("""
+                SELECT count(*) as total_vms,
+                       coalesce(sum(total_disk_gb), 0) as total_disk_gb,
+                       count(*) FILTER (WHERE risk_category = 'GREEN') as green,
+                       count(*) FILTER (WHERE risk_category = 'YELLOW') as yellow,
+                       count(*) FILTER (WHERE risk_category = 'RED') as red
+                FROM migration_vms WHERE project_id = %s
+            """, (project_id,))
+            vm_stats = dict(cur.fetchone())
+
+            cur.execute("SELECT count(*) as cnt FROM migration_tenants WHERE project_id = %s", (project_id,))
+            tenant_count = cur.fetchone()["cnt"]
+
+            summary = {
+                "name": project["name"],
+                "status_at_archive": project["status"],
+                "topology_type": project["topology_type"],
+                "vm_count": vm_stats["total_vms"],
+                "total_disk_tb": round(float(vm_stats["total_disk_gb"]) / 1024, 2),
+                "tenant_count": tenant_count,
+                "risk_green": vm_stats["green"],
+                "risk_yellow": vm_stats["yellow"],
+                "risk_red": vm_stats["red"],
+                "created_at": project["created_at"].isoformat() if project["created_at"] else None,
+                "archived_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            cur.execute("""
+                INSERT INTO migration_project_archives (original_project_id, name, summary, archived_by)
+                VALUES (%s, %s, %s, %s)
+            """, (project_id, project["name"], Json(summary), actor))
+
+            cur.execute("DELETE FROM migration_projects WHERE project_id = %s", (project_id,))
+
+    _log_activity(actor=actor, action="archive", resource_type="migration_project",
+                  resource_id=project_id, resource_name=project["name"], details=summary)
+
+    return {"status": "ok", "message": f"Project archived and data purged", "summary": summary}
+
+
+# =====================================================================
+# RVTOOLS UPLOAD & PARSE
+# =====================================================================
+
+@router.post("/projects/{project_id}/upload", dependencies=[Depends(require_permission("migration", "write"))])
+async def upload_rvtools(project_id: str, file: UploadFile = File(...), user = Depends(get_current_user)):
+    """Upload and parse an RVTools XLSX file."""
+    actor = user.username if user else "system"
+
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx/.xls files accepted")
+
+    # Read file into memory
+    contents = await file.read()
+    if len(contents) > 100 * 1024 * 1024:  # 100 MB limit
+        raise HTTPException(status_code=400, detail="File too large (max 100 MB)")
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        if project["status"] not in ("draft", "assessment"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot upload RVTools in status '{project['status']}'. Reset to draft first."
+            )
+
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Cannot read XLSX: {exc}")
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Clear existing data for re-import (including cohorts Γאפ full clean slate)
+            for table in (
+                "migration_wave_vms", "migration_waves", "migration_prep_tasks",
+                "migration_target_gaps", "migration_vm_snapshots", "migration_vm_nics",
+                "migration_vm_disks", "migration_vms", "migration_hosts",
+                "migration_clusters", "migration_tenants", "migration_cohorts",
+            ):
+                cur.execute(f"DELETE FROM {table} WHERE project_id = %s", (project_id,))
+
+            # ----- Parse vHost -----
+            vhost_count = 0
+            if "vHost" in wb.sheetnames:
+                vhost_count = _parse_vhost_sheet(wb["vHost"], project_id, cur)
+
+            # ----- Parse vCluster -----
+            vcluster_count = 0
+            if "vCluster" in wb.sheetnames:
+                vcluster_count = _parse_vcluster_sheet(wb["vCluster"], project_id, cur)
+
+            # ----- Parse vInfo (main) -----
+            vinfo_count = 0
+            if "vInfo" in wb.sheetnames:
+                vinfo_count = _parse_vinfo_sheet(wb["vInfo"], project_id, cur)
+            else:
+                raise HTTPException(status_code=400, detail="vInfo sheet not found in XLSX")
+
+            # ----- Parse vDisk -----
+            vdisk_count = 0
+            if "vDisk" in wb.sheetnames:
+                vdisk_count = _parse_vdisk_sheet(wb["vDisk"], project_id, cur)
+
+            # ----- Parse vNIC -----
+            vnic_count = 0
+            vnetwork_infrastructure_count = 0
+            if "vNetwork" in wb.sheetnames:
+                # Parse NICs/adapters from vNetwork sheet
+                vnic_count = _parse_vnic_sheet(wb["vNetwork"], project_id, cur)
+                # Parse network infrastructure from vNetwork sheet
+                vnetwork_infrastructure_count = _parse_vnetwork_sheet(wb["vNetwork"], project_id, cur)
+            elif "vNIC" in wb.sheetnames:
+                vnic_count = _parse_vnic_sheet(wb["vNIC"], project_id, cur)
+
+            # ----- Parse vSnapshot -----
+            vsnapshot_count = 0
+            if "vSnapshot" in wb.sheetnames:
+                vsnapshot_count = _parse_vsnapshot_sheet(wb["vSnapshot"], project_id, cur)
+
+            # ----- Parse vPartition (used disk space) -----
+            vpartition_count = 0
+            if "vPartition" in wb.sheetnames:
+                vpartition_count = _parse_vpartition_sheet(wb["vPartition"], project_id, cur)
+
+            # ----- Parse vCPU (CPU usage metrics) -----
+            vcpu_count = 0
+            if "vCPU" in wb.sheetnames:
+                vcpu_count = _parse_vcpu_sheet(wb["vCPU"], project_id, cur)
+
+            # ----- Parse vMemory (Memory usage metrics) -----
+            vmemory_count = 0
+            if "vMemory" in wb.sheetnames:
+                vmemory_count = _parse_vmemory_sheet(wb["vMemory"], project_id, cur)
+
+            # Update disk/nic/snapshot summaries on VMs
+            _update_vm_summaries(project_id, cur)
+
+            # Build network infrastructure summary
+            _build_network_summary(project_id, cur)
+
+            # Run tenant detection
+            _run_tenant_detection(project_id, cur)
+
+            # Clean up network mappings for source networks no longer in VM data
+            cur.execute("""
+                DELETE FROM migration_network_mappings
+                WHERE project_id = %s
+                  AND source_network_name NOT IN (
+                      SELECT DISTINCT network_name
+                      FROM migration_vms
+                      WHERE project_id = %s
+                        AND network_name IS NOT NULL
+                        AND network_name != ''
+                  )
+            """, (project_id, project_id))
+
+            # ---- Collect enriched stats from DB ----
+            # Power state breakdown
+            cur.execute("""
+                SELECT coalesce(lower(power_state), 'unknown') as state, count(*) as cnt
+                FROM migration_vms WHERE project_id = %s AND (template IS NOT TRUE)
+                GROUP BY coalesce(lower(power_state), 'unknown')
+            """, (project_id,))
+            power_state_counts = {r["state"]: r["cnt"] for r in cur.fetchall()}
+
+            # OS family breakdown
+            cur.execute("""
+                SELECT coalesce(os_family, 'unknown') as family, count(*) as cnt
+                FROM migration_vms WHERE project_id = %s AND (template IS NOT TRUE)
+                GROUP BY coalesce(os_family, 'unknown')
+            """, (project_id,))
+            os_family_counts = {r["family"]: r["cnt"] for r in cur.fetchall()}
+
+            # Tenant count
+            cur.execute("""
+                SELECT count(*) as cnt FROM migration_tenants WHERE project_id = %s
+            """, (project_id,))
+            tenant_count = cur.fetchone()["cnt"]
+
+            # Template count
+            cur.execute("""
+                SELECT count(*) as cnt FROM migration_vms
+                WHERE project_id = %s AND template IS TRUE
+            """, (project_id,))
+            template_count = cur.fetchone()["cnt"]
+
+            # Detect if vCD environment (any tenant detected via vcd_folder or vapp_name with org_vdc)
+            cur.execute("""
+                SELECT count(*) as cnt FROM migration_tenants
+                WHERE project_id = %s AND detection_method IN ('vcd_folder', 'vapp_name')
+                  AND org_vdc IS NOT NULL
+            """, (project_id,))
+            vcd_detected = cur.fetchone()["cnt"] > 0
+
+            # Update project metadata
+            stats = summarize_rvtools_stats(
+                vinfo_count, vdisk_count, vnic_count, vhost_count, vcluster_count, vsnapshot_count,
+                vpartition_count=vpartition_count,
+                vcpu_count=vcpu_count,
+                vmemory_count=vmemory_count,
+                power_state_counts=power_state_counts,
+                os_family_counts=os_family_counts,
+                tenant_count=tenant_count,
+                vcd_detected=vcd_detected,
+                template_count=template_count,
+            )
+            cur.execute("""
+                UPDATE migration_projects
+                SET rvtools_filename = %s,
+                    rvtools_uploaded_at = now(),
+                    rvtools_sheet_stats = %s,
+                    status = CASE WHEN status = 'draft' THEN 'assessment' ELSE status END,
+                    updated_at = now()
+                WHERE project_id = %s
+            """, (file.filename, Json(stats), project_id))
+
+
+        wb.close()
+
+    _log_activity(actor=actor, action="upload_rvtools", resource_type="migration_project",
+                  resource_id=project_id, details={"filename": file.filename, "stats": stats})
+
+    return {
+        "status": "ok",
+        "message": f"Parsed {file.filename}",
+        "stats": stats,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Re-parse ONLY the vMemory sheet (to fix active vs consumed without full re-upload)
+# ---------------------------------------------------------------------------
+
+@router.post("/projects/{project_id}/reparse-memory",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def reparse_memory(project_id: str, file: UploadFile = File(...), user = Depends(get_current_user)):
+    """
+    Re-parse ONLY the vMemory sheet from a fresh RVTools XLSX to update
+    memory_usage_percent and memory_usage_mb on existing VMs Γאפ without
+    wiping any other data (VMs, tenants, disks, etc.).
+
+    Use this when the initial upload captured 'Consumed' instead of 'Active',
+    giving all VMs ~100% memory utilisation.
+    """
+    actor = user.username if user else "system"
+
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx/.xls files accepted")
+
+    contents = await file.read()
+    if len(contents) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 100 MB)")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Cannot read XLSX: {exc}")
+
+        if "vMemory" not in wb.sheetnames:
+            raise HTTPException(status_code=400, detail="vMemory sheet not found in the uploaded file")
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Reset existing memory columns so COALESCE picks up fresh values
+            cur.execute("""
+                UPDATE migration_vms
+                SET memory_usage_percent = NULL, memory_usage_mb = NULL
+                WHERE project_id = %s
+            """, (project_id,))
+
+            updated = _parse_vmemory_sheet(wb["vMemory"], project_id, cur)
+
+        wb.close()
+
+    _log_activity(actor=actor, action="reparse_memory", resource_type="migration_project",
+                  resource_id=project_id, details={"filename": file.filename, "updated": updated})
+
+    return {
+        "status": "ok",
+        "message": f"Memory metrics updated for {updated} VMs from {file.filename}",
+        "updated_vms": updated,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Clear uploaded RVTools data (keep project settings)
+# ---------------------------------------------------------------------------
+
+@router.delete("/projects/{project_id}/rvtools",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def clear_rvtools_data(project_id: str, user = Depends(get_current_user)):
+    """Delete all uploaded RVTools data for a project (VMs, disks, NICs, etc.)
+    while preserving the project itself and its settings."""
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            # Delete cohorts first (FK: migration_tenants.cohort_id Γזע migration_cohorts.id)
+            # then the rest of the rvtools-derived tables.
+            for table in (
+                "migration_wave_vms", "migration_waves", "migration_prep_tasks",
+                "migration_target_gaps", "migration_vm_snapshots", "migration_vm_nics",
+                "migration_vm_disks", "migration_vms", "migration_hosts",
+                "migration_clusters", "migration_tenants", "migration_networks",
+                "migration_network_mappings", "migration_cohorts",
+            ):
+                cur.execute(f"DELETE FROM {table} WHERE project_id = %s", (project_id,))
+
+            cur.execute("""
+                UPDATE migration_projects SET
+                    rvtools_filename = NULL,
+                    rvtools_uploaded_at = NULL,
+                    rvtools_sheet_stats = '{}',
+                    status = 'draft',
+                    updated_at = now()
+                WHERE project_id = %s
+            """, (project_id,))
+
+    _log_activity(actor=actor, action="clear_rvtools", resource_type="migration_project",
+                  resource_id=project_id, resource_name=project["name"])
+
+    return {"status": "ok", "message": "All RVTools data cleared (including cohorts). Project reset to draft."}
+
+
+# ---------------------------------------------------------------------------
+# Sheet parsers
+# ---------------------------------------------------------------------------
+
+def _sheet_headers(sheet) -> List[str]:
+    """Extract header row from an openpyxl sheet."""
+    for row in sheet.iter_rows(min_row=1, max_row=1, values_only=True):
+        return [str(c) if c else "" for c in row]
+    return []
+
+
+def _sheet_rows(sheet) -> List[list]:
+    """All data rows (skip header)."""
+    rows = []
+    for i, row in enumerate(sheet.iter_rows(values_only=True)):
+        if i == 0:
+            continue
+        rows.append(list(row))
+    return rows
+
+
+def _safe_int(val, default=0) -> int:
+    if val is None or val == "":
+        return default
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(val, default=0.0) -> float:
+    if val is None or val == "":
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_bool(val) -> Optional[bool]:
+    if val is None or val == "":
+        return None
+    if isinstance(val, bool):
+        return val
+    return str(val).lower() in ("true", "yes", "1", "enabled")
+
+
+def _safe_str(val) -> str:
+    if val is None:
+        return ""
+    return str(val).strip()
+
+
+def _parse_vinfo_sheet(sheet, project_id: str, cur) -> int:
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers)
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        vm_name = _safe_str(d.get("vm_name"))
+        if not vm_name:
+            continue
+
+        guest_os = _safe_str(d.get("guest_os"))
+        guest_os_tools = _safe_str(d.get("guest_os_tools"))
+        os_family = classify_os_family(guest_os, guest_os_tools)
+        os_version = extract_os_version(guest_os, guest_os_tools)
+
+        # Disk sizes from vInfo (rough Γאפ refined after vDisk parse)
+        prov_mb = _safe_float(d.get("provisioned_mb"))
+        in_use_raw = _safe_float(d.get("in_use_mb"))
+        total_disk_gb = round(prov_mb / 1024, 2) if prov_mb else 0
+        in_use_gb = round(in_use_raw / 1024, 2) if in_use_raw else 0
+
+        cur.execute("""
+            INSERT INTO migration_vms (
+                project_id, vm_name, power_state, template,
+                guest_os, guest_os_tools, os_family, os_version,
+                folder_path, resource_pool, vapp_name, annotation,
+                cpu_count, ram_mb, total_disk_gb,
+                provisioned_mb, in_use_mb, in_use_gb,
+                host_name, cluster, datacenter,
+                vm_uuid, firmware, change_tracking, connection_state,
+                dns_name, primary_ip,
+                raw_data
+            ) VALUES (
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s,
+                %s
+            )
+            ON CONFLICT (project_id, vm_name) DO UPDATE SET
+                power_state = EXCLUDED.power_state,
+                template = EXCLUDED.template,
+                guest_os = EXCLUDED.guest_os,
+                guest_os_tools = EXCLUDED.guest_os_tools,
+                os_family = EXCLUDED.os_family,
+                os_version = EXCLUDED.os_version,
+                folder_path = EXCLUDED.folder_path,
+                resource_pool = EXCLUDED.resource_pool,
+                vapp_name = EXCLUDED.vapp_name,
+                annotation = EXCLUDED.annotation,
+                cpu_count = EXCLUDED.cpu_count,
+                ram_mb = EXCLUDED.ram_mb,
+                total_disk_gb = EXCLUDED.total_disk_gb,
+                provisioned_mb = EXCLUDED.provisioned_mb,
+                in_use_mb = EXCLUDED.in_use_mb,
+                in_use_gb = EXCLUDED.in_use_gb,
+                host_name = EXCLUDED.host_name,
+                cluster = EXCLUDED.cluster,
+                datacenter = EXCLUDED.datacenter,
+                vm_uuid = EXCLUDED.vm_uuid,
+                firmware = EXCLUDED.firmware,
+                change_tracking = EXCLUDED.change_tracking,
+                connection_state = EXCLUDED.connection_state,
+                dns_name = EXCLUDED.dns_name,
+                primary_ip = EXCLUDED.primary_ip,
+                raw_data = EXCLUDED.raw_data,
+                updated_at = now()
+        """, (
+            project_id, vm_name,
+            _safe_str(d.get("power_state")),
+            _safe_bool(d.get("template")),
+            guest_os, guest_os_tools, os_family, os_version,
+            _safe_str(d.get("folder_path")),
+            _safe_str(d.get("resource_pool")),
+            _safe_str(d.get("vapp_name")),
+            _safe_str(d.get("annotation")),
+            _safe_int(d.get("cpu_count")),
+            _safe_int(d.get("ram_mb")),
+            total_disk_gb,
+            _safe_int(prov_mb),
+            _safe_int(in_use_raw),
+            in_use_gb,
+            _safe_str(d.get("host_name")),
+            _safe_str(d.get("cluster")),
+            _safe_str(d.get("datacenter")),
+            _safe_str(d.get("vm_uuid")),
+            _safe_str(d.get("firmware")),
+            _safe_bool(d.get("change_tracking")),
+            _safe_str(d.get("connection_state")),
+            _safe_str(d.get("dns_name")),
+            _safe_str(d.get("primary_ip")),
+            Json({k: str(v) if v is not None else "" for k, v in d.items()}),
+        ))
+        count += 1
+
+    return count
+
+
+def _parse_vdisk_sheet(sheet, project_id: str, cur) -> int:
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="disk_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        vm_name = _safe_str(d.get("disk_vm_name") or d.get("vm_name"))
+        if not vm_name:
+            continue
+
+        cap_mb = _safe_float(d.get("capacity_mb"))
+        cap_gb = round(cap_mb / 1024, 2) if cap_mb else 0
+
+        cur.execute("""
+            INSERT INTO migration_vm_disks (
+                project_id, vm_name, disk_label, disk_path,
+                capacity_gb, thin_provisioned, eagerly_scrub, datastore,
+                raw_data
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            project_id, vm_name,
+            _safe_str(d.get("disk_label")),
+            _safe_str(d.get("disk_path")),
+            cap_gb,
+            _safe_bool(d.get("thin")),
+            _safe_bool(d.get("eagerly_scrub")),
+            _safe_str(d.get("datastore")),
+            Json({k: str(v) if v is not None else "" for k, v in d.items()}),
+        ))
+        count += 1
+
+    return count
+
+
+def _parse_vnic_sheet(sheet, project_id: str, cur) -> int:
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="nic_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        vm_name = _safe_str(d.get("nic_vm_name") or d.get("vm_name"))
+        if not vm_name:
+            continue
+
+        # Filter out literal "none" / "None" Γאפ RVTools writes this when a NIC has no network
+        raw_net = _safe_str(d.get("network_name"))
+        net_name = "" if raw_net.lower() == "none" else raw_net
+
+        cur.execute("""
+            INSERT INTO migration_vm_nics (
+                project_id, vm_name, nic_label, adapter_type,
+                network_name, connected, mac_address, ip_address,
+                raw_data
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            project_id, vm_name,
+            _safe_str(d.get("nic_label")),
+            _safe_str(d.get("adapter_type")),
+            net_name,
+            _safe_bool(d.get("nic_connected")),
+            _safe_str(d.get("mac_address")),
+            _safe_str(d.get("ip_address")),
+            Json({k: str(v) if v is not None else "" for k, v in d.items()}),
+        ))
+        count += 1
+
+    return count
+
+
+def _parse_vhost_sheet(sheet, project_id: str, cur) -> int:
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="host_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        host_name = _safe_str(d.get("host_host_name") or d.get("vm_name"))
+        if not host_name:
+            continue
+
+        # Try to parse NIC speed (could be "10000" Mbps or "10 Gbit")
+        nic_speed_raw = _safe_str(d.get("host_nic_speed"))
+        nic_speed_mbps = _safe_int(nic_speed_raw)
+        if "gbit" in nic_speed_raw.lower() or "gbps" in nic_speed_raw.lower():
+            nic_speed_mbps = _safe_int(nic_speed_raw.split()[0]) * 1000
+
+        cur.execute("""
+            INSERT INTO migration_hosts (
+                project_id, host_name, cluster, datacenter,
+                cpu_model, cpu_count, cpu_cores, cpu_threads,
+                ram_mb, nic_count, nic_speed_mbps,
+                esx_version, raw_data
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (project_id, host_name) DO UPDATE SET
+                cluster = EXCLUDED.cluster,
+                datacenter = EXCLUDED.datacenter,
+                cpu_model = EXCLUDED.cpu_model,
+                cpu_count = EXCLUDED.cpu_count,
+                cpu_cores = EXCLUDED.cpu_cores,
+                cpu_threads = EXCLUDED.cpu_threads,
+                ram_mb = EXCLUDED.ram_mb,
+                nic_count = EXCLUDED.nic_count,
+                nic_speed_mbps = EXCLUDED.nic_speed_mbps,
+                esx_version = EXCLUDED.esx_version,
+                raw_data = EXCLUDED.raw_data
+        """, (
+            project_id, host_name,
+            _safe_str(d.get("host_cluster")),
+            _safe_str(d.get("host_datacenter")),
+            _safe_str(d.get("host_cpu_model")),
+            _safe_int(d.get("host_cpu_count")),
+            _safe_int(d.get("host_cpu_cores")),
+            _safe_int(d.get("host_cpu_threads")),
+            _safe_int(d.get("host_ram_mb")),
+            _safe_int(d.get("host_nic_count")),
+            nic_speed_mbps,
+            _safe_str(d.get("host_esx_version")),
+            Json({k: str(v) if v is not None else "" for k, v in d.items()}),
+        ))
+        count += 1
+
+    return count
+
+
+def _parse_vcluster_sheet(sheet, project_id: str, cur) -> int:
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="cluster_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        name = _safe_str(d.get("cluster_name_col") or d.get("vm_name"))
+        if not name:
+            continue
+
+        cur.execute("""
+            INSERT INTO migration_clusters (
+                project_id, cluster_name, datacenter,
+                host_count, total_cpu_mhz, total_ram_mb,
+                ha_enabled, drs_enabled, raw_data
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (project_id, cluster_name) DO UPDATE SET
+                datacenter = EXCLUDED.datacenter,
+                host_count = EXCLUDED.host_count,
+                total_cpu_mhz = EXCLUDED.total_cpu_mhz,
+                total_ram_mb = EXCLUDED.total_ram_mb,
+                ha_enabled = EXCLUDED.ha_enabled,
+                drs_enabled = EXCLUDED.drs_enabled,
+                raw_data = EXCLUDED.raw_data
+        """, (
+            project_id, name,
+            _safe_str(d.get("cluster_datacenter")),
+            _safe_int(d.get("cluster_host_count")),
+            _safe_int(d.get("cluster_total_cpu")),
+            _safe_int(d.get("cluster_total_ram")),
+            _safe_bool(d.get("cluster_ha")),
+            _safe_bool(d.get("cluster_drs")),
+            Json({k: str(v) if v is not None else "" for k, v in d.items()}),
+        ))
+        count += 1
+
+    return count
+
+
+def _parse_vsnapshot_sheet(sheet, project_id: str, cur) -> int:
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="snap_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        vm_name = _safe_str(d.get("snap_vm_name") or d.get("vm_name"))
+        if not vm_name:
+            continue
+
+        # Parse snapshot date
+        snap_date = d.get("snap_created")
+        if snap_date and not isinstance(snap_date, datetime):
+            try:
+                snap_date = datetime.fromisoformat(str(snap_date))
+            except (ValueError, TypeError):
+                snap_date = None
+
+        size_raw = _safe_float(d.get("snap_size_mb"))
+        size_gb = round(size_raw / 1024, 2) if size_raw else 0
+
+        cur.execute("""
+            INSERT INTO migration_vm_snapshots (
+                project_id, vm_name, snapshot_name, description,
+                created_date, size_gb, is_current, raw_data
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            project_id, vm_name,
+            _safe_str(d.get("snap_name")),
+            _safe_str(d.get("snap_description")),
+            snap_date,
+            size_gb,
+            _safe_bool(d.get("snap_is_current")),
+            Json({k: str(v) if v is not None else "" for k, v in d.items()}),
+        ))
+        count += 1
+
+    return count
+
+
+# ---------------------------------------------------------------------------
+# vPartition parser Γאפ actual used disk space per VM partition
+# ---------------------------------------------------------------------------
+
+def _parse_vpartition_sheet(sheet, project_id: str, cur) -> int:
+    """
+    Parse the vPartition sheet from RVTools.
+    Aggregates consumed space per VM and updates migration_vms.partition_used_gb.
+    Also updates in_use_gb on migration_vms with partition data (more accurate than vInfo in_use_mb).
+    """
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="part_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    # Aggregate consumed MB per VM
+    vm_consumed: Dict[str, float] = {}
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        vm_name = _safe_str(d.get("part_vm_name") or d.get("vm_name"))
+        if not vm_name:
+            continue
+
+        consumed_mb = _safe_float(d.get("part_consumed_mb"))
+        capacity_mb = _safe_float(d.get("part_capacity_mb"))
+        free_mb = _safe_float(d.get("part_free_space_mb"))
+
+        # Some RVTools exports only have Free Space Γאפ derive consumed
+        if consumed_mb <= 0 and capacity_mb > 0 and free_mb >= 0:
+            consumed_mb = capacity_mb - free_mb
+
+        if consumed_mb > 0:
+            vm_consumed[vm_name] = vm_consumed.get(vm_name, 0) + consumed_mb
+        count += 1
+
+    # Bulk-update partition_used_gb and in_use_gb on VMs
+    for vm_name, total_consumed_mb in vm_consumed.items():
+        consumed_gb = round(total_consumed_mb / 1024, 2)
+        cur.execute("""
+            UPDATE migration_vms
+            SET partition_used_gb = %s,
+                in_use_gb = %s
+            WHERE project_id = %s AND vm_name = %s
+        """, (consumed_gb, consumed_gb, project_id, vm_name))
+
+    return count
+
+
+def _find_col(headers_lower: List[str], candidates: List[str]) -> int:
+    """Find column index by matching normalized header against candidate names. Returns -1 if not found."""
+    for candidate in candidates:
+        c = candidate.lower().strip()
+        for i, h in enumerate(headers_lower):
+            if h == c or h.replace(" ", "") == c.replace(" ", ""):
+                return i
+    return -1
+
+
+def _parse_vcpu_sheet(sheet, project_id: str, cur) -> int:
+    """
+    Parse the vCPU sheet from RVTools to extract CPU usage metrics.
+    Updates migration_vms with cpu_usage_percent and cpu_demand_mhz.
+    Uses direct column matching against known RVTools vCPU sheet header names.
+    """
+    headers = _sheet_headers(sheet)
+    headers_lower = [h.lower().strip() for h in headers]
+
+    # Find column indices by direct header matching - RVTools vCPU sheet uses these exact names
+    vm_col = _find_col(headers_lower, ["vm", "name", "vm name"])
+    # 'overall' = current CPU usage in MHz; 'cpus' = vCPU count for computing %
+    usage_col = _find_col(headers_lower, ["% usage", "usage %", "cpu usage %", "cpu usage", "average % usage", "avg % usage", "average usage %"])
+    demand_col = _find_col(headers_lower, ["demand mhz", "demand (mhz)", "cpu demand mhz", "demand", "cpu demand", "overall"])
+    cpus_col = _find_col(headers_lower, ["cpus", "cpu count", "vcpu count", "num cpus", "# cpus", "num vcpus"])
+
+
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        if vm_col < 0 or vm_col >= len(row_vals):
+            continue
+        vm_name = _safe_str(row_vals[vm_col])
+        if not vm_name:
+            continue
+
+        cpu_usage_pct = None
+        cpu_demand_mhz = None
+
+        if usage_col >= 0 and usage_col < len(row_vals):
+            v = row_vals[usage_col]
+            if v is not None and str(v).strip() not in ("", "None"):
+                try:
+                    cpu_usage_pct = float(v)
+                except (ValueError, TypeError):
+                    pass
+
+        if demand_col >= 0 and demand_col < len(row_vals):
+            v = row_vals[demand_col]
+            if v is not None and str(v).strip() not in ("", "None"):
+                try:
+                    cpu_demand_mhz = int(float(v))
+                except (ValueError, TypeError):
+                    pass
+
+        # If no direct % column, compute from demand_mhz / (cpus * ~2400 MHz) * 100
+        if cpu_usage_pct is None and cpu_demand_mhz is not None:
+            vcpus = None
+            if cpus_col >= 0 and cpus_col < len(row_vals):
+                cpuv = row_vals[cpus_col]
+                if cpuv is not None and str(cpuv).strip() not in ("", "None"):
+                    try:
+                        vcpus = int(float(cpuv))
+                    except (ValueError, TypeError):
+                        pass
+            if vcpus and vcpus > 0:
+                # 2400 MHz per vCPU is a reasonable ESXi average (modern hardware 2.0-3.5GHz)
+                cpu_usage_pct = round(min(cpu_demand_mhz / (vcpus * 2400.0) * 100, 100.0), 1)
+
+        if cpu_usage_pct is None and cpu_demand_mhz is None:
+            continue
+
+        cur.execute("""
+            UPDATE migration_vms
+            SET cpu_usage_percent = COALESCE(%s, cpu_usage_percent),
+                cpu_demand_mhz = COALESCE(%s, cpu_demand_mhz)
+            WHERE project_id = %s AND vm_name = %s
+        """, (cpu_usage_pct, cpu_demand_mhz, project_id, vm_name))
+
+        if cur.rowcount > 0:
+            count += 1
+
+    return count
+
+
+def _parse_vmemory_sheet(sheet, project_id: str, cur) -> int:
+    """
+    Parse the vMemory sheet from RVTools to extract memory usage metrics.
+    Updates migration_vms with memory_usage_percent and memory_usage_mb.
+    Uses direct column matching against known RVTools vMemory sheet header names.
+    """
+    headers = _sheet_headers(sheet)
+    headers_lower = [h.lower().strip() for h in headers]
+
+    # Find column indices by direct header matching - RVTools vMemory sheet uses these exact names
+    vm_col = _find_col(headers_lower, ["vm", "name", "vm name"])
+
+    # Explicit % column from vSphere real-time stats (may be absent in static RVTools exports)
+    usage_col = _find_col(headers_lower, ["% usage", "usage %", "memory usage %", "mem usage %",
+                                          "memory usage", "average % usage", "avg % usage",
+                                          "average usage %", "% mem", "mem %"])
+
+    # Prefer "Active (MiB)" Γאפ the guest working set actually being read/written.
+    # "Consumed (MiB)" is configured RAM + VMkernel overhead and is always ~100% for
+    # powered-on VMs regardless of real guest utilisation Γאפ do NOT use it for the % indicator.
+    usage_mb_col = _find_col(headers_lower, [
+        "active (mib)", "active mib", "active mb", "active",   # real guest working set Γזנ preferred
+        "usage mb", "usage (mb)", "memory usage mb", "mem usage mb", "used mb",
+        "consumed (mib)", "consumed mib", "consumed",           # fallback Γאפ always Γיט configured RAM
+    ])
+
+    # Separate lookup for consumed so we can still log/store it for reference (optional)
+    consumed_col = _find_col(headers_lower, ["consumed (mib)", "consumed mib", "consumed"])
+
+    # Configured memory size Γאפ needed to compute % when no explicit % column exists
+    # RVTools vMemory uses "Memory" (MB) or "Size MiB"
+    size_mib_col = _find_col(headers_lower, ["size mib", "size (mib)", "size mb",
+                                              "configured size", "memory size", "memory"])
+
+
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        if vm_col < 0 or vm_col >= len(row_vals):
+            continue
+        vm_name = _safe_str(row_vals[vm_col])
+        if not vm_name:
+            continue
+
+        memory_usage_pct = None
+        memory_usage_mb = None
+
+        if usage_col >= 0 and usage_col < len(row_vals):
+            v = row_vals[usage_col]
+            if v is not None and str(v).strip() not in ("", "None"):
+                try:
+                    memory_usage_pct = float(v)
+                except (ValueError, TypeError):
+                    pass
+
+        if usage_mb_col >= 0 and usage_mb_col < len(row_vals):
+            v = row_vals[usage_mb_col]
+            if v is not None and str(v).strip() not in ("", "None"):
+                try:
+                    memory_usage_mb = int(float(v))
+                except (ValueError, TypeError):
+                    pass
+
+        # Compute % from active / configured when no direct % column exists.
+        # If usage_mb came from "consumed" this will still be ~100% (expected); if from
+        # "active" it will correctly reflect the guest's real working-set utilisation.
+        if memory_usage_pct is None and memory_usage_mb is not None and size_mib_col >= 0 and size_mib_col < len(row_vals):
+            sz = row_vals[size_mib_col]
+            if sz is not None and str(sz).strip() not in ("", "None"):
+                try:
+                    size_mib = float(sz)
+                    if size_mib > 0:
+                        memory_usage_pct = round(memory_usage_mb / size_mib * 100, 1)
+                except (ValueError, TypeError):
+                    pass
+
+        if memory_usage_pct is None and memory_usage_mb is None:
+            continue
+
+        cur.execute("""
+            UPDATE migration_vms
+            SET memory_usage_percent = COALESCE(%s, memory_usage_percent),
+                memory_usage_mb = COALESCE(%s, memory_usage_mb)
+            WHERE project_id = %s AND vm_name = %s
+        """, (memory_usage_pct, memory_usage_mb, project_id, vm_name))
+
+        if cur.rowcount > 0:
+            count += 1
+
+    return count
+
+
+def _parse_vnetwork_sheet(sheet, project_id: str, cur) -> int:
+    """
+    Parse the vNetwork sheet from RVTools to extract network infrastructure data.
+    Updates migration_networks with subnet, gateway, DNS, and IP range information.
+    """
+    headers = _sheet_headers(sheet)
+    col_map = build_column_map(headers, prefix="net_")
+    rows = _sheet_rows(sheet)
+    count = 0
+
+    for row_vals in rows:
+        d = extract_row(row_vals, col_map)
+        network_name = _safe_str(d.get("net_network_name") or d.get("network_name"))
+        if not network_name:
+            continue
+
+        # Extract network infrastructure data
+        vlan_id = _safe_str(d.get("net_vlan_id"))
+        subnet = _safe_str(d.get("net_subnet"))
+        gateway = _safe_str(d.get("net_gateway"))
+        dns_servers = _safe_str(d.get("net_dns_servers"))
+        ip_range = _safe_str(d.get("net_ip_range"))
+
+        # Update existing network record or skip if not found
+        # (Networks should already exist from NIC parsing)
+        cur.execute("""
+            UPDATE migration_networks
+            SET subnet = %s,
+                gateway = %s,
+                dns_servers = %s,
+                ip_range = %s
+            WHERE project_id = %s AND network_name = %s
+        """, (subnet, gateway, dns_servers, ip_range, project_id, network_name))
+        
+        if cur.rowcount > 0:
+            count += 1
+
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Post-parse: update VM summaries (disk/nic/snapshot counts from detail tables)
+# ---------------------------------------------------------------------------
+
+def _update_vm_summaries(project_id: str, cur):
+    """Update disk_count, nic_count, snapshot_count etc from detail tables."""
+    # Disk totals
+    cur.execute("""
+        UPDATE migration_vms mv SET
+            total_disk_gb = sub.sum_gb,
+            disk_count = sub.cnt
+        FROM (
+            SELECT vm_name, coalesce(sum(capacity_gb), 0) as sum_gb, count(*) as cnt
+            FROM migration_vm_disks WHERE project_id = %s
+            GROUP BY vm_name
+        ) sub
+        WHERE mv.project_id = %s AND mv.vm_name = sub.vm_name
+    """, (project_id, project_id))
+
+    # NIC count
+    cur.execute("""
+        UPDATE migration_vms mv SET
+            nic_count = sub.cnt
+        FROM (
+            SELECT vm_name, count(*) as cnt
+            FROM migration_vm_nics WHERE project_id = %s
+            GROUP BY vm_name
+        ) sub
+        WHERE mv.project_id = %s AND mv.vm_name = sub.vm_name
+    """, (project_id, project_id))
+
+    # Snapshot count + oldest
+    cur.execute("""
+        UPDATE migration_vms mv SET
+            snapshot_count = sub.cnt,
+            snapshot_oldest_days = sub.oldest_days
+        FROM (
+            SELECT vm_name,
+                   count(*) as cnt,
+                   EXTRACT(DAY FROM now() - min(created_date))::int as oldest_days
+            FROM migration_vm_snapshots WHERE project_id = %s
+            GROUP BY vm_name
+        ) sub
+        WHERE mv.project_id = %s AND mv.vm_name = sub.vm_name
+    """, (project_id, project_id))
+
+    # Host VM counts
+    cur.execute("""
+        UPDATE migration_hosts mh SET
+            vm_count = sub.cnt
+        FROM (
+            SELECT host_name, count(*) as cnt
+            FROM migration_vms WHERE project_id = %s
+            GROUP BY host_name
+        ) sub
+        WHERE mh.project_id = %s AND mh.host_name = sub.host_name
+    """, (project_id, project_id))
+
+    # Network name from first NIC (primary network for each VM)
+    cur.execute("""
+        UPDATE migration_vms mv SET
+            network_name = sub.first_network
+        FROM (
+            SELECT DISTINCT ON (vm_name) vm_name, network_name as first_network
+            FROM migration_vm_nics
+            WHERE project_id = %s AND network_name IS NOT NULL AND network_name != ''
+            ORDER BY vm_name, id ASC
+        ) sub
+        WHERE mv.project_id = %s AND mv.vm_name = sub.vm_name
+    """, (project_id, project_id))
+
+    # If vPartition was NOT parsed, derive in_use_gb from vInfo in_use_mb
+    # (only for VMs where partition_used_gb is still 0)
+    cur.execute("""
+        UPDATE migration_vms
+        SET in_use_gb = CASE
+                WHEN in_use_mb > 0 THEN round(in_use_mb / 1024.0, 2)
+                ELSE total_disk_gb
+            END
+        WHERE project_id = %s
+          AND (partition_used_gb IS NULL OR partition_used_gb = 0)
+          AND (in_use_gb IS NULL OR in_use_gb = 0)
+    """, (project_id,))
+
+
+# ---------------------------------------------------------------------------
+# Network summary builder
+# ---------------------------------------------------------------------------
+
+def _build_network_summary(project_id: str, cur):
+    """Aggregate unique networks from NIC data, classify type, extract VLAN IDs."""
+    cur.execute("""
+        SELECT network_name, count(DISTINCT vm_name) as vm_count
+        FROM migration_vm_nics
+        WHERE project_id = %s AND network_name IS NOT NULL AND network_name != ''
+        GROUP BY network_name ORDER BY vm_count DESC
+    """, (project_id,))
+    networks = cur.fetchall()
+
+    for net in networks:
+        name = net["network_name"]
+        vlan_id = extract_vlan_id(name)
+        net_type = classify_network_type(name)
+        cur.execute("""
+            INSERT INTO migration_networks (project_id, network_name, vlan_id, network_type, vm_count)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (project_id, network_name) DO UPDATE SET
+                vlan_id = EXCLUDED.vlan_id,
+                network_type = EXCLUDED.network_type,
+                vm_count = EXCLUDED.vm_count,
+                updated_at = now()
+        """, (project_id, name, vlan_id, net_type, net["vm_count"]))
+
+
+# ---------------------------------------------------------------------------
+# Tenant detection
+# ---------------------------------------------------------------------------
+
+def _run_tenant_detection(project_id: str, cur):
+    """Run tenant detection for all VMs in a project."""
+    # Get detection config
+    cur.execute("""
+        SELECT detection_config FROM migration_tenant_rules
+        WHERE project_id = %s ORDER BY id DESC LIMIT 1
+    """, (project_id,))
+    row = cur.fetchone()
+    if row:
+        raw = row["detection_config"]
+        detection_config = raw if isinstance(raw, dict) else json.loads(raw)
+    else:
+        detection_config = {}
+
+    # Default detection: try vCD folder first, then vApp, folder path, resource pool
+    default_methods = [
+        {"method": "vcd_folder", "enabled": True},
+        {"method": "vapp_name", "enabled": True},
+        {"method": "folder_path", "enabled": True, "depth": 2},
+        {"method": "resource_pool", "enabled": True},
+        {"method": "cluster", "enabled": True},
+    ]
+
+    # Use stored methods, but ensure vcd_folder is present (may be missing in old configs)
+    methods = detection_config.get("methods", default_methods)
+    has_vcd_folder = any(m.get("method") == "vcd_folder" for m in methods)
+    if not has_vcd_folder:
+        methods.insert(0, {"method": "vcd_folder", "enabled": True})
+    detection_config["methods"] = methods
+
+    if "fallback_tenant" not in detection_config:
+        detection_config["fallback_tenant"] = "Unassigned"
+    if "orgvdc_detection" not in detection_config:
+        detection_config["orgvdc_detection"] = {"use_resource_pool": True, "use_folder_depth3": True}
+
+    # Get all VMs
+    cur.execute("""
+        SELECT vm_name, folder_path, resource_pool, vapp_name, annotation, cluster
+        FROM migration_vms
+        WHERE project_id = %s
+          AND (manually_assigned IS NULL OR manually_assigned = false)
+    """, (project_id,))
+    vms = [dict(row) for row in cur.fetchall()]
+
+    # Detect tenants
+    tenant_map: Dict[str, Dict] = {}
+    for vm in vms:
+        assignment = assign_tenant(vm, detection_config)
+
+        # For plain-vSphere detection methods (not vCD, not cluster-as-tenant),
+        # use the VM's cluster as the org_vdc discriminator when no org_vdc was
+        # already determined.  This prevents same-named tenants on different
+        # clusters from collapsing into one row, and also ensures the
+        # ON CONFLICT (project_id, tenant_name, org_vdc) upsert works correctly
+        # (PostgreSQL treats NULLs as distinct in unique constraints, so
+        # NULL-org_vdc rows would silently duplicate on every re-run).
+        if (
+            assignment.detection_method not in ("vcd_folder", "cluster")
+            and assignment.org_vdc is None
+            and vm.get("cluster")
+        ):
+            assignment.org_vdc = vm["cluster"]
+
+        # Update VM
+        cur.execute("""
+            UPDATE migration_vms SET
+                tenant_name = %s,
+                org_vdc = %s,
+                app_group = %s,
+                updated_at = now()
+            WHERE project_id = %s AND vm_name = %s
+        """, (assignment.tenant_name, assignment.org_vdc, assignment.app_group,
+              project_id, vm["vm_name"]))
+
+        # Aggregate tenant info
+        key = (assignment.tenant_name, assignment.org_vdc or "")
+        if key not in tenant_map:
+            tenant_map[key] = {
+                "tenant_name": assignment.tenant_name,
+                "org_vdc": assignment.org_vdc,
+                "detection_method": assignment.detection_method,
+                "vm_count": 0,
+            }
+        tenant_map[key]["vm_count"] += 1
+
+    # Upsert tenants Γאפ pre-seed target names from source name (confirmed=false = needs review)
+    for (tname, ovdc), info in tenant_map.items():
+        target_project = info["org_vdc"] or info["tenant_name"]
+        cur.execute("""
+            INSERT INTO migration_tenants
+                (project_id, tenant_name, org_vdc, detection_method, vm_count,
+                 target_domain_name, target_domain_description,
+                 target_project_name, target_display_name, target_confirmed)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, false)
+            ON CONFLICT (project_id, tenant_name, org_vdc) DO UPDATE SET
+                detection_method = EXCLUDED.detection_method,
+                vm_count = EXCLUDED.vm_count,
+                updated_at = now()
+                -- Do NOT overwrite target names / target_confirmed if already set by user
+        """, (project_id, info["tenant_name"], info["org_vdc"] or None,
+              info["detection_method"], info["vm_count"],
+              info["tenant_name"],
+              # target_domain_description: seeded as a description hint from domain name
+              info["tenant_name"],
+              # target_project_name: use OrgVDC if available (maps to PCD Project),
+              # else fall back to tenant_name (non-vCloud or unknown VDC)
+              target_project,
+              # target_display_name: seeded as a description hint from target_project_name
+              target_project))
+
+    # Update tenant disk/ram/vcpu/in_use totals
+    cur.execute("""
+        UPDATE migration_tenants mt SET
+            total_disk_gb = sub.disk_gb,
+            total_in_use_gb = sub.in_use_gb,
+            total_ram_mb = sub.ram_mb,
+            total_vcpu = sub.vcpu
+        FROM (
+            SELECT tenant_name, coalesce(org_vdc, '') as ovdc,
+                   coalesce(sum(total_disk_gb), 0) as disk_gb,
+                   coalesce(sum(in_use_gb), 0) as in_use_gb,
+                   coalesce(sum(ram_mb), 0) as ram_mb,
+                   coalesce(sum(cpu_count), 0) as vcpu
+            FROM migration_vms WHERE project_id = %s
+            GROUP BY tenant_name, coalesce(org_vdc, '')
+        ) sub
+        WHERE mt.project_id = %s
+          AND mt.tenant_name = sub.tenant_name
+          AND coalesce(mt.org_vdc, '') = sub.ovdc
+    """, (project_id, project_id))
+
+    # Remove stale auto-detected tenants whose org_vdc is NULL and now have
+    # zero VMs (they were split into cluster-specific rows by the fix above on
+    # re-detection).  Rows where the user already confirmed target settings are
+    # kept so no manual configuration is lost.
+    cur.execute("""
+        DELETE FROM migration_tenants
+        WHERE project_id = %s
+          AND org_vdc IS NULL
+          AND vm_count = 0
+          AND (target_confirmed IS NULL OR target_confirmed = false)
+    """, (project_id,))
+
+
+# =====================================================================
+# VM ENDPOINTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/vms", dependencies=[Depends(require_permission("migration", "read"))])
+async def list_vms(
+    project_id: str,
+    tenant: Optional[str] = Query(None),
+    risk: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None),
+    host: Optional[str] = Query(None),
+    cluster: Optional[str] = Query(None),
+    os_family: Optional[str] = Query(None),
+    os_version: Optional[str] = Query(None),
+    power_state: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    exclude_templates: bool = Query(True),
+    sort_by: str = Query("vm_name"),
+    sort_dir: str = Query("asc"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """List VMs in a migration project with filters."""
+    allowed_sorts = {
+        "vm_name", "risk_score", "total_disk_gb", "ram_mb", "cpu_count",
+        "tenant_name", "host_name", "cluster", "migration_mode", "risk_category",
+        "power_state", "priority", "nic_count", "disk_count", "in_use_mb",
+        "in_use_gb", "partition_used_gb", "network_name", "os_version",
+        "primary_ip", "dns_name", "os_family",
+    }
+    if sort_by not in allowed_sorts:
+        sort_by = "vm_name"
+    if sort_dir.lower() not in ("asc", "desc"):
+        sort_dir = "asc"
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            where = "WHERE project_id = %s"
+            params: list = [project_id]
+
+            if exclude_templates:
+                where += " AND (template IS NULL OR template = false)"
+            if tenant:
+                where += " AND tenant_name = %s"
+                params.append(tenant)
+            if risk:
+                where += " AND risk_category = %s"
+                params.append(risk.upper())
+            if mode:
+                where += " AND migration_mode = %s"
+                params.append(mode)
+            if host:
+                where += " AND host_name = %s"
+                params.append(host)
+            if cluster:
+                where += " AND cluster = %s"
+                params.append(cluster)
+            if os_family:
+                where += " AND os_family = %s"
+                params.append(os_family)
+            if os_version:
+                where += " AND os_version ILIKE %s"
+                params.append(f"%{os_version}%")
+            if power_state:
+                where += " AND power_state = %s"
+                params.append(power_state)
+            if search:
+                where += " AND (vm_name ILIKE %s OR dns_name ILIKE %s OR primary_ip ILIKE %s)"
+                pattern = f"%{search}%"
+                params.extend([pattern, pattern, pattern])
+
+            cur.execute(f"""
+                SELECT migration_vms.*,
+                       COALESCE((
+                           SELECT mc.include_in_plan
+                           FROM migration_clusters mc
+                           WHERE mc.project_id = migration_vms.project_id
+                             AND mc.cluster_name = migration_vms.cluster
+                           LIMIT 1
+                       ), true) AS cluster_in_scope
+                FROM migration_vms
+                {where}
+                ORDER BY {sort_by} {sort_dir}
+                LIMIT %s OFFSET %s
+            """, params + [limit, offset])
+            vms = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+            cur.execute(f"SELECT count(*) as cnt FROM migration_vms {where}", params)
+            total = cur.fetchone()["cnt"]
+
+    return {"status": "ok", "total": total, "vms": vms}
+
+
+# NOTE: /vms/reassign MUST be registered before /vms/{vm_id} so FastAPI
+# does not swallow the literal "reassign" segment as a vm_id path parameter.
+@router.patch("/projects/{project_id}/vms/reassign",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def reassign_vms(project_id: str, req: VMReassignRequest, user=Depends(get_current_user)):
+    """Manually move VMs to a different (or new) tenant.
+    Sets manually_assigned=true so re-running detection skips them.
+    Pass tenant_name=null to unassign (move to Unassigned group).
+    """
+    actor = user.username if user else "system"
+    if not req.vm_ids and not req.create_if_missing:
+        raise HTTPException(status_code=400, detail="vm_ids required")
+    if req.vm_ids and len(req.vm_ids) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 VMs per reassign request")
+    if req.create_if_missing and not (req.tenant_name or "").strip():
+        raise HTTPException(status_code=400, detail="tenant_name required when create_if_missing is true")
+    if req.tenant_name and len(req.tenant_name) > 255:
+        raise HTTPException(status_code=400, detail="tenant_name exceeds maximum length")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Collect current tenant+org_vdc for affected VMs so we can
+            # recalculate vm_count on both source and target tenant rows.
+            cur.execute("""
+                SELECT id, tenant_name, org_vdc FROM migration_vms
+                WHERE project_id = %s AND id = ANY(%s::bigint[])
+            """, (project_id, req.vm_ids))
+            old_rows = cur.fetchall()
+
+            # Determine the target org_vdc: use the majority org_vdc of the
+            # selected VMs (most common org_vdc wins, falls back to None).
+            target_org_vdc = None
+            if req.tenant_name and req.vm_ids:
+                cur.execute("""
+                    SELECT org_vdc FROM migration_vms
+                    WHERE project_id = %s AND id = ANY(%s::bigint[])
+                      AND org_vdc IS NOT NULL AND org_vdc != ''
+                    GROUP BY org_vdc ORDER BY count(*) DESC LIMIT 1
+                """, (project_id, req.vm_ids))
+                cl_row = cur.fetchone()
+                target_org_vdc = cl_row["org_vdc"] if cl_row else None
+
+            # Upsert the target tenant row when creating a new tenant.
+            # NOTE: ON CONFLICT with (project_id, tenant_name, org_vdc) silently
+            # fails when org_vdc IS NULL (two NULLs are not equal in PG unique
+            # indexes). Use WHERE NOT EXISTS with IS NOT DISTINCT FROM instead.
+            if req.tenant_name and req.create_if_missing:
+                cur.execute("""
+                    INSERT INTO migration_tenants
+                        (project_id, tenant_name, org_vdc, detection_method, vm_count,
+                         target_domain_name, target_project_name, target_display_name,
+                         target_domain_description, target_confirmed)
+                    SELECT %s, %s, %s, 'manual', 0, %s, %s, %s, %s, false
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM migration_tenants
+                        WHERE project_id = %s AND tenant_name = %s
+                          AND (org_vdc IS NOT DISTINCT FROM %s)
+                    )
+                """, (project_id, req.tenant_name, target_org_vdc,
+                      req.tenant_name, req.tenant_name, req.tenant_name, req.tenant_name,
+                      project_id, req.tenant_name, target_org_vdc))
+
+            # Move the VMs (only when vm_ids are provided).
+            if req.vm_ids:
+                cur.execute("""
+                    UPDATE migration_vms
+                    SET tenant_name     = %s,
+                        org_vdc         = %s,
+                        manually_assigned = true,
+                        updated_at      = now()
+                    WHERE project_id = %s AND id = ANY(%s::bigint[])
+                """, (req.tenant_name, target_org_vdc, project_id, req.vm_ids))
+
+            # Recalculate vm_count on all affected tenant rows (sources + target).
+            affected = set()
+            for r in old_rows:
+                if r["tenant_name"]:
+                    affected.add((r["tenant_name"], r["org_vdc"]))
+            if req.tenant_name:
+                affected.add((req.tenant_name, target_org_vdc))
+
+            for (tname, ovdc) in affected:
+                cur.execute("""
+                    UPDATE migration_tenants
+                    SET vm_count = (
+                        SELECT count(*) FROM migration_vms
+                        WHERE project_id = %s AND tenant_name = %s
+                          AND (org_vdc = %s OR (org_vdc IS NULL AND %s IS NULL))
+                    )
+                    WHERE project_id = %s AND tenant_name = %s
+                      AND (org_vdc = %s OR (org_vdc IS NULL AND %s IS NULL))
+                """, (project_id, tname, ovdc, ovdc,
+                      project_id, tname, ovdc, ovdc))
+
+    _log_activity(actor=actor, action="reassign_vms", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"vm_ids": req.vm_ids, "target_tenant": req.tenant_name})
+    return {"status": "ok", "moved": len(req.vm_ids) if req.vm_ids else 0}
+
+
+@router.patch("/projects/{project_id}/vms/{vm_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_vm(project_id: str, vm_id: str, req: UpdateVMRequest, user = Depends(get_current_user)):
+    """Update VM overrides (exclude, mode, priority, tenant)."""
+    actor = user.username if user else "system"
+
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clauses = [f"{k} = %s" for k in updates]
+    set_clauses.append("updated_at = now()")
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_vms
+                SET {', '.join(set_clauses)}
+                WHERE project_id = %s AND vm_id = %s
+                RETURNING *
+            """, params + [project_id, vm_id])
+            vm = cur.fetchone()
+            if not vm:
+                raise HTTPException(status_code=404, detail="VM not found")
+
+    _log_activity(actor=actor, action="update_vm", resource_type="migration_vm",
+                  resource_id=vm_id, details=updates)
+
+    return {"status": "ok", "vm": _serialize_row(dict(vm))}
+
+
+# =====================================================================
+# TENANT ENDPOINTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/tenants", dependencies=[Depends(require_permission("migration", "read"))])
+async def list_tenants(project_id: str):
+    # (body unchanged Γאפ see below)
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                WITH vm_agg AS (
+                    -- Aggregate actual CPU/RAM usage from per-VM RVTools data.
+                    -- Disk is taken directly from migration_tenants.total_in_use_gb
+                    -- (set per-row at import time) to avoid double-counting when
+                    -- multiple tenant rows share the same tenant_name.
+                    SELECT
+                        project_id,
+                        tenant_name,
+                        ROUND(SUM(cpu_count * COALESCE(cpu_usage_percent, 0) / 100.0)::numeric, 1)
+                            AS used_vcpu,
+                        ROUND((
+                            SUM(COALESCE(
+                                memory_usage_mb,
+                                ram_mb * COALESCE(memory_usage_percent, 0) / 100.0,
+                                0
+                            )) / 1024.0
+                        )::numeric, 1) AS used_ram_gb
+                    FROM migration_vms
+                    WHERE project_id = %s
+                    GROUP BY project_id, tenant_name
+                )
+                SELECT
+                    t.*,
+                    COALESCE(a.used_vcpu,    0) AS used_vcpu,
+                    COALESCE(a.used_ram_gb,  0) AS used_ram_gb,
+                    -- Disk: use the per-row total_in_use_gb from the tenant table
+                    -- (populated at RVTools import, correct even with duplicate tenant_names)
+                    COALESCE(t.total_in_use_gb, 0) AS used_disk_gb,
+                    CASE
+                        WHEN COALESCE(t.total_in_use_gb, 0) > 0
+                        THEN ROUND(t.total_in_use_gb::numeric / 100.0, 1)
+                        ELSE NULL
+                    END AS est_migration_hours,
+                    (
+                        SELECT json_object_agg(nt, cnt)
+                        FROM (
+                            SELECT mn.network_type AS nt,
+                                   COUNT(DISTINCT mn.network_name) AS cnt
+                            FROM migration_vm_nics nic2
+                            JOIN migration_networks mn
+                                ON mn.project_id = nic2.project_id
+                               AND mn.network_name = nic2.network_name
+                            JOIN migration_vms v2
+                                ON v2.project_id = nic2.project_id
+                               AND v2.vm_name = nic2.vm_name
+                            WHERE v2.tenant_name = t.tenant_name
+                              AND v2.project_id  = t.project_id
+                              AND mn.network_type IS NOT NULL
+                            GROUP BY mn.network_type
+                        ) _nt
+                    ) AS network_type_counts,
+                    (
+                        SELECT COALESCE(
+                            array_agg(DISTINCT v2.cluster ORDER BY v2.cluster)
+                            FILTER (WHERE v2.cluster IS NOT NULL AND v2.cluster <> ''),
+                            ARRAY[]::text[]
+                        )
+                        FROM migration_vms v2
+                        WHERE v2.tenant_name = t.tenant_name
+                          AND v2.project_id  = t.project_id
+                          AND (v2.org_vdc = t.org_vdc OR (v2.org_vdc IS NULL AND t.org_vdc IS NULL))
+                    ) AS vm_clusters
+                FROM migration_tenants t
+                LEFT JOIN vm_agg a
+                    ON a.tenant_name = t.tenant_name
+                   AND a.project_id  = t.project_id
+                WHERE t.project_id = %s
+                ORDER BY t.vm_count DESC
+            """, (project_id, project_id))
+            tenants = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+            # Synthetic row for VMs that were never assigned to any tenant.
+            # These are invisible to tenant-based scoping, so we surface them
+            # explicitly so the operator knows they exist.
+            cur.execute("""
+                SELECT
+                    count(*) AS vm_count,
+                    COALESCE(
+                        array_agg(DISTINCT cluster ORDER BY cluster)
+                        FILTER (WHERE cluster IS NOT NULL AND cluster <> ''),
+                        ARRAY[]::text[]
+                    ) AS vm_clusters
+                FROM migration_vms
+                WHERE project_id = %s
+                  AND (tenant_name IS NULL OR tenant_name = '')
+                  AND (template IS NULL OR template = false)
+            """, (project_id,))
+            unassigned_row = cur.fetchone()
+            if unassigned_row and unassigned_row["vm_count"] > 0:
+                tenants.append({
+                    "id": None,
+                    "project_id": project_id,
+                    "tenant_name": "(Unassigned)",
+                    "org_vdc": None,
+                    "vm_count": unassigned_row["vm_count"],
+                    "vm_clusters": list(unassigned_row["vm_clusters"] or []),
+                    "include_in_plan": False,
+                    "exclude_reason": "VMs with no tenant detected Γאפ run Re-run Detection or check RVTools data",
+                    "detection_method": None,
+                    "total_vcpu": None,
+                    "total_ram_mb": None,
+                    "total_disk_gb": None,
+                    "total_in_use_gb": None,
+                    "used_vcpu": None,
+                    "used_ram_gb": None,
+                    "used_disk_gb": None,
+                    "est_migration_hours": None,
+                    "network_type_counts": None,
+                    "is_unassigned_group": True,
+                })
+    return {"status": "ok", "tenants": tenants}
+
+
+# ---------------------------------------------------------------------------
+# Create empty tenant (vSphere: no detection rule needed; vCD: optional rule)
+# ---------------------------------------------------------------------------
+
+class CreateTenantRequest(BaseModel):
+    tenant_name: str
+    detection_method: Optional[Literal["vcd_folder", "vapp_name", "folder_path", "resource_pool", "cluster"]] = None
+    pattern_value: Optional[str] = None
+
+
+@router.post("/projects/{project_id}/tenants",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_tenant(project_id: str, req: CreateTenantRequest, user=Depends(get_current_user)):
+    """Create an empty tenant (org_vdc=NULL).
+    For vSphere: just provide tenant_name Γאפ no detection rule needed.
+    For vCD:     detection_method + pattern_value are optional but allow
+                 Re-run Detection to auto-assign matching VMs.
+    """
+    actor = user.username if user else "system"
+    tenant_name = (req.tenant_name or "").strip()
+    if not tenant_name:
+        raise HTTPException(status_code=400, detail="tenant_name required")
+    if len(tenant_name) > 255:
+        raise HTTPException(status_code=400, detail="tenant_name exceeds maximum length")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # NULL-safe check Γאפ PostgreSQL treats two NULLs as DISTINCT in a
+            # UNIQUE index, so ON CONFLICT would silently create duplicates.
+            cur.execute("""
+                INSERT INTO migration_tenants
+                    (project_id, tenant_name, org_vdc, detection_method, vm_count,
+                     target_domain_name, target_project_name, target_display_name,
+                     target_domain_description, target_confirmed)
+                SELECT %s, %s, NULL, 'manual', 0, %s, %s, %s, %s, false
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM migration_tenants
+                    WHERE project_id = %s AND tenant_name = %s AND org_vdc IS NULL
+                )
+                RETURNING *
+            """, (project_id, tenant_name,
+                  tenant_name, tenant_name, tenant_name, tenant_name,
+                  project_id, tenant_name))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=409,
+                                    detail=f"Tenant '{tenant_name}' already exists in this project")
+
+            # Optionally register a detection rule so Re-run Detection assigns
+            # matching VMs to this tenant automatically.
+            if req.detection_method and (req.pattern_value or "").strip():
+                cur.execute("""
+                    SELECT id, detection_config FROM migration_tenant_rules
+                    WHERE project_id = %s ORDER BY id DESC LIMIT 1
+                """, (project_id,))
+                rules_row = cur.fetchone()
+                if rules_row:
+                    raw = rules_row["detection_config"]
+                    config = raw if isinstance(raw, dict) else json.loads(raw)
+                    custom_rules = config.get("custom_rules", [])
+                    custom_rules.append({
+                        "tenant_name": tenant_name,
+                        "field": req.detection_method,
+                        "pattern": req.pattern_value.strip(),
+                    })
+                    config["custom_rules"] = custom_rules
+                    cur.execute("""
+                        UPDATE migration_tenant_rules SET detection_config = %s
+                        WHERE id = %s
+                    """, (json.dumps(config), rules_row["id"]))
+
+    _log_activity(actor=actor, action="create_tenant", resource_type="migration_tenant",
+                  resource_id=project_id,
+                  details={"tenant_name": tenant_name, "detection_method": req.detection_method})
+    return {"status": "ok", "tenant": _serialize_row(dict(row))}
+
+
+@router.patch("/projects/{project_id}/tenants/{tenant_id:int}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_tenant(project_id: str, tenant_id: int, req: UpdateTenantRequest, user = Depends(get_current_user)):
+    actor = user.username if user else "system"
+
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clauses = [f"{k} = %s" for k in updates]
+    set_clauses.append("updated_at = now()")
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get old tenant name first (for VM cascade)
+            cur.execute("SELECT tenant_name FROM migration_tenants WHERE id = %s AND project_id = %s",
+                        (tenant_id, project_id))
+            old_row = cur.fetchone()
+            if not old_row:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            old_tenant_name = old_row["tenant_name"]
+
+            cur.execute(f"""
+                UPDATE migration_tenants
+                SET {', '.join(set_clauses)}
+                WHERE id = %s AND project_id = %s
+                RETURNING *
+            """, params + [tenant_id, project_id])
+            tenant = cur.fetchone()
+
+            # If tenant_name changed, update VMs too (use OLD name for the WHERE)
+            if "tenant_name" in updates and updates["tenant_name"] != old_tenant_name:
+                cur.execute("""
+                    UPDATE migration_vms SET tenant_name = %s, updated_at = now()
+                    WHERE project_id = %s AND tenant_name = %s
+                """, (updates["tenant_name"], project_id, old_tenant_name))
+
+
+    _log_activity(actor=actor, action="update_tenant", resource_type="migration_tenant",
+                  resource_id=str(tenant_id), details=updates)
+
+    return {"status": "ok", "tenant": _serialize_row(dict(tenant))}
+
+
+# =====================================================================
+# NETWORK ENDPOINTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/networks", dependencies=[Depends(require_permission("migration", "read"))])
+async def list_networks(project_id: str):
+    """List network infrastructure summary for a migration project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT mn.*,
+                       string_agg(DISTINCT t.tenant_name, ', ' ORDER BY t.tenant_name) as tenant_names,
+                       count(DISTINCT t.tenant_name) as tenant_count
+                FROM migration_networks mn
+                LEFT JOIN migration_vm_nics nic ON mn.project_id = nic.project_id 
+                    AND mn.network_name = nic.network_name
+                LEFT JOIN migration_vms vm ON nic.project_id = vm.project_id 
+                    AND nic.vm_name = vm.vm_name
+                    AND NOT COALESCE(vm.exclude_from_migration, false)
+                    AND NOT COALESCE(vm.template, false)
+                LEFT JOIN migration_tenants t ON t.project_id = vm.project_id
+                    AND t.tenant_name = vm.tenant_name
+                    AND COALESCE(t.include_in_plan, true) = true
+                WHERE mn.project_id = %s
+                GROUP BY mn.id, mn.project_id, mn.network_name, mn.vlan_id, mn.network_type, 
+                         mn.vm_count, mn.subnet, mn.gateway, mn.dns_servers, mn.ip_range, 
+                         mn.pcd_target, mn.notes, mn.created_at, mn.updated_at
+                HAVING COUNT(DISTINCT vm.id) > 0
+                ORDER BY COUNT(DISTINCT vm.id) DESC
+            """, (project_id,))
+            networks = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "networks": networks}
+
+
+@router.post("/projects/{project_id}/networks/reclassify",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def reclassify_networks(project_id: str, user=Depends(get_current_user)):
+    """
+    Re-apply classify_network_type() to all existing networks in this project.
+    Useful after updating classification patterns (e.g. adding 'routed' to NSX-T patterns).
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            _build_network_summary(project_id, cur)
+    _log_activity(actor=actor, action="reclassify_networks", resource_type="migration_network",
+                  resource_id=project_id, details={"reason": "manual reclassify"})
+    return {"status": "ok", "message": "Network types refreshed from current classification rules"}
+
+
+# ---------------------------------------------------------------------------
+# VMware Dependency Graph  (GET /projects/{project_id}/graph)
+# Returns the same { nodes, edges, root, truncated } format as /api/graph so
+# the DependencyGraph component can render it unchanged.
+# Nodes are built from RVTools import data (migration_vms, migration_vm_nics,
+# migration_networks, migration_tenants) Γאפ NOT from OpenStack/PCD.
+# ---------------------------------------------------------------------------
+@router.get("/projects/{project_id}/graph", dependencies=[Depends(require_permission("migration", "read"))])
+async def get_migration_vmware_graph(
+    project_id: str,
+    tenant_id: int = Query(..., description="migration_tenants.id to centre the graph on"),
+):
+    """
+    Build a VMware-side dependency graph for a single tenant in a migration project.
+
+    Node types returned: 'tenant' (Org-vDC), 'vm', 'network' (portgroup/VLAN).
+    Edges: tenantΓזעvm (contains), vmΓזעnetwork (NIC), vmΓזעvm (explicit dependency),
+           networkΓזעtenant (cross-tenant: other tenants sharing the same portgroup).
+
+    migration_overlay.status on VM nodes:
+      complete               Γזע confirmed  (green)
+      in_progress/validating/pre_checks_passed Γזע pending (amber)
+      failed/cancelled       Γזע missing    (red)
+      not_started            Γזע null       (no ring Γאפ not yet started is normal)
+    """
+    MAX_NODES = 150
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+            # --- Root tenant node ---
+            cur.execute(
+                "SELECT id, tenant_name, target_project_name, target_confirmed, include_in_plan "
+                "FROM migration_tenants WHERE project_id = %s AND id = %s",
+                (project_id, tenant_id),
+            )
+            tenant = cur.fetchone()
+            if not tenant:
+                raise HTTPException(status_code=404, detail="Tenant not found in this project")
+
+            root_id = f"tenant:{tenant['id']}"
+            if not tenant["include_in_plan"]:
+                t_overlay = {"status": "missing"}
+            elif tenant["target_confirmed"]:
+                t_overlay = {"status": "confirmed"}
+            else:
+                t_overlay = {"status": "pending"}
+
+            nodes: dict = {}
+            edges: list = []
+            nodes[root_id] = {
+                "id": root_id,
+                "type": "tenant",
+                "label": tenant["tenant_name"],
+                "status": tenant["target_project_name"] or "",
+                "badges": [] if tenant["include_in_plan"] else ["excluded"],
+                "db_id": str(tenant["id"]),
+                "migration_overlay": t_overlay,
+            }
+
+            # --- VMs in this tenant (non-template) ---
+            cur.execute("""
+                SELECT id, vm_name, migration_status, power_state, risk_score,
+                       exclude_from_migration, primary_ip, guest_os, cpu_count, ram_mb,
+                       cpu_usage_percent, memory_usage_percent
+                FROM migration_vms
+                WHERE project_id = %s AND tenant_name = %s AND (template IS NOT TRUE)
+                ORDER BY vm_name
+            """, (project_id, tenant["tenant_name"]))
+            all_vms = cur.fetchall()
+
+            vm_ids_in_tenant: list = []
+            vm_names_in_tenant: list = []
+            truncated = False
+
+            for vm in all_vms:
+                if len(nodes) >= MAX_NODES:
+                    truncated = True
+                    break
+                node_id = f"vm:{vm['id']}"
+                vm_ids_in_tenant.append(vm["id"])
+                vm_names_in_tenant.append(vm["vm_name"])
+
+                status = vm["migration_status"] or "not_started"
+                if status == "complete":
+                    overlay = {"status": "confirmed"}
+                elif status in ("in_progress", "validating", "pre_checks_passed"):
+                    overlay = {"status": "pending"}
+                elif status in ("failed", "cancelled"):
+                    overlay = {"status": "missing"}
+                else:
+                    overlay = None  # not_started: no ring
+
+                badges = []
+                if vm["risk_score"] and float(vm["risk_score"]) >= 70:
+                    badges.append("risk_high")
+                if vm["exclude_from_migration"]:
+                    badges.append("excluded")
+                if vm["power_state"] and vm["power_state"].lower() == "poweredoff":
+                    badges.append("power_off")
+
+                # Build multi-line status string:
+                # Line 1: IP (+ migration status if not the default)
+                # Line 2: allocated vCPU / RAM
+                # Line 3: CPU % / MEM % usage (if available)
+                ip_str     = vm["primary_ip"] or ""
+                mig_label  = status if status != "not_started" else ""
+                line1      = " ┬╖ ".join(p for p in [ip_str, mig_label] if p)
+
+                line2 = ""
+                if vm["cpu_count"] or vm["ram_mb"]:
+                    cpu_part = f"{vm['cpu_count']} vCPU" if vm["cpu_count"] else ""
+                    ram_part = f"{vm['ram_mb'] / 1024:.1f} GB RAM" if vm["ram_mb"] else ""
+                    line2 = " ┬╖ ".join(p for p in [cpu_part, ram_part] if p)
+
+                usage_parts = []
+                if vm["cpu_usage_percent"] is not None:
+                    usage_parts.append(f"CPU {float(vm['cpu_usage_percent']):.0f}%")
+                if vm["memory_usage_percent"] is not None:
+                    usage_parts.append(f"MEM {float(vm['memory_usage_percent']):.0f}%")
+                line3 = " ┬╖ ".join(usage_parts)
+
+                vm_status = "\n".join(l for l in [line1, line2, line3] if l)
+
+                nodes[node_id] = {
+                    "id": node_id,
+                    "type": "vm",
+                    "label": vm["vm_name"],
+                    "status": vm_status,
+                    "badges": badges,
+                    "db_id": str(vm["id"]),
+                    "migration_overlay": overlay,
+                }
+                edges.append({"source": root_id, "target": node_id, "label": "contains"})
+
+            # --- Disk nodes (from RVTools vDisk sheet) ---
+            if vm_names_in_tenant:
+                cur.execute("""
+                    SELECT d.id, d.vm_name, d.disk_label, d.capacity_gb, d.consumed_gb,
+                           d.datastore, d.thin_provisioned, v.id AS vm_pk
+                    FROM migration_vm_disks d
+                    JOIN migration_vms v ON v.vm_name = d.vm_name AND v.project_id = d.project_id
+                    WHERE d.project_id = %s
+                      AND d.vm_name = ANY(%s)
+                    ORDER BY d.vm_name, d.disk_label
+                """, (project_id, vm_names_in_tenant))
+                for disk in cur.fetchall():
+                    if len(nodes) >= MAX_NODES:
+                        truncated = True
+                        break
+                    disk_node_id = f"disk:{disk['id']}"
+                    # Line 1: allocated size + used size (with %)
+                    cap_gb = float(disk["capacity_gb"]) if disk["capacity_gb"] else None
+                    used_gb = float(disk["consumed_gb"]) if disk["consumed_gb"] else None
+                    alloc_str = f"{cap_gb:.0f} GB allocated" if cap_gb else ""
+                    if used_gb is not None:
+                        if cap_gb:
+                            pct = used_gb / cap_gb * 100
+                            used_str = f"{used_gb:.0f} GB used ({pct:.0f}%)"
+                        else:
+                            used_str = f"{used_gb:.0f} GB used"
+                    else:
+                        used_str = ""
+                    disk_line1 = " ┬╖ ".join(p for p in [alloc_str, used_str] if p)
+                    # Line 2: provisioning type + datastore
+                    thin_str = "thin" if disk["thin_provisioned"] else "thick"
+                    ds = disk["datastore"] or ""
+                    disk_line2 = " ┬╖ ".join(p for p in [thin_str, ds] if p)
+                    disk_status = "\n".join(l for l in [disk_line1, disk_line2] if l)
+                    nodes[disk_node_id] = {
+                        "id": disk_node_id,
+                        "type": "disk",
+                        "label": disk["disk_label"] or f"Disk {disk['id']}",
+                        "status": disk_status,
+                        "badges": [],
+                        "db_id": str(disk["id"]),
+                        "migration_overlay": None,
+                    }
+                    vm_nid = f"vm:{disk['vm_pk']}"
+                    if vm_nid in nodes:
+                        edges.append({"source": vm_nid, "target": disk_node_id, "label": "disk"})
+
+            # --- Explicit VMΓזעVM dependencies (within this tenant) ---
+            if vm_ids_in_tenant:
+                cur.execute("""
+                    SELECT vm_id, depends_on_vm_id, dependency_type
+                    FROM migration_vm_dependencies
+                    WHERE project_id = %s
+                      AND vm_id = ANY(%s)
+                      AND depends_on_vm_id = ANY(%s)
+                """, (project_id, vm_ids_in_tenant, vm_ids_in_tenant))
+                for dep in cur.fetchall():
+                    edges.append({
+                        "source": f"vm:{dep['vm_id']}",
+                        "target": f"vm:{dep['depends_on_vm_id']}",
+                        "label": dep["dependency_type"] or "depends_on",
+                    })
+
+            # --- Network nodes (portgroups used by VMs in this tenant) ---
+            network_names_shown: set = set()
+            if vm_names_in_tenant:
+                cur.execute("""
+                    SELECT DISTINCT n.id, n.network_name, n.vlan_id, n.network_type
+                    FROM migration_networks n
+                    JOIN migration_vm_nics nic
+                        ON nic.network_name = n.network_name AND nic.project_id = n.project_id
+                    WHERE n.project_id = %s
+                      AND nic.vm_name = ANY(%s)
+                    ORDER BY n.network_name
+                """, (project_id, vm_names_in_tenant))
+                networks = cur.fetchall()
+
+                for net in networks:
+                    if len(nodes) >= MAX_NODES:
+                        truncated = True
+                        break
+                    net_node_id = f"network:{net['id']}"
+                    vlan_sfx = f" (VLAN {net['vlan_id']})" if net["vlan_id"] else ""
+                    nodes[net_node_id] = {
+                        "id": net_node_id,
+                        "type": "network",
+                        "label": f"{net['network_name']}{vlan_sfx}",
+                        "status": net["network_type"] or "",
+                        "badges": [],
+                        "db_id": str(net["id"]),
+                        "migration_overlay": None,
+                    }
+                    network_names_shown.add(net["network_name"])
+
+                    # Edges: vm Γזע network for each NIC in this tenant
+                    cur.execute("""
+                        SELECT DISTINCT v.id
+                        FROM migration_vms v
+                        JOIN migration_vm_nics nic
+                            ON nic.vm_name = v.vm_name AND nic.project_id = v.project_id
+                        WHERE v.project_id = %s
+                          AND v.id = ANY(%s)
+                          AND nic.network_name = %s
+                    """, (project_id, vm_ids_in_tenant, net["network_name"]))
+                    for row in cur.fetchall():
+                        vm_nid = f"vm:{row['id']}"
+                        if vm_nid in nodes:
+                            edges.append({"source": vm_nid, "target": net_node_id, "label": "nic"})
+
+            # --- Cross-tenant connections (other tenants sharing the same portgroups) ---
+            if network_names_shown:
+                cur.execute("""
+                    SELECT mt.id, mt.tenant_name, n.network_name,
+                           COUNT(DISTINCT v.id) AS vm_count
+                    FROM migration_tenants mt
+                    JOIN migration_vms v ON v.tenant_name = mt.tenant_name
+                        AND v.project_id = mt.project_id
+                        AND NOT COALESCE(v.template, false)
+                    JOIN migration_vm_nics nic ON nic.vm_name = v.vm_name
+                        AND nic.project_id = v.project_id
+                    JOIN migration_networks n ON n.network_name = nic.network_name
+                        AND n.project_id = nic.project_id
+                    WHERE mt.project_id = %s
+                      AND mt.id != %s
+                      AND n.network_name = ANY(%s)
+                    GROUP BY mt.id, mt.tenant_name, n.network_name
+                    ORDER BY vm_count DESC
+                """, (project_id, tenant_id, list(network_names_shown)))
+
+                # Map network_name Γזע net_node_id for edge building
+                net_name_to_node_id = {
+                    n["label"].split(" (VLAN")[0]: nid
+                    for nid, n in nodes.items() if n["type"] == "network"
+                }
+
+                for row in cur.fetchall():
+                    if len(nodes) >= MAX_NODES:
+                        truncated = True
+                        break
+                    cross_nid = f"tenant:{row['id']}"
+                    if cross_nid not in nodes:
+                        nodes[cross_nid] = {
+                            "id": cross_nid,
+                            "type": "tenant",
+                            "label": row["tenant_name"],
+                            "status": "cross-tenant",
+                            "badges": ["cross_tenant"],
+                            "db_id": str(row["id"]),
+                            "migration_overlay": None,
+                        }
+                    net_nid = net_name_to_node_id.get(row["network_name"])
+                    if net_nid:
+                        already = any(
+                            e["source"] == net_nid and e["target"] == cross_nid
+                            for e in edges
+                        )
+                        if not already:
+                            edges.append({
+                                "source": net_nid,
+                                "target": cross_nid,
+                                "label": f"{row['vm_count']} VM{'s' if row['vm_count'] != 1 else ''}",
+                            })
+
+            return {
+                "root": root_id,
+                "nodes": list(nodes.values()),
+                "edges": edges,
+                "truncated": truncated,
+            }
+
+
+@router.patch("/projects/{project_id}/networks/{network_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_network(project_id: str, network_id: int, req: Request, user=Depends(get_current_user)):
+    """Update editable network fields (subnet, gateway, dns_servers, ip_range, pcd_target, notes, network_type, vlan_id)."""
+    actor = user.username if user else "system"
+    body = await req.json()
+    allowed = {"subnet", "gateway", "dns_servers", "ip_range", "pcd_target", "notes", "network_type", "vlan_id"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    set_clauses = [f"{k} = %s" for k in updates]
+    set_clauses.append("updated_at = now()")
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_networks
+                SET {', '.join(set_clauses)}
+                WHERE id = %s AND project_id = %s
+                RETURNING *
+            """, params + [network_id, project_id])
+            net = cur.fetchone()
+            if not net:
+                raise HTTPException(status_code=404, detail="Network not found")
+
+    _log_activity(actor=actor, action="update_network", resource_type="migration_network",
+                  resource_id=str(network_id), details=updates)
+
+    return {"status": "ok", "network": _serialize_row(dict(net))}
+
+
+# =====================================================================
+# HOST / CLUSTER / STATS
+# =====================================================================
+
+@router.get("/projects/{project_id}/hosts", dependencies=[Depends(require_permission("migration", "read"))])
+async def list_hosts(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_hosts
+                WHERE project_id = %s ORDER BY host_name
+            """, (project_id,))
+            hosts = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "hosts": hosts}
+
+
+@router.get("/projects/{project_id}/clusters", dependencies=[Depends(require_permission("migration", "read"))])
+async def list_clusters(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_clusters
+                WHERE project_id = %s ORDER BY cluster_name
+            """, (project_id,))
+            clusters = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "clusters": clusters}
+
+
+class ClusterScopeRequest(BaseModel):
+    cluster_ids: List[int]
+    include_in_plan: bool
+    exclude_reason: Optional[str] = None
+
+
+@router.patch("/projects/{project_id}/clusters/scope",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def scope_clusters(project_id: str, req: ClusterScopeRequest, user=Depends(get_current_user)):
+    """Include or exclude clusters from the migration plan."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            for cid in req.cluster_ids:
+                cur.execute("""
+                    UPDATE migration_clusters
+                    SET include_in_plan = %s,
+                        exclude_reason  = %s
+                    WHERE id = %s AND project_id = %s
+                    RETURNING cluster_name
+                """, (req.include_in_plan,
+                      req.exclude_reason if not req.include_in_plan else None,
+                      cid, project_id))
+                row = cur.fetchone()
+                if row:
+                    cluster_name = row["cluster_name"]
+                    # Sentinel includes the cluster name so it cannot collide with
+                    # an operator-supplied exclude_reason.  Format: "Cluster exclusion: <name>"
+                    sentinel = f"Cluster exclusion: {cluster_name}"
+                    if not req.include_in_plan:
+                        # Cascade exclusion to all tenants whose org_vdc matches
+                        # the cluster name (vSphere: org_vdc = cluster_name after
+                        # detection). This ensures Networks/Cohorts also hide them.
+                        cur.execute("""
+                            UPDATE migration_tenants
+                            SET include_in_plan = false,
+                                exclude_reason  = %s
+                            WHERE project_id = %s
+                              AND org_vdc = %s
+                              AND include_in_plan = true
+                        """, (sentinel, project_id, cluster_name))
+                    else:
+                        # Re-include only tenants excluded by THIS cascade
+                        # (match exact sentinel to avoid clearing operator-set reasons).
+                        cur.execute("""
+                            UPDATE migration_tenants
+                            SET include_in_plan = true,
+                                exclude_reason  = NULL
+                            WHERE project_id = %s
+                              AND org_vdc = %s
+                              AND exclude_reason = %s
+                        """, (project_id, cluster_name, sentinel))
+    _log_activity(actor=actor, action="scope_clusters", resource_type="migration_project",
+                  resource_id=project_id, details={"cluster_ids": req.cluster_ids, "include": req.include_in_plan})
+    return {"status": "ok", "updated": len(req.cluster_ids)}
+
+
+@router.get("/projects/{project_id}/stats", dependencies=[Depends(require_permission("migration", "read"))])
+async def get_stats(project_id: str):
+    """Summary statistics for a migration project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    count(*) as total_vms,
+                    count(*) FILTER (WHERE template = true) as templates,
+                    count(*) FILTER (WHERE NOT coalesce(exclude_from_migration, false) AND NOT coalesce(template, false)) as migratable_vms,
+                    count(*) FILTER (WHERE exclude_from_migration) as excluded_vms,
+                    coalesce(sum(total_disk_gb), 0) as total_disk_gb,
+                    coalesce(sum(ram_mb), 0) as total_ram_mb,
+                    coalesce(sum(cpu_count), 0) as total_vcpus,
+                    round(coalesce(sum(in_use_mb), 0) / 1024.0, 2) as total_in_use_gb,
+                    count(DISTINCT host_name) as host_count,
+                    count(DISTINCT cluster) as cluster_count,
+                    count(DISTINCT tenant_name) as tenant_count,
+                    count(*) FILTER (WHERE risk_category = 'GREEN') as risk_green,
+                    count(*) FILTER (WHERE risk_category = 'YELLOW') as risk_yellow,
+                    count(*) FILTER (WHERE risk_category = 'RED') as risk_red,
+                    count(*) FILTER (WHERE migration_mode = 'warm_eligible') as mode_warm,
+                    count(*) FILTER (WHERE migration_mode = 'warm_risky') as mode_warm_risky,
+                    count(*) FILTER (WHERE migration_mode = 'cold_required') as mode_cold,
+                    count(*) FILTER (WHERE power_state ILIKE '%%poweredOn%%') as powered_on,
+                    count(*) FILTER (WHERE power_state ILIKE '%%poweredOff%%') as powered_off
+                FROM migration_vms WHERE project_id = %s
+            """, (project_id,))
+            stats = _serialize_row(dict(cur.fetchone()))
+
+            # ---- Build UI-friendly aliases ----
+            stats["total_vcpu"] = stats["total_vcpus"]  # backward compat
+            stats["total_provisioned_gb"] = stats["total_disk_gb"]
+
+            # Risk & migration-mode distributions as dicts
+            stats["risk_distribution"] = {
+                "GREEN": stats.get("risk_green", 0),
+                "YELLOW": stats.get("risk_yellow", 0),
+                "RED": stats.get("risk_red", 0),
+            }
+            stats["mode_distribution"] = {
+                "warm_eligible": stats.get("mode_warm", 0),
+                "warm_risky": stats.get("mode_warm_risky", 0),
+                "cold_required": stats.get("mode_cold", 0),
+            }
+
+            # OS family distribution
+            cur.execute("""
+                SELECT os_family, count(*) as cnt
+                FROM migration_vms WHERE project_id = %s
+                GROUP BY os_family ORDER BY cnt DESC
+            """, (project_id,))
+            os_fam = {r["os_family"]: r["cnt"] for r in cur.fetchall()}
+            stats["os_families"] = os_fam
+            stats["os_distribution"] = os_fam  # alias for UI
+
+            # Top 10 largest VMs
+            cur.execute("""
+                SELECT vm_name, total_disk_gb, ram_mb, cpu_count, risk_category
+                FROM migration_vms WHERE project_id = %s
+                ORDER BY total_disk_gb DESC NULLS LAST LIMIT 10
+            """, (project_id,))
+            stats["largest_vms"] = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    return {"status": "ok", "stats": stats}
+
+
+# =====================================================================
+# RISK SCORING & ASSESSMENT
+# =====================================================================
+
+@router.get("/projects/{project_id}/risk-config",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_risk_config(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_risk_config
+                WHERE project_id = %s ORDER BY id DESC LIMIT 1
+            """, (project_id,))
+            config = cur.fetchone()
+            if not config:
+                raise HTTPException(status_code=404, detail="Risk config not found")
+    return {"status": "ok", "config": _serialize_row(dict(config))}
+
+
+@router.put("/projects/{project_id}/risk-config",
+            dependencies=[Depends(require_permission("migration", "write"))])
+async def update_risk_config(project_id: str, request: Request, user = Depends(get_current_user)):
+    actor = user.username if user else "system"
+    body = await request.json()
+    rules = body.get("rules")
+    if not rules:
+        raise HTTPException(status_code=400, detail="rules field required")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_risk_config SET rules = %s
+                WHERE project_id = %s
+                RETURNING *
+            """, (Json(rules), project_id))
+            config = cur.fetchone()
+            if not config:
+                cur.execute("""
+                    INSERT INTO migration_risk_config (project_id, rules)
+                    VALUES (%s, %s) RETURNING *
+                """, (project_id, Json(rules)))
+                config = cur.fetchone()
+
+    _log_activity(actor=actor, action="update_risk_config", resource_type="migration_project",
+                  resource_id=project_id)
+
+    return {"status": "ok", "config": _serialize_row(dict(config))}
+
+
+@router.post("/projects/{project_id}/assess",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def run_assessment(project_id: str, user = Depends(get_current_user)):
+    """Run risk scoring and warm/cold classification for all VMs."""
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get risk rules
+            cur.execute("""
+                SELECT rules FROM migration_risk_config
+                WHERE project_id = %s ORDER BY id DESC LIMIT 1
+            """, (project_id,))
+            config_row = cur.fetchone()
+            rules = config_row["rules"] if config_row else {}
+            if isinstance(rules, str):
+                rules = json.loads(rules)
+
+            # Get all VMs
+            cur.execute("""
+                SELECT * FROM migration_vms WHERE project_id = %s
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+
+            scored = 0
+            for vm in vms:
+                # Risk scoring
+                risk = compute_risk(vm, rules)
+                # Migration mode
+                mode = classify_migration_mode(vm, rules)
+
+                cur.execute("""
+                    UPDATE migration_vms SET
+                        risk_score = %s,
+                        risk_category = %s,
+                        risk_reasons = %s,
+                        migration_mode = %s,
+                        mode_reasons = %s,
+                        updated_at = now()
+                    WHERE project_id = %s AND vm_id = %s
+                """, (
+                    risk.score, risk.category, Json(risk.reasons),
+                    mode.mode, Json(mode.reasons),
+                    project_id, vm["vm_id"],
+                ))
+                scored += 1
+
+            # Update project status
+            cur.execute("""
+                UPDATE migration_projects SET
+                    status = CASE WHEN status IN ('draft', 'assessment') THEN 'assessment' ELSE status END,
+                    updated_at = now()
+                WHERE project_id = %s
+            """, (project_id,))
+
+
+    _log_activity(actor=actor, action="run_assessment", resource_type="migration_project",
+                  resource_id=project_id, details={"vms_scored": scored})
+
+    return {"status": "ok", "message": f"Assessment complete: {scored} VMs scored"}
+
+
+# =====================================================================
+# RESET ENDPOINTS
+# =====================================================================
+
+@router.post("/projects/{project_id}/reset-assessment",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def reset_assessment(project_id: str, user = Depends(get_current_user)):
+    """Clear all computed risk/mode scores. Keep source data."""
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_vms SET
+                    risk_score = NULL, risk_category = NULL, risk_reasons = '[]',
+                    migration_mode = NULL, mode_reasons = '[]',
+                    phase1_duration_hours = NULL, cutover_downtime_hours = NULL,
+                    total_migration_hours = NULL, production_impact = NULL,
+                    target_flavor = NULL, target_flavor_id = NULL,
+                    target_network = NULL, target_project = NULL,
+                    updated_at = now()
+                WHERE project_id = %s
+            """, (project_id,))
+
+            # Also clear waves, gaps, prep tasks
+            for table in ("migration_wave_vms", "migration_waves",
+                          "migration_prep_tasks", "migration_target_gaps"):
+                cur.execute(f"DELETE FROM {table} WHERE project_id = %s", (project_id,))
+
+            cur.execute("""
+                UPDATE migration_projects SET status = 'assessment', updated_at = now()
+                WHERE project_id = %s
+            """, (project_id,))
+
+    _log_activity(actor=actor, action="reset_assessment", resource_type="migration_project",
+                  resource_id=project_id)
+
+    return {"status": "ok", "message": "Assessment data cleared"}
+
+
+@router.post("/projects/{project_id}/reset-plan",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def reset_plan(project_id: str, user = Depends(get_current_user)):
+    """Clear wave/prep data only. Keep assessment results."""
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            for table in ("migration_wave_vms", "migration_waves",
+                          "migration_prep_tasks", "migration_target_gaps"):
+                cur.execute(f"DELETE FROM {table} WHERE project_id = %s", (project_id,))
+
+            cur.execute("""
+                UPDATE migration_projects
+                SET status = CASE WHEN status IN ('planned', 'approved', 'preparing', 'ready')
+                                  THEN 'assessment' ELSE status END,
+                    updated_at = now()
+                WHERE project_id = %s
+            """, (project_id,))
+
+    _log_activity(actor=actor, action="reset_plan", resource_type="migration_project",
+                  resource_id=project_id)
+
+    return {"status": "ok", "message": "Plan data cleared"}
+
+
+# =====================================================================
+# APPROVAL GATE
+# =====================================================================
+
+@router.post("/projects/{project_id}/approve",
+             dependencies=[Depends(require_permission("migration", "admin"))])
+async def approve_project(project_id: str, user = Depends(get_current_user)):
+    """Approve a project Γאפ gate before any PCD write operations."""
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        if project["status"] not in ("planned", "assessment"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot approve project in status '{project['status']}'. Must be 'planned' or 'assessment'."
+            )
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_projects SET
+                    status = 'approved',
+                    approved_by = %s,
+                    approved_at = now(),
+                    updated_at = now()
+                WHERE project_id = %s
+            """, (actor, project_id))
+
+    _log_activity(actor=actor, action="approve", resource_type="migration_project",
+                  resource_id=project_id, resource_name=project["name"])
+
+    return {"status": "ok", "message": f"Project approved by {actor}"}
+
+
+# =====================================================================
+# BANDWIDTH & AGENT RECOMMENDATION
+# =====================================================================
+
+@router.get("/projects/{project_id}/bandwidth",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_bandwidth_model(project_id: str):
+    """Compute the bandwidth constraint model for the project."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        model = compute_bandwidth_model(project)
+
+    return {
+        "status": "ok",
+        "bandwidth": {
+            "source_effective_mbps": round(model.source_effective_mbps, 1),
+            "link_effective_mbps": round(model.link_effective_mbps, 1) if model.link_effective_mbps else None,
+            "agent_effective_mbps": round(model.agent_effective_mbps, 1),
+            "storage_effective_mbps": round(model.storage_effective_mbps, 1),
+            "bottleneck": model.bottleneck,
+            "bottleneck_mbps": round(model.bottleneck_mbps, 1),
+            "topology_type": project["topology_type"],
+        },
+    }
+
+
+@router.get("/projects/{project_id}/agent-recommendation",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_agent_recommendation(project_id: str):
+    """Compute recommended vJailbreak agent sizing."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT count(*) as vm_count,
+                       coalesce(max(total_disk_gb), 0) as max_disk_gb,
+                       coalesce(sum(total_disk_gb), 0) as total_disk_gb
+                FROM migration_vms
+                WHERE project_id = %s AND NOT coalesce(exclude_from_migration, false)
+                  AND NOT coalesce(template, false)
+            """, (project_id,))
+            summary = dict(cur.fetchone())
+
+            cur.execute("""
+                SELECT total_disk_gb FROM migration_vms
+                WHERE project_id = %s AND NOT coalesce(exclude_from_migration, false)
+                  AND NOT coalesce(template, false)
+                ORDER BY total_disk_gb DESC NULLS LAST LIMIT 10
+            """, (project_id,))
+            top_disks = [float(r["total_disk_gb"] or 0) for r in cur.fetchall()]
+
+    rec = recommend_agent_sizing(
+        vm_count=summary["vm_count"],
+        largest_disk_gb=float(summary["max_disk_gb"]),
+        top5_disk_sizes_gb=top_disks[:5],
+        project_settings=project,
+        total_disk_gb=float(summary["total_disk_gb"]),
+    )
+
+    return {
+        "status": "ok",
+        "recommendation": {
+            "recommended_agent_count": rec.recommended_count,
+            "vcpu_per_agent": rec.vcpu_per_agent,
+            "ram_gb_per_agent": rec.ram_gb_per_agent,
+            "disk_gb_per_agent": round(rec.disk_gb_per_agent, 0),
+            "max_concurrent_vms": rec.max_concurrent_vms,
+            "reasoning": rec.reasoning,
+        },
+    }
+
+
+# =====================================================================
+# VM DETAIL (Disks + NICs per VM)
+# =====================================================================
+
+@router.get("/projects/{project_id}/vms/{vm_name}/details",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_vm_details(project_id: str, vm_name: str):
+    """Get detailed disk and NIC info for a specific VM."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT disk_label, disk_path, capacity_gb, thin_provisioned,
+                       eagerly_scrub, datastore
+                FROM migration_vm_disks
+                WHERE project_id = %s AND vm_name = %s
+                ORDER BY disk_label
+            """, (project_id, vm_name))
+            disks = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT nic_label, adapter_type, network_name, connected,
+                       mac_address, ip_address
+                FROM migration_vm_nics
+                WHERE project_id = %s AND vm_name = %s
+                ORDER BY nic_label
+            """, (project_id, vm_name))
+            nics = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    return {"status": "ok", "disks": disks, "nics": nics}
+
+
+# =====================================================================
+# MIGRATION PLAN EXPORT
+# =====================================================================
+
+@router.get("/projects/{project_id}/export-plan",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_migration_plan(project_id: str):
+    """
+    Generate a comprehensive migration plan with per-tenant assessment,
+    daily VM schedule, and per-VM time estimates (warm/cold).
+    Only includes tenants and VMs where include_in_plan = true.
+    """
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Included tenants only Γאפ join cohort so Migration Plan knows which wave
+            cur.execute("""
+                SELECT t.*,
+                       c.name  AS cohort_name,
+                       c.cohort_order AS cohort_order
+                FROM migration_tenants t
+                LEFT JOIN migration_cohorts c ON c.id = t.cohort_id
+                WHERE t.project_id = %s AND t.include_in_plan = true
+                ORDER BY c.cohort_order NULLS LAST, t.vm_count DESC
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+            included_names = {t["tenant_name"] for t in tenants}
+
+            # Excluded tenants count for project summary
+            cur.execute("""
+                SELECT count(*) FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = false
+            """, (project_id,))
+            excluded_count = cur.fetchone()["count"]
+
+            # Only VMs belonging to included tenants, and not individually excluded
+            cur.execute("""
+                SELECT v.* FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                WHERE v.project_id = %s
+                  AND NOT COALESCE(v.template, false)
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND t.include_in_plan = true
+                ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+
+    bw_model = compute_bandwidth_model(project)
+    plan = generate_migration_plan(
+        vms=vms,
+        tenants=tenants,
+        project_settings=project,
+        bottleneck_mbps=bw_model.bottleneck_mbps,
+    )
+    plan["project_summary"]["excluded_tenants"] = int(excluded_count)
+    plan["project_summary"]["executive_summary"] = project.get("executive_summary", "") or ""
+    plan["project_summary"]["technical_notes"] = project.get("technical_notes", "") or ""
+
+    return {
+        "status": "ok",
+        "project_name": project["name"],
+        "topology_type": project["topology_type"],
+        **plan,
+    }
+
+
+@router.get("/projects/{project_id}/export-report.xlsx",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_report_excel(project_id: str):
+    """Download a full migration plan report as an Excel workbook (4 sheets)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+                ORDER BY vm_count DESC
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+            cur.execute("""SELECT v.* FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                WHERE v.project_id = %s AND NOT coalesce(v.template, false)
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND t.include_in_plan = true
+                ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+
+    bw_model = compute_bandwidth_model(project)
+    plan = generate_migration_plan(
+        vms=vms, tenants=tenants, project_settings=project,
+        bottleneck_mbps=bw_model.bottleneck_mbps,
+    )
+    plan["bandwidth_model"] = {
+        "bottleneck": bw_model.bottleneck,
+        "source_effective_mbps": round(bw_model.source_effective_mbps, 1),
+        "link_effective_mbps": round(bw_model.link_effective_mbps, 1),
+        "agent_effective_mbps": round(bw_model.agent_effective_mbps, 1),
+        "storage_effective_mbps": round(bw_model.storage_effective_mbps, 1),
+    }
+
+    xlsx_bytes = generate_excel_report(plan, project["name"])
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="migration-plan-{safe_name}.xlsx"'},
+    )
+
+
+@router.get("/projects/{project_id}/export-report.pdf",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_report_pdf(project_id: str):
+    """Download a full migration plan report as a PDF (landscape A4)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        fix_settings = _get_fix_settings(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+                ORDER BY vm_count DESC
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT v.* FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                WHERE v.project_id = %s AND NOT coalesce(v.template, false)
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND t.include_in_plan = true
+                ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+
+    bw_model = compute_bandwidth_model(project)
+    plan = generate_migration_plan(
+        vms=vms, tenants=tenants, project_settings=project,
+        bottleneck_mbps=bw_model.bottleneck_mbps,
+    )
+    plan["bandwidth_model"] = {
+        "bottleneck": bw_model.bottleneck,
+        "source_effective_mbps": round(bw_model.source_effective_mbps, 1),
+        "link_effective_mbps": round(bw_model.link_effective_mbps, 1),
+        "agent_effective_mbps": round(bw_model.agent_effective_mbps, 1),
+        "storage_effective_mbps": round(bw_model.storage_effective_mbps, 1),
+    }
+
+    plan["executive_summary"] = project.get("executive_summary", "") or ""
+    plan["technical_notes"] = project.get("technical_notes", "") or ""
+    # Enrich each planned VM with tech fix time so the PDF can display Fix(h) and accurate Downtime(h)
+    for _tp in plan.get("tenant_plans", []):
+        for _vm in _tp.get("vms", []):
+            _fr = compute_vm_fix_time(_vm, fix_settings)
+            _vm["fix_hours"] = round(_fr["fix_minutes"] / 60, 2)
+    pdf_bytes = generate_pdf_report(plan, project["name"])
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="migration-plan-{safe_name}.pdf"'},
+    )
+
+
+# =====================================================================
+# Phase 5.1 Γאפ Migration Summary Export (Excel + PDF)
+# =====================================================================
+
+@router.get("/projects/{project_id}/export-summary.xlsx",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_summary_excel(project_id: str):
+    """Download the migration summary as an Excel workbook (4 sheets)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+
+    summary = await get_migration_summary(project_id)
+
+    xlsx_bytes = generate_summary_excel_report(summary, project["name"])
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="migration-summary-{safe_name}.xlsx"'},
+    )
+
+
+@router.get("/projects/{project_id}/export-summary.pdf",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_summary_pdf(project_id: str):
+    """Download the migration summary as a PDF report (A4 portrait)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+
+    summary = await get_migration_summary(project_id)
+
+    pdf_bytes = generate_summary_pdf_report(summary, project["name"])
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="migration-summary-{safe_name}.pdf"'},
+    )
+
+
+# =====================================================================
+# Phase 2A Γאפ Tenant Exclusion / Include-in-plan
+# =====================================================================
+
+class BulkScopeRequest(BaseModel):
+    tenant_ids: List[int]
+    include_in_plan: bool
+    exclude_reason: Optional[str] = None
+
+
+class BulkReplaceTargetRequest(BaseModel):
+    field: str                       # "target_domain_name" | "target_project_name"
+    find: str                        # literal substring to find
+    replace: str                     # replacement string (empty string = strip)
+    case_sensitive: bool = False     # default: case-insensitive
+    unconfirmed_only: bool = False   # if true, only affect rows not yet confirmed
+    preview_only: bool = False       # if true, return preview without writing
+
+
+class BulkReplaceNetworkRequest(BaseModel):
+    find: str                        # literal substring to find
+    replace: str                     # replacement string (empty string = strip)
+    case_sensitive: bool = False     # default: case-insensitive
+    unconfirmed_only: bool = False   # if true, only affect rows where confirmed=false
+    preview_only: bool = False       # if true, return preview without writing
+
+
+@router.patch("/projects/{project_id}/tenants/bulk-scope",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_scope_tenants(project_id: str, req: BulkScopeRequest, user=Depends(get_current_user)):
+    """Include or exclude multiple tenants from the migration plan at once."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            for tid in req.tenant_ids:
+                cur.execute("""
+                    UPDATE migration_tenants
+                    SET include_in_plan = %s,
+                        exclude_reason  = %s,
+                        updated_at      = now()
+                    WHERE id = %s AND project_id = %s
+                """, (req.include_in_plan, req.exclude_reason if not req.include_in_plan else None,
+                      tid, project_id))
+    _log_activity(actor=actor, action="bulk_scope_tenants", resource_type="migration_project",
+                  resource_id=project_id, details={"tenant_ids": req.tenant_ids, "include": req.include_in_plan})
+    return {"status": "ok", "updated": len(req.tenant_ids)}
+
+
+@router.post("/projects/{project_id}/tenants/bulk-replace-target",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_replace_target(project_id: str, req: BulkReplaceTargetRequest,
+                               user=Depends(get_current_user)):
+    """
+    Find-and-replace in target_domain_name or target_project_name across all tenants.
+    Supports case-insensitive matching (default) and preview mode (dry run).
+    Matching is literal substring Γאפ not regex Γאפ to keep it safe and predictable.
+    After apply, affected rows are marked target_confirmed=false so operator reviews the result.
+    """
+    ALLOWED_FIELDS = {"target_domain_name", "target_domain_description",
+                       "target_project_name", "target_display_name"}
+    if req.field not in ALLOWED_FIELDS:
+        raise HTTPException(status_code=400, detail=f"field must be one of {ALLOWED_FIELDS}")
+    if not req.find:
+        raise HTTPException(status_code=400, detail="find string must not be empty")
+
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch candidates Γאפ rows where the target field contains the find substring
+            if req.unconfirmed_only:
+                filter_sql = "AND target_confirmed = false"
+            else:
+                filter_sql = ""
+
+            cur.execute(f"""
+                SELECT id, tenant_name, org_vdc,
+                       {req.field} AS current_value
+                FROM migration_tenants
+                WHERE project_id = %s
+                  AND {req.field} IS NOT NULL
+                  AND {req.field} != ''
+                  {filter_sql}
+                ORDER BY tenant_name
+            """, (project_id,))
+            rows = cur.fetchall()
+
+            # Compute replacements in Python (safe from SQL injection, predictable)
+            preview = []
+            for r in rows:
+                old = r["current_value"] or ""
+                if req.case_sensitive:
+                    new = old.replace(req.find, req.replace)
+                else:
+                    new = re.sub(re.escape(req.find), req.replace,
+                                 old, flags=re.IGNORECASE)
+                if old != new:
+                    preview.append({
+                        "id": r["id"],
+                        "tenant_name": r["tenant_name"],
+                        "org_vdc": r["org_vdc"],
+                        "old_value": old,
+                        "new_value": new,
+                    })
+
+            if req.preview_only:
+                return {"status": "ok", "preview": preview, "affected_count": len(preview)}
+
+            # Apply updates
+            for item in preview:
+                cur.execute(f"""
+                    UPDATE migration_tenants
+                    SET {req.field} = %s,
+                        target_confirmed = false,
+                        updated_at = now()
+                    WHERE id = %s AND project_id = %s
+                """, (item["new_value"], item["id"], project_id))
+
+    _log_activity(actor=actor, action="bulk_replace_target", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"field": req.field, "find": req.find, "replace": req.replace,
+                           "affected": len(preview)})
+    return {"status": "ok", "affected_count": len(preview), "preview": preview}
+
+
+@router.post("/projects/{project_id}/network-mappings/bulk-replace",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_replace_network(project_id: str, req: BulkReplaceNetworkRequest,
+                               user=Depends(get_current_user)):
+    """
+    Find-and-replace in target_network_name across all network mappings.
+    Supports case-insensitive matching (default) and preview mode (dry run).
+    Matching is literal substring Γאפ not regex Γאפ to keep it safe and predictable.
+    After apply, affected rows are marked confirmed=false so operator reviews the result.
+    """
+    if not req.find:
+        raise HTTPException(status_code=400, detail="find string must not be empty")
+
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            filter_sql = "AND confirmed = false" if req.unconfirmed_only else ""
+            cur.execute(f"""
+                SELECT id, source_network_name, target_network_name
+                FROM migration_network_mappings
+                WHERE project_id = %s
+                  AND target_network_name IS NOT NULL
+                  AND target_network_name != ''
+                  {filter_sql}
+                ORDER BY source_network_name
+            """, (project_id,))
+            rows = cur.fetchall()
+
+            preview = []
+            for r in rows:
+                old = r["target_network_name"] or ""
+                if req.case_sensitive:
+                    new = old.replace(req.find, req.replace)
+                else:
+                    new = re.sub(re.escape(req.find), req.replace,
+                                 old, flags=re.IGNORECASE)
+                if old != new:
+                    preview.append({
+                        "id": r["id"],
+                        "source_network_name": r["source_network_name"],
+                        "old_value": old,
+                        "new_value": new,
+                    })
+
+            if req.preview_only:
+                return {"status": "ok", "preview": preview, "affected_count": len(preview)}
+
+            for item in preview:
+                cur.execute("""
+                    UPDATE migration_network_mappings
+                    SET target_network_name = %s,
+                        confirmed = false,
+                        updated_at = now()
+                    WHERE id = %s AND project_id = %s
+                """, (item["new_value"], item["id"], project_id))
+
+    _log_activity(actor=actor, action="bulk_replace_network", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"find": req.find, "replace": req.replace, "affected": len(preview)})
+    return {"status": "ok", "affected_count": len(preview), "preview": preview}
+
+
+@router.post("/projects/{project_id}/tenants/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def confirm_all_tenants(project_id: str, user=Depends(get_current_user)):
+    """Mark target_confirmed=true on every tenant in the project that is currently unconfirmed."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_tenants
+                SET target_confirmed = true, updated_at = now()
+                WHERE project_id = %s AND target_confirmed = false
+            """, (project_id,))
+            affected = cur.rowcount
+    _log_activity(actor=actor, action="confirm_all_tenants", resource_type="migration_project",
+                  resource_id=project_id, details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.post("/projects/{project_id}/network-mappings/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def confirm_all_networks(project_id: str, user=Depends(get_current_user)):
+    """Mark confirmed=true on every network mapping in the project that is currently unconfirmed."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_network_mappings
+                SET confirmed = true, updated_at = now()
+                WHERE project_id = %s AND confirmed = false
+            """, (project_id,))
+            affected = cur.rowcount
+    _log_activity(actor=actor, action="confirm_all_networks", resource_type="migration_project",
+                  resource_id=project_id, details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.post("/projects/{project_id}/network-mappings/confirm-subnets",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def confirm_all_subnets(project_id: str, user=Depends(get_current_user)):
+    """Mark subnet_details_confirmed=true for all network mappings that have a CIDR set."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_network_mappings
+                SET subnet_details_confirmed = true, updated_at = now()
+                WHERE project_id = %s
+                  AND cidr IS NOT NULL AND TRIM(cidr) != ''
+                  AND NOT COALESCE(subnet_details_confirmed, false)
+            """, (project_id,))
+            affected = cur.rowcount
+    _log_activity(actor=actor, action="confirm_all_subnets", resource_type="migration_project",
+                  resource_id=project_id, details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.get("/projects/{project_id}/network-mappings/export-template",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_network_mapping_template(project_id: str):
+    """Download an Excel template pre-filled with current network mappings for bulk editing."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from fastapi.responses import StreamingResponse as _Stream
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT m.source_network_name, m.vlan_id, m.target_network_name,
+                       m.cidr, m.gateway_ip, m.dns_nameservers,
+                       m.allocation_pool_start, m.allocation_pool_end, m.notes,
+                       COUNT(DISTINCT v.id) AS vm_count
+                FROM migration_network_mappings m
+                LEFT JOIN migration_vms v
+                    ON v.project_id = m.project_id AND v.network_name = m.source_network_name
+                    AND v.power_state = 'poweredOn'
+                WHERE m.project_id = %s
+                GROUP BY m.id
+                ORDER BY vm_count DESC, m.source_network_name
+            """, (project_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Network Map"
+
+    HEADERS = [
+        "Source Network (VMware)", "VMs", "VLAN ID",
+        "PCD Target Network", "Subnet / CIDR", "Gateway",
+        "DNS (comma-separated)", "IP Range Start", "IP Range End", "Notes"
+    ]
+    EDITABLE_COLS = {3, 4, 5, 6, 7, 8, 9, 10}   # 1-based; cols 1+2 = reference only
+
+    hdr_fill_ref  = PatternFill("solid", fgColor="4B5563")   # dark grey for read-only
+    hdr_fill_edit = PatternFill("solid", fgColor="1D4ED8")   # blue for editable
+    hdr_font      = Font(bold=True, color="FFFFFF")
+    edit_fill     = PatternFill("solid", fgColor="EFF6FF")   # light blue data cells
+    thin          = Side(border_style="thin", color="D1D5DB")
+    border        = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    for ci, h in enumerate(HEADERS, start=1):
+        cell = ws.cell(row=1, column=ci, value=h)
+        cell.font  = hdr_font
+        cell.fill  = hdr_fill_edit if ci in EDITABLE_COLS else hdr_fill_ref
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+
+    ws.row_dimensions[1].height = 30
+    ws.freeze_panes = "A2"
+
+    COL_WIDTHS = [45, 6, 10, 35, 20, 18, 30, 18, 18, 30]
+    for ci, w in enumerate(COL_WIDTHS, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(ci)].width = w
+
+    for ri, r in enumerate(rows, start=2):
+        dns_str = ", ".join(r["dns_nameservers"]) if r.get("dns_nameservers") else ""
+        vals = [
+            r["source_network_name"], r["vm_count"] or 0, r["vlan_id"],
+            r["target_network_name"] or "", r["cidr"] or "", r["gateway_ip"] or "",
+            dns_str, r["allocation_pool_start"] or "", r["allocation_pool_end"] or "",
+            r["notes"] or ""
+        ]
+        for ci, val in enumerate(vals, start=1):
+            cell = ws.cell(row=ri, column=ci, value=val)
+            cell.border = border
+            if ci in EDITABLE_COLS:
+                cell.fill = edit_fill
+
+    # Add instruction row at top (insert before headers)
+    ws.insert_rows(1)
+    inst = ws.cell(row=1, column=1,
+                   value="Γ£ן∩╕ן  Fill in the blue columns. Do not change column order or the Source Network column. Save and re-upload.")
+    inst.font = Font(italic=True, color="1D4ED8")
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(HEADERS))
+    ws.row_dimensions[1].height = 20
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"network_map_template_{project_id}.xlsx"
+    return _Stream(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/projects/{project_id}/network-mappings/import-template",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def import_network_mapping_template(
+    project_id: str,
+    file: UploadFile = File(...),
+    user=Depends(get_current_user)
+):
+    """Upload a filled-in network mapping template to bulk-update target/subnet fields."""
+    import io
+    import openpyxl
+
+    actor = getattr(user, "username", "system")
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        wb_fmla = openpyxl.load_workbook(io.BytesIO(content), data_only=False)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid Excel file: {e}")
+
+    ws = wb.active
+    ws_fmla = wb_fmla.active
+
+    # Load all rows from both workbooks so we can cross-reference
+    all_rows_vals = list(ws.iter_rows(values_only=True))
+    all_rows_fmla = list(ws_fmla.iter_rows(values_only=True))
+
+    # Robustly locate the header row: scan up to first 5 rows for the one where
+    # at least one cell contains "source" AND at least one cell contains "vlan" or "subnet" or "gateway" or "pcd".
+    # This avoids misidentifying an instruction row that happens to mention "source".
+    def _is_header_row(row) -> bool:
+        cells = [str(c).lower().strip() for c in row if c is not None]
+        has_source = any("source" in c for c in cells)
+        has_other = any(kw in c for c in cells for kw in ("vlan", "subnet", "gateway", "pcd", "target", "dns", "note"))
+        return has_source and has_other
+
+    header_row_idx = None
+    for i, row in enumerate(all_rows_vals[:5]):
+        if _is_header_row(row):
+            header_row_idx = i
+            break
+
+    if header_row_idx is None:
+        raise HTTPException(status_code=400, detail="Could not find header row (expected columns: Source Network, VLAN ID, Subnet/CIDR, etc.).")
+
+    header_row = all_rows_vals[header_row_idx]
+    data_rows_vals = all_rows_vals[header_row_idx + 1:]
+    data_rows_fmla = all_rows_fmla[header_row_idx + 1:] if header_row_idx + 1 < len(all_rows_fmla) else []
+
+    # Map column names Γזע indices (flexible; case-insensitive)
+    col_idx: dict = {}
+    for ci, h in enumerate(header_row):
+        if h is None: continue
+        key = str(h).lower().strip()
+        if "source" in key: col_idx["source"]     = ci
+        elif "vlan"  in key: col_idx["vlan"]       = ci
+        elif "pcd" in key or "target" in key: col_idx["target"] = ci
+        elif "subnet" in key or "cidr" in key: col_idx["cidr"]  = ci
+        elif "gateway" in key: col_idx["gateway"]  = ci
+        elif "dns" in key:    col_idx["dns"]        = ci
+        elif "start" in key:  col_idx["pool_start"] = ci
+        elif "end" in key:    col_idx["pool_end"]   = ci
+        elif "note" in key:   col_idx["notes"]      = ci
+
+    if "source" not in col_idx:
+        raise HTTPException(status_code=400, detail="Could not find 'Source Network' column.")
+
+    # Detect formula cells with external file references (openpyxl data_only=True returns None for these)
+    formula_cols_found: set = set()
+    editable_keys = ["target", "vlan", "cidr", "gateway", "dns", "pool_start", "pool_end", "notes"]
+    editable_indices = {col_idx[k] for k in editable_keys if k in col_idx}
+    for rv, rf in zip(data_rows_vals, data_rows_fmla):
+        for ci in editable_indices:
+            val_v = rv[ci] if ci < len(rv) else None
+            val_f = rf[ci] if ci < len(rf) else None
+            if val_v is None and val_f is not None and str(val_f).startswith("="):
+                # Formula in non-data_only but None in data_only Γזע unevaluated external reference
+                col_name = str(header_row[ci]) if ci < len(header_row) else str(ci)
+                formula_cols_found.add(col_name)
+    if formula_cols_found:
+        col_list = ", ".join(sorted(formula_cols_found))
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"The uploaded file contains formulas referencing external files in columns: {col_list}. "
+                "Excel cannot cache external-file formula results in the .xlsx, so they cannot be read. "
+                "Fix: In Excel, select all blue columns Γזע Copy Γזע Paste Special Γזע Values Only Γזע Save Γזע re-upload."
+            )
+        )
+
+    def _cell(row_vals, key):
+        idx = col_idx.get(key)
+        if idx is None or idx >= len(row_vals): return None
+        v = row_vals[idx]
+        return str(v).strip() if v is not None else None
+
+    updated = 0
+    skipped_empty_patch = 0
+    skipped_no_db_match = 0
+    sample_sources_in_file: list = []
+    sample_no_match: list = []
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        # Fetch all source_network_names in DB for this project (for diagnostics)
+        with conn.cursor() as dcur:
+            dcur.execute(
+                "SELECT source_network_name FROM migration_network_mappings WHERE project_id = %s",
+                (project_id,)
+            )
+            db_sources = {r[0] for r in dcur.fetchall()}
+
+        with conn.cursor() as cur:
+            for row_vals in data_rows_vals:
+                src = _cell(row_vals, "source")
+                if not src:
+                    continue
+                if len(sample_sources_in_file) < 5:
+                    sample_sources_in_file.append(src)
+
+                patch: dict = {}
+                if col_idx.get("target") is not None:
+                    v = _cell(row_vals, "target")
+                    if v: patch["target_network_name"] = v
+                if col_idx.get("vlan") is not None:
+                    v = _cell(row_vals, "vlan")
+                    if v:
+                        # Accept int/float VLAN values from formula results
+                        vlan_str = v.split(".")[0] if "." in v else v
+                        if vlan_str.lstrip("-").isdigit():
+                            patch["vlan_id"] = int(vlan_str)
+                if col_idx.get("cidr") is not None:
+                    v = _cell(row_vals, "cidr")
+                    if v: patch["cidr"] = v
+                if col_idx.get("gateway") is not None:
+                    v = _cell(row_vals, "gateway")
+                    if v: patch["gateway_ip"] = v
+                if col_idx.get("dns") is not None:
+                    v = _cell(row_vals, "dns")
+                    if v: patch["dns_nameservers"] = [x.strip() for x in v.split(",") if x.strip()]
+                if col_idx.get("pool_start") is not None:
+                    v = _cell(row_vals, "pool_start")
+                    if v: patch["allocation_pool_start"] = v
+                if col_idx.get("pool_end") is not None:
+                    v = _cell(row_vals, "pool_end")
+                    if v: patch["allocation_pool_end"] = v
+                if col_idx.get("notes") is not None:
+                    v = _cell(row_vals, "notes")
+                    if v is not None: patch["notes"] = v
+                # Auto-confirm subnet details when cidr is provided in the import
+                if "cidr" in patch:
+                    patch["subnet_details_confirmed"] = True
+
+                if not patch:
+                    skipped_empty_patch += 1
+                    continue
+
+                set_clauses = [f"{k} = %s" for k in patch] + ["updated_at = now()"]
+                params = list(patch.values())
+                # Use TRIM + case-insensitive match to guard against whitespace/case drift
+                cur.execute(f"""
+                    UPDATE migration_network_mappings
+                    SET {', '.join(set_clauses)}
+                    WHERE project_id = %s AND LOWER(TRIM(source_network_name)) = LOWER(TRIM(%s))
+                """, params + [project_id, src])
+                if cur.rowcount > 0:
+                    updated += 1
+                else:
+                    skipped_no_db_match += 1
+                    if len(sample_no_match) < 5:
+                        sample_no_match.append(src)
+
+    skipped = skipped_empty_patch + skipped_no_db_match
+    diag: dict = {}
+    if updated == 0 and skipped > 0:
+        db_sample = sorted(db_sources)[:5]
+        diag = {
+            "skipped_empty_patch": skipped_empty_patch,
+            "skipped_no_db_match": skipped_no_db_match,
+            "sample_sources_in_file": sample_sources_in_file,
+            "sample_sources_in_db": db_sample,
+            "sample_no_match_sources": sample_no_match,
+            "hint": (
+                "empty_patch means no editable fields had values; "
+                "no_db_match means source_network_name not found in DB for this project"
+            ),
+        }
+
+    _log_activity(actor=actor, action="import_network_mapping_template",
+                  resource_type="migration_network_mappings", resource_id=project_id,
+                  details={"updated": updated, "skipped": skipped})
+    return {"status": "ok", "updated": updated, "skipped": skipped, "diagnostics": diag}
+
+
+# ΓפאΓפא Auto-exclude filter patterns ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+
+class TenantFilterRequest(BaseModel):
+    pattern: str
+    reason: Optional[str] = None
+    auto_exclude: Optional[bool] = True
+
+
+@router.get("/projects/{project_id}/tenant-filters",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_tenant_filters(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_tenant_filters WHERE project_id = %s ORDER BY id", (project_id,))
+            filters = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "filters": filters}
+
+
+@router.post("/projects/{project_id}/tenant-filters",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def add_tenant_filter(project_id: str, req: TenantFilterRequest, user=Depends(get_current_user)):
+    """Add an auto-exclude pattern (e.g. 'LAB-%') and optionally apply it now."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_tenant_filters (project_id, pattern, reason, auto_exclude)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (project_id, pattern) DO UPDATE
+                  SET reason = EXCLUDED.reason, auto_exclude = EXCLUDED.auto_exclude
+                RETURNING *
+            """, (project_id, req.pattern.strip(), req.reason, req.auto_exclude))
+            row = _serialize_row(dict(cur.fetchone()))
+
+            if req.auto_exclude:
+                # Apply the pattern immediately: exclude matching tenants
+                # Simple glob: only supports % wildcard Γזע convert to SQL LIKE
+                sql_pattern = req.pattern.strip().replace("*", "%")
+                cur.execute("""
+                    UPDATE migration_tenants
+                    SET include_in_plan = false, exclude_reason = %s, updated_at = now()
+                    WHERE project_id = %s AND tenant_name ILIKE %s AND include_in_plan = true
+                """, (req.reason or f"Matched pattern: {req.pattern}", project_id, sql_pattern))
+                affected = cur.rowcount
+            else:
+                affected = 0
+
+    _log_activity(actor=actor, action="add_tenant_filter", resource_type="migration_project",
+                  resource_id=project_id, details={"pattern": req.pattern, "affected": affected})
+    return {"status": "ok", "filter": row, "tenants_excluded": affected}
+
+
+@router.delete("/projects/{project_id}/tenant-filters/{filter_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_tenant_filter(project_id: str, filter_id: int, user=Depends(get_current_user)):
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_tenant_filters WHERE id = %s AND project_id = %s",
+                        (filter_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Filter not found")
+    _log_activity(actor=actor, action="delete_tenant_filter", resource_type="migration_project",
+                  resource_id=project_id, details={"filter_id": filter_id})
+    return {"status": "ok"}
+
+
+# =====================================================================
+# Phase 2C Γאפ Quota & Overcommit Modeling
+# =====================================================================
+
+@router.get("/overcommit-profiles",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_overcommit_profiles():
+    """List all overcommit profiles (seeded presets + any custom ones)."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_overcommit_profiles ORDER BY id")
+            profiles = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "profiles": profiles}
+
+
+class UpdateOvercommitRequest(BaseModel):
+    overcommit_profile_name: str
+
+
+@router.patch("/projects/{project_id}/overcommit-profile",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def set_overcommit_profile(project_id: str, req: UpdateOvercommitRequest, user=Depends(get_current_user)):
+    """Set the active overcommit profile for a project."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM migration_overcommit_profiles WHERE profile_name = %s",
+                        (req.overcommit_profile_name,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail=f"Profile '{req.overcommit_profile_name}' not found")
+            cur.execute("""
+                UPDATE migration_projects SET overcommit_profile_name = %s, updated_at = now()
+                WHERE project_id = %s
+            """, (req.overcommit_profile_name, project_id))
+    _log_activity(actor=actor, action="set_overcommit_profile", resource_type="migration_project",
+                  resource_id=project_id, details={"profile": req.overcommit_profile_name})
+    return {"status": "ok"}
+
+
+@router.get("/projects/{project_id}/quota-requirements",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_quota_requirements(project_id: str):
+    """
+    Compute per-tenant and aggregate quota requirements.
+    Uses the project's selected overcommit profile.
+    Only includes tenants where include_in_plan = true.
+    """
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+                ORDER BY vm_count DESC
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            # Actual RAM usage per tenant+org_vdc from vMemory telemetry
+            # Key by (tenant_name, org_vdc) so that tenants split across multiple
+            # org_vdcs (e.g. Autosoft2) don't each get the full aggregate total.
+            cur.execute("""
+                SELECT tenant_name,
+                       COALESCE(org_vdc, '') AS org_vdc,
+                       ROUND(SUM(COALESCE(memory_usage_mb, 0)) / 1024.0, 1) AS ram_used_gb
+                FROM migration_vms
+                WHERE project_id = %s
+                  AND memory_usage_mb IS NOT NULL AND memory_usage_mb > 0
+                GROUP BY tenant_name, COALESCE(org_vdc, '')
+            """, (project_id,))
+            ram_used_map = {
+                (r["tenant_name"], r["org_vdc"]): float(r["ram_used_gb"])
+                for r in cur.fetchall()
+            }
+            for t in tenants:
+                key = (t.get("tenant_name", ""), t.get("org_vdc") or "")
+                t["ram_used_gb"] = ram_used_map.get(key, 0.0)
+
+            profile_name = project.get("overcommit_profile_name") or "balanced"
+            cur.execute("SELECT * FROM migration_overcommit_profiles WHERE profile_name = %s", (profile_name,))
+            profile_row = cur.fetchone()
+            if profile_row:
+                profile = dict(profile_row)
+            else:
+                profile = {"profile_name": "balanced", "cpu_ratio": 4.0, "ram_ratio": 1.5, "disk_snapshot_factor": 1.5}
+
+    result = compute_quota_requirements(tenants, profile)
+    return {"status": "ok", "quota": result}
+
+
+# =====================================================================
+# Phase 2D Γאפ PCD Hardware Node Sizing
+# =====================================================================
+
+class NodeProfileRequest(BaseModel):
+    profile_name: str
+    cpu_cores: Optional[int] = 48
+    cpu_threads: Optional[int] = 96
+    ram_gb: Optional[float] = 384.0
+    storage_tb: Optional[float] = 20.0
+    max_cpu_util_pct: Optional[float] = 70.0
+    max_ram_util_pct: Optional[float] = 75.0
+    max_disk_util_pct: Optional[float] = 70.0
+    is_default: Optional[bool] = False
+
+
+@router.get("/projects/{project_id}/node-profiles",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_node_profiles(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_pcd_node_profiles WHERE project_id = %s ORDER BY id",
+                        (project_id,))
+            profiles = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "profiles": profiles}
+
+
+@router.post("/projects/{project_id}/node-profiles",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_node_profile(project_id: str, req: NodeProfileRequest, user=Depends(get_current_user)):
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if req.is_default:
+                cur.execute("UPDATE migration_pcd_node_profiles SET is_default = false WHERE project_id = %s",
+                            (project_id,))
+            cur.execute("""
+                INSERT INTO migration_pcd_node_profiles
+                  (project_id, profile_name, cpu_cores, cpu_threads, ram_gb, storage_tb,
+                   max_cpu_util_pct, max_ram_util_pct, max_disk_util_pct, is_default)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (project_id, profile_name) DO UPDATE
+                  SET cpu_cores=EXCLUDED.cpu_cores, cpu_threads=EXCLUDED.cpu_threads,
+                      ram_gb=EXCLUDED.ram_gb, storage_tb=EXCLUDED.storage_tb,
+                      max_cpu_util_pct=EXCLUDED.max_cpu_util_pct,
+                      max_ram_util_pct=EXCLUDED.max_ram_util_pct,
+                      max_disk_util_pct=EXCLUDED.max_disk_util_pct,
+                      is_default=EXCLUDED.is_default, updated_at=now()
+                RETURNING *
+            """, (project_id, req.profile_name, req.cpu_cores, req.cpu_threads, req.ram_gb,
+                  req.storage_tb, req.max_cpu_util_pct, req.max_ram_util_pct, req.max_disk_util_pct,
+                  req.is_default))
+            profile = _serialize_row(dict(cur.fetchone()))
+    _log_activity(actor=actor, action="create_node_profile", resource_type="migration_project",
+                  resource_id=project_id, details={"profile_name": req.profile_name})
+    return {"status": "ok", "profile": profile}
+
+
+@router.delete("/projects/{project_id}/node-profiles/{profile_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_node_profile(project_id: str, profile_id: int, user=Depends(get_current_user)):
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_pcd_node_profiles WHERE id = %s AND project_id = %s",
+                        (profile_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Node profile not found")
+    _log_activity(actor=actor, action="delete_node_profile", resource_type="migration_project",
+                  resource_id=project_id, details={"profile_id": profile_id})
+    return {"status": "ok"}
+
+
+class NodeInventoryRequest(BaseModel):
+    profile_id: Optional[int] = None
+    current_nodes: int = 0
+    current_vcpu_used: Optional[int] = 0
+    current_ram_gb_used: Optional[float] = 0.0
+    current_disk_tb_used: Optional[float] = 0.0
+    notes: Optional[str] = None
+
+
+@router.get("/projects/{project_id}/node-inventory",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_node_inventory(project_id: str):
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_pcd_node_inventory WHERE project_id = %s", (project_id,))
+            row = cur.fetchone()
+    return {"status": "ok", "inventory": _serialize_row(dict(row)) if row else None}
+
+
+@router.get("/projects/{project_id}/pcd-live-inventory",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_pcd_live_inventory(project_id: str):
+    """
+    Auto-discover current PCD cluster capacity from the hypervisors inventory table
+    (populated by pf9_rvtools.py).  Also pulls committed vCPU/RAM from servers+flavors.
+    Returns a 'live' snapshot the UI can offer to sync into the manual inventory form.
+    """
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # ΓפאΓפא Hypervisor totals (PCD compute nodes) ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+            cur.execute("""
+                SELECT
+                  COUNT(*)::int                                              AS node_count,
+                  COALESCE(SUM(vcpus),       0)::int                        AS total_vcpus,
+                  ROUND(COALESCE(SUM(memory_mb), 0) / 1024.0, 1)           AS total_ram_gb,
+                  ROUND(COALESCE(SUM(local_gb),  0) / 1024.0, 3)           AS total_local_disk_tb,
+                  COALESCE(SUM(running_vms),  0)::int                       AS running_vms
+                FROM hypervisors
+                WHERE state = 'up' AND status = 'enabled'
+            """)
+            cluster = dict(cur.fetchone() or {})
+
+            # ΓפאΓפא vCPU / RAM already committed (active servers ├ק flavor) ΓפאΓפאΓפאΓפאΓפאΓפא
+            cur.execute("""
+                SELECT
+                  COUNT(s.id)::int                                           AS vm_count,
+                  COALESCE(SUM(f.vcpus), 0)::int                            AS vcpus_used,
+                  ROUND(COALESCE(SUM(f.ram_mb), 0) / 1024.0, 1)            AS ram_gb_used
+                FROM servers s
+                LEFT JOIN flavors f ON f.id = s.flavor_id
+                WHERE s.status NOT IN ('DELETED', 'ERROR')
+            """)
+            usage = dict(cur.fetchone() or {})
+
+            # ΓפאΓפא Cinder block-storage already allocated ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+            cur.execute("""
+                SELECT ROUND(COALESCE(SUM(size_gb), 0) / 1024.0, 3) AS disk_tb_used
+                FROM volumes
+                WHERE status NOT IN ('deleting', 'error')
+            """)
+            disk_row = dict(cur.fetchone() or {})
+
+    return {
+        "status": "ok",
+        "live": {
+            "node_count":         int(cluster.get("node_count",         0)),
+            "total_vcpus":        int(cluster.get("total_vcpus",        0)),
+            "total_ram_gb":       float(cluster.get("total_ram_gb",     0) or 0),
+            "total_local_disk_tb": float(cluster.get("total_local_disk_tb", 0) or 0),
+            "running_vms":        int(cluster.get("running_vms",        0)),
+            "vcpus_used":         int(usage.get("vcpus_used",           0)),
+            "ram_gb_used":        float(usage.get("ram_gb_used",        0) or 0),
+            "vm_count":           int(usage.get("vm_count",             0)),
+            "disk_tb_used":       float(disk_row.get("disk_tb_used",    0) or 0),
+        },
+    }
+
+
+@router.put("/projects/{project_id}/node-inventory",
+            dependencies=[Depends(require_permission("migration", "write"))])
+async def upsert_node_inventory(project_id: str, req: NodeInventoryRequest, user=Depends(get_current_user)):
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_pcd_node_inventory
+                  (project_id, profile_id, current_nodes, current_vcpu_used, current_ram_gb_used, current_disk_tb_used, notes)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (project_id) DO UPDATE
+                  SET profile_id=EXCLUDED.profile_id, current_nodes=EXCLUDED.current_nodes,
+                      current_vcpu_used=EXCLUDED.current_vcpu_used,
+                      current_ram_gb_used=EXCLUDED.current_ram_gb_used,
+                      current_disk_tb_used=EXCLUDED.current_disk_tb_used,
+                      notes=EXCLUDED.notes, updated_at=now()
+                RETURNING *
+            """, (project_id, req.profile_id, req.current_nodes, req.current_vcpu_used,
+                  req.current_ram_gb_used, req.current_disk_tb_used, req.notes))
+            inv = _serialize_row(dict(cur.fetchone()))
+    _log_activity(actor=actor, action="upsert_node_inventory", resource_type="migration_project",
+                  resource_id=project_id, details={"current_nodes": req.current_nodes})
+    return {"status": "ok", "inventory": inv}
+
+
+@router.get("/projects/{project_id}/node-sizing",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_node_sizing(
+    project_id: str,
+    max_util_pct: float = Query(70.0, ge=10.0, le=100.0,
+        description="Maximum cluster utilisation target (%). HA headroom lives inside this cap."),
+    peak_buffer_pct: float = Query(15.0, ge=0.0, le=100.0,
+        description="Extra buffer added to migration workload for traffic spikes (%)."),
+):
+    """
+    Compute PCD node sizing based on quota requirements and the current live cluster.
+
+    Uses a 70%-utilisation HA model: the utilisation cap IS the HA strategy Γאפ
+    no separate spare nodes are added on top.
+    """
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            profile_name = project.get("overcommit_profile_name") or "balanced"
+            cur.execute("SELECT * FROM migration_overcommit_profiles WHERE profile_name = %s", (profile_name,))
+            profile_row = cur.fetchone()
+            profile = dict(profile_row) if profile_row else {"cpu_ratio": 4.0, "ram_ratio": 1.5, "disk_snapshot_factor": 1.5}
+
+            cur.execute("""
+                SELECT * FROM migration_pcd_node_profiles
+                WHERE project_id = %s
+                ORDER BY is_default DESC, id ASC LIMIT 1
+            """, (project_id,))
+            node_profile_row = cur.fetchone()
+
+            cur.execute("SELECT * FROM migration_pcd_node_inventory WHERE project_id = %s", (project_id,))
+            inv_row = cur.fetchone()
+
+            # ΓפאΓפא Actual VM footprint from RVtools (source of truth for HW sizing) ΓפאΓפא
+            # Prefer actual performance data (cpu_usage_percent/memory_usage_percent)
+            # when available Γאפ these reflect real running consumption, not allocation.
+            # SUM(cpu_count * cpu_usage_percent/100) = actual physical vCPU demand:
+            # no overcommit division needed because utilisation already represents
+            # real scheduler pressure on the host (not theoretical peak).
+            # Only counts VMs that are in-scope: tenant include_in_plan = true AND
+            # individual exclude_from_migration = false.
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE v.power_state = 'poweredOn')                            AS powered_on_count,
+                    -- Performance-based actual demand
+                    COUNT(*) FILTER (WHERE v.power_state = 'poweredOn'
+                                     AND v.cpu_usage_percent IS NOT NULL)                          AS vms_with_cpu_perf,
+                    COUNT(*) FILTER (WHERE v.power_state = 'poweredOn'
+                                     AND v.memory_usage_percent IS NOT NULL)                       AS vms_with_ram_perf,
+                    COALESCE(SUM(v.cpu_count * v.cpu_usage_percent / 100.0)
+                             FILTER (WHERE v.power_state = 'poweredOn'
+                                      AND v.cpu_usage_percent IS NOT NULL), 0)                    AS actual_vcpu_used,
+                    COALESCE(SUM(v.ram_mb * v.memory_usage_percent / 100.0)
+                             FILTER (WHERE v.power_state = 'poweredOn'
+                                      AND v.memory_usage_percent IS NOT NULL), 0) / 1024.0        AS actual_ram_gb,
+                    -- Allocation-based fallback
+                    COALESCE(SUM(v.cpu_count)    FILTER (WHERE v.power_state = 'poweredOn'), 0)   AS vm_vcpu_alloc,
+                    COALESCE(SUM(v.ram_mb)       FILTER (WHERE v.power_state = 'poweredOn'), 0)
+                        / 1024.0                                                                  AS vm_ram_gb_alloc,
+                    COALESCE(SUM(v.total_disk_gb) FILTER (WHERE v.power_state = 'poweredOn'), 0)
+                        / 1024.0                                                                  AS vm_disk_tb,
+                    COUNT(DISTINCT v.host_name)                                                    AS source_node_count
+                FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                WHERE v.project_id = %s
+                  AND t.include_in_plan = true
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND NOT COALESCE(v.template, false)
+                  AND COALESCE((
+                      SELECT mc.include_in_plan FROM migration_clusters mc
+                      WHERE mc.project_id = v.project_id AND mc.cluster_name = v.cluster
+                      LIMIT 1
+                  ), true) = true
+            """, (project_id,))
+            vm_row = dict(cur.fetchone() or {})
+
+    if not node_profile_row:
+        raise HTTPException(status_code=400,
+                            detail="No node profile configured. Add a PCD node profile first.")
+
+    # Fetch live cluster state (preferred over manual inventory)
+    live_cluster = None
+    try:
+        live_resp = await get_pcd_live_inventory(project_id)
+        live = live_resp.get("live", {})
+        if live.get("node_count", 0) > 0:
+            live_cluster = live
+    except Exception:
+        pass  # Fall back to manual inventory
+
+    quota = compute_quota_requirements(tenants, profile)
+
+    # ΓפאΓפא Physical demand for HW sizing ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    # Priority 1 Γאפ Actual performance data (cpu_usage_percent / memory_usage_percent)
+    #   SUM(cpu_count ├ק cpu_usage_percent/100) = physical vCPU actually consumed.
+    #   No overcommit division needed: utilisation is already physical scheduler load.
+    #
+    # Priority 2 Γאפ Allocation ├╖ overcommit ratio (fallback when <50% VMs have perf data)
+    #   SUM(cpu_count) is vCPU configured, not running. Divide by PCD overcommit ratio
+    #   to convert to physical core demand.
+    #
+    # Priority 3 Γאפ Tenant quota (if no VM data at all, e.g. RVtools not yet imported)
+    #   Quota already has overcommit baked in; using fallback avoids a zero-node result.
+    # ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    cpu_ratio          = float(profile.get("cpu_ratio", 4.0))
+    powered_on         = int(vm_row.get("powered_on_count") or 0)
+    vms_with_cpu_perf  = int(vm_row.get("vms_with_cpu_perf") or 0)
+    vms_with_ram_perf  = int(vm_row.get("vms_with_ram_perf") or 0)
+    actual_vcpu_used   = float(vm_row.get("actual_vcpu_used") or 0)
+    actual_ram_gb      = float(vm_row.get("actual_ram_gb") or 0)
+    vm_vcpu_alloc      = float(vm_row.get("vm_vcpu_alloc") or 0)
+    vm_ram_gb_alloc    = float(vm_row.get("vm_ram_gb_alloc") or 0)
+    vm_disk_tb         = float(vm_row.get("vm_disk_tb") or 0)
+    source_node_count  = int(vm_row.get("source_node_count") or 0)
+
+    perf_threshold = 0.5  # require ΓיÑ50% of powered-on VMs to have perf data
+    cpu_perf_coverage = vms_with_cpu_perf / max(powered_on, 1)
+    ram_perf_coverage = vms_with_ram_perf / max(powered_on, 1)
+
+    if powered_on > 0 and cpu_perf_coverage >= perf_threshold:
+        # Γ£ו Use actual performance data Γאפ most accurate physical demand
+        phys_vcpu  = round(actual_vcpu_used)
+        phys_ram   = round(actual_ram_gb if ram_perf_coverage >= perf_threshold else vm_ram_gb_alloc, 1)
+        sizing_basis = "actual_performance"
+    elif vm_vcpu_alloc > 0:
+        # Γתá∩╕ן Fallback: allocation ├╖ overcommit
+        phys_vcpu  = round(vm_vcpu_alloc / cpu_ratio)
+        phys_ram   = round(vm_ram_gb_alloc, 1)
+        sizing_basis = "allocation"
+    else:
+        # ≡ƒפ┤ Last resort: tenant quota totals
+        phys_vcpu  = quota["totals_recommended"]["vcpu"]
+        phys_ram   = quota["totals_recommended"]["ram_gb"]
+        sizing_basis = "quota"
+
+    physical_totals = {
+        "vcpu":    phys_vcpu,
+        "ram_gb":  phys_ram,
+        "disk_tb": quota["totals_recommended"]["disk_tb"],  # quota disk includes snapshot factor
+    }
+
+    sizing = compute_node_sizing(
+        totals=physical_totals,
+        node_profile=dict(node_profile_row),
+        existing_inventory=dict(inv_row) if inv_row else None,
+        live_cluster=live_cluster,
+        max_util_pct=max_util_pct,
+        peak_buffer_pct=peak_buffer_pct,
+    )
+
+    # Attach metadata so the UI can explain what basis was used
+    sizing["sizing_basis"]         = sizing_basis
+    sizing["vm_powered_on_count"]   = powered_on
+    sizing["vm_vcpu_actual"]        = round(actual_vcpu_used) if sizing_basis == "actual_performance" else round(vm_vcpu_alloc / max(cpu_ratio, 1))
+    sizing["vm_ram_gb_actual"]      = round(actual_ram_gb)    if sizing_basis == "actual_performance" else round(vm_ram_gb_alloc)
+    sizing["vm_vcpu_alloc"]         = round(vm_vcpu_alloc)
+    sizing["vm_ram_gb_alloc"]       = round(vm_ram_gb_alloc)
+    sizing["source_node_count"]     = source_node_count
+    sizing["perf_coverage_pct"]     = round(cpu_perf_coverage * 100)
+
+    return {
+        "status": "ok",
+        "quota_summary": quota["totals_recommended"],
+        "sizing": sizing,
+        "live_cluster": live_cluster,
+    }
+
+
+# =====================================================================
+# Phase 2E Γאפ PCD Readiness & Gap Analysis
+# =====================================================================
+
+class PcdSettingsRequest(BaseModel):
+    pcd_auth_url: Optional[str] = None
+    pcd_username: Optional[str] = None
+    pcd_password_hint: Optional[str] = None
+    pcd_region: Optional[str] = "region-one"
+
+
+@router.patch("/projects/{project_id}/pcd-settings",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_pcd_settings(project_id: str, req: PcdSettingsRequest, user=Depends(get_current_user)):
+    """Store PCD connection info on the migration project. Password is stored as hint only."""
+    actor = user.username if user else "system"
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    set_parts = [f"{k} = %s" for k in updates]
+    set_parts.append("updated_at = now()")
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(f"UPDATE migration_projects SET {', '.join(set_parts)} WHERE project_id = %s",
+                        params + [project_id])
+    _log_activity(actor=actor, action="update_pcd_settings", resource_type="migration_project",
+                  resource_id=project_id, details=list(updates.keys()))
+    return {"status": "ok"}
+
+
+@router.post("/projects/{project_id}/pcd-gap-analysis",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def run_pcd_gap_analysis(project_id: str, user=Depends(get_current_user)):
+    """
+    Connect to PCD (using credentials from .env or project settings),
+    fetch flavors/networks/images, compare against VMware workload, and store gaps.
+    Falls back to offline analysis (only mapping-gap checks) if PCD is unreachable.
+    """
+    actor = user.username if user else "system"
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT v.vm_name, v.cpu_count, v.ram_mb, v.os_family, v.network_name, v.tenant_name
+                FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                    AND COALESCE(t.include_in_plan, true) = true
+                WHERE v.project_id = %s
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND NOT COALESCE(v.template, false)
+            """, (project_id,))
+            vms = [dict(r) for r in cur.fetchall()]
+
+    # ΓפאΓפא Try to connect to PCD ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    pcd_flavors: List[Dict[str, Any]] = []
+    pcd_networks: List[Dict[str, Any]] = []
+    pcd_images: List[Dict[str, Any]] = []
+    pcd_connected = False
+    pcd_error = None
+
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(__file__))
+        import p9_common  # type: ignore
+
+        # Override config with project-level PCD settings if provided
+        pcd_auth_url = project.get("pcd_auth_url") or p9_common.CFG.get("KEYSTONE_URL", "")
+        pcd_username  = project.get("pcd_username") or p9_common.CFG.get("USERNAME", "")
+        pcd_password  = os.getenv("PF9_PASSWORD", p9_common.CFG.get("PASSWORD", ""))
+
+        if pcd_auth_url and pcd_username and pcd_password:
+            # Temporarily patch global CFG if project has custom PCD settings
+            _orig_cfg = {}
+            if project.get("pcd_auth_url"):
+                _orig_cfg["KEYSTONE_URL"] = p9_common.CFG["KEYSTONE_URL"]
+                p9_common.CFG["KEYSTONE_URL"] = pcd_auth_url
+            if project.get("pcd_username"):
+                _orig_cfg["USERNAME"] = p9_common.CFG["USERNAME"]
+                p9_common.CFG["USERNAME"] = pcd_username
+            if project.get("pcd_region"):
+                _orig_cfg["REGION_NAME"] = p9_common.CFG.get("REGION_NAME", "region-one")
+                p9_common.CFG["REGION_NAME"] = project["pcd_region"]
+
+            try:
+                session, *_ = p9_common.get_session_best_scope()
+                pcd_flavors  = p9_common.nova_flavors(session)
+                pcd_networks = p9_common.neutron_list(session, "networks")
+                pcd_images   = p9_common.glance_images(session)
+                pcd_connected = True
+            finally:
+                # Restore original config
+                for k, v in _orig_cfg.items():
+                    p9_common.CFG[k] = v
+        else:
+            pcd_error = "PCD credentials not configured. Set PF9_AUTH_URL, PF9_USERNAME, PF9_PASSWORD in .env or project PCD settings."
+    except Exception as e:
+        pcd_error = str(e)
+        logger.warning(f"PCD gap analysis: could not connect to PCD: {e}")
+
+    # ΓפאΓפא Run gap analysis ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    gaps = analyze_pcd_gaps(tenants, pcd_flavors, pcd_networks, pcd_images, vms)
+
+    # ΓפאΓפא Store gaps in DB ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            # Clear old gaps for this project
+            cur.execute("DELETE FROM migration_pcd_gaps WHERE project_id = %s", (project_id,))
+            for g in gaps:
+                cur.execute("""
+                    INSERT INTO migration_pcd_gaps
+                      (project_id, gap_type, resource_name, tenant_name, details, severity, resolution)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (project_id, gap_type, resource_name, tenant_name)
+                    DO UPDATE SET details=EXCLUDED.details, severity=EXCLUDED.severity,
+                                  resolution=EXCLUDED.resolution, checked_at=now(), resolved=false
+                """, (project_id, g["gap_type"], g["resource_name"], g.get("tenant_name"),
+                      Json(g.get("details", {})), g.get("severity", "warning"), g.get("resolution")))
+
+            # Update readiness score on project (100 Γטע penalties)
+            critical_count = sum(1 for g in gaps if g.get("severity") == "critical")
+            warning_count  = sum(1 for g in gaps if g.get("severity") == "warning")
+            score = max(0, 100 - critical_count * 15 - warning_count * 5)
+            cur.execute("""
+                UPDATE migration_projects
+                SET pcd_readiness_score = %s, pcd_last_checked_at = now(), updated_at = now()
+                WHERE project_id = %s
+            """, (score, project_id))
+
+            # Auto-resolve gaps whose resources are already confirmed
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s
+                  AND gap_type = 'flavor'
+                  AND resolved = false
+                  AND resource_name IN (
+                      SELECT source_shape FROM migration_flavor_staging
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s
+                  AND gap_type = 'image'
+                  AND resolved = false
+                  AND resource_name IN (
+                      SELECT os_family FROM migration_image_requirements
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # Auto-resolve network gaps where the source network has a confirmed mapping
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'network' AND resolved = false
+                  AND resource_name IN (
+                      SELECT source_network_name FROM migration_network_mappings
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # If ALL network mappings are confirmed, resolve any remaining network gaps
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'network' AND resolved = false
+                  AND (
+                      SELECT COUNT(*) FROM migration_network_mappings
+                      WHERE project_id = %s AND confirmed = false
+                  ) = 0
+                  AND (
+                      SELECT COUNT(*) FROM migration_network_mappings
+                      WHERE project_id = %s
+                  ) > 0
+            """, (project_id, project_id, project_id))
+
+
+    _log_activity(actor=actor, action="pcd_gap_analysis", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"gaps": len(gaps), "pcd_connected": pcd_connected, "score": score})
+
+    return {
+        "status": "ok",
+        "pcd_connected": pcd_connected,
+        "pcd_error": pcd_error,
+        "gaps": gaps,
+        "gap_counts": {
+            "critical": critical_count,
+            "warning": warning_count,
+            "total": len(gaps),
+        },
+        "readiness_score": score,
+    }
+
+
+@router.get("/projects/{project_id}/pcd-gaps",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_pcd_gaps(
+    project_id: str,
+    resolved: Optional[bool] = Query(None),
+    gap_type: Optional[str] = Query(None),
+):
+    """List stored PCD gap analysis results for a project."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Always reconcile resolved state from staging/image-requirements before returning
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'flavor' AND resolved = false
+                  AND resource_name IN (
+                      SELECT source_shape FROM migration_flavor_staging
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # If ALL staging rows are confirmed (nothing pending), resolve any remaining
+            # flavor gaps too Γאפ they are stale or belong to VMs outside the current plan
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'flavor' AND resolved = false
+                  AND (
+                      SELECT COUNT(*) FROM migration_flavor_staging
+                      WHERE project_id = %s AND confirmed = false AND skip = false
+                  ) = 0
+                  AND (
+                      SELECT COUNT(*) FROM migration_flavor_staging
+                      WHERE project_id = %s
+                  ) > 0
+            """, (project_id, project_id, project_id))
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'image' AND resolved = false
+                  AND resource_name IN (
+                      SELECT os_family FROM migration_image_requirements
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # Auto-resolve network gaps where source network has a confirmed mapping
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'network' AND resolved = false
+                  AND resource_name IN (
+                      SELECT source_network_name FROM migration_network_mappings
+                      WHERE project_id = %s AND confirmed = true
+                  )
+            """, (project_id, project_id))
+            # If ALL network mappings are confirmed, resolve any remaining network gaps
+            cur.execute("""
+                UPDATE migration_pcd_gaps
+                SET resolved = true
+                WHERE project_id = %s AND gap_type = 'network' AND resolved = false
+                  AND (
+                      SELECT COUNT(*) FROM migration_network_mappings
+                      WHERE project_id = %s AND confirmed = false
+                  ) = 0
+                  AND (
+                      SELECT COUNT(*) FROM migration_network_mappings
+                      WHERE project_id = %s
+                  ) > 0
+            """, (project_id, project_id, project_id))
+
+            conditions = ["project_id = %s"]
+            params: List[Any] = [project_id]
+            if resolved is not None:
+                conditions.append("resolved = %s"); params.append(resolved)
+            if gap_type:
+                conditions.append("gap_type = %s"); params.append(gap_type)
+            cur.execute(f"""
+                SELECT * FROM migration_pcd_gaps
+                WHERE {' AND '.join(conditions)}
+                ORDER BY severity DESC, gap_type, resource_name
+            """, params)
+            gaps = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    return {
+        "status": "ok",
+        "gaps": gaps,
+        "readiness_score": project.get("pcd_readiness_score"),
+        "last_checked_at": project.get("pcd_last_checked_at"),
+    }
+
+
+@router.patch("/projects/{project_id}/pcd-gaps/{gap_id}/resolve",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def resolve_pcd_gap(project_id: str, gap_id: int, user=Depends(get_current_user)):
+    """Mark a specific PCD gap as resolved."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_pcd_gaps SET resolved = true
+                WHERE id = %s AND project_id = %s
+            """, (gap_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Gap not found")
+    _log_activity(actor=actor, action="resolve_pcd_gap", resource_type="migration_project",
+                  resource_id=project_id, details={"gap_id": gap_id})
+    return {"status": "ok"}
+
+
+# =====================================================================
+# Phase 2.8 Γאפ Auto-detect PCD node profile from hypervisors inventory
+# =====================================================================
+
+@router.get("/projects/{project_id}/pcd-auto-detect-profile",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def auto_detect_pcd_node_profile(project_id: str):
+    """
+    Auto-detect the dominant PCD compute node type from the hypervisors
+    inventory table (populated by pf9_rvtools.py nightly sync).
+    Groups active hypervisors by (vcpus, memory_mb) and returns the most
+    common configuration as a ready-to-use node-profile suggestion.
+    """
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                  vcpus,
+                  memory_mb,
+                  COUNT(*)::int                         AS node_count,
+                  ROUND(AVG(local_gb), 0)::int          AS avg_local_disk_gb
+                FROM hypervisors
+                WHERE state = 'up' AND status = 'enabled'
+                GROUP BY vcpus, memory_mb
+                ORDER BY node_count DESC
+                LIMIT 5
+            """)
+            groups = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT COUNT(*)::int AS total_nodes
+                FROM hypervisors
+                WHERE state = 'up' AND status = 'enabled'
+            """)
+            total_row = cur.fetchone()
+
+    if not groups:
+        return {
+            "status": "no_data",
+            "message": (
+                "No active hypervisors found in inventory. "
+                "Ensure the PCD inventory sync has run (pf9_rvtools.py) and "
+                "hypervisors are in state=up / status=enabled."
+            ),
+            "profiles": [],
+        }
+
+    total_nodes = int((total_row or {}).get("total_nodes") or 0)
+    suggestions = []
+    for g in groups:
+        vcpus     = int(g["vcpus"]   or 0)
+        ram_gb    = round(int(g["memory_mb"] or 0) / 1024)
+        disk_gb   = int(float(g["avg_local_disk_gb"] or 0))
+        storage_tb = round(disk_gb / 1024, 2)
+        # Assume HT: cpu_threads = vcpus, cpu_cores = vcpus / 2
+        cpu_cores   = max(1, vcpus // 2)
+        cpu_threads = vcpus
+        suggestions.append({
+            "suggested_name":  f"{vcpus}vCPU-{ram_gb}GB",
+            "cpu_cores":       cpu_cores,
+            "cpu_threads":     cpu_threads,
+            "ram_gb":          ram_gb,
+            "storage_tb":      storage_tb,
+            "node_count":      int(g["node_count"]),
+        })
+
+    dominant = suggestions[0]
+    return {
+        "status":           "ok",
+        "total_nodes":      total_nodes,
+        "dominant_profile": dominant,
+        "all_configurations": suggestions,
+        "message": (
+            f"Detected {len(groups)} node configuration(s) across "
+            f"{total_nodes} active hypervisor(s). "
+            f"Dominant: {dominant['cpu_threads']} vCPU ┬╖ {dominant['ram_gb']} GB RAM ┬╖ "
+            f"{total_nodes} node(s)."
+        ),
+    }
+
+
+# =====================================================================
+# Phase 2.8 Γאפ Gap Analysis Action Report export (Excel + PDF)
+# =====================================================================
+
+@router.get("/projects/{project_id}/export-gaps-report.xlsx",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_gaps_report_excel(project_id: str):
+    """Download PCD readiness gap analysis as a styled Excel workbook."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_pcd_gaps
+                WHERE project_id = %s
+                ORDER BY severity DESC, gap_type, resource_name
+            """, (project_id,))
+            gaps = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    readiness_score = project.get("pcd_readiness_score")
+    excel_bytes = generate_gaps_excel_report(
+        gaps=gaps,
+        project_name=project["name"],
+        readiness_score=float(readiness_score) if readiness_score is not None else None,
+    )
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(excel_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="pcd-readiness-{safe_name}.xlsx"'},
+    )
+
+
+@router.get("/projects/{project_id}/export-gaps-report.pdf",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_gaps_report_pdf(project_id: str):
+    """Download PCD readiness gap analysis as a landscape A4 PDF."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_pcd_gaps
+                WHERE project_id = %s
+                ORDER BY severity DESC, gap_type, resource_name
+            """, (project_id,))
+            gaps = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    readiness_score = project.get("pcd_readiness_score")
+    pdf_bytes = generate_gaps_pdf_report(
+        gaps=gaps,
+        project_name=project["name"],
+        readiness_score=float(readiness_score) if readiness_score is not None else None,
+    )
+    safe_name = project["name"].replace(" ", "_")
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="pcd-readiness-{safe_name}.pdf"'},
+    )
+
+
+# =====================================================================
+# Serialization helpers
+# =====================================================================
+
+# =====================================================================
+# PHASE 2.10 Γאפ VM STATUS & MODE OVERRIDE
+# =====================================================================
+
+VALID_VM_STATUSES = {"not_started", "assigned", "in_progress", "migrated", "failed", "skipped"}
+VALID_MODE_OVERRIDES = {"warm", "cold", None}
+
+
+@router.patch("/projects/{project_id}/vms/{vm_id}/status",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_vm_status(project_id: str, vm_id: int, req: VMStatusUpdateRequest,
+                           user=Depends(get_current_user)):
+    """Update the migration status of a single VM."""
+    actor = user.username if user else "system"
+    if req.status not in VALID_VM_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Valid: {sorted(VALID_VM_STATUSES)}")
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_vms
+                SET migration_status = %s,
+                    migration_status_note = %s,
+                    migration_status_updated_at = now(),
+                    migration_status_updated_by = %s,
+                    updated_at = now()
+                WHERE project_id = %s AND id = %s
+                RETURNING id, vm_name, migration_status, migration_status_note,
+                          migration_status_updated_at, migration_status_updated_by
+            """, (req.status, req.status_note, actor, project_id, vm_id))
+            vm = cur.fetchone()
+            if not vm:
+                raise HTTPException(status_code=404, detail="VM not found")
+
+    _log_activity(actor=actor, action="update_vm_status", resource_type="migration_vm",
+                  resource_id=str(vm_id), details={"status": req.status, "note": req.status_note})
+    return {"status": "ok", "vm": _serialize_row(dict(vm))}
+
+
+@router.patch("/projects/{project_id}/vms/bulk-status",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_update_vm_status(project_id: str, req: VMBulkStatusRequest,
+                                user=Depends(get_current_user)):
+    """Bulk-update migration status for multiple VMs."""
+    actor = user.username if user else "system"
+    if req.status not in VALID_VM_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Valid: {sorted(VALID_VM_STATUSES)}")
+    if not req.vm_ids:
+        raise HTTPException(status_code=400, detail="vm_ids must not be empty")
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_vms
+                SET migration_status = %s,
+                    migration_status_note = %s,
+                    migration_status_updated_at = now(),
+                    migration_status_updated_by = %s,
+                    updated_at = now()
+                WHERE project_id = %s AND id = ANY(%s)
+            """, (req.status, req.status_note, actor, project_id, req.vm_ids))
+            updated = cur.rowcount
+
+    _log_activity(actor=actor, action="bulk_update_vm_status", resource_type="migration_vm",
+                  resource_id=project_id, details={"status": req.status, "count": updated, "vm_ids": req.vm_ids})
+    return {"status": "ok", "updated_count": updated}
+
+
+@router.patch("/projects/{project_id}/vms/{vm_id}/mode-override",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_vm_mode_override(project_id: str, vm_id: int, req: VMModeOverrideRequest,
+                                  user=Depends(get_current_user)):
+    """Set or clear a per-VM migration mode override (warm/cold/null=auto)."""
+    actor = user.username if user else "system"
+    if req.override not in VALID_MODE_OVERRIDES:
+        raise HTTPException(status_code=400, detail="override must be 'warm', 'cold', or null")
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_vms
+                SET migration_mode_override = %s, updated_at = now()
+                WHERE project_id = %s AND id = %s
+                RETURNING id, vm_name, migration_mode, migration_mode_override
+            """, (req.override, project_id, vm_id))
+            vm = cur.fetchone()
+            if not vm:
+                raise HTTPException(status_code=404, detail="VM not found")
+
+    _log_activity(actor=actor, action="update_vm_mode_override", resource_type="migration_vm",
+                  resource_id=str(vm_id), details={"override": req.override})
+    return {"status": "ok", "vm": _serialize_row(dict(vm))}
+
+
+# =====================================================================
+# PHASE 2.10 Γאפ VM DEPENDENCIES
+# =====================================================================
+
+@router.get("/projects/{project_id}/vm-dependencies",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_vm_dependencies(
+    project_id: str,
+    vm_id: Optional[int] = Query(None),
+    dep_source: Optional[str] = Query(None),           # 'manual' | 'auto_imported' | 'rdm' | 'shared_datastore'
+    min_confidence: Optional[float] = Query(None),     # 0.0Γאף1.0
+):
+    """List VM dependencies for a project, optionally filtered by vm_id, dep_source, or min_confidence."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            where = "WHERE d.project_id = %s"
+            params: List[Any] = [project_id]
+            if vm_id is not None:
+                where += " AND d.vm_id = %s"
+                params.append(vm_id)
+            if dep_source is not None:
+                where += " AND d.dep_source = %s"
+                params.append(dep_source)
+            if min_confidence is not None:
+                where += " AND COALESCE(d.confidence, 1.0) >= %s"
+                params.append(min_confidence)
+            cur.execute(f"""
+                SELECT d.*,
+                       v1.vm_name AS vm_name,
+                       v2.vm_name AS depends_on_vm_name
+                FROM migration_vm_dependencies d
+                JOIN migration_vms v1 ON d.vm_id = v1.id
+                JOIN migration_vms v2 ON d.depends_on_vm_id = v2.id
+                {where}
+                ORDER BY v1.vm_name, d.created_at
+            """, params)
+            deps = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "dependencies": deps}
+
+
+@router.post("/projects/{project_id}/vms/{vm_id}/dependencies",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def add_vm_dependency(project_id: str, vm_id: int, req: VMDependencyRequest,
+                            user=Depends(get_current_user)):
+    """Add a dependency: this VM must wait for depends_on_vm_id to complete first."""
+    actor = user.username if user else "system"
+    if vm_id == req.depends_on_vm_id:
+        raise HTTPException(status_code=400, detail="A VM cannot depend on itself")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Circular dependency check (AΓזעB and BΓזעA)
+            cur.execute("""
+                SELECT 1 FROM migration_vm_dependencies
+                WHERE project_id = %s AND vm_id = %s AND depends_on_vm_id = %s
+            """, (project_id, req.depends_on_vm_id, vm_id))
+            if cur.fetchone():
+                raise HTTPException(status_code=409,
+                    detail="Circular dependency detected: the target VM already depends on this VM")
+
+            cur.execute("""
+                INSERT INTO migration_vm_dependencies
+                    (project_id, vm_id, depends_on_vm_id, dependency_type, notes)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (vm_id, depends_on_vm_id) DO UPDATE
+                    SET dependency_type = EXCLUDED.dependency_type,
+                        notes = EXCLUDED.notes
+                RETURNING *
+            """, (project_id, vm_id, req.depends_on_vm_id, req.dependency_type, req.notes))
+            dep = cur.fetchone()
+
+    _log_activity(actor=actor, action="add_vm_dependency", resource_type="migration_vm_dependency",
+                  resource_id=str(dep["id"]), details={"vm_id": vm_id, "depends_on": req.depends_on_vm_id})
+    return {"status": "ok", "dependency": _serialize_row(dict(dep))}
+
+
+@router.delete("/projects/{project_id}/vms/{vm_id}/dependencies/{dep_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_vm_dependency(project_id: str, vm_id: int, dep_id: int,
+                               user=Depends(get_current_user)):
+    """Remove a VM dependency."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM migration_vm_dependencies
+                WHERE id = %s AND project_id = %s AND vm_id = %s
+            """, (dep_id, project_id, vm_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Dependency not found")
+    _log_activity(actor=actor, action="delete_vm_dependency", resource_type="migration_vm_dependency",
+                  resource_id=str(dep_id), details={"vm_id": vm_id})
+    return {"status": "ok"}
+
+
+# =====================================================================
+# PHASE 2.10 Γאפ NETWORK MAPPINGS (Source Γזע PCD)
+# =====================================================================
+
+@router.get("/projects/{project_id}/network-mappings",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_network_mappings(project_id: str):
+    """
+    List all source network Γזע PCD network mappings for this project.
+    Auto-seeds unmapped entries from distinct VM network_name values.
+    """
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Auto-seed: insert any source networks from VMs that don't have a mapping yet.
+            # Default target = source name ("best guess, confirm or override"), confirmed=false.
+            cur.execute("""
+                INSERT INTO migration_network_mappings
+                    (project_id, source_network_name, target_network_name, confirmed)
+                SELECT DISTINCT %s, vm.network_name, vm.network_name, false
+                FROM migration_vms vm
+                JOIN migration_tenants t
+                    ON t.project_id = vm.project_id
+                    AND t.tenant_name = vm.tenant_name
+                    AND COALESCE(t.include_in_plan, true) = true
+                WHERE vm.project_id = %s
+                  AND vm.network_name IS NOT NULL
+                  AND vm.network_name != ''
+                  AND LOWER(vm.network_name) != 'none'
+                  AND vm.power_state = 'poweredOn'
+                  AND NOT COALESCE(vm.exclude_from_migration, false)
+                  AND NOT COALESCE(vm.template, false)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM migration_network_mappings m
+                      WHERE m.project_id = %s AND m.source_network_name = vm.network_name
+                  )
+                ON CONFLICT DO NOTHING
+            """, (project_id, project_id, project_id))
+            # Backfill VLAN ID from network name pattern (e.g. "mynet_vlan_3399" Γזע 3399)
+            cur.execute("""
+                UPDATE migration_network_mappings
+                SET vlan_id = CAST(
+                    NULLIF(substring(source_network_name from '[Vv][Ll][Aa][Nn][_-]?([0-9]+)'), '')
+                    AS INTEGER
+                )
+                WHERE project_id = %s
+                  AND vlan_id IS NULL
+                  AND source_network_name ~ '[Vv][Ll][Aa][Nn][_-]?[0-9]+'
+            """, (project_id,))
+
+            # Fetch all mappings with VM count per source network (in-scope VMs only)
+            cur.execute("""
+                SELECT m.*,
+                       COUNT(DISTINCT v.id) AS vm_count
+                FROM migration_network_mappings m
+                LEFT JOIN migration_vms v
+                    ON v.project_id = m.project_id
+                    AND v.network_name = m.source_network_name
+                    AND v.power_state = 'poweredOn'
+                    AND NOT COALESCE(v.exclude_from_migration, false)
+                    AND NOT COALESCE(v.template, false)
+                    AND EXISTS (
+                        SELECT 1 FROM migration_tenants t
+                        WHERE t.project_id = v.project_id
+                          AND t.tenant_name = v.tenant_name
+                          AND COALESCE(t.include_in_plan, true) = true
+                    )
+                WHERE m.project_id = %s
+                GROUP BY m.id
+                HAVING COUNT(DISTINCT v.id) > 0
+                ORDER BY COUNT(DISTINCT v.id) DESC, m.source_network_name
+            """, (project_id,))
+            mappings = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    # unconfirmed = auto-seeded rows (target = source name but not yet reviewed by user)
+    unconfirmed_count = sum(1 for m in mappings if not m.get("confirmed"))
+    return {"status": "ok", "mappings": mappings, "unconfirmed_count": unconfirmed_count,
+            "total": len(mappings)}
+
+
+@router.post("/projects/{project_id}/network-mappings",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_network_mapping(project_id: str, req: NetworkMappingCreateRequest,
+                                 user=Depends(get_current_user)):
+    """Create a sourceΓזעPCD network mapping entry."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_network_mappings
+                    (project_id, source_network_name, target_network_name,
+                     target_network_id, vlan_id, notes)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (project_id, source_network_name) DO UPDATE
+                    SET target_network_name = EXCLUDED.target_network_name,
+                        target_network_id = EXCLUDED.target_network_id,
+                        vlan_id = EXCLUDED.vlan_id,
+                        notes = EXCLUDED.notes,
+                        updated_at = now()
+                RETURNING *
+            """, (project_id, req.source_network_name, req.target_network_name,
+                  req.target_network_id, req.vlan_id, req.notes))
+            mapping = cur.fetchone()
+    _log_activity(actor=actor, action="create_network_mapping", resource_type="migration_network_mapping",
+                  resource_id=str(mapping["id"]), details={"source": req.source_network_name})
+    return {"status": "ok", "mapping": _serialize_row(dict(mapping))}
+
+
+@router.get("/projects/{project_id}/network-mappings/readiness",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_network_mappings_readiness(project_id: str):
+    """Count of networks that have confirmed mappings but missing subnet details for Phase 4B."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE confirmed = true)                              AS confirmed_count,
+                    COUNT(*) FILTER (WHERE confirmed = true AND NOT COALESCE(is_external, false)
+                                    AND NOT COALESCE(subnet_details_confirmed, false))    AS missing_subnet_details,
+                    COUNT(*) FILTER (WHERE confirmed = true AND COALESCE(is_external, false)) AS external_count
+                FROM migration_network_mappings
+                WHERE project_id = %s
+            """, (project_id,))
+            row = cur.fetchone()
+    return {
+        "confirmed_count":       row[0],
+        "missing_subnet_details": row[1],
+        "external_count":        row[2],
+        "ready":                 row[1] == 0 and row[0] > 0,
+    }
+
+
+@router.patch("/projects/{project_id}/network-mappings/{mapping_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_network_mapping(project_id: str, mapping_id: int,
+                                 req: NetworkMappingUpdateRequest, user=Depends(get_current_user)):
+    """Update target network name/ID for a mapping entry."""
+    actor = user.username if user else "system"
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_network_mappings
+                SET {', '.join(set_clauses)}
+                WHERE id = %s AND project_id = %s
+                RETURNING *
+            """, params + [mapping_id, project_id])
+            mapping = cur.fetchone()
+            if not mapping:
+                raise HTTPException(status_code=404, detail="Network mapping not found")
+    _log_activity(actor=actor, action="update_network_mapping", resource_type="migration_network_mapping",
+                  resource_id=str(mapping_id), details=updates)
+    return {"status": "ok", "mapping": _serialize_row(dict(mapping))}
+
+
+@router.delete("/projects/{project_id}/network-mappings/{mapping_id}",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_network_mapping(project_id: str, mapping_id: int,
+                                 user=Depends(get_current_user)):
+    """Delete a network mapping entry."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_network_mappings WHERE id = %s AND project_id = %s",
+                        (mapping_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Network mapping not found")
+    _log_activity(actor=actor, action="delete_network_mapping", resource_type="migration_network_mapping",
+                  resource_id=str(mapping_id), details={})
+    return {"status": "ok"}
+
+
+# =====================================================================
+# PHASE 4A Γאפ FLAVOR STAGING
+# =====================================================================
+
+@router.get("/projects/{project_id}/flavor-staging",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_flavor_staging(project_id: str):
+    """List draft flavor shapes for the project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_flavor_staging
+                WHERE project_id = %s
+                ORDER BY vm_count DESC, source_shape
+            """, (project_id,))
+            rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    confirmed = sum(1 for r in rows if r["confirmed"] or r["skip"])
+    return {"flavors": rows, "total": len(rows), "ready_count": confirmed}
+
+
+@router.post("/projects/{project_id}/flavor-staging/refresh",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def refresh_flavor_staging(project_id: str, user=Depends(get_current_user)):
+    """Re-detect distinct VM shapes from migration_vms and upsert into flavor staging.
+    Preserves any operator edits (target_flavor_name, confirmed, skip) on existing rows."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Collect distinct (vcpus, ram_mb) shapes from in-scope, non-excluded VMs.
+            # NOTE: disk is intentionally excluded Γאפ VCD flavors are boot-volume flavors
+            # (disk=0 on the flavor; the VM's boot disk is handled as a separate volume at
+            # migration time).  Two VMs with the same CPU/RAM but different disk sizes map
+            # to the SAME flavor.
+            cur.execute("""
+                SELECT
+                    COALESCE(v.cpu_count, 0)   AS vcpus,
+                    COALESCE(v.ram_mb, 0)      AS ram_mb,
+                    COUNT(*)                   AS vm_count
+                FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name
+                    AND COALESCE(t.include_in_plan, true) = true
+                WHERE v.project_id = %s
+                  AND NOT COALESCE(v.exclude_from_migration, false)
+                  AND NOT COALESCE(v.template, false)
+                  AND COALESCE(v.power_state, '') != 'poweredOff'
+                GROUP BY 1, 2
+                ORDER BY vm_count DESC
+            """, (project_id,))
+            shapes = cur.fetchall()
+
+            inserted = 0
+            updated = 0
+            new_shapes: set[str] = set()
+
+            for s in shapes:
+                vcpus  = s["vcpus"]
+                ram_mb = s["ram_mb"]
+                if vcpus == 0 and ram_mb == 0:
+                    continue
+                ram_gb = ram_mb // 1024
+                # source_shape no longer includes disk Γאפ reflects VCD boot-volume model
+                source_shape = f"{vcpus}vCPU-{ram_gb}GB"
+                default_name = f"m1.custom-{vcpus}cpu-{ram_gb}gb"
+                new_shapes.add(source_shape)
+                cur.execute("""
+                    INSERT INTO migration_flavor_staging
+                        (project_id, source_shape, vcpus, ram_mb, disk_gb, target_flavor_name, vm_count)
+                    VALUES (%s, %s, %s, %s, 0, %s, %s)
+                    ON CONFLICT (project_id, source_shape) DO UPDATE
+                        SET vm_count   = EXCLUDED.vm_count,
+                            vcpus      = EXCLUDED.vcpus,
+                            ram_mb     = EXCLUDED.ram_mb,
+                            disk_gb    = 0,
+                            updated_at = now()
+                    RETURNING (xmax = 0) AS is_insert
+                """, (project_id, source_shape, vcpus, ram_mb, default_name, s["vm_count"]))
+                row = cur.fetchone()
+                if row and row["is_insert"]:
+                    inserted += 1
+                else:
+                    updated += 1
+
+            # Prune any stale rows that used the old disk-in-shape naming (e.g. "4vCPU-8GB-300GB").
+            # This covers both fresh projects and projects that were refreshed before this fix.
+            if new_shapes:
+                cur.execute("""
+                    DELETE FROM migration_flavor_staging
+                    WHERE project_id = %s
+                      AND source_shape NOT IN %s
+                """, (project_id, tuple(new_shapes)))
+
+    _log_activity(actor=actor, action="refresh_flavor_staging", resource_type="migration_flavor_staging",
+                  resource_id=project_id, details={"inserted": inserted, "updated": updated})
+    return {"status": "ok", "inserted": inserted, "updated": updated}
+
+
+@router.patch("/flavor-staging/{staging_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_flavor_staging(staging_id: int, req: FlavorStagingUpdateRequest,
+                                user=Depends(get_current_user)):
+    """Update target name, skip flag, or confirmed status of a flavor staging row."""
+    actor = getattr(user, "username", "system")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_flavor_staging
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+                RETURNING *
+            """, params + [staging_id])
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Flavor staging row not found")
+            row = dict(row)
+            # Auto-resolve the corresponding flavor gap when a row is confirmed
+            if updates.get("confirmed") is True and row.get("source_shape"):
+                cur.execute("""
+                    UPDATE migration_pcd_gaps
+                    SET resolved = true
+                    WHERE project_id = %s
+                      AND gap_type  = 'flavor'
+                      AND resolved  = false
+                      AND resource_name = %s
+                """, (row["project_id"], row["source_shape"]))
+    _log_activity(actor=actor, action="update_flavor_staging", resource_type="migration_flavor_staging",
+                  resource_id=str(staging_id), details=updates)
+    return {"status": "ok", "flavor": _serialize_row(row)}
+
+
+@router.post("/projects/{project_id}/flavor-staging/bulk-rename",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def flavor_staging_bulk_rename(project_id: str, req: FlavorBulkRenameRequest,
+                                     user=Depends(get_current_user)):
+    """Find & Replace across target_flavor_name column. Returns preview or applies."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, source_shape, target_flavor_name
+                FROM migration_flavor_staging
+                WHERE project_id = %s AND target_flavor_name IS NOT NULL
+            """, (project_id,))
+            rows = cur.fetchall()
+
+        flags = 0 if req.case_sensitive else re.IGNORECASE
+        preview = []
+        for r in rows:
+            old_val = r["target_flavor_name"] or ""
+            new_val = re.sub(re.escape(req.find), req.replace, old_val, flags=flags)
+            if new_val != old_val:
+                preview.append({"id": r["id"], "source_shape": r["source_shape"],
+                                 "old_value": old_val, "new_value": new_val})
+
+        if not req.preview_only and preview:
+            with conn.cursor() as cur:
+                for p in preview:
+                    cur.execute("""
+                        UPDATE migration_flavor_staging
+                        SET target_flavor_name = %s, confirmed = false, updated_at = now()
+                        WHERE id = %s AND project_id = %s
+                    """, (p["new_value"], p["id"], project_id))
+            _log_activity(actor=actor, action="flavor_staging_bulk_rename",
+                          resource_type="migration_flavor_staging",
+                          resource_id=project_id, details={"affected": len(preview)})
+
+    return {"preview": preview, "affected_count": len(preview)}
+
+
+@router.post("/projects/{project_id}/flavor-staging/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def flavor_staging_confirm_all(project_id: str, user=Depends(get_current_user)):
+    """Mark all non-skipped, unconfirmed flavor staging rows as confirmed."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_flavor_staging
+                SET confirmed = true, updated_at = now()
+                WHERE project_id = %s AND skip IS NOT TRUE AND confirmed IS NOT TRUE
+            """, (project_id,))
+            affected = cur.rowcount
+    _log_activity(actor=actor, action="flavor_staging_confirm_all",
+                  resource_type="migration_flavor_staging", resource_id=project_id,
+                  details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.post("/projects/{project_id}/flavor-staging/match-from-pcd",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def flavor_staging_match_from_pcd(project_id: str, user=Depends(get_current_user)):
+    """Query live PCD Nova API and auto-match staged flavor shapes by (vcpus, ram_mb).
+    For each match sets pcd_flavor_id, target_flavor_name (PCD name), confirmed=true.
+    Unmatched rows are left as-is so the operator can name and create them in Phase 4B."""
+    actor = getattr(user, "username", "system")
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_flavor_staging WHERE project_id = %s", (project_id,))
+            staging_rows = [dict(r) for r in cur.fetchall()]
+
+    if not staging_rows:
+        return {"matched": 0, "unmatched": 0, "pcd_connected": False,
+                "error": "No staged flavors found. Run Refresh from VMs first.",
+                "details": []}
+
+    # ΓפאΓפא Connect to PCD ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(__file__))
+        import p9_common  # type: ignore
+
+        pcd_auth_url = project.get("pcd_auth_url") or p9_common.CFG.get("KEYSTONE_URL", "")
+        pcd_username  = project.get("pcd_username") or p9_common.CFG.get("USERNAME", "")
+        pcd_password  = os.getenv("PF9_PASSWORD", p9_common.CFG.get("PASSWORD", ""))
+
+        if not (pcd_auth_url and pcd_username and pcd_password):
+            return {"matched": 0, "unmatched": len(staging_rows), "pcd_connected": False,
+                    "error": "PCD credentials not configured. Set PF9_AUTH_URL / PF9_USERNAME / PF9_PASSWORD.",
+                    "details": []}
+
+        _orig_cfg: dict = {}
+        if project.get("pcd_auth_url"):
+            _orig_cfg["KEYSTONE_URL"] = p9_common.CFG.get("KEYSTONE_URL", "")
+            p9_common.CFG["KEYSTONE_URL"] = pcd_auth_url
+        if project.get("pcd_username"):
+            _orig_cfg["USERNAME"] = p9_common.CFG.get("USERNAME", "")
+            p9_common.CFG["USERNAME"] = pcd_username
+        if project.get("pcd_region"):
+            _orig_cfg["REGION_NAME"] = p9_common.CFG.get("REGION_NAME", "region-one")
+            p9_common.CFG["REGION_NAME"] = project["pcd_region"]
+
+        try:
+            session, *_ = p9_common.get_session_best_scope()
+            pcd_flavors = p9_common.nova_flavors(session)
+        finally:
+            for k, v in _orig_cfg.items():
+                p9_common.CFG[k] = v
+
+    except Exception as e:
+        return {"matched": 0, "unmatched": len(staging_rows), "pcd_connected": False,
+                "error": str(e), "details": []}
+
+    # ΓפאΓפא Build lookup: (vcpus, ram_mb) Γזע [pcd_flavor, ...] ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    from collections import defaultdict
+    pcd_by_shape: dict = defaultdict(list)
+    for f in pcd_flavors:
+        key = (int(f.get("vcpus", 0)), int(f.get("ram", 0)))
+        pcd_by_shape[key].append(f)
+
+    # ΓפאΓפא Match and update ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    matched = 0
+    unmatched = 0
+    details = []
+
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            for row in staging_rows:
+                key = (int(row["vcpus"] or 0), int(row["ram_mb"] or 0))
+                candidates = pcd_by_shape.get(key, [])
+
+                if not candidates:
+                    unmatched += 1
+                    details.append({"source_shape": row["source_shape"], "matched": False})
+                    continue
+
+                # If multiple PCD flavors share the same cpu+ram, prefer the one whose
+                # name most closely matches the current target_flavor_name.
+                best = candidates[0]
+                if len(candidates) > 1:
+                    current_name = row.get("target_flavor_name") or ""
+                    def _score(f: dict) -> int:
+                        fn = f.get("name", "")
+                        return sum(1 for a, b in zip(current_name, fn) if a == b)
+                    best = max(candidates, key=_score)
+
+                cur.execute("""
+                    UPDATE migration_flavor_staging
+                    SET pcd_flavor_id    = %s,
+                        target_flavor_name = %s,
+                        confirmed         = true,
+                        updated_at        = now()
+                    WHERE id = %s AND project_id = %s
+                """, (best["id"], best["name"], row["id"], project_id))
+
+                matched += 1
+                details.append({
+                    "source_shape": row["source_shape"],
+                    "matched": True,
+                    "pcd_flavor_id": best["id"],
+                    "pcd_flavor_name": best["name"],
+                })
+
+    # ΓפאΓפא Auto-resolve flavor gaps for matched shapes ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    gaps_resolved = 0
+    if matched > 0:
+        matched_shapes = [d["source_shape"] for d in details if d.get("matched")]
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE migration_pcd_gaps
+                    SET resolved = true
+                    WHERE project_id = %s
+                      AND gap_type   = 'flavor'
+                      AND resolved   = false
+                      AND resource_name = ANY(%s)
+                """, (project_id, matched_shapes))
+                gaps_resolved = cur.rowcount
+
+    _log_activity(actor=actor, action="flavor_staging_match_from_pcd",
+                  resource_type="migration_flavor_staging", resource_id=project_id,
+                  details={"matched": matched, "unmatched": unmatched, "gaps_resolved": gaps_resolved})
+    return {"matched": matched, "unmatched": unmatched, "gaps_resolved": gaps_resolved,
+            "pcd_connected": True, "details": details}
+
+
+# =====================================================================
+# PHASE 4A Γאפ IMAGE REQUIREMENTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/image-requirements",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_image_requirements(project_id: str):
+    """List image requirements for the project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_image_requirements
+                WHERE project_id = %s
+                ORDER BY vm_count DESC, os_family
+            """, (project_id,))
+            rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    confirmed = sum(1 for r in rows if r["confirmed"])
+    return {"images": rows, "total": len(rows), "confirmed_count": confirmed}
+
+
+@router.post("/projects/{project_id}/image-requirements/refresh",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def refresh_image_requirements(project_id: str, user=Depends(get_current_user)):
+    """Re-detect distinct OS families from migration_vms and upsert image requirement rows.
+    Preserves operator edits (glance_image_id, confirmed, notes)."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT
+                    fam.os_family,
+                    fam.vm_count,
+                    (SELECT v2.os_version
+                     FROM migration_vms v2
+                     JOIN migration_tenants t2 ON t2.project_id = v2.project_id
+                         AND t2.tenant_name = v2.tenant_name
+                         AND COALESCE(t2.include_in_plan, true) = true
+                     WHERE v2.project_id = %s
+                       AND NOT COALESCE(v2.exclude_from_migration, false)
+                       AND NOT COALESCE(v2.template, false)
+                       AND COALESCE(v2.os_family, 'other') = fam.os_family
+                       AND v2.os_version IS NOT NULL
+                     GROUP BY v2.os_version ORDER BY COUNT(*) DESC LIMIT 1) AS os_version_hint
+                FROM (
+                    SELECT
+                        COALESCE(v.os_family, 'other') AS os_family,
+                        COUNT(*) AS vm_count
+                    FROM migration_vms v
+                    JOIN migration_tenants t ON t.project_id = v.project_id
+                        AND t.tenant_name = v.tenant_name
+                        AND COALESCE(t.include_in_plan, true) = true
+                    WHERE v.project_id = %s
+                      AND NOT COALESCE(v.exclude_from_migration, false)
+                      AND NOT COALESCE(v.template, false)
+                      AND COALESCE(v.os_family, 'other') != 'other'
+                    GROUP BY 1
+                ) fam
+                ORDER BY fam.vm_count DESC
+            """, (project_id, project_id))
+            families = cur.fetchall()
+
+            inserted = 0
+            updated = 0
+            for f in families:
+                cur.execute("""
+                    INSERT INTO migration_image_requirements
+                        (project_id, os_family, os_version_hint, vm_count)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (project_id, os_family) DO UPDATE
+                        SET vm_count        = EXCLUDED.vm_count,
+                            os_version_hint = EXCLUDED.os_version_hint,
+                            updated_at      = now()
+                    RETURNING (xmax = 0) AS is_insert
+                """, (project_id, f["os_family"], f["os_version_hint"], f["vm_count"]))
+                row = cur.fetchone()
+                if row and row["is_insert"]:
+                    inserted += 1
+                else:
+                    updated += 1
+    _log_activity(actor=actor, action="refresh_image_requirements", resource_type="migration_image_requirements",
+                  resource_id=project_id, details={"inserted": inserted, "updated": updated})
+    return {"status": "ok", "inserted": inserted, "updated": updated}
+
+
+@router.post("/projects/{project_id}/image-requirements/match-from-pcd",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def image_requirements_match_from_pcd(project_id: str, user=Depends(get_current_user)):
+    """Query PCD Glance for existing images and auto-match image requirement rows by os_family.
+    Sets glance_image_id, glance_image_name, confirmed=true for matched rows."""
+    actor = getattr(user, "username", "system")
+
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_image_requirements WHERE project_id = %s", (project_id,))
+            req_rows = [dict(r) for r in cur.fetchall()]
+
+    if not req_rows:
+        return {"matched": 0, "unmatched": 0, "pcd_connected": False,
+                "error": "No image requirements found. Run Refresh from VMs first.", "details": []}
+
+    # ΓפאΓפא Connect to PCD ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(__file__))
+        import p9_common  # type: ignore
+
+        pcd_auth_url = project.get("pcd_auth_url") or p9_common.CFG.get("KEYSTONE_URL", "")
+        pcd_username  = project.get("pcd_username") or p9_common.CFG.get("USERNAME", "")
+        pcd_password  = os.getenv("PF9_PASSWORD", p9_common.CFG.get("PASSWORD", ""))
+
+        if not (pcd_auth_url and pcd_username and pcd_password):
+            return {"matched": 0, "unmatched": len(req_rows), "pcd_connected": False,
+                    "error": "PCD credentials not configured.", "details": []}
+
+        _orig_cfg: dict = {}
+        if project.get("pcd_auth_url"):
+            _orig_cfg["KEYSTONE_URL"] = p9_common.CFG.get("KEYSTONE_URL", "")
+            p9_common.CFG["KEYSTONE_URL"] = pcd_auth_url
+        if project.get("pcd_username"):
+            _orig_cfg["USERNAME"] = p9_common.CFG.get("USERNAME", "")
+            p9_common.CFG["USERNAME"] = pcd_username
+        if project.get("pcd_region"):
+            _orig_cfg["REGION_NAME"] = p9_common.CFG.get("REGION_NAME", "region-one")
+            p9_common.CFG["REGION_NAME"] = project["pcd_region"]
+
+        try:
+            session, *_ = p9_common.get_session_best_scope()
+            glance_imgs = p9_common.glance_images(session)
+        finally:
+            for k, v in _orig_cfg.items():
+                p9_common.CFG[k] = v
+
+    except Exception as e:
+        return {"matched": 0, "unmatched": len(req_rows), "pcd_connected": False,
+                "error": str(e), "details": []}
+
+    # ΓפאΓפא Match: os_family substring against Glance image name (case-insensitive) ΓפאΓפא
+    matched = 0
+    unmatched = 0
+    details = []
+
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            for row in req_rows:
+                family = (row.get("os_family") or "").lower().strip()
+                if not family:
+                    unmatched += 1
+                    details.append({"os_family": row.get("os_family"), "matched": False, "reason": "empty os_family"})
+                    continue
+
+                # Candidates: Glance images whose name contains os_family
+                candidates = [img for img in glance_imgs
+                              if family in (img.get("name") or "").lower()]
+
+                if not candidates:
+                    unmatched += 1
+                    details.append({"os_family": row.get("os_family"), "matched": False})
+                    continue
+
+                # Prefer shortest name (most specific/generic) unless current name already set
+                current = (row.get("glance_image_name") or "").lower()
+                if current:
+                    # Prefer the one whose name most closely matches the current value
+                    def _img_score(img: dict) -> int:
+                        n = (img.get("name") or "").lower()
+                        return sum(1 for a, b in zip(current, n) if a == b)
+                    best = max(candidates, key=_img_score)
+                else:
+                    # Pick shortest active image (active = no status or status=active)
+                    active = [img for img in candidates if img.get("status", "active") == "active"] or candidates
+                    best = min(active, key=lambda img: len(img.get("name") or ""))
+
+                cur.execute("""
+                    UPDATE migration_image_requirements
+                    SET glance_image_id   = %s,
+                        glance_image_name = %s,
+                        confirmed         = true,
+                        updated_at        = now()
+                    WHERE id = %s AND project_id = %s
+                """, (best["id"], best["name"], row["id"], project_id))
+
+                matched += 1
+                details.append({"os_family": row.get("os_family"), "matched": True,
+                                "glance_image_id": best["id"], "glance_image_name": best["name"]})
+
+    # ΓפאΓפא Auto-resolve image gaps for matched families ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+    gaps_resolved = 0
+    if matched > 0:
+        matched_families = [d["os_family"] for d in details if d.get("matched")]
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE migration_pcd_gaps
+                    SET resolved = true
+                    WHERE project_id = %s
+                      AND gap_type   = 'image'
+                      AND resolved   = false
+                      AND resource_name = ANY(%s)
+                """, (project_id, matched_families))
+                gaps_resolved = cur.rowcount
+
+    _log_activity(actor=actor, action="image_requirements_match_from_pcd",
+                  resource_type="migration_image_requirements", resource_id=project_id,
+                  details={"matched": matched, "unmatched": unmatched, "gaps_resolved": gaps_resolved})
+    return {"matched": matched, "unmatched": unmatched, "gaps_resolved": gaps_resolved,
+            "pcd_connected": True, "details": details}
+
+
+@router.post("/projects/{project_id}/image-requirements/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def image_requirements_confirm_all(project_id: str, user=Depends(get_current_user)):
+    """Mark all unconfirmed image requirement rows as confirmed."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_image_requirements
+                SET confirmed = true, updated_at = now()
+                WHERE project_id = %s AND confirmed IS NOT TRUE
+            """, (project_id,))
+            affected = cur.rowcount
+    _log_activity(actor=actor, action="image_requirements_confirm_all",
+                  resource_type="migration_image_requirements", resource_id=project_id,
+                  details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.patch("/image-requirements/{req_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_image_requirement(req_id: int, req: ImageRequirementUpdateRequest,
+                                   user=Depends(get_current_user)):
+    """Update Glance image ID/name and confirmed status for an image requirement row."""
+    actor = getattr(user, "username", "system")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_image_requirements
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+                RETURNING *
+            """, params + [req_id])
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Image requirement not found")
+            row = dict(row)
+            # Auto-resolve image gap when confirmed
+            if updates.get("confirmed") is True and row.get("os_family"):
+                cur.execute("""
+                    UPDATE migration_pcd_gaps
+                    SET resolved = true
+                    WHERE project_id = %s
+                      AND gap_type  = 'image'
+                      AND resolved  = false
+                      AND resource_name = %s
+                """, (row["project_id"], row["os_family"]))
+    _log_activity(actor=actor, action="update_image_requirement", resource_type="migration_image_requirements",
+                  resource_id=str(req_id), details=updates)
+    return {"status": "ok", "image_req": _serialize_row(row)}
+
+
+# =====================================================================
+# PHASE 4A Γאפ TENANT USERS
+# =====================================================================
+
+import hashlib
+import secrets as _secrets
+
+def _generate_temp_password() -> str:
+    """Generate a 20-character cryptographically random password."""
+    alphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$"
+    return "".join(_secrets.choice(alphabet) for _ in range(20))
+
+
+def _hash_password(pw: str) -> str:
+    """Simple one-way hash for storing temp passwords (not plaintext in DB)."""
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+
+@router.get("/projects/{project_id}/tenant-users",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_tenant_users(project_id: str):
+    """List all user definitions for the project, grouped by tenant."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT mu.*, mt.tenant_name
+                FROM migration_tenant_users mu
+                JOIN migration_tenants mt ON mt.id = mu.tenant_id
+                WHERE mu.project_id = %s
+                  AND COALESCE(mt.include_in_plan, true) = true
+                ORDER BY mt.tenant_name, mu.user_type, mu.username
+            """, (project_id,))
+            rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    # Group by tenant
+    groups: Dict[str, List] = {}
+    for r in rows:
+        tn = r["tenant_name"]
+        groups.setdefault(tn, []).append(r)
+    confirmed_tenants = sum(
+        1 for grp in groups.values()
+        if all(u["confirmed"] for u in grp)
+    )
+    return {
+        "users": rows,
+        "tenant_count": len(groups),
+        "confirmed_tenant_count": confirmed_tenants,
+    }
+
+
+@router.post("/projects/{project_id}/tenant-users/seed-service-accounts",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def seed_service_accounts(project_id: str, user=Depends(get_current_user)):
+    """Auto-create one service_account row per in-scope tenant that doesn't have one yet."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch project slug for username prefix
+            cur.execute("SELECT project_id FROM migration_projects WHERE project_id = %s", (project_id,))
+            proj = cur.fetchone()
+            proj_slug = re.sub(r"[^a-z0-9]+", "-", (project_id or "").lower()).strip("-")[:12]
+
+            # Get in-scope tenants that don't yet have a service account
+            cur.execute("""
+                SELECT mt.id, mt.tenant_name
+                FROM migration_tenants mt
+                WHERE mt.project_id = %s
+                  AND COALESCE(mt.include_in_plan, true) = true
+                  AND NOT EXISTS (
+                      SELECT 1 FROM migration_tenant_users u
+                      WHERE u.tenant_id = mt.id AND u.user_type = 'service_account'
+                  )
+                ORDER BY mt.tenant_name
+            """, (project_id,))
+            tenants = cur.fetchall()
+
+            created = 0
+            for t in tenants:
+                tenant_slug = re.sub(r"[^a-z0-9]+", "-", t["tenant_name"].lower()).strip("-")[:16]
+                username = f"svc-mig-{proj_slug}-{tenant_slug}"[:50]
+                temp_pw  = _generate_temp_password()
+                cur.execute("""
+                    INSERT INTO migration_tenant_users
+                        (tenant_id, project_id, user_type, username, role,
+                         is_existing_user, temp_password, password_must_change)
+                    VALUES (%s, %s, 'service_account', %s, 'admin', false, %s, false)
+                    ON CONFLICT (tenant_id, username) DO NOTHING
+                    RETURNING id
+                """, (t["id"], project_id, username, temp_pw))
+                if cur.fetchone():
+                    created += 1
+    _log_activity(actor=actor, action="seed_service_accounts", resource_type="migration_tenant_users",
+                  resource_id=project_id, details={"created": created})
+    return {"status": "ok", "created": created}
+
+
+@router.post("/projects/{project_id}/tenant-users",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_tenant_user(project_id: str, req: TenantUserCreateRequest,
+                             user=Depends(get_current_user)):
+    """Add a user definition (typically a tenant_owner) for a specific tenant."""
+    actor = getattr(user, "username", "system")
+    if req.user_type not in ("service_account", "tenant_owner"):
+        raise HTTPException(status_code=400, detail="user_type must be 'service_account' or 'tenant_owner'")
+    if req.role not in ("admin", "member", "reader"):
+        raise HTTPException(status_code=400, detail="role must be 'admin', 'member', or 'reader'")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Verify tenant belongs to this project
+            cur.execute("SELECT id FROM migration_tenants WHERE id = %s AND project_id = %s",
+                        (req.tenant_id, project_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Tenant not found in this project")
+            cur.execute("""
+                INSERT INTO migration_tenant_users
+                    (tenant_id, project_id, user_type, username, email, role,
+                     is_existing_user, password_must_change, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (req.tenant_id, project_id, req.user_type, req.username, req.email,
+                  req.role, req.is_existing_user, not req.is_existing_user, req.notes))
+            row = cur.fetchone()
+    _log_activity(actor=actor, action="create_tenant_user", resource_type="migration_tenant_users",
+                  resource_id=str(row["id"]), details={"username": req.username, "type": req.user_type})
+    return {"status": "ok", "user": _serialize_row(dict(row))}
+
+
+@router.patch("/tenant-users/{user_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_tenant_user(user_id: int, req: TenantUserUpdateRequest,
+                             user=Depends(get_current_user)):
+    """Edit a tenant user definition (username, email, role, confirmed, etc.)."""
+    actor = getattr(user, "username", "system")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_tenant_users
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+                RETURNING *
+            """, params + [user_id])
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Tenant user not found")
+    _log_activity(actor=actor, action="update_tenant_user", resource_type="migration_tenant_users",
+                  resource_id=str(user_id), details=updates)
+    return {"status": "ok", "user": _serialize_row(dict(row))}
+
+
+@router.delete("/tenant-users/{user_id}",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_tenant_user(user_id: int, user=Depends(get_current_user)):
+    """Delete a tenant user definition. Service accounts cannot be deleted."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_type FROM migration_tenant_users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Tenant user not found")
+            if row[0] == "service_account":
+                raise HTTPException(status_code=400,
+                                    detail="Service accounts cannot be deleted Γאפ regenerate password or edit username instead")
+            cur.execute("DELETE FROM migration_tenant_users WHERE id = %s", (user_id,))
+    _log_activity(actor=actor, action="delete_tenant_user", resource_type="migration_tenant_users",
+                  resource_id=str(user_id), details={})
+    return {"status": "ok"}
+
+
+# =====================================================================
+# PHASE 2.10 Γאפ MIGRATION COHORTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/cohorts",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_cohorts(project_id: str):
+    """List all cohorts for a project with per-cohort VM and tenant counts."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT c.*,
+                       COUNT(DISTINCT t.id) AS tenant_count,
+                       COALESCE(SUM(t.vm_count), 0) AS vm_count,
+                       COALESCE(SUM(t.total_vcpu), 0) AS total_vcpu,
+                       COALESCE(ROUND(SUM(t.total_ram_mb / 1024.0)::numeric, 1), 0) AS total_ram_gb,
+                       COALESCE(ROUND(SUM(t.total_disk_gb)::numeric, 1), 0) AS total_disk_gb
+                FROM migration_cohorts c
+                LEFT JOIN migration_tenants t ON t.cohort_id = c.id
+                    AND COALESCE(t.include_in_plan, true) = true
+                WHERE c.project_id = %s
+                GROUP BY c.id
+                ORDER BY c.cohort_order, c.created_at
+            """, (project_id,))
+            cohorts = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+            # Count unassigned tenants (in this project with no cohort)
+            cur.execute("""
+                SELECT COUNT(*) AS cnt FROM migration_tenants
+                WHERE project_id = %s AND cohort_id IS NULL AND include_in_plan = true
+            """, (project_id,))
+            unassigned_count = cur.fetchone()["cnt"]
+
+    return {"status": "ok", "cohorts": cohorts, "unassigned_tenant_count": unassigned_count}
+
+
+@router.post("/projects/{project_id}/cohorts",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_cohort(project_id: str, req: CreateCohortRequest,
+                        user=Depends(get_current_user)):
+    """Create a new migration cohort."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_cohorts
+                    (project_id, name, description, cohort_order,
+                     scheduled_start, scheduled_end, owner_name,
+                     depends_on_cohort_id, overcommit_profile_override,
+                     agent_slots_override, schedule_duration_days, target_vms_per_day, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (project_id, req.name, req.description, req.cohort_order,
+                  req.scheduled_start, req.scheduled_end, req.owner_name,
+                  req.depends_on_cohort_id, req.overcommit_profile_override,
+                  req.agent_slots_override, req.schedule_duration_days,
+                  req.target_vms_per_day, req.notes))
+            cohort = cur.fetchone()
+    _log_activity(actor=actor, action="create_cohort", resource_type="migration_cohort",
+                  resource_id=str(cohort["id"]), details={"name": req.name})
+    return {"status": "ok", "cohort": _serialize_row(dict(cohort))}
+
+
+@router.patch("/projects/{project_id}/cohorts/{cohort_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_cohort(project_id: str, cohort_id: int, req: UpdateCohortRequest,
+                        user=Depends(get_current_user)):
+    """Update cohort metadata."""
+    actor = user.username if user else "system"
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates] + ["updated_at = now()"]
+    params = list(updates.values())
+
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"""
+                UPDATE migration_cohorts
+                SET {', '.join(set_clauses)}
+                WHERE id = %s AND project_id = %s
+                RETURNING *
+            """, params + [cohort_id, project_id])
+            cohort = cur.fetchone()
+            if not cohort:
+                raise HTTPException(status_code=404, detail="Cohort not found")
+    _log_activity(actor=actor, action="update_cohort", resource_type="migration_cohort",
+                  resource_id=str(cohort_id), details=updates)
+    return {"status": "ok", "cohort": _serialize_row(dict(cohort))}
+
+
+@router.delete("/projects/{project_id}/cohorts/{cohort_id}",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_cohort(project_id: str, cohort_id: int, user=Depends(get_current_user)):
+    """Delete a cohort. Tenants are unassigned (cohort_id = NULL), not deleted."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            # Unassign tenants first
+            cur.execute("UPDATE migration_tenants SET cohort_id = NULL WHERE cohort_id = %s",
+                        (cohort_id,))
+            cur.execute("DELETE FROM migration_cohorts WHERE id = %s AND project_id = %s",
+                        (cohort_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Cohort not found")
+    _log_activity(actor=actor, action="delete_cohort", resource_type="migration_cohort",
+                  resource_id=str(cohort_id), details={})
+    return {"status": "ok"}
+
+
+@router.delete("/projects/{project_id}/cohorts",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_all_cohorts(project_id: str, user=Depends(get_current_user)):
+    """
+    Delete ALL cohorts for a project and unassign all tenants.
+    Use this to rebuild cohort groupings from scratch after changing exclusions
+    or reassessing the migration plan.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            # Unassign all tenants first
+            cur.execute("""
+                UPDATE migration_tenants SET cohort_id = NULL
+                WHERE project_id = %s AND cohort_id IS NOT NULL
+            """, (project_id,))
+            unassigned = cur.rowcount
+            # Delete all cohorts
+            cur.execute("DELETE FROM migration_cohorts WHERE project_id = %s", (project_id,))
+            deleted = cur.rowcount
+    _log_activity(actor=actor, action="delete_all_cohorts", resource_type="migration_cohort",
+                  resource_id=project_id,
+                  details={"cohorts_deleted": deleted, "tenants_unassigned": unassigned})
+    return {"status": "ok", "cohorts_deleted": deleted, "tenants_unassigned": unassigned}
+
+
+@router.post("/projects/{project_id}/cohorts/{cohort_id}/assign-tenants",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def assign_tenants_to_cohort(project_id: str, cohort_id: int,
+                                   req: AssignTenantsToCohortRequest,
+                                   user=Depends(get_current_user)):
+    """Assign a list of tenants to a cohort (or unassign with cohort_id=0)."""
+    actor = user.username if user else "system"
+    if not req.tenant_ids:
+        raise HTTPException(status_code=400, detail="tenant_ids must not be empty")
+
+    # cohort_id=0 means unassign
+    target_cohort_id = None if cohort_id == 0 else cohort_id
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        if target_cohort_id is not None:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT id FROM migration_cohorts WHERE id = %s AND project_id = %s",
+                            (target_cohort_id, project_id))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Cohort not found")
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_tenants
+                SET cohort_id = %s, updated_at = now()
+                WHERE project_id = %s AND id = ANY(%s)
+            """, (target_cohort_id, project_id, req.tenant_ids))
+            updated = cur.rowcount
+
+    _log_activity(actor=actor, action="assign_tenants_to_cohort", resource_type="migration_cohort",
+                  resource_id=str(cohort_id),
+                  details={"tenant_ids": req.tenant_ids, "updated": updated})
+    return {"status": "ok", "updated_count": updated}
+
+
+@router.get("/projects/{project_id}/cohorts/{cohort_id}/summary",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_cohort_summary(project_id: str, cohort_id: int):
+    """Detailed summary for one cohort: tenant list, VM counts, resource totals, status breakdown."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_cohorts WHERE id = %s AND project_id = %s",
+                        (cohort_id, project_id))
+            cohort = cur.fetchone()
+            if not cohort:
+                raise HTTPException(status_code=404, detail="Cohort not found")
+
+            # Tenants in this cohort Γאפ only those still in scope
+            cur.execute("""
+                SELECT id, tenant_name, include_in_plan, migration_priority,
+                       vm_count, total_vcpu, total_ram_mb, total_disk_gb,
+                       target_domain_name, target_project_name
+                FROM migration_tenants
+                WHERE cohort_id = %s AND project_id = %s
+                  AND COALESCE(include_in_plan, true) = true
+                ORDER BY migration_priority, tenant_name
+            """, (cohort_id, project_id))
+            tenants = [_serialize_row(dict(r)) for r in cur.fetchall()]
+            tenant_ids = [t["id"] for t in tenants]
+
+            # VM status breakdown for this cohort Γאפ exclude individually excluded VMs
+            status_breakdown = {}
+            if tenant_ids:
+                placeholders = ', '.join(['%s'] * len(tenant_ids))
+                cur.execute(f"""
+                    SELECT migration_status, COUNT(*) as cnt,
+                           COALESCE(SUM(cpu_count), 0) as vcpu,
+                           COALESCE(ROUND(SUM(ram_mb / 1024.0)::numeric, 1), 0) as ram_gb
+                    FROM migration_vms
+                    WHERE project_id = %s
+                      AND tenant_name IN (
+                          SELECT tenant_name FROM migration_tenants
+                          WHERE id IN ({placeholders})
+                      )
+                      AND power_state = 'poweredOn'
+                      AND NOT COALESCE(exclude_from_migration, false)
+                      AND NOT COALESCE(template, false)
+                    GROUP BY migration_status
+                """, [project_id] + tenant_ids)
+                for row in cur.fetchall():
+                    status_breakdown[row["migration_status"] or "not_started"] = {
+                        "count": row["cnt"], "vcpu": row["vcpu"], "ram_gb": float(row["ram_gb"])
+                    }
+
+    return {
+        "status": "ok",
+        "cohort": _serialize_row(dict(cohort)),
+        "tenants": tenants,
+        "status_breakdown": status_breakdown,
+        "tenant_count": len(tenants),
+        "vm_count": sum(t.get("vm_count") or 0 for t in tenants),
+        "total_vcpu": sum(t.get("total_vcpu") or 0 for t in tenants),
+        "total_ram_gb": round(sum(float(t.get("total_ram_mb") or 0) / 1024.0 for t in tenants), 1),
+    }
+
+
+# =====================================================================
+# PHASE 2.10 Γאפ TENANT READINESS CHECKS
+# =====================================================================
+# NOTE: auto-assign endpoint moved to Phase 3.0 section below (auto_assign_cohorts_endpoint)
+
+def _compute_tenant_readiness(project_id: str, tenant_id: int, conn) -> List[Dict]:
+    """Compute readiness check results for one tenant. Returns list of check dicts."""
+    results = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT * FROM migration_tenants WHERE id = %s AND project_id = %s",
+                    (tenant_id, project_id))
+        tenant = cur.fetchone()
+        if not tenant:
+            return []
+
+        # Check 1: target_mapped Γאפ requires confirmed=true (user reviewed, not just auto-seeded)
+        results.append({
+            "check_name": "target_mapped",
+            "check_status": "pass" if (tenant.get("target_domain_name") and tenant.get("target_confirmed"))
+                            else "pending" if tenant.get("target_domain_name")
+                            else "fail",
+            "notes": "Target PCD domain confirmed" if (tenant.get("target_domain_name") and tenant.get("target_confirmed"))
+                     else "Target pre-filled from source name Γאפ review and confirm in Tenants tab" if tenant.get("target_domain_name")
+                     else "No target domain assigned Γאפ set in Tenants tab"
+        })
+
+        # Check 2: network_mapped Γאפ requires confirmed=true (user reviewed, not just auto-seeded)
+        cur.execute("""
+            SELECT COUNT(DISTINCT v.network_name) AS total,
+                   COUNT(DISTINCT CASE WHEN m.confirmed = true
+                         THEN v.network_name END) AS confirmed
+            FROM migration_vms v
+            LEFT JOIN migration_network_mappings m
+                ON m.project_id = v.project_id AND m.source_network_name = v.network_name
+            WHERE v.project_id = %s AND v.tenant_name = %s
+              AND v.power_state = 'poweredOn' AND v.network_name IS NOT NULL
+        """, (project_id, tenant["tenant_name"]))
+        nm = cur.fetchone()
+        total_nets = nm["total"] or 0
+        confirmed_nets = nm["confirmed"] or 0
+        results.append({
+            "check_name": "network_mapped",
+            "check_status": "pass" if (total_nets == 0 or total_nets == confirmed_nets) else "pending",
+            "notes": f"{confirmed_nets}/{total_nets} networks confirmed " +
+                     ("" if total_nets == confirmed_nets else "Γאפ review Network Map tab and confirm each mapping")
+        })
+
+        # Check 3: quota_sufficient Γאפ target_project_name or quota model exists
+        results.append({
+            "check_name": "quota_sufficient",
+            "check_status": "pass" if tenant.get("target_project_name") else "pending",
+            "notes": "Target PCD project set" if tenant.get("target_project_name")
+                     else "Set target PCD project to enable quota validation"
+        })
+
+        # Check 4: no_critical_gaps Γאפ check migration_pcd_gaps for this project
+        cur.execute("""
+            SELECT COUNT(*) AS cnt FROM migration_pcd_gaps
+            WHERE project_id = %s AND severity = 'critical' AND status != 'resolved'
+        """, (project_id,))
+        critical_gaps = cur.fetchone()["cnt"]
+        results.append({
+            "check_name": "no_critical_gaps",
+            "check_status": "pass" if critical_gaps == 0 else "fail",
+            "notes": f"{critical_gaps} unresolved critical PCD gap(s)" if critical_gaps > 0
+                     else "No critical gaps"
+        })
+
+        # Check 5: vms_classified Γאפ all powered-on VMs have a migration mode
+        cur.execute("""
+            SELECT COUNT(*) AS total,
+                   COUNT(CASE WHEN migration_mode IS NOT NULL THEN 1 END) AS classified
+            FROM migration_vms
+            WHERE project_id = %s AND tenant_name = %s AND power_state = 'poweredOn'
+        """, (project_id, tenant["tenant_name"]))
+        vc = cur.fetchone()
+        results.append({
+            "check_name": "vms_classified",
+            "check_status": "pass" if (vc["total"] == 0 or vc["classified"] == vc["total"]) else "fail",
+            "notes": f"{vc['classified']}/{vc['total']} VMs have migration mode assigned"
+        })
+
+    return results
+
+
+@router.get("/projects/{project_id}/tenants/{tenant_id}/readiness",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_tenant_readiness(project_id: str, tenant_id: int):
+    """Compute and return readiness check results for a single tenant."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        checks = _compute_tenant_readiness(project_id, tenant_id, conn)
+        if not checks:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        # Persist latest results
+        with conn.cursor() as cur:
+            for c in checks:
+                cur.execute("""
+                    INSERT INTO migration_tenant_readiness
+                        (tenant_id, check_name, check_status, checked_at, notes)
+                    VALUES (%s, %s, %s, now(), %s)
+                    ON CONFLICT (tenant_id, check_name) DO UPDATE
+                        SET check_status = EXCLUDED.check_status,
+                            checked_at = EXCLUDED.checked_at,
+                            notes = EXCLUDED.notes
+                """, (tenant_id, c["check_name"], c["check_status"], c["notes"]))
+
+    passed = sum(1 for c in checks if c["check_status"] == "pass")
+    overall = "pass" if passed == len(checks) else ("fail" if any(c["check_status"] == "fail" for c in checks) else "pending")
+    return {"status": "ok", "tenant_id": tenant_id, "checks": checks,
+            "overall": overall, "score": f"{passed}/{len(checks)}"}
+
+
+@router.get("/projects/{project_id}/cohorts/{cohort_id}/readiness-summary",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_cohort_readiness_summary(project_id: str, cohort_id: int):
+    """Readiness summary for all tenants in a cohort."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, tenant_name FROM migration_tenants
+                WHERE cohort_id = %s AND project_id = %s
+                  AND COALESCE(include_in_plan, true) = true
+            """, (cohort_id, project_id))
+            tenants = cur.fetchall()
+
+        tenant_results = []
+        for t in tenants:
+            checks = _compute_tenant_readiness(project_id, t["id"], conn)
+            passed = sum(1 for c in checks if c["check_status"] == "pass")
+            overall = "pass" if passed == len(checks) else (
+                "fail" if any(c["check_status"] == "fail" for c in checks) else "pending")
+            tenant_results.append({
+                "tenant_id": t["id"],
+                "tenant_name": t["tenant_name"],
+                "overall": overall,
+                "score": f"{passed}/{len(checks)}",
+                "checks": checks
+            })
+
+    ready = sum(1 for t in tenant_results if t["overall"] == "pass")
+    return {
+        "status": "ok",
+        "cohort_id": cohort_id,
+        "tenants": tenant_results,
+        "ready_count": ready,
+        "total_count": len(tenant_results),
+        "all_ready": (ready == len(tenant_results) and len(tenant_results) > 0)
+    }
+
+
+# =====================================================================
+# PHASE 3.0 Γאפ TENANT EASE SCORES & AUTO-ASSIGN COHORTS
+# =====================================================================
+
+@router.get("/projects/{project_id}/tenant-ease-scores",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_tenant_ease_scores(
+    project_id: str,
+    weights: Optional[str] = None,  # JSON string of {dim: weight} overrides
+):
+    """
+    Compute a 0Γאף100 ease score per tenant (lower = easier to migrate first).
+    Returns per-tenant score with dimension-level breakdown.
+    """
+    import json as _json
+    ease_weights = None
+    if weights:
+        try:
+            ease_weights = _json.loads(weights)
+        except Exception:
+            raise HTTPException(status_code=400, detail="weights must be a valid JSON object")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Fetch tenant-level aggregates needed for scoring
+            cur.execute("""
+                SELECT
+                    t.id                              AS tenant_id,
+                    t.tenant_name,
+                    t.migration_priority,
+                    t.include_in_plan,
+                    COALESCE(t.vm_count, 0)            AS vm_count,
+                    COALESCE(
+                        NULLIF(ROUND(SUM(v.in_use_gb)::numeric, 2), 0),
+                        ROUND(t.total_in_use_gb::numeric, 2),
+                        ROUND(t.total_disk_gb::numeric, 2),
+                        0
+                    )                                  AS total_used_gb,
+                    COALESCE(ROUND(AVG(v.risk_score)::numeric, 1), 0) AS avg_risk_score,
+                    -- OS support rate: fraction of VMs with known (non-other) os_family
+                    CASE WHEN COUNT(v.id) = 0 THEN 1.0
+                         ELSE ROUND(
+                           COUNT(CASE WHEN v.os_family IN ('windows','linux') THEN 1 END)::numeric
+                           / NULLIF(COUNT(v.id),0)
+                         , 3) END                      AS os_support_rate,
+                    -- dominant OS family for os_first strategy
+                    MODE() WITHIN GROUP (ORDER BY v.os_family) AS os_family,
+                    -- distinct source networks
+                    COUNT(DISTINCT v.network_name)     AS distinct_network_count,
+                    -- cross-tenant VM dependencies (edges pointing OUT of this tenant)
+                    COALESCE((
+                        SELECT COUNT(*) FROM migration_vm_dependencies d
+                        JOIN migration_vms dv ON dv.id = d.vm_id
+                        JOIN migration_vms dov ON dov.id = d.depends_on_vm_id
+                        WHERE dv.tenant_name = t.tenant_name
+                          AND dov.tenant_name <> t.tenant_name
+                          AND dv.project_id = t.project_id
+                    ), 0)                              AS cross_tenant_dep_count,
+                    -- cold VM count
+                    COUNT(CASE WHEN COALESCE(v.migration_mode_override, v.migration_mode) = 'cold' THEN 1 END)
+                                                       AS cold_vm_count,
+                    -- unconfirmed: target mapping unconfirmed + network mappings unconfirmed
+                    CASE WHEN COALESCE(t.target_confirmed, false) THEN 0 ELSE 1 END
+                    + COALESCE((
+                        SELECT COUNT(*) FROM migration_network_mappings nm
+                        WHERE nm.project_id = t.project_id
+                          AND nm.confirmed = false
+                          AND nm.source_network_name IN (
+                              SELECT DISTINCT network_name FROM migration_vms
+                              WHERE tenant_name = t.tenant_name AND project_id = t.project_id
+                          )
+                    ), 0)                              AS unconfirmed_count,
+                    -- denominator: 1 (target) + distinct networks
+                    1 + COUNT(DISTINCT v.network_name) AS total_vm_or_mapping
+                FROM migration_tenants t
+                LEFT JOIN migration_vms v ON v.tenant_name = t.tenant_name
+                    AND v.project_id = t.project_id
+                    AND v.power_state = 'poweredOn'
+                WHERE t.project_id = %s
+                  AND t.include_in_plan = true
+                GROUP BY t.id, t.tenant_name, t.migration_priority, t.include_in_plan,
+                         t.vm_count, t.total_disk_gb, t.total_in_use_gb, t.target_confirmed
+                ORDER BY t.tenant_name
+            """, (project_id,))
+            raw_tenants = [dict(r) for r in cur.fetchall()]
+
+    scored = compute_tenant_ease_scores(raw_tenants, ease_weights)
+    return {"status": "ok", "tenant_ease_scores": scored, "count": len(scored)}
+
+
+@router.post("/projects/{project_id}/cohorts/auto-assign",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def auto_assign_cohorts_endpoint(
+    project_id: str,
+    req: AutoAssignRequest,
+    user=Depends(get_current_user),
+):
+    """
+    Propose (or apply) an automatic tenant Γזע cohort assignment.
+
+    Always returns a preview.  Set dry_run=false to commit the assignment to DB.
+    If create_cohorts_if_missing=true and fewer cohorts exist than num_cohorts,
+    new cohorts are created automatically.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get all in-scope tenants with aggregates
+            cur.execute("""
+                SELECT
+                    t.id                              AS tenant_id,
+                    t.tenant_name,
+                    t.migration_priority,
+                    COALESCE(t.vm_count, 0)            AS vm_count,
+                    COALESCE(
+                        NULLIF(ROUND(SUM(v.in_use_gb)::numeric, 2), 0),
+                        ROUND(t.total_in_use_gb::numeric, 2),
+                        ROUND(t.total_disk_gb::numeric, 2),
+                        0
+                    )                                  AS total_used_gb,
+                    COALESCE(ROUND(AVG(v.risk_score)::numeric, 1), 0) AS avg_risk_score,
+                    CASE WHEN COUNT(v.id) = 0 THEN 1.0
+                         ELSE ROUND(
+                           COUNT(CASE WHEN v.os_family IN ('windows','linux') THEN 1 END)::numeric
+                           / NULLIF(COUNT(v.id),0), 3) END AS os_support_rate,
+                    MODE() WITHIN GROUP (ORDER BY v.os_family)          AS os_family,
+                    COUNT(DISTINCT v.network_name)      AS distinct_network_count,
+                    COALESCE((
+                        SELECT COUNT(*) FROM migration_vm_dependencies d
+                        JOIN migration_vms dv ON dv.id = d.vm_id
+                        JOIN migration_vms dov ON dov.id = d.depends_on_vm_id
+                        WHERE dv.tenant_name = t.tenant_name
+                          AND dov.tenant_name <> t.tenant_name
+                          AND dv.project_id = t.project_id
+                    ), 0)                               AS cross_tenant_dep_count,
+                    COUNT(CASE WHEN COALESCE(v.migration_mode_override, v.migration_mode) = 'cold' THEN 1 END)
+                                                        AS cold_vm_count,
+                    CASE WHEN COALESCE(t.target_confirmed, false) THEN 0 ELSE 1 END
+                    + COALESCE((
+                        SELECT COUNT(*) FROM migration_network_mappings nm
+                        WHERE nm.project_id = t.project_id
+                          AND nm.confirmed = false
+                          AND nm.source_network_name IN (
+                              SELECT DISTINCT network_name FROM migration_vms
+                              WHERE tenant_name = t.tenant_name AND project_id = t.project_id
+                          )
+                    ), 0)                               AS unconfirmed_count,
+                    1 + COUNT(DISTINCT v.network_name)  AS total_vm_or_mapping
+                FROM migration_tenants t
+                LEFT JOIN migration_vms v ON v.tenant_name = t.tenant_name
+                    AND v.project_id = t.project_id
+                    AND v.power_state = 'poweredOn'
+                WHERE t.project_id = %s
+                  AND t.include_in_plan = true
+                GROUP BY t.id, t.tenant_name, t.migration_priority,
+                         t.vm_count, t.total_disk_gb, t.total_in_use_gb, t.target_confirmed
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            # Get existing cohorts
+            cur.execute("""
+                SELECT c.id, c.name, c.cohort_order,
+                       COALESCE(SUM(t2.vm_count), 0) AS vm_count,
+                       0.0 AS total_used_gb
+                FROM migration_cohorts c
+                LEFT JOIN migration_tenants t2 ON t2.cohort_id = c.id
+                WHERE c.project_id = %s
+                GROUP BY c.id, c.name, c.cohort_order
+                ORDER BY c.cohort_order
+            """, (project_id,))
+            existing_cohorts = [dict(r) for r in cur.fetchall()]
+
+        # If we need more cohorts and create_cohorts_if_missing is set, create them
+        created_cohort_ids: Dict[int, int] = {}   # slot Γזע DB id
+        if not req.dry_run and req.create_cohorts_if_missing:
+            effective_num_cohorts = len(req.cohort_profiles) if req.cohort_profiles else req.num_cohorts
+            existing_count = len(existing_cohorts)
+            for slot in range(existing_count + 1, effective_num_cohorts + 1):
+                strategy_names = {
+                    "pilot_bulk": ["\U0001f9ea Pilot", "\U0001f680 Main"],
+                }
+                default_names = strategy_names.get(req.strategy, [])
+                if req.cohort_profiles and slot - 1 < len(req.cohort_profiles):
+                    cname = req.cohort_profiles[slot - 1].get("name") or f"Cohort {slot}"
+                else:
+                    cname = default_names[slot - 1] if slot - 1 < len(default_names) else f"Cohort {slot}"
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("""
+                        INSERT INTO migration_cohorts (project_id, name, cohort_order)
+                        VALUES (%s, %s, %s) RETURNING id
+                    """, (project_id, cname, slot))
+                    new_id = cur.fetchone()["id"]
+                    created_cohort_ids[slot] = new_id
+            # Refresh existing cohorts list after creation
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, name, cohort_order FROM migration_cohorts
+                    WHERE project_id = %s ORDER BY cohort_order
+                """, (project_id,))
+                existing_cohorts = [dict(r) for r in cur.fetchall()]
+
+        # Build slot Γזע DB cohort id mapping
+        slot_to_cohort_id: Dict[int, int] = {}
+        for c in existing_cohorts:
+            slot_to_cohort_id[c["cohort_order"]] = c["id"]
+        # fill from created_cohort_ids too
+        slot_to_cohort_id.update(created_cohort_ids)
+
+    # Run engine
+    result = auto_assign_cohorts(
+        tenants=tenants,
+        existing_cohorts=existing_cohorts,
+        strategy=req.strategy,
+        num_cohorts=len(req.cohort_profiles) if req.cohort_profiles else req.num_cohorts,
+        guardrails=req.guardrails.dict(),
+        ease_weights=req.ease_weights,
+        cohort_profiles=req.cohort_profiles,
+    )
+
+    if not req.dry_run:
+        # Commit assignments to DB
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                for assignment in result["assignments"]:
+                    tid  = assignment["tenant_id"]
+                    slot = assignment["cohort_slot"]
+                    cid  = slot_to_cohort_id.get(slot)
+                    if cid is None:
+                        continue
+                    cur.execute("""
+                        UPDATE migration_tenants SET cohort_id = %s, updated_at = now()
+                        WHERE id = %s AND project_id = %s
+                    """, (cid, tid, project_id))
+        _log_activity(actor=actor, action="auto_assign_cohorts",
+                      resource_type="migration_project", resource_id=project_id,
+                      details={"strategy": req.strategy, "num_cohorts": req.num_cohorts,
+                               "tenant_count": len(result["assignments"]),
+                               "created_cohorts": len(created_cohort_ids)})
+        # Annotate assignments with resolved cohort DB ids
+        for a in result["assignments"]:
+            a["cohort_id"] = slot_to_cohort_id.get(a["cohort_slot"])
+
+    result["dry_run"] = req.dry_run
+    result["slot_to_cohort_map"] = slot_to_cohort_id
+    return {"status": "ok", **result}
+
+
+# =====================================================================
+# PHASE 3 Γאפ WAVE PLANNING
+# =====================================================================
+
+class CreateWaveRequest(BaseModel):
+    wave_number: Optional[int] = None          # auto-assigned if None
+    name: Optional[str] = None
+    wave_type: str = "regular"                 # pilot | regular | cleanup
+    cohort_id: Optional[int] = None
+    agent_slots_override: Optional[int] = None
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+    owner_name: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class UpdateWaveRequest(BaseModel):
+    name: Optional[str] = None
+    wave_type: Optional[str] = None
+    cohort_id: Optional[int] = None
+    agent_slots_override: Optional[int] = None
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+    owner_name: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class AssignVmsRequest(BaseModel):
+    vm_ids: List[int]
+    replace: bool = False       # True = replace all current assignments; False = add
+
+
+class AdvanceWaveRequest(BaseModel):
+    status: str  # pre_checks_passed | executing | validating | complete | failed | cancelled
+    notes: Optional[str] = None
+
+
+class AutoWaveRequest(BaseModel):
+    strategy: str = "pilot_first"    # by_tenant | by_risk | pilot_first | by_priority | balanced
+    cohort_id: Optional[int] = None  # scope to a specific cohort; None = whole project
+    max_vms_per_wave: int = 30
+    max_disk_gb_per_wave: Optional[float] = None  # None = unlimited; set to daily capacity to auto-split
+    pilot_vm_count: int = 5
+    wave_name_prefix: str = "Wave"
+    dry_run: bool = True
+
+
+class UpdatePreflightRequest(BaseModel):
+    check_status: str   # pass | fail | skipped | na
+    notes: Optional[str] = None
+
+
+# --- Helper ---
+def _next_wave_number(project_id: str, cohort_id: Optional[int], conn) -> int:
+    with conn.cursor() as cur:
+        if cohort_id:
+            cur.execute(
+                "SELECT COALESCE(MAX(wave_number),0)+1 FROM migration_waves "
+                "WHERE project_id=%s AND cohort_id=%s", (project_id, cohort_id))
+        else:
+            cur.execute(
+                "SELECT COALESCE(MAX(wave_number),0)+1 FROM migration_waves "
+                "WHERE project_id=%s", (project_id,))
+        return cur.fetchone()[0]
+
+
+@router.get("/projects/{project_id}/waves",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_waves(project_id: str, cohort_id: Optional[int] = None):
+    """List all waves for a project, optionally filtered by cohort."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if cohort_id is not None:
+                cur.execute("""
+                    SELECT w.*,
+                           COUNT(wv.id) AS vm_count,
+                           COALESCE(c.name, '') AS cohort_name
+                    FROM migration_waves w
+                    LEFT JOIN migration_wave_vms wv
+                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number AND wv.vm_id IS NOT NULL
+                    LEFT JOIN migration_cohorts c ON c.id = w.cohort_id
+                    WHERE w.project_id = %s AND w.cohort_id = %s
+                    GROUP BY w.id, c.name
+                    ORDER BY w.wave_number
+                """, (project_id, cohort_id))
+            else:
+                cur.execute("""
+                    SELECT w.*,
+                           COUNT(wv.id) AS vm_count,
+                           COALESCE(c.name, '') AS cohort_name
+                    FROM migration_waves w
+                    LEFT JOIN migration_wave_vms wv
+                           ON wv.project_id = w.project_id AND wv.wave_number = w.wave_number AND wv.vm_id IS NOT NULL
+                    LEFT JOIN migration_cohorts c ON c.id = w.cohort_id
+                    WHERE w.project_id = %s
+                    GROUP BY w.id, c.name
+                    ORDER BY w.cohort_id NULLS LAST, w.wave_number
+                """, (project_id,))
+            waves = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+        # Attach VM summaries to each wave
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            for w in waves:
+                cur.execute("""
+                    SELECT v.id, v.vm_name, v.tenant_name, v.risk_category,
+                           v.migration_mode, v.migration_status, v.total_disk_gb,
+                           v.in_use_gb, wv.wave_vm_status, wv.migration_order
+                    FROM migration_wave_vms wv
+                    JOIN migration_vms v ON v.id = wv.vm_id
+                    WHERE wv.project_id = %s AND wv.wave_number = %s
+                    ORDER BY wv.migration_order, v.vm_name
+                """, (project_id, w["wave_number"]))
+                w["vms"] = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    return {"waves": waves}
+
+
+@router.post("/projects/{project_id}/waves",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_wave(project_id: str, req: CreateWaveRequest,
+                      user=Depends(get_current_user)):
+    """Create a migration wave manually."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        wave_number = req.wave_number or _next_wave_number(project_id, req.cohort_id, conn)
+        wave_name = req.name or f"Wave {wave_number}"
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO migration_waves
+                    (project_id, wave_number, name, wave_type, cohort_id,
+                     agent_slots_override, scheduled_start, scheduled_end,
+                     owner_name, notes, status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'planned')
+                ON CONFLICT (project_id, wave_number) DO UPDATE SET
+                    name=EXCLUDED.name, wave_type=EXCLUDED.wave_type,
+                    cohort_id=EXCLUDED.cohort_id, updated_at=now()
+                RETURNING *
+            """, (project_id, wave_number, wave_name, req.wave_type, req.cohort_id,
+                  req.agent_slots_override, req.scheduled_start, req.scheduled_end,
+                  req.owner_name, req.notes))
+            wave = _serialize_row(dict(cur.fetchone()))
+        # Seed pre-flight checklist
+        with conn.cursor() as cur:
+            for cname, clabel, severity in PREFLIGHT_CHECKS:
+                cur.execute("""
+                    INSERT INTO migration_wave_preflights (wave_id, check_name, check_label, severity)
+                    VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
+                """, (wave["id"], cname, clabel, severity))
+    _log_activity(actor=getattr(user, "username", "?"), action="create_wave",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"wave_number": wave_number, "name": wave_name})
+    return {"status": "ok", "wave": wave}
+
+
+@router.patch("/projects/{project_id}/waves/{wave_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_wave(project_id: str, wave_id: int, req: UpdateWaveRequest,
+                      user=Depends(get_current_user)):
+    """Update wave metadata."""
+    updates: Dict[str, Any] = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    allowed = {"name", "wave_type", "cohort_id", "agent_slots_override",
+               "scheduled_start", "scheduled_end", "owner_name", "notes"}
+    fields = {k: v for k, v in updates.items() if k in allowed}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No valid fields")
+    set_clause = ", ".join(f"{k}=%s" for k in fields) + ", updated_at=now()"
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"UPDATE migration_waves SET {set_clause} "
+                "WHERE id=%s AND project_id=%s RETURNING *",
+                (*fields.values(), wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave = _serialize_row(dict(row))
+    return {"status": "ok", "wave": wave}
+
+
+@router.delete("/projects/{project_id}/waves/{wave_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_wave(project_id: str, wave_id: int, user=Depends(get_current_user)):
+    """Delete a wave (must be in planned status)."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT status FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            if row["status"] not in ("planned",):
+                raise HTTPException(status_code=400,
+                    detail=f"Cannot delete a wave in '{row['status']}' status")
+            cur.execute("DELETE FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+    _log_activity(actor=getattr(user, "username", "?"), action="delete_wave",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"wave_id": wave_id})
+    return {"status": "ok"}
+
+
+@router.delete("/projects/{project_id}/waves",
+               dependencies=[Depends(require_permission("migration", "admin"))])
+async def delete_all_waves(project_id: str, user=Depends(get_current_user)):
+    """
+    Delete ALL waves for a project and reset assigned VM statuses back to not_started.
+    Use this to rebuild wave groupings from scratch after changing cohort/exclusion config
+    or reassessing the migration schedule.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            # Get all wave numbers before deleting
+            cur.execute("SELECT wave_number FROM migration_waves WHERE project_id = %s",
+                        (project_id,))
+            wave_numbers = [r[0] for r in cur.fetchall()]
+
+            # Reset migration_status to not_started for any VM that was only 'assigned'
+            cur.execute("""
+                UPDATE migration_vms
+                SET migration_status = 'not_started'
+                WHERE project_id = %s
+                  AND migration_status = 'assigned'
+                  AND EXISTS (
+                      SELECT 1 FROM migration_wave_vms wv
+                      WHERE wv.vm_id = migration_vms.id AND wv.project_id = %s
+                  )
+            """, (project_id, project_id))
+            vms_reset = cur.rowcount
+
+            # Remove all wave VM assignments
+            cur.execute("DELETE FROM migration_wave_vms WHERE project_id = %s", (project_id,))
+            # Delete all waves
+            cur.execute("DELETE FROM migration_waves WHERE project_id = %s", (project_id,))
+            deleted = cur.rowcount
+    _log_activity(actor=actor, action="delete_all_waves", resource_type="migration_project",
+                  resource_id=project_id,
+                  details={"waves_deleted": deleted, "vms_reset": vms_reset})
+    return {"status": "ok", "waves_deleted": deleted, "vms_reset": vms_reset}
+
+
+@router.post("/projects/{project_id}/waves/{wave_id}/assign-vms",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def assign_vms_to_wave(project_id: str, wave_id: int, req: AssignVmsRequest,
+                             user=Depends(get_current_user)):
+    """Assign VM IDs to a wave. replace=True clears current assignments first."""
+    if not req.vm_ids:
+        raise HTTPException(status_code=400, detail="vm_ids is empty")
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT wave_number, project_id FROM migration_waves "
+                        "WHERE id=%s AND project_id=%s", (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave_number = row["wave_number"]
+
+        with conn.cursor() as cur:
+            if req.replace:
+                cur.execute("DELETE FROM migration_wave_vms WHERE project_id=%s AND wave_number=%s",
+                            (project_id, wave_number))
+            # Look up vm_names so we can satisfy NOT NULL constraint
+            vm_id_list = list(req.vm_ids)
+            cur.execute("SELECT id, vm_name FROM migration_vms WHERE id = ANY(%s) AND project_id=%s",
+                        (vm_id_list, project_id))
+            vm_name_map = {r[0]: r[1] for r in cur.fetchall()}
+
+            for order, vm_id in enumerate(req.vm_ids):
+                vm_name = vm_name_map.get(vm_id, str(vm_id))
+                cur.execute("""
+                    INSERT INTO migration_wave_vms
+                        (project_id, wave_number, vm_id, vm_name, migration_order, assigned_at)
+                    VALUES (%s,%s,%s,%s,%s,now())
+                    ON CONFLICT (project_id, vm_id) WHERE vm_id IS NOT NULL DO UPDATE
+                        SET wave_number=EXCLUDED.wave_number, migration_order=EXCLUDED.migration_order,
+                            assigned_at=EXCLUDED.assigned_at
+                """, (project_id, wave_number, vm_id, vm_name, order))
+                # Update migration_vms.migration_status Γזע assigned
+                cur.execute("""
+                    UPDATE migration_vms SET migration_status='assigned'
+                    WHERE id=%s AND project_id=%s AND migration_status='not_started'
+                """, (vm_id, project_id))
+    _log_activity(actor=getattr(user, "username", "?"), action="assign_vms_to_wave",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"wave_id": wave_id, "vm_count": len(req.vm_ids), "replace": req.replace})
+    return {"status": "ok", "assigned": len(req.vm_ids)}
+
+
+@router.delete("/projects/{project_id}/waves/{wave_id}/vms/{vm_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def remove_vm_from_wave(project_id: str, wave_id: int, vm_id: int,
+                              user=Depends(get_current_user)):
+    """Remove a VM assignment from a wave."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT wave_number FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave_number = row["wave_number"]
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_wave_vms "
+                        "WHERE project_id=%s AND wave_number=%s AND vm_id=%s",
+                        (project_id, wave_number, vm_id))
+            # Revert VM status to not_started if no other wave claims it
+            cur.execute("""
+                UPDATE migration_vms SET migration_status='not_started'
+                WHERE id=%s AND project_id=%s AND migration_status='assigned'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM migration_wave_vms wv2
+                    WHERE wv2.vm_id=%s AND wv2.project_id=%s
+                  )
+            """, (vm_id, project_id, vm_id, project_id))
+    return {"status": "ok"}
+
+
+WAVE_STATUS_TRANSITIONS = {
+    "planned":           ["pre_checks_passed", "cancelled"],
+    "pre_checks_passed": ["executing", "planned", "cancelled"],
+    "executing":         ["validating", "failed"],
+    "validating":        ["complete", "failed"],
+    "complete":          [],
+    "failed":            ["planned"],
+    "cancelled":         ["planned"],
+}
+
+
+@router.post("/projects/{project_id}/waves/{wave_id}/advance",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def advance_wave_status(project_id: str, wave_id: int, req: AdvanceWaveRequest,
+                              user=Depends(get_current_user)):
+    """Advance (or regress) a wave's status through the lifecycle."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT status, approval_status FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            current_status = row["status"]
+            allowed = WAVE_STATUS_TRANSITIONS.get(current_status, [])
+            if req.status not in allowed:
+                raise HTTPException(status_code=400,
+                    detail=f"Cannot transition from '{current_status}' to '{req.status}'. "
+                           f"Allowed: {allowed}")
+            # T.A: wave must be approved before it can advance past planning
+            if req.status == "pre_checks_passed" and row.get("approval_status") != "approved":
+                raise HTTPException(status_code=409,
+                    detail="Wave must be approved before advancing. "
+                           "Use POST /waves/{id}/request-approval to request sign-off.")
+            extras = ""
+            if req.status == "executing":
+                extras = ", started_at=now()"
+            elif req.status in ("complete", "failed", "cancelled"):
+                extras = ", completed_at=now()"
+            cur.execute(
+                f"UPDATE migration_waves SET status=%s{extras}, updated_at=now() "
+                "WHERE id=%s AND project_id=%s RETURNING *",
+                (req.status, wave_id, project_id))
+            wave = _serialize_row(dict(cur.fetchone()))
+    _log_activity(actor=getattr(user, "username", "?"), action="advance_wave_status",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"wave_id": wave_id, "from": current_status, "to": req.status})
+
+    # T3.5 Γאפ Auto service-request ticket when a migration wave completes
+    if req.status == "complete":
+        try:
+            from ticket_routes import _auto_ticket
+            wave_name = wave.get("name", f"Wave {wave_id}")
+            _auto_ticket(
+                title=f"Migration wave complete Γאפ {wave_name} (project {project_id})",
+                description=(
+                    f"Wave '{wave_name}' (ID {wave_id}) in migration project {project_id} "
+                    f"has reached 'complete' status. Review and approve progressing to the next phase."
+                ),
+                ticket_type="service_request",
+                priority="normal",
+                to_dept_name="Engineering",
+                auto_source="migration",
+                auto_source_id=f"wave:{wave_id}",
+            )
+        except Exception as ticket_err:
+            import logging
+            logging.getLogger("migration_routes").warning(
+                "Auto-ticket for migration wave completion failed: %s", ticket_err
+            )
+
+    return {"status": "ok", "wave": wave}
+
+
+@router.post("/projects/{project_id}/auto-waves",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def auto_build_waves(project_id: str, req: AutoWaveRequest,
+                           user=Depends(get_current_user)):
+    """Auto-build a wave plan using the engine. dry_run=True previews without saving.
+
+    When cohorts exist and no cohort_id filter is specified, waves are built
+    cohort-by-cohort (one build_wave_plan() call per cohort) so wave boundaries
+    always respect cohort boundaries.  When a specific cohort_id is supplied the
+    plan is scoped to that cohort only.  If no cohorts exist the project-wide VM
+    pool is used as a single implicit cohort.
+    """
+    with _get_conn() as conn:
+        project_row = _get_project(project_id, conn)
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Always include t.cohort_id on each VM so we can group later
+            cur.execute("""
+                SELECT v.id, v.vm_name, v.tenant_name, v.power_state,
+                       v.risk_category AS risk_classification, v.migration_mode, v.migration_status,
+                       v.total_disk_gb, v.in_use_gb, v.cpu_count,
+                       v.risk_score, v.cpu_usage_percent,
+                       t.cohort_id AS vm_cohort_id
+                FROM migration_vms v
+                JOIN migration_tenants t ON t.project_id = v.project_id
+                    AND t.tenant_name = v.tenant_name AND t.include_in_plan = true
+                WHERE v.project_id = %s
+                  AND v.migration_status NOT IN ('migrated', 'skipped')
+            """, (project_id,))
+            all_vms = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT id, tenant_name, migration_priority, cohort_id
+                FROM migration_tenants
+                WHERE project_id = %s AND include_in_plan = true
+            """, (project_id,))
+            all_tenants = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT vm_id, depends_on_vm_id
+                FROM migration_vm_dependencies
+                WHERE project_id = %s
+            """, (project_id,))
+            deps = [dict(r) for r in cur.fetchall()]
+
+            # Ordered cohorts for the project
+            cur.execute("""
+                SELECT id, name, cohort_order
+                FROM migration_cohorts
+                WHERE project_id = %s
+                ORDER BY cohort_order NULLS LAST, id
+            """, (project_id,))
+            ordered_cohorts = [dict(r) for r in cur.fetchall()]
+
+        # Load maintenance windows now (same connection, before it closes)
+        maint_windows: List[Dict] = []
+        if project_row.get("use_maintenance_windows"):
+            maint_windows = _load_windows(project_id, conn)
+
+    vm_name_map = {v["id"]: v["vm_name"] for v in all_vms}
+
+    # -----------------------------------------------------------------
+    # Decide cohort groups to process
+    # -----------------------------------------------------------------
+    if req.cohort_id is not None:
+        # Single cohort requested
+        cohort_groups = [{"cohort_id": req.cohort_id,
+                          "cohort_name": next((c["name"] for c in ordered_cohorts
+                                               if c["id"] == req.cohort_id), f"Cohort {req.cohort_id}"),
+                          "vms": [v for v in all_vms if v.get("vm_cohort_id") == req.cohort_id],
+                          "tenants": [t for t in all_tenants if t.get("cohort_id") == req.cohort_id]}]
+    elif ordered_cohorts:
+        # Multi-cohort: one group per cohort + catch unassigned VMs
+        cohort_groups = []
+        assigned_vm_ids: set = set()
+        for c in ordered_cohorts:
+            cid = c["id"]
+            c_vms = [v for v in all_vms if v.get("vm_cohort_id") == cid]
+            c_tenants = [t for t in all_tenants if t.get("cohort_id") == cid]
+            if c_vms:
+                cohort_groups.append({"cohort_id": cid, "cohort_name": c["name"],
+                                      "vms": c_vms, "tenants": c_tenants})
+                assigned_vm_ids.update(v["id"] for v in c_vms if v.get("id"))
+        # Any VMs not in any cohort get their own "Unassigned" group
+        unassigned = [v for v in all_vms if v.get("id") not in assigned_vm_ids]
+        if unassigned:
+            cohort_groups.append({"cohort_id": None, "cohort_name": "Unassigned",
+                                   "vms": unassigned,
+                                   "tenants": [t for t in all_tenants if not t.get("cohort_id")]})
+    else:
+        # No cohorts Γאפ treat the whole project as one group
+        cohort_groups = [{"cohort_id": None, "cohort_name": None,
+                          "vms": all_vms, "tenants": all_tenants}]
+
+    # -----------------------------------------------------------------
+    # Build a wave plan per cohort group
+    # -----------------------------------------------------------------
+    all_preview_waves: List[Dict] = []
+    all_warnings: List[str] = []
+    all_unassigned: List[int] = []
+
+    # Tracks global wave_number offset so waves across cohorts don't collide
+    wave_number_offset = 0
+
+    cohort_plans = []  # [{cohort_id, cohort_name, result, wave_number_offset}]
+    for grp in cohort_groups:
+        if not grp["vms"]:
+            continue
+        prefix = grp["cohort_name"] if grp["cohort_name"] else req.wave_name_prefix
+        r = build_wave_plan(
+            vms=grp["vms"], tenants=grp["tenants"], dependencies=deps,
+            strategy=req.strategy,
+            max_vms_per_wave=req.max_vms_per_wave,
+            max_disk_gb_per_wave=req.max_disk_gb_per_wave if req.max_disk_gb_per_wave else float("inf"),
+            pilot_vm_count=req.pilot_vm_count,
+            wave_name_prefix=prefix,
+        )
+        # Apply global offset so wave numbers are unique across cohorts
+        for w in r.get("waves", []):
+            w["wave_number"] = wave_number_offset + w["wave_number"]
+            w["cohort_id"] = grp["cohort_id"]
+            w["cohort_name"] = grp["cohort_name"]
+        wave_number_offset += len(r.get("waves", []))
+        all_preview_waves.extend(r.get("waves", []))
+        all_warnings.extend(r.get("warnings", []))
+        all_unassigned.extend(r.get("unassigned_vm_ids", []))
+        cohort_plans.append({"cohort_id": grp["cohort_id"], "cohort_name": grp["cohort_name"],
+                              "result": r})
+
+    combined_result = {
+        "waves": all_preview_waves,
+        "strategy": req.strategy,
+        "warnings": all_warnings,
+        "unassigned_vm_ids": all_unassigned,
+        "preflight_checks": PREFLIGHT_CHECKS,
+        "cohort_count": len(cohort_plans),
+    }
+
+    # -----------------------------------------------------------------
+    # Maintenance-window scheduling (Phase T / C8)
+    # Assign each wave a sequential scheduled_start from the next
+    # available maintenance window, probing forward day-by-day.
+    # -----------------------------------------------------------------
+    if maint_windows:
+        from datetime import date as _mw_date, timedelta as _mw_td
+        probe = _mw_date.today()
+        for w in all_preview_waves:
+            slot = next_window_start(maint_windows, probe)
+            if slot:
+                w["scheduled_start"] = slot["start"].isoformat()
+                w["scheduled_end"] = slot["end"].isoformat()
+                probe = slot["start"].date() + _mw_td(days=1)
+
+    if req.dry_run:
+        combined_result["dry_run"] = True
+        return {"status": "ok", **combined_result}
+
+    # -----------------------------------------------------------------
+    # Commit to DB
+    # -----------------------------------------------------------------
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(MAX(wave_number),0) FROM migration_waves WHERE project_id=%s",
+                        (project_id,))
+            base = cur.fetchone()[0]
+
+        created_waves: List[Dict] = []
+        for w in all_preview_waves:
+            wave_number = base + w["wave_number"]
+            wave_name = w["name"]
+            cohort_id_for_wave = w.get("cohort_id")
+
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    INSERT INTO migration_waves
+                        (project_id, wave_number, name, wave_type, cohort_id, status,
+                         scheduled_start, scheduled_end)
+                    VALUES (%s,%s,%s,%s,%s,'planned',%s,%s)
+                    ON CONFLICT (project_id, wave_number) DO UPDATE SET
+                        name=EXCLUDED.name, wave_type=EXCLUDED.wave_type,
+                        cohort_id=EXCLUDED.cohort_id,
+                        scheduled_start=EXCLUDED.scheduled_start,
+                        scheduled_end=EXCLUDED.scheduled_end,
+                        updated_at=now()
+                    RETURNING id, wave_number
+                """, (project_id, wave_number, wave_name, w["wave_type"], cohort_id_for_wave,
+                       w.get("scheduled_start"), w.get("scheduled_end")))
+                wave_row = cur.fetchone()
+                wave_id = wave_row["id"]
+
+            with conn.cursor() as cur:
+                for cname, clabel, severity in PREFLIGHT_CHECKS:
+                    cur.execute("""
+                        INSERT INTO migration_wave_preflights (wave_id, check_name, check_label, severity)
+                        VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
+                    """, (wave_id, cname, clabel, severity))
+                for order, vm_id in enumerate(w["vm_ids"]):
+                    vm_name = vm_name_map.get(vm_id, str(vm_id))
+                    cur.execute("""
+                        INSERT INTO migration_wave_vms
+                            (project_id, wave_number, vm_id, vm_name, migration_order, assigned_at)
+                        VALUES (%s,%s,%s,%s,%s,now())
+                        ON CONFLICT (project_id, vm_id) WHERE vm_id IS NOT NULL DO UPDATE
+                            SET wave_number=EXCLUDED.wave_number,
+                                migration_order=EXCLUDED.migration_order,
+                                assigned_at=EXCLUDED.assigned_at
+                    """, (project_id, wave_number, vm_id, vm_name, order))
+                    cur.execute("""
+                        UPDATE migration_vms SET migration_status='assigned'
+                        WHERE id=%s AND project_id=%s AND migration_status='not_started'
+                    """, (vm_id, project_id))
+            created_waves.append({"wave_number": wave_number, "name": wave_name,
+                                   "wave_id": wave_id, "cohort_id": cohort_id_for_wave,
+                                   "vm_count": len(w["vm_ids"])})
+
+    _log_activity(actor=getattr(user, "username", "?"), action="auto_build_waves",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"strategy": req.strategy, "waves_created": len(created_waves),
+                           "cohort_count": len(cohort_plans), "cohort_id": req.cohort_id})
+    combined_result["dry_run"] = False
+    combined_result["created_waves"] = created_waves
+    return {"status": "ok", **combined_result}
+
+
+@router.get("/projects/{project_id}/waves/{wave_id}/preflights",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_wave_preflights(project_id: str, wave_id: int):
+    """Get the pre-flight checklist for a wave."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Wave not found")
+            # Seed missing checks lazily
+            for cname, clabel, severity in PREFLIGHT_CHECKS:
+                cur.execute("""
+                    INSERT INTO migration_wave_preflights (wave_id, check_name, check_label, severity)
+                    VALUES (%s,%s,%s,%s) ON CONFLICT (wave_id, check_name) DO NOTHING
+                """, (wave_id, cname, clabel, severity))
+            cur.execute("""
+                SELECT * FROM migration_wave_preflights WHERE wave_id=%s ORDER BY id
+            """, (wave_id,))
+            checks = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    passed = sum(1 for c in checks if c["check_status"] == "pass")
+    blockers_failing = sum(1 for c in checks
+                           if c["severity"] == "blocker" and c["check_status"] == "fail")
+    return {
+        "checks": checks,
+        "summary": {
+            "total": len(checks),
+            "passed": passed,
+            "blocker_failures": blockers_failing,
+            "ready_to_advance": blockers_failing == 0,
+        }
+    }
+
+
+@router.patch("/projects/{project_id}/waves/{wave_id}/preflights/{check_name}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_wave_preflight(project_id: str, wave_id: int, check_name: str,
+                                req: UpdatePreflightRequest, user=Depends(get_current_user)):
+    """Update a pre-flight check status."""
+    allowed_statuses = ("pending", "pass", "fail", "skipped", "na")
+    if req.check_status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail=f"check_status must be one of {allowed_statuses}")
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM migration_waves WHERE id=%s AND project_id=%s",
+                        (wave_id, project_id))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Wave not found")
+            cur.execute("""
+                UPDATE migration_wave_preflights
+                SET check_status=%s, notes=%s, checked_at=now(), checked_by=%s
+                WHERE wave_id=%s AND check_name=%s
+                RETURNING *
+            """, (req.check_status, req.notes, getattr(user, "username", "?"), wave_id, check_name))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Preflight check not found")
+            check = _serialize_row(dict(row))
+    return {"status": "ok", "check": check}
+
+
+# Progress funnel: project-level VM migration status rollup
+@router.get("/projects/{project_id}/migration-funnel",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_migration_funnel(project_id: str):
+    """Counts of VMs by migration_status for the project funnel view."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT migration_status, COUNT(*) AS cnt
+                FROM migration_vms
+                WHERE project_id=%s
+                GROUP BY migration_status
+                ORDER BY migration_status
+            """, (project_id,))
+            rows = cur.fetchall()
+    funnel = {r[0] or "not_started": r[1] for r in rows}
+    total = sum(funnel.values())
+    funnel["total"] = total
+    return {"funnel": funnel}
+
+
+# =====================================================================
+# PHASE 4B Γאפ PCD Auto-Provisioning
+# =====================================================================
+
+class PrepApproveRequest(BaseModel):
+    decision: str           # "approved" or "rejected"
+    comment:  Optional[str] = ""
+
+
+@router.get("/projects/{project_id}/prep-readiness",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_prep_readiness(project_id: str):
+    """Phase 4B pre-flight: check all 4A items are confirmed. Returns per-gate status."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE confirmed = true)                                                             AS nets_confirmed,
+                    COUNT(*) FILTER (WHERE confirmed = true AND COALESCE(subnet_details_confirmed, false) = true)        AS subnets_confirmed
+                FROM migration_network_mappings WHERE project_id = %s
+            """, (project_id,))
+            sub_r = cur.fetchone()
+            nets_confirmed   = int(sub_r[0] or 0)
+            subnets_confirmed = int(sub_r[1] or 0)
+
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE confirmed = true OR skip = true) AS done
+                FROM migration_flavor_staging WHERE project_id = %s
+            """, (project_id,))
+            fl_r = cur.fetchone(); flavors_total = int(fl_r[0] or 0); flavors_done = int(fl_r[1] or 0)
+
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE confirmed = true) AS done
+                FROM migration_image_requirements WHERE project_id = %s
+            """, (project_id,))
+            img_r = cur.fetchone(); images_total = int(img_r[0] or 0); images_done = int(img_r[1] or 0)
+
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE confirmed = true) AS done
+                FROM migration_tenant_users WHERE project_id = %s
+            """, (project_id,))
+            usr_r = cur.fetchone(); users_total = int(usr_r[0] or 0); users_done = int(usr_r[1] or 0)
+
+            cur.execute("""
+                SELECT COUNT(*),
+                       COUNT(*) FILTER (WHERE status='done'),
+                       COUNT(*) FILTER (WHERE status='failed'),
+                       COUNT(*) FILTER (WHERE status='running')
+                FROM migration_prep_tasks WHERE project_id = %s
+            """, (project_id,))
+            tsk_r = cur.fetchone()
+            tasks_total   = int(tsk_r[0] or 0)
+            tasks_done    = int(tsk_r[1] or 0)
+            tasks_failed  = int(tsk_r[2] or 0)
+            tasks_running = int(tsk_r[3] or 0)
+
+    subnets_ready = nets_confirmed > 0 and subnets_confirmed >= nets_confirmed
+    flavors_ready = flavors_total == 0 or flavors_done >= flavors_total
+    images_ready  = images_total == 0 or images_done >= images_total
+    users_ready   = users_total == 0 or users_done >= users_total
+    all_ready     = subnets_ready and flavors_ready and images_ready
+
+    return {
+        "all_ready": all_ready,
+        "items": [
+            {"key": "subnets",  "label": "Network Subnet Details",
+             "total": nets_confirmed,  "done": subnets_confirmed, "ready": subnets_ready,
+             "message": (f"{subnets_confirmed}/{nets_confirmed} confirmed networks have subnet details")
+                         if nets_confirmed else "No confirmed network mappings found"},
+            {"key": "flavors",  "label": "Flavor Staging",
+             "total": flavors_total,  "done": flavors_done,      "ready": flavors_ready,
+             "message": (f"{flavors_done}/{flavors_total} flavors confirmed or skipped")
+                         if flavors_total else "No flavor shapes detected Γאפ run gap analysis"},
+            {"key": "images",   "label": "OS Image Requirements",
+             "total": images_total,   "done": images_done,       "ready": images_ready,
+             "message": (f"{images_done}/{images_total} images confirmed")
+                         if images_total else "No OS images required"},
+            {"key": "users",    "label": "Tenant Users",
+             "total": users_total,    "done": users_done,        "ready": users_ready,
+             "message": (f"{users_done}/{users_total} users confirmed")
+                         if users_total else "No users defined yet"},
+        ],
+        "tasks_total": tasks_total,
+        "tasks_done":  tasks_done,
+        "tasks_failed": tasks_failed,
+        "tasks_running": tasks_running,
+    }
+
+
+@router.post("/projects/{project_id}/prepare",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def generate_prep_tasks(project_id: str, user=Depends(get_current_user)):
+    """
+    Phase 4B: Generate (or regenerate) the ordered prep task list from the migration plan.
+    Clears pending/failed tasks and rebuilds. Does NOT call PCD Γאפ tasks executed separately.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("DELETE FROM migration_prep_tasks WHERE project_id=%s AND status IN ('pending','failed')", (project_id,))
+
+            cur.execute("""
+                SELECT t.*, COALESCE(c.cohort_order, 999) AS _co
+                FROM migration_tenants t LEFT JOIN migration_cohorts c ON t.cohort_id = c.id
+                WHERE t.project_id=%s AND t.include_in_plan=true
+                ORDER BY _co, t.tenant_name
+            """, (project_id,))
+            tenants = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("SELECT * FROM migration_network_mappings WHERE project_id=%s AND confirmed=true ORDER BY source_network_name", (project_id,))
+            networks = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("SELECT * FROM migration_flavor_staging WHERE project_id=%s AND (confirmed=true OR skip=true) ORDER BY vcpus, ram_mb", (project_id,))
+            flavors = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT mu.*, t.tenant_name, t.target_project_name, t.target_domain_name
+                FROM migration_tenant_users mu
+                JOIN migration_tenants t ON t.id = mu.tenant_id
+                WHERE mu.project_id=%s ORDER BY t.tenant_name, mu.user_type
+            """, (project_id,))
+            mu_users = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT op.* FROM migration_projects mp
+                LEFT JOIN migration_overcommit_profiles op ON op.profile_name = mp.overcommit_profile_name
+                WHERE mp.project_id=%s
+            """, (project_id,))
+            pr = cur.fetchone()
+            profile = dict(pr) if pr else {}
+            cpu_ratio   = float(profile.get("cpu_ratio",  4.0))
+            ram_ratio   = float(profile.get("ram_ratio",  1.5))
+            disk_factor = float(profile.get("disk_snapshot_factor", 1.5))
+
+            inserts = []
+
+            # 1. create_domain
+            seen_domains: set = set()
+            for i, t in enumerate(tenants):
+                dn = (t.get("target_domain_name") or "").strip()
+                if dn and dn not in seen_domains:
+                    seen_domains.add(dn)
+                    inserts.append((project_id, 1000 + i*10, "create_domain",
+                                    f"Create domain: {dn}", None,
+                                    json.dumps({"domain_name": dn, "description": t.get("target_domain_description") or ""})))
+
+            # 2. create_project
+            for i, t in enumerate(tenants):
+                proj = (t.get("target_project_name") or "").strip()
+                dom  = (t.get("target_domain_name") or "").strip()
+                if proj and dom:
+                    inserts.append((project_id, 2000 + i*10, "create_project",
+                                    f"Create project: {proj}", t.get("tenant_name"),
+                                    json.dumps({"project_name": proj, "domain_name": dom,
+                                                "description": t.get("target_display_name") or proj})))
+
+            # 3. set_quotas
+            for i, t in enumerate(tenants):
+                proj = (t.get("target_project_name") or "").strip()
+                dom  = (t.get("target_domain_name") or "").strip()
+                if not proj or not dom:
+                    continue
+                vcpu_rec   = max(1,    round(int(t.get("total_vcpu", 0) or 0) / cpu_ratio))
+                ram_mb_rec = max(1024, round(int(t.get("total_ram_mb", 0) or 0) / ram_ratio))
+                disk_gb_rec = round(float(t.get("total_disk_gb", 0) or 0) * disk_factor)
+                vm_cnt = int(t.get("vm_count", 0) or 0)
+                inserts.append((project_id, 3000 + i*10, "set_quotas",
+                                f"Set quotas: {proj}", t.get("tenant_name"),
+                                json.dumps({
+                                    "project_name": proj, "domain_name": dom,
+                                    "nova":    {"cores": vcpu_rec * 2, "instances": max(10, vm_cnt + 5), "ram": ram_mb_rec},
+                                    "neutron": {"network": 10, "subnet": 20, "port": 100, "router": 5, "floatingip": 20},
+                                    "cinder":  {"volumes": 100, "gigabytes": int(disk_gb_rec) or 500},
+                                })))
+
+            # 4. create_network + 5. create_subnet
+            for i, net in enumerate(networks):
+                nname = (net.get("target_network_name") or net.get("source_network_name") or "").strip()
+                if not nname:
+                    continue
+                vlan = net.get("vlan_id")
+                inserts.append((project_id, 4000 + i*10, "create_network",
+                                f"Create network: {nname}", None,
+                                json.dumps({"network_name": nname,
+                                            "source_network_name": net.get("source_network_name"),
+                                            "vlan_id": int(vlan) if vlan else None,
+                                            "network_kind": net.get("network_kind") or "physical_managed",
+                                            "is_external": bool(net.get("is_external")),
+                                            "mapping_id": net.get("id")})))
+                cidr = (net.get("cidr") or "").strip()
+                if cidr:
+                    pools = []
+                    if net.get("allocation_pool_start") and net.get("allocation_pool_end"):
+                        pools = [{"start": net["allocation_pool_start"], "end": net["allocation_pool_end"]}]
+                    dns_raw = net.get("dns_nameservers") or []
+                    inserts.append((project_id, 5000 + i*10, "create_subnet",
+                                    f"Create subnet: {nname}-subnet ({cidr})", None,
+                                    json.dumps({"subnet_name": f"{nname}-subnet",
+                                                "network_name": nname, "cidr": cidr,
+                                                "gateway_ip": net.get("gateway_ip"),
+                                                "dns_nameservers": dns_raw if isinstance(dns_raw, list) else [],
+                                                "enable_dhcp": bool(net.get("dhcp_enabled", True)),
+                                                "allocation_pools": pools,
+                                                "mapping_id": net.get("id")})))
+
+            # 6. create_flavor
+            for i, fl in enumerate(flavors):
+                if fl.get("skip"):
+                    continue
+                fname = (fl.get("target_flavor_name") or fl.get("source_shape") or "").strip()
+                if fname:
+                    inserts.append((project_id, 6000 + i*10, "create_flavor",
+                                    f"Create flavor: {fname}", None,
+                                    json.dumps({"flavor_name": fname,
+                                                "vcpus": int(fl.get("vcpus", 1)),
+                                                "ram_mb": int(fl.get("ram_mb", 1024)),
+                                                "disk_gb": 0,
+                                                "staging_id": fl.get("id")})))
+
+            # 7. create_user
+            for i, u in enumerate(mu_users):
+                if u.get("is_existing_user"):
+                    continue
+                uname = (u.get("username") or "").strip()
+                if uname:
+                    inserts.append((project_id, 7000 + i*10, "create_user",
+                                    f"Create user: {uname}", u.get("tenant_name"),
+                                    json.dumps({"username": uname,
+                                                "email": u.get("email") or "",
+                                                "domain_name": (u.get("target_domain_name") or "").strip(),
+                                                "user_record_id": u.get("id")})))
+
+            # 8. assign_role
+            for i, u in enumerate(mu_users):
+                uname = (u.get("username") or "").strip()
+                proj  = (u.get("target_project_name") or "").strip()
+                if uname and proj:
+                    inserts.append((project_id, 8000 + i*10, "assign_role",
+                                    f"Assign {u.get('role','member')}: {uname} Γזע {proj}",
+                                    u.get("tenant_name"),
+                                    json.dumps({"username": uname, "project_name": proj,
+                                                "domain_name": (u.get("target_domain_name") or "").strip(),
+                                                "role": u.get("role") or "member"})))
+
+            for row in inserts:
+                cur.execute("""
+                    INSERT INTO migration_prep_tasks
+                        (project_id, task_order, task_type, task_name, tenant_name, detail, status)
+                    VALUES (%s,%s,%s,%s,%s,%s,'pending')
+                """, row)
+
+    _log_activity(actor=actor, action="generate_prep_tasks", resource_type="migration_prep_tasks",
+                  resource_id=project_id, details={"task_count": len(inserts)})
+    # Reset approval to pending Γאפ new plan requires fresh approval
+    with _get_conn() as conn2:
+        with conn2.cursor() as cur:
+            cur.execute("""
+                UPDATE migration_projects
+                SET prep_approval_status='pending_approval',
+                    prep_requested_by=%s,
+                    prep_approved_by=NULL,
+                    prep_approved_at=NULL
+                WHERE project_id=%s
+            """, (actor, project_id))
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="prep_approval_requested",
+            summary=f"PCD prep plan ready for approval: {len(inserts)} tasks generated by {actor}",
+            severity="info",
+            resource_id=project_id,
+            actor=actor,
+            template_vars={"task_count": len(inserts), "requested_by": actor},
+        )
+    except Exception:
+        pass
+    return {"status": "ok", "tasks_generated": len(inserts), "approval_status": "pending_approval"}
+
+
+@router.get("/projects/{project_id}/prep-tasks",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_prep_tasks(project_id: str):
+    """List all prep tasks for the project, ordered for execution."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_prep_tasks WHERE project_id=%s ORDER BY task_order, id", (project_id,))
+            tasks = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    counts: Dict[str, int] = {}
+    for t in tasks:
+        s = t.get("status", "pending")
+        counts[s] = counts.get(s, 0) + 1
+    return {"status": "ok", "tasks": tasks, "counts": counts}
+
+
+@router.get("/projects/{project_id}/prep-approval",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_prep_approval(project_id: str):
+    """Get the current approval status and full history for the prep plan."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT approver, decision, comment, created_at
+                FROM migration_prep_approvals
+                WHERE project_id=%s ORDER BY created_at DESC
+            """, (project_id,))
+            history = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {
+        "status":       project.get("prep_approval_status"),
+        "requested_by": project.get("prep_requested_by"),
+        "approved_by":  project.get("prep_approved_by"),
+        "approved_at":  project.get("prep_approved_at").isoformat() if project.get("prep_approved_at") else None,
+        "history":      history,
+    }
+
+
+@router.post("/projects/{project_id}/prep-approval",
+             dependencies=[Depends(require_permission("migration", "admin"))])
+async def approve_prep_plan(project_id: str, body: PrepApproveRequest, user=Depends(get_current_user)):
+    """Approve or reject the pending prep plan. Requires migration:admin permission."""
+    actor = user.username if user else "system"
+    if body.decision not in ("approved", "rejected"):
+        raise HTTPException(400, "Decision must be 'approved' or 'rejected'")
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        current = project.get("prep_approval_status")
+        if current != "pending_approval":
+            raise HTTPException(409, f"Plan is not pending approval (current: '{current or 'not_submitted'}')")
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO migration_prep_approvals (project_id, approver, decision, comment)
+                VALUES (%s, %s, %s, %s)
+            """, (project_id, actor, body.decision, body.comment or ""))
+            cur.execute("""
+                UPDATE migration_projects
+                SET prep_approval_status=%s, prep_approved_by=%s, prep_approved_at=now()
+                WHERE project_id=%s
+            """, (body.decision, actor, project_id))
+    _log_activity(actor=actor, action=f"{body.decision}_prep_plan",
+                  resource_type="migration_prep_tasks", resource_id=project_id,
+                  details={"decision": body.decision, "comment": body.comment or ""})
+    try:
+        from provisioning_routes import _fire_notification
+        et = "prep_approval_granted" if body.decision == "approved" else "prep_approval_rejected"
+        _fire_notification(
+            event_type=et,
+            summary=f"PCD prep plan {body.decision} by {actor}" + (f": {body.comment}" if body.comment else ""),
+            severity="info" if body.decision == "approved" else "warning",
+            resource_id=project_id, actor=actor,
+        )
+    except Exception:
+        pass
+    return {"status": "ok", "decision": body.decision, "approved_by": actor}
+
+
+@router.post("/projects/{project_id}/prepare/dry-run",
+             dependencies=[Depends(require_permission("migration", "read"))])
+async def dry_run_prep_tasks(project_id: str):
+    """Simulate prep execution: check PCD for existing resources without creating anything."""
+    from pf9_control import get_client
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT task_type, detail FROM migration_prep_tasks WHERE project_id=%s AND status='pending'",
+                (project_id,))
+            pending = [dict(r) for r in cur.fetchall()]
+
+    if not pending:
+        return {"status": "ok", "summary": {"total": 0, "would_create": 0, "would_skip_existing": 0, "would_execute": 0}, "by_type": []}
+
+    client = get_client(); client.authenticate()
+    existing_domains = {d["name"] for d in client.list_domains()}
+    existing_nets    = {n["name"] for n in client.list_networks()}
+    existing_flavors = {f["name"] for f in client.list_flavors()}
+    domain_projects: Dict[str, set] = {}
+    domain_users:    Dict[str, set] = {}
+    domain_id_cache: Dict[str, Optional[str]] = {}
+
+    def _did(dname: str) -> Optional[str]:
+        if dname not in domain_id_cache:
+            domain_id_cache[dname] = next((d["id"] for d in client.list_domains() if d["name"] == dname), None)
+        return domain_id_cache[dname]
+
+    results: Dict[str, Dict[str, int]] = {}
+    for task in pending:
+        ttype  = task["task_type"]
+        detail = task.get("detail") or {}
+        if isinstance(detail, str):
+            detail = json.loads(detail)
+        if ttype not in results:
+            results[ttype] = {"total": 0, "would_create": 0, "would_skip_existing": 0, "would_execute": 0}
+        r = results[ttype]
+        r["total"] += 1
+        if ttype == "create_domain":
+            r["would_skip_existing" if detail.get("domain_name", "") in existing_domains else "would_create"] += 1
+        elif ttype == "create_project":
+            pname = detail.get("project_name", ""); dname = detail.get("domain_name", "Default")
+            if dname not in domain_projects:
+                did = _did(dname)
+                domain_projects[dname] = {p["name"] for p in client.list_projects(domain_id=did)} if did else set()
+            r["would_skip_existing" if pname in domain_projects.get(dname, set()) else "would_create"] += 1
+        elif ttype == "create_network":
+            r["would_skip_existing" if detail.get("network_name", "") in existing_nets else "would_create"] += 1
+        elif ttype == "create_flavor":
+            r["would_skip_existing" if detail.get("flavor_name", "") in existing_flavors else "would_create"] += 1
+        elif ttype == "create_user":
+            uname = detail.get("username", ""); dname = detail.get("domain_name", "Default")
+            if dname not in domain_users:
+                did = _did(dname)
+                domain_users[dname] = {u["name"] for u in client.list_users(domain_id=did)} if did else set()
+            r["would_skip_existing" if uname in domain_users.get(dname, set()) else "would_create"] += 1
+        else:  # set_quotas, create_subnet, assign_role
+            r["would_execute"] += 1
+
+    by_type = [{"task_type": k, **v} for k, v in sorted(results.items())]
+    return {
+        "status": "ok",
+        "summary": {
+            "total":               len(pending),
+            "would_create":        sum(v["would_create"] for v in results.values()),
+            "would_skip_existing": sum(v["would_skip_existing"] for v in results.values()),
+            "would_execute":       sum(v["would_execute"] for v in results.values()),
+        },
+        "by_type": by_type,
+    }
+
+
+@router.get("/projects/{project_id}/prep-audit",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_prep_audit(project_id: str):
+    """Full audit trail of Phase 4B actions: activity log, approval history, execution history."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT actor, action, resource_id, details, "timestamp" AS created_at
+                FROM activity_log
+                WHERE resource_type = 'migration_prep_tasks'
+                  AND (resource_id = %s
+                       OR resource_id IN (
+                           SELECT id::text FROM migration_prep_tasks WHERE project_id=%s
+                       ))
+                ORDER BY "timestamp" DESC LIMIT 500
+            """, (project_id, project_id))
+            activity = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT approver, decision, comment, created_at
+                FROM migration_prep_approvals WHERE project_id=%s
+                ORDER BY created_at DESC
+            """, (project_id,))
+            approvals = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT task_type, task_name, status, executed_by, executed_at, resource_id
+                FROM migration_prep_tasks
+                WHERE project_id=%s AND executed_by IS NOT NULL
+                ORDER BY executed_at DESC NULLS LAST LIMIT 200
+            """, (project_id,))
+            executions = [_serialize_row(dict(r)) for r in cur.fetchall()]
+
+    return {
+        "activity_log":      activity,
+        "approval_history":  approvals,
+        "recent_executions": executions,
+    }
+
+
+def _execute_one_task(task: Dict[str, Any], project_id: str, conn, actor: str) -> Dict[str, Any]:
+    """
+    Execute a single prep task against PCD. Returns {resource_id, result} on success.
+    Raises on failure. Caller handles status updates.
+    """
+    from pf9_control import get_client
+    client = get_client()
+    client.authenticate()
+
+    ttype  = task["task_type"]
+    detail = task.get("detail") or {}
+    if isinstance(detail, str):
+        detail = json.loads(detail)
+
+    # Helper: find PCD resource_id from a previously completed task
+    def _find_task_resource(task_type: str, name_key: str, name_val: str) -> Optional[str]:
+        with conn.cursor() as c2:
+            c2.execute("""
+                SELECT resource_id FROM migration_prep_tasks
+                WHERE project_id=%s AND task_type=%s AND status='done'
+                  AND detail::json->>%s = %s
+                LIMIT 1
+            """, (project_id, task_type, name_key, name_val))
+            row = c2.fetchone()
+            return row[0] if row else None
+
+    if ttype == "create_domain":
+        dn = detail["domain_name"]
+        existing = {d["name"]: d["id"] for d in client.list_domains()}
+        if dn in existing:
+            return {"resource_id": existing[dn], "result": {"skipped": True, "reason": "already_exists"}}
+        dom = client.create_domain(dn, description=detail.get("description") or "")
+        return {"resource_id": dom["id"], "result": dom}
+
+    elif ttype == "create_project":
+        pname = detail["project_name"]
+        dname = detail["domain_name"]
+        domain_id = _find_task_resource("create_domain", "domain_name", dname)
+        if not domain_id:
+            existing_domains = {d["name"]: d["id"] for d in client.list_domains()}
+            domain_id = existing_domains.get(dname)
+        if not domain_id:
+            raise ValueError(f"Domain '{dname}' not found in PCD Γאפ run create_domain first")
+        existing_projects = {p["name"]: p["id"] for p in client.list_projects(domain_id=domain_id)}
+        if pname in existing_projects:
+            return {"resource_id": existing_projects[pname], "result": {"skipped": True, "reason": "already_exists"}}
+        proj = client.create_project(pname, domain_id=domain_id, description=detail.get("description") or "")
+        return {"resource_id": proj["id"], "result": proj}
+
+    elif ttype == "set_quotas":
+        pname = detail["project_name"]
+        dname = detail["domain_name"]
+        pcd_proj_id = _find_task_resource("create_project", "project_name", pname)
+        if not pcd_proj_id:
+            dexisting = {d["name"]: d["id"] for d in client.list_domains()}
+            did = dexisting.get(dname)
+            if did:
+                pexisting = {p["name"]: p["id"] for p in client.list_projects(domain_id=did)}
+                pcd_proj_id = pexisting.get(pname)
+        if not pcd_proj_id:
+            raise ValueError(f"PCD project '{pname}' not found Γאפ run create_project first")
+        if detail.get("nova"):
+            client.update_compute_quotas(pcd_proj_id, detail["nova"])
+        if detail.get("neutron"):
+            client.update_network_quotas(pcd_proj_id, detail["neutron"])
+        if detail.get("cinder"):
+            try:
+                client.update_storage_quotas(pcd_proj_id, detail["cinder"])
+            except Exception:
+                pass  # Cinder may not be available
+        return {"resource_id": pcd_proj_id, "result": {"nova": detail.get("nova"), "neutron": detail.get("neutron"), "cinder": detail.get("cinder")}}
+
+    elif ttype == "create_network":
+        nname = detail["network_name"]
+        vlan  = detail.get("vlan_id")
+        kind  = detail.get("network_kind", "physical_managed")
+        is_ext= bool(detail.get("is_external"))
+        existing_nets = {n["name"]: n["id"] for n in client.list_networks()}
+        if nname in existing_nets:
+            net_id = existing_nets[nname]
+            # Write back mapping_id
+            if detail.get("mapping_id"):
+                with conn.cursor() as c2:
+                    c2.execute("UPDATE migration_network_mappings SET target_network_id=%s WHERE id=%s",
+                               (net_id, detail["mapping_id"]))
+            return {"resource_id": net_id, "result": {"skipped": True, "reason": "already_exists"}}
+        if kind in ("physical_managed", "physical_l2") and vlan:
+            physnets = client.list_physical_networks()
+            physnet  = physnets[0] if physnets else "physnet1"
+            net = client.create_provider_network(nname, network_type="vlan", physical_network=physnet,
+                                                  segmentation_id=vlan, external=is_ext)
+        else:
+            net = client.create_network(nname, external=is_ext)
+        net_id = net["id"]
+        if detail.get("mapping_id"):
+            with conn.cursor() as c2:
+                c2.execute("UPDATE migration_network_mappings SET target_network_id=%s WHERE id=%s",
+                           (net_id, detail["mapping_id"]))
+        return {"resource_id": net_id, "result": net}
+
+    elif ttype == "create_subnet":
+        nname = detail["network_name"]
+        cidr  = detail["cidr"]
+        net_id = _find_task_resource("create_network", "network_name", nname)
+        if not net_id:
+            for n in client.list_networks():
+                if n["name"] == nname:
+                    net_id = n["id"]
+                    break
+        if not net_id:
+            raise ValueError(f"Network '{nname}' not found Γאפ run create_network first")
+        existing_subnets = [s for s in client.list_subnets(network_id=net_id)]
+        if existing_subnets:
+            return {"resource_id": existing_subnets[0]["id"], "result": {"skipped": True, "reason": "subnet_exists"}}
+        pools = detail.get("allocation_pools") or []
+        sub = client.create_subnet(net_id, cidr=cidr,
+                                    name=detail.get("subnet_name") or f"{nname}-subnet",
+                                    gateway_ip=detail.get("gateway_ip"),
+                                    dns_nameservers=detail.get("dns_nameservers") or [],
+                                    enable_dhcp=bool(detail.get("enable_dhcp", True)),
+                                    allocation_pools=pools if pools else None)
+        return {"resource_id": sub["id"], "result": sub}
+
+    elif ttype == "create_flavor":
+        fname = detail["flavor_name"]
+        existing_flavors = {f["name"]: f["id"] for f in client.list_flavors()}
+        if fname in existing_flavors:
+            fid = existing_flavors[fname]
+            if detail.get("staging_id"):
+                with conn.cursor() as c2:
+                    c2.execute("UPDATE migration_flavor_staging SET pcd_flavor_id=%s WHERE id=%s",
+                               (fid, detail["staging_id"]))
+            return {"resource_id": fid, "result": {"skipped": True, "reason": "already_exists"}}
+        fl = client.create_flavor(fname, vcpus=int(detail.get("vcpus",1)),
+                                   ram_mb=int(detail.get("ram_mb",1024)), disk_gb=0)
+        fid = fl.get("flavor", fl).get("id", "")
+        if detail.get("staging_id"):
+            with conn.cursor() as c2:
+                c2.execute("UPDATE migration_flavor_staging SET pcd_flavor_id=%s WHERE id=%s",
+                           (fid, detail["staging_id"]))
+        return {"resource_id": fid, "result": fl}
+
+    elif ttype == "create_user":
+        uname  = detail["username"]
+        dname  = detail.get("domain_name", "Default")
+        domain_id = _find_task_resource("create_domain", "domain_name", dname)
+        if not domain_id:
+            existing_domains = {d["name"]: d["id"] for d in client.list_domains()}
+            domain_id = existing_domains.get(dname)
+        if not domain_id:
+            raise ValueError(f"Domain '{dname}' not found")
+        existing_users = {u["name"]: u["id"] for u in client.list_users(domain_id=domain_id)}
+        if uname in existing_users:
+            uid = existing_users[uname]
+            if detail.get("user_record_id"):
+                with conn.cursor() as c2:
+                    c2.execute("UPDATE migration_tenant_users SET pcd_user_id=%s WHERE id=%s",
+                               (uid, detail["user_record_id"]))
+            return {"resource_id": uid, "result": {"skipped": True, "reason": "already_exists"}}
+        import secrets
+        tmp_pw = secrets.token_urlsafe(16)
+        u_obj = client.create_user(uname, password=tmp_pw,
+                                    domain_id=domain_id, email=detail.get("email") or "")
+        uid = u_obj.get("id", "")
+        if detail.get("user_record_id"):
+            with conn.cursor() as c2:
+                c2.execute("UPDATE migration_tenant_users SET pcd_user_id=%s, temp_password=%s WHERE id=%s",
+                           (uid, tmp_pw, detail["user_record_id"]))
+        return {"resource_id": uid, "result": {"id": uid, "name": uname, "temp_password": tmp_pw}}
+
+    elif ttype == "assign_role":
+        uname = detail["username"]
+        pname = detail["project_name"]
+        dname = detail.get("domain_name", "Default")
+        role_name = detail.get("role", "member")
+        pcd_user_id = _find_task_resource("create_user", "username", uname)
+        if not pcd_user_id:
+            domain_id = next((d["id"] for d in client.list_domains() if d["name"] == dname), None)
+            if domain_id:
+                pcd_user_id = next((u["id"] for u in client.list_users(domain_id=domain_id) if u["name"] == uname), None)
+        if not pcd_user_id:
+            raise ValueError(f"User '{uname}' not found in PCD")
+        pcd_proj_id = _find_task_resource("create_project", "project_name", pname)
+        if not pcd_proj_id:
+            domain_id = next((d["id"] for d in client.list_domains() if d["name"] == dname), None)
+            if domain_id:
+                pcd_proj_id = next((p["id"] for p in client.list_projects(domain_id=domain_id) if p["name"] == pname), None)
+        if not pcd_proj_id:
+            raise ValueError(f"Project '{pname}' not found in PCD")
+        roles = {r["name"]: r["id"] for r in client.list_roles()}
+        role_id = roles.get(role_name) or roles.get("member")
+        if not role_id:
+            raise ValueError(f"Role '{role_name}' not found in PCD")
+        client.assign_role_to_user_on_project(pcd_proj_id, pcd_user_id, role_id)
+        return {"resource_id": pcd_proj_id, "result": {"user_id": pcd_user_id, "role_id": role_id}}
+
+    else:
+        raise ValueError(f"Unknown task_type: {ttype}")
+
+
+@router.post("/projects/{project_id}/prep-tasks/{task_id}/execute",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def execute_prep_task(project_id: str, task_id: int, user=Depends(get_current_user)):
+    """Execute a single prep task against PCD."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_prep_tasks WHERE id=%s AND project_id=%s", (task_id, project_id))
+            task = cur.fetchone()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            task = dict(task)
+            if task["status"] == "done":
+                return {"status": "ok", "message": "already_done", "task": _serialize_row(task)}
+            cur.execute("UPDATE migration_prep_tasks SET status='running', executed_by=%s, executed_at=now() WHERE id=%s",
+                        (actor, task_id))
+
+        try:
+            res = _execute_one_task(task, project_id, conn, actor)
+            with conn.cursor() as cur:
+                cur.execute("""UPDATE migration_prep_tasks
+                               SET status='done', resource_id=%s, result=%s, error_message=NULL
+                               WHERE id=%s""",
+                            (res["resource_id"], json.dumps(res["result"]), task_id))
+            _log_activity(actor=actor, action="execute_prep_task", resource_type="migration_prep_tasks",
+                          resource_id=str(task_id), details={"task_type": task["task_type"], "task_name": task["task_name"]})
+            return {"status": "ok", "resource_id": res["resource_id"], "result": res["result"]}
+        except Exception as exc:
+            try:
+                conn.rollback()
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE migration_prep_tasks SET status='failed', error_message=%s WHERE id=%s",
+                                (str(exc), task_id))
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/projects/{project_id}/prepare/run",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def run_all_prep_tasks(project_id: str, user=Depends(get_current_user)):
+    """Execute all pending (and failed) tasks in order. Stops on first new failure."""
+    actor = user.username if user else "system"
+    done_count = 0; fail_count = 0; skipped_count = 0
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        appr = project.get("prep_approval_status")
+        if appr != "approved":
+            raise HTTPException(
+                status_code=403,
+                detail=f"Prep plan is not approved (status: '{appr or 'not_submitted'}'). "
+                       "An admin must approve via POST /api/migration/projects/{{id}}/prep-approval."
+            )
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""SELECT * FROM migration_prep_tasks
+                           WHERE project_id=%s AND status IN ('pending','failed')
+                           ORDER BY task_order, id""", (project_id,))
+            pending = [dict(r) for r in cur.fetchall()]
+
+        for task in pending:
+            tid = task["id"]
+            with conn.cursor() as cur:
+                cur.execute("UPDATE migration_prep_tasks SET status='running', executed_by=%s, executed_at=now() WHERE id=%s",
+                            (actor, tid))
+            try:
+                res = _execute_one_task(task, project_id, conn, actor)
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE migration_prep_tasks SET status='done', resource_id=%s, result=%s, error_message=NULL WHERE id=%s",
+                                (res["resource_id"], json.dumps(res["result"]), tid))
+                if res.get("result", {}).get("skipped"):
+                    skipped_count += 1
+                else:
+                    done_count += 1
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                    with conn.cursor() as cur:
+                        cur.execute("UPDATE migration_prep_tasks SET status='failed', error_message=%s WHERE id=%s",
+                                    (str(exc), tid))
+                except Exception:
+                    pass
+                fail_count += 1
+                break  # stop on first failure
+
+    _log_activity(actor=actor, action="run_prep_tasks", resource_type="migration_prep_tasks",
+                  resource_id=project_id, details={"done": done_count, "failed": fail_count})
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="prep_tasks_completed",
+            summary=f"PCD prep run finished: {done_count} created, {skipped_count} skipped, {fail_count} failed",
+            severity="critical" if fail_count > 0 else "info",
+            resource_id=project_id,
+            actor=actor,
+            template_vars={"done": done_count, "skipped": skipped_count, "failed": fail_count},
+        )
+    except Exception:
+        pass
+    return {"status": "ok", "done": done_count, "failed": fail_count, "skipped": skipped_count}
+
+
+@router.post("/projects/{project_id}/prep-tasks/{task_id}/rollback",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def rollback_prep_task(project_id: str, task_id: int, user=Depends(get_current_user)):
+    """
+    Rollback (undo) a completed prep task Γאפ deletes the created PCD resource.
+    Supported: create_domain, create_project, create_network, create_flavor, create_user.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM migration_prep_tasks WHERE id=%s AND project_id=%s", (task_id, project_id))
+            task = cur.fetchone()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            task = dict(task)
+
+        from pf9_control import get_client
+        client = get_client(); client.authenticate()
+        ttype   = task["task_type"]
+        res_id  = task.get("resource_id") or ""
+        detail  = task.get("detail") or {}
+        if isinstance(detail, str):
+            detail = json.loads(detail)
+        msg = "rollback_not_supported"
+
+        try:
+            if ttype == "create_domain" and res_id:
+                counts = client.count_domain_resources(res_id)
+                if counts["projects"] > 0 or counts["users"] > 0:
+                    raise HTTPException(status_code=409, detail=f"Domain still has {counts['projects']} projects / {counts['users']} users")
+                client.update_domain(res_id, enabled=False)
+                client.delete_domain(res_id)
+                msg = "domain_deleted"
+            elif ttype == "create_project" and res_id:
+                client.delete_project(res_id)
+                try:
+                    with conn.cursor() as c2:
+                        c2.execute("UPDATE migration_tenants SET pcd_project_id=NULL WHERE project_id=%s AND target_project_name=%s",
+                                   (project_id, detail.get("project_name")))
+                except Exception:
+                    conn.rollback()
+                msg = "project_deleted"
+            elif ttype == "create_network" and res_id:
+                client.delete_network(res_id)
+                if detail.get("mapping_id"):
+                    with conn.cursor() as c2:
+                        c2.execute("UPDATE migration_network_mappings SET target_network_id=NULL WHERE id=%s", (detail["mapping_id"],))
+                msg = "network_deleted"
+            elif ttype == "create_flavor" and res_id:
+                client.delete_flavor(res_id)
+                if detail.get("staging_id"):
+                    with conn.cursor() as c2:
+                        c2.execute("UPDATE migration_flavor_staging SET pcd_flavor_id=NULL WHERE id=%s", (detail["staging_id"],))
+                msg = "flavor_deleted"
+            elif ttype == "create_user" and res_id:
+                client.delete_user(res_id)
+                if detail.get("user_record_id"):
+                    with conn.cursor() as c2:
+                        c2.execute("UPDATE migration_tenant_users SET pcd_user_id=NULL WHERE id=%s", (detail["user_record_id"],))
+                msg = "user_deleted"
+
+            with conn.cursor() as cur:
+                cur.execute("UPDATE migration_prep_tasks SET status='pending', resource_id=NULL, result='{}', error_message=NULL WHERE id=%s", (task_id,))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    _log_activity(actor=actor, action="rollback_prep_task", resource_type="migration_prep_tasks",
+                  resource_id=str(task_id), details={"task_type": ttype, "result": msg})
+    return {"status": "ok", "message": msg}
+
+
+@router.delete("/projects/{project_id}/prep-tasks",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def clear_prep_tasks(project_id: str, user=Depends(get_current_user)):
+    """Clear all pending/failed tasks so prepare can regenerate."""
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM migration_prep_tasks WHERE project_id=%s AND status IN ('pending','failed')", (project_id,))
+    _log_activity(actor=actor, action="clear_prep_tasks", resource_type="migration_prep_tasks",
+                  resource_id=project_id, details={})
+    return {"status": "ok"}
+
+
+@router.get("/projects/{project_id}/prep-summary",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_prep_summary(project_id: str):
+    """Breakdown of prep task results by task type: created / skipped / failed counts."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT task_type,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN status='done'   THEN 1 ELSE 0 END) AS done,
+                       SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN status IN ('pending','running') THEN 1 ELSE 0 END) AS pending,
+                       SUM(CASE WHEN result IS NOT NULL AND (result->>'skipped') = 'true' THEN 1 ELSE 0 END) AS skipped
+                FROM migration_prep_tasks
+                WHERE project_id=%s
+                GROUP BY task_type
+                ORDER BY task_type
+            """, (project_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN status='done'   THEN 1 ELSE 0 END) AS done,
+                       SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN status IN ('pending','running') THEN 1 ELSE 0 END) AS pending
+                FROM migration_prep_tasks WHERE project_id=%s
+            """, (project_id,))
+            totals = dict(cur.fetchone() or {})
+
+    by_type = []
+    for r in rows:
+        done    = int(r.get("done", 0) or 0)
+        skipped = int(r.get("skipped", 0) or 0)
+        by_type.append({
+            "task_type": r["task_type"],
+            "total":   int(r.get("total", 0) or 0),
+            "done":    done,
+            "created": done - skipped,
+            "skipped": skipped,
+            "failed":  int(r.get("failed", 0) or 0),
+            "pending": int(r.get("pending", 0) or 0),
+        })
+
+    total   = int(totals.get("total", 0) or 0)
+    done    = int(totals.get("done", 0) or 0)
+    failed  = int(totals.get("failed", 0) or 0)
+    pending = int(totals.get("pending", 0) or 0)
+    skipped = sum(r["skipped"] for r in by_type)
+
+    return {
+        "total":    total,
+        "done":     done,
+        "created":  done - skipped,
+        "skipped":  skipped,
+        "failed":   failed,
+        "pending":  pending,
+        "complete": total > 0 and failed == 0 and pending == 0,
+        "by_type":  by_type,
+    }
+
+
+# =====================================================================
+# Phase 4C Γאפ vJailbreak Handoff Artifacts
+# =====================================================================
+
+def _serialize_tenant_for_bundle(t: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a DB-enriched tenant dict to a clean JSON-safe bundle entry."""
+    def _net(n: Dict) -> Dict:
+        return {
+            "source_network": n.get("source_network_name"),
+            "target_network_name": n.get("target_network_name"),
+            "pcd_network_id": n.get("target_network_id"),
+            "vlan_id": n.get("vlan_id"),
+            "cidr": n.get("cidr"),
+            "gateway_ip": n.get("gateway_ip"),
+        }
+
+    def _wave(w: Dict) -> Dict:
+        return {
+            "wave_number": w.get("wave_number"),
+            "wave_name": w.get("wave_name"),
+            "vm_count": int(w.get("vm_count") or 0),
+        }
+
+    return {
+        "tenant_name":          t.get("tenant_name"),
+        "target_project_name": t.get("target_project_name"),
+        "target_domain_name":  t.get("target_domain_name"),
+        "target_display_name": t.get("target_display_name"),
+        "pcd_project_id":      t.get("pcd_project_id"),
+        "cohort_name":         t.get("cohort_name"),
+        "service_account":     t.get("service_account"),
+        "networks":            [_net(n) for n in t.get("networks", [])],
+        "wave_sequence":       [_wave(w) for w in t.get("wave_sequence", [])],
+    }
+
+
+def _build_bundle_tenants(
+    project_id: str, conn, cohort_id: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """Fetch and enrich all in-scope tenants for a vJailbreak bundle."""
+    where_extra = "AND t.cohort_id = %(cohort_id)s" if cohort_id else ""
+    params: Dict = {"project_id": project_id, "cohort_id": cohort_id}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(f"""
+            SELECT t.id, t.tenant_name, t.target_project_name, t.target_domain_name,
+                   t.target_display_name, t.cohort_id,
+                   c.name  AS cohort_name,
+                   c.cohort_order,
+                   pt.resource_id AS pcd_project_id
+            FROM migration_tenants t
+            LEFT JOIN migration_cohorts c ON c.id = t.cohort_id
+            LEFT JOIN migration_prep_tasks pt
+                   ON pt.project_id  = t.project_id
+                  AND pt.task_type   = 'create_project'
+                  AND pt.tenant_name = t.tenant_name
+                  AND pt.status      = 'done'
+            WHERE t.project_id = %(project_id)s
+              {where_extra}
+            ORDER BY c.cohort_order NULLS LAST, t.tenant_name
+        """, params)
+        tenants = [dict(r) for r in cur.fetchall()]
+
+        for t in tenants:
+            tid, tname = t["id"], t["tenant_name"]
+            # Service account
+            cur.execute("""
+                SELECT username, temp_password, role, pcd_user_id
+                FROM   migration_tenant_users
+                WHERE  tenant_id = %s AND user_type = 'service_account'
+                ORDER BY id LIMIT 1
+            """, (tid,))
+            svc = cur.fetchone()
+            t["service_account"] = (
+                {"username": svc["username"], "password": svc["temp_password"],
+                 "pcd_user_id": svc["pcd_user_id"]}
+                if svc else None
+            )
+            # All users for handoff sheet
+            cur.execute("""
+                SELECT username, email, role, temp_password, is_existing_user, user_type
+                FROM   migration_tenant_users
+                WHERE  tenant_id = %s
+                ORDER BY user_type, username
+            """, (tid,))
+            t["users"] = [dict(r) for r in cur.fetchall()]
+            # Networks for this tenant's powered-on VMs
+            cur.execute("""
+                SELECT DISTINCT nm.source_network_name, nm.target_network_name,
+                                nm.target_network_id, nm.vlan_id, nm.cidr, nm.gateway_ip
+                FROM   migration_network_mappings nm
+                WHERE  nm.project_id = %s
+                  AND  nm.source_network_name IN (
+                           SELECT DISTINCT v.network_name
+                           FROM   migration_vms v
+                           WHERE  v.project_id  = %s
+                             AND  v.tenant_name = %s
+                             AND  v.power_state = 'poweredOn'
+                       )
+                ORDER BY nm.source_network_name
+            """, (project_id, project_id, tname))
+            t["networks"] = [dict(r) for r in cur.fetchall()]
+            # Wave sequence
+            cur.execute("""
+                SELECT w.wave_number, w.name AS wave_name, COUNT(wv.id) AS vm_count
+                FROM   migration_waves w
+                JOIN   migration_wave_vms wv ON wv.project_id = w.project_id
+                                            AND wv.wave_number = w.wave_number
+                                            AND wv.vm_id IS NOT NULL
+                JOIN   migration_vms v        ON v.id = wv.vm_id
+                WHERE  v.project_id  = %s AND v.tenant_name = %s
+                GROUP  BY w.id, w.wave_number, w.name
+                ORDER  BY w.wave_number
+            """, (project_id, tname))
+            t["wave_sequence"] = [dict(r) for r in cur.fetchall()]
+            t.pop("cohort_order", None)
+
+    return tenants
+
+
+@router.get("/projects/{project_id}/export-vjailbreak-bundle",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_vjailbreak_bundle(
+    project_id: str,
+    cohort_id: Optional[int] = Query(default=None, description="Restrict bundle to a single cohort"),
+    user=Depends(get_current_user),
+):
+    """
+    Export a JSON vJailbreak credential bundle for the full project
+    (or restricted to one cohort with ?cohort_id=).  Contains PCD project IDs,
+    service-account credentials, network UUIDs, and wave sequence.
+    Partial bundles (provisioning still running) are exported with warnings.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        try:
+            import p9_common as _p9c  # type: ignore
+            _cfg = _p9c.CFG
+        except Exception:
+            _cfg = {}
+        pcd_auth_url = project.get("pcd_auth_url") or _cfg.get("KEYSTONE_URL", "")
+        tenants = _build_bundle_tenants(project_id, conn, cohort_id)
+
+    if not tenants:
+        raise HTTPException(
+            status_code=404,
+            detail="No in-scope tenants found" + (f" in cohort {cohort_id}" if cohort_id else ""),
+        )
+
+    warnings_list: List[str] = []
+    no_svc = [t["tenant_name"] for t in tenants if not t.get("service_account")]
+    if no_svc:
+        warnings_list.append(
+            f"{len(no_svc)} tenant(s) have no service account Γאפ "
+            "run 'Seed Service Accounts' in the Users tab."
+        )
+    no_pcd_id = [t["tenant_name"] for t in tenants if not t.get("pcd_project_id")]
+    if no_pcd_id:
+        warnings_list.append(
+            f"{len(no_pcd_id)} tenant(s) have no PCD project ID "
+            "(provisioning not yet complete or tasks pending)."
+        )
+
+    bundle = {
+        "schema_version": "1.0",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "project_name": project.get("name", project_id),
+        "project_id": project_id,
+        "auth_url": pcd_auth_url,
+        "cohort_filter": cohort_id,
+        "tenant_count": len(tenants),
+        "warnings": warnings_list,
+        "tenants": [_serialize_tenant_for_bundle(t) for t in tenants],
+    }
+    json_bytes = json.dumps(bundle, indent=2, ensure_ascii=False).encode("utf-8")
+
+    _log_activity(
+        actor=actor, action="export_vjailbreak_bundle",
+        resource_type="migration_project", resource_id=project_id,
+        details={"tenant_count": len(tenants), "cohort_id": cohort_id,
+                 "warnings": len(warnings_list)},
+    )
+    logger.info(
+        "vjailbreak_bundle_exported project=%s tenants=%d cohort=%s warnings=%d by=%s",
+        project_id, len(tenants), cohort_id, len(warnings_list), actor,
+    )
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="vjailbreak_bundle_exported",
+            summary=(
+                f"vJailbreak bundle exported: {project.get('name', project_id)} Γאפ "
+                f"{len(tenants)} tenant(s) by {actor}"
+                + (f" Γאפ {len(warnings_list)} warning(s)" if warnings_list else "")
+            ),
+            severity="warning" if warnings_list else "info",
+            resource_id=project_id,
+            actor=actor,
+            template_vars={"project_name": project.get("name", project_id),
+                           "tenant_count": len(tenants), "exported_by": actor},
+        )
+    except Exception:
+        pass
+
+    suffix = f"-cohort-{cohort_id}" if cohort_id else ""
+    filename = f"vjailbreak-bundle-{project_id}{suffix}.json"
+    return StreamingResponse(
+        io.BytesIO(json_bytes),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/projects/{project_id}/cohorts/{cohort_id}/export-vjailbreak-bundle",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_vjailbreak_bundle_cohort(
+    project_id: str,
+    cohort_id: int,
+    user=Depends(get_current_user),
+):
+    """Cohort-scoped vJailbreak credential bundle (path-param variant)."""
+    return await export_vjailbreak_bundle(
+        project_id=project_id, cohort_id=cohort_id, user=user
+    )
+
+
+@router.get("/projects/{project_id}/export-handoff-sheet.pdf",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def export_handoff_sheet_pdf(
+    project_id: str,
+    cohort_id: Optional[int] = Query(default=None),
+    user=Depends(get_current_user),
+):
+    """
+    Export a per-tenant credential handoff PDF Γאפ one section per in-scope tenant
+    with domain/project info, networks (CIDR), and plaintext temporary passwords.
+    """
+    actor = user.username if user else "system"
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        try:
+            import p9_common as _p9c  # type: ignore
+            _cfg = _p9c.CFG
+        except Exception:
+            _cfg = {}
+        pcd_auth_url = project.get("pcd_auth_url") or _cfg.get("KEYSTONE_URL", "")
+        tenants = _build_bundle_tenants(project_id, conn, cohort_id)
+
+    if not tenants:
+        raise HTTPException(
+            status_code=404,
+            detail="No in-scope tenants found" + (f" in cohort {cohort_id}" if cohort_id else ""),
+        )
+
+    from export_reports import generate_handoff_pdf
+    pdf_bytes = generate_handoff_pdf(
+        project_name=project.get("name", project_id),
+        auth_url=pcd_auth_url,
+        tenants=tenants,
+    )
+
+    _log_activity(
+        actor=actor, action="export_handoff_sheet",
+        resource_type="migration_project", resource_id=project_id,
+        details={"tenant_count": len(tenants), "cohort_id": cohort_id},
+    )
+    logger.info(
+        "handoff_sheet_exported project=%s tenants=%d cohort=%s by=%s",
+        project_id, len(tenants), cohort_id, actor,
+    )
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="handoff_sheet_exported",
+            summary=(
+                f"Handoff sheet exported: {project.get('name', project_id)} Γאפ "
+                f"{len(tenants)} tenant(s) by {actor}. "
+                "Contains plaintext passwords Γאפ distribute securely."
+            ),
+            severity="warning",
+            resource_id=project_id,
+            actor=actor,
+            template_vars={"project_name": project.get("name", project_id),
+                           "tenant_count": len(tenants), "exported_by": actor},
+        )
+    except Exception:
+        pass
+
+    safe_name = (project.get("name") or project_id).replace(" ", "_")
+    suffix = f"-cohort-{cohort_id}" if cohort_id else ""
+    filename = f"migration-handoff-{safe_name}{suffix}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _serialize_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a single DB row dict to JSON-safe format."""
+    result = {}
+    for k, v in row.items():
+        if isinstance(v, datetime):
+            result[k] = v.isoformat()
+        elif isinstance(v, (int, float, str, bool, list, dict)) or v is None:
+            result[k] = v
+        else:
+            result[k] = str(v)
+    return result
+
+
+# ===========================================================================
+# Phase 5.0 Γאפ Tech Fix Time: Fix Settings + Migration Summary
+# ===========================================================================
+
+def _get_fix_settings(project_id: str, conn) -> dict:
+    """Return fix settings for the project, auto-creating defaults if missing."""
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM migration_fix_settings WHERE project_id = %s", (project_id,))
+    row = cur.fetchone()
+    if row:
+        cols = [d[0] for d in cur.description]
+        return dict(zip(cols, row))
+    # Auto-create defaults
+    defaults = DEFAULT_FIX_WEIGHTS.copy()
+    cols = list(defaults.keys())
+    vals = list(defaults.values())
+    placeholders = ", ".join(["%s"] * len(vals))
+    col_list = ", ".join(cols)
+    cur.execute(
+        f"INSERT INTO migration_fix_settings (project_id, {col_list}) "
+        f"VALUES (%s, {placeholders}) ON CONFLICT (project_id) DO NOTHING "
+        f"RETURNING *",
+        [project_id] + vals,
+    )
+    cur.execute("SELECT * FROM migration_fix_settings WHERE project_id = %s", (project_id,))
+    row = cur.fetchone()
+    cols2 = [d[0] for d in cur.description]
+    return dict(zip(cols2, row))
+
+
+@router.get("/projects/{project_id}/fix-settings")
+async def get_fix_settings(project_id: str):
+    with _get_conn() as conn:
+        settings = _get_fix_settings(project_id, conn)
+        return {"settings": settings}
+
+
+@router.patch("/projects/{project_id}/fix-settings")
+async def update_fix_settings(project_id: str, request: Request,
+                               user=Depends(get_current_user)):
+    body = await request.json()
+    allowed = set(DEFAULT_FIX_WEIGHTS.keys())
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    with _get_conn() as conn:
+        _get_fix_settings(project_id, conn)  # ensure row exists
+        cur = conn.cursor()
+        set_clause = ", ".join([f"{k} = %s" for k in updates])
+        vals = list(updates.values()) + [project_id]
+        cur.execute(
+            f"UPDATE migration_fix_settings SET {set_clause} WHERE project_id = %s",
+            vals,
+        )
+        cur.execute("SELECT * FROM migration_fix_settings WHERE project_id = %s", (project_id,))
+        row = cur.fetchone()
+        cols = [d[0] for d in cur.description]
+        return {"settings": dict(zip(cols, row))}
+
+
+@router.patch("/projects/{project_id}/vms/{vm_id}/fix-override")
+async def set_vm_fix_override(project_id: str, vm_id: int, request: Request,
+                               user=Depends(get_current_user)):
+    """
+    Set or clear the manual tech_fix_minutes_override for a VM.
+    Body: {"minutes": 45}  or  {"minutes": null} to clear.
+    """
+    body = await request.json()
+    minutes = body.get("minutes")  # int or None
+    if minutes is not None and not isinstance(minutes, (int, float)):
+        raise HTTPException(status_code=400, detail="minutes must be a number or null")
+    with _get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE migration_vms SET tech_fix_minutes_override = %s "
+            "WHERE id = %s AND project_id = %s RETURNING id",
+            (int(minutes) if minutes is not None else None, vm_id, project_id),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="VM not found")
+        return {"id": vm_id, "tech_fix_minutes_override": minutes}
+
+
+@router.get("/projects/{project_id}/migration-summary")
+async def get_migration_summary(project_id: str):
+    """
+    Return a management-level migration summary including:
+    - total VMs, data volume, estimated data-copy time
+    - estimated tech fix time (weighted by OS fix rates)
+    - estimated downtime (cutover + fix)
+    - per-OS and per-cohort/wave breakdowns
+    - per-day daily schedule (days, tenants, VMs, storage, tech time, cold/warm, risk)
+    - methodology notes explaining every calculation
+    """
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+        settings = _get_fix_settings(project_id, conn)
+        cur = conn.cursor()
+
+        # Fetch all in-scope VMs (including risk_category for day-level risk breakdown)
+        cur.execute("""
+            SELECT vm.id, vm.vm_name, vm.os_family, vm.in_use_gb, vm.total_disk_gb,
+                   vm.disk_count, vm.nic_count, vm.snapshot_count, vm.risk_score,
+                   vm.risk_category,
+                   vm.migration_mode, vm.migration_mode_override,
+                   vm.tech_fix_minutes_override,
+                   t.tenant_name, c.name AS cohort_name,
+                   (SELECT COUNT(*) FROM migration_vm_dependencies d
+                     JOIN migration_vms v2 ON v2.id = d.depends_on_vm_id
+                     WHERE d.project_id = vm.project_id
+                       AND d.vm_id = vm.id
+                       AND COALESCE(v2.tenant_name, '') != COALESCE(vm.tenant_name, '')) AS cross_tenant_dep_count
+            FROM migration_vms vm
+            LEFT JOIN migration_tenants t ON t.project_id = vm.project_id
+                                        AND t.tenant_name = vm.tenant_name
+            LEFT JOIN migration_cohorts c ON c.id = t.cohort_id
+            WHERE vm.project_id = %s
+              AND (t.include_in_plan IS NULL OR t.include_in_plan = TRUE)
+              AND NOT COALESCE(vm.exclude_from_migration, false)
+              AND NOT COALESCE(vm.template, false)
+        """, (project_id,))
+        cols = [d[0] for d in cur.description]
+        vms = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        # Fetch tenants WITH cohort JOIN Γאפ same as export-plan so cohort_name/cohort_order
+        # are populated, otherwise generate_migration_plan assigns everything "Uncohorted"
+        cur.execute("""
+            SELECT t.*,
+                   c.name         AS cohort_name,
+                   c.cohort_order AS cohort_order
+            FROM migration_tenants t
+            LEFT JOIN migration_cohorts c ON c.id = t.cohort_id
+            WHERE t.project_id = %s AND t.include_in_plan = true
+            ORDER BY c.cohort_order NULLS LAST, t.vm_count DESC
+        """, (project_id,))
+        tenants = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+
+        # Fetch full VM rows (v.*) for generate_migration_plan Γאפ needs priority + all cols
+        cur.execute("""
+            SELECT v.* FROM migration_vms v
+            JOIN migration_tenants t ON t.project_id = v.project_id
+                AND t.tenant_name = v.tenant_name
+            WHERE v.project_id = %s
+              AND NOT COALESCE(v.template, false)
+              AND NOT COALESCE(v.exclude_from_migration, false)
+              AND t.include_in_plan = true
+            ORDER BY v.tenant_name, v.priority, v.total_disk_gb DESC NULLS LAST
+        """, (project_id,))
+        plan_vms = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+
+        # Full bandwidth model (uses all project bandwidth fields)
+        bw_model = compute_bandwidth_model(project)
+        bw_mbps = bw_model.bottleneck_mbps
+
+        summary = compute_project_fix_summary(vms, settings, bw_mbps)
+
+        # Total provisioned disk (total_disk_gb) Γאפ for parity with Migration Plan's "Total Disk"
+        total_provisioned_gb = round(
+            sum(float(v.get("total_disk_gb") or 0) for v in vms), 1
+        )
+
+        # Per-cohort breakdown (use vms with cross_tenant_dep_count for accurate fix calc)
+        cohort_map: dict = {}
+        for vm in vms:
+            cohort = vm.get("cohort_name") or "Unassigned"
+            if cohort not in cohort_map:
+                cohort_map[cohort] = []
+            cohort_map[cohort].append(vm)
+
+        per_cohort = []
+        for cohort_name, c_vms in cohort_map.items():
+            c_summary = compute_project_fix_summary(c_vms, settings, bw_mbps)
+            per_cohort.append({
+                "cohort_name":    cohort_name,
+                "vm_count":       len(c_vms),
+                "data_gb":        c_summary["total_data_gb"],
+                "data_copy_hours": c_summary["data_copy_hours"],
+                "fix_hours":      c_summary["total_fix_hours"],
+                "downtime_hours": c_summary["total_downtime_hours"],
+            })
+        per_cohort.sort(key=lambda x: x["cohort_name"])
+
+        # Per-tenant breakdown
+        tenant_map_t: dict = {}
+        for vm in vms:
+            tn = vm.get("tenant_name") or "Unknown"
+            if tn not in tenant_map_t:
+                tenant_map_t[tn] = {"tenant_name": tn, "cohort_name": vm.get("cohort_name") or "Unassigned", "vm_list": []}
+            tenant_map_t[tn]["vm_list"].append(vm)
+        per_tenant: list = []
+        for tn_key, tdata in tenant_map_t.items():
+            t_vms = tdata["vm_list"]
+            t_sum = compute_project_fix_summary(t_vms, settings, bw_mbps)
+            cold_c = sum(1 for v in t_vms if "cold" in (v.get("migration_mode") or ""))
+            per_tenant.append({
+                "tenant_name":    tn_key,
+                "cohort_name":    tdata["cohort_name"],
+                "vm_count":       len(t_vms),
+                "cold_count":     cold_c,
+                "warm_count":     len(t_vms) - cold_c,
+                "data_gb":        t_sum["total_data_gb"],
+                "fix_hours":      t_sum["total_fix_hours"],
+                "downtime_hours": t_sum["total_downtime_hours"],
+            })
+        per_tenant.sort(key=lambda x: (x["cohort_name"] or "", x["tenant_name"] or ""))
+
+        # VM mode and risk distribution
+        warm_risky_c    = sum(1 for v in vms if (v.get("migration_mode") or "") == "warm_risky")
+        warm_eligible_c = sum(1 for v in vms if (v.get("migration_mode") or "") == "warm_eligible")
+        cold_required_c = sum(1 for v in vms if "cold" in (v.get("migration_mode") or ""))
+        risk_green_c    = sum(1 for v in vms if v.get("risk_category") == "GREEN")
+        risk_yellow_c   = sum(1 for v in vms if v.get("risk_category") == "YELLOW")
+        risk_red_c      = sum(1 for v in vms if v.get("risk_category") == "RED")
+
+        # Per-day breakdown via full migration plan generation
+        # Build risk lookup from the detailed VM query (has risk_category)
+        vm_risk: dict = {v["vm_name"]: (v.get("risk_category") or "GREEN") for v in vms}
+        per_day: list = []
+        try:
+            plan = generate_migration_plan(
+                vms=plan_vms,
+                tenants=tenants,
+                project_settings=project,
+                bottleneck_mbps=bw_mbps,
+            )
+            # Build lookups for per-VM fix time and migration timing
+            vm_detail_map: dict = {v["vm_name"]: v for v in vms}
+            vm_timing_map: dict = {}
+            for _tp in plan.get("tenant_plans", []):
+                for _vm in _tp.get("vms", []):
+                    vm_timing_map[_vm.get("vm_name")] = _vm
+
+            for day in plan.get("daily_schedule", []):
+                day_vms = day.get("vms", [])
+                tenants_set = {v["tenant_name"] for v in day_vms}
+                cold = sum(1 for v in day_vms if "cold" in (v.get("mode") or ""))
+                warm = len(day_vms) - cold
+                total_gb = round(sum(float(v.get("in_use_gb") or 0) for v in day_vms), 1)
+                green  = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "GREEN")
+                yellow = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "YELLOW")
+                red    = sum(1 for v in day_vms if vm_risk.get(v["vm_name"]) == "RED")
+                # Per-day fix and downtime totals
+                day_fix_h = 0.0
+                day_dn_h  = 0.0
+                for dv in day_vms:
+                    vname   = dv.get("vm_name")
+                    vdetail = vm_detail_map.get(vname, dv)
+                    fix_r   = compute_vm_fix_time(vdetail, settings)
+                    fh      = fix_r["fix_minutes"] / 60
+                    day_fix_h += fh
+                    vt       = vm_timing_map.get(vname, {})
+                    is_cold  = "cold" in (dv.get("mode") or "")
+                    mig_dn_h = float(vt.get("cold_downtime_hours", 0) or 0) if is_cold \
+                               else float(vt.get("warm_downtime_hours", 0) or 0)
+                    day_dn_h += mig_dn_h + fh
+                per_day.append({
+                    "day":               day["day"],
+                    "cohort_name":       day.get("cohort_name", ""),
+                    "tenant_count":      len(tenants_set),
+                    "vm_count":          day.get("vm_count", len(day_vms)),
+                    "total_gb":          total_gb,
+                    "wall_clock_hours":  round(float(day.get("wall_clock_hours") or 0), 2),
+                    "total_agent_hours": round(float(day.get("total_estimated_hours") or 0), 2),
+                    "cold_count":        cold,
+                    "warm_count":        warm,
+                    "fix_hours":         round(day_fix_h, 2),
+                    "downtime_hours":    round(day_dn_h, 2),
+                    "risk_green":        green,
+                    "risk_yellow":       yellow,
+                    "risk_red":          red,
+                    "over_capacity":     bool(day.get("over_capacity", False)),
+                })
+        except Exception:
+            per_day = []
+
+        methodology = {
+            "data_copy": (
+                f"Data copy time = Total in-use GB ├╖ (bandwidth {bw_mbps} Mbps converted to GB/h). "
+                "Assumes dedicated migration bandwidth with no contention. "
+                "WAN or shared links will increase this value."
+            ),
+            "fix_time": (
+                "Per-VM tech fix score is calculated by summing weight values for each risk factor "
+                "(OS type, extra volumes, extra NICs, cold mode, risk score, snapshots, cross-tenant deps). "
+                "The raw score is then multiplied by the OS-family fix rate (probability the VM needs "
+                "any intervention) to give an expected value per VM. "
+                "Override any VM's score manually using the Fix Override field in the VM list."
+            ),
+            "downtime": (
+                f"Per-VM downtime = cutover window ({int(settings.get('cutover_minutes', 30))} min fixed) "
+                "+ expected tech fix time. Total downtime is the sum across all in-scope VMs. "
+                "In practice, waves run in parallel so elapsed calendar time will be lower."
+            ),
+            "fix_rates": (
+                f"Windows fix rate={float(settings.get('fix_rate_windows', 0.5)):.0%}, "
+                f"Linux fix rate={float(settings.get('fix_rate_linux', 0.2)):.0%}, "
+                f"Other OS fix rate={float(settings.get('fix_rate_other', 0.4)):.0%}. "
+                "A global override rate (if set) applies to all VMs regardless of OS."
+            ),
+        }
+
+        # Use the plan's project_summary for schedule/scope fields (agent count, slot count, etc.)
+        # but keep compute_project_fix_summary()'s total_downtime_hours which correctly includes
+        # fix time:  warm = cutover + fix,  cold = copy + cutover + fix.
+        plan_ps = plan.get("project_summary", {})
+        summary["total_vms"] = plan_ps.get("total_vms", summary["total_vms"])
+
+        return {
+            **summary,
+            "total_provisioned_gb": total_provisioned_gb,
+            "estimated_schedule_days": plan_ps.get("estimated_schedule_days", len(per_day)),
+            "warm_eligible": plan_ps.get("warm_eligible", warm_eligible_c),
+            "warm_risky":    warm_risky_c,
+            "cold_required": plan_ps.get("cold_required", cold_required_c),
+            "total_tenants": plan_ps.get("total_tenants", 0),
+            "agent_count": plan_ps.get("agent_count", 0),
+            "total_concurrent_slots": plan_ps.get("total_concurrent_slots", 0),
+            "bottleneck_mbps": bw_mbps,
+            "per_cohort":    per_cohort,
+            "per_tenant":    per_tenant,
+            "per_day":       per_day,
+            "bandwidth_mbps": bw_mbps,
+            "vm_mode_dist":  {"warm_eligible": warm_eligible_c, "warm_risky": warm_risky_c, "cold_required": cold_required_c},
+            "vm_risk_dist":  {"GREEN": risk_green_c, "YELLOW": risk_yellow_c, "RED": risk_red_c},
+            "methodology":   methodology,
+        }
+
+
+# =============================================================================
+# Phase 5 Γאפ vJailbreak Agent Integration (E1)
+# =============================================================================
+# Set VJAILBREAK_API_URL to the base URL of your vJailbreak REST API.
+# When not set, the endpoints return a "not_connected" status so the UI can
+# surface a helpful configuration message instead of a raw error.
+# =============================================================================
+
+_VJAILBREAK_API_URL: str = os.getenv("VJAILBREAK_API_URL", "").rstrip("/")
+
+
+@router.get(
+    "/projects/{project_id}/vjailbreak-status",
+    dependencies=[Depends(require_permission("migration", "read"))],
+)
+async def get_vjailbreak_status(project_id: str):
+    """Return vJailbreak agent connectivity status for this project.
+
+    When VJAILBREAK_API_URL is not configured, returns ``not_configured``.
+    When configured, performs a lightweight health-check against the agent.
+    """
+    if not _VJAILBREAK_API_URL:
+        return {
+            "status": "not_configured",
+            "message": (
+                "vJailbreak agent URL is not configured. "
+                "Set the VJAILBREAK_API_URL environment variable to enable execution."
+            ),
+            "agent_url": None,
+        }
+
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+    health_url = f"{_VJAILBREAK_API_URL}/api/v1/health"
+    try:
+        with _ureq.urlopen(health_url, timeout=5) as resp:
+            reachable = 200 <= resp.getcode() < 300
+    except (_uerr.URLError, OSError):
+        reachable = False
+
+    if reachable:
+        return {
+            "status": "connected",
+            "message": "vJailbreak agent is reachable.",
+            "agent_url": _VJAILBREAK_API_URL,
+        }
+    return {
+        "status": "unreachable",
+        "message": (
+            f"vJailbreak agent at {_VJAILBREAK_API_URL} did not respond. "
+            "Check that the agent is running and the URL is correct."
+        ),
+        "agent_url": _VJAILBREAK_API_URL,
+    }
+
+
+class VjailbreakExecuteRequest(BaseModel):
+    dry_run: bool = False
+    notes: Optional[str] = None
+
+
+@router.post(
+    "/projects/{project_id}/waves/{wave_id}/execute",
+    dependencies=[Depends(require_permission("migration", "execute"))],
+)
+async def execute_wave(
+    project_id: str,
+    wave_id: int,
+    body: VjailbreakExecuteRequest = VjailbreakExecuteRequest(),
+    current_user=Depends(get_current_user),
+):
+    """Trigger wave execution via the vJailbreak agent.
+
+    When ``VJAILBREAK_API_URL`` is not set, the call is rejected with a clear
+    error so the UI can prompt the operator to configure the agent URL.
+
+    When set, the request is forwarded to the vJailbreak REST API.  An
+    activity log entry is created regardless of the outcome.
+
+    Body parameters
+    ---------------
+    dry_run : bool
+        Pass through to vJailbreak Γאפ performs pre-flight checks without
+        actually starting the migration.
+    notes : str, optional
+        Optional operator note recorded in the activity log.
+    """
+    actor = current_user.get("username", "system") if current_user else "system"
+
+    # Look up the wave to include context in the log entry
+    with _get_conn() as conn:
+        _get_project(project_id, conn)   # 404 guard
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT w.id, w.wave_number, w.name, w.status,
+                   COUNT(t.id) AS tenant_count
+            FROM   migration_waves w
+            LEFT JOIN migration_cohorts c ON c.wave_id = w.id
+            LEFT JOIN migration_tenants t ON t.cohort_id = c.id
+            WHERE  w.id = %s AND w.project_id = %s
+            GROUP  BY w.id, w.wave_number, w.name, w.status
+            """,
+            (wave_id, project_id),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Wave {wave_id} not found in project {project_id}")
+
+    col_names = ["id", "wave_number", "name", "status", "tenant_count"]
+    wave = dict(zip(col_names, row))
+
+    _log_activity(
+        actor=actor,
+        action="execute_wave",
+        resource_type="migration_wave",
+        resource_id=wave_id,
+        details={
+            "project_id": project_id,
+            "wave_number": wave.get("wave_number"),
+            "wave_name": wave.get("name"),
+            "dry_run": body.dry_run,
+            "notes": body.notes,
+            "vjailbreak_configured": bool(_VJAILBREAK_API_URL),
+        },
+    )
+
+    if not _VJAILBREAK_API_URL:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "vJailbreak agent URL is not configured. "
+                "Set the VJAILBREAK_API_URL environment variable to enable wave execution."
+            ),
+        )
+
+    # Forward the execution request to the vJailbreak agent
+    import json as _json
+    import urllib.request as _ureq
+    import urllib.error as _uerr
+
+    payload = _json.dumps(
+        {
+            "project_id": project_id,
+            "wave_id": wave_id,
+            "wave_number": wave.get("wave_number"),
+            "dry_run": body.dry_run,
+            "initiated_by": actor,
+        }
+    ).encode("utf-8")
+
+    execute_url = f"{_VJAILBREAK_API_URL}/api/v1/migrations"
+    req = _ureq.Request(
+        execute_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with _ureq.urlopen(req, timeout=30) as resp:
+            resp_body = _json.loads(resp.read().decode("utf-8"))
+        logger.info(
+            "execute_wave project=%s wave=%s dry_run=%s by=%s Γזע vJailbreak accepted",
+            project_id, wave_id, body.dry_run, actor,
+        )
+        return {
+            "status": "accepted",
+            "wave": wave,
+            "vjailbreak_response": resp_body,
+            "dry_run": body.dry_run,
+        }
+    except _uerr.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", "replace")[:500] if exc.fp else ""
+        logger.error(
+            "execute_wave project=%s wave=%s vJailbreak HTTP %s: %s",
+            project_id, wave_id, exc.code, err_body,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"vJailbreak agent returned HTTP {exc.code}: {err_body}",
+        )
+    except (_uerr.URLError, OSError) as exc:
+        logger.error("execute_wave project=%s wave=%s vJailbreak unreachable: %s", project_id, wave_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach vJailbreak agent at {_VJAILBREAK_API_URL}: {exc}",
+        )
+
+
+# =============================================================================
+# Phase 4D Γאפ Users UX Overhaul + vJailbreak CRD Auto-Push  (v1.43.0)
+# =============================================================================
+#
+#  4D.1  POST /projects/{id}/tenant-users/seed-tenant-owners
+#  4D.2  POST /projects/{id}/tenant-users/bulk-replace
+#        POST /projects/{id}/tenant-users/confirm-all
+#        POST /projects/{id}/tenant-users/bulk-action
+#  4D.3  GET  /projects/{id}/vjailbreak-settings
+#        PATCH /projects/{id}/vjailbreak-settings
+#        POST /projects/{id}/vjailbreak-push/dry-run
+#        POST /projects/{id}/vjailbreak-push
+#        GET  /projects/{id}/vjailbreak-push-tasks
+#        DELETE /projects/{id}/vjailbreak-push-tasks
+# =============================================================================
+
+import re as _re
+
+
+def _k8s_name(raw: str, max_len: int = 52) -> str:
+    """Convert an arbitrary string to a valid Kubernetes resource name."""
+    s = raw.lower()
+    s = _re.sub(r"[^a-z0-9-]", "-", s)
+    s = _re.sub(r"-{2,}", "-", s).strip("-")
+    return s[:max_len] or "tenant"
+
+
+def _vjb_k8s_request(method: str, url: str, token: str,
+                     payload: Optional[dict] = None, verify_tls: bool = False) -> dict:
+    """Make an authenticated request to the vJailbreak Kubernetes CRD API."""
+    import requests as _req
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    resp = _req.request(
+        method, url,
+        headers=headers,
+        json=payload,
+        verify=verify_tls,
+        timeout=20,
+    )
+    if resp.status_code == 404 and method == "GET":
+        return {}
+    resp.raise_for_status()
+    try:
+        return resp.json()
+    except Exception:
+        return {"status_code": resp.status_code}
+
+
+def _vjb_base_url(project: dict) -> str:
+    api_url = (project.get("vjb_api_url") or "").rstrip("/")
+    ns = (project.get("vjb_namespace") or "migration").strip()
+    return f"{api_url}/apis/vjailbreak.k8s.pf9.io/v1alpha1/namespaces/{ns}"
+
+
+# ΓפאΓפאΓפא 4D.1  Seed Tenant Owners ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+
+@router.post("/projects/{project_id}/tenant-users/seed-tenant-owners",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def seed_tenant_owners(project_id: str, user=Depends(get_current_user)):
+    """Auto-create one tenant_owner row per in-scope tenant that doesn't have one yet."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT mt.id, mt.tenant_name,
+                       COALESCE(mt.target_domain_name, mt.tenant_name) AS domain
+                FROM migration_tenants mt
+                WHERE mt.project_id = %s
+                  AND COALESCE(mt.include_in_plan, true) = true
+                  AND NOT EXISTS (
+                      SELECT 1 FROM migration_tenant_users u
+                      WHERE u.tenant_id = mt.id AND u.user_type = 'tenant_owner'
+                  )
+                ORDER BY mt.tenant_name
+            """, (project_id,))
+            tenants = cur.fetchall()
+
+            created = 0
+            for t in tenants:
+                domain = (t["domain"] or t["tenant_name"]).lower()
+                # Clean domain into a simple form for the email username
+                domain_slug = _re.sub(r"[^a-z0-9]+", "-", domain).strip("-")
+                username = f"admin@{domain_slug}"[:80]
+                email = username
+                temp_pw = _generate_temp_password()
+                cur.execute("""
+                    INSERT INTO migration_tenant_users
+                        (tenant_id, project_id, user_type, username, email, role,
+                         is_existing_user, temp_password, password_must_change, confirmed)
+                    VALUES (%s, %s, 'tenant_owner', %s, %s, 'admin', false, %s, true, false)
+                    ON CONFLICT (tenant_id, username) DO NOTHING
+                    RETURNING id
+                """, (t["id"], project_id, username, email, temp_pw))
+                if cur.fetchone():
+                    created += 1
+
+    _log_activity(actor=actor, action="seed_tenant_owners",
+                  resource_type="migration_tenant_users",
+                  resource_id=project_id, details={"created": created})
+    return {"status": "ok", "created": created}
+
+
+# ΓפאΓפאΓפא 4D.2  Users Bulk Operations ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+
+@router.post("/projects/{project_id}/tenant-users/bulk-replace",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_replace_tenant_users(project_id: str, request: Request,
+                                    user=Depends(get_current_user)):
+    """Find-and-replace across a chosen field on all user rows in this project.
+
+    Body: {field, find, replace, case_sensitive, preview}
+    Allowed fields: username, email, role
+    """
+    actor = getattr(user, "username", "system")
+    body = await request.json()
+    field = body.get("field", "username")
+    find  = body.get("find", "")
+    repl  = body.get("replace", "")
+    cs    = bool(body.get("case_sensitive", False))
+    preview = bool(body.get("preview", False))
+
+    allowed_fields = {"username", "email", "role"}
+    if field not in allowed_fields:
+        raise HTTPException(status_code=400,
+                            detail=f"field must be one of {sorted(allowed_fields)}")
+    if not find:
+        raise HTTPException(status_code=400, detail="find must be a non-empty string")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if cs:
+                cur.execute(f"""
+                    SELECT id, tenant_id, {field} AS current_value
+                    FROM migration_tenant_users
+                    WHERE project_id = %s AND {field} LIKE %s
+                """, (project_id, f"%{find}%"))
+            else:
+                cur.execute(f"""
+                    SELECT id, tenant_id, {field} AS current_value
+                    FROM migration_tenant_users
+                    WHERE project_id = %s AND LOWER({field}) LIKE LOWER(%s)
+                """, (project_id, f"%{find}%"))
+            rows = cur.fetchall()
+
+            affected = []
+            for r in rows:
+                old_val = r["current_value"] or ""
+                if cs:
+                    new_val = old_val.replace(find, repl)
+                else:
+                    new_val = _re.sub(_re.escape(find), repl, old_val, flags=_re.IGNORECASE)
+                affected.append({"id": r["id"], "old": old_val, "new": new_val})
+
+            if not preview and affected:
+                for item in affected:
+                    cur.execute(
+                        f"UPDATE migration_tenant_users SET {field} = %s, confirmed = false "
+                        "WHERE id = %s",
+                        (item["new"], item["id"]),
+                    )
+
+    if not preview:
+        _log_activity(actor=actor, action="bulk_replace_tenant_users",
+                      resource_type="migration_tenant_users",
+                      resource_id=project_id,
+                      details={"field": field, "find": find,
+                               "replace": repl, "affected": len(affected)})
+    return {
+        "preview": preview,
+        "affected_count": len(affected),
+        "changes": affected,
+    }
+
+
+@router.post("/projects/{project_id}/tenant-users/confirm-all",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def confirm_all_tenant_users(project_id: str, user=Depends(get_current_user)):
+    """Set confirmed=true for all user rows in this project."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE migration_tenant_users SET confirmed = true "
+                "WHERE project_id = %s AND confirmed = false",
+                (project_id,),
+            )
+            affected = cur.rowcount
+    _log_activity(actor=actor, action="confirm_all_tenant_users",
+                  resource_type="migration_tenant_users",
+                  resource_id=project_id, details={"affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+@router.post("/projects/{project_id}/tenant-users/bulk-action",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def bulk_action_tenant_users(project_id: str, request: Request,
+                                   user=Depends(get_current_user)):
+    """Perform a bulk action on selected user rows.
+
+    Body: {action: 'confirm'|'set_role'|'delete', user_ids: [int...], role?: str}
+    """
+    actor = getattr(user, "username", "system")
+    body = await request.json()
+    action   = body.get("action", "")
+    user_ids = body.get("user_ids", [])
+    role     = body.get("role", "")
+
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="user_ids must be a non-empty list")
+    valid_actions = {"confirm", "set_role", "delete"}
+    if action not in valid_actions:
+        raise HTTPException(status_code=400,
+                            detail=f"action must be one of {sorted(valid_actions)}")
+
+    placeholders = ",".join(["%s"] * len(user_ids))
+    affected = 0
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            if action == "confirm":
+                cur.execute(
+                    f"UPDATE migration_tenant_users SET confirmed = true "
+                    f"WHERE project_id = %s AND id IN ({placeholders})",
+                    [project_id] + user_ids,
+                )
+                affected = cur.rowcount
+
+            elif action == "set_role":
+                if role not in ("admin", "member", "reader"):
+                    raise HTTPException(status_code=400,
+                                        detail="role must be admin, member, or reader")
+                cur.execute(
+                    f"UPDATE migration_tenant_users SET role = %s "
+                    f"WHERE project_id = %s AND id IN ({placeholders})",
+                    [role, project_id] + user_ids,
+                )
+                affected = cur.rowcount
+
+            elif action == "delete":
+                # Only tenant_owners can be bulk-deleted; service accounts are protected
+                cur.execute(
+                    f"DELETE FROM migration_tenant_users "
+                    f"WHERE project_id = %s "
+                    f"  AND user_type = 'tenant_owner' "
+                    f"  AND id IN ({placeholders})",
+                    [project_id] + user_ids,
+                )
+                affected = cur.rowcount
+
+    _log_activity(actor=actor, action=f"bulk_{action}_tenant_users",
+                  resource_type="migration_tenant_users",
+                  resource_id=project_id,
+                  details={"action": action, "count": len(user_ids), "affected": affected})
+    return {"status": "ok", "affected_count": affected}
+
+
+# ΓפאΓפאΓפא 4D.3  vJailbreak Push (Kubernetes CRD API) ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
+
+@router.get("/projects/{project_id}/vjailbreak-push-settings",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_vjb_push_settings(project_id: str):
+    """Return vJailbreak CRD push settings for this project (token masked)."""
+    with _get_conn() as conn:
+        project = _get_project(project_id, conn)
+    token = project.get("vjb_bearer_token") or ""
+    return {
+        "vjb_api_url":   project.get("vjb_api_url") or "",
+        "vjb_namespace": project.get("vjb_namespace") or "migration",
+        "vjb_bearer_token_set": bool(token),
+        "vjb_bearer_token_hint": f"Γאª{token[-6:]}" if len(token) > 6 else ("set" if token else ""),
+    }
+
+
+@router.patch("/projects/{project_id}/vjailbreak-push-settings",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_vjb_push_settings(project_id: str, request: Request,
+                                   user=Depends(get_current_user)):
+    """Update vJailbreak push settings (URL, namespace, bearer token)."""
+    actor = getattr(user, "username", "system")
+    body = await request.json()
+    allowed = {"vjb_api_url", "vjb_namespace", "vjb_bearer_token"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields")
+    set_clause = ", ".join(f"{k} = %s" for k in updates)
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE migration_projects SET {set_clause} WHERE project_id = %s",
+                list(updates.values()) + [project_id],
+            )
+    _log_activity(actor=actor, action="update_vjb_settings",
+                  resource_type="migration_project",
+                  resource_id=project_id,
+                  details={k: ("***" if k == "vjb_bearer_token" else v)
+                            for k, v in updates.items()})
+    return {"status": "ok", "updated": list(updates.keys())}
+
+
+def _list_existing_crd_names(base_url: str, crd_type: str, token: str) -> set:
+    """Return the set of CRD .metadata.name values that already exist."""
+    try:
+        data = _vjb_k8s_request("GET", f"{base_url}/{crd_type}", token)
+        items = data.get("items", [])
+        return {i.get("metadata", {}).get("name", "") for i in items}
+    except Exception:
+        return set()
+
+
+def _build_openstackcreds_crd(name: str, namespace: str,
+                               auth_url: str, project_name: str,
+                               domain_name: str, username: str, password: str) -> dict:
+    return {
+        "apiVersion": "vjailbreak.k8s.pf9.io/v1alpha1",
+        "kind": "OpenstackCreds",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "OS_AUTH_URL":      auth_url,
+            "OS_USERNAME":      username,
+            "OS_PASSWORD":      password,
+            "OS_PROJECT_NAME":  project_name,
+            "OS_DOMAIN_NAME":   domain_name,
+            "OS_INSECURE":      "true",
+        },
+    }
+
+
+def _build_networkmapping_crd(name: str, namespace: str,
+                               mappings: list) -> dict:
+    return {
+        "apiVersion": "vjailbreak.k8s.pf9.io/v1alpha1",
+        "kind": "NetworkMapping",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "networks": [
+                {"source": m["source"], "target": m["target"]}
+                for m in mappings
+            ],
+        },
+    }
+
+
+def _build_vmwarecreds_crd(name: str, namespace: str,
+                            vcenter_host: str, vcenter_user: str,
+                            vcenter_password: str, insecure: bool = True) -> dict:
+    return {
+        "apiVersion": "vjailbreak.k8s.pf9.io/v1alpha1",
+        "kind": "VMwareCreds",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "VCENTER_HOST":     vcenter_host,
+            "VCENTERUSERNAME":  vcenter_user,
+            "VCENTERPASSWORD":  vcenter_password,
+            "VCENTER_INSECURE": "true" if insecure else "false",
+        },
+    }
+
+
+def _fetch_bundle_data_for_push(project_id: str, conn) -> tuple:
+    """Return (project, tenants_with_creds, network_mappings) for push operations."""
+    project = _get_project(project_id, conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+            SELECT mt.id, mt.tenant_name,
+                   mt.target_project_name, mt.target_domain_name,
+                   mu.username AS svc_username,
+                   mu.temp_password AS svc_password,
+                   pt.resource_id AS pcd_project_id
+            FROM migration_tenants mt
+            LEFT JOIN migration_tenant_users mu
+                   ON mu.tenant_id = mt.id AND mu.user_type = 'service_account'
+            LEFT JOIN migration_prep_tasks pt
+                   ON pt.project_id = mt.project_id
+                  AND pt.task_type = 'create_project'
+                  AND pt.tenant_name = mt.tenant_name
+                  AND pt.status = 'done'
+            WHERE mt.project_id = %s
+              AND COALESCE(mt.include_in_plan, true) = true
+            ORDER BY mt.tenant_name
+        """, (project_id,))
+        tenants = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT source_network_name, target_network_name, target_network_id
+            FROM migration_network_mappings
+            WHERE project_id = %s
+              AND confirmed = true
+              AND COALESCE(is_external, false) = false
+            ORDER BY source_network_name
+        """, (project_id,))
+        net_maps = [dict(r) for r in cur.fetchall()]
+
+    return project, tenants, net_maps
+
+
+@router.post("/projects/{project_id}/vjailbreak-push/dry-run",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def vjb_push_dry_run(project_id: str, request: Request,
+                           user=Depends(get_current_user)):
+    """Dry-run: check what would be created on vJailbreak without writing anything.
+
+    Body (optional):
+      vcenter_host, vcenter_user Γאפ include VMwareCreds in the preview
+    """
+    body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
+
+    with _get_conn() as conn:
+        project, tenants, net_maps = _fetch_bundle_data_for_push(project_id, conn)
+
+    vjb_url   = (project.get("vjb_api_url") or "").rstrip("/")
+    namespace = (project.get("vjb_namespace") or "migration").strip()
+    token     = project.get("vjb_bearer_token") or ""
+
+    if not vjb_url or not token:
+        return {
+            "status": "not_configured",
+            "message": "Configure vJailbreak API URL and bearer token in the settings panel first.",
+        }
+
+    base = f"{vjb_url}/apis/vjailbreak.k8s.pf9.io/v1alpha1/namespaces/{namespace}"
+
+    try:
+        existing_creds   = _list_existing_crd_names(base, "openstackcreds", token)
+        existing_netmaps = _list_existing_crd_names(base, "networkmappings", token)
+        existing_vmcreds = _list_existing_crd_names(base, "vmwarecreds", token)
+        reachable = True
+    except Exception as exc:
+        return {"status": "unreachable", "message": str(exc)}
+
+    auth_url = project.get("pcd_auth_url") or ""
+
+    creds_preview = []
+    no_svc = []
+    for t in tenants:
+        name = f"creds-{_k8s_name(t['tenant_name'])}"
+        has_svc = bool(t.get("svc_username") and t.get("svc_password"))
+        if not has_svc:
+            no_svc.append(t["tenant_name"])
+        creds_preview.append({
+            "tenant_name":     t["tenant_name"],
+            "crd_name":        name,
+            "action":          "skip_existing" if name in existing_creds else "create",
+            "has_service_acct": has_svc,
+        })
+
+    netmap_name = f"netmap-{_k8s_name(project_id)}"
+    netmap_preview = {
+        "crd_name": netmap_name,
+        "action":   "skip_existing" if netmap_name in existing_netmaps else "create",
+        "mapping_count": len(net_maps),
+    }
+
+    vmcreds_preview = None
+    vcenter_host = body.get("vcenter_host", "")
+    if vcenter_host:
+        vc_name = f"vcenter-{_k8s_name(vcenter_host)}"
+        vmcreds_preview = {
+            "crd_name": vc_name,
+            "action":   "skip_existing" if vc_name in existing_vmcreds else "create",
+        }
+
+    would_create = sum(1 for c in creds_preview if c["action"] == "create")
+    would_skip   = sum(1 for c in creds_preview if c["action"] == "skip_existing")
+    if netmap_preview["action"] == "create":
+        would_create += 1
+    else:
+        would_skip += 1
+    if vmcreds_preview:
+        if vmcreds_preview["action"] == "create":
+            would_create += 1
+        else:
+            would_skip += 1
+
+    return {
+        "status": "ok",
+        "reachable": reachable,
+        "vjb_api_url": vjb_url,
+        "namespace": namespace,
+        "would_create": would_create,
+        "would_skip_existing": would_skip,
+        "warnings": [f"No service account for: {n}" for n in no_svc],
+        "openstackcreds": creds_preview,
+        "networkmappings": netmap_preview,
+        "vmwarecreds": vmcreds_preview,
+    }
+
+
+@router.post("/projects/{project_id}/vjailbreak-push",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def vjb_push(project_id: str, request: Request,
+                   user=Depends(get_current_user)):
+    """Push credentials, network mappings, and (optionally) VMware creds to vJailbreak as Kubernetes CRDs.
+
+    Body: {vcenter_host?, vcenter_user?, vcenter_password?}
+    The vCenter password is NEVER stored Γאפ used only during this request.
+    """
+    actor = getattr(user, "username", "system")
+    body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
+
+    with _get_conn() as conn:
+        project, tenants, net_maps = _fetch_bundle_data_for_push(project_id, conn)
+
+        vjb_url   = (project.get("vjb_api_url") or "").rstrip("/")
+        namespace = (project.get("vjb_namespace") or "migration").strip()
+        token     = project.get("vjb_bearer_token") or ""
+
+        if not vjb_url or not token:
+            raise HTTPException(
+                status_code=400,
+                detail="vJailbreak API URL and bearer token must be configured in settings.",
+            )
+
+        base     = f"{vjb_url}/apis/vjailbreak.k8s.pf9.io/v1alpha1/namespaces/{namespace}"
+        auth_url = project.get("pcd_auth_url") or ""
+
+        # Clear previous push tasks for this project
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM migration_vjailbreak_push_tasks WHERE project_id = %s",
+                (project_id,),
+            )
+
+        existing_creds   = _list_existing_crd_names(base, "openstackcreds", token)
+        existing_netmaps = _list_existing_crd_names(base, "networkmappings", token)
+        existing_vmcreds = _list_existing_crd_names(base, "vmwarecreds", token)
+
+        results = []
+
+        # 1. OpenstackCreds Γאפ one per tenant
+        for t in tenants:
+            crd_name  = f"creds-{_k8s_name(t['tenant_name'])}"
+            svc_user  = t.get("svc_username") or ""
+            svc_pass  = t.get("svc_password") or ""
+            proj_name = t.get("target_project_name") or t["tenant_name"]
+            dom_name  = t.get("target_domain_name") or "Default"
+
+            if crd_name in existing_creds:
+                status, error = "skipped", None
+            elif not svc_user or not svc_pass:
+                status, error = "failed", "No service account credentials found"
+            else:
+                try:
+                    payload = _build_openstackcreds_crd(
+                        crd_name, namespace, auth_url,
+                        proj_name, dom_name, svc_user, svc_pass,
+                    )
+                    _vjb_k8s_request("POST", f"{base}/openstackcreds", token, payload)
+                    status, error = "done", None
+                except Exception as exc:
+                    status, error = "failed", str(exc)[:500]
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO migration_vjailbreak_push_tasks
+                        (project_id, tenant_name, resource_type, resource_name,
+                         status, error_message, pushed_by)
+                    VALUES (%s, %s, 'openstackcreds', %s, %s, %s, %s)
+                """, (project_id, t["tenant_name"], crd_name, status, error, actor))
+
+            results.append({"type": "openstackcreds", "name": crd_name,
+                             "tenant": t["tenant_name"], "status": status, "error": error})
+
+        # 2. NetworkMapping Γאפ one combined CRD for the whole project
+        if net_maps:
+            netmap_name = f"netmap-{_k8s_name(project_id)}"
+            if netmap_name in existing_netmaps:
+                nm_status, nm_error = "skipped", None
+            else:
+                try:
+                    mappings = [
+                        {
+                            "source": m["source_network_name"],
+                            "target": m.get("target_network_id") or m["target_network_name"],
+                        }
+                        for m in net_maps
+                    ]
+                    payload = _build_networkmapping_crd(netmap_name, namespace, mappings)
+                    _vjb_k8s_request("POST", f"{base}/networkmappings", token, payload)
+                    nm_status, nm_error = "done", None
+                except Exception as exc:
+                    nm_status, nm_error = "failed", str(exc)[:500]
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO migration_vjailbreak_push_tasks
+                        (project_id, tenant_name, resource_type, resource_name,
+                         status, error_message, pushed_by)
+                    VALUES (%s, NULL, 'networkmappings', %s, %s, %s, %s)
+                """, (project_id, netmap_name, nm_status, nm_error, actor))
+
+            results.append({"type": "networkmappings", "name": netmap_name,
+                             "tenant": None, "status": nm_status, "error": nm_error})
+
+        # 3. VMwareCreds Γאפ optional, at operator's request, password NOT stored
+        vcenter_host = body.get("vcenter_host", "").strip()
+        vcenter_user = body.get("vcenter_user", "").strip()
+        vcenter_pass = body.get("vcenter_password", "").strip()
+
+        if vcenter_host and vcenter_user and vcenter_pass:
+            vc_name = f"vcenter-{_k8s_name(vcenter_host)}"
+            if vc_name in existing_vmcreds:
+                vc_status, vc_error = "skipped", None
+            else:
+                try:
+                    payload = _build_vmwarecreds_crd(
+                        vc_name, namespace, vcenter_host, vcenter_user, vcenter_pass
+                    )
+                    _vjb_k8s_request("POST", f"{base}/vmwarecreds", token, payload)
+                    vc_status, vc_error = "done", None
+                except Exception as exc:
+                    vc_status, vc_error = "failed", str(exc)[:500]
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO migration_vjailbreak_push_tasks
+                        (project_id, tenant_name, resource_type, resource_name,
+                         status, error_message, pushed_by)
+                    VALUES (%s, NULL, 'vmwarecreds', %s, %s, %s, %s)
+                """, (project_id, vc_name, vc_status, vc_error, actor))
+
+            results.append({"type": "vmwarecreds", "name": vc_name,
+                             "tenant": None, "status": vc_status, "error": vc_error})
+
+    done_count    = sum(1 for r in results if r["status"] == "done")
+    skipped_count = sum(1 for r in results if r["status"] == "skipped")
+    failed_count  = sum(1 for r in results if r["status"] == "failed")
+
+    _log_activity(actor=actor, action="vjailbreak_push",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"done": done_count, "skipped": skipped_count, "failed": failed_count})
+
+    return {
+        "status": "ok",
+        "done":    done_count,
+        "skipped": skipped_count,
+        "failed":  failed_count,
+        "results": results,
+    }
+
+
+@router.get("/projects/{project_id}/vjailbreak-push-tasks",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_vjb_push_tasks(project_id: str):
+    """List all vJailbreak push task records for this project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM migration_vjailbreak_push_tasks
+                WHERE project_id = %s
+                ORDER BY pushed_at DESC, id
+            """, (project_id,))
+            rows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    done    = sum(1 for r in rows if r["status"] == "done")
+    skipped = sum(1 for r in rows if r["status"] == "skipped")
+    failed  = sum(1 for r in rows if r["status"] == "failed")
+    return {"tasks": rows, "done": done, "skipped": skipped, "failed": failed}
+
+
+@router.delete("/projects/{project_id}/vjailbreak-push-tasks",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def clear_vjb_push_tasks(project_id: str, user=Depends(get_current_user)):
+    """Clear the push task log for this project (safe Γאפ does NOT touch vJailbreak)."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM migration_vjailbreak_push_tasks WHERE project_id = %s",
+                (project_id,),
+            )
+            count = cur.rowcount
+    _log_activity(actor=actor, action="clear_vjb_push_tasks",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"deleted": count})
+    return {"status": "ok", "deleted": count}
+
+
+# =====================================================================
+# PHASE T.A Γאפ WAVE APPROVAL GATES
+# =====================================================================
+
+class WaveApprovalRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+    comment: Optional[str] = None
+
+
+@router.get("/projects/{project_id}/waves/{wave_id}/approval",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def get_wave_approval(project_id: str, wave_id: int):
+    """Return the current approval state for a wave."""
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT id, name, approval_status, approved_by, approved_at, approval_comment
+                FROM migration_waves
+                WHERE id = %s AND project_id = %s
+            """, (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+    return {"status": "ok", "approval": _serialize_row(dict(row))}
+
+
+@router.post("/projects/{project_id}/waves/{wave_id}/request-approval",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def request_wave_approval(project_id: str, wave_id: int,
+                                user=Depends(get_current_user)):
+    """Ask an admin to approve this wave before execution can proceed."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                UPDATE migration_waves
+                SET approval_status = 'pending_approval',
+                    approved_by = NULL,
+                    approved_at = NULL,
+                    approval_comment = NULL
+                WHERE id = %s AND project_id = %s
+                RETURNING id, name
+            """, (wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave_name = row["name"]
+
+    _log_activity(actor=actor, action="request_wave_approval",
+                  resource_type="migration_wave", resource_id=str(wave_id),
+                  details={"wave_name": wave_name, "project_id": project_id})
+    try:
+        from provisioning_routes import _fire_notification
+        _fire_notification(
+            event_type="wave_approval_requested",
+            summary=f"Wave approval requested for '{wave_name}' by {actor}",
+            severity="info",
+            resource_id=project_id, actor=actor,
+            template_vars={"wave_id": wave_id, "wave_name": wave_name, "requested_by": actor},
+        )
+    except Exception:
+        pass
+    return {"status": "ok", "wave_id": wave_id, "approval_status": "pending_approval"}
+
+
+@router.post("/projects/{project_id}/waves/{wave_id}/approval",
+             dependencies=[Depends(require_permission("migration", "admin"))])
+async def decide_wave_approval(project_id: str, wave_id: int,
+                               body: WaveApprovalRequest,
+                               user=Depends(get_current_user)):
+    """Approve or reject a wave. Requires migration:admin."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if body.decision == "approved":
+                cur.execute("""
+                    UPDATE migration_waves
+                    SET approval_status  = 'approved',
+                        approved_by      = %s,
+                        approved_at      = now(),
+                        approval_comment = %s
+                    WHERE id = %s AND project_id = %s
+                    RETURNING id, name
+                """, (actor, body.comment, wave_id, project_id))
+            else:
+                cur.execute("""
+                    UPDATE migration_waves
+                    SET approval_status  = 'rejected',
+                        approved_by      = %s,
+                        approved_at      = now(),
+                        approval_comment = %s
+                    WHERE id = %s AND project_id = %s
+                    RETURNING id, name
+                """, (actor, body.comment, wave_id, project_id))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Wave not found")
+            wave_name = row["name"]
+
+    _log_activity(actor=actor, action=f"wave_approval_{body.decision}",
+                  resource_type="migration_wave", resource_id=str(wave_id),
+                  details={"decision": body.decision, "comment": body.comment or "",
+                           "wave_name": wave_name})
+    try:
+        from provisioning_routes import _fire_notification
+        et = "wave_approval_granted" if body.decision == "approved" else "wave_approval_rejected"
+        _fire_notification(
+            event_type=et,
+            summary=f"Wave '{wave_name}' {body.decision} by {actor}"
+                    + (f": {body.comment}" if body.comment else ""),
+            severity="info" if body.decision == "approved" else "warning",
+            resource_id=project_id, actor=actor,
+        )
+    except Exception:
+        pass
+    return {"status": "ok", "decision": body.decision, "approved_by": actor}
+
+
+# =====================================================================
+# PHASE T.B Γאפ VM DEPENDENCY AUTO-IMPORT
+# =====================================================================
+
+class AutoImportDepsRequest(BaseModel):
+    dry_run: bool = False
+    min_confidence: float = 0.50  # discard auto-detected pairs below this threshold
+
+
+@router.post("/projects/{project_id}/vm-dependencies/auto-import",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def auto_import_vm_dependencies(project_id: str, req: AutoImportDepsRequest,
+                                      user=Depends(get_current_user)):
+    """
+    Detect and import VM dependencies automatically from RVtools data:
+    - RDM disks: VMs with rdm_disk_count > 0 are flagged as mutual dependents
+      within the same tenant (confidence 0.95, dep_source='rdm').
+    - Shared datastores: VMs sharing a non-standard datastore within the same
+      tenant (heuristic, confidence 0.70, dep_source='shared_datastore').
+
+    Pass dry_run=true to see what would be imported without writing to DB.
+    """
+    actor = getattr(user, "username", "system")
+    from migration_engine import detect_auto_dependencies
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        result = detect_auto_dependencies(
+            project_id=project_id,
+            conn=conn,
+            min_confidence=req.min_confidence,
+            dry_run=req.dry_run,
+        )
+
+    if not req.dry_run:
+        _log_activity(actor=actor, action="auto_import_vm_dependencies",
+                      resource_type="migration_project", resource_id=project_id,
+                      details=result)
+    return {"status": "ok", "dry_run": req.dry_run, **result}
+
+
+@router.delete("/projects/{project_id}/vm-dependencies/auto-imported",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_auto_imported_dependencies(project_id: str,
+                                            user=Depends(get_current_user)):
+    """Bulk-delete all auto-imported (non-manual) dependencies for the project."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM migration_vm_dependencies
+                WHERE project_id = %s AND dep_source != 'manual'
+            """, (project_id,))
+            deleted = cur.rowcount
+
+    _log_activity(actor=actor, action="delete_auto_deps",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"deleted": deleted})
+    return {"status": "ok", "deleted": deleted}
+
+
+# =====================================================================
+# PHASE T.C Γאפ MAINTENANCE WINDOW SCHEDULING
+# =====================================================================
+
+class MaintenanceWindowCreate(BaseModel):
+    label: str
+    day_of_week: Optional[int] = None          # 0=Mon Γאª 6=Sun; None = any day
+    start_time: str                             # "HH:MM"
+    end_time: str                               # "HH:MM"
+    timezone: str = "UTC"
+    cohort_id: Optional[int] = None
+    is_active: bool = True
+    notes: Optional[str] = None
+
+
+class MaintenanceWindowUpdate(BaseModel):
+    label: Optional[str] = None
+    day_of_week: Optional[int] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    timezone: Optional[str] = None
+    cohort_id: Optional[int] = None
+    is_active: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+@router.get("/projects/{project_id}/maintenance-windows",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def list_maintenance_windows(project_id: str):
+    """List all maintenance windows for the project."""
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT * FROM maintenance_windows
+                WHERE project_id = %s
+                ORDER BY COALESCE(day_of_week, 7), start_time
+            """, (project_id,))
+            windows = [_serialize_row(dict(r)) for r in cur.fetchall()]
+    return {"status": "ok", "windows": windows}
+
+
+@router.post("/projects/{project_id}/maintenance-windows",
+             dependencies=[Depends(require_permission("migration", "write"))])
+async def create_maintenance_window(project_id: str, req: MaintenanceWindowCreate,
+                                    user=Depends(get_current_user)):
+    """Create a maintenance window."""
+    actor = getattr(user, "username", "system")
+    if req.day_of_week is not None and req.day_of_week not in range(7):
+        raise HTTPException(status_code=422, detail="day_of_week must be 0 (Mon) through 6 (Sun)")
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                INSERT INTO maintenance_windows
+                    (project_id, cohort_id, label, day_of_week, start_time, end_time,
+                     timezone, is_active, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (project_id, req.cohort_id, req.label, req.day_of_week,
+                  req.start_time, req.end_time, req.timezone, req.is_active, req.notes))
+            window = _serialize_row(dict(cur.fetchone()))
+    _log_activity(actor=actor, action="create_maintenance_window",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"label": req.label, "window_id": window["id"]})
+    return {"status": "ok", "window": window}
+
+
+@router.patch("/projects/{project_id}/maintenance-windows/{mw_id}",
+              dependencies=[Depends(require_permission("migration", "write"))])
+async def update_maintenance_window(project_id: str, mw_id: int,
+                                    req: MaintenanceWindowUpdate,
+                                    user=Depends(get_current_user)):
+    """Update a maintenance window field."""
+    actor = getattr(user, "username", "system")
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    set_clauses = [f"{k} = %s" for k in updates]
+    params = list(updates.values()) + [mw_id, project_id]
+    with _get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                f"UPDATE maintenance_windows SET {', '.join(set_clauses)} "
+                "WHERE id = %s AND project_id = %s RETURNING *",
+                params)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Maintenance window not found")
+            window = _serialize_row(dict(row))
+    _log_activity(actor=actor, action="update_maintenance_window",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"window_id": mw_id, **updates})
+    return {"status": "ok", "window": window}
+
+
+@router.delete("/projects/{project_id}/maintenance-windows/{mw_id}",
+               dependencies=[Depends(require_permission("migration", "write"))])
+async def delete_maintenance_window(project_id: str, mw_id: int,
+                                    user=Depends(get_current_user)):
+    """Delete a maintenance window."""
+    actor = getattr(user, "username", "system")
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM maintenance_windows WHERE id = %s AND project_id = %s",
+                (mw_id, project_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Maintenance window not found")
+    _log_activity(actor=actor, action="delete_maintenance_window",
+                  resource_type="migration_project", resource_id=project_id,
+                  details={"window_id": mw_id})
+    return {"status": "ok"}
+
+
+@router.get("/projects/{project_id}/maintenance-windows/preview",
+            dependencies=[Depends(require_permission("migration", "read"))])
+async def preview_maintenance_windows(
+    project_id: str,
+    start_date: str = Query(..., description="ISO date YYYY-MM-DD"),
+    num_windows: int = Query(8, ge=1, le=52),
+):
+    """Return the next N upcoming window slots from start_date."""
+    from datetime import date as date_cls
+    from migration_engine import next_window_start, _load_windows
+
+    try:
+        after = date_cls.fromisoformat(start_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="start_date must be YYYY-MM-DD")
+
+    with _get_conn() as conn:
+        _get_project(project_id, conn)
+        windows = _load_windows(project_id, conn)
+
+    if not windows:
+        return {"status": "ok", "slots": []}
+
+    slots = []
+    cur_date = after
+    while len(slots) < num_windows:
+        slot = next_window_start(windows, cur_date)
+        if slot is None:
+            break
+        slots.append({"start": slot["start"].isoformat(), "end": slot["end"].isoformat(),
+                      "label": slot.get("label", "")})
+        # advance past this slot to find the next distinct one
+        from datetime import timedelta as td
+        cur_date = slot["end"].date() + td(days=1)
+
+    return {"status": "ok", "slots": slots}
+

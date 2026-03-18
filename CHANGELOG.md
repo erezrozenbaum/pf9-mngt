@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.72.0] - 2026-03-18
+
+### Restored
+
+#### Migration Planner — Full Feature Restoration
+- **`api/migration_routes.py`** — Re-added migration planner API routes (156 endpoints) that were removed from the repository in v1.69.0. The file is now committed and included in the `pf9_api` Docker image via `COPY api/ ./` in `api/Dockerfile`.
+- **`api/migration_engine.py`** — Re-added the migration engine (scoring, wave planning, RVTools parsing, cohort analysis) that was removed in v1.69.0.
+- **`pf9-ui/src/components/MigrationPlannerTab.tsx`** — Re-added the top-level Migration Planner UI component removed in v1.69.0.
+- **`pf9-ui/src/components/migration/ProjectSetup.tsx`** — Re-added project setup wizard component.
+- **`pf9-ui/src/components/migration/SourceAnalysis.tsx`** — Re-added source analysis component.
+- **`pf9-ui/src/App.tsx`** — Re-added `MigrationPlannerTab` import, `"migration_planner"` to the `ActiveTab` type, `handleViewMigrationGraph` callback, and the render block (removed in v1.71.0 as a dangling-reference cleanup after v1.69.0 deleted the component).
+- **`.gitignore`** — Removed the migration planner exclusion block (`api/migration_engine.py`, `api/migration_routes.py`, `pf9-ui/src/components/MigrationPlannerTab.tsx`, `pf9-ui/src/components/migration/`) so all migration files are now tracked and built into production images by CI.
+
+### Fixed
+
+#### startup_prod.ps1 — Stop Rebuilding from Local Source
+- **`startup_prod.ps1`** — Replaced `docker compose up -d --build` with a `docker compose pull` followed by `docker compose up -d` (no `--build`). The previous behaviour rebuilt images from local source on every production start, which silently overwrote the pulled `ghcr.io` images with locally-built ones that were missing the migration planner files.
+
+#### nginx — /tenants Routing
+- **`nginx/nginx.prod.conf`** — Added `location = /tenants` block that rewrites to `/api/tenants` before proxying to `pf9_api`. The Migration Planner UI calls `GET /tenants` (no `/api` prefix) while the API registers `GET /api/tenants`; this mismatch caused 404 errors on the Projects page.
+
+#### API — Migration Router Registration and /tenants Alias
+- **`api/main.py`** — Registered `migration_router` (`app.include_router(migration_router)`) and added a `GET /tenants` alias route that delegates to the existing `list_tenants()` handler, covering clients that call the unprefixed path.
+
+---
+
 ## [1.71.0] - 2026-03-17
 
 ### Fixed

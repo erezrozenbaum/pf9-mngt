@@ -155,11 +155,21 @@ if ($backupEnabled) {
 $staleVol = docker volume ls --quiet --filter "name=pf9-mngt_nfs_backups" 2>$null
 if ($staleVol) { docker volume rm pf9-mngt_nfs_backups 2>$null | Out-Null }
 
-Write-Host "3. Building and starting PRODUCTION services..." -ForegroundColor Yellow
-Write-Host "   (This may take a few minutes on first run — UI is compiled into static assets)" -ForegroundColor Gray
+Write-Host "3. Pulling pre-built images from ghcr.io..." -ForegroundColor Yellow
+Write-Host "   (This may take a few minutes on first run)" -ForegroundColor Gray
 
 try {
-    Invoke-Expression "$COMPOSE_CMD up -d --build"
+    Invoke-Expression "$COMPOSE_CMD pull"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "⚠ Some images could not be pulled — starting with cached versions" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "⚠ Pull failed — starting with cached versions" -ForegroundColor Yellow
+}
+
+Write-Host "3b. Starting PRODUCTION services..." -ForegroundColor Yellow
+try {
+    Invoke-Expression "$COMPOSE_CMD up -d"
     if ($LASTEXITCODE -eq 0) {
         Write-Host "✓ All services started" -ForegroundColor Green
     } else {

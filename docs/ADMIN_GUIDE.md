@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.71.0  
-**Last Updated**: March 17, 2026  
+**Version**: 1.72.0  
+**Last Updated**: March 18, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -490,6 +490,16 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.72.0 — Migration Planner Restored & Production Startup Fixes (✅ Complete)
+
+- **Migration Planner restored** — `api/migration_routes.py`, `api/migration_engine.py`, all three UI components (`MigrationPlannerTab.tsx`, `ProjectSetup.tsx`, `SourceAnalysis.tsx`), and `App.tsx` integration re-added after removal in v1.69.0; all files are now committed and built by CI into production images
+- **`.gitignore` cleaned** — Migration planner exclusion block removed; all migration files are now tracked
+- **`startup_prod.ps1` fixed** — `up -d --build` replaced with `pull` + `up -d`; prevents local source rebuilds overwriting pulled `ghcr.io` images on every production start
+- **nginx `/tenants` routing** — `location = /tenants` rewrite added to `nginx.prod.conf`; resolves 404 on Migration Planner Projects listing
+- **API migration router registered** — `migration_router` registered in `main.py`; `GET /tenants` alias route added
+
+---
 
 ### v1.71.0 — Dependency Security Patches & Quality Fixes (✅ Complete)
 

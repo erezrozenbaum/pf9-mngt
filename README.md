@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.71.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.72.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -721,7 +721,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.71.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.72.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -865,6 +865,13 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.72.0 — Migration Planner Restored & Production Startup Fixes
+- ✅ **Migration Planner restored** — `api/migration_routes.py`, `api/migration_engine.py`, all three frontend components (`MigrationPlannerTab.tsx`, `ProjectSetup.tsx`, `SourceAnalysis.tsx`), and the `App.tsx` integration re-added after being removed in v1.69.0. All files are now committed and included in CI-built images.
+- ✅ **`.gitignore` cleaned** — Removed the migration planner exclusion block so all migration files are tracked and built into production images automatically.
+- ✅ **`startup_prod.ps1` fixed** — Replaced `docker compose up -d --build` with `docker compose pull` + `docker compose up -d`; the previous `--build` flag silently rebuilt images from local source on every production start, overwriting pulled `ghcr.io` images.
+- ✅ **nginx `/tenants` routing fixed** — Added `location = /tenants` rewrite to `/api/tenants` in `nginx.prod.conf`; the Migration Planner UI calls `GET /tenants` while the API registered only `GET /api/tenants`, causing 404 on the Projects listing.
+- ✅ **API migration router registered** — `migration_router` added to `main.py` and a `GET /tenants` alias route added for legacy callers.
 
 ### v1.71.0 — Dependency Security Patches & Quality Fixes
 - ✅ **Webhook URL validation** — `SLACK_WEBHOOK_URL` and `TEAMS_WEBHOOK_URL` are validated at startup; non-`https` or malformed URLs are rejected with a warning instead of silently failing to deliver.
@@ -1379,4 +1386,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.71.0 | **Last Updated**: March 17, 2026
+**Project Status**: Production Ready | **Version**: 1.72.0 | **Last Updated**: March 18, 2026
