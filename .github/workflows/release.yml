@@ -120,7 +120,7 @@ jobs:
             dockerfile: nginx/Dockerfile
             platforms: linux/amd64,linux/arm64
           - service: snapshot-worker
-            context: ./snapshots
+            context: .
             dockerfile: snapshots/Dockerfile
             platforms: linux/amd64,linux/arm64
 

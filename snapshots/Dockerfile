@@ -4,9 +4,9 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY snapshots/requirements.txt /app/snapshots/requirements.txt
+RUN pip install --no-cache-dir -r /app/snapshots/requirements.txt
 
-COPY . .
+COPY . /app
 
-CMD ["python", "snapshot_scheduler.py"]
+CMD ["python", "snapshots/snapshot_scheduler.py"]
