@@ -18,6 +18,11 @@ ARG VITE_MONITORING_BASE=""
 ENV VITE_API_BASE=${VITE_API_BASE}
 ENV VITE_MONITORING_BASE=${VITE_MONITORING_BASE}
 
+# Increase Node heap to 4 GB — large component files (SourceAnalysis.tsx etc.)
+# can exhaust the default 1.5 GB limit during Rollup bundling, causing a silent
+# OOM hang on GitHub Actions runners.
+ENV NODE_OPTIONS=--max-old-space-size=4096
+
 RUN npm run build
 
 # ── Stage 2: serve ─────────────────────────────────────────────────────────────
