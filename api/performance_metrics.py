@@ -142,8 +142,12 @@ class PerformanceMetrics:
                 }
                 for ep, stats in slow_endpoints
             ],
-            "recent_slow_requests": slow_snap[-10:],
-            "recent_errors": error_snap[-10:],
+            "recent_slow_requests": [
+                {k: v for k, v in r.items() if k != "user"} for r in slow_snap[-10:]
+            ],
+            "recent_errors": [
+                {k: v for k, v in r.items() if k != "user"} for r in error_snap[-10:]
+            ],
         }
     
     def get_endpoint_stats(self, method: str, path: str):
