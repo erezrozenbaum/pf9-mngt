@@ -137,7 +137,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Release Pipeline Fix** (v1.72.2 — NEW ✨): All 10 service images now built and published
+- **snapshot-worker Build Fix** (v1.72.3 — NEW ✨): Fixed Dockerfile COPY paths
+- **Release Pipeline Fix** (v1.72.2): All 10 service images now built and published
 - **Maintenance & Hardening** (v1.72.1): Internal API hardening
 - **Migration Planner Restored & Production Startup Fixes** (v1.72.0):
   - **Migration Planner restored** — `migration_routes.py`, `migration_engine.py`, `MigrationPlannerTab.tsx`, `ProjectSetup.tsx`, `SourceAnalysis.tsx` re-added; `.gitignore` exclusion block removed so CI builds include them
