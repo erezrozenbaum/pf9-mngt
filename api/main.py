@@ -565,7 +565,133 @@ async def access_log_middleware(request: Request, call_next):
 from snapshot_management import setup_snapshot_routes
 from restore_management import setup_restore_routes, RestoreOpenStackClient
 
-# Startup event
+
+def _seed_default_cluster() -> None:
+    """
+    Seed pf9_control_planes and pf9_regions from env vars on first startup.
+
+    Fully idempotent — uses INSERT ... ON CONFLICT DO NOTHING so re-running after
+    the tables already exist is a no-op. After seeding, backfills any resource rows
+    that still have NULL region_id / control_plane_id with the default values.
+
+    Security note: we store a placeholder encrypted password for the default control
+    plane. Actual API calls continue to use the Pf9Client which reads credentials
+    directly from env vars via read_secret(). The stored value is only used in Phase 3
+    (ClusterRegistry) when we begin constructing Pf9Client instances from DB rows.
+    """
+    from secret_helper import read_secret as _read_secret
+    import hashlib as _hashlib
+
+    # Build default IDs from the configured auth URL so they're stable across restarts
+    _auth_url = os.environ.get("PF9_AUTH_URL", "").rstrip("/")
+    if not _auth_url:
+        logger.warning("PF9_AUTH_URL not set — skipping multi-cluster default seed")
+        return
+
+    _region_name = os.environ.get("PF9_REGION_NAME", "region-one")
+    _cp_id = "default"
+    _region_id = f"default:{_region_name}"
+
+    # Store an HMAC-tagged marker instead of the actual password for now.
+    # Phase 3 will introduce AES-256-GCM encryption with a dedicated CLUSTER_ENC_KEY.
+    # The marker lets startup code distinguish "seeded from env" from "operator-set".
+    _raw_pw = _read_secret("pf9_password", env_var="PF9_PASSWORD", default="")
+    _pw_marker = (
+        "env:" + _hashlib.sha256(_raw_pw.encode()).hexdigest()[:16]
+        if _raw_pw
+        else "env:unknown"
+    )
+
+    with get_connection() as _conn:
+        with _conn.cursor() as _cur:
+            # Insert default control plane (no-op if already seeded)
+            _cur.execute(
+                """
+                INSERT INTO pf9_control_planes
+                    (id, name, auth_url, username, password_enc,
+                     user_domain, project_name, project_domain, is_enabled, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, 'system')
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    _cp_id,
+                    "Default PF9",
+                    _auth_url,
+                    os.environ.get("PF9_USERNAME", ""),
+                    _pw_marker,
+                    os.environ.get("PF9_USER_DOMAIN", "Default"),
+                    os.environ.get("PF9_PROJECT_NAME", "service"),
+                    os.environ.get("PF9_PROJECT_DOMAIN", "Default"),
+                ),
+            )
+
+            # Insert default region (no-op if already seeded)
+            _cur.execute(
+                """
+                INSERT INTO pf9_regions
+                    (id, control_plane_id, region_name, display_name,
+                     is_default, is_enabled, health_status)
+                VALUES (%s, %s, %s, %s, TRUE, TRUE, 'unknown')
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    _region_id,
+                    _cp_id,
+                    _region_name,
+                    f"Default Region ({_region_name})",
+                ),
+            )
+
+            # Backfill resource tables — set region_id to default for all NULL rows
+            _resource_tables = [
+                "hypervisors", "servers", "volumes", "networks", "subnets",
+                "routers", "ports", "floating_ips", "flavors", "images",
+                "snapshots", "inventory_runs",
+            ]
+            for _tbl in _resource_tables:
+                try:
+                    _cur.execute(
+                        f"UPDATE {_tbl} SET region_id = %s WHERE region_id IS NULL",
+                        (_region_id,),
+                    )
+                    if _cur.rowcount:
+                        logger.info("Backfilled %d rows in %s with region_id=%s",
+                                    _cur.rowcount, _tbl, _region_id)
+                except Exception as _e:
+                    # Table may not exist yet (migration order); non-fatal
+                    logger.debug("Backfill skipped for %s: %s", _tbl, _e)
+
+            # Backfill metering tables (created by migrate_metering.sql, may not exist yet)
+            for _tbl in ("metering_resources", "metering_efficiency"):
+                try:
+                    _cur.execute(
+                        f"UPDATE {_tbl} SET region_id = %s WHERE region_id IS NULL",
+                        (_region_id,),
+                    )
+                except Exception:
+                    pass
+
+            # Backfill identity tables → default control plane
+            _identity_tables = ["domains", "projects", "users", "roles", "role_assignments"]
+            for _tbl in _identity_tables:
+                try:
+                    _cur.execute(
+                        f"UPDATE {_tbl} SET control_plane_id = %s WHERE control_plane_id IS NULL",
+                        (_cp_id,),
+                    )
+                    if _cur.rowcount:
+                        logger.info("Backfilled %d rows in %s with control_plane_id=%s",
+                                    _cur.rowcount, _tbl, _cp_id)
+                except Exception as _e:
+                    logger.debug("Backfill skipped for %s: %s", _tbl, _e)
+
+    logger.info(
+        "Multi-cluster default cluster seeded — control_plane=%s region=%s",
+        _cp_id, _region_id,
+    )
+
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize authentication system on startup"""
@@ -578,7 +704,7 @@ async def startup_event():
 
     # Apply performance indexes migration (idempotent — CREATE INDEX IF NOT EXISTS)
     try:
-        _idx_sql = os.path.join(os.path.dirname(__file__), "..", "db", "migrate_indexes.sql")
+        _idx_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_indexes.sql")
         if os.path.exists(_idx_sql):
             with open(_idx_sql) as _f:
                 _sql = _f.read()
@@ -591,7 +717,7 @@ async def startup_event():
 
     # Apply container alerts migration (idempotent)
     try:
-        _ca_sql = os.path.join(os.path.dirname(__file__), "..", "db", "migrate_container_alerts.sql")
+        _ca_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_container_alerts.sql")
         if os.path.exists(_ca_sql):
             with open(_ca_sql) as _f:
                 _sql = _f.read()
@@ -604,7 +730,7 @@ async def startup_event():
 
     # Apply Phase 4A tables migration (migration_flavor_staging, flavor-staging endpoints)
     try:
-        _p4a_sql = os.path.join(os.path.dirname(__file__), "..", "db", "migrate_phase4_preparation.sql")
+        _p4a_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_phase4_preparation.sql")
         if os.path.exists(_p4a_sql):
             with open(_p4a_sql) as _f:
                 _sql = _f.read()
@@ -614,6 +740,33 @@ async def startup_event():
             logger.info("Phase 4A migration applied (migration_flavor_staging ready)")
     except Exception as _exc:
         logger.warning("Phase 4A migration skipped: %s", _exc)
+
+    # -----------------------------------------------------------------------
+    # Multi-cluster Phase 1: pf9_control_planes + pf9_regions schema migration
+    # then seed the default control plane / region from env vars (idempotent).
+    # -----------------------------------------------------------------------
+    try:
+        _mc_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_multicluster.sql")
+        if os.path.exists(_mc_sql):
+            with open(_mc_sql, encoding="utf-8") as _f:
+                _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    for _stmt in (s.strip() for s in _sql.split(";")):
+                        if _stmt and any(
+                            ln.strip() and not ln.strip().startswith("--")
+                            for ln in _stmt.splitlines()
+                        ):
+                            _cur.execute(_stmt)
+            logger.info("Multi-cluster schema migration applied")
+    except Exception as _exc:
+        logger.warning("Multi-cluster schema migration skipped: %s", _exc)
+
+    # Seed default control plane + region from env vars, then backfill existing rows.
+    try:
+        _seed_default_cluster()
+    except Exception as _exc:
+        logger.warning("Multi-cluster default seed skipped: %s", _exc)
 
     logger.info("PF9 Management API started — Authentication: %s", "Enabled" if ENABLE_AUTHENTICATION else "Disabled")
 

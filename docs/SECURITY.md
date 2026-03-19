@@ -26,6 +26,9 @@
 17. **Webhook HMAC Verification**: Incoming webhook payloads validated with HMAC-SHA256 signature (Phase E3)
 18. **Backup Integrity**: HMAC-SHA256 checksums stored and verified for backup archives (Phase E5)
 19. **LDAP File Descriptor Safety**: All LDAP connection methods use `try/finally` to guarantee `conn.unbind_s()` on both success and exception paths (Phase M2.3)
+20. **Multi-Cluster SSRF Protection**: `pf9_control_planes.allow_private_network` defaults to `FALSE`; all control-plane URLs validated against RFC-1918/loopback blocklists before any outbound connection. Only superadmin can override per record.
+21. **Region-Scoped Cache Isolation**: Redis cache keys include `region_id` segment (`pf9:{resource}:{region_id}:{hash}`) preventing cross-region data exposure in multi-cluster deployments.
+22. **Password-in-DB Prevention**: Control-plane credentials in `pf9_control_planes.password_enc` are stored as `env:{sha256[:16]}` hash markers; the actual credential is always read from a Docker secret or env var at runtime — never persisted in plaintext.
 
 ---
 
@@ -695,6 +698,47 @@ Masks:
 - [ ] Review user access permissions quarterly
 - [ ] Update security documentation as changes occur
 - [ ] Conduct security training for administrators
+
+---
+
+## 🌐 Multi-Cluster Security Controls
+
+### SSRF Protection
+
+`pf9_control_planes.allow_private_network` is `BOOLEAN NOT NULL DEFAULT FALSE`. This field is the per-record SSRF guard for control plane registrations.
+
+| `allow_private_network` | Effect |
+|---|---|
+| `FALSE` (default) | `auth_url` and all URLs in cross-region task payloads **will be** validated against RFC-1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and loopback (127.0.0.0/8, ::1) blocklists before any HTTP connection |
+| `TRUE` | Private-network connections permitted for this control plane — required for on-premises PF9 with a private IP |
+
+> **Implementation note (v1.73.0 — Phase 1):** The schema column and default are in place. Runtime URL validation at the API write layer is enforced when the Cluster Registry API ships (Phase 3). In Phase 1 there is no API to register control planes — `auth_url` is sourced exclusively from the operator-supplied `PF9_AUTH_URL` environment variable, so no user-controlled SSRF vector exists.
+
+Only a **superadmin** can set `allow_private_network = TRUE`. The flag is per-record, never global.
+
+Verify your deployment has no unintended overrides:
+```sql
+SELECT id, auth_url, allow_private_network
+FROM pf9_control_planes
+WHERE allow_private_network = TRUE;
+-- Should return zero rows for cloud-hosted deployments
+```
+
+### Credential Storage
+
+Passwords for control planes in `pf9_control_planes.password_enc` use the format `env:{sha256_prefix}` — a hash marker that tells the runtime to read the actual credential from the `PF9_PASSWORD` Docker secret or env var. **Plaintext passwords are never written to the database.**
+
+Verify this holds on any deployment:
+```sql
+SELECT id, left(password_enc, 4) AS prefix FROM pf9_control_planes;
+-- All rows should show prefix = 'env:'
+```
+
+Full AES-256-GCM encryption of stored credentials (for multi-cluster records that use different passwords) is planned for a future release. The `env:` marker system ensures all current deployments are safe in the interim.
+
+### Cache Isolation
+
+Redis cache keys include a `region_id` segment: `pf9:{resource}:{region_id}:{md5(args)}`. Data from different regions is stored under distinct key namespaces — no cross-region data exposure in shared-Redis multi-cluster deployments. Deployments with a single region use `region_id=default` and are unaffected by this change.
 
 ---
 

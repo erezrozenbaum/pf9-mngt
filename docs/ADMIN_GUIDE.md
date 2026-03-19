@@ -489,9 +489,69 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "VACUUM ANA
 
 ---
 
+## 13. Multi-Region & Multi-Cluster Management
+
+### How it works
+
+pf9-mngt uses a two-level model that matches how Platform9 actually works:
+- **Control plane** — one row in `pf9_control_planes`, one Keystone endpoint, one set of admin credentials. Identity resources (domains, projects, users, roles) are shared across all regions on the same control plane.
+- **Region** — one row in `pf9_regions`, one set of Nova/Neutron/Cinder/Glance endpoints within a control plane. All resource inventory (VMs, volumes, networks, hypervisors) is scoped to a region.
+
+On first startup, the system automatically seeds a `default` control plane and `default:region-one` region from the `PF9_AUTH_URL` and `PF9_REGION_NAME` env vars. For single-region deployments nothing changes — the default region is used everywhere.
+
+### Default region (existing installations)
+
+No operator action is required. The existing env vars (`PF9_AUTH_URL`, `PF9_USERNAME`, `PF9_PASSWORD`, `PF9_REGION_NAME`) continue to define the single active region. All resources are tagged with `region_id = 'default:region-one'` on the first startup after v1.73.0 is deployed.
+
+### Adding a second region or control plane
+
+Additional clusters and regions are managed via the API — no env-var changes or app restarts needed:
+
+```bash
+# Check what's in the registry
+docker exec pf9_db psql -U pf9 -d pf9_mgmt \
+  -c "SELECT id, name, auth_url, is_enabled FROM pf9_control_planes;"
+docker exec pf9_db psql -U pf9 -d pf9_mgmt \
+  -c "SELECT id, region_name, is_default, health_status FROM pf9_regions;"
+```
+
+### Verify default region seeding
+
+```bash
+docker exec pf9_db psql -U pf9 -d pf9_mgmt \
+  -c "SELECT id, password_enc, allow_private_network FROM pf9_control_planes;"
+# Expected: id=default, password_enc=env:xxxxxxxxxxxxxxxx, allow_private_network=f
+```
+
+`password_enc = env:...` means the password is read from the `PF9_PASSWORD` env var / Docker secret at runtime — it is never stored in plaintext in the database.
+
+### Health status values
+
+| Status | Meaning |
+|---|---|
+| `unknown` | Initial state; sync has not yet run |
+| `healthy` | Last sync succeeded within the latency threshold |
+| `degraded` | Sync completed but with partial errors, or avg API latency exceeded `latency_threshold_ms` |
+| `unreachable` | TCP/HTTP connection to PF9 endpoint failed; workers will retry |
+| `auth_failed` | Keystone returned 401/403; operator must rotate credentials — retrying will not help |
+
+### SSRF protection (`allow_private_network`)
+
+Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE`. When false (the default), `auth_url` and any URL in cross-region task payloads are validated against RFC-1918 and loopback blocklists before any outbound connection. Only a **superadmin** can set this to `TRUE` — required for on-premises PF9 installations with private IPs.
+
+---
+
 ## Appendix: Feature History by Version
 
-### v1.72.0 — Migration Planner Restored & Production Startup Fixes (✅ Complete)
+### v1.73.0 — Multi-Region & Multi-Cluster Support (✅ Complete)
+
+- **Schema foundation** — four new tables (`pf9_control_planes`, `pf9_regions`, `cluster_sync_metrics`, `cluster_tasks`) + `region_id`/`control_plane_id` FK columns on 25+ existing tables; all nullable for zero regression on existing deployments
+- **Auto-seeding** — `_seed_default_cluster()` in `api/main.py` seeds the `default` control plane and `default:region-one` region from env vars on every startup (`ON CONFLICT DO NOTHING`)
+- **Region-aware endpoint resolution** — `Pf9Client._find_endpoint()` fixed to filter service catalog by `region_name` before falling back to first match; eliminates silent cross-region misrouting on multi-region PF9 control planes
+- **Injectable `Pf9Client`** — constructor now accepts explicit parameters; `from_env()` classmethod preserves existing behavior for all call sites
+- **Region-scoped Redis cache keys** — cache key format changed to `pf9:{resource}:{region_id}:{hash}` preventing cross-region data collisions
+- **`db/init.sql` updated** — fresh installs include the full multi-region schema
+- **`api/Dockerfile` updated** — `COPY db/ ./db/` added for dev builds
 
 - **Migration Planner restored** — `api/migration_routes.py`, `api/migration_engine.py`, all three UI components (`MigrationPlannerTab.tsx`, `ProjectSetup.tsx`, `SourceAnalysis.tsx`), and `App.tsx` integration re-added after removal in v1.69.0; all files are now committed and built by CI into production images
 - **`.gitignore` cleaned** — Migration planner exclusion block removed; all migration files are now tracked

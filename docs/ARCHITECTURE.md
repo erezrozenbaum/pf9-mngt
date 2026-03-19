@@ -176,9 +176,60 @@ This document covers:
 - **Historical tracking** with audit trails and change detection
 - **Cache-based performance** for real-time monitoring
 
+### 5. **Multi-Region Architecture**
+- **Two-level hierarchy** — one control plane (one Keystone) manages shared identity across one or more OpenStack regions; each region has its own Nova/Neutron/Cinder/Glance endpoints
+- **Region-aware endpoint resolution** — `Pf9Client._find_endpoint()` filters the Keystone service catalog by `region_name` before falling back to the first public match; eliminates silent cross-region misrouting on multi-region control planes
+- **Region-scoped cache keys** — Redis keys include `region_id` segment (`pf9:{resource}:{region_id}:{hash}`) preventing cross-region data collisions when multiple clients share one Redis instance
+- **Backward compatible** — single-region deployments continue working unchanged; existing resources are automatically associated with the `default` region on startup
+
 ---
 
-## 🔑 Authentication & Authorization Flow
+## 🌐 Multi-Region & Multi-Cluster Architecture
+
+### Two-Level Hierarchy
+
+A Platform9 control plane exposes one Keystone endpoint that handles authentication and returns a service catalog containing per-region Nova/Neutron/Cinder/Glance endpoint URLs. The system models this as a strict two-level hierarchy:
+
+```
+pf9-mngt
+│
+├── Control Plane: "default"  (PF9_AUTH_URL → /keystone/v3)
+│   │   Shared: domains, projects, users, roles, role_assignments
+│   ├── Region: "default:region-one"  (PF9_REGION_NAME=region-one)
+│   │       Nova · Neutron · Cinder · Glance endpoints
+│   │       VMs, Volumes, Networks, Hypervisors, Snapshots…
+│   └── Region: "corp-pf9:eu-west-1"  (added via API—no restart needed)
+│           Own endpoint set, own resource inventory
+│
+└── Control Plane: "lab-pf9"  (separate Keystone)
+    ├── Region: "lab-pf9:region-one"
+    └── ...
+```
+
+Key rules:
+- **Keystone API calls** (list_domains, list_projects, list_users, create_user) → one call per **control plane**
+- **Nova/Neutron/Cinder/Glance API calls** → per **region** (endpoint filtered from service catalog by `region_name`)
+- **Identity resources** (domains, projects, users, roles) carry `control_plane_id` FK
+- **Compute/network/storage resources** carry `region_id` FK
+
+### Seeding on Startup
+
+`api/main.py` calls `_seed_default_cluster()` on every startup. It reads `PF9_AUTH_URL` and `PF9_REGION_NAME` from env vars and inserts a `default` control plane + `default:region-one` region using `ON CONFLICT DO NOTHING`. For existing deployments this is a no-op after the first run; for new deployments it ensures the default registry is always populated.
+
+Additional control planes and regions are added via the admin API/UI — no env-var changes or restarts required.
+
+### New DB Tables
+
+| Table | Purpose |
+|---|---|
+| `pf9_control_planes` | One row per PF9 installation: `auth_url`, `username`, `password_enc`, credentials, `allow_private_network` (SSRF guard, default `FALSE`), `supported_types`, health fields |
+| `pf9_regions` | One row per OpenStack region: `control_plane_id` FK, `region_name`, `health_status`, `priority`, `capabilities` JSONB (refreshed each sync), `latency_threshold_ms` |
+| `cluster_sync_metrics` | Per-region sync outcomes: duration, resource count, error count, avg API latency. Feeds `pf9_regions.health_status` |
+| `cluster_tasks` | State machine for cross-region operations (snapshot replication, DR failover, migration): UUID PK, `task_type`, `operation_scope`, `source_region_id`, `target_region_id`, `replication_mode`, retry support |
+
+### SSRF Protection
+
+`pf9_control_planes.allow_private_network` defaults to `FALSE`. When false, `auth_url` and any URL in `cluster_tasks.payload` are validated against RFC-1918 / loopback blocklists before any outbound connection is made. Only a superadmin can set this flag to `TRUE` for a specific control plane (e.g., an on-premises PF9 installation with a private IP).
 
 ### Full Flow: LDAP Bind → JWT → MFA Challenge → RBAC
 
@@ -356,7 +407,16 @@ Every infrastructure resource follows a **dual-table pattern**:
                   groups (id, name, domain_id)
 ```
 
-### Table Catalog (65+ tables)
+### Table Catalog (69+ tables)
+
+#### Multi-Region Registry (4 tables)
+
+| Table | Purpose |
+|---|---|
+| `pf9_control_planes` | Control plane registry: one row per PF9 installation (one Keystone). `allow_private_network` SSRF guard defaults to FALSE. |
+| `pf9_regions` | Region registry: one row per OpenStack region within a control plane. `health_status`, `priority`, `capabilities` JSONB, `latency_threshold_ms`. |
+| `cluster_sync_metrics` | Per-region sync outcomes fed back into `pf9_regions.health_status`. Indexed on `(region_id, started_at DESC)`. |
+| `cluster_tasks` | State machine (UUID PK) for long-running cross-region operations: replication, DR failover, migration. `FOR UPDATE SKIP LOCKED` prevents concurrent double-execution. |
 
 #### Core Infrastructure (14 tables)
 
@@ -1488,10 +1548,11 @@ graph TD
 - 60-second TTL with configurable refresh
 - Persistent storage across container restarts
 
-**3. API Response Caching**:
-- Paginated responses with efficient offset/limit
-- Filtered queries with optimized WHERE clauses
-- Real-time data with minimal latency
+**3. Redis API Response Cache (`api/cache.py`)**:
+- `@cached(ttl=N, key_prefix="pf9:resource")` decorator on `Pf9Client` methods
+- Key format: `{prefix}:{region_id}:{md5(args)}` — `region_id` segment prevents cross-region cache collisions when multiple clients share one Redis instance
+- Redis failure degrades gracefully to a direct API call; never raises
+- Configurable via `CACHE_ENABLED` and `CACHE_TTL_SECONDS` env vars
 
 ### Scalability Considerations
 **Horizontal Scaling**:
@@ -1656,7 +1717,7 @@ python host_metrics_collector.py > metrics.log 2>&1
 2. **High Availability**: Load balancers, service redundancy
 3. **Advanced Monitoring**: Alerting, dashboards, trend analysis
 4. **API Versioning**: Backward-compatible API evolution
-5. **Multi-Tenancy**: Tenant isolation and access controls
+5. **Multi-Cluster Management UI**: Region selector, per-region health dashboard, cross-region cost comparison, ClusterRegistry API
 
 ## 📚 Architecture Decision Records
 
@@ -1711,4 +1772,11 @@ python host_metrics_collector.py > metrics.log 2>&1
 - Supports compliance auditing and forensic analysis of any resource over time
 - `deletions_history` provides a cross-type view of resource removal events
 
-This architecture provides a solid foundation for enterprise OpenStack management while maintaining flexibility for future enhancements and production hardening.
+### ADR-007: Two-Level Multi-Region Model
+**Decision**: Model multi-cluster support as control-plane → region hierarchy rather than a flat cluster list
+**Rationale**:
+- Reflects how Platform9 actually works: one Keystone per control plane, one endpoint set per region in the service catalog
+- Separates identity API calls (per control plane) from compute/network/storage calls (per region) without code duplication
+- Existing single-region deployments map directly to `default` control plane + `default:region-one` region — zero migration burden
+- `Pf9Client.from_env()` preserves all existing behavior; constructor now injectable for future `ClusterRegistry` without modifying call sites
+- Region-scoped Redis cache keys prevent data leakage between regions sharing one Redis instance without requiring a separate Redis per deployment

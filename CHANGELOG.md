@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.73.0] - 2026-03-19
+
+### Added — Multi-Region & Multi-Cluster Support
+
+Full schema foundation and region-aware API client for managing multiple Platform9 control planes and OpenStack regions from a single pf9-mngt deployment. All changes are purely additive — zero regression for existing single-region deployments.
+
+Platform9 uses a two-level model: one Keystone (control plane) manages shared identity for all regions, while each region has its own Nova/Neutron/Cinder/Glance endpoints. The system now models this correctly. Existing deployments are automatically seeded on first startup: the current `PF9_AUTH_URL` + `PF9_REGION_NAME` values become the `default` control plane and region — no operator action required.
+
+#### New DB tables (`db/migrate_multicluster.sql`)
+- **`pf9_control_planes`** — Level 1 registry: one row per PF9 installation (one Keystone endpoint, one service-account credential set). Columns: `id`, `name`, `auth_url`, `username`, `password_enc` (AES-256-GCM placeholder; full encryption in Phase 3), `user_domain`, `project_name`, `project_domain`, `login_url`, `is_enabled`, `display_color`, `tags`, `allow_private_network` (per-record SSRF exception, `FALSE` by default), `supported_types`, `created_at`, `updated_at`, `created_by`.
+- **`pf9_regions`** — Level 2 registry: one row per OpenStack region within a control plane. Columns: `id` (convention: `{cp_id}:{region_name}`), `control_plane_id` (FK), `region_name`, `display_name`, `is_default`, `is_enabled`, `sync_interval_minutes`, `last_sync_at/status/vm_count`, `health_status` (`healthy`/`degraded`/`unreachable`/`auth_failed`/`unknown`), `health_checked_at`, `priority` (lower = higher priority for failover/scheduling), `capabilities` (JSONB, refreshed each sync), `latency_threshold_ms`, `created_at`.
+- **`cluster_sync_metrics`** — Per-region sync outcomes: `region_id`, `sync_type`, `started_at`, `finished_at`, `duration_ms`, `resource_count`, `error_count`, `api_calls_made`, `avg_api_latency_ms`, `status`. Feeds `health_status` on `pf9_regions`. Indexed on `(region_id, started_at DESC)` and `(status, started_at DESC)`.
+- **`cluster_tasks`** — State-machine for long-running cross-cluster operations (snapshot replication, DR failover, cross-region migration): `id` (UUID), `task_type`, `operation_scope`, `source_region_id`, `target_region_id`, `replication_mode`, `status` (`pending`/`in_progress`/`partial`/`completed`/`failed`), `payload` (JSONB), `result` (JSONB), `next_retry_at`, `retry_count`. Workers use `FOR UPDATE SKIP LOCKED` to prevent double-execution.
+
+#### New columns on existing tables (all nullable — backward compat)
+- `region_id TEXT REFERENCES pf9_regions(id)` added to: `hypervisors`, `servers`, `volumes`, `networks`, `subnets`, `routers`, `ports`, `floating_ips`, `flavors`, `images`, `snapshots`, `inventory_runs`, `metering_resources`, `metering_efficiency`, `provisioning_jobs`, `provisioning_steps`, `vm_provisioning_batches`, `snapshot_policy_sets`, `snapshot_assignments`, `snapshot_records`, `deletions_history`.
+- `control_plane_id TEXT REFERENCES pf9_control_planes(id)` added to: `domains`, `projects`, `users`, `roles`, `role_assignments` (identity resources are shared across all regions on one control plane).
+- `region_id` + `control_plane_id` added to `user_roles` — nullable, per-region RBAC enforcement in a future release. `NULL` = global role (current behavior, unchanged).
+- `replication_mode TEXT` + `replication_region_id TEXT` added to `snapshot_policy_sets` — for cross-region DR snapshot replication (`image_copy` / `volume_transfer` / `backup_restore`).
+- `region_id` / `control_plane_id` added (no FK) to `servers_history`, `volumes_history`, `domains_history`, `projects_history` — audit trail context only.
+
+#### Performance indexes
+New indexes on all new FK columns: `idx_servers_region_id`, `idx_hypervisors_region_id`, `idx_volumes_region_id`, `idx_networks_region_id`, `idx_snapshots_region_id`, `idx_domains_cp_id`, `idx_projects_cp_id`, `idx_users_cp_id`, `idx_prov_jobs_region_id`, `idx_snap_policy_region_id`, `idx_user_roles_region_id`, `idx_user_roles_cp_id`.
+
+#### Auto-seeding (`api/main.py`)
+- `_seed_default_cluster()` — idempotent startup function: inserts default `pf9_control_planes` + `pf9_regions` rows from `PF9_AUTH_URL` / `PF9_REGION_NAME` env vars (`ON CONFLICT DO NOTHING`). Existing deployments automatically get `id=default` / `id=default:region-one` on first startup with no operator action.
+- `startup_event()` in `api/main.py` calls `_seed_default_cluster()` on every startup (safe to replay).
+
+#### Fresh install support
+- `db/init.sql` — multi-cluster tables and all FK column additions appended (lines 3483–3656). New deployments initialize with the full Phase 1 schema without needing to run `migrate_multicluster.sql` separately.
+
+#### Dockerfile
+- `api/Dockerfile` — added `COPY db/ ./db/` so dev builds include migration SQL at `/app/db/`.
+
+#### Region-aware API client (`api/pf9_control.py`)
+- **`_find_endpoint()` region bug fixed** — previously returned the first public endpoint for a service type, ignoring `region_name`. In multi-region control planes (one Keystone, multiple regions in the service catalog) this silently returned the wrong Nova/Neutron/Cinder/Glance endpoint. Now filters by `ep["region_id"] == self.region_name` (with `ep["region"]` as fallback for older Keystone versions). Falls back to unfiltered first match only when no region-matched endpoint is found — zero regression for single-region deployments.
+- **`Pf9Client.__init__` refactored** — constructor now accepts explicit parameters (`auth_url`, `username`, `password`, `user_domain`, `project_name`, `project_domain`, `region_name`, `region_id`) instead of reading from environment variables directly. `region_id` attribute added per naming contract (never `cluster_id`).
+- **`Pf9Client.from_env()` classmethod added** — preserves existing env-var behavior for all legacy call sites. Single-cluster / dev deployments require no changes.
+- **All `Pf9Client()` call sites updated** to use `Pf9Client.from_env()`: `get_client()`, `get_client_fresh()`, `copilot_intents._get_pf9_client()`, `setup_provision_user.main()`.
+- **`vm_provisioning_service_user.py`** — added `client.region_id` to the manual `Pf9Client.__new__` construction block (mirrors all `__init__` attributes).
+
+#### Cache key namespacing (`api/cache.py`)
+- **Cache key now includes `region_id`** — key format changed from `{prefix}:{hash}` to `{prefix}:{region_id}:{hash}`. Prevents cache collisions when multiple `Pf9Client` instances target different regions share the same Redis instance. For existing single-cluster deployments `region_id` defaults to `"default"` — fully backward compatible behavior, cache keys change on first deployment (existing entries are orphaned; acceptable during maintenance window).
+
+---
+
 ## [1.72.5] - 2026-03-19
 
 ### Fixed

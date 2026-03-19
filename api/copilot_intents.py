@@ -164,7 +164,7 @@ def _get_pf9_client():
     """Lazily instantiate a Pf9Client for quota lookups."""
     try:
         from pf9_control import Pf9Client
-        return Pf9Client()
+        return Pf9Client.from_env()
     except Exception as exc:
         _quota_log.warning("Cannot create Pf9Client: %s", exc)
         return None

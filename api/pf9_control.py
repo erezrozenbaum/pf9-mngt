@@ -15,14 +15,25 @@ log = logging.getLogger(__name__)
 
 
 class Pf9Client:
-    def __init__(self) -> None:
-        self.auth_url = os.environ["PF9_AUTH_URL"].rstrip("/")
-        self.username = os.environ["PF9_USERNAME"]
-        self.password = read_secret("pf9_password", env_var="PF9_PASSWORD")
-        self.user_domain = os.getenv("PF9_USER_DOMAIN", "Default")
-        self.project_name = os.environ["PF9_PROJECT_NAME"]
-        self.project_domain = os.getenv("PF9_PROJECT_DOMAIN", "Default")
-        self.region_name = os.getenv("PF9_REGION_NAME", "region-one")
+    def __init__(
+        self,
+        auth_url: str,
+        username: str,
+        password: str,
+        user_domain: str = "Default",
+        project_name: str = "service",
+        project_domain: str = "Default",
+        region_name: str = "region-one",
+        region_id: str = "default",
+    ) -> None:
+        self.region_id = region_id          # naming contract: always region_id, never cluster_id
+        self.auth_url = auth_url.rstrip("/")
+        self.username = username
+        self.password = password
+        self.user_domain = user_domain
+        self.project_name = project_name
+        self.project_domain = project_domain
+        self.region_name = region_name
 
         # Derived endpoints
         self.session = requests.Session()
@@ -42,6 +53,19 @@ class Pf9Client:
         self._rl_tokens: float = self._rl_rate
         self._rl_last: float = time.monotonic()
         self._rl_lock = threading.Lock()
+
+    @classmethod
+    def from_env(cls) -> "Pf9Client":
+        """Build a Pf9Client from environment variables (single-cluster / legacy mode)."""
+        return cls(
+            auth_url=os.environ["PF9_AUTH_URL"],
+            username=os.environ["PF9_USERNAME"],
+            password=read_secret("pf9_password", env_var="PF9_PASSWORD"),
+            user_domain=os.getenv("PF9_USER_DOMAIN", "Default"),
+            project_name=os.getenv("PF9_PROJECT_NAME", "service"),
+            project_domain=os.getenv("PF9_PROJECT_DOMAIN", "Default"),
+            region_name=os.getenv("PF9_REGION_NAME", "region-one"),
+        )
 
     # ---------------------------
     # Keystone auth + catalog
@@ -148,12 +172,26 @@ class Pf9Client:
         self.keystone_endpoint = self.auth_url
 
     def _find_endpoint(self, catalog: Any, service_type: str) -> str:
+        # First pass: region-aware (correct for multi-region control planes)
+        for svc in catalog:
+            if svc.get("type") == service_type:
+                for ep in svc.get("endpoints", []):
+                    region_match = (
+                        ep.get("region_id") == self.region_name
+                        or ep.get("region") == self.region_name
+                    )
+                    if ep.get("interface") == "public" and region_match:
+                        return ep["url"].rstrip("/")
+        # Fallback: single-region deployments where region_id may be absent from catalog
         for svc in catalog:
             if svc.get("type") == service_type:
                 for ep in svc.get("endpoints", []):
                     if ep.get("interface") == "public":
                         return ep["url"].rstrip("/")
-        raise RuntimeError(f"No public endpoint for {service_type}")
+        raise RuntimeError(
+            f"No public endpoint for service_type={service_type!r} "
+            f"region={self.region_name!r}"
+        )
 
     def _headers(self) -> Dict[str, str]:
         self._throttle()
@@ -1696,7 +1734,7 @@ _client: Optional[Pf9Client] = None
 def get_client() -> Pf9Client:
     global _client
     if _client is None:
-        _client = Pf9Client()
+        _client = Pf9Client.from_env()
     return _client
 
 
@@ -1706,5 +1744,5 @@ def get_client_fresh() -> Pf9Client:
     if _client is not None:
         _client.invalidate()
     else:
-        _client = Pf9Client()
+        _client = Pf9Client.from_env()
     return _client

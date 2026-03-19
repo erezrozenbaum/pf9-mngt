@@ -206,6 +206,7 @@ def get_provisioner_client(
     client.project_name = project_name
     client.project_domain = project_domain
     client.region_name = os.getenv("PF9_REGION_NAME", "region-one")
+    client.region_id = os.getenv("PF9_REGION_ID", "default")
     client.session = requests.Session()
     client.token = None
     client._token_expires_at = None

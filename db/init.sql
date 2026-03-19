@@ -3467,3 +3467,190 @@ INSERT INTO ticket_email_templates (template_name, subject, html_body) VALUES
  '[{{ticket_ref}}] SLA BREACH — {{title}}',
  '<p><strong>SLA Breach Alert</strong></p><p>Ticket <strong>{{ticket_ref}}</strong> has breached its SLA.</p><p><strong>Subject:</strong> {{title}}<br><strong>Breached SLA:</strong> {{breach_type}}<br><strong>Priority:</strong> {{priority}}<br><strong>Assigned to:</strong> {{assigned_to}}</p><p>Immediate action is required.</p><p>Support Team</p>')
 ON CONFLICT (template_name) DO NOTHING;
+
+-- =============================================================================
+-- Multi-region / Multi-cluster schema (Phase 1 — v1.73.0)
+-- Canonical definitions for fresh installs.  Existing deployments upgrading
+-- from < v1.73.0 should run db/migrate_multicluster.sql (or wait for
+-- startup_event() in api/main.py to apply it automatically).
+-- All ALTER TABLE statements use ADD COLUMN IF NOT EXISTS so this block is
+-- fully idempotent when re-run against a DB that already has the columns.
+-- Tables not yet created at this point (metering_*, vm_provisioning_batches)
+-- will produce an ignorable error thanks to \set ON_ERROR_STOP 0 at the top.
+-- =============================================================================
+
+-- -------------------------------------------------------------------------
+-- Level 1: pf9_control_planes
+-- One row per PF9 installation (one Keystone, one set of admin credentials).
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS pf9_control_planes (
+    id                    TEXT PRIMARY KEY,
+    name                  TEXT NOT NULL,
+    auth_url              TEXT NOT NULL,
+    username              TEXT NOT NULL,
+    password_enc          TEXT NOT NULL,
+    user_domain           TEXT NOT NULL DEFAULT 'Default',
+    project_name          TEXT NOT NULL DEFAULT 'service',
+    project_domain        TEXT NOT NULL DEFAULT 'Default',
+    login_url             TEXT,
+    is_enabled            BOOLEAN NOT NULL DEFAULT TRUE,
+    display_color         TEXT,
+    tags                  JSONB NOT NULL DEFAULT '{}',
+    allow_private_network BOOLEAN NOT NULL DEFAULT FALSE,
+    supported_types       TEXT[] NOT NULL DEFAULT '{openstack}',
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by            TEXT
+);
+
+-- -------------------------------------------------------------------------
+-- Level 2: pf9_regions
+-- One row per OpenStack region within a control plane.
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS pf9_regions (
+    id                    TEXT PRIMARY KEY,
+    control_plane_id      TEXT NOT NULL REFERENCES pf9_control_planes(id) ON DELETE CASCADE,
+    region_name           TEXT NOT NULL,
+    display_name          TEXT NOT NULL,
+    is_default            BOOLEAN NOT NULL DEFAULT FALSE,
+    is_enabled            BOOLEAN NOT NULL DEFAULT TRUE,
+    sync_interval_minutes INTEGER NOT NULL DEFAULT 30,
+    last_sync_at          TIMESTAMPTZ,
+    last_sync_status      TEXT,
+    last_sync_vm_count    INTEGER,
+    health_status         TEXT NOT NULL DEFAULT 'unknown',
+    health_checked_at     TIMESTAMPTZ,
+    priority              INTEGER NOT NULL DEFAULT 100,
+    capabilities          JSONB NOT NULL DEFAULT '{}',
+    latency_threshold_ms  INTEGER NOT NULL DEFAULT 2000,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (control_plane_id, region_name)
+);
+
+-- At most one default region across the entire table.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pf9_regions_one_default
+    ON pf9_regions (is_default)
+    WHERE (is_default = TRUE);
+
+-- -------------------------------------------------------------------------
+-- Add region_id / control_plane_id FK columns to existing resource tables.
+-- All nullable — zero-regression for single-cluster deployments.
+-- -------------------------------------------------------------------------
+
+-- Core inventory
+ALTER TABLE hypervisors        ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE servers            ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE volumes            ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE networks           ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE subnets            ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE routers            ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE ports              ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE floating_ips       ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE flavors            ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE images             ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE snapshots          ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE inventory_runs     ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+
+-- Metering tables (created by migrate_metering.sql; may not exist yet on first run)
+ALTER TABLE metering_resources  ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE metering_efficiency ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+
+-- Keystone identity tables: scoped to control_plane (shared across all regions)
+ALTER TABLE domains          ADD COLUMN IF NOT EXISTS control_plane_id TEXT REFERENCES pf9_control_planes(id);
+ALTER TABLE projects         ADD COLUMN IF NOT EXISTS control_plane_id TEXT REFERENCES pf9_control_planes(id);
+ALTER TABLE users            ADD COLUMN IF NOT EXISTS control_plane_id TEXT REFERENCES pf9_control_planes(id);
+ALTER TABLE roles            ADD COLUMN IF NOT EXISTS control_plane_id TEXT REFERENCES pf9_control_planes(id);
+ALTER TABLE role_assignments ADD COLUMN IF NOT EXISTS control_plane_id TEXT REFERENCES pf9_control_planes(id);
+
+-- Application operation tables
+ALTER TABLE provisioning_jobs    ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE provisioning_steps   ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE snapshot_policy_sets ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE snapshot_assignments ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE snapshot_records     ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE deletions_history    ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+
+-- vm_provisioning_batches is created dynamically by vm_provisioning_routes.py
+ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+
+-- Per-cluster RBAC scoping (NULL = global; enforcement deferred to Phase 5)
+ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS region_id        TEXT REFERENCES pf9_regions(id);
+ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS control_plane_id TEXT REFERENCES pf9_control_planes(id);
+
+-- Snapshot DR replication
+ALTER TABLE snapshot_policy_sets ADD COLUMN IF NOT EXISTS replication_mode      TEXT;
+ALTER TABLE snapshot_policy_sets ADD COLUMN IF NOT EXISTS replication_region_id TEXT REFERENCES pf9_regions(id);
+
+-- History tables: no FK constraint, contextual audit trail only
+ALTER TABLE servers_history  ADD COLUMN IF NOT EXISTS region_id        TEXT;
+ALTER TABLE volumes_history  ADD COLUMN IF NOT EXISTS region_id        TEXT;
+ALTER TABLE domains_history  ADD COLUMN IF NOT EXISTS control_plane_id TEXT;
+ALTER TABLE projects_history ADD COLUMN IF NOT EXISTS control_plane_id TEXT;
+
+-- -------------------------------------------------------------------------
+-- cluster_sync_metrics
+-- Per-region sync outcomes; feeds pf9_regions.health_status updates.
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cluster_sync_metrics (
+    id                 BIGSERIAL PRIMARY KEY,
+    region_id          TEXT NOT NULL REFERENCES pf9_regions(id) ON DELETE CASCADE,
+    sync_type          TEXT NOT NULL,
+    started_at         TIMESTAMPTZ NOT NULL,
+    finished_at        TIMESTAMPTZ,
+    duration_ms        INTEGER,
+    resource_count     INTEGER,
+    error_count        INTEGER NOT NULL DEFAULT 0,
+    api_calls_made     INTEGER NOT NULL DEFAULT 0,
+    avg_api_latency_ms INTEGER,
+    status             TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cluster_sync_metrics_region_started
+    ON cluster_sync_metrics (region_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cluster_sync_metrics_status_started
+    ON cluster_sync_metrics (status, started_at DESC);
+
+-- -------------------------------------------------------------------------
+-- cluster_tasks
+-- State machine for long-running cross-cluster operations.
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cluster_tasks (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_type        TEXT NOT NULL,
+    operation_scope  TEXT NOT NULL DEFAULT 'cross_cluster',
+    source_region_id TEXT REFERENCES pf9_regions(id),
+    target_region_id TEXT REFERENCES pf9_regions(id),
+    replication_mode TEXT,
+    status           TEXT NOT NULL DEFAULT 'pending',
+    payload          JSONB NOT NULL DEFAULT '{}',
+    result           JSONB NOT NULL DEFAULT '{}',
+    created_by       TEXT,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    started_at       TIMESTAMPTZ,
+    finished_at      TIMESTAMPTZ,
+    next_retry_at    TIMESTAMPTZ,
+    retry_count      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_cluster_tasks_status_retry
+    ON cluster_tasks (status, next_retry_at);
+CREATE INDEX IF NOT EXISTS idx_cluster_tasks_source_type
+    ON cluster_tasks (source_region_id, task_type);
+CREATE INDEX IF NOT EXISTS idx_cluster_tasks_target_type
+    ON cluster_tasks (target_region_id, task_type);
+
+-- -------------------------------------------------------------------------
+-- Performance indexes on new FK columns
+-- -------------------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_servers_region_id      ON servers(region_id);
+CREATE INDEX IF NOT EXISTS idx_hypervisors_region_id  ON hypervisors(region_id);
+CREATE INDEX IF NOT EXISTS idx_volumes_region_id      ON volumes(region_id);
+CREATE INDEX IF NOT EXISTS idx_networks_region_id     ON networks(region_id);
+CREATE INDEX IF NOT EXISTS idx_snapshots_region_id    ON snapshots(region_id);
+CREATE INDEX IF NOT EXISTS idx_domains_cp_id          ON domains(control_plane_id);
+CREATE INDEX IF NOT EXISTS idx_projects_cp_id         ON projects(control_plane_id);
+CREATE INDEX IF NOT EXISTS idx_users_cp_id            ON users(control_plane_id);
+CREATE INDEX IF NOT EXISTS idx_prov_jobs_region_id    ON provisioning_jobs(region_id);
+CREATE INDEX IF NOT EXISTS idx_snap_policy_region_id  ON snapshot_policy_sets(region_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_region_id   ON user_roles(region_id);
+CREATE INDEX IF NOT EXISTS idx_user_roles_cp_id       ON user_roles(control_plane_id);

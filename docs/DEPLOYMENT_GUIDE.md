@@ -494,13 +494,15 @@ PF9_PASSWORD=<secure-service-password>
 PF9_USER_DOMAIN=Default              # User domain in Platform9
 PF9_PROJECT_NAME=service             # Project for service account
 PF9_PROJECT_DOMAIN=Default           # Project domain
-PF9_REGION_NAME=region-one           # Region name
+PF9_REGION_NAME=region-one           # Default OpenStack region name (see note below)
 
 # Optional - Platform9 API Rate Limiter
 # Prevents overwhelming the Platform9 API under heavy provisioning/migration load
 PF9_RATE_LIMIT_ENABLED=false         # Set to true to enable token-bucket rate limiting
 PF9_API_RATE_LIMIT=10                # Max requests per second (default 10)
 ```
+
+> **Multi-Region Note**: `PF9_REGION_NAME` defines the *default* region for the initial setup. On first startup, `PF9_AUTH_URL` + `PF9_REGION_NAME` are automatically seeded into the `pf9_control_planes` and `pf9_regions` tables as the `default` entries. Additional control planes and regions can be added via the admin API/UI after deployment — no env-var changes or restarts needed. See [Admin Guide § 13](ADMIN_GUIDE.md) for details.
 
 **Finding Your Platform9 URL**:
 1. Log into Platform9 UI

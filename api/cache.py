@@ -74,13 +74,14 @@ def cached(ttl: int = DEFAULT_TTL, key_prefix: str = ""):
             if client is None:
                 return fn(*args, **kwargs)
 
-            # Build cache key: prefix + hash of (positional args[1:] + kwargs)
+            # Build cache key: prefix + region_id + hash of (positional args[1:] + kwargs)
             try:
+                region_segment = getattr(args[0], "region_id", "default") if args else "default"
                 key_data = json.dumps(
                     {"a": list(args[1:]), "k": kwargs}, sort_keys=True, default=str
                 )
                 key_hash = hashlib.md5(key_data.encode()).hexdigest()
-                cache_key = f"{prefix}:{key_hash}"
+                cache_key = f"{prefix}:{region_segment}:{key_hash}"
             except Exception:
                 return fn(*args, **kwargs)
 

@@ -29,7 +29,7 @@ def main():
     password = Fernet(key.encode()).decrypt(enc.encode()).decode()
     print(f"Setting up provisionsrv user: {email}")
 
-    client = Pf9Client()
+    client = Pf9Client.from_env()
     client.authenticate()
 
     # Resolve domain ID

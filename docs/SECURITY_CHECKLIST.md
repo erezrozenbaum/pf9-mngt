@@ -264,4 +264,29 @@
 
 - [OWASP Secret Management](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html)
 - [GitHub Secret Scanning](https://docs.github.com/en/code-security/secret-scanning)
+
+---
+
+## Multi-Region & Multi-Cluster Security
+
+### Before Adding a New Control Plane
+
+- [ ] `auth_url` is HTTPS (not HTTP) for production control planes
+- [ ] `auth_url` does NOT resolve to a private/RFC-1918 address (unless `allow_private_network` is explicitly required and approved by a superadmin)
+- [ ] `allow_private_network` is `FALSE` in the INSERT statement — confirm with: `SELECT id, allow_private_network FROM pf9_control_planes;`
+- [ ] `password_enc` is stored as `env:{sha256_prefix}` — NOT as a plaintext password. Confirm `left(password_enc, 4) = 'env:'`
+- [ ] Credential is injected from a Docker secret or `.env` file, never hard-coded in SQL or application code
+
+### Ongoing Multi-Cluster Health Checks
+
+- [ ] `pf9_regions.health_status` is monitored; rows with `auth_failed` or `unreachable` require immediate credential rotation or network investigation
+- [ ] `cluster_sync_metrics.error_count` is tracked; persistent errors indicate endpoint misconfiguration
+- [ ] Cache keys verified to include `region_id` segment — check `api/cache.py` `_make_key()` method
+- [ ] No `PF9_PASSWORD` value or control-plane credentials appear in application logs, API responses, or error messages
+- [ ] `cluster_tasks` table is reviewed for stale tasks (status `pending` or `in_progress` for more than 24 hours)
+
+### Per-Region RBAC (Future)
+
+- [ ] When per-region RBAC is enabled: `user_roles.region_id IS NOT NULL` rows must be validated to reference real `pf9_regions.id` values
+- [ ] Global roles (`user_roles.region_id IS NULL`) are reviewed quarterly to ensure least-privilege access
 - [12 Factor App - Store config in environment](https://12factor.net/config)
