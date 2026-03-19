@@ -137,7 +137,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **snapshot-worker Build Context Fix** (v1.72.4 — NEW ✨): Release build context aligned with docker-compose
+- **System Metadata Routing Fix** (v1.72.5 — NEW ✨): `/system-metadata-summary` and `/export` added to nginx routing and Vite proxy; fixes System Metadata tab empty under Inventory
+- **snapshot-worker Build Context Fix** (v1.72.4): Release build context aligned with docker-compose
 - **snapshot-worker Build Fix** (v1.72.3): Fixed Dockerfile COPY paths
 - **Release Pipeline Fix** (v1.72.2): All 10 service images now built and published
 - **Maintenance & Hardening** (v1.72.1): Internal API hardening

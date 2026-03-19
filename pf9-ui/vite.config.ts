@@ -55,6 +55,8 @@ const apiPrefixes = [
   "/docs",
   "/redoc",
   "/openapi.json",
+  "/system-metadata-summary",
+  "/export",
 ];
 
 const proxyEntries: Record<string, { target: string; changeOrigin: boolean }> = {};

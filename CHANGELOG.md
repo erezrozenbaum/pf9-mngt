@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.72.5] - 2026-03-19
+
+### Fixed
+- **System Metadata page empty** — `/system-metadata-summary` and `/export` endpoints were missing from all routing configs, causing requests to fall through to the UI container and return HTML instead of JSON.
+  - `nginx/nginx.prod.conf` — added both paths to the API routing regex (production fix)
+  - `nginx/nginx.conf` — added both paths to the dev regex (consistency)
+  - `pf9-ui/vite.config.ts` — added `/system-metadata-summary` and `/export` to the Vite dev proxy `apiPrefixes` list
+
+---
+
 ## [1.72.4] - 2026-03-18
 
 ### Fixed
