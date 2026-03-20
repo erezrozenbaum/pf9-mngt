@@ -435,7 +435,17 @@ A 15-minute explainer video walking through the UI and key features:
 - **Feedback & History**: Per-answer thumbs up/down, conversation history persisted per user with automatic trimming
 - **Automatic Fallback**: If the LLM backend fails, seamlessly falls back to the built-in intent engine
 
-### 🎫 Support Ticket System *(v1.58 → v1.60)*
+### � Multi-Region & Multi-Cluster Support *(v1.73.0)*
+- **Multiple Control Planes**: Register and manage multiple Platform9 installations (distinct Keystone endpoints) from a single pf9-mngt deployment — each with independent service-account credentials
+- **Region Registry**: Full two-level model matching OpenStack's architecture — one Keystone per control plane, with multiple Nova/Neutron/Cinder/Glance regions underneath
+- **Zero-Migration Rollout**: Existing single-region deployments are automatically seeded on first startup — current `PF9_AUTH_URL` + `PF9_REGION_NAME` become the `default` control plane and region; no operator action required
+- **Per-Region Health Tracking**: `health_status` per region (`healthy` / `degraded` / `unreachable` / `auth_failed`), sync metrics, last sync timestamp, and per-region priority for failover scheduling
+- **Cross-Region Task Engine**: State-machine (`cluster_tasks`) for long-running cross-cluster operations — snapshot replication, DR failover, cross-region migration — with `FOR UPDATE SKIP LOCKED` worker safety preventing double-execution
+- **Region-Scoped Resources**: All infrastructure resources (VMs, volumes, networks, snapshots, provisioning jobs, etc.) carry a `region_id` FK — full per-region inventory, reporting, and audit trail
+- **Endpoint Bug Fix**: Service catalog endpoint selection now correctly filters by `region_id`, preventing silent wrong-region API calls in multi-region control planes
+- **Cache Namespacing**: Redis cache keys include `region_id` — prevents cross-region cache collisions when multiple `Pf9Client` instances share one Redis instance
+
+### �🎫 Support Ticket System *(v1.58 → v1.60)*
 - **Full Ticket Lifecycle**: Ticket refs (TKT-YYYY-NNNNN); 5 types (incident, service_request, change_request, auto_incident, auto_change_request); full status/priority/type model; approval gate; SLA deadlines; OpenStack resource linkage
 - **35+ API Endpoints** at `/api/tickets`: create, list, get, update, assign, escalate, approve/reject, resolve/reopen/close, comment thread, SLA policies, email templates, analytics, bulk actions
 - **SLA Daemon**: Background asyncio task (15-min interval) — breach detection, Slack/Teams notification, auto-escalate on breach, activity comment logged
@@ -722,13 +732,13 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.72.5](CHANGELOG.md) — March 2026
+**Current version:** [v1.73.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
 **Platform:** Docker Compose with nginx TLS termination. All core containers (14) have restart policies and resource limits; a 15th `pf9_scheduler_worker` container handles automated collection, and `pf9_backup_worker` is added when `COMPOSE_PROFILES=backup` is set. Redis cache, rate limiting, and structured logging active.
 
-**Maturity:** 14 of 16 tracked features are production-grade. AI Copilot is in beta. Kubernetes deployment is a planned future option.
+**Maturity:** 15 of 17 tracked features are production-grade. AI Copilot is in beta. Kubernetes deployment is a planned future option.
 
 ---
 
@@ -867,493 +877,35 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.73.0 — Multi-Region & Multi-Cluster Support
+- ✅ **Control plane registry** — `pf9_control_planes` table: register multiple Platform9 installations (distinct Keystone endpoints) with independent service-account credentials
+- ✅ **Region registry** — `pf9_regions` table: two-level model matching OpenStack's architecture; per-region health tracking (`healthy` / `degraded` / `unreachable` / `auth_failed`), sync metrics, and failover priority
+- ✅ **Auto-seeded on first start** — existing deployments are automatically migrated; current `PF9_AUTH_URL` + `PF9_REGION_NAME` become the `default` control plane/region with no operator action
+- ✅ **Cross-region task engine** — `cluster_tasks` state machine for snapshot replication, DR failover, and cross-region migration; workers use `FOR UPDATE SKIP LOCKED` to prevent double-execution
+- ✅ **Region-scoped resources** — `region_id` FK added to all infrastructure tables (VMs, volumes, networks, snapshots, provisioning jobs, etc.)
+- ✅ **Service catalog region bug fixed** — `_find_endpoint()` now correctly filters by `region_id`; prevents silent wrong-region API calls in multi-region control planes
+- ✅ **Cache key namespacing** — Redis keys include `region_id`; prevents cross-region cache collisions on shared Redis instances
+
 ### v1.72.5 — System Metadata Routing Fix
 - ✅ `/system-metadata-summary` and `/export` endpoints added to `nginx.prod.conf`, `nginx.conf`, and the Vite dev proxy — fixes System Metadata tab showing empty under Inventory
 
-### v1.72.4 — snapshot-worker Build Context Fix
-- ✅ snapshot-worker release build now uses repo root context, matching docker-compose.yml
-
-### v1.72.3 — snapshot-worker Build Fix
-- ✅ Fixed snapshot-worker Dockerfile COPY paths for correct build context
-
-### v1.72.2 — Release Pipeline Fix
-- ✅ snapshot-worker image added to CI release matrix
-
-### v1.72.1 — Maintenance & Hardening
-- ✅ Internal API response hardening and cleanup
-
 ### v1.72.0 — Migration Planner Restored & Production Startup Fixes
-- ✅ **Migration Planner restored** — `api/migration_routes.py`, `api/migration_engine.py`, all three frontend components (`MigrationPlannerTab.tsx`, `ProjectSetup.tsx`, `SourceAnalysis.tsx`), and the `App.tsx` integration re-added after being removed in v1.69.0. All files are now committed and included in CI-built images.
-- ✅ **`.gitignore` cleaned** — Removed the migration planner exclusion block so all migration files are tracked and built into production images automatically.
-- ✅ **`startup_prod.ps1` fixed** — Replaced `docker compose up -d --build` with `docker compose pull` + `docker compose up -d`; the previous `--build` flag silently rebuilt images from local source on every production start, overwriting pulled `ghcr.io` images.
-- ✅ **nginx `/tenants` routing fixed** — Added `location = /tenants` rewrite to `/api/tenants` in `nginx.prod.conf`; the Migration Planner UI calls `GET /tenants` while the API registered only `GET /api/tenants`, causing 404 on the Projects listing.
-- ✅ **API migration router registered** — `migration_router` added to `main.py` and a `GET /tenants` alias route added for legacy callers.
+- ✅ **Migration Planner restored** — `migration_routes.py`, `migration_engine.py`, and all frontend components re-added after being removed in v1.69.0; committed and included in CI-built images
+- ✅ **`startup_prod.ps1` fixed** — replaced `--build` with `docker compose pull` + `docker compose up -d`; was silently overwriting pulled `ghcr.io` images with local source
+- ✅ **nginx `/tenants` routing fixed** — `GET /tenants` alias added to resolve Migration Planner 404
 
 ### v1.71.0 — Dependency Security Patches & Quality Fixes
-- ✅ **Webhook URL validation** — `SLACK_WEBHOOK_URL` and `TEAMS_WEBHOOK_URL` are validated at startup; non-`https` or malformed URLs are rejected with a warning instead of silently failing to deliver.
-- ✅ **CSV export quoting** — All CSV downloads now use `QUOTE_ALL`, preventing fields containing commas or newlines (e.g. VM descriptions) from corrupting column alignment in Excel.
-- ✅ **Ticket approval note capped at 5,000 characters** — Oversized approval notes are now rejected with HTTP 422 before reaching the database or notification emails.
-- ✅ **Python dependency CVE upgrades** — `fastapi`, `requests`, `python-ldap`, `python-jose`, `python-multipart` upgraded to resolve 13 CVEs including starlette multipart ReDoS, credential leak on redirect, LDAP injection paths, and JWT algorithm confusion.
-- ✅ **npm transitive CVE overrides** — `flatted`, `minimatch`, `rollup` forced to patched minimum versions via `package.json` overrides.
-- ✅ **Release pipeline corrected** — Docker images for all 9 services are now built and pushed to `ghcr.io` *before* the GitHub Release tag is created; a broken build can no longer produce a published release with no pullable images.
-- ✅ **CI audit tooling hardened** — `pip-audit` invocation updated for pip-audit 2.9+ (removed dropped `--severity` flag); `npm audit` step no longer regenerates the lock file before auditing it.
-
-### v1.70.0 — Performance, Security & Code Quality
-- ✅ **Report pagination** — `/reports/tenant-quota-usage` and `/reports/domain-overview` now accept `page`/`page_size` query parameters; the project slice is applied before per-project quota API calls for large deployments (100+ tenants). JSON responses include `total`, `page`, and `page_size` metadata. CSV export always returns full data.
-- ✅ **Upload row cap** — Bulk onboarding Excel upload rejects any sheet exceeding 2,000 data rows with HTTP 400, preventing memory exhaustion from oversized files.
-- ✅ **Dependency version bounds** — All open-ended major-version dependencies in `api/requirements.txt` now have `<N.0.0` upper bounds, preventing silent breaking upgrades during Docker image builds.
-- ✅ **Copilot markdown (marked.js)** — Replaced the hand-rolled `renderMarkdown()` in `CopilotPanel` with `marked.parse()` + `DOMPurify.sanitize()`. Fixes table rendering on nested pipes and edge-case list corruption.
-- ✅ **Dependency vulnerability scanning in CI** — New `dependency-audit` CI job runs `pip-audit` (critical = fail, high = warn) on Python requirements and `npm audit --audit-level=high` for the frontend. Integration tests are now gated on this job.
-
-### v1.69.0 — Bug Fixes Sprint
-- ✅ **Performance metrics `IndexError`** — `get_endpoint_stats()` now guards against empty `sorted_durations`, preventing a crash on cold-start endpoints.
-- ✅ **ISO timestamp `Z`-suffix parse error** — `host_metrics_collector.py` now calls `.replace("Z", "+00:00")` before `datetime.fromisoformat()`; fixes `ValueError` on Python < 3.11.
-- ✅ **Scheduler worker task leak on SIGTERM** — `async_main()` `finally` block explicitly cancels and awaits all asyncio tasks before shutting down the thread executor.
-- ✅ **Metering worker duplicate rows** — `run_collection_cycle()` acquires a `pg_try_advisory_lock(8765432)` at the start of each cycle; scaled replicas skip if another holds the lock.
-- ✅ **Backup worker silent `pg_dump` failure** — output file is checked for < 1 KB size after `pg_dump` exits; suspiciously small files raise `RuntimeError` and trigger the cleanup path.
-- ✅ **SLA daemon task leaked on API shutdown** — `asyncio.Task` returned by `create_task(_sla_daemon())` stored as `_sla_task`; `shutdown_event()` cancels and awaits it cleanly.
-
-### v1.68.0 — Security Hardening Sprint
-- ✅ **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline now sanitized via `DOMPurify.sanitize()` with a strict `ALLOWED_TAGS: ["mark"]` allowlist (was unsanitized raw HTML from `ts_headline`)
-- ✅ **SMTP TLS certificate enforcement** — both `api/smtp_helper.py` and `notifications/main.py` now explicitly set `ctx.check_hostname = True` and `ctx.verify_mode = ssl.CERT_REQUIRED` instead of relying on Python version defaults
-- ✅ **LDAP `create_user` plaintext password** — `create_user()` now stores `{SSHA}` hashed password (same scheme as `change_password()`); was storing cleartext in `userPassword`
-- ✅ **LDAP backup password exposure** — `_run_ldap_backup/restore()` now uses `-y <tempfile>` instead of `-w <password>` on the command line; password no longer visible in `ps aux`
-- ✅ **Password complexity policy** — `AddUserRequest` min length raised 6→8, new validator requires uppercase + digit + special character; failures return HTTP 422 with a descriptive message
-- ✅ **Rate limit on password reset** — `POST /auth/users/{username}/password` now has `@limiter.limit("5/minute")` (was unlimited)
-- ✅ **Secret file permission warning** — `read_secret()` logs a warning when a secret file has group/other read bits set; directs operator to fix permissions to 0600/0400
-- ✅ **Backup worker distributed lock** — `pg_try_advisory_lock` wraps the scheduled-backup decision path; prevents duplicate backups in multi-replica deployments
-- ✅ **VM provisioning — plaintext OS password cleared** — `os_password` erased from DB row after successful provisioning (cloud-init already consumed it; no need to retain it)
-- ✅ **VM provisioning — OS password minimum length** — raised from 6 to 8 characters
-- ✅ **docker-compose.yml fail-fast guards** — `POSTGRES_PASSWORD`, `POSTGRES_USER`, `POSTGRES_DB`, `LDAP_ADMIN_PASSWORD`, and `JWT_SECRET_KEY` now use `${VAR:?ERROR: VAR must be set in .env}` syntax; Docker Compose refuses to start if any are empty
-
-### v1.67.0 — Wave Approval Gates, VM Dependency Auto-Import & Maintenance Window Scheduling
-- ✅ **Wave Approval Gates** — each migration wave now requires explicit approval before it can advance to pre-checks-passed. A new approval workflow lets operators request approval (triggering notifications) and admins approve or reject inline with a comment. Waves display an approval status badge (⏳ pending / ✅ approved / ❌ rejected) and the "Pass Checks" button is locked until approval is granted.
-- ✅ **VM Dependency Auto-Import** — the Wave Planner can now automatically detect implicit VM dependencies from RDM disk sharing (confidence 0.95) and shared-datastore co-location (confidence 0.70). A dry-run preview shows what would be imported before committing; auto-detected dependencies are shown with source badges (💽 RDM / 🗄 DS) and can be bulk-removed independently of manually entered ones.
-- ✅ **Maintenance Window Scheduling** — recurring maintenance windows can be defined per project (day-of-week, start/end time, timezone, cross-midnight support). When enabled, Auto-Build Waves automatically assigns a `scheduled_start` / `scheduled_end` to each wave from the next available window slot. A preview strip shows the next 8 upcoming calendar bands.
-
-### v1.66.3 — CI/CD Pipeline Hardening & Input Validation Fixes
-- ✅ **`release.yml` branch ref fix** — checkout now uses `${{ github.event.workflow_run.head_branch }}` instead of hardcoded `master`, so release jobs trigger correctly from any configured default branch
-- ✅ **`release.yml` CHANGELOG regex tightened** — version extraction now requires a closing `]` in the header pattern, preventing malformed headers from producing spurious version strings
-- ✅ **Redis healthcheck** — `redis` service in `docker-compose.yml` now includes a Docker healthcheck (`redis-cli ping`) so dependent services wait until Redis is confirmed reachable before starting
-- ✅ **DB connection timeout** — `_db_params()` in `p9_common.py` passes `connect_timeout=10` to psycopg2, preventing indefinite hangs when the database host is unreachable
-- ✅ **`VMReassignRequest.vm_ids` length guard** — `Field(max_length=1000)` rejects oversized payloads with HTTP 422 before any DB work is attempted
-- ✅ **`CreateTenantRequest.detection_method` typed** — changed to `Optional[Literal["org_vdc", "vapp", "folder", "resource_pool", "cluster", "vm_prefix"]]`; unrecognised values now return HTTP 422 instead of being silently stored
-- ✅ **Cluster exclusion sentinel parameterised** — sentinel value changed from the static string `'Cluster excluded from plan'` to `f'Cluster exclusion: {cluster_name}'` for precise per-cluster reversibility
-
-### v1.66.2 — Cluster-Level Scoping & Unassigned VM Surface
-- ✅ **Cluster exclusion toggle** — click any cluster pill in the Tenants tab to exclude or re-include that cluster from all wave planning; excluded clusters show as red strikethrough pills; VMs on excluded clusters display a `⊘` badge on the VMs tab
-- ✅ **Unassigned VM group** — a synthetic ⚠️ `(Unassigned)` row appears in the Tenants tab when any VMs lack a tenant; cluster pills in that row are interactive so the cluster can be excluded in one click without re-running detection
-- ✅ **New `PATCH /projects/{id}/clusters/scope` endpoint** — bulk-toggle `include_in_plan` on `migration_clusters`; `GET /vms` extended with `cluster_in_scope` boolean field
-
-### v1.66.1 — VMware Cluster Column in Migration Planner
-- ✅ **Cluster column on Tenants tab** — shows all VMware clusters hosting that tenant's VMs as filterable pills; new **All Clusters** filter dropdown lets you scope the tenants list to a single vCenter cluster
-- ✅ **Cluster column on VMs tab** — each VM row now shows its VMware cluster name alongside the Tenant column; existing All Clusters dropdown on VMs tab is now also loaded when switching to the Tenants sub-tab
-- No DB migration, no new endpoints — `cluster` was already stored per-VM from the `vInfo` RVTools sheet; the tenant response is extended with a computed `vm_clusters` array
-
-### v1.66.0 — Container Alerting, Full CI Pipeline & Docker Image Publishing
-- ✅ **Container restart alerting** — monitoring watchdog emails the configured alert address when any container crashes or goes unhealthy; alert email is configurable in the Admin panel
-- ✅ **Full integration test pipeline** — GitHub Actions now spins up the complete Docker stack and runs pytest against live endpoints on every push; unit tests (14) run without needing a live stack
-- ✅ **Docker images published to ghcr.io** — all 9 service images are built for `linux/amd64` + `linux/arm64` and pushed to `ghcr.io/erezrozenbaum/pf9-mngt-<service>` on each release; use `PF9_IMAGE_TAG` in `.env` to pin a specific version
-
-### v1.65.4 — Production Healthcheck Fix & Automated Test Suite
-- ✅ **`pf9_ui` healthcheck fixed** — Alpine Linux resolves `localhost` to `::1` (IPv6), but nginx binds IPv4 only; changed healthcheck to `http://127.0.0.1:80` so the container correctly reports `(healthy)` in production
-- ✅ **Automated test suite added** — `tests/test_health.py` (9 tests) and `tests/test_auth.py` (JWT unit tests + conditional integration tests) added; CI now runs JWT unit tests on every push/PR with no live stack required
-
-### v1.65.3 — Snapshot Worker Startup Performance Fix
-- **"Sync & Snapshot Now" no longer slow after restart** — snapshot worker now checks on-demand triggers first on every loop cycle; 60-second startup grace period prevents scheduled tasks from blocking the first on-demand run.
-
-### v1.65.2 — Snapshot Restore Bug Fix & Code Cleanup
-- ✅ **"Sync & Snapshot Now" fixed** — the button in the Snapshot Restore wizard now correctly triggers the snapshot pipeline; the `/api` prefix was missing from the two `run-now` fetch calls, causing nginx to return a 405 instead of reaching the API
-- ✅ **Dead code removed** — three unauthenticated probe endpoints removed from the API; a duplicate block of 5 route handlers removed; the last `print()` replaced with structured logging; unused `db_conn` parameter plumbing removed from snapshot and restore route setup
-- ✅ **Redundant commits cleaned up** — 6 leftover `conn.commit()` calls removed from `integration_routes.py` and `runbook_routes.py` (the connection-pool context manager commits automatically)
-
-### v1.65.1 — Production & Dev Stack Fixes
-- ✅ **Production Docker build unblocked** — `startup_prod.ps1` now completes successfully; the UI image builds without `tsc` strict-mode errors
-- ✅ **Login from external IP fixed** — `config.ts` defaults changed to `""` (empty string); all API calls now use relative paths through nginx, eliminating CORS errors regardless of the client's IP or hostname
-- ✅ **nginx routing complete** — production config rewritten to cover all 50+ FastAPI routes: monitoring service upstream, `/restore/`, `/static/`, every resource path, and `^~ /metrics/` prefix to correctly route monitoring requests before the regex block
-- ✅ **TrustedHostMiddleware 400 fixed** — nginx now rewrites `Host: localhost` before proxying, so FastAPI accepts requests from any external IP
-- ✅ **Admin Tools tabs fixed** — Departments, LDAP Users, and Visibility pages now load correctly; departments response was being stored as an object instead of an array
-- ✅ **Dev stack fully functional** — Vite proxy rewritten to forward all API and monitoring paths; `localhost:5173` now works identically to the production nginx proxy
-- ✅ **Prod/dev image conflict resolved** — prod UI image tagged as `pf9-mngt-pf9_ui-prod`; switching between stacks no longer overwrites each other's built image
-
-### v1.65.0 — CI Pipeline, CORS Hardening, DB Performance Indexes
-- ✅ **GitHub Actions CI** — `.github/workflows/ci.yml` runs on every push and PR: Python syntax check across all `.py` files, `flake8` critical-error scan, and `docker compose config` validation for both dev and prod overlays
-- ✅ **CORS production restriction** — when `APP_ENV=production`, dev-only origins (`localhost:5173`, `:3000`, `:8000`) are removed from `ALLOWED_ORIGINS`; only the nginx TLS proxy origins are accepted
-- ✅ **Database performance indexes** — `db/migrate_indexes.sql` adds 8 `CREATE INDEX IF NOT EXISTS` statements on `inventory_runs`, `activity_log`, `snapshots`, `migration_vms`, `tickets`, and `runbook_executions`; applied automatically on API startup
-
-### v1.64.0 — Production Hardening Sprint
-- ✅ **Docker Secrets** — all sensitive credentials (DB password, LDAP bind password, SMTP password, JWT secret) migrated from environment variables to Docker Secrets; `docker-compose.prod.yml` wires them via `secrets:` blocks
-- ✅ **LDAP FD leak fix** — `get_all_users()`, `create_user()`, `delete_user()`, `change_password()` in `auth.py` now close LDAP connections in `finally` blocks — eliminates file-descriptor exhaustion under error conditions
-- ✅ **Log rotation** — `logging.handlers.RotatingFileHandler` added to API, scheduler, backup, and metering workers; log files cap at 10 MB × 5 backups
-- ✅ **nginx production config** — `nginx/nginx.prod.conf` routes UI traffic to `pf9_ui:80` (Dockerfile.prod nginx) instead of the Vite dev port `:5173`; `docker-compose.prod.yml` mounts it automatically
-- ✅ **Port hardening** — `docker-compose.prod.yml` suppresses host-exposed ports for `pf9_api`, `pf9_ui`, and `pf9_monitoring`; all traffic flows exclusively through the TLS nginx reverse-proxy
-- ✅ **CORS fix** — `https://localhost` added to `ALLOWED_ORIGINS` in both `api/main.py` and `monitoring/main.py`; fixes CORS preflight failures when accessing the stack via browser on the same host
-- ✅ **Source file cleanup** — domain-specific email placeholders removed from `api/vm_provisioning_service_user.py`, `api/setup_provision_user.py`, and `p9_common.py`; replaced with generic `yourdomain.com` form
-- ✅ **`startup_prod.ps1`** — new production startup script: verifies Docker Secrets, runs pre-flight checks, starts the prod-profile stack, and confirms port isolation
-
-### v1.63.0 — RVTools Export Browser + Migration Planner PDF Fixes
-- ✅ **RVTools Exports Browser** — "📁 RVTools Exports" sub-tab inside Reports: file list (filename, size, date) with one-click authenticated download + run history table showing the last 100 `inventory_runs` entries (started, finished, duration, status badge)
-- ✅ **`GET /api/reports/rvtools/files`** — lists all `reports/*.xlsx` exports with metadata; **`GET /api/reports/rvtools/files/{filename}`** — authenticated binary download; **`GET /api/reports/rvtools/runs`** — returns last 100 rows from `inventory_runs`
-- ✅ **Scheduler per-run log files** — `_run_rvtools_sync()` captures stdout/stderr to `logs/rvtools_<timestamp>.log` per run
-- ✅ **Migration Planner PDF export fixes** — Fix/Downtime columns now show correct values; Power State column added to All VMs sheet; table overflow prevented; `NameError` for `get_risk_color` resolved; KPI bar totals accurate
-- ✅ **`.gitignore` hardening** — `reports/*.xlsx`, `reports/*.csv`, `reports/*.json` protected from accidental commit
-
-### v1.62.2 — Cross-Tenant Snapshot Visibility + Snapshot Tab Fix
-- ✅ **Cross-tenant snapshot fix** — `scheduler_worker` and `snapshot_worker` containers rebuilt with `session.is_admin = True`; all Cinder listing calls now correctly use `all_tenants=1`; volumes and snapshots from all tenants visible in Snapshot, Compliance, and Restore tabs
-- 🐛 **Snapshot tab 500 fix** — `project_id` filter ambiguity in snapshots query resolved by qualifying as `s.project_id` / `s.domain_name`
-
-### v1.62.1 — Orphan Cleanup + Project Deletion Cascade
-- ✅ **Orphan cleanup volume delete fix** — volume delete no longer returns HTTP 400; URL rebuilt using the volume's own `tenant_id`; delete-volume in Resources tab similarly fixed
-- ✅ **External network orphan detection** — networks whose Keystone project was deleted are now surfaced as orphans with reason `"deleted project (external)"`
-- ✅ **Project deletion cascade cleanup** — `cleanup_project_resources()` called before Keystone project removal; cascade-deletes servers, volumes, FIPs, ports, and networks to prevent orphaned OS resources
-- ✅ **Platform9 DU admin fallback** — `_try_os_admin_token()` reads `PF9_OS_ADMIN_*` env vars as privileged fallback on provisioner Keystone 404
-
-### v1.62.0 — Scheduler Worker + Delete Impact Analysis + Backup UI
-- ✅ **Scheduler Worker container** (`pf9_scheduler_worker`) — replaces Windows Task Scheduler; `host_metrics_collector.py` and `pf9_rvtools.py` run inside the container on configurable schedules; no Windows Task Scheduler configuration required after deployment
-- ✅ **Delete Impact Analysis** — Delete confirmation for Networks, FIPs, Volumes, and Security Groups pre-fetches the dependency graph and shows 🚫 Blockers, 🗑 Cascade deletes, ⚠ Stranded resources; requires typing the resource name to unlock the delete button
-- ✅ **"🔗 Deps" button** — inline dependency panel (graph depth 2) on Networks, FIPs, Volumes, and Security Groups rows for topology inspection without deletion intent
-- ✅ **Networks orphan detection** — "Networks" added as selectable type in Orphan Resource Cleanup runbook (no subnets, no non-DHCP ports, non-shared, non-external, older than `age_threshold_days`)
-- ✅ **Backup NFS consolidation** — `docker-compose.nfs.yml` removed; backup + NFS now a single `COMPOSE_PROFILES=backup` profile; split poll loops (30 s for manual jobs, 3600 s for schedule checks)
-- ✅ **Backup Status UI redesign** — two per-target panels (Database + LDAP) each showing schedule badge, description, stored count + size, last backup time/filename/duration
-- ✅ **Networks search filters** — substring search added in Inventory → Networks and Provisioning → Resources → Networks
-
-### v1.61.0 — Phase D: Cluster Capacity Planner + Visibility Fixes
-- ✅ **New runbook `cluster_capacity_planner`** (Runbook #25) — HA-aware cluster capacity analysis: reserves N+1 or N+2 host capacity, applies a 70% safe-operating threshold, forecasts when a new host must be added at current growth rate, recommends minimum host spec for a 6-month runway, and produces a per-flavor VM slot table
-- ✅ **`vm_provisioning` + `bulk_onboarding` in visibility matrix** — both wizard runbooks are now registered in the `runbooks` table (`enabled=false`) so they appear in the Admin Runbook Visibility panel
-- ✅ **Visibility rows seeded**: `vm_provisioning` → Tier2, Tier3, Engineering, Management; `bulk_onboarding` → Engineering, Management
-
-### v1.60.0 — Phase T4: Analytics, Bulk Actions & Polish
-- ✅ **Ticket analytics**: `GET /api/tickets/analytics?days=30` — admin-only; returns `resolution_by_dept`, `sla_by_dept`, `top_openers`, and daily `volume_trend`
-- ✅ **Stats enhanced**: `/api/tickets/stats` adds `resolved_today` and `opened_today`; stats bar hides priority breakdown when a status filter is active (no stale counts)
-- ✅ **Bulk actions**: `POST /api/tickets/bulk-action` — `close_stale`, `reassign`, `export_csv`; TicketsTab gains checkbox multi-select + bulk toolbar
-- ✅ **Team-member picker**: `GET /api/tickets/team-members/{dept_id}` — optional "Assign to user" dropdown in Create Ticket modal populates with active dept members; `TicketCreate` accepts `assigned_to`, status set to `assigned` at creation if specified
-- ✅ **Opener confirmation email**: `ticket_created` template sent silently to opener's email (from `users.name` lookup) when SMTP is enabled
-- ✅ **Fixed dept dropdown**: `GET /api/navigation/departments` now returns `{departments: [...]}` — fixes empty teams in Create Ticket modal and dept filter
-- ✅ **LandingDashboard widget**: ticket KPI tile (Open / SLA Breached / Resolved Today / Opened Today) with nav link
-- ✅ **MeteringTab & RunbooksTab hooks**: 📋 and 📎 inline ticket-creation modals per resource/execution row
-- ✅ **Analytics Admin tab**: volume trend chart, resolution time table, SLA breach rate, top openers
-- ✅ **Email template variable reference guide**: collapsible panel in template editor
-
-### v1.59.0 — Phase T3: Auto-Ticket Triggers
-- ✅ **Drift → auto-incident**: critical/warning drift events in `db_writer.py` open `auto_incident` tickets; idempotent dedup on `(auto_source, auto_source_id)` prevents duplicates
-- ✅ **Health score drop → auto-incident**: graph nodes with `health_score < 40` trigger auto-incident tickets via `_build_graph()` → `_trigger_health_auto_tickets()`
-- ✅ **Delete gate → change request**: `POST /api/graph/request-delete` creates an `auto_change_request` ticket with `auto_blocked=true` before any destructive graph delete
-- ✅ **Runbook failure → auto-incident**: `_execute_runbook()` except block opens an incident ticket linked to the failed `execution_id`
-- ✅ **Migration wave complete → service request**: `advance_wave_status()` opens a service-request ticket when a wave is marked complete
-- ✅ **`_auto_ticket()` helper**: importable pure-DB function in `ticket_routes.py`; `AutoTicketCreate` model accepts either `to_dept_id` or `to_dept_name`
-- ✅ **UI buttons**: 🎫 Create Incident Ticket (Drift Detection side-panel), 🚨 Report Incident (Tenant Health panel, score < 60), 🎫 Request Delete Approval (Graph delete-impact panel)
-- 🐛 Fixed `AutoTicketCreate` Pydantic validator — changed to `@root_validator(skip_on_failure=True)` to avoid 422 errors when only `to_dept_name` is provided
-- 🐛 Fixed nav department visibility rows for Operations & Support group
-
-### v1.58.0 — Phase T1 + T2: Support Ticket System
-- ✅ **Support Ticket lifecycle**: `support_tickets` table with ticket refs (TKT-YYYY-NNNNN), full status/priority/type model, approval gate, SLA deadlines, OpenStack resource linkage, Slack thread tracking, and escalation chain
-- ✅ **35+ API endpoints** at `/api/tickets`: create, list, get, update, assign, escalate, approve/reject, resolve/reopen/close, comments, SLA policies, email templates, auto-ticket creation
-- ✅ **SLA daemon** — asyncio background task (15-min interval): breach detection, Slack/Teams notification, auto-escalate, activity comment
-- ✅ **Runbook integration**: `trigger-runbook` and `runbook-result` endpoints delegate to the runbook engine with service-token auth; `email-customer` sends named HTML templates via SMTP
-- ✅ **TicketsTab.tsx** — filterable list, create modal, detail view, comment thread, one-click actions (Assign/Escalate/Approve/Reject/Resolve/Reopen/Close), T2 buttons (📧 Email Customer, ▶ Run Runbook), SLA breach/warning indicators, admin panel (SLA policy table + email template editor)
-- ✅ **Navigation**: new "Operations & Support" group (🎫) with Tickets and My Queue items
-- ✅ **5 DB tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence` with 17 seeded SLA policies and 6 email templates
-
-### v1.57.0 — Phase C: Security Audit Runbooks + Phase C2: Hypervisor Evacuate
-- ✅ **Runbook 21: `security_group_hardening`** — scans all security groups for ingress rules open to `0.0.0.0/0`/`::/0` on sensitive ports; dry-run derives replacement CIDRs from graph adjacency data; execute mode deletes violating rules and creates tighter replacements
-- ✅ **Runbook 22: `network_isolation_audit`** — read-only scan for shared networks, cross-tenant routers, overlapping CIDRs, and FIPs assigned to non-compute device owners; severity-rated findings (critical/warning/info)
-- ✅ **Runbook 23: `image_lifecycle_audit`** — scores Glance private images by age, EOL OS detection (CentOS 6/7, Ubuntu 14/16, Windows 2008/2012, RHEL 6, Debian 8), FIP exposure, and orphan status; risk score 0–100 mapped to low/medium/high/critical
-- ✅ **Runbook 24: `hypervisor_maintenance_evacuate`** — drains all VMs from a target hypervisor before maintenance; graph-depth ordered live-migrate with cold-migrate fallback; optionally disables `nova-compute` after a clean drain; supports `live_first`, `cold_only`, `live_only` strategies
-- ✅ **`GET /api/runbooks/lookup/hypervisors`** — new lookup endpoint exposing compute hypervisors (hostname, state, status, vCPU usage, running VM count) for trigger-modal dropdowns
-
-### v1.56.0 — Phase B3: Action Runbooks — DR Drill + Tenant Offboarding
-- ✅ **Runbook 19: `disaster_recovery_drill`** — clones VMs tagged `dr_candidate` into an ephemeral isolated Neutron network, verifies each VM boots within `boot_timeout_minutes`, then auto-tears down all drill resources regardless of outcome; billing gate quota pre-check before any resource creation
-- ✅ **Runbook 20: `tenant_offboarding`** — 10-step customer exit workflow: FIP release → VM stop → port cleanup → Keystone disable → metadata tagging → CRM notification via billing gate → final usage report email; requires `confirm_project_name` exact match to prevent accidental offboarding; risk level critical with full dry-run preview
-
-### v1.55.0 — Phase B2: Action Runbooks — VM Rightsizing + Capacity Forecast
-- ✅ **Runbook 17: `vm_rightsizing`** — analyses `metering_resources` CPU/RAM usage (default 14 days), selects the cheapest Nova flavor satisfying headroom requirements; execute mode pre-snapshots, stops, resizes, confirms, and restarts VMs; dry-run returns per-VM candidate list with savings estimate
-- ✅ **Runbook 18: `capacity_forecast`** — reads `hypervisors_history` weekly, performs numpy-free linear regression, projects days until configurable capacity threshold (default 80 %) is reached for vCPU and RAM separately; alert list populated when breach is within `warn_days_threshold`
-- ✅ **`vms_multi` multi-select lookup** — `RunbooksTab` now renders `x-lookup: vms_multi` schema fields as a `<select multiple>` control for scoping runbook runs to specific VMs
-- ✅ **Bug fix: `ram_usage_mb` rightsizing** — engine was using allocated RAM as peak RAM, making downsizing impossible; fixed to use `MAX(ram_usage_percent) × ram_allocated_mb / 100`
-
-### v1.53.0 — Phase B1: Action Runbooks — Quota Adjustment + Org Usage Report
-- ✅ **Runbook 15: `quota_adjustment`** — operators set Nova/Neutron/Cinder quota for a project; dry-run returns before/after diff; billing gate integration blocks execution when `require_billing_approval=true` and a gate integration is configured; full before/after audit log entry
-- ✅ **Runbook 16: `org_usage_report`** — read-only usage + cost report for a project covering Nova, Neutron, and Cinder quota/usage plus per-server breakdown; pre-rendered `result.html_body` suitable for direct customer email; cost driven by `metering_pricing` table
-- ✅ **Bug fix: runbook role detection** — `trigger_runbook` was always applying the `operator` approval policy because `hasattr(user, "role")` returns False for dicts; fixed with dict-safe lookup
-
-### v1.52.0 — Phase A: Runbook Department Visibility + External Integrations Framework
-- ✅ **Department-scoped runbook filtering** — non-admin users see only the runbooks their department is permitted to view; admin/superadmin bypass the filter and always see all 14 runbooks
-- ✅ **`runbook_dept_visibility` table** — join table `(runbook_name, dept_id)` controlling per-department access; absence of rows means globally visible
-- ✅ **All 14 runbooks pre-seeded** with sensible department mappings (Engineering, Tier 1–3 Support, Sales, Management)
-- ✅ **Admin visibility grid in RunbooksTab** — collapsible checkbox matrix (runbooks × departments) with per-row save; unchecking all boxes = visible to all
-- ✅ **`external_integrations` table** — stores billing gate, CRM, and webhook integrations; `auth_credential` Fernet-encrypted at rest
-- ✅ **`/api/integrations` CRUD + test API** — create, update, delete (superadmin); list, get (admin+); test fires real HTTP request and persists `last_test_status`
-- ✅ **`_call_billing_gate()` helper** in runbook engine — shared pre-authorization utility for upcoming action runbooks; gracefully skips if no billing integration configured
-- ✅ **Admin integrations panel in RunbooksTab** — table with 🧪 Test button per row, superadmin-only create/edit modal
-- ✅ **`db/migrate_runbooks_dept_visibility.sql`** — idempotent migration for existing installs
-
-### v1.51.0 — Graph: Health Scores, Orphan Detection, Blast Radius & Delete Safety
-- ✅ **Health Score engine** — every node shows a coloured score circle (0–100); VM/volume/host each have tailored deduction rules for error states, missing snapshots, drift, and resource pressure
-- ✅ **3-state snapshot coverage** — `snapshot_protected` ✅ / `snapshot_stale` ⚠️ / `snapshot_missing` ❌ replaces the old binary `no_snapshot` badge
-- ✅ **Orphan detection** — graph summary surfaces orphaned volumes (status=available, unattached), floating IPs (no port), security groups (not in use), and dangling snapshots
-- ✅ **Capacity pressure tinting** — host nodes are tinted green/amber/red based on CPU and RAM utilisation
-- ✅ **Tenant Health Panel** — shown above the canvas in Topology mode; environment health score, critical/degraded VM counts, orphan count, expandable top-issues list
-- ✅ **Blast Radius mode** — click 💥 to highlight all resources that would be impacted if the selected node fails; animated edges + node dimming; summary banner (VMs, tenants, FIPs, volumes)
-- ✅ **Delete Impact mode** — click 🗑 to preview cascade deletions, stranded resources, and OpenStack blockers before deleting any resource; network/volume/tenant/VM/SG cascade rules
-- ✅ **Sidebar enhancements** — health score badge, snapshot status, capacity ring, and quick-action buttons (📸 Create Snapshot / 🔍 View Drift / 📋 View Logs) auto-suggested when score < 60
-
-### v1.50.0 — Security Hardening & Code Quality (Phase J)
-- ✅ **Timing-safe admin password check** — `hmac.compare_digest()` replaces `==` on the local admin fallback path
-- ✅ **LDAP connection leak closed** — `get_user_info()` now calls `unbind_s()` in a `finally` block on every path
-- ✅ **Command injection patched** — `get_log_range()` validates `start_time` with a `YYYY-MM-DD` regex and wraps it with `shlex.quote()` before interpolating into SSH command
-- ✅ **`_db()` / `_release()` helpers removed** — VM provisioning thread now manages the connection lifecycle inline via `getconn()` / `putconn()` in a `try/finally`, consistent with the rest of the codebase
-- ✅ **`print()` eliminated** — remaining bare `print()` calls in `auth.py` and `log_collector.py` replaced with structured logger calls
-
-### v1.48.0 — Cloud Dependency Graph: VMware-Side Migration Graph (Phase 4)
-- ✅ **`GET /api/migration/projects/{id}/graph`** — new VMware-side dependency graph built from RVTools import data; returns the same `{ nodes, edges, root, truncated }` format as `/api/graph` so `DependencyGraph` renders it unchanged
-- ✅ **Node types**: `tenant` (Org-vDC root), `vm`, `network` (portgroup/VLAN), `disk` (virtual disk), cross-tenant `tenant` nodes
-- ✅ **VM nodes** show multi-line detail: IP · migration status / vCPU · RAM / CPU% · MEM% usage (from RVTools vInfo + perf data)
-- ✅ **Disk nodes** show: allocated GB · actual used GB (%) / thin|thick · datastore name
-- ✅ **Migration status rings** on VM nodes: 🟢 complete / 🟡 in progress / 🔴 failed; legend auto-adapts labels for VMware context
-- ✅ **`graphUrl` prop** on `DependencyGraph` — all PCD-specific controls (depth pills, "Explore from here", action buttons) suppressed when set
-- ✅ **🕸️ View Graph** button on every tenant row and inside cohort expansions in the Migration Planner Source Analysis tab
-- ✅ **🕸️ View Dependencies** button added to Projects tab rows (PCD tenant graph)
-
-### v1.47.0 — Cloud Dependency Graph: Backend API + UI + Node Actions (Phases 1–3)
-- ✅ **`GET /api/graph`** — new BFS dependency graph endpoint: given any resource (`vm`, `volume`, `network`, `tenant`, `snapshot`, `security_group`, `floating_ip`, `subnet`, `port`, `host`, `image`, `domain`), returns the full node+edge graph up to the requested depth (1–3 hops)
-- ✅ **12 node types, 15 edge types** — all relationships derived from the existing DB schema; no new columns required
-- ✅ **VM→SecurityGroup edge** — reads `ports.raw_json->'security_groups'` JSONB array (no join table)
-- ✅ **Badges on every node** — `no_snapshot`, `drift`, `error_state`, `power_off`, `restore_source` flags for at-a-glance risk assessment
-- ✅ **150-node cap** with `truncated` flag to prevent hairball graphs on large tenants
-- ✅ **RBAC** `resources:read` — Viewer and above
-- ✅ **Full-screen graph drawer** (`DependencyGraph.tsx`) — ReactFlow + dagre hierarchical layout; 12 color-coded node types; depth pills (1/2/3); type filter checkboxes; dark sidebar
-- ✅ **🔍 Explore from here** — re-root the graph at any clicked node; **← Back** history breadcrumb; mobile fallback table
-- ✅ **🕸️ View Dependencies** button on Servers, Volumes, Snapshots, Networks, and Projects tab rows
-- ✅ **Node action buttons** — click any node to get: **"🔗 Open in tab"** (switch to resource's native tab + pre-select it), **"📸 Create Snapshot"** (volumes), **"🚀 View in Migration Planner"** (VMs + tenants)
-
-### v1.46.0 — Migration Planner Phase 4D: vJailbreak CRD Push + Tenant User Overhaul
-- ✅ **vJailbreak CRD Push tab** — new 🚀 sub-tab in the Migration Planner pushes `OpenstackCreds`, `VMwareCreds`, and `NetworkMappings` CRDs directly to a vJailbreak Kubernetes cluster via its `/apis/vjailbreak.k8s.pf9.io/v1alpha1/` API; supports dry-run preview, idempotent apply (skip-if-exists), and per-resource task log
-- ✅ **Connection settings** — per-project `vjb_api_url`, `vjb_namespace`, and `vjb_bearer_token` stored on `migration_projects`; token is masked in API responses
-- ✅ **Tenant Users tab overhauled** — filter bar (type/status/role/search), 🔁 Find & Replace panel for bulk field edits, bulk-select toolbar (confirm / set-role / delete), 🌱 Seed Tenant Owners button, ✓ Confirm All button
-- ✅ **`migration_vjailbreak_push_tasks` table** — tracks every CRD push attempt (resource type, name, status, error, actor, timestamp)
-- ✅ **`POST /tenant-users/seed-tenant-owners`** — bulk-creates one `admin@<slug>` owner account per tenant with a random 20-char password; idempotent (skips existing)
-- ✅ **`POST /tenant-users/bulk-replace`** — regex-based find-and-replace across a chosen user field for all users in a project (preview + apply)
-- ✅ **`POST /tenant-users/bulk-action`** — confirm / set-role / delete for a set of user IDs in one call
-
-### v1.44.2 — VM Provisioning: Windows Glance image properties auto-patched on execution
-- ✅ **Windows Glance properties auto-set** — execution thread now patches the image with `os_type=windows`, `hw_disk_bus=scsi`, `hw_scsi_model=virtio-scsi`, `hw_firmware_type=bios` before creating the boot volume, fixing boot failures caused by missing hardware metadata
-
-### v1.39.0 — VM Provisioning (Runbook 2): Tenant-Scoped Auth + Windows Cloud-Init + Admin History + Rich Email
-- ✅ **`provisionsrv` service account** — dedicated Keystone user (not in LDAP) authenticates with a real project-scoped token for each execution batch, ensuring Nova/Cinder/Neutron resources land in the correct tenant project
-- ✅ **Windows cloud-init fixed** — `net user Administrator /active:yes` (no `/add`) + `adminPass` injected into Nova body for cloudbase-init `SetUserPasswordPlugin`; custom user path uses `/add` + Administrators group
-- ✅ **Dry-run Windows warnings** — preflight now emits `windows_cloudinit` and `windows_glance_property` warnings for Windows VMs
-- ✅ **Cloud-init preview fixed** — `VmProvisioningTab` now renders `#ps1_sysnative` preview for Windows and `#cloud-config` for Linux correctly in the step-3 credentials panel
-- ✅ **Admin Tools → VM Provisioning tab** — new "🖥️ VM Provisioning" sub-tab in Admin Tools shows all batch history with status badges, expandable per-VM table (name, status, IP, image, flavor, OS, GB, error), and a dark-terminal activity timeline
-- ✅ **Rich completion email** — body now includes image name, flavor, OS type, volume GB, error column per VM, plus a full execution timeline section rendered from `activity_log`
-
-### v1.38.2 — Onboarding Fixes: Networks, Emails, UX
-- ✅ **`is_external` default False** — tenant networks are no longer created as admin-visible external/shared networks; fixed in code, migration SQL, and Excel template
-- ✅ **Welcome email notifications** — `POST /api/onboarding/batches/{id}/send-notifications` sends per-user HTML emails with credentials (temp password highlighted), network details, and a login tip; admin summary email groups users by domain → project with full credentials table
-- ✅ **Resend button** — after first send, a 🔁 Resend button re-enables the notification flow
-- ✅ **Select None fixed** — notifications panel now correctly deselects all users when Select None is clicked
-- ✅ **Approval comment textarea** — text is now visible (background was near-black `--bg-tertiary`; fixed to `--bg-secondary`)
-- ✅ **CORS / 500 on send-notifications** — incorrect table name (`onboarding_domains` → `onboarding_customers`) caused a 500 which appeared as a CORS failure
-
-### v1.38.1 — Onboarding Bug Fixes & Permissions
-- ✅ **CORS / 500 fix** — `require_permission()` now returns a user dict; CORS headers emitted correctly on all onboarding endpoints
-- ✅ **Operator permissions** — seeded `role_permissions` rows for `admin/operator/technical/viewer` on the `onboarding` resource; operators can now upload, dry-run, and execute
-- ✅ **Excel template** — `physical_l2` networks no longer marked with required CIDR/gateway fields; `virtual` sample row added; per-kind field matrix in README sheet
-- ✅ **Approve/Reject role gate** — only admin users see the Approve/Reject buttons; operators see a ⏳ waiting indicator with auto-polling
-- ✅ **Table UI** — dark headers, correct text colour, all quota columns, human-readable `pcd_*` labels
-- ✅ **Copilot FAB** — no longer overlaps page content (z-index 9000, bottom padding 96 px, resting opacity 0.82)
-
-### v1.38.0 — Runbook 1: Bulk Customer Onboarding via Excel
-- ✅ **`POST /api/onboarding/upload`** — upload a filled Excel workbook; structural validation with per-row error reporting across all four sheets (customers / projects / networks / users)
-- ✅ **`POST /api/onboarding/batches/{id}/dry-run`** — hard gate before execution: checks live PCD for existing domains, projects, and networks; blocks Execute until zero conflicts
-- ✅ **`POST /api/onboarding/batches/{id}/execute`** — creates domains → projects (with quotas) → networks + subnets → users + role assignments; continue-and-report per item; locked until `approved + dry_run_passed`
-- ✅ **Approval workflow** — submitter → admin approve/reject with comment; fires `onboarding_approved` / `onboarding_rejected` notifications
-- ✅ **5 new DB tables** — `onboarding_batches`, `onboarding_customers`, `onboarding_projects`, `onboarding_networks`, `onboarding_users`; auto-migrated on startup
-- ✅ **UI: `BulkOnboardingTab`** — step-indicator workflow, drag-and-drop upload, dry-run conflict table, inline approval modal, live-polling execution view with per-item status
-- ✅ **`GET /api/onboarding/template`** — download styled Excel template with 4 sheets and sample rows
-
-### v1.37.0 — vJailbreak Credential Bundle & Tenant Handoff Sheet
-- ✅ **`GET /export-vjailbreak-bundle`** — exports a JSON credential bundle for all in-scope tenants with PCD project IDs, service-account credentials, temporary user passwords, network UUIDs, and wave sequence
-- ✅ **Cohort-scoped variant** — `GET /cohorts/{id}/export-vjailbreak-bundle` restricts the bundle to a single cohort
-- ✅ **`GET /export-handoff-sheet.pdf`** — generates a CONFIDENTIAL A4 PDF handoff document: one section per tenant with domain/project identity, network mappings, and users/credentials; service accounts highlighted in blue
-- ✅ **Partial-bundle warnings** — structured `warnings[]` in response if any tenants are missing service accounts or PCD project IDs
-- ✅ **Notification events** — `vjailbreak_bundle_exported` and `handoff_sheet_exported` registered; audit activity logged on every export
-- ✅ **UI: Export panel** — two-click export cards appear in *Prepare PCD* tab once all provisioning tasks complete
-
-### v1.36.2 — Approval Workflow, Dry Run & Audit Log
-- ✅ **2-step approval gate** — `POST /prepare` sets plan to `pending_approval`; `POST /prepare/run` is blocked with HTTP 403 until explicitly approved
-- ✅ **`GET /prep-approval`** — returns approval status, requester, approver, timestamp, and full approval history
-- ✅ **`POST /prep-approval`** *(migration:admin)* — approve or reject with a comment; fires `prep_approval_granted` / `prep_approval_rejected` notifications
-- ✅ **Dry Run** — `POST /prepare/dry-run` simulates provisioning against live PCD without writing anything; returns per-type `would_create` / `would_skip` / `would_execute` breakdown
-- ✅ **Audit Log** — `GET /prep-audit` returns approval history, activity log, and full execution history in one call
-- ✅ **`migration_prep_approvals` table** — stores every approval/rejection decision with approver, decision, comment, and timestamp
-- ✅ **UI: approval banner** — yellow (pending), green (approved), red (rejected), grey (no plan) — with inline Approve/Reject actions
-- ✅ **UI: gated Run All** — disabled (🔒) until plan is approved; dry-run panel shows per-type breakdown table
-
-### v1.36.1 — Provisioning Confirmation Modal, Execution Summary & Notifications
-- ✅ **Run All confirmation modal** — shows exact resource counts per type before firing the API call
-- ✅ **`GET /prep-summary`** — per-task-type breakdown: created / skipped / failed / pending + overall totals
-- ✅ **Provisioning Summary panel** — auto-loads and displays full summary table once all tasks reach `done`
-- ✅ **Notification on run completion** — fires `prep_tasks_completed` event (severity `critical` if any tasks failed)
-
-### v1.36.0 — PCD Auto-Provisioning (Prepare PCD)
-- ✅ **Readiness gate** — `GET /prep-readiness` verifies subnets, flavors, images, and users are all confirmed before allowing plan generation
-- ✅ **Ordered task plan** — `POST /prepare` builds 667+ tasks in strict dependency order: domains → projects → quotas → networks → subnets → flavors → users → roles
-- ✅ **Per-task execution** — each task executes against live PCD Keystone / Neutron / Nova and writes back PCD UUIDs to source tables
-- ✅ **Run All** — executes all pending/failed tasks in order; stops on first new failure to prevent cascade
-- ✅ **Per-task rollback** — deletes the PCD resource and resets the task; domain rollback is safety-checked
-- ✅ **Prepare PCD UI tab** — readiness grid (4 cards), Generate Plan + Run All buttons, task table with status badges, auto-refresh every 3 s
-
-### v1.35.7 — Network Map: Excel Template Export / Import
-- ✅ **Download Template** — exports a styled XLSX with the full network map pre-filled (grey read-only columns + blue editable columns)
-- ✅ **Import Template** — uploads filled template and bulk-updates all editable fields; formula detection catches external VLOOKUP references with a clear fix instruction
-- ✅ **Confirm Subnets button** — bulk-sets `subnet_details_confirmed = true` for all rows that have a CIDR in one click
-- ✅ **Import auto-confirm** — importing a template with CIDR values auto-confirms subnet details on the row
-- ✅ **CIDR inline display** — confirmed rows show `✓ 10.0.0.0/24`; unconfirmed-with-CIDR show `⚠ 10.0.0.0/24`
-
-### v1.35.0–v1.35.6 — Pre-Migration Data Enrichment
-- ✅ **Network Subnet Details** — per-network subnet configuration (CIDR, gateway, DNS, DHCP pool, network kind) with inline editing panel and `Subnet Details: X/Y` readiness counter
-- ✅ **Flavor Staging** — de-duplicated per (vCPU, RAM) shape; match against live PCD Nova API; confirmed rows show "✓ exists" vs "✓ new"; Find & Replace, Confirm All
-- ✅ **Image Requirements** — one row per OS family; confirm after uploading to PCD Glance; Match PCD auto-links to existing Glance images
-- ✅ **Per-Tenant User Definitions** — auto-seeded service accounts per tenant; owner records; confirmed-tenants counter
-- ✅ **PCD Readiness Score** — live readiness counter per resource type; gaps auto-resolve when confirmed
-- ✅ **`migrate_phase4_preparation.sql`** — idempotent migration for all data enrichment schema additions; auto-applied on startup
-
-### v1.34.2 — Multi-Network Customer Provisioning
-- ✅ **3 network kinds** — Physical Managed (external VLAN), Physical L2 (no subnet), Virtual; any combination per provisioning run
-- ✅ **Naming conventions** — Auto-derived from `domain_name`: `extnet_vlan_<id>` / `L2net_vlan_<id>` / `virtnet[_N]`
-- ✅ **VLAN ID naming bug fixed** — Full multi-digit VLAN captured via atomic `setForm` update
-- ✅ **Welcome email updated** — Loops over all created networks; per-network card with kind, VLAN, subnet, DNS
-- ✅ **DB schema** — `networks_config` + `networks_created` JSONB columns added to `provisioning_jobs`; migration: `db/migrate_provisioning_networks.sql` (auto-applied on startup)
-- ✅ **Provisioning Tools → Networks** — Physical Managed + Physical L2 creation with provider type, physical network, VLAN ID fields
-
-### v1.34.1 — Wave Planner Bug Fixes
-- ✅ **Cohort-scoped iteration** — `auto_build_waves` now calls `build_wave_plan()` per cohort in `cohort_order` sequence; each cohort builds its own independent wave set
-- ✅ **`cohort_order` column** — SQL query fixed from `"order"` to `cohort_order`
-- ✅ **Wave naming** — Waves use cohort name as prefix; pilot wave `🧪 <Cohort>`, regular waves numbered from 1 per cohort
-- ✅ **`risk_category` column** — Fixed all SQL queries referencing the wrong column name `risk_classification`
-- ✅ **`vm_name` NOT NULL** — Wave VM INSERT now resolves vm_name from `vm_name_map` lookup before inserting
-- ✅ **`RealDictCursor` scalar fetch** — Plain cursor used for scalar queries; no more `fetchone()[0]` TypeError on dicts
-- ✅ **Pydantic v2 compatibility** — All `user.get()` calls replaced with `getattr(user, "username", "?")`
-- ✅ **Double emoji badge** — Removed hardcoded `📦` prefix; cohort badge now uses `wave.cohort_name` directly
-
-### v1.34.0 — Phase 3: Wave Planning (Complete)
-- ✅ **Cohort-scoped wave building** — VMs assigned to waves per cohort independently, respecting cohort ordering
-- ✅ **5 scheduling strategies** — bandwidth-paced, risk-tiered, even-spread, dependency-ordered, pilot-first
-- ✅ **Wave lifecycle** — Full draft → confirmed → in-progress → complete state machine with timestamps
-- ✅ **Pre-flight checklists** — Per-wave operator checklist items with completion tracking and sign-off
-- ✅ **Wave Planner UI** — Per-cohort wave cards, VM assignment tables, preflight status panel, cohort summary badges
-- ✅ **Daily capacity controls** — Configurable VMs/day per wave with pilot-wave support and bandwidth-aware scheduling
-- ✅ **11 new API routes** — Full wave CRUD, preflight management, auto-build, strategy configuration
-
-### v1.33.0 — Cohort Scheduling & What-If Modeling
-- ✅ **Cohort-aligned scheduling** — Per-cohort start date, working hours, and capacity independent from project defaults
-- ✅ **Two-model What-If** — Side-by-side comparison of bandwidth/schedule scenarios per cohort
-- ✅ **Execution plan view** — Calendar-style wave schedule with per-day VM count and cumulative progress
-- ✅ **Cohort dependency gates** — Block cohort start until predecessor cohort reaches defined completion threshold
-
-### v1.32.0–v1.32.1 — Smart Cohort Planning
-- ✅ **Auto-assign VMs to cohorts** — Intelligent assignment based on tenant priority, risk score, and VM size
-- ✅ **Ease scores** — Per-VM migration ease scoring combining risk, disk size, OS family, and dependency count
-- ✅ **Ramp profile mode** — Conservative/standard/aggressive ramp controls for wave capacity curve
-- ✅ **Cohort health dashboard** — Per-cohort readiness summary with blocking issue count and completion estimate
-
-### v1.31.0–v1.31.1 — Migration Cohorts & Network Mapping (Phase 2.10)
-- ✅ **Migration Cohorts** — Split large projects into ordered workstreams with independent schedules, owners, and dependency gates
-- ✅ **Source → PCD Network Mapping** — Auto-seeded from VM inventory with best-guess target name and amber ⚠️ confirmed-flag review pattern
-- ✅ **VM Dependency Annotation** — Mark app-stack ordering constraints with circular-dependency validation
-- ✅ **Per-VM Migration Status & Mode Override** — Operator-controlled status tracking and warm/cold force-override
-- ✅ **Tenant Migration Priority** — Integer ordering for cohort auto-assign
-- ✅ **Per-Tenant Readiness Checks** — 5 auto-derived checks: target mapped, network mapped, quota sufficient, no critical gaps, VMs classified
-- ✅ **Target name pre-seeding fix** (v1.31.1) — Both `migration_network_mappings` and `migration_tenants` auto-seed target fields with `confirmed` flag; readiness checks return `pending` until reviewed
-
-### v1.28.3 — Migration Plan Excel/PDF Export + Parser Fixes
-- ✅ **Excel Export** — `Export Excel` button downloads a 4-sheet openpyxl workbook: Project Summary, Per-Tenant Assessment (colour-coded), Daily Schedule, All VMs with full timing columns
-- ✅ **PDF Export** — `Export PDF` button downloads a landscape A4 PDF (reportlab) with all three sections and a page footer
-- ✅ **vCPU usage % fixed** — RVTools vCPU sheet uses `overall` (MHz) + `cpus`; parser now computes `cpu_usage_percent = min(demand / (cpus × 2400 MHz) × 100, 100)`
-- ✅ **vMemory usage % fixed** — RVTools vMemory sheet uses `consumed` + `size mib`; parser now computes correct memory %; all 448 VMs have valid values
-- ✅ **Phase1 times fixed** — `estimate_vm_time()` was multiplying data by 3–8% instead of applying 45–65% bandwidth utilization; fixed to show realistic 3 min–1.5 h range
-- ✅ **Clear RVTools fix** — `migration_networks` was missing from the reset loop; now included
-
-### v1.28.2 — Migration Plan UI, VM Expand, Per-Tenant Schedule
-- ✅ **Migration Plan tab** — Per-tenant assessment, phase-1/cutover/cold times, daily wave schedule, JSON + CSV export
-- ✅ **Expandable VM rows** — Click any VM to see per-disk and per-NIC detail inline
-- ✅ **Additional VM filters** — OS Family, Power State, Cluster dropdowns
-- ✅ **Per-VM time engine** — `estimate_vm_time()` computes warm phase-1, incremental, cutover, and cold times from disk/in-use data and bottleneck bandwidth
-
-### v1.30.1 — Performance-Based Node Sizing
-- ✅ **Actual VM utilisation for sizing** — Node sizing now uses `cpu_usage_percent`/`memory_usage_percent` per VM (from RVtools data) instead of configured vCPU ÷ overcommit. For the PoC cluster: 125 vCPU actually running vs 1,371 allocated — result is +2 new nodes needed, not +9
-- ✅ **Three-tier basis** — Prefers actual performance data (when ≥50% coverage), falls back to allocation ÷ overcommit, then tenant quota
-- ✅ **Sizing basis badge** — Capacity tab shows green/amber pill identifying whether sizing was based on real utilisation or allocation estimate, with coverage %, actual vCPU/RAM, and allocated vCPU/RAM
-
-### v1.30.0 — Pre-Phase 3 Polish (Phase 2.8)
-- ✅ **Auto-Detect PCD node profile** — "🔍 Auto-Detect from PCD" button pre-fills node spec from dominant hypervisor type in inventory; no manual spec entry needed
-- ✅ **Gap Analysis Action Report** — Excel (3 sheets: Executive Summary, Action Items, All Gaps) + PDF export from PCD Readiness tab
-- ✅ **Plan export auth fix** — Excel/PDF plan export was failing without auth token; replaced `<a>` navigation with `downloadAuthBlob()` helper
-- ✅ **Risk breakdown per VM** — Expanded VM detail row shows each risk rule that fired with its score contribution
-
-### v1.29.7 — Node Sizing CPU+RAM Only (v1.29.1–v1.29.7)
-- ✅ **Node sizing driven by CPU+RAM only** — Cinder storage is independent infrastructure; compute node count now driven by vCPU and RAM exclusively
-- ✅ **Live PCD cluster panel** — Capacity tab shows real node count, vCPU/RAM totals and in-use from `hypervisors` table; "📥 Sync to Inventory" pre-fills all fields
-- ✅ **PCD Readiness capacity section** — Shows node recommendation, existing vs additional needed, post-migration util, binding dimension
-- ✅ **Numerous bug fixes** — Tenant checkbox, Capacity tab blank page, cold downtime, export excluded tenants, route ordering 422, overcommit object crash, and more
-
-### v1.28.1 — Live Bandwidth Preview & Schedule-Aware Agent Sizing
-- ✅ **Live bandwidth cards** — Update instantly on field change with `(live preview — save to persist)` indicator
-- ✅ **Migration Schedule section** — Duration, working hours/day, working days/week, target VMs/day
-- ✅ **Schedule-aware agent sizing** — Recommends agent count based on project timeline + throughput need
-- ✅ **Cluster-based tenant detection** — New `cluster` method as fallback for non-vCD environments
-- ✅ **Inline tenant editing** — Edit tenant name and OrgVDC inline; cascade to all VMs
-
-### v1.28.0 — Migration Intelligence & Execution Cockpit (Phase 1)
-- ✅ **Migration Planner tab** — 15 new DB tables, full lifecycle (draft → archived), RVTools XLSX import with 6-sheet parsing
-- ✅ **Risk scoring engine** — Configurable 0–100 score (GREEN/YELLOW/RED) with weighted OS, disk, snapshot, NIC factors
-- ✅ **Bandwidth model** — 4-constraint model (source NIC → link → agent → PCD storage) with latency penalties and bottleneck detection
-- ✅ **3 topology types** — Local, Cross-site dedicated, Cross-site internet with custom NIC/speed sliders
-- ✅ **vJailbreak agent sizing** — Recommendations for count, vCPU, RAM, and disk based on workload profile
-- ✅ **Full RBAC** — `migration` resource: viewer=read, technical=read+write, admin=all
-
-### v1.27.0 — Environment Data Reset (Admin)
-- ✅ **Data Reset tab** — Superadmin-only panel to purge operational data without dropping tables; 7 selectable categories with row-count preview and typed `RESET` confirmation
-
-### v1.26.0 — Snapshot Quota-Aware Batching & Forecast Runbook
-- ✅ **Quota Pre-Check** — Cinder quota checked before snapshotting; volumes that would exceed GB/snapshot limits are flagged `quota_blocked` instead of failing with 413 errors
-- ✅ **Tenant-Grouped Batching** — Volumes batched by tenant with configurable `--batch-size` (default 20) and `--batch-delay` (default 5s) to avoid API rate limiting at scale (500+ tenants)
-- ✅ **Live Progress Tracking** — Real-time progress bar in Snapshot Monitor with batch indicators, estimated completion, and active polling (`GET /snapshot/runs/active/progress`)
-- ✅ **Quota Blocked in Compliance** — Compliance report distinguishes `quota_blocked` volumes from `missing`, with distinct orange styling and summary count
-- ✅ **14 Runbooks** — Added Snapshot Quota Forecast: proactive daily scan of all projects forecasting Cinder quota shortfalls before the next snapshot run
-- ✅ **Run Completion Notifications** — Snapshot runs send notifications with full summary (created/deleted/skipped/quota-blocked/errors, batches, duration)
-
-### v1.25.1 — ILS Currency, User Last Login Runbook, Export Buttons
-- ✅ **13 Runbooks** — Added User Last Login Report: lists every user with last login time, session activity, IP, login count, inactive flags
-- ✅ **Result Export** — CSV, JSON, and Print-to-PDF export buttons on every runbook execution result
-- ✅ **ILS Currency** — Cost runbooks now pull real pricing from `metering_pricing` table (ILS) instead of hardcoded USD defaults
-- ✅ **Approval Fixes** — Security Compliance Audit and Upgrade Opportunity Detector now require approval for operator/admin triggers
-
-### v1.25.0 — 7 New Operational Runbooks
-- ✅ **12 Runbooks** — VM Health Quick Fix, Snapshot Before Escalation, Upgrade Opportunity Detector, Monthly Executive Snapshot, Cost Leakage Report, Password Reset + Console, Security & Compliance Audit
-- ✅ **Approval Policies** — Role-based approval for all 12 runbooks with security-sensitive engines requiring admin sign-off
-- ✅ **Friendly Result Renderers** — Dedicated UI panels for each runbook with tables, KPI grids, and severity badges
-
-### v1.17.1 — Reports & Resource Management Enhancements
-- ✅ **16 Report Types** — Added VM Report with full VM details (flavor, host, IPs, volumes, power state)
-- ✅ **Enhanced Domain Overview** — Full quota aggregation with utilization percentages
-- ✅ **Flavor Name Resolution** — Flavor Usage report shows actual names, vCPUs, RAM, disk
-- ✅ **Resource Notifications** — All resource CRUD operations fire notification events
-- ✅ **Audit Log Tab** — Resource Management now includes filterable activity log (24h–90d)
-
-### v1.17.0 — Reports & Resource Management
-- ✅ **15 Report Types** — Tenant Quota, Domain Overview, Snapshot Compliance, Flavor Usage, Metering Summary, and more
-- ✅ **Resource Provisioning Tool** — Full CRUD for Users, Flavors, Networks, Routers, Floating IPs, Volumes, Security Groups
-- ✅ **Quota Management** — Live-edit compute/network/storage quotas per tenant
-- ✅ **Safety Checks** — Last-user protection, in-use flavor protection, attached-volume guard
-
-### v1.16.0 — Customer Provisioning & Domain Management
-- ✅ **5-Step Provisioning Wizard** — Full OpenStack API integration
-- ✅ **Domain Management Tab** — Enable/disable/delete with resource inspection panel
-- ✅ **8 Resource Deletion Endpoints** — Servers, volumes, networks, routers, floating IPs, security groups, users, subnets
-- ✅ **Full Dark Mode** — 25+ CSS variables, ~110 hardcoded colors replaced
-
-> See [CHANGELOG.md](CHANGELOG.md) for full version history.
+- ✅ **Python dependency CVEs** — `fastapi`, `requests`, `python-ldap`, `python-jose`, `python-multipart` upgraded (13 CVEs resolved)
+- ✅ **npm CVE overrides** — `flatted`, `minimatch`, `rollup` forced to patched versions
+- ✅ **CSV export quoting** — `QUOTE_ALL` prevents column corruption on fields with commas/newlines
+
+### v1.68.0–v1.70.0 — Security Hardening, Bug Fixes & Performance
+- ✅ **XSS fix** — OpsSearch `ts_headline` sanitized via DOMPurify; SMTP TLS certificate enforcement
+- ✅ **LDAP fixes** — `create_user()` stores `{SSHA}` hashed passwords; backup uses `-y <tempfile>` (no plaintext in `ps aux`)
+- ✅ **Report pagination** — `tenant-quota-usage` and `domain-overview` paged before per-project API calls; upload row cap (2,000) prevents memory exhaustion
+- ✅ **Dependency vulnerability scanning in CI** — `pip-audit` + `npm audit` gating integration tests
+
+> For the full history of all 121 releases, see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -1402,4 +954,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.72.5 | **Last Updated**: March 19, 2026
+**Project Status**: Production Ready | **Version**: 1.73.0 | **Last Updated**: March 19, 2026
