@@ -161,27 +161,53 @@ class ClusterRegistry:
         """
         Resolve the stored password_enc value to a plaintext password.
 
-        Convention established by Phase 1 _seed_default_cluster():
-          - Starts with "env:"  → read from Docker secret / env var (default cluster)
-          - Otherwise           → AES-256-GCM encrypted blob (Phase 4 admin-added clusters)
-
-        Phase 3 only handles "env:" since no admin CRUD exists yet.
-        Phase 4 cluster management routes will introduce the encrypted blob path.
+        Storage prefix conventions:
+          "env:<name>"    → read from Docker secret file / env var (default cluster)
+          "fernet:<blob>" → Fernet-encrypted using JWT_SECRET key (admin-added clusters)
+          anything else   → treated as plaintext with a warning (legacy/unknown)
         """
         enc = (row.get("password_enc") or "").strip()
+
         if enc.startswith("env:"):
             return read_secret("pf9_password", env_var="PF9_PASSWORD", default="")
 
-        # Encrypted blob path — placeholder until Phase 4 adds the AES helper.
-        # Log a warning and fall back to env so the default cluster still works
-        # if it is somehow stored without the "env:" prefix.
+        if enc.startswith("fernet:"):
+            return self._fernet_decrypt(enc[7:], row.get("control_plane_id", "unknown"))
+
+        # Unknown/legacy format — log warning and fall back to env-var password
         logger.warning(
-            "password_enc for control_plane '%s' is not in env: format — "
-            "encrypted credentials are not yet supported (Phase 4). "
-            "Falling back to env-var password.",
+            "password_enc for control_plane '%s' has unrecognized prefix — "
+            "treating as plaintext. Expected 'env:' or 'fernet:' prefix.",
             row.get("control_plane_id"),
         )
-        return read_secret("pf9_password", env_var="PF9_PASSWORD", default="")
+        return enc if enc else read_secret("pf9_password", env_var="PF9_PASSWORD", default="")
+
+    @staticmethod
+    def _fernet_decrypt(ciphertext: str, cp_id: str) -> str:
+        """Decrypt a Fernet-encrypted password (key = SHA-256 of JWT_SECRET)."""
+        try:
+            import base64 as _b64
+            import hashlib as _hl
+            from cryptography.fernet import Fernet, InvalidToken
+            secret = os.getenv("JWT_SECRET", "") or os.getenv("JWT_SECRET_KEY", "")
+            if not secret:
+                raise RuntimeError("JWT_SECRET / JWT_SECRET_KEY is not set")
+            key = _b64.urlsafe_b64encode(_hl.sha256(secret.encode()).digest())
+            return Fernet(key).decrypt(ciphertext.encode()).decode()
+        except ImportError:
+            logger.error(
+                "Cannot decrypt password for control_plane '%s': "
+                "cryptography library not installed (pip install cryptography)",
+                cp_id,
+            )
+            return ""
+        except Exception as exc:
+            logger.error(
+                "Failed to decrypt password for control_plane '%s': %s — "
+                "JWT_SECRET may have changed since the credential was stored.",
+                cp_id, exc,
+            )
+            return ""
 
     def _bootstrap_from_env(self) -> None:
         """

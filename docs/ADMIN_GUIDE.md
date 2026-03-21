@@ -505,10 +505,45 @@ No operator action is required. The existing env vars (`PF9_AUTH_URL`, `PF9_USER
 
 ### Adding a second region or control plane
 
-Additional clusters and regions are managed via the API — no env-var changes or app restarts needed:
+Additional control planes and regions are managed via the REST API (v1.74.0+). A **superadmin** token is required for all write operations.
 
 ```bash
-# Check what's in the registry
+# 1. List current control planes
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://<host>/admin/control-planes | python3 -m json.tool
+
+# 2. Register a new control plane
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "eu-west",
+    "name": "EU West PF9",
+    "auth_url": "https://pf9.eu.example.com/keystone/v3",
+    "username": "svc-admin@eu",
+    "password": "<password>",
+    "user_domain": "Default",
+    "project_name": "service",
+    "project_domain": "Default"
+  }' https://<host>/admin/control-planes
+
+# 3. Test Keystone connectivity and discover available regions
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  https://<host>/admin/control-planes/eu-west/test | python3 -m json.tool
+
+# 4. Register one of the discovered regions
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "region_name": "eu-west-1",
+    "display_name": "EU West (Ireland)",
+    "sync_interval_minutes": 30
+  }' https://<host>/admin/control-planes/eu-west/regions
+```
+
+No app restart or env-var changes are required. The in-memory registry is reloaded automatically after each write.
+
+```bash
+# Verify via DB (read-only check)
 docker exec pf9_db psql -U pf9 -d pf9_mgmt \
   -c "SELECT id, name, auth_url, is_enabled FROM pf9_control_planes;"
 docker exec pf9_db psql -U pf9 -d pf9_mgmt \
@@ -542,6 +577,16 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.74.0 — Control Plane & Region Management API (✅ Complete)
+
+- **REST API for multi-cluster admin** — 14 superadmin-only endpoints under `/admin/control-planes` for full CRUD on control planes and regions; no DB restarts or psql commands needed
+- **Fernet credential encryption** — passwords stored as `fernet:<ciphertext>` using AES-128-CBC + HMAC-SHA256 derived from `JWT_SECRET`; `_resolve_password()` in `ClusterRegistry` decrypts at runtime; plaintext never written to DB
+- **Live connectivity test** (`POST /admin/control-planes/{id}/test`) — authenticates against Keystone and returns discovered regions, service catalog endpoints, and which regions are already registered
+- **SSRF protection enforced at write layer** — `auth_url` validated on every create/update; loopback (127.0.0.0/8, ::1) and cloud metadata (169.254.169.254) always blocked; HTTP requires `ALLOW_HTTP_AUTH_URL=true`; RFC-1918 allowed when `allow_private_network=true`
+- **Registry hot-reload** — `get_registry().reload()` called after every write; running workers pick up new regions without restart
+- **Bandit SAST gate** — CI pipeline extended; HIGH severity findings block merge
+- **`metering_routes` registry-aware** — `sync_flavors_to_pricing` now uses `get_registry().get_default_region()` instead of the legacy `get_client()` singleton
 
 ### v1.73.0 — Multi-Region & Multi-Cluster Support (✅ Complete)
 

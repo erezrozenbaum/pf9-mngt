@@ -46,6 +46,11 @@ class _HTTPException(Exception):
 fastapi_stub.HTTPException = _HTTPException
 fastapi_stub.Query = lambda *a, **kw: None
 fastapi_stub.Depends = lambda fn: None
+fastapi_stub.APIRouter = MagicMock(return_value=MagicMock())
+fastapi_stub.Request = MagicMock
+fastapi_stub.status = MagicMock()
+fastapi_stub.status.HTTP_403_FORBIDDEN = 403
+fastapi_stub.status.HTTP_401_UNAUTHORIZED = 401
 sys.modules.setdefault("fastapi", fastapi_stub)
 
 # Stub psycopg2.extras (RealDictCursor)
@@ -170,12 +175,13 @@ class TestClusterRegistryBootstrap(unittest.TestCase):
         pw = reg._resolve_password(row)
         self.assertEqual(pw, "test-password")  # from stub
 
-    def test_resolve_password_non_env_falls_back(self):
+    def test_resolve_password_unknown_prefix_returns_plaintext(self):
         reg = ClusterRegistry()
-        row = {"password_enc": "ENCRYPTED_BLOB", "control_plane_id": "default"}
+        # An unrecognized prefix is treated as raw plaintext (with a logged warning).
+        # This covers legacy/manually-inserted rows that lack a recognized prefix.
+        row = {"password_enc": "LEGACY_PLAINTEXT_PW", "control_plane_id": "default"}
         pw = reg._resolve_password(row)
-        # Phase 4 path hits warning + falls back to env-var stub value
-        self.assertEqual(pw, "test-password")
+        self.assertEqual(pw, "LEGACY_PLAINTEXT_PW")
 
     def test_shutdown_closes_sessions(self):
         reg = _make_registry_with_clients("r1")

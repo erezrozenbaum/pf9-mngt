@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.74.0] - 2026-03-21
+
+### Added — Control Plane & Region Management API
+
+Admin-only CRUD API for registering and managing multiple Platform9 control planes and their OpenStack regions at runtime — no `.env` edits or container restarts required.
+
+#### New module: `api/cluster_routes.py`
+- **`GET /admin/control-planes`** — list all registered control planes (password omitted in every response)
+- **`POST /admin/control-planes`** — register a new PF9 control plane; password Fernet-encrypted at rest
+- **`GET /admin/control-planes/{id}`** — get config (password always omitted)
+- **`PUT /admin/control-planes/{id}`** — update config (password only re-encrypted if explicitly changed)
+- **`DELETE /admin/control-planes/{id}`** — remove (blocked if regions still exist)
+- **`POST /admin/control-planes/{id}/test`** — authenticate against Keystone, return all discovered regions from the catalog with their Nova/Neutron/Cinder/Glance endpoints; marks which are already registered
+- **`GET /admin/control-planes/{cp_id}/regions`** — list regions for a control plane
+- **`POST /admin/control-planes/{cp_id}/regions`** — register a region
+- **`PUT /admin/control-planes/{cp_id}/regions/{id}`** — update region settings (display_name, sync_interval, priority, latency_threshold, capabilities)
+- **`DELETE /admin/control-planes/{cp_id}/regions/{id}`** — remove (blocked if resource data exists or if it is the default region)
+- **`POST /admin/control-planes/{cp_id}/regions/{id}/set-default`** — promote a region to default
+- **`POST /admin/control-planes/{cp_id}/regions/{id}/sync`** — queue an immediate inventory sync
+- **`GET /admin/control-planes/{cp_id}/regions/{id}/sync-status`** — last sync stats + 10-entry history
+- **`PUT /admin/control-planes/{cp_id}/regions/{id}/enable`** — enable or disable a region
+
+#### Security
+- All endpoints require `superadmin` role.
+- Passwords stored with `fernet:` prefix prefix (Fernet/AES-128-CBC + HMAC-SHA256, key = SHA-256 of `JWT_SECRET`).
+- `GET` responses never include `password_enc`.
+- `auth_url` validated against SSRF: loopback IPs and cloud metadata endpoint (`169.254.169.254`) are blocked; HTTP allowed only if `ALLOW_HTTP_AUTH_URL=true` (on-prem deployments).
+- All CRUD operations written to `auth_audit_log`.
+
+#### Modified: `api/cluster_registry.py`
+- `_resolve_password()` now fully handles `fernet:<blob>` prefix (admin-added clusters) in addition to the existing `env:` prefix (default cluster).
+- New `_fernet_decrypt()` static method (Fernet, same key derivation as `cluster_routes.py`).
+
+#### Modified: `api/main.py`
+- `cluster_routes` imported and router registered.
+
+#### Tests: `tests/test_cluster_routes.py`
+- 18 unit tests covering SSRF validation, Fernet round-trip, response sanitisation (password never returned), role guard, catalog parser, and router registration sanity check. No live DB or PF9 required.
+
+---
+
 ## [1.73.3] - 2026-03-21
 
 ### Security — npm dependency patches

@@ -1259,10 +1259,10 @@ async def sync_flavors_to_pricing(
     3. Adds new flavor pricing entries (cost defaults to 0).
     4. Removes stale pricing entries for flavors that no longer exist.
     """
-    from pf9_control import get_client
+    from cluster_registry import get_registry
 
     try:
-        client = get_client()
+        client = get_registry().get_default_region()
         live_flavors = client.list_flavors()
     except Exception as e:
         logger.error(f"Failed to fetch live flavors from OpenStack: {e}")

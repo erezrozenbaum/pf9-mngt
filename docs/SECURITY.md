@@ -712,7 +712,7 @@ Masks:
 | `FALSE` (default) | `auth_url` and all URLs in cross-region task payloads **will be** validated against RFC-1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) and loopback (127.0.0.0/8, ::1) blocklists before any HTTP connection |
 | `TRUE` | Private-network connections permitted for this control plane — required for on-premises PF9 with a private IP |
 
-> **Implementation note (v1.73.0 — Phase 1):** The schema column and default are in place. Runtime URL validation at the API write layer is enforced when the Cluster Registry API ships (Phase 3). In Phase 1 there is no API to register control planes — `auth_url` is sourced exclusively from the operator-supplied `PF9_AUTH_URL` environment variable, so no user-controlled SSRF vector exists.
+> **Implementation note (v1.74.0):** Runtime URL validation is fully enforced at the API write layer (`POST /admin/control-planes`, `PUT /admin/control-planes/{id}`). Loopback addresses (127.0.0.0/8, ::1), link-local (169.254.169.254), and missing-scheme URLs are always rejected with HTTP 422. HTTP is blocked unless the operator sets `ALLOW_HTTP_AUTH_URL=true`. RFC-1918 private IPs are permitted when `allow_private_network=true` for on-premises deployments.
 
 Only a **superadmin** can set `allow_private_network = TRUE`. The flag is per-record, never global.
 
@@ -730,11 +730,12 @@ Passwords for control planes in `pf9_control_planes.password_enc` use the format
 
 Verify this holds on any deployment:
 ```sql
-SELECT id, left(password_enc, 4) AS prefix FROM pf9_control_planes;
--- All rows should show prefix = 'env:'
+SELECT id, left(password_enc, 7) AS prefix FROM pf9_control_planes;
+-- Default seeded row: prefix = 'env:...'
+-- Admin-added rows:   prefix = 'fernet:'
 ```
 
-Full AES-256-GCM encryption of stored credentials (for multi-cluster records that use different passwords) is planned for a future release. The `env:` marker system ensures all current deployments are safe in the interim.
+As of v1.74.0, admin-added control planes use **Fernet encryption** (AES-128-CBC + HMAC-SHA256, key derived from `JWT_SECRET`). The stored `password_enc` value begins with `fernet:` followed by the base64-encoded ciphertext. The default seeded row continues to use `env:` (reads from the `PF9_PASSWORD` Docker secret). Plaintext passwords are never persisted to the database.
 
 ### Cache Isolation
 

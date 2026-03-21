@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.73.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.74.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -734,7 +734,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.73.3](CHANGELOG.md) — March 2026
+**Current version:** [v1.74.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -879,6 +879,16 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.74.0 — Control Plane & Region Management API
+- ✅ **REST API for multi-cluster admin** — 14 new superadmin-only endpoints under `/admin/control-planes` for full CRUD on control planes and regions; no DB restarts or psql commands needed
+- ✅ **Fernet credential encryption** — passwords for additional control planes are encrypted with Fernet (AES-128-CBC + HMAC-SHA256) derived from `JWT_SECRET`; prefix `fernet:<ciphertext>` stored in `password_enc`; plaintext never written to DB
+- ✅ **Live connectivity test** — `POST /admin/control-planes/{id}/test` authenticates against Keystone and returns discovered regions and service catalog endpoints
+- ✅ **SSRF protection enforced** — `auth_url` validated on write: loopback and 169.254.169.254 always blocked; HTTP blocked unless `ALLOW_HTTP_AUTH_URL=true`; RFC-1918 private IPs allowed for on-premises deployments when `allow_private_network=true`
+- ✅ **Superadmin-only guard** — all control-plane and region management operations require `superadmin` role; full audit log entries written on every create/update/delete
+- ✅ **Registry hot-reload** — in-memory `ClusterRegistry` is reloaded after every write; running workers pick up new regions without restart
+- ✅ **Bandit SAST job** — CI pipeline extended with a high-severity security gate using Bandit; HIGH findings block merge, MEDIUM findings are reported but non-blocking
+- ✅ **25 new unit tests** — SSRF validation, Fernet roundtrip, `superadmin` role guard, password never returned in responses, router registration
+
 ### v1.73.3 — Security Patch (npm)
 - ✅ **GHSA-rf6f-7fwh-wjgh resolved** — `flatted` override bumped to `>=3.4.2`; patches Prototype Pollution (high severity) in transitive UI dependency
 - ✅ **GHSA-2g4f-4pwh-qvx6 resolved** — `ajv` override added at `>=6.14.0`; patches ReDoS via `$data` option (moderate severity)
@@ -970,4 +980,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.73.3 | **Last Updated**: March 21, 2026
+**Project Status**: Production Ready | **Version**: 1.74.0 | **Last Updated**: March 21, 2026

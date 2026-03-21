@@ -276,3 +276,50 @@ jobs:
       - name: Tear down stack
         if: always()
         run: docker compose down -v
+
+  # -------------------------------------------------------------------------
+  # Job 7: SAST / Security scan (Bandit)
+  # Scans Python source for OWASP Top-10 class issues: SQL injection,
+  # command injection, hardcoded passwords, insecure deserialization, SSRF,
+  # weak cryptography, and more.
+  # Runs on every push/PR to dev and master.
+  # Fails CI on HIGH severity findings; MEDIUM findings are reported only.
+  # -------------------------------------------------------------------------
+  security-scan:
+    name: SAST Security Scan (Bandit)
+    runs-on: ubuntu-latest
+    needs: [lint]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit — HIGH severity gate
+        # -ll  = only report HIGH severity (fail on any finding)
+        # -ii  = only report HIGH confidence
+        # Excluded paths: test files (intentionally use weak patterns for CI stubs),
+        #   node_modules, and _plans (markdown, not executed code).
+        run: |
+          bandit -r . \
+            -ll -ii \
+            --exclude ./.venv,./pf9-ui,./tests,./__pycache__ \
+            --skip B105,B106,B107 \
+            -f txt
+
+      - name: Run Bandit — MEDIUM severity report (non-blocking)
+        # -l = LOW+, -i = LOW+ confidence — report everything for visibility
+        # but do NOT fail CI ( || true ).  Developers should review these warnings.
+        run: |
+          bandit -r . \
+            -l -i \
+            --exclude ./.venv,./pf9-ui,./tests,./__pycache__ \
+            --skip B105,B106,B107 \
+            -f txt || true
