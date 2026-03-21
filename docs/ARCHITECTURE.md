@@ -180,8 +180,8 @@ This document covers:
 - **Two-level hierarchy** — one control plane (one Keystone) manages shared identity across one or more OpenStack regions; each region has its own Nova/Neutron/Cinder/Glance endpoints
 - **Region-aware endpoint resolution** — `Pf9Client._find_endpoint()` filters the Keystone service catalog by `region_name` before falling back to the first public match; eliminates silent cross-region misrouting on multi-region control planes
 - **Region-scoped cache keys** — Redis keys include `region_id` segment (`pf9:{resource}:{region_id}:{hash}`) preventing cross-region data collisions when multiple clients share one Redis instance
-- **Single `aiohttp.ClientSession` per `Pf9Client`** — each client instance owns one session (with `TCPConnector(limit=10)`) created at init time and reused for all API calls; prevents TCP/TLS overhead from per-call session creation and caps per-region file descriptor usage
-- **Per-region hard timeout** — `MultiClusterQuery._call_region()` wraps every outbound call in `asyncio.wait_for(timeout=REGION_REQUEST_TIMEOUT_SEC)`; a slow or hung region cannot hold a semaphore slot indefinitely and stall all other regions
+- **Single `requests.Session` per `Pf9Client`** — each client instance owns one session (created in `__init__` and reused for all API calls) preventing TCP/TLS overhead from per-call session creation; sessions are closed cleanly on shutdown via `ClusterRegistry.shutdown()`
+- **Per-region hard timeout** — each region call in `MultiClusterQuery.gather()` is wrapped in `asyncio.wait_for(timeout=REGION_REQUEST_TIMEOUT_SEC)`; a slow or hung region cannot hold a semaphore slot indefinitely and stall all other regions
 - **Backward compatible** — single-region deployments continue working unchanged; existing resources are automatically associated with the `default` region on startup
 
 ---
@@ -1780,5 +1780,5 @@ python host_metrics_collector.py > metrics.log 2>&1
 - Reflects how Platform9 actually works: one Keystone per control plane, one endpoint set per region in the service catalog
 - Separates identity API calls (per control plane) from compute/network/storage calls (per region) without code duplication
 - Existing single-region deployments map directly to `default` control plane + `default:region-one` region — zero migration burden
-- `Pf9Client.from_env()` preserves all existing behavior; constructor now injectable for future `ClusterRegistry` without modifying call sites
+- `Pf9Client.from_env()` preserves all existing behavior; constructor is injectable via the live `ClusterRegistry` registry which manages all registered control planes and regions without modifying call sites
 - Region-scoped Redis cache keys prevent data leakage between regions sharing one Redis instance without requiring a separate Redis per deployment

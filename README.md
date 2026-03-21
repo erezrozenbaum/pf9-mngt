@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.73.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.73.1-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -444,8 +444,8 @@ A 15-minute explainer video walking through the UI and key features:
 - **Region-Scoped Resources**: All infrastructure resources (VMs, volumes, networks, snapshots, provisioning jobs, etc.) carry a `region_id` FK — full per-region inventory, reporting, and audit trail
 - **Endpoint Bug Fix**: Service catalog endpoint selection now correctly filters by `region_id`, preventing silent wrong-region API calls in multi-region control planes
 - **Cache Namespacing**: Redis cache keys include `region_id` — prevents cross-region cache collisions when multiple `Pf9Client` instances share one Redis instance
-- **Session Reuse**: Each `Pf9Client` owns a single `aiohttp.ClientSession` (with `TCPConnector(limit=10)`) reused for all calls — no per-call TCP/TLS overhead; sessions are closed cleanly on shutdown via `ClusterRegistry.shutdown()`
-- **Per-Region Request Timeout**: `MultiClusterQuery._call_region()` enforces a hard `asyncio.wait_for` timeout (`REGION_REQUEST_TIMEOUT_SEC`, default 30 s) — a slow or unreachable region cannot block the semaphore slot and stall all other regions
+- **Session Reuse**: Each `Pf9Client` owns a single `requests.Session` reused for all API calls — no per-call TCP/TLS overhead; sessions are closed cleanly on shutdown via `ClusterRegistry.shutdown()`
+- **Per-Region Request Timeout**: Each region call in `MultiClusterQuery.gather()` enforces a hard `asyncio.wait_for` timeout (`REGION_REQUEST_TIMEOUT_SEC`, default 30 s) — a slow or unreachable region cannot block the semaphore slot and stall all other regions
 
 ### �🎫 Support Ticket System *(v1.58 → v1.60)*
 - **Full Ticket Lifecycle**: Ticket refs (TKT-YYYY-NNNNN); 5 types (incident, service_request, change_request, auto_incident, auto_change_request); full status/priority/type model; approval gate; SLA deadlines; OpenStack resource linkage
@@ -508,7 +508,7 @@ A single engineering console covering every operational surface:
 
 ### Prerequisites
 - **Docker & Docker Compose** (for complete platform)
-- **Python 3.11+** with packages: `requests`, `openpyxl`, `psycopg2-binary`, `aiohttp`, `aiofiles`
+- **Python 3.11+** with packages: `requests`, `openpyxl`, `psycopg2-binary`, `aiofiles`
 - **Valid Platform9 credentials** (service account recommended) — *not required in Demo Mode*
 - **Network access** to Platform9 cluster and compute nodes — *not required in Demo Mode*
 
@@ -734,7 +734,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.73.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.73.1](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -879,6 +879,13 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.73.1 — ClusterRegistry + Multi-Region Client Hub
+- ✅ **ClusterRegistry module** — new `api/cluster_registry.py`; synchronous, thread-safe two-level registry (control planes → regions) replaces the global `get_client()` singleton; all 100+ existing callers are unchanged
+- ✅ **Auto-initializes from DB** — loads `pf9_control_planes` / `pf9_regions` on startup; falls back to env vars if DB empty so existing single-region installs need no changes
+- ✅ **MultiClusterQuery** — parallel fan-out across all enabled regions with `asyncio + run_in_executor`; concurrency cap (`MAX_PARALLEL_REGIONS`, default 3); per-region hard timeout (`REGION_REQUEST_TIMEOUT_SEC`, default 30 s) prevents slow regions from blocking the others
+- ✅ **Clean shutdown** — `ClusterRegistry.shutdown()` closes every `requests.Session` on app exit; no dangling connections
+- ✅ **22 unit tests** — full coverage with no live DB or Platform9 instance required
+
 ### v1.73.0 — Multi-Region & Multi-Cluster Support
 - ✅ **Control plane registry** — `pf9_control_planes` table: register multiple Platform9 installations (distinct Keystone endpoints) with independent service-account credentials
 - ✅ **Region registry** — `pf9_regions` table: two-level model matching OpenStack's architecture; per-region health tracking (`healthy` / `degraded` / `unreachable` / `auth_failed`), sync metrics, and failover priority
@@ -956,4 +963,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.73.0 | **Last Updated**: March 19, 2026
+**Project Status**: Production Ready | **Version**: 1.73.1 | **Last Updated**: March 21, 2026

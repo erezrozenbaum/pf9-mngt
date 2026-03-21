@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.73.1] - 2026-03-21
+
+### Added — ClusterRegistry + MultiClusterQuery
+
+Central registry replacing the global `get_client()` singleton. All 100+ existing `get_client()` callers are unchanged — zero regression for single-region deployments.
+
+#### New module: `api/cluster_registry.py`
+- **`ClusterRegistry`** — synchronous, thread-safe two-level registry (control planes → regions). Loads from `pf9_control_planes` / `pf9_regions` tables on startup; falls back to `_bootstrap_from_env()` if DB empty so existing single-region deployments need no config changes.
+- **`get_region_client()`** / **`get_keystone_client()`** — FastAPI `Depends()` helpers for region-scoped and identity calls.
+- **`MultiClusterQuery`** — parallel fan-out using `asyncio + run_in_executor`; concurrency cap via `asyncio.Semaphore(3)`; per-region hard timeout via `asyncio.wait_for(timeout=30s)`; partial-failure safe (returns results for regions that succeed).
+- **`merge_flat()`** / **`merge_aggregate()`** — standard merge functions for multi-region API routes.
+- **`get_registry()`** — module-level singleton with double-check locking; `reload()` for admin cluster CRUD; `shutdown()` closes all HTTP sessions on app shutdown.
+
+#### Modified: `api/pf9_control.py`
+- `get_client()` and `get_client_fresh()` now delegate to `get_registry().get_default_region()` via lazy import (avoids circular dependency). Emergency fallback to the old `_client` global if registry throws.
+
+#### Modified: `api/main.py`
+- `startup_event`: calls `get_registry().reload()` after DB seed; logs `ClusterRegistry ready: N region(s)`.
+- `shutdown_event`: calls `get_registry().shutdown()` to close all client HTTP sessions cleanly.
+
+#### Tests: `tests/test_cluster_registry.py`
+- 22 unit tests covering accessors, bootstrap/password resolution, DB-load mocking, merge functions, `MultiClusterQuery` parallel/partial/timeout/filter, and `get_client()` shim backward compat. No live DB or PF9 instance required.
+
+---
+
 ## [1.73.0] - 2026-03-19
 
 ### Added — Multi-Region & Multi-Cluster Support

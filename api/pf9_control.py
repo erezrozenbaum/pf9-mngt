@@ -1727,22 +1727,52 @@ class Pf9Client:
         )
 
 
-# A single global client for the FastAPI app
+# ---------------------------------------------------------------------------
+# Backward-compatibility shim — preserved for all 100+ existing get_client()
+# call sites across the codebase.  Phase 3 routes these through ClusterRegistry
+# so they transparently benefit from per-region client management.
+# ---------------------------------------------------------------------------
+
+# Emergency fallback singleton used ONLY if ClusterRegistry itself fails to init.
 _client: Optional[Pf9Client] = None
 
 
 def get_client() -> Pf9Client:
-    global _client
-    if _client is None:
-        _client = Pf9Client.from_env()
-    return _client
+    """
+    Return the default region's Pf9Client.
+
+    Phase 3: delegates to ClusterRegistry.get_default_region() so all existing
+    callers automatically use the registry's managed client (session reuse,
+    per-region config, future multi-region support) without any code changes.
+
+    Falls back to the legacy env-var singleton if the registry is unavailable
+    (e.g. called before DB is up during a fresh container start) — identical
+    behavior to the pre-Phase-3 implementation.
+    """
+    try:
+        # Lazy import avoids circular dependency:
+        #   pf9_control → cluster_registry → pf9_control (Pf9Client)
+        from cluster_registry import get_registry  # noqa: PLC0415
+        return get_registry().get_default_region()
+    except Exception:
+        # Safety net: cluster_registry unavailable or registry not yet populated.
+        global _client
+        if _client is None:
+            _client = Pf9Client.from_env()
+        return _client
 
 
 def get_client_fresh() -> Pf9Client:
     """Force-discard any cached token and return a freshly authenticated client."""
-    global _client
-    if _client is not None:
-        _client.invalidate()
-    else:
-        _client = Pf9Client.from_env()
-    return _client
+    try:
+        from cluster_registry import get_registry  # noqa: PLC0415
+        client = get_registry().get_default_region()
+        client.invalidate()
+        return client
+    except Exception:
+        global _client
+        if _client is not None:
+            _client.invalidate()
+        else:
+            _client = Pf9Client.from_env()
+        return _client

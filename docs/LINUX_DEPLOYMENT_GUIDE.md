@@ -117,7 +117,7 @@ EOF
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install requests aiohttp openpyxl psycopg2-binary cryptography python-dotenv
+pip install requests openpyxl psycopg2-binary cryptography python-dotenv
 ```
 
 ### 5. Configure Environment Variables
@@ -464,7 +464,7 @@ mkdir -p logs secrets reports monitoring/cache backups
 # Set up Python
 python3 -m venv .venv
 source .venv/bin/activate
-pip install requests aiohttp openpyxl psycopg2-binary cryptography python-dotenv
+pip install requests openpyxl psycopg2-binary cryptography python-dotenv
 
 # Configure
 cp .env.example .env

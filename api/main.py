@@ -22,6 +22,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from pf9_control import get_client
+from cluster_registry import get_registry
 
 # Database connection pool
 from db_pool import get_connection, close_pool
@@ -309,6 +310,11 @@ async def shutdown_event():
             await _sla_task
         except asyncio.CancelledError:
             pass
+    # Close all Pf9Client sessions managed by the registry
+    try:
+        get_registry().shutdown()
+    except Exception as _exc:
+        logger.warning("ClusterRegistry shutdown error: %s", _exc)
     close_pool()
 
 # Include routers
@@ -767,6 +773,18 @@ async def startup_event():
         _seed_default_cluster()
     except Exception as _exc:
         logger.warning("Multi-cluster default seed skipped: %s", _exc)
+
+    # Phase 3: warm the ClusterRegistry now that the DB is seeded.
+    # reload() discards any premature lazy-init that may have run before seeding
+    # and rebuilds fresh from the now-populated pf9_regions / pf9_control_planes.
+    try:
+        get_registry().reload()
+        logger.info(
+            "ClusterRegistry ready: %d region(s)",
+            len(get_registry().get_all_enabled_regions()),
+        )
+    except Exception as _exc:
+        logger.warning("ClusterRegistry startup init failed: %s", _exc)
 
     logger.info("PF9 Management API started — Authentication: %s", "Enabled" if ENABLE_AUTHENTICATION else "Disabled")
 
