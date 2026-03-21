@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.73.2] - 2026-03-21
+
+### Security — Dependency patch
+
+- **`pyasn1>=0.6.3`** added to `api/requirements.txt` — pins the transitive dependency (pulled in by `paramiko`, `python-jose`, `python-ldap`) to the version that resolves CVE-2026-30922 (uncontrolled recursion / DoS on deeply-nested ASN.1 input; fixed upstream in pyasn1 0.6.3).
+
+---
+
 ## [1.73.1] - 2026-03-21
 
 ### Added — ClusterRegistry + MultiClusterQuery

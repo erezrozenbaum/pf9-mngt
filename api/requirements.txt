@@ -17,6 +17,8 @@ python-jose[cryptography]>=3.4.0,<4.0.0
 passlib[bcrypt]==1.7.4
 python-multipart>=0.0.22,<1.0.0
 python-dateutil==2.8.2
+# Transitive dep of python-jose / paramiko / python-ldap — pin to safe version (CVE-2026-30922)
+pyasn1>=0.6.3
 
 # TOTP / MFA dependencies
 pyotp==2.9.0

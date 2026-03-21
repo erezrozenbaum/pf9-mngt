@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.73.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.73.2-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -734,7 +734,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.73.1](CHANGELOG.md) — March 2026
+**Current version:** [v1.73.2](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -879,6 +879,9 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.73.2 — Security Patch
+- ✅ **CVE-2026-30922 resolved** — `pyasn1>=0.6.3` pinned in `api/requirements.txt`; patches uncontrolled recursion / DoS vulnerability in the ASN.1 decoder (transitive dependency of `paramiko`, `python-jose`, `python-ldap`)
+
 ### v1.73.1 — ClusterRegistry + Multi-Region Client Hub
 - ✅ **ClusterRegistry module** — new `api/cluster_registry.py`; synchronous, thread-safe two-level registry (control planes → regions) replaces the global `get_client()` singleton; all 100+ existing callers are unchanged
 - ✅ **Auto-initializes from DB** — loads `pf9_control_planes` / `pf9_regions` on startup; falls back to env vars if DB empty so existing single-region installs need no changes
@@ -963,4 +966,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.73.1 | **Last Updated**: March 21, 2026
+**Project Status**: Production Ready | **Version**: 1.73.2 | **Last Updated**: March 21, 2026
