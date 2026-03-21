@@ -80,7 +80,8 @@ def cached(ttl: int = DEFAULT_TTL, key_prefix: str = ""):
                 key_data = json.dumps(
                     {"a": list(args[1:]), "k": kwargs}, sort_keys=True, default=str
                 )
-                key_hash = hashlib.md5(key_data.encode()).hexdigest()
+                # MD5 used for cache key sharding only, not for any security purpose
+                key_hash = hashlib.md5(key_data.encode(), usedforsecurity=False).hexdigest()  # nosec B324
                 cache_key = f"{prefix}:{region_segment}:{key_hash}"
             except Exception:
                 return fn(*args, **kwargs)
@@ -111,7 +112,8 @@ def cached(ttl: int = DEFAULT_TTL, key_prefix: str = ""):
                 key_data = json.dumps(
                     {"a": list(args), "k": kwargs}, sort_keys=True, default=str
                 )
-                key_hash = hashlib.md5(key_data.encode()).hexdigest()
+                # MD5 used for cache key sharding only, not for any security purpose
+                key_hash = hashlib.md5(key_data.encode(), usedforsecurity=False).hexdigest()  # nosec B324
                 client.delete(f"{prefix}:{key_hash}")
             except Exception as exc:
                 logger.debug("Cache invalidation error for %s:%s: %s", prefix, key_hash, exc)

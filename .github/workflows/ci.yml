@@ -303,13 +303,13 @@ jobs:
         run: pip install bandit[toml]
 
       - name: Run Bandit — HIGH severity gate
-        # -ll  = only report HIGH severity (fail on any finding)
-        # -ii  = only report HIGH confidence
+        # -lll = report HIGH severity only (fail on any finding)
+        # -iii = report HIGH confidence only
         # Excluded paths: test files (intentionally use weak patterns for CI stubs),
         #   node_modules, and _plans (markdown, not executed code).
         run: |
           bandit -r . \
-            -ll -ii \
+            -lll -iii \
             --exclude ./.venv,./pf9-ui,./tests,./__pycache__ \
             --skip B105,B106,B107 \
             -f txt

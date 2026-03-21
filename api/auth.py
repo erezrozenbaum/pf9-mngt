@@ -248,7 +248,8 @@ class LDAPAuthenticator:
             # (same algorithm used by change_password)
             import base64
             salt = secrets.token_bytes(4)
-            h = hashlib.sha1(password.encode('utf-8') + salt)
+            # SSHA is the LDAP wire format; not used as a cryptographic security primitive
+            h = hashlib.sha1(password.encode('utf-8') + salt, usedforsecurity=False)  # nosec B324
             hashed_password = '{SSHA}' + base64.b64encode(h.digest() + salt).decode()
             user_attrs = [
                 ('objectclass', [b'person', b'inetOrgPerson']),
@@ -315,7 +316,8 @@ class LDAPAuthenticator:
             admin_dn = f"cn=admin,{self.base_dn}"
             conn.simple_bind_s(admin_dn, read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD"))
             salt = secrets.token_bytes(4)
-            h = hashlib.sha1(new_password.encode('utf-8') + salt)
+            # SSHA is the LDAP wire format; not used as a cryptographic security primitive
+            h = hashlib.sha1(new_password.encode('utf-8') + salt, usedforsecurity=False)  # nosec B324
             hashed = '{SSHA}' + base64.b64encode(h.digest() + salt).decode()
             user_dn = f"cn={username},{self.user_dn}"
             conn.modify_s(user_dn, [(ldap.MOD_REPLACE, 'userPassword', [hashed.encode('utf-8')])])

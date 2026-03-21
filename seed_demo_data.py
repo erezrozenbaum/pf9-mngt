@@ -51,7 +51,8 @@ def ago(**kw):
     return now() - timedelta(**kw)
 
 def change_hash(data: dict) -> str:
-    return hashlib.md5(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
+    # MD5 used for change-detection fingerprinting only, not for security
+    return hashlib.md5(json.dumps(data, sort_keys=True, default=str).encode(), usedforsecurity=False).hexdigest()  # nosec B324
 
 # ---------------------------------------------------------------------------
 # Demo data constants

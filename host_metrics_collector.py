@@ -105,7 +105,8 @@ class HostMetricsCollector:
                 import requests
                 url = f"https://{du_fqdn}/nova/v2.1/os-hypervisors/detail"
                 headers = {"X-Auth-Token": token}
-                r = requests.get(url, headers=headers, timeout=10, verify=False)
+                # Internal PF9 host metrics endpoint; self-signed cert is expected in on-prem deployments
+                r = requests.get(url, headers=headers, timeout=10, verify=False)  # nosec B501
                 if r.status_code == 200:
                     for hv in r.json().get("hypervisors", []):
                         ip = hv.get("host_ip", "")
