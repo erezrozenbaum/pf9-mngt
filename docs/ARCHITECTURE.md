@@ -180,6 +180,8 @@ This document covers:
 - **Two-level hierarchy** — one control plane (one Keystone) manages shared identity across one or more OpenStack regions; each region has its own Nova/Neutron/Cinder/Glance endpoints
 - **Region-aware endpoint resolution** — `Pf9Client._find_endpoint()` filters the Keystone service catalog by `region_name` before falling back to the first public match; eliminates silent cross-region misrouting on multi-region control planes
 - **Region-scoped cache keys** — Redis keys include `region_id` segment (`pf9:{resource}:{region_id}:{hash}`) preventing cross-region data collisions when multiple clients share one Redis instance
+- **Single `aiohttp.ClientSession` per `Pf9Client`** — each client instance owns one session (with `TCPConnector(limit=10)`) created at init time and reused for all API calls; prevents TCP/TLS overhead from per-call session creation and caps per-region file descriptor usage
+- **Per-region hard timeout** — `MultiClusterQuery._call_region()` wraps every outbound call in `asyncio.wait_for(timeout=REGION_REQUEST_TIMEOUT_SEC)`; a slow or hung region cannot hold a semaphore slot indefinitely and stall all other regions
 - **Backward compatible** — single-region deployments continue working unchanged; existing resources are automatically associated with the `default` region on startup
 
 ---

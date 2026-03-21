@@ -444,6 +444,8 @@ A 15-minute explainer video walking through the UI and key features:
 - **Region-Scoped Resources**: All infrastructure resources (VMs, volumes, networks, snapshots, provisioning jobs, etc.) carry a `region_id` FK — full per-region inventory, reporting, and audit trail
 - **Endpoint Bug Fix**: Service catalog endpoint selection now correctly filters by `region_id`, preventing silent wrong-region API calls in multi-region control planes
 - **Cache Namespacing**: Redis cache keys include `region_id` — prevents cross-region cache collisions when multiple `Pf9Client` instances share one Redis instance
+- **Session Reuse**: Each `Pf9Client` owns a single `aiohttp.ClientSession` (with `TCPConnector(limit=10)`) reused for all calls — no per-call TCP/TLS overhead; sessions are closed cleanly on shutdown via `ClusterRegistry.shutdown()`
+- **Per-Region Request Timeout**: `MultiClusterQuery._call_region()` enforces a hard `asyncio.wait_for` timeout (`REGION_REQUEST_TIMEOUT_SEC`, default 30 s) — a slow or unreachable region cannot block the semaphore slot and stall all other regions
 
 ### �🎫 Support Ticket System *(v1.58 → v1.60)*
 - **Full Ticket Lifecycle**: Ticket refs (TKT-YYYY-NNNNN); 5 types (incident, service_request, change_request, auto_incident, auto_change_request); full status/priority/type model; approval gate; SLA deadlines; OpenStack resource linkage
