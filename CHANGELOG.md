@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.73.3] - 2026-03-21
+
+### Security — npm dependency patches
+
+- **`flatted` override bumped to `>=3.4.2`** in `pf9-ui/package.json` — resolves GHSA-rf6f-7fwh-wjgh (Prototype Pollution via `parse()`, severity: high; fixed in 3.4.2)
+- **`ajv` override added at `>=6.14.0`** — resolves GHSA-2g4f-4pwh-qvx6 (ReDoS via `$data` option, severity: moderate)
+- `package-lock.json` regenerated to apply overrides
+
+---
+
 ## [1.73.2] - 2026-03-21
 
 ### Security — Dependency patch
