@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.74.6] - 2026-03-22
+
+### Fixed — Metering Worker Crash on First Post-Upgrade Cycle
+
+#### `api/main.py` — Phase 5B startup guard
+- The Phase 5B migration guard checked only `metering_resources.region_id` to decide whether to skip `migrate_metering_region.sql`. Because a CI pipeline had previously applied only the first two `ALTER TABLE` statements (`metering_resources`, `metering_efficiency`), the guard fired a false-positive "already present" on production restart and skipped the rest of the migration — leaving `metering_snapshots`, `metering_restores`, `metering_quotas`, and `backup_history` without `region_id`.
+- Fixed: guard now counts how many of the six target tables have `region_id`. The migration is only skipped when **all six** columns are present (`COUNT(*) = 6`). Any partial state triggers a re-run, and `ADD COLUMN IF NOT EXISTS` makes every statement genuinely idempotent.
+
+#### `db/init.sql` + `db/migrate_multicluster.sql` — `security_groups.region_id` omission
+- `security_groups` was added to the schema after the multi-region `region_id` sweep and was never included in either the `init.sql` `ALTER TABLE` block or `migrate_multicluster.sql`. The `collect_quota_usage` function in `metering_worker` issued a `LATERAL` subquery referencing `security_groups.region_id`, which crashed with `column "region_id" does not exist`.
+- Fixed: `ALTER TABLE security_groups ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id)` and `CREATE INDEX IF NOT EXISTS idx_security_groups_region` added to both SQL files. Applied directly to the running DB.
+
+---
+
 ## [1.74.5] - 2026-03-22
 
 ### Added — Multi-Region Worker Support
@@ -38,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### `db/migrate_metering_region.sql` *(new)*
 - Adds `region_id TEXT` column (nullable) to `metering_resources`, `metering_snapshots`, `metering_restores`, `metering_quotas`, `metering_efficiency`, and `backup_history`.
 - Creates region-scoped descending indexes on each metering table for query performance.
-- Applied automatically at API startup via `api/main.py` (idempotent — skipped if `metering_resources.region_id` already exists).
+- Applied automatically at API startup via `api/main.py` (idempotent — skipped only when all six target columns are confirmed present; see v1.74.6 for the guard hardening).
 
 ---
 

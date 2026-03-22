@@ -117,6 +117,7 @@ ALTER TABLE flavors             ADD COLUMN IF NOT EXISTS region_id TEXT REFERENC
 ALTER TABLE images              ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 ALTER TABLE snapshots           ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 ALTER TABLE inventory_runs      ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE security_groups     ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 
 -- Metering tables (defined in migrate_metering.sql - safe to apply here too)
 ALTER TABLE metering_resources  ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
@@ -225,6 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_hypervisors_region_id   ON hypervisors(region_id)
 CREATE INDEX IF NOT EXISTS idx_volumes_region_id       ON volumes(region_id);
 CREATE INDEX IF NOT EXISTS idx_networks_region_id      ON networks(region_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_region_id     ON snapshots(region_id);
+CREATE INDEX IF NOT EXISTS idx_security_groups_region  ON security_groups(region_id);
 CREATE INDEX IF NOT EXISTS idx_domains_cp_id           ON domains(control_plane_id);
 CREATE INDEX IF NOT EXISTS idx_projects_cp_id          ON projects(control_plane_id);
 CREATE INDEX IF NOT EXISTS idx_users_cp_id             ON users(control_plane_id);

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.74.2  
+**Version**: 1.74.6  
 **Last Updated**: March 22, 2026  
 **Audience**: System administrators and platform operators
 
@@ -577,6 +577,28 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.74.6 — Metering Worker Crash Fix (✅ Complete)
+
+- **Phase 5B guard hardened** — `api/main.py` now requires all six target tables to have `region_id` before skipping `migrate_metering_region.sql`; a partial prior run (e.g. from CI) no longer causes a false-positive "already present" skip that leaves 4 tables unpatched
+- **`security_groups.region_id` added** — `init.sql` and `migrate_multicluster.sql` now include `security_groups` in the infra `region_id` sweep; fixes metering_worker crash on `collect_quota_usage` LATERAL subquery (`column "region_id" does not exist`)
+
+### v1.74.5 — Full Per-Region Worker Loops (✅ Complete)
+
+- **metering_worker multi-region** — all five collectors (`collect_resource_metrics`, `collect_snapshot_metrics`, `collect_restore_metrics`, `collect_quota_usage`, `collect_efficiency_scores`) accept `region_id`; `run_collection_cycle()` iterates all enabled regions and writes `cluster_sync_metrics` per region
+- **HostMetricsCollector region binding** — constructor accepts optional `region_id` argument for explicit region binding without env var dependency
+- **scheduler_worker per-region host metrics** — one `HostMetricsCollector` per region with independent `metrics_cache_{rid}.json` / `cpu_state_{rid}.json` files; `cluster_sync_metrics` written after every run
+- **DB migration** (`migrate_metering_region.sql`) — adds `region_id TEXT` (nullable) + descending indexes to all metering tables and `backup_history`
+
+### v1.74.4 — Search Worker VM Indexing Fix (✅ Complete)
+
+- **VM search indexing restored** — `LEFT JOIN images` used wrong join key (`i.image_id`); corrected to `i.id` in `search_worker/main.py` and `api/reports.py`
+
+### v1.74.3 — Blank-UI-on-Restart Fixes (✅ Complete)
+
+- **DDL lock storm eliminated** — migration guards check column/table existence before issuing any `ALTER TABLE`; zero `ACCESS EXCLUSIVE` locks on healthy restarts
+- **Snapshot worker crash loop fixed** — indentation bug causing recursive `main()` call corrected; compliance report timer and sleep loop fixed
+- **PostgreSQL idle-in-transaction protection** — `idle_in_transaction_session_timeout=30s` + `statement_timeout=2min` added to DB service
 
 ### v1.74.2 — Multi-Region Worker Support (✅ Complete)
 

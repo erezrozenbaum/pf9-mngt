@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.74.5-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.74.6-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -734,7 +734,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.74.5](CHANGELOG.md) — March 2026
+**Current version:** [v1.74.6](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -879,6 +879,11 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.74.6 — Metering Worker Crash Fix
+
+- **Hardened Phase 5B migration guard** — guard now verifies all six target tables have `region_id` before skipping `migrate_metering_region.sql`; a partial prior run (e.g. from CI) no longer causes a false-positive skip that leaves 4 tables unpatched
+- **`security_groups.region_id` column added** — `init.sql` and `migrate_multicluster.sql` now include `security_groups` in the infra `region_id` sweep; fixes metering_worker crash on `collect_quota_usage` LATERAL subquery
+
 ### v1.74.5 — Multi-Region Worker Support
 
 - **metering_worker**: Full multi-region loop — each enabled region gets its own metering collection cycle with `region_id`-tagged rows in all metering tables. `collect_resource_metrics` passes `region_id` to the monitoring API; `collect_snapshot_metrics` and `collect_quota_usage` filter inventory tables by region. `run_collection_cycle` now iterates all regions and writes a `cluster_sync_metrics` row per region.
@@ -1010,4 +1015,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.74.5 | **Last Updated**: March 22, 2026
+**Project Status**: Production Ready | **Version**: 1.74.6 | **Last Updated**: March 22, 2026

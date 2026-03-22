@@ -845,16 +845,21 @@ async def startup_event():
         logger.info("Phase 5 workers schema already present — DDL skipped")
 
       # Phase 5B: add region_id to metering tables and backup_history.
-      # Guard: skip if metering_resources.region_id already exists.
+      # Guard: ALL six target columns must be present before skipping.
+      # Checking only metering_resources caused a false-positive when CI applied
+      # a partial run (only that one table got the column), leaving the rest unpatched.
       try:
         with get_connection() as _p5b_chk:
             with _p5b_chk.cursor() as _p5b_cur:
                 _p5b_cur.execute(
-                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
-                    "WHERE table_name='metering_resources' AND column_name='region_id' "
-                    "AND table_schema='public')"
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    "WHERE table_schema='public' AND column_name='region_id' "
+                    "AND table_name IN ("
+                    "  'metering_resources','metering_snapshots','metering_restores',"
+                    "  'metering_quotas','metering_efficiency','backup_history'"
+                    ")"
                 )
-                _p5b_schema_exists = _p5b_cur.fetchone()[0]
+                _p5b_schema_exists = (_p5b_cur.fetchone()[0] == 6)
       except Exception:
         _p5b_schema_exists = False
 

@@ -1511,6 +1511,7 @@ CREATE TABLE IF NOT EXISTS security_groups (
 CREATE INDEX IF NOT EXISTS idx_security_groups_project_id ON security_groups(project_id);
 CREATE INDEX IF NOT EXISTS idx_security_groups_name ON security_groups(name);
 CREATE INDEX IF NOT EXISTS idx_security_groups_domain_name ON security_groups(domain_name);
+CREATE INDEX IF NOT EXISTS idx_security_groups_region ON security_groups(region_id);
 
 -- Security Group Rules (Neutron)
 CREATE TABLE IF NOT EXISTS security_group_rules (
@@ -3550,6 +3551,7 @@ ALTER TABLE flavors            ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCE
 ALTER TABLE images             ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 ALTER TABLE snapshots          ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 ALTER TABLE inventory_runs     ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+ALTER TABLE security_groups    ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 
 -- Metering tables (created by migrate_metering.sql; may not exist yet on first run)
 ALTER TABLE metering_resources  ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
