@@ -30,6 +30,8 @@ p9_rvtools_state.json
 metrics_cache.json
 monitoring/cache/metrics_cache.json
 monitoring/cache/cpu_state.json
+monitoring/cache/metrics_cache_*.json
+monitoring/cache/cpu_state_*.json
 
 # Excel/CSV exports (generated outputs)
 *.xlsx
