@@ -128,7 +128,7 @@ def _build_indexers():
         LEFT JOIN projects p ON s.project_id = p.id
         LEFT JOIN domains d ON p.domain_id = d.id
         LEFT JOIN flavors f ON s.flavor_id = f.id
-        LEFT JOIN images i ON s.image_id = i.image_id
+        LEFT JOIN images i ON s.image_id = i.id
         WHERE s.last_seen_at > %s
         ORDER BY s.last_seen_at
     """, lambda r: {

@@ -1747,7 +1747,7 @@ async def report_vm_report(
                                i.raw_json->>'os_distro' AS img_os_distro,
                                i.raw_json->>'os_version' AS img_os_version
                         FROM servers s
-                        LEFT JOIN images i ON s.image_id = i.image_id
+                        LEFT JOIN images i ON s.image_id = i.id
                     """)
                     for row in cur.fetchall():
                         os_info_map[row["server_id"]] = {

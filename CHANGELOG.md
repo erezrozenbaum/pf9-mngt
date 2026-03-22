@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.74.4] - 2026-03-22
+
+### Fixed — Search Worker VM Indexing & Reports OS Info
+
+#### `search_worker/main.py` + `api/reports.py`
+- `LEFT JOIN images i ON s.image_id = i.image_id` referenced a non-existent column — the `images` table primary key is `id`, not `image_id`. The search worker logged `column i.image_id does not exist` on every 5-minute indexing cycle, causing VM records to never be indexed; the reports endpoint silently returned empty OS info for all VMs.
+- Fixed: changed join condition to `s.image_id = i.id` in both files.
+
+---
+
 ## [1.74.3] - 2026-03-22
 
 ### Fixed — Blank-UI-on-Restart: DDL Lock Storm

@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.74.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.74.4-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -734,7 +734,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.74.3](CHANGELOG.md) — March 2026
+**Current version:** [v1.74.4](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -879,6 +879,9 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.74.4 — Search Worker VM Indexing Fix
+- ✅ **VM search indexing restored** — `LEFT JOIN images` used `i.image_id` (non-existent column); corrected to `i.id` in `search_worker/main.py` and `api/reports.py`; VM records now index correctly every 5 minutes and OS info appears in reports
+
 ### v1.74.3 — Blank-UI-on-Restart Fixes
 - ✅ **DDL lock storm eliminated** — `api/main.py` now checks whether `pf9_regions` / `snapshot_runs.region_id` already exist before issuing any `ALTER TABLE`; zero `ACCESS EXCLUSIVE` locks on healthy restarts → pages load instantly after `startup_prod.ps1`
 - ✅ **Snapshot worker crash loop fixed** — corrected indentation bug that placed a recursive `main()` call inside the function body, causing exit code 0 with empty logs; `next_compliance_report` counter now advances correctly; 10 s sleep added to scheduler loop
@@ -998,4 +1001,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.74.3 | **Last Updated**: March 22, 2026
+**Project Status**: Production Ready | **Version**: 1.74.4 | **Last Updated**: March 22, 2026
