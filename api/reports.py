@@ -34,13 +34,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from psycopg2.extras import RealDictCursor
 
-from auth import require_permission, get_current_user, User
+from auth import require_permission, get_current_user, User, get_effective_region_filter
+from cluster_registry import get_registry
 from db_pool import get_connection
 from pf9_control import get_client
 
 REPORTS_DIR = os.getenv("PF9_OUTPUT_DIR", "/mnt/reports")
 
 logger = logging.getLogger("pf9.reports")
+
+
+def _report_client_and_region(user, region_id: Optional[str]) -> tuple:
+    """Return (Pf9Client, effective_region_id) for report endpoints."""
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
+    client_ = get_registry().get_region(effective_region) if effective_region else get_client()
+    return client_, effective_region
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -254,11 +263,12 @@ async def report_tenant_quota_usage(
     format: str = Query("json", description="json or csv"),
     page: int = Query(1, ge=1, description="Page number (JSON only)"),
     page_size: int = Query(100, ge=1, le=1000, description="Rows per page; 0 = all (JSON only)"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Per-tenant allocated quota vs actual usage with utilization %."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         all_projects = client.list_projects(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
 
@@ -440,11 +450,12 @@ async def report_domain_overview(
     format: str = Query("json", description="json or csv"),
     page: int = Query(1, ge=1, description="Page number (JSON only)"),
     page_size: int = Query(50, ge=1, le=500, description="Rows per page; CSV always returns all"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """All domains with their tenants, resource counts, and quota rollup."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         domains = client.list_domains()
         projects = client.list_projects()
         users = client.list_users()
@@ -633,15 +644,26 @@ async def report_domain_overview(
 @router.get("/snapshot-compliance")
 async def report_snapshot_compliance(
     domain_id: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     format: str = Query("json", description="json or csv"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Per-tenant snapshot compliance status."""
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Get snapshot policy assignments (volume-level, grouped by tenant)
-                cur.execute("""
+                _p1: list = []
+                _w1 = "WHERE 1=1"
+                if domain_id:
+                    _w1 += " AND p.domain_id = %s"
+                    _p1.append(domain_id)
+                if effective_region:
+                    _w1 += " AND sa.region_id = %s"
+                    _p1.append(effective_region)
+                cur.execute(f"""
                     SELECT
                         p.name AS tenant_name,
                         p.id AS tenant_id,
@@ -655,15 +677,19 @@ async def report_snapshot_compliance(
                     LEFT JOIN domains d ON d.id = p.domain_id
                     LEFT JOIN snapshot_assignments sa ON sa.project_id = p.id
                     LEFT JOIN snapshot_policy_sets sps ON sps.id = sa.policy_set_id
-                    WHERE 1=1
-                    """ + (" AND p.domain_id = %s" if domain_id else "") + """
+                    {_w1}
                     GROUP BY p.name, p.id, d.name, d.id, sa.policy_set_id, sps.name
                     ORDER BY d.name, p.name
-                """, [domain_id] if domain_id else [])
+                """, _p1)
                 assignments = cur.fetchall()
 
                 # Get latest snapshot per tenant from metering_snapshots
-                cur.execute("""
+                _p2: list = []
+                _w2 = "WHERE collected_at > now() - interval '30 days'"
+                if effective_region:
+                    _w2 += " AND region_id = %s"
+                    _p2.append(effective_region)
+                cur.execute(f"""
                     SELECT
                         project_name,
                         MAX(collected_at) AS last_snapshot_time,
@@ -671,17 +697,23 @@ async def report_snapshot_compliance(
                         COUNT(*) FILTER (WHERE is_compliant = true) AS compliant_count,
                         COUNT(*) FILTER (WHERE is_compliant = false) AS non_compliant_count
                     FROM metering_snapshots
-                    WHERE collected_at > now() - interval '30 days'
+                    {_w2}
                     GROUP BY project_name
-                """)
+                """, _p2)
                 snap_stats = {r["project_name"]: r for r in cur.fetchall()}
 
                 # Also count actual Cinder snapshots per tenant
-                cur.execute("""
+                _p3: list = []
+                _w3 = ""
+                if effective_region:
+                    _w3 = "WHERE region_id = %s"
+                    _p3.append(effective_region)
+                cur.execute(f"""
                     SELECT project_name, COUNT(*) AS cinder_count
                     FROM snapshots
+                    {_w3}
                     GROUP BY project_name
-                """)
+                """, _p3)
                 cinder_counts = {r["project_name"]: r["cinder_count"] for r in cur.fetchall()}
 
         rows = []
@@ -733,11 +765,12 @@ async def report_snapshot_compliance(
 @router.get("/flavor-usage")
 async def report_flavor_usage(
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """All flavors with instance count, tenant breakdown, and resource footprint."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         servers = client.list_servers(all_tenants=True)
         projects = {p["id"]: p.get("name", "") for p in client.list_projects()}
 
@@ -836,9 +869,12 @@ async def report_metering_summary(
     domain_id: Optional[str] = Query(None),
     hours: int = Query(720, ge=1, le=8760, description="Lookback hours (default 30 days)"),
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Per-tenant metering: compute usage, storage, network I/O, cost breakdown."""
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
     try:
         with get_connection() as conn:
             domain_filter = ""
@@ -846,6 +882,9 @@ async def report_metering_summary(
             if domain_id:
                 domain_filter = " AND project_name IN (SELECT name FROM projects WHERE domain_id = %s)"
                 params.append(domain_id)
+            if effective_region:
+                domain_filter += " AND region_id = %s"
+                params.append(effective_region)
 
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Build project→domain lookup
@@ -924,11 +963,12 @@ async def report_resource_inventory(
     domain_id: Optional[str] = Query(None),
     project_id: Optional[str] = Query(None),
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Full inventory: VMs, volumes, networks, routers, floating IPs, SGs per tenant."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         projects = client.list_projects(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
 
@@ -992,11 +1032,12 @@ async def report_resource_inventory(
 async def report_user_role_audit(
     domain_id: Optional[str] = Query(None),
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """All users across domains with their role assignments."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         all_users = client.list_users(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
         projects = {p["id"]: p.get("name", "") for p in client.list_projects(domain_id=domain_id)}
@@ -1079,11 +1120,12 @@ async def report_user_role_audit(
 async def report_idle_resources(
     domain_id: Optional[str] = Query(None),
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """VMs in SHUTOFF, unattached volumes, unused floating IPs."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         projects_data = client.list_projects(domain_id=domain_id)
         project_ids = {p["id"] for p in projects_data}
         project_names = {p["id"]: p.get("name", "") for p in projects_data}
@@ -1164,11 +1206,12 @@ async def report_idle_resources(
 async def report_security_group_audit(
     project_id: Optional[str] = Query(None),
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """All security groups with rule analysis."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         sgs = client.list_security_groups(project_id=project_id)
         projects = {p["id"]: p.get("name", "") for p in client.list_projects()}
         servers = client.list_servers(all_tenants=True)
@@ -1233,14 +1276,22 @@ async def report_security_group_audit(
 @router.get("/capacity-planning")
 async def report_capacity_planning(
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Aggregate hypervisor capacity vs allocated vs used."""
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Hypervisor capacity from local cache
-                cur.execute("""
+                _hyp_params: list = []
+                _hyp_where = ""
+                if effective_region:
+                    _hyp_where = "WHERE region_id = %s"
+                    _hyp_params.append(effective_region)
+                cur.execute(f"""
                     SELECT
                         hostname,
                         hypervisor_type,
@@ -1251,11 +1302,12 @@ async def report_capacity_planning(
                         status,
                         raw_json
                     FROM hypervisors
+                    {_hyp_where}
                     ORDER BY hostname
-                """)
+                """, _hyp_params)
                 hyps = cur.fetchall()
 
-        client = get_client()
+        client, _reg = _report_client_and_region(user, region_id)
         servers = client.list_servers(all_tenants=True)
 
         # Build flavor lookup (servers/detail may omit inline vcpus/ram)
@@ -1359,13 +1411,21 @@ async def report_capacity_planning(
 @router.get("/backup-status")
 async def report_backup_status(
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """System backup status: last backups, size, success/failure."""
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("""
+                _bk_params: list = []
+                _bk_where = ""
+                if effective_region:
+                    _bk_where = "WHERE region_id = %s"
+                    _bk_params.append(effective_region)
+                cur.execute(f"""
                     SELECT
                         id,
                         backup_type,
@@ -1380,9 +1440,10 @@ async def report_backup_status(
                         completed_at,
                         created_at
                     FROM backup_history
+                    {_bk_where}
                     ORDER BY started_at DESC NULLS LAST
                     LIMIT 500
-                """)
+                """, _bk_params)
                 rows = cur.fetchall()
 
         result = []
@@ -1463,11 +1524,12 @@ async def report_activity_log(
 async def report_network_topology(
     domain_id: Optional[str] = Query(None),
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """All networks, subnets, routers, floating IPs per tenant."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         projects = client.list_projects(domain_id=domain_id)
         project_names = {p["id"]: p.get("name", "") for p in projects}
         domains = {d["id"]: d["name"] for d in client.list_domains()}
@@ -1558,9 +1620,12 @@ async def report_network_topology(
 async def report_cost_allocation(
     hours: int = Query(720, ge=1, le=8760, description="Lookback hours (default 30 days)"),
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Metering data grouped by domain for chargeback."""
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1571,11 +1636,17 @@ async def report_cost_allocation(
                 cur.execute("SELECT p.name AS pname, d.name AS dname FROM projects p LEFT JOIN domains d ON d.id = p.domain_id")
                 proj_domain = {r["pname"]: r["dname"] for r in cur.fetchall()}
 
+                _ca_params: list = [hours]
+                _ca_region_filter = ""
+                if effective_region:
+                    _ca_region_filter = "AND region_id = %s"
+                    _ca_params.append(effective_region)
                 cur.execute(f"""
                     WITH latest AS (
                         SELECT DISTINCT ON (vm_id) *
                         FROM metering_resources
                         WHERE collected_at > now() - interval '%s hours'
+                        {_ca_region_filter}
                         ORDER BY vm_id, collected_at DESC
                     )
                     SELECT
@@ -1589,7 +1660,7 @@ async def report_cost_allocation(
                     FROM latest
                     GROUP BY project_name
                     ORDER BY project_name
-                """, [hours])
+                """, _ca_params)
                 project_rows = cur.fetchall()
 
             cost_vcpu = float(cfg.get("cost_per_vcpu_hour", 0)) if cfg else 0
@@ -1715,11 +1786,12 @@ async def report_vm_report(
     domain_id: Optional[str] = Query(None, description="Filter by domain ID"),
     project_id: Optional[str] = Query(None, description="Filter by project ID"),
     format: str = Query("json", description="json or csv"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Detailed report of all VMs with flavor, host, IPs, volumes, quota context, OS, and status."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
         projects = client.list_projects(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
         project_map = {p["id"]: p for p in projects}
@@ -1921,11 +1993,12 @@ async def report_vm_report(
 @router.get("/image-usage")
 async def report_image_usage(
     format: str = "json",
+    region_id: Optional[str] = None,
     user: User = Depends(require_permission("reports", "read")),
 ):
     """All Glance images with VM count and per-tenant breakdown."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
 
         images = client.list_images()
         servers = client.list_servers(all_tenants=True)
@@ -2028,11 +2101,12 @@ async def report_image_usage(
 async def report_flavor_by_tenant(
     format: str = "json",
     domain_id: Optional[str] = None,
+    region_id: Optional[str] = None,
     user: User = Depends(require_permission("reports", "read")),
 ):
     """Per-flavor, per-tenant breakdown for chargeback analysis."""
     try:
-        client = get_client()
+        client, effective_region = _report_client_and_region(user, region_id)
 
         flavors = client.list_flavors()
         servers = client.list_servers(all_tenants=True)

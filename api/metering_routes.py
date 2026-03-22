@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
-from auth import require_permission, get_current_user, User
+from auth import require_permission, get_current_user, User, get_effective_region_filter
 from db_pool import get_connection
 
 logger = logging.getLogger("pf9.metering")
@@ -162,9 +162,13 @@ async def get_resource_metering(
     vm_id: Optional[str] = Query(None, description="Filter by VM ID"),
     hours: int = Query(24, ge=1, le=2160, description="Lookback window in hours"),
     limit: int = Query(500, ge=1, le=10000),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("metering", "read")),
 ):
     """Return resource metering records (latest per VM by default)."""
+    effective_region = get_effective_region_filter(
+        user["username"] if isinstance(user, dict) else user.username, region_id
+    )
     with get_connection() as conn:
         where = ["collected_at > now() - interval '%s hours'"]
         params: list = [hours]
@@ -177,6 +181,9 @@ async def get_resource_metering(
         if vm_id:
             where.append("vm_id = %s")
             params.append(vm_id)
+        if effective_region:
+            where.append("region_id = %s")
+            params.append(effective_region)
 
         # Return only the LATEST record per VM to avoid duplication
         sql = f"""
@@ -213,9 +220,13 @@ async def get_snapshot_metering(
     domain: Optional[str] = Query(None),
     hours: int = Query(24, ge=1, le=2160),
     limit: int = Query(500, ge=1, le=10000),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("metering", "read")),
 ):
     """Return snapshot metering records."""
+    effective_region = get_effective_region_filter(
+        user["username"] if isinstance(user, dict) else user.username, region_id
+    )
     with get_connection() as conn:
         where = ["collected_at > now() - interval '%s hours'"]
         params: list = [hours]
@@ -225,6 +236,9 @@ async def get_snapshot_metering(
         if domain:
             where.append("domain = %s")
             params.append(domain)
+        if effective_region:
+            where.append("region_id = %s")
+            params.append(effective_region)
 
         sql = f"""
             SELECT * FROM metering_snapshots
@@ -257,9 +271,13 @@ async def get_restore_metering(
     domain: Optional[str] = Query(None),
     hours: int = Query(168, ge=1, le=2160),
     limit: int = Query(200, ge=1, le=5000),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("metering", "read")),
 ):
     """Return restore operation metering records."""
+    effective_region = get_effective_region_filter(
+        user["username"] if isinstance(user, dict) else user.username, region_id
+    )
     with get_connection() as conn:
         where = ["collected_at > now() - interval '%s hours'"]
         params: list = [hours]
@@ -269,6 +287,9 @@ async def get_restore_metering(
         if domain:
             where.append("domain = %s")
             params.append(domain)
+        if effective_region:
+            where.append("region_id = %s")
+            params.append(effective_region)
 
         sql = f"""
             SELECT * FROM metering_restores
@@ -342,9 +363,13 @@ async def get_efficiency_scores(
     classification: Optional[str] = Query(None, description="Filter: excellent|good|fair|poor|idle"),
     hours: int = Query(24, ge=1, le=2160),
     limit: int = Query(500, ge=1, le=10000),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("metering", "read")),
 ):
     """Return VM efficiency scores (latest per VM by default)."""
+    effective_region = get_effective_region_filter(
+        user["username"] if isinstance(user, dict) else user.username, region_id
+    )
     with get_connection() as conn:
         where = ["collected_at > now() - interval '%s hours'"]
         params: list = [hours]
@@ -357,6 +382,9 @@ async def get_efficiency_scores(
         if classification:
             where.append("classification = %s")
             params.append(classification)
+        if effective_region:
+            where.append("region_id = %s")
+            params.append(effective_region)
 
         # Return only the LATEST record per VM to avoid duplication
         sql = f"""
@@ -437,12 +465,16 @@ async def get_metering_filters(
 async def get_metering_overview(
     project: Optional[str] = Query(None),
     domain: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("metering", "read")),
 ):
     """
     High-level metering overview: totals and recent counts across all
     metering categories for the MSP dashboard.
     """
+    effective_region = get_effective_region_filter(
+        user["username"] if isinstance(user, dict) else user.username, region_id
+    )
     with get_connection() as conn:
         pfilter = ""
         params: list = []
@@ -452,6 +484,9 @@ async def get_metering_overview(
         if domain:
             pfilter = pfilter + " AND domain = %s"
             params.append(domain)
+        if effective_region:
+            pfilter = pfilter + " AND region_id = %s"
+            params.append(effective_region)
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Total unique VMs metered

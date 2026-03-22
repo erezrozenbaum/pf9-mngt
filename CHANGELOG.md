@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.75.0] - 2026-03-22
+
+### Added — Multi-Region API Filtering with RBAC Enforcement
+
+#### Optional `?region_id=` query parameter on all API modules
+- All major API modules now accept an optional `region_id` query parameter to scope responses to a specific PF9 region.
+- **`api/auth.py`** — `get_user_accessible_regions(username)` and `get_effective_region_filter(username, region_id)` helper functions added. Region-scoped users are automatically constrained to their assigned region; requests to an unassigned region raise `HTTP 403`. Global users may query any region.
+- **`api/metering_routes.py`** — 5 endpoints updated: `/resources`, `/snapshots`, `/restores`, `/efficiency`, `/overview`.
+- **`api/dashboards.py`** — `/health-summary` updated with per-region DB count filters.
+- **`api/reports.py`** — 14 report endpoints updated. Live-API reports route to the correct region registry client; DB-only reports apply `WHERE region_id = %s`. Helper `_report_client_and_region()` added.
+- **`api/resource_management.py`** — 12 GET endpoints updated: users, flavors, networks, routers, floating-ips, volumes, security-groups, images, quotas, context/domains, context/projects, context/external-networks. Helper `_res_client()` added.
+- **`api/provisioning_routes.py`** — `ProvisionRequest` model gains `region_id` field; INSERT writes it to `provisioning_jobs`; `GET /logs` filters by region.
+- **`api/vm_provisioning_routes.py`** — `CreateBatchRequest` model gains `region_id`; INSERT writes it to `vm_provisioning_batches`; `GET /batches`, `/domains`, `/resources`, `/quota`, `/available-ips` all region-aware.
+- **`api/search.py`** — Main search endpoint passes `region_id` as the 9th argument to the `search_ranked` PostgreSQL function; COUNT query also filtered.
+- **`api/main.py`** — Startup migration guard added: checks `search_documents.region_id` existence before applying `migrate_phase6_api.sql`.
+
+#### Database migration
+- **`db/migrate_phase6_api.sql`** *(new)* — Adds `region_id TEXT REFERENCES pf9_regions(id)` to `search_documents`; creates `idx_search_documents_region_id` index; updates `search_ranked` PostgreSQL function with backward-compatible 9th parameter `filter_region` (defaults to `NULL` = no filter).
+
+---
+
 ## [1.74.6] - 2026-03-22
 
 ### Fixed — Metering Worker Crash on First Post-Upgrade Cycle

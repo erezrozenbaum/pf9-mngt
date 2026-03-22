@@ -809,7 +809,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_wave_approvals.sql"; Desc="Migration Planner v1.67.0: wave approval_status/approved_by/approved_at/approval_comment, VM dep dep_source/confidence, maintenance_windows table, use_maintenance_windows flag on projects"},
     @{File="db\migrate_multicluster.sql"; Desc="Multi-region registry: pf9_control_planes, pf9_regions tables; region_id/control_plane_id columns on all resource tables; cluster_sync_metrics, cluster_tasks tables"},
     @{File="db\migrate_phase5_workers.sql"; Desc="Multi-region workers v1.74.2: snapshot_runs.region_id column + idx_snapshot_runs_region_id index"},
-    @{File="db\migrate_metering_region.sql"; Desc="Multi-region metering v1.74.5: region_id column + indexes on metering_resources, metering_snapshots, metering_restores, metering_quotas, metering_efficiency, backup_history"}
+    @{File="db\migrate_metering_region.sql"; Desc="Multi-region metering v1.74.5: region_id column + indexes on metering_resources, metering_snapshots, metering_restores, metering_quotas, metering_efficiency, backup_history"},
+    @{File="db\migrate_phase6_api.sql"; Desc="Multi-region API filtering v1.75.0: search_documents.region_id column + idx_search_documents_region_id index + search_ranked function 9th filter_region parameter"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

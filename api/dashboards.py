@@ -21,7 +21,7 @@ from fastapi import APIRouter, Query, HTTPException, Depends
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import glob
-from auth import require_permission
+from auth import require_permission, get_effective_region_filter
 from db_pool import get_connection
 
 
@@ -485,7 +485,9 @@ def _normalize_vm_metrics(metrics_data: Optional[Dict[str, Any]]) -> List[Dict[s
 # ENDPOINT 1: Health Summary
 # =========================================================================
 @router.get("/health-summary")
-async def get_health_summary():
+async def get_health_summary(
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
+):
     """
     Get system health summary.
     
@@ -497,18 +499,21 @@ async def get_health_summary():
     try:
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            region_filter = "AND region_id = %s" if region_id else ""
+            region_params = (region_id,) if region_id else ()
         
             # Get resource counts (separate queries to avoid cartesian products)
             cursor.execute("SELECT COUNT(*) as total_tenants FROM projects")
             total_tenants = (cursor.fetchone() or {}).get("total_tenants", 0)
 
-            cursor.execute("SELECT COUNT(*) as total_vms FROM servers")
+            cursor.execute(f"SELECT COUNT(*) as total_vms FROM servers {region_filter.replace('AND', 'WHERE', 1)}", region_params)
             total_vms_count = (cursor.fetchone() or {}).get("total_vms", 0)
 
-            cursor.execute("SELECT COUNT(*) as total_volumes FROM volumes")
+            cursor.execute(f"SELECT COUNT(*) as total_volumes FROM volumes {region_filter.replace('AND', 'WHERE', 1)}", region_params)
             total_volumes_count = (cursor.fetchone() or {}).get("total_volumes", 0)
 
-            cursor.execute("SELECT COUNT(*) as total_networks FROM networks")
+            cursor.execute(f"SELECT COUNT(*) as total_networks FROM networks {region_filter.replace('AND', 'WHERE', 1)}", region_params)
             total_networks_count = (cursor.fetchone() or {}).get("total_networks", 0)
 
             counts = {
@@ -519,28 +524,44 @@ async def get_health_summary():
             }
         
             # Get running VM count
-            cursor.execute("SELECT COUNT(*) as running_vms FROM servers WHERE status = 'ACTIVE'")
+            if region_id:
+                cursor.execute("SELECT COUNT(*) as running_vms FROM servers WHERE status = 'ACTIVE' AND region_id = %s", (region_id,))
+            else:
+                cursor.execute("SELECT COUNT(*) as running_vms FROM servers WHERE status = 'ACTIVE'")
             running = dict(cursor.fetchone() or {})
 
             # Get total hosts (hypervisors)
-            cursor.execute("SELECT COUNT(*) as total_hosts FROM hypervisors")
+            cursor.execute(f"SELECT COUNT(*) as total_hosts FROM hypervisors {region_filter.replace('AND', 'WHERE', 1)}", region_params)
             hosts_count = dict(cursor.fetchone() or {})
 
             # Snapshot coverage and freshness
-            cursor.execute("SELECT COUNT(*) as total_snapshots FROM snapshots")
+            cursor.execute(f"SELECT COUNT(*) as total_snapshots FROM snapshots {region_filter.replace('AND', 'WHERE', 1)}", region_params)
             snapshots_count = dict(cursor.fetchone() or {})
 
-            cursor.execute("SELECT COUNT(*) as snapshots_last_24h FROM snapshots WHERE created_at > now() - interval '24 hours'")
+            if region_id:
+                cursor.execute("SELECT COUNT(*) as snapshots_last_24h FROM snapshots WHERE created_at > now() - interval '24 hours' AND region_id = %s", (region_id,))
+            else:
+                cursor.execute("SELECT COUNT(*) as snapshots_last_24h FROM snapshots WHERE created_at > now() - interval '24 hours'")
             snapshots_last_24h = dict(cursor.fetchone() or {})
 
-            cursor.execute(
-                """
-                SELECT COUNT(*) as volumes_without_snapshots
-                FROM volumes v
-                LEFT JOIN snapshots s ON s.volume_id = v.id
-                WHERE s.id IS NULL
-                """
-            )
+            if region_id:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) as volumes_without_snapshots
+                    FROM volumes v
+                    LEFT JOIN snapshots s ON s.volume_id = v.id
+                    WHERE s.id IS NULL AND v.region_id = %s
+                    """, (region_id,)
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) as volumes_without_snapshots
+                    FROM volumes v
+                    LEFT JOIN snapshots s ON s.volume_id = v.id
+                    WHERE s.id IS NULL
+                    """
+                )
             volumes_without_snapshots = dict(cursor.fetchone() or {})
         
             cursor.close()
@@ -566,6 +587,7 @@ async def get_health_summary():
                 "alerts_count": 0,  # Placeholder - can be enhanced
                 "critical_count": 0,  # Placeholder - can be enhanced
                 "warnings_count": 0,  # Placeholder - can be enhanced
+                "region_id": region_id,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
     except Exception as e:

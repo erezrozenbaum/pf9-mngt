@@ -30,7 +30,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from psycopg2.extras import RealDictCursor
 
-from auth import require_permission, get_current_user, User
+from auth import require_permission, get_current_user, User, get_effective_region_filter
 from db_pool import get_connection
 from smart_queries import execute_smart_query, list_smart_queries
 
@@ -64,6 +64,7 @@ async def search(
     to_date: Optional[str] = Query(None, alias="to", description="ISO date upper bound"),
     limit: int = Query(25, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     _user: User = Depends(require_permission("search", "read")),
 ):
     """
@@ -72,12 +73,14 @@ async def search(
     Returns matching documents with a headline snippet.
     """
     type_array = [t.strip() for t in types.split(",") if t.strip()] if types else None
+    uname = _user.username if hasattr(_user, "username") else (_user.get("username", "") if isinstance(_user, dict) else "")
+    effective_region = get_effective_region_filter(uname, region_id)
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT * FROM search_ranked(%s, %s, %s, %s, %s, %s, %s, %s)",
-                (q, type_array, tenant_id, domain_id, from_date, to_date, limit, offset),
+                "SELECT * FROM search_ranked(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (q, type_array, tenant_id, domain_id, from_date, to_date, limit, offset, effective_region),
             )
             raw = cur.fetchall()
             # Combine headline fields for the UI
@@ -99,6 +102,7 @@ async def search(
                   AND (%s IS NULL OR domain_id = %s)
                   AND (%s IS NULL OR ts >= %s::timestamptz)
                   AND (%s IS NULL OR ts <= %s::timestamptz)
+                  AND (%s IS NULL OR region_id = %s)
             """, (
                 q,
                 type_array, type_array,
@@ -106,6 +110,7 @@ async def search(
                 domain_id, domain_id,
                 from_date, from_date,
                 to_date, to_date,
+                effective_region, effective_region,
             ))
             total = cur.fetchone()["total"]
 

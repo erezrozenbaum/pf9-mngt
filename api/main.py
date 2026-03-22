@@ -883,6 +883,39 @@ async def startup_event():
       else:
         logger.info("Phase 5B metering region schema already present — DDL skipped")
 
+      # Phase 6: search_documents.region_id + updated search_ranked function.
+      try:
+        with get_connection() as _p6_chk:
+            with _p6_chk.cursor() as _p6_cur:
+                _p6_cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='search_documents' "
+                    "AND column_name='region_id')"
+                )
+                _p6_schema_exists = _p6_cur.fetchone()[0]
+      except Exception:
+        _p6_schema_exists = False
+
+      if not _p6_schema_exists:
+        try:
+          _p6_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_phase6_api.sql")
+          if os.path.exists(_p6_sql):
+              with open(_p6_sql, encoding="utf-8") as _f:
+                  _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
+              with get_connection() as _conn:
+                  with _conn.cursor() as _cur:
+                      for _stmt in (s.strip() for s in _sql.split(";")):
+                          if _stmt and any(
+                              ln.strip() and not ln.strip().startswith("--")
+                              for ln in _stmt.splitlines()
+                          ):
+                              _cur.execute(_stmt)
+              logger.info("Phase 6 API region migration applied")
+        except Exception as _exc:
+          logger.warning("Phase 6 API region migration skipped: %s", _exc)
+      else:
+        logger.info("Phase 6 API region schema already present — DDL skipped")
+
       # Seed default control plane + region from env vars, then backfill existing rows.
       # Always runs (ON CONFLICT DO NOTHING — no locks acquired).
       try:

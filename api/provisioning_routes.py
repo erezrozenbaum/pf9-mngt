@@ -33,7 +33,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, validator, root_validator
 
 from pf9_control import get_client
-from auth import require_permission, get_current_user
+from auth import require_permission, get_current_user, get_effective_region_filter
 from smtp_helper import send_email as smtp_send_email, SMTP_ENABLED
 
 logger = logging.getLogger("pf9_provisioning")
@@ -417,6 +417,8 @@ class ProvisionRequest(BaseModel):
     send_welcome_email: bool = True
     include_user_email: bool = False  # opt-in: include created user's email in recipients
     email_recipients: List[str] = []  # additional/override email recipients
+    # Region
+    region_id: Optional[str] = None   # target PF9 region (Phase 6)
 
     @validator("user_role")
     def validate_role(cls, v):
@@ -1063,8 +1065,8 @@ async def provision_customer(
                      network_name, network_type, vlan_id, subnet_cidr, gateway_ip,
                      dns_nameservers, networks_config,
                      quota_compute, quota_network, quota_storage,
-                     created_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     created_by, region_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING job_id, id
             """, (
                 req.domain_name, req.project_name, req.username,
@@ -1075,6 +1077,7 @@ async def provision_customer(
                 Json(req.network_quotas.dict()),
                 Json(req.storage_quotas.dict()),
                 user.get("username", "system") if isinstance(user, dict) else "system",
+                req.region_id,
             ))
             job = cur.fetchone()
 
@@ -1158,24 +1161,31 @@ async def get_provisioning_logs(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     status_filter: Optional[str] = Query(None, alias="status"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user=Depends(require_permission("provisioning", "read")),
 ):
     """Get provisioning job history."""
     from db_pool import get_connection
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
 
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            where = ""
+            where_clauses = []
             params: list = []
             if status_filter:
-                where = "WHERE status = %s"
+                where_clauses.append("status = %s")
                 params.append(status_filter)
+            if effective_region:
+                where_clauses.append("region_id = %s")
+                params.append(effective_region)
+            where = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
             params.extend([limit, offset])
             cur.execute(f"""
                 SELECT job_id, domain_name, project_name, username, user_email,
                        user_role, status, created_by, created_at, started_at,
                        completed_at, error_message,
-                       domain_id, project_id, user_id, network_id
+                       domain_id, project_id, user_id, network_id, region_id
                 FROM provisioning_jobs
                 {where}
                 ORDER BY created_at DESC
@@ -1183,8 +1193,8 @@ async def get_provisioning_logs(
             """, params)
             jobs = cur.fetchall()
 
-            cur.execute(f"SELECT count(*) FROM provisioning_jobs {where}",
-                        params[:1] if status_filter else [])
+            count_params = params[:-2]  # exclude limit/offset
+            cur.execute(f"SELECT count(*) FROM provisioning_jobs {where}", count_params)
             total = cur.fetchone()["count"]
 
     return {"jobs": jobs, "total": total, "limit": limit, "offset": offset}

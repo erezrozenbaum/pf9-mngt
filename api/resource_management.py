@@ -27,7 +27,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, validator
 from psycopg2.extras import RealDictCursor
 
-from auth import require_permission, get_current_user, User
+from auth import require_permission, get_current_user, User, get_effective_region_filter
+from cluster_registry import get_registry
 from db_pool import get_connection
 from pf9_control import get_client
 
@@ -96,6 +97,13 @@ def _notify(event_type: str, summary: str, severity: str = "info",
         )
     except Exception as e:
         logger.error(f"Resource notification failed ({event_type}): {e}")
+
+
+def _res_client(user, region_id: Optional[str]):
+    """Return a Pf9Client for the effective region (Phase 6 helper)."""
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
+    return get_registry().get_region(effective_region) if effective_region else get_client()
 
 
 # ---------------------------------------------------------------------------
@@ -250,11 +258,12 @@ class UpdateQuotasRequest(BaseModel):
 async def list_users(
     project_id: Optional[str] = Query(None, description="Filter by project/tenant ID"),
     domain_id: Optional[str] = Query(None, description="Filter by domain ID"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List users, optionally filtered by domain."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         users = client.list_users(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
 
@@ -421,11 +430,12 @@ async def assign_role(
 
 @router.get("/flavors")
 async def list_flavors(
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List all Nova flavors with instance counts."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         # Get flavors from Nova
         client.authenticate()
         assert client.nova_endpoint
@@ -553,11 +563,12 @@ async def list_networks(
     domain_id: Optional[str] = Query(None),
     name: Optional[str] = Query(None, description="Filter by network name (case-insensitive substring)"),
     network_id: Optional[str] = Query(None, description="Filter by network ID (substring)"),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List networks with subnet info."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         networks = client.list_networks(project_id=project_id)
         subnets = client.list_subnets()
         projects = {p["id"]: p.get("name", "") for p in client.list_projects()}
@@ -719,11 +730,12 @@ async def delete_network(
 @router.get("/routers")
 async def list_routers(
     project_id: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List routers."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         routers = client.list_routers(project_id=project_id)
         projects = {p["id"]: p.get("name", "") for p in client.list_projects()}
 
@@ -888,11 +900,12 @@ async def remove_router_interface(
 @router.get("/floating-ips")
 async def list_floating_ips(
     project_id: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List floating IPs."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         fips = client.list_floating_ips(project_id=project_id)
         projects = {p["id"]: p.get("name", "") for p in client.list_projects()}
 
@@ -998,11 +1011,12 @@ async def release_floating_ip(
 @router.get("/volumes")
 async def list_volumes(
     project_id: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List volumes with attachment info."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         volumes = client.list_volumes(project_id=project_id, all_tenants=True)
         projects = {p["id"]: p.get("name", "") for p in client.list_projects()}
 
@@ -1133,11 +1147,12 @@ async def delete_volume(
 @router.get("/security-groups")
 async def list_security_groups(
     project_id: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List security groups with rule details."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         sgs = client.list_security_groups(project_id=project_id)
         projects = {p["id"]: p.get("name", "") for p in client.list_projects()}
 
@@ -1305,11 +1320,12 @@ async def delete_sg_rule(
 
 @router.get("/images")
 async def list_images(
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List Glance images."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         client.authenticate()
 
         # Glance endpoint — look for 'image' service
@@ -1359,11 +1375,12 @@ async def list_images(
 @router.get("/quotas/{project_id}")
 async def get_quotas(
     project_id: str,
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """Get compute, network, and storage quotas for a project."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         compute_q = client.get_compute_quotas(project_id)
         network_q = client.get_network_quotas(project_id)
         storage_q = client.get_storage_quotas(project_id)
@@ -1453,11 +1470,12 @@ async def update_quotas(
 
 @router.get("/context/domains")
 async def context_domains(
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List domains for dropdown filters."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         domains = client.list_domains()
         return {"data": [{"id": d["id"], "name": d.get("name", "")} for d in domains]}
     except Exception as e:
@@ -1467,11 +1485,12 @@ async def context_domains(
 @router.get("/context/projects")
 async def context_projects(
     domain_id: Optional[str] = Query(None),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List projects for dropdown filters."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         projects = client.list_projects(domain_id=domain_id)
         domains = {d["id"]: d["name"] for d in client.list_domains()}
         return {
@@ -1491,11 +1510,12 @@ async def context_projects(
 
 @router.get("/context/external-networks")
 async def context_external_networks(
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user: User = Depends(require_permission("resources", "read")),
 ):
     """List external networks available for floating IP allocation or router gateways."""
     try:
-        client = get_client()
+        client = _res_client(user, region_id)
         networks = client.list_networks()
         external = [
             {"id": n.get("id", ""), "name": n.get("name", "")}

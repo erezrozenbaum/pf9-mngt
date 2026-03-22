@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.74.6  
+**Version**: 1.75.0  
 **Last Updated**: March 22, 2026  
 **Audience**: System administrators and platform operators
 
@@ -577,6 +577,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.75.0 — Multi-Region API Filtering (✅ Complete)
+
+- **Optional `?region_id=` on all API modules** — 7 API modules updated: `metering_routes`, `dashboards`, `reports`, `resource_management`, `provisioning_routes`, `vm_provisioning_routes`, `search`; all accept `?region_id=` to scope responses to a specific PF9 region
+- **RBAC region enforcement** — `get_effective_region_filter()` in `auth.py`; region-scoped users constrained to their assigned region (HTTP 403 on mismatch); global users may query any region
+- **Live-API registry routing** — when `region_id` is specified, PF9 API calls are routed to the correct region's control-plane client via the cluster registry
+- **DB-query region filters** — all DB-backed endpoints apply `WHERE region_id = %s` parameterized clause
+- **`search_ranked` function updated** — backward-compatible 9th `filter_region` parameter added; `search_documents.region_id` column + index added via `migrate_phase6_api.sql`
+- **Startup migration guard** — `main.py` applies `migrate_phase6_api.sql` idempotently on API restart
 
 ### v1.74.6 — Metering Worker Crash Fix (✅ Complete)
 

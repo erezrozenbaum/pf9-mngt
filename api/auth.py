@@ -594,3 +594,64 @@ def initialize_default_admin():
             logger.info("Default admin user '%s' initialized", DEFAULT_ADMIN_USER)
     except Exception as e:
         logger.error("Error initializing default admin: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Region-scoped RBAC helpers
+# ---------------------------------------------------------------------------
+
+def get_user_accessible_regions(username: str) -> Optional[List[str]]:
+    """
+    Return the list of region IDs this user is scoped to, or None for global access.
+
+    user_roles.region_id is NULL for global admins (existing behaviour).
+    When non-NULL, the user may only access that specific region.
+    Returning None means "no restriction" so all callers preserve the existing
+    single-region default behaviour without any code change.
+    """
+    if not ENABLE_AUTHENTICATION:
+        return None  # auth disabled — global access
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT region_id FROM user_roles WHERE username = %s AND is_active = TRUE",
+                    (username,),
+                )
+                row = cur.fetchone()
+                if not row or row[0] is None:
+                    return None  # global access
+                return [row[0]]
+    except Exception as e:
+        logger.error("Error checking region restriction for %s: %s", username, e)
+        return None  # fail open — global access on error
+
+
+def get_effective_region_filter(username: str, requested_region_id: Optional[str]) -> Optional[str]:
+    """
+    Resolve the region_id to use for DB / API filtering.
+
+    Rules:
+    - User has no region restriction (NULL)  + caller passes region_id  → use requested
+    - User has no region restriction         + caller passes nothing      → None (all regions)
+    - User is region-scoped                  + caller passes matching id  → return user's region
+    - User is region-scoped                  + caller passes nothing      → return user's region
+    - User is region-scoped                  + caller passes different id → 403
+
+    This is the single entry-point for every Phase 6 endpoint that accepts ?region_id=.
+    Enforcing region RBAC here (rather than in middleware) keeps the logic co-located
+    with the parameter that enables it and satisfies the OWASP A01 requirement stated
+    in MULTICLUSTER_PLAN Phase 6.
+    """
+    allowed = get_user_accessible_regions(username)
+    if allowed is None:
+        # Global access — respect whatever the caller passed (may be None)
+        return requested_region_id
+    # User is region-scoped
+    user_region = allowed[0]
+    if requested_region_id and requested_region_id != user_region:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Access denied: you are not authorised for region '{requested_region_id}'",
+        )
+    return user_region

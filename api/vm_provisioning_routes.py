@@ -29,8 +29,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, validator
 
-from auth import require_permission, get_current_user, ldap_auth
+from auth import require_permission, get_current_user, ldap_auth, get_effective_region_filter
 from pf9_control import get_client
+from cluster_registry import get_registry
 from smtp_helper import send_email as smtp_send_email
 from db_pool import get_connection, get_pool
 
@@ -375,6 +376,7 @@ class CreateBatchRequest(BaseModel):
     domain_name: str
     project_name: str
     require_approval: bool = True
+    region_id: Optional[str] = None  # target PF9 region (Phase 6)
     vms: List[VmRowRequest]
 
     @validator("name")
@@ -940,11 +942,16 @@ def _update_vm_status(conn, vm_id: int, status: str, error_msg: Optional[str] = 
 # ---------------------------------------------------------------------------
 
 @router.get("/domains")
-async def list_domains_projects(user=Depends(get_current_user)):
+async def list_domains_projects(
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
+    user=Depends(get_current_user),
+):
     """Return all Keystone domains, each with its list of projects.
     Used by the Step 1 picker so users never have to type domain/project names."""
     try:
-        admin = get_client()
+        uname = user["username"] if isinstance(user, dict) else user.username
+        effective_region = get_effective_region_filter(uname, region_id)
+        admin = get_registry().get_region(effective_region) if effective_region else get_client()
         domains_raw = admin.list_domains()
         result = []
         for d in sorted(domains_raw, key=lambda x: x.get("name", "").lower()):
@@ -967,13 +974,16 @@ async def list_domains_projects(user=Depends(get_current_user)):
 async def get_resources(
     domain_name: str = Query(...),
     project_name: str = Query(...),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     request: Request = None,
     user=Depends(get_current_user),
 ):
     """Return images (Glance), diskless flavors, networks, SGs scoped to domain+project."""
     _ensure_tables()
     try:
-        admin = get_client()
+        uname = user["username"] if isinstance(user, dict) else user.username
+        effective_region = get_effective_region_filter(uname, region_id)
+        admin = get_registry().get_region(effective_region) if effective_region else get_client()
         project_id = admin.resolve_project_id(project_name=project_name, domain_name=domain_name)
 
         images = admin.list_images()
@@ -1005,12 +1015,15 @@ async def get_resources(
 async def get_quota(
     domain_name: str = Query(...),
     project_name: str = Query(...),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user=Depends(get_current_user),
 ):
     """Return compute + storage quota with usage for a project."""
     _ensure_tables()
     try:
-        admin = get_client()
+        uname = user["username"] if isinstance(user, dict) else user.username
+        effective_region = get_effective_region_filter(uname, region_id)
+        admin = get_registry().get_region(effective_region) if effective_region else get_client()
         project_id = admin.resolve_project_id(project_name=project_name, domain_name=domain_name)
         usage = admin.get_quota_usage(project_id)
         return usage
@@ -1023,12 +1036,15 @@ async def get_available_ips(
     domain_name: str = Query(...),
     project_name: str = Query(...),
     network_id: str = Query(...),
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user=Depends(get_current_user),
 ):
     """Return free IPs from the subnet allocation pool for a network."""
     _ensure_tables()
     try:
-        admin = get_client()
+        uname = user["username"] if isinstance(user, dict) else user.username
+        effective_region = get_effective_region_filter(uname, region_id)
+        admin = get_registry().get_region(effective_region) if effective_region else get_client()
         project_id = admin.resolve_project_id(project_name=project_name, domain_name=domain_name)
         ips = admin.list_available_ips(network_id, project_id=project_id)
         return {"available_ips": ips}
@@ -1155,11 +1171,11 @@ async def create_batch(
                 cur.execute(
                     """INSERT INTO vm_provisioning_batches
                        (name, domain_name, project_name, require_approval, created_by,
-                        status, approval_status)
-                       VALUES (%s,%s,%s,%s,%s,'validated','pending_approval')
+                        status, approval_status, region_id)
+                       VALUES (%s,%s,%s,%s,%s,'validated','pending_approval',%s)
                        RETURNING id""",
                     (body.name, body.domain_name, body.project_name,
-                     body.require_approval, user.username),
+                     body.require_approval, user.username, body.region_id),
                 )
                 batch_id = cur.fetchone()["id"]
 
@@ -1190,13 +1206,24 @@ async def create_batch(
 
 
 @router.get("/batches")
-async def list_batches(user=Depends(get_current_user)):
+async def list_batches(
+    region_id: Optional[str] = Query(None, description="Filter by region ID"),
+    user=Depends(get_current_user),
+):
     _ensure_tables()
+    uname = user["username"] if isinstance(user, dict) else user.username
+    effective_region = get_effective_region_filter(uname, region_id)
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT * FROM vm_provisioning_batches ORDER BY created_at DESC LIMIT 100"
-            )
+            if effective_region:
+                cur.execute(
+                    "SELECT * FROM vm_provisioning_batches WHERE region_id = %s ORDER BY created_at DESC LIMIT 100",
+                    (effective_region,),
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM vm_provisioning_batches ORDER BY created_at DESC LIMIT 100"
+                )
             rows = [dict(r) for r in cur.fetchall()]
     return rows
 
