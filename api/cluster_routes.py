@@ -23,6 +23,9 @@ Region endpoints:
   GET    /admin/control-planes/{cp_id}/regions/{region_id}/sync-status
   PUT    /admin/control-planes/{cp_id}/regions/{region_id}/enable
 
+Cluster task endpoint (Phase 8):
+  GET    /admin/control-planes/cluster-tasks  — list pending cluster_tasks rows
+
 Security notes:
 - Passwords are Fernet-encrypted at rest (key = SHA-256 of JWT_SECRET).
   Storage prefix convention: "fernet:<ciphertext>".
@@ -978,3 +981,39 @@ async def set_region_enabled(
     logger.info("Region '%s' %s by %s", region_id, "enabled" if enabled else "disabled", current_user.username)
     get_registry().reload()
     return _region_row_public(dict(updated))
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — Cluster task visibility (cross-region replication bus)
+# ---------------------------------------------------------------------------
+
+@router.get("/cluster-tasks", summary="List cluster tasks (NOT_IMPLEMENTED)")
+async def list_cluster_tasks(
+    status: Optional[str] = None,
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Return pending/in-progress rows from the ``cluster_tasks`` table for
+    superadmin inspection.
+
+    The cross-region replication processor (image_copy, volume_transfer,
+    backup_restore) is **not yet implemented**.  Tasks queued in this table
+    will not be executed until the processor is added. This endpoint makes
+    deferred work visible rather than silently ignored so operators can plan
+    accordingly.
+    """
+    _require_superadmin(current_user)
+    task_status = status or "pending"
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM cluster_tasks WHERE status = %s ORDER BY created_at LIMIT 100",
+                (task_status,),
+            )
+            tasks = [dict(r) for r in cur.fetchall()]
+    return {
+        "processor_status": "NOT_IMPLEMENTED",
+        "note": "Cross-region replication processor is deferred. Tasks queued here will not execute until the processor is added.",
+        "count": len(tasks),
+        "tasks": tasks,
+    }

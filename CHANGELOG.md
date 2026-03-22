@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.77.0] - 2026-03-22
+
+### Added — Migration Planner Region Normalization (Phase 8)
+
+#### `migration_projects` — source and target region FKs
+- **`migration_projects.source_region_id`** *(new column, nullable)* — FK to `pf9_regions.id`; records the PCD source region for cross-region migration projects. NULL for VMware-to-PCD migrations (the common case).
+- **`migration_projects.target_region_id`** *(new column, nullable)* — FK to `pf9_regions.id`; when set, `pcd-gap-analysis` uses the ClusterRegistry client for that region (registered credentials + capabilities JSONB) instead of temporarily patching the global `p9_common.CFG`. Falls back to ad-hoc `pcd_auth_url`/`pcd_username` credentials when `target_region_id` is NULL (full backward compatibility with all existing projects).
+- **`PATCH /api/migration/projects/{id}/pcd-settings`** — now accepts `source_region_id` and `target_region_id` fields to link a project to a registered region.
+
+#### `pcd-gap-analysis` enhancement
+- When `project.target_region_id` is set, `POST /api/migration/projects/{id}/pcd-gap-analysis` now retrieves flavors, networks, and images via `get_registry().get_region(target_region_id)` — no global `p9_common.CFG` mutation, no config restore block required.
+- If the registered region client is unavailable, the endpoint falls back to the ad-hoc credential path and logs a warning — no silent failure.
+
+#### Cluster task visibility
+- **`GET /admin/control-planes/cluster-tasks`** *(new)* — superadmin-only endpoint that returns pending/in-progress `cluster_tasks` rows with `"processor_status": "NOT_IMPLEMENTED"`. The cross-region replication processor (image_copy, volume_transfer, backup_restore) is deferred until a second region is available for end-to-end testing. This endpoint surfaces queued tasks rather than silently ignoring them.
+
+#### Database migration
+- **`db/migrate_phase8_migration_norm.sql`** *(new)* — adds `source_region_id` and `target_region_id` FK columns to `migration_projects`; creates selective indexes on both columns; adds `idx_cluster_tasks_pending` partial index on `cluster_tasks`.
+- **`api/main.py`** — Phase 8 startup migration guard added: checks `migration_projects.target_region_id` column existence in `information_schema.columns` before applying `migrate_phase8_migration_norm.sql`.
+
+---
+
 ## [1.76.0] - 2026-03-22
 
 ### Added — Multi-Region Management UI

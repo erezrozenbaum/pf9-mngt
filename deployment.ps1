@@ -811,7 +811,8 @@ $provisioningMigrations = @(
     @{File="db\migrate_phase5_workers.sql"; Desc="Multi-region workers v1.74.2: snapshot_runs.region_id column + idx_snapshot_runs_region_id index"},
     @{File="db\migrate_metering_region.sql"; Desc="Multi-region metering v1.74.5: region_id column + indexes on metering_resources, metering_snapshots, metering_restores, metering_quotas, metering_efficiency, backup_history"},
     @{File="db\migrate_phase6_api.sql"; Desc="Multi-region API filtering v1.75.0: search_documents.region_id column + idx_search_documents_region_id index + search_ranked function 9th filter_region parameter"},
-    @{File="db\migrate_phase7_nav.sql"; Desc="Multi-region management UI v1.76.0: cluster_management nav item added to admin_tools navigation group"}
+    @{File="db\migrate_phase7_nav.sql"; Desc="Multi-region management UI v1.76.0: cluster_management nav item added to admin_tools navigation group"},
+    @{File="db\migrate_phase8_migration_norm.sql"; Desc="Migration planner normalization v1.77.0: source_region_id + target_region_id FKs on migration_projects; idx_cluster_tasks_pending index"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

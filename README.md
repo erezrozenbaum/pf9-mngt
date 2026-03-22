@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.76.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.77.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -734,7 +734,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.76.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.77.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -878,6 +878,14 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.77.0 — Migration Planner Region Normalization
+
+- **`migration_projects.target_region_id`** — new FK column to `pf9_regions`; `pcd-gap-analysis` now uses the ClusterRegistry client when a registered region is linked to a project (no more global config mutation)
+- **`migration_projects.source_region_id`** — new FK column for cross-region migration tracking; nullable, NULL for VMware-to-PCD migrations
+- **`GET /admin/control-planes/cluster-tasks`** — new superadmin endpoint exposing pending cluster_tasks rows with `processor_status: NOT_IMPLEMENTED`
+- **`db/migrate_phase8_migration_norm.sql`** — adds both FK columns + selective indexes + `idx_cluster_tasks_pending`
+- Full backward compatibility: projects without `target_region_id` continue using ad-hoc `pcd_auth_url` credentials
 
 ### v1.76.0 — Multi-Region Management UI
 
@@ -1032,4 +1040,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.76.0 | **Last Updated**: March 22, 2026
+**Project Status**: Production Ready | **Version**: 1.77.0 | **Last Updated**: March 22, 2026

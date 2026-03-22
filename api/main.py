@@ -945,6 +945,39 @@ async def startup_event():
       else:
         logger.info("Phase 7 navigation item already present — DDL skipped")
 
+      # ── Phase 8: migration_projects region FK normalization ──────────────
+      try:
+        with get_connection() as _p8_chk:
+            with _p8_chk.cursor() as _p8_cur:
+                _p8_cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='migration_projects' "
+                    "AND column_name='target_region_id')"
+                )
+                _p8_schema_exists = _p8_cur.fetchone()[0]
+      except Exception:
+        _p8_schema_exists = False
+
+      if not _p8_schema_exists:
+        try:
+          _p8_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_phase8_migration_norm.sql")
+          if os.path.exists(_p8_sql):
+              with open(_p8_sql, encoding="utf-8") as _f:
+                  _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
+              with get_connection() as _conn:
+                  with _conn.cursor() as _cur:
+                      for _stmt in (s.strip() for s in _sql.split(";")):
+                          if _stmt and any(
+                              ln.strip() and not ln.strip().startswith("--")
+                              for ln in _stmt.splitlines()
+                          ):
+                              _cur.execute(_stmt)
+              logger.info("Phase 8 migration routes normalization applied")
+        except Exception as _exc:
+          logger.warning("Phase 8 migration routes normalization skipped: %s", _exc)
+      else:
+        logger.info("Phase 8 migration normalization already present — DDL skipped")
+
       # Seed default control plane + region from env vars, then backfill existing rows.
       # Always runs (ON CONFLICT DO NOTHING — no locks acquired).
       try:

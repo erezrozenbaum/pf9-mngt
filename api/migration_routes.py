@@ -4645,6 +4645,8 @@ class PcdSettingsRequest(BaseModel):
     pcd_username: Optional[str] = None
     pcd_password_hint: Optional[str] = None
     pcd_region: Optional[str] = "region-one"
+    source_region_id: Optional[str] = None  # Phase 8: FK to pf9_regions (source PCD region)
+    target_region_id: Optional[str] = None  # Phase 8: FK to pf9_regions (preferred over ad-hoc creds)
 
 
 @router.patch("/projects/{project_id}/pcd-settings",
@@ -4713,36 +4715,56 @@ async def run_pcd_gap_analysis(project_id: str, user=Depends(get_current_user)):
         _sys.path.insert(0, os.path.dirname(__file__))
         import p9_common  # type: ignore
 
-        # Override config with project-level PCD settings if provided
-        pcd_auth_url = project.get("pcd_auth_url") or p9_common.CFG.get("KEYSTONE_URL", "")
-        pcd_username  = project.get("pcd_username") or p9_common.CFG.get("USERNAME", "")
-        pcd_password  = os.getenv("PF9_PASSWORD", p9_common.CFG.get("PASSWORD", ""))
-
-        if pcd_auth_url and pcd_username and pcd_password:
-            # Temporarily patch global CFG if project has custom PCD settings
-            _orig_cfg = {}
-            if project.get("pcd_auth_url"):
-                _orig_cfg["KEYSTONE_URL"] = p9_common.CFG["KEYSTONE_URL"]
-                p9_common.CFG["KEYSTONE_URL"] = pcd_auth_url
-            if project.get("pcd_username"):
-                _orig_cfg["USERNAME"] = p9_common.CFG["USERNAME"]
-                p9_common.CFG["USERNAME"] = pcd_username
-            if project.get("pcd_region"):
-                _orig_cfg["REGION_NAME"] = p9_common.CFG.get("REGION_NAME", "region-one")
-                p9_common.CFG["REGION_NAME"] = project["pcd_region"]
-
+        # Phase 8: if the project is linked to a registered region, use that client
+        # directly instead of temporarily patching the global p9_common.CFG.
+        if project.get("target_region_id"):
             try:
-                session, *_ = p9_common.get_session_best_scope()
-                pcd_flavors  = p9_common.nova_flavors(session)
-                pcd_networks = p9_common.neutron_list(session, "networks")
-                pcd_images   = p9_common.glance_images(session)
+                from cluster_registry import get_registry
+                _region_client = get_registry().get_region(project["target_region_id"])
+                pcd_flavors  = _region_client.nova_flavors()
+                pcd_networks = _region_client.neutron_list("networks")
+                pcd_images   = _region_client.glance_images()
                 pcd_connected = True
-            finally:
-                # Restore original config
-                for k, v in _orig_cfg.items():
-                    p9_common.CFG[k] = v
-        else:
-            pcd_error = "PCD credentials not configured. Set PF9_AUTH_URL, PF9_USERNAME, PF9_PASSWORD in .env or project PCD settings."
+                logger.info("pcd-gap-analysis: using registered region %s", project["target_region_id"])
+            except Exception as _reg_exc:
+                pcd_error = (
+                    f"Registered region {project['target_region_id']} unavailable: {_reg_exc}"
+                    " — falling back to ad-hoc credentials"
+                )
+                logger.warning("pcd-gap-analysis: registry client failed: %s — falling back", _reg_exc)
+
+        # Ad-hoc credentials path (original behavior, also used as fallback from above)
+        if not pcd_connected:
+            # Override config with project-level PCD settings if provided
+            pcd_auth_url = project.get("pcd_auth_url") or p9_common.CFG.get("KEYSTONE_URL", "")
+            pcd_username  = project.get("pcd_username") or p9_common.CFG.get("USERNAME", "")
+            pcd_password  = os.getenv("PF9_PASSWORD", p9_common.CFG.get("PASSWORD", ""))
+
+            if pcd_auth_url and pcd_username and pcd_password:
+                # Temporarily patch global CFG if project has custom PCD settings
+                _orig_cfg = {}
+                if project.get("pcd_auth_url"):
+                    _orig_cfg["KEYSTONE_URL"] = p9_common.CFG["KEYSTONE_URL"]
+                    p9_common.CFG["KEYSTONE_URL"] = pcd_auth_url
+                if project.get("pcd_username"):
+                    _orig_cfg["USERNAME"] = p9_common.CFG["USERNAME"]
+                    p9_common.CFG["USERNAME"] = pcd_username
+                if project.get("pcd_region"):
+                    _orig_cfg["REGION_NAME"] = p9_common.CFG.get("REGION_NAME", "region-one")
+                    p9_common.CFG["REGION_NAME"] = project["pcd_region"]
+
+                try:
+                    session, *_ = p9_common.get_session_best_scope()
+                    pcd_flavors  = p9_common.nova_flavors(session)
+                    pcd_networks = p9_common.neutron_list(session, "networks")
+                    pcd_images   = p9_common.glance_images(session)
+                    pcd_connected = True
+                finally:
+                    # Restore original config
+                    for k, v in _orig_cfg.items():
+                        p9_common.CFG[k] = v
+            else:
+                pcd_error = "PCD credentials not configured. Set PF9_AUTH_URL, PF9_USERNAME, PF9_PASSWORD in .env or project PCD settings."
     except Exception as e:
         pcd_error = str(e)
         logger.warning(f"PCD gap analysis: could not connect to PCD: {e}")

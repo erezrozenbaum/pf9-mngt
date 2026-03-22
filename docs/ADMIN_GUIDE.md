@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.76.0  
+**Version**: 1.77.0  
 **Last Updated**: March 22, 2026  
 **Audience**: System administrators and platform operators
 
@@ -577,6 +577,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.77.0 — Migration Planner Region Normalization (✅ Complete)
+
+- **`migration_projects.target_region_id`** — new nullable FK to `pf9_regions.id`; when set, `pcd-gap-analysis` uses the ClusterRegistry client for the registered region (no global config mutation); falls back to ad-hoc `pcd_auth_url` credentials when NULL (fully backward compatible)
+- **`migration_projects.source_region_id`** — new nullable FK to `pf9_regions.id`; tracks PCD source region for cross-region migrations; NULL for VMware-to-PCD projects
+- **`PcdSettingsRequest`** — `PATCH /api/migration/projects/{id}/pcd-settings` now accepts `source_region_id` and `target_region_id` fields
+- **`GET /admin/control-planes/cluster-tasks`** — new superadmin endpoint; returns pending `cluster_tasks` rows with `processor_status: NOT_IMPLEMENTED`; cross-region replication processor deferred pending 2nd region
+- **`migrate_phase8_migration_norm.sql`** — DDL migration; Phase 8 startup guard added to `main.py`
 
 ### v1.76.0 — Multi-Region Management UI (✅ Complete)
 
