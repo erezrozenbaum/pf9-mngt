@@ -29,6 +29,9 @@ import ReportsTab from "./components/ReportsTab";
 import ResourceManagementTab from "./components/ResourceManagementTab";
 import GroupedNavBar from "./components/GroupedNavBar";
 import OpsSearch from "./components/OpsSearch";
+import { ClusterContextProvider } from "./components/ClusterContext";
+import { RegionSelector } from "./components/RegionSelector";
+import ClusterManagement from "./components/ClusterManagement";
 import RunbooksTab from "./components/RunbooksTab";
 import TicketsTab from "./components/TicketsTab";
 import MigrationPlannerTab from "./components/MigrationPlannerTab";
@@ -413,7 +416,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -473,6 +476,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "system_metadata",       label: "🗂️ System Metadata",    actionStyle: true },
   { id: "tickets",               label: "🎫 Support Tickets",    adminOnly: false, actionStyle: true },
   { id: "my_queue",              label: "📥 My Queue",           adminOnly: false, actionStyle: true },
+  { id: "cluster_management",   label: "🌐 Cluster Mgmt",       adminOnly: true,  actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -3049,6 +3053,7 @@ const App: React.FC = () => {
   // Main Application
   return (
     <ThemeProvider>
+      <ClusterContextProvider userRole={authUser?.role ?? ""}>
       <div className="pf9-app">
         {isDemo && (
           <div className="demo-banner">
@@ -3138,6 +3143,7 @@ const App: React.FC = () => {
                 </button>
               </div>
             )}
+            <RegionSelector />
             <ThemeToggle />
           </div>
         </header>
@@ -3221,6 +3227,8 @@ const App: React.FC = () => {
             ? "My assigned tickets · sorted by priority · SLA deadlines"
             : activeTab === "system_metadata"
             ? "Unified system inventory · resource counts · compute & storage · quota hotspots · full Excel export"
+            : activeTab === "cluster_management"
+            ? "Platform9 control planes · region registry · sync status · health monitoring"
             : "Platform9 management"}
       </section>
 
@@ -6019,7 +6027,10 @@ const App: React.FC = () => {
             <TicketsTab userRole={authUser?.role || ""} myQueueMode />
           )}
 
-
+          {/* Cluster Management */}
+          {activeTab === "cluster_management" && (
+            <ClusterManagement userRole={authUser?.role} />
+          )}
 
         </div>
 
@@ -6430,6 +6441,7 @@ const App: React.FC = () => {
         </div>
       )}
     </div>
+      </ClusterContextProvider>
     </ThemeProvider>
   );
 };

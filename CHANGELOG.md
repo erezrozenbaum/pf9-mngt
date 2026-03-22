@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.76.0] - 2026-03-22
+
+### Added — Multi-Region Management UI
+
+#### Region selector and cluster management panel
+- **`ClusterContext.tsx`** *(new)* — React context providing `selectedRegionId`, `regionParam()`, `controlPlanes`, `regions`, and `reload` to all child components. Data is loaded from `/admin/control-planes` and per-CP `/regions` on mount; only runs for `superadmin` users; fails silently for others.
+- **`RegionSelector.tsx`** *(new)* — Compact dropdown in the top navigation bar. Rendered only when `regions.length ≥ 2` and the user is a superadmin. Options are grouped by control plane with health-state colour indicators (green/yellow/red/grey). Selecting a region sets the global `selectedRegionId` context value; "All Regions" resets it to `null`.
+- **`ClusterManagement.tsx`** *(new)* — Superadmin-only admin panel accessible via the **Cluster Mgmt** tab. Features: list / add / delete / test control planes; test-connection result shows discovered regions with one-click **Register**; regions table with enable/disable toggle, set-default, trigger-sync, and view-sync-log actions.
+- **`App.tsx`** — Imports and wires all three new components: `ClusterContextProvider` wraps the full authenticated shell; `RegionSelector` is placed before the theme toggle in the header; `cluster_management` added to `ActiveTab` type and `DEFAULT_TAB_ORDER`.
+
+#### Per-region filtering in all major views
+- **`MeteringTab.tsx`** — `buildQuery()` and `loadOverview()` callbacks now append `region_id` to query params when a region is selected; `selectedRegionId` added to both `useCallback` dependency arrays.
+- **`ResourceManagementTab.tsx`** — `loadData()` appends `region_id` to resource-list query params; `selectedRegionId` added to dependency array.
+- **`ReportsTab.tsx`** — `runReport()` appends `region_id` to the report fetch URL; `selectedRegionId` added to dependency array.
+- **`LandingDashboard.tsx`** — `fetchDashboardData()` appends `?region_id=` to the `/dashboard/health-summary` URL; `selectedRegionId` added to the `useEffect` dependency array so the dashboard auto-refreshes on region change.
+
+#### Database migration
+- **`db/migrate_phase7_nav.sql`** *(new)* — Adds a `cluster_management` row to `nav_items` inside the `admin_tools` group (`ON CONFLICT DO NOTHING`).
+- **`db/init.sql`** — `cluster_management` nav item added to the Admin Tools INSERT block for fresh installs.
+- **`api/main.py`** — Startup migration guard added: checks `nav_items.key = 'cluster_management'` existence before applying `migrate_phase7_nav.sql`.
+
+---
+
 ## [1.75.0] - 2026-03-22
 
 ### Added — Multi-Region API Filtering with RBAC Enforcement

@@ -2827,8 +2827,9 @@ ON CONFLICT (key) DO NOTHING;
 
 -- Admin Tools group
 INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order) VALUES
-    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'admin',          'Auth Management', '⚙️', '/admin',          'users',         1),
-    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'notifications',  'Notifications',   '🔔', '/notifications',  'notifications', 2)
+    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'admin',              'Auth Management',  '⚙️', '/admin',              'users',              1),
+    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'notifications',      'Notifications',    '🔔', '/notifications',      'notifications',      2),
+    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'cluster_management', 'Cluster Management','🌐', '/cluster_management', 'cluster_management', 3)
 ON CONFLICT (key) DO NOTHING;
 
 -- Technical Tools group

@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../config";
+import { useClusterContext } from "./ClusterContext";
 
 function getToken(): string | null {
   return localStorage.getItem("auth_token");
@@ -85,6 +86,7 @@ interface RVToolsRun {
 }
 
 export default function ReportsTab({ isAdmin }: Props) {
+  const { selectedRegionId } = useClusterContext();
   const [activeView, setActiveView] = useState<"catalog" | "rvtools">("catalog");
 
   const [catalog, setCatalog] = useState<ReportDef[]>([]);
@@ -218,6 +220,7 @@ export default function ReportsTab({ isAdmin }: Props) {
       if (selectedReport.parameters.includes("resource_type") && resourceType) {
         params.set("resource_type", resourceType);
       }
+      if (selectedRegionId) params.set("region_id", selectedRegionId);
       const data = await apiFetch<{ data: any[]; count: number }>(
         `/api/reports/${selectedReport.id}?${params.toString()}`
       );
@@ -227,7 +230,7 @@ export default function ReportsTab({ isAdmin }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [selectedReport, domainId, projectId, hours, days, action, resourceType]);
+  }, [selectedReport, domainId, projectId, hours, days, action, resourceType, selectedRegionId]);
 
   const exportCSV = useCallback(async () => {
     if (!selectedReport) return;

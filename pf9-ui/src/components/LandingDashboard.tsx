@@ -15,6 +15,7 @@ import { TenantRiskHeatmapCard } from './TenantRiskHeatmapCard';
 import { CapacityTrendsCard } from './CapacityTrendsCard';
 import { ComplianceDriftCard } from './ComplianceDriftCard';
 import { API_BASE } from '../config';
+import { useClusterContext } from './ClusterContext';
 
 interface DashboardData {
   health: any;
@@ -103,6 +104,7 @@ interface Props {
 
 export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
   const { theme } = useTheme();
+  const { selectedRegionId } = useClusterContext();
   const [data, setData] = useState<DashboardData>({
     health: null,
     sla: null,
@@ -193,9 +195,10 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
         }
       };
 
+      const rp = selectedRegionId ? `?region_id=${encodeURIComponent(selectedRegionId)}` : '';
       // Batch 1: critical widgets (health + core)
       const [health, sla, hosts, activity, coverage, capacity] = await Promise.all([
-        safeFetch(`${API_BASE}/dashboard/health-summary`),
+        safeFetch(`${API_BASE}/dashboard/health-summary${rp}`),
         safeFetch(`${API_BASE}/dashboard/snapshot-sla-compliance`),
         safeFetch(`${API_BASE}/dashboard/top-hosts-utilization`),
         safeFetch(`${API_BASE}/dashboard/recent-changes`),
@@ -264,7 +267,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
     // Refresh every 60 seconds
     const interval = setInterval(fetchDashboardData, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedRegionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
     fetchDashboardData();

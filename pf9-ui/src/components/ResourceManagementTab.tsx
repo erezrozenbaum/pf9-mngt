@@ -6,6 +6,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../config";
+import { useClusterContext } from "./ClusterContext";
 
 function getToken(): string | null {
   return localStorage.getItem("auth_token");
@@ -61,6 +62,7 @@ const ROLE_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 export default function ResourceManagementTab({ isAdmin }: Props) {
+  const { selectedRegionId } = useClusterContext();
   const [activeSection, setActiveSection] = useState<ResourceSection>("users");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -170,6 +172,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
       else if (filterDomainId) params.set("domain_id", filterDomainId);
       if (activeSection === "networks" && filterNetworkSearch.trim())
         params.set("name", filterNetworkSearch.trim());
+      if (selectedRegionId) params.set("region_id", selectedRegionId);
       const qs = params.toString() ? `?${params.toString()}` : "";
 
       const sectionEndpoints: Record<ResourceSection, string> = {
@@ -208,7 +211,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [activeSection, filterDomainId, filterProjectId, filterNetworkSearch]);
+  }, [activeSection, filterDomainId, filterProjectId, filterNetworkSearch, selectedRegionId]);
 
   // Load audit log data from activity-log-export report
   const loadAuditLog = useCallback(async () => {

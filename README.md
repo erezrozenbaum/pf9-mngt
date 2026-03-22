@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.75.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.76.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -734,7 +734,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.75.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.76.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -878,6 +878,14 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.76.0 — Multi-Region Management UI
+
+- **Region selector** in top nav bar — compact dropdown that appears only when ≥ 2 regions are registered; groups options by control plane with health-state indicators
+- **Cluster Management panel** — new superadmin-only tab for managing control planes and regions (add/delete/test CPs; register/enable/sync regions)
+- **Per-region filtering** in MeteringTab, ResourceManagementTab, ReportsTab, and LandingDashboard — all views now pass `?region_id=` when a region is selected
+- **`ClusterContext`** React context provides shared state to the entire authenticated shell
+- **`migrate_phase7_nav.sql`** — adds `cluster_management` nav item to the admin tools group
 
 ### v1.75.0 — Multi-Region API Filtering
 
@@ -1024,4 +1032,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.75.0 | **Last Updated**: March 22, 2026
+**Project Status**: Production Ready | **Version**: 1.76.0 | **Last Updated**: March 22, 2026

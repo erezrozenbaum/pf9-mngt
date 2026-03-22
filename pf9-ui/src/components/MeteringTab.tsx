@@ -14,6 +14,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE } from "../config";
+import { useClusterContext } from "./ClusterContext";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -352,6 +353,7 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 const CURRENCIES = ["USD", "EUR", "GBP", "ILS", "JPY", "CAD", "AUD", "CHF", "INR"];
 
 export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
+  const { selectedRegionId } = useClusterContext();
   const [subTab, setSubTab] = useState<SubTab>("overview");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -404,8 +406,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     if (projectFilter) params.set("project", projectFilter);
     if (domainFilter) params.set("domain", domainFilter);
     params.set("hours", String(hoursFilter));
+    if (selectedRegionId) params.set("region_id", selectedRegionId);
     return params.toString();
-  }, [projectFilter, domainFilter, hoursFilter]);
+  }, [projectFilter, domainFilter, hoursFilter, selectedRegionId]);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -424,6 +427,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
       const q = new URLSearchParams();
       if (projectFilter) q.set("project", projectFilter);
       if (domainFilter) q.set("domain", domainFilter);
+      if (selectedRegionId) q.set("region_id", selectedRegionId);
       const data = await apiFetch<OverviewData>(`/api/metering/overview?${q}`);
       setOverview(data);
     } catch (e: any) {

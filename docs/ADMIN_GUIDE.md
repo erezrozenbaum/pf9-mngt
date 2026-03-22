@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.75.0  
+**Version**: 1.76.0  
 **Last Updated**: March 22, 2026  
 **Audience**: System administrators and platform operators
 
@@ -577,6 +577,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.76.0 — Multi-Region Management UI (✅ Complete)
+
+- **`ClusterContext.tsx`** — React context for global `selectedRegionId` state; loads control planes + regions from `/admin/control-planes`; superadmin-only
+- **`RegionSelector.tsx`** — compact nav-bar dropdown; appears only when ≥ 2 regions are registered; grouped by control plane with health dots
+- **`ClusterManagement.tsx`** — superadmin admin panel: manage control planes (add/delete/test/discover regions) and regions (enable/disable, set-default, sync, sync-log)
+- **Per-region filtering** injected into `MeteringTab`, `ResourceManagementTab`, `ReportsTab`, `LandingDashboard` — all append `?region_id=` when a region is selected
+- **`migrate_phase7_nav.sql`** — `cluster_management` nav item added to `admin_tools` group; startup guard in `main.py` applies it idempotently
 
 ### v1.75.0 — Multi-Region API Filtering (✅ Complete)
 
