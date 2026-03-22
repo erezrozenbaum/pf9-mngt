@@ -223,6 +223,14 @@ Key rules:
 
 Additional control planes and regions are added via the admin API/UI — no env-var changes or restarts required.
 
+### Migration Planning Integration (v1.77.0)
+
+`migration_projects` gained two new FK columns in Phase 8:
+- `target_region_id` — links the migration project to a registered `pf9_regions` row; when set, `pcd-gap-analysis` uses the ClusterRegistry client for that region (authenticated, session-reused, SSRF-guarded) instead of ad-hoc credentials
+- `source_region_id` — optional; links the source cluster for full cross-cluster gap analysis
+
+Backward compatible: projects without these columns use the embedded ad-hoc Nova/Glance credentials as before.
+
 ### New DB Tables
 
 | Table | Purpose |
@@ -1722,7 +1730,7 @@ python host_metrics_collector.py > metrics.log 2>&1
 2. **High Availability**: Load balancers, service redundancy
 3. **Advanced Monitoring**: Alerting, dashboards, trend analysis
 4. **API Versioning**: Backward-compatible API evolution
-5. **Multi-Cluster Management UI**: Region selector, per-region health dashboard, cross-region cost comparison, ClusterRegistry API
+5. ~~**Multi-Cluster Management UI**: Region selector, per-region health dashboard, cross-region cost comparison, ClusterRegistry API~~ → ✅ Shipped: RegionSelector nav dropdown + ClusterManagement admin panel (v1.76.0)
 
 ## 📚 Architecture Decision Records
 

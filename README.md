@@ -435,17 +435,40 @@ A 15-minute explainer video walking through the UI and key features:
 - **Feedback & History**: Per-answer thumbs up/down, conversation history persisted per user with automatic trimming
 - **Automatic Fallback**: If the LLM backend fails, seamlessly falls back to the built-in intent engine
 
-### � Multi-Region & Multi-Cluster Support *(v1.73.0)*
-- **Multiple Control Planes**: Register and manage multiple Platform9 installations (distinct Keystone endpoints) from a single pf9-mngt deployment — each with independent service-account credentials
-- **Region Registry**: Full two-level model matching OpenStack's architecture — one Keystone per control plane, with multiple Nova/Neutron/Cinder/Glance regions underneath
-- **Zero-Migration Rollout**: Existing single-region deployments are automatically seeded on first startup — current `PF9_AUTH_URL` + `PF9_REGION_NAME` become the `default` control plane and region; no operator action required
-- **Per-Region Health Tracking**: `health_status` per region (`healthy` / `degraded` / `unreachable` / `auth_failed`), sync metrics, last sync timestamp, and per-region priority for failover scheduling
-- **Cross-Region Task Engine**: State-machine (`cluster_tasks`) for long-running cross-cluster operations — snapshot replication, DR failover, cross-region migration — with `FOR UPDATE SKIP LOCKED` worker safety preventing double-execution
-- **Region-Scoped Resources**: All infrastructure resources (VMs, volumes, networks, snapshots, provisioning jobs, etc.) carry a `region_id` FK — full per-region inventory, reporting, and audit trail
-- **Endpoint Bug Fix**: Service catalog endpoint selection now correctly filters by `region_id`, preventing silent wrong-region API calls in multi-region control planes
-- **Cache Namespacing**: Redis cache keys include `region_id` — prevents cross-region cache collisions when multiple `Pf9Client` instances share one Redis instance
-- **Session Reuse**: Each `Pf9Client` owns a single `requests.Session` reused for all API calls — no per-call TCP/TLS overhead; sessions are closed cleanly on shutdown via `ClusterRegistry.shutdown()`
-- **Per-Region Request Timeout**: Each region call in `MultiClusterQuery.gather()` enforces a hard `asyncio.wait_for` timeout (`REGION_REQUEST_TIMEOUT_SEC`, default 30 s) — a slow or unreachable region cannot block the semaphore slot and stall all other regions
+### 🌐 Multi-Region & Multi-Cluster Support *(v1.73.0 → v1.77.0)*
+
+**For MSPs managing multiple Platform9 customers or data centres, this is the operational core.**
+
+A single pf9-mngt instance can connect to any number of Platform9 installations and OpenStack regions. Every view — inventory, metering, snapshots, reports, migration planner — automatically scopes to the selected region, or aggregates across all regions simultaneously.
+
+**The MSP use case**: your company manages 4 customers, each on their own PF9 cluster. Without multi-cluster support you run 4 separate tools, correlate data manually, and switch contexts manually. With pf9-mngt you register all 4 control planes, and one console covers everything: per-customer inventory, per-customer chargeback, per-customer snapshot SLA, per-customer migration planning — with a region selector that switches context in one click.
+
+#### Architecture
+- **Two-level hierarchy** that mirrors OpenStack natively — one **control plane** per PF9 installation (one Keystone endpoint, shared identity), with one or more **regions** per control plane (each with its own Nova/Neutron/Cinder/Glance endpoints and independent resource inventory)
+- **ClusterRegistry** replaces the legacy global `Pf9Client` singleton — the registry holds one authenticated client per region, manages sessions, and routes all API calls to the correct endpoint
+- **Zero-migration rollout** — existing single-region deployments are automatically seeded on first startup; `PF9_AUTH_URL` + `PF9_REGION_NAME` become the `default` control plane and region; no operator action required
+
+#### Management UI *(v1.76.0)*
+- **Region Selector** — compact dropdown in the top nav bar, visible only when 2 or more regions are registered; groups options by control plane with live health-state colour dots (green / yellow / red / grey)
+- **Cluster Management admin panel** — superadmin-only tab to add/delete/test control planes, discover and register regions with one click, enable/disable regions, trigger manual syncs, and view sync logs; no env-var changes or restarts required to add a new cluster
+
+#### Per-Region Everything
+- All infrastructure resources — VMs, volumes, networks, snapshots, provisioning jobs, search index, metering rows — carry a `region_id` FK; full per-region inventory, reporting, and audit trail
+- All 7 API modules accept an optional `?region_id=` parameter to scope any query to a specific region, or aggregate across all regions when omitted
+- **RBAC enforcement**: region-scoped users are automatically constrained to their assigned region (HTTP 403 on mismatch); global users may query any region
+- All background workers (metering, snapshot, scheduler, search) run independent per-region loops — a slow or failed region does not block collection for healthy regions
+- Redis cache keys are namespaced by `region_id` — no cross-region cache collisions
+
+#### Cross-Region Migration Planning *(v1.77.0)*
+- Migration projects can now be linked to registered regions via `target_region_id` — `pcd-gap-analysis` uses the ClusterRegistry client for live feasibility checks against that registered region, with full backward compatibility for ad-hoc credentials
+- `GET /admin/control-planes/cluster-tasks` — superadmin endpoint exposing the `cluster_tasks` cross-region task bus; snapshot replication / DR failover deferred pending second-region testing infrastructure
+
+#### Operational Resilience
+- **Per-region health tracking**: `health_status` per region (`healthy` / `degraded` / `unreachable` / `auth_failed`), sync metrics, and last-sync timestamp
+- **Per-region timeout**: each region call enforces a hard `asyncio.wait_for` deadline (`REGION_REQUEST_TIMEOUT_SEC`, default 30 s) — an unreachable region cannot stall all others
+- **SSRF protection**: each control plane has `allow_private_network` (default `false`) — blocks RFC-1918 and loopback outbound connections; configurable per-CP by superadmin for on-premises clusters
+
+> 📖 See the dedicated **[Multi-Region & Multi-Cluster Guide](docs/MULTICLUSTER_GUIDE.md)** for a step-by-step operator walkthrough.
 
 ### �🎫 Support Ticket System *(v1.58 → v1.60)*
 - **Full Ticket Lifecycle**: Ticket refs (TKT-YYYY-NNNNN); 5 types (incident, service_request, change_request, auto_incident, auto_change_request); full status/priority/type model; approval gate; SLA deadlines; OpenStack resource linkage
@@ -726,6 +749,7 @@ pf9-mngt/
 | [Quick Reference](docs/QUICK_REFERENCE.md) | Common commands and URLs cheat sheet |
 | [Kubernetes Migration](docs/KUBERNETES_MIGRATION_GUIDE.md) | K8s migration planning guide |
 | [Linux Deployment](docs/LINUX_DEPLOYMENT_GUIDE.md) | Running pf9-mngt on Linux instead of Windows |
+| [Multi-Region & Multi-Cluster Guide](docs/MULTICLUSTER_GUIDE.md) | MSP operator guide: onboarding clusters, Region Selector UI, per-region filtering, workers, migration planning |
 | [Support Ticket System Guide](docs/TICKET_GUIDE.md) | Full reference for the ticket lifecycle, API, SLA, email templates, and auto-tickets |
 | [CI/CD Guide](docs/CI_CD_GUIDE.md) | CI pipeline, release process, and Docker image publishing |
 | [Contributing](CONTRIBUTING.md) | Contribution guidelines |
