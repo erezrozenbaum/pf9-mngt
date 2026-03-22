@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.74.4-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.74.5-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -734,7 +734,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.74.4](CHANGELOG.md) — March 2026
+**Current version:** [v1.74.5](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -879,6 +879,15 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ## 🎯 Recent Updates
 
+### v1.74.5 — Multi-Region Worker Support
+
+- **metering_worker**: Full multi-region loop — each enabled region gets its own metering collection cycle with `region_id`-tagged rows in all metering tables. `collect_resource_metrics` passes `region_id` to the monitoring API; `collect_snapshot_metrics` and `collect_quota_usage` filter inventory tables by region. `run_collection_cycle` now iterates all regions and writes a `cluster_sync_metrics` row per region.
+- **HostMetricsCollector**: Constructor accepts optional `region_id` argument for explicit region binding.
+- **scheduler_worker**: `metrics_loop` now creates one `HostMetricsCollector` per region, writes `cluster_sync_metrics` after each collection, and falls back to single-region env-var mode when no region rows exist.
+- **p9_snapshot_policy_assign**: `--region-id` now properly scopes all progress output; `region_label` prefixes every print line for clear multi-region log attribution.
+- **backup_worker**: `backup_history` rows now carry `region_id` tracking metadata for manual region-triggered backup jobs.
+- **DB migration** (`migrate_metering_region.sql`): adds `region_id TEXT` column and indexes to all metering tables and `backup_history`.
+
 ### v1.74.4 — Search Worker VM Indexing Fix
 - ✅ **VM search indexing restored** — `LEFT JOIN images` used `i.image_id` (non-existent column); corrected to `i.id` in `search_worker/main.py` and `api/reports.py`; VM records now index correctly every 5 minutes and OS info appears in reports
 
@@ -1001,4 +1010,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.74.4 | **Last Updated**: March 22, 2026
+**Project Status**: Production Ready | **Version**: 1.74.5 | **Last Updated**: March 22, 2026

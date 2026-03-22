@@ -341,22 +341,25 @@ def main():
     parser.add_argument(
         "--region-id",
         default="",
-        help="Region ID for multi-region scoping (Phase 5). Accepted but informational.",
+        help="Region ID for multi-region scoping. When set, all OpenStack API calls "
+             "use region-specific credentials already overlaid in the environment by "
+             "the snapshot scheduler.",
     )
 
     args = parser.parse_args()
+    region_label = f"[{args.region_id}] " if args.region_id else ""
     if args.region_id:
         print(f"[INFO] Policy assign running for region: {args.region_id}")
 
     rules = load_rules(args.config)
-    print(f"[1/4] Loaded {len(rules)} rule(s) from {args.config}")
+    print(f"{region_label}[1/4] Loaded {len(rules)} rule(s) from {args.config}")
 
-    print("[2/4] Keystone auth (project scope)...")
+    print(f"{region_label}[2/4] Keystone auth (project scope)...")
     session, token, auth_body, scope, _ = get_session_best_scope()
     admin_project_id = auth_body["token"]["project"]["id"]
     print(f"      Scope: {scope}, project={admin_project_id}")
 
-    print("[3/4] Fetching domains and projects...")
+    print(f"{region_label}[3/4] Fetching domains and projects...")
     domains = list_domains_all(session)
     projects = list_projects_all(session)
 
@@ -365,7 +368,7 @@ def main():
 
     print(f"      Domains: {len(domains)}, Projects: {len(projects)}")
 
-    print("[4/4] Fetching volumes (all tenants via admin project)...")
+    print(f"{region_label}[4/4] Fetching volumes (all tenants via admin project)...")
     vols = cinder_volumes_all(session, admin_project_id)
     print(f"      Total volumes: {len(vols)}")
 
@@ -483,7 +486,8 @@ def main():
         update_volume_metadata(session, admin_project_id, vol_id, new_meta, args.dry_run)
         changed += 1
 
-    print("\nSummary:")
+    print(f"\n{region_label}Summary:")
+    print(f"  Region:             {args.region_id or '(default)'}")
     print(f"  Volumes processed:  {len(vols)}")
     print(f"  Volumes changed:    {changed}")
     print(f"  Volumes unchanged:  {skipped}")

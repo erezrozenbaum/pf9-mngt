@@ -102,6 +102,56 @@ def load_default_region_id(conn) -> Optional[str]:
         return None
 
 
+def _decrypt_password(password_enc: str) -> str:
+    """Resolve a control_plane.password_enc value to plaintext."""
+    if not password_enc:
+        return os.getenv("PF9_PASSWORD", "")
+    if password_enc.startswith("env:"):
+        return os.getenv("PF9_PASSWORD", "")
+    if password_enc.startswith("fernet:"):
+        try:
+            import base64 as _b64
+            import hashlib as _hl
+            from cryptography.fernet import Fernet
+            secret = os.getenv("JWT_SECRET", "") or os.getenv("JWT_SECRET_KEY", "")
+            if not secret:
+                log.warning("JWT_SECRET not set – cannot decrypt region password")
+                return os.getenv("PF9_PASSWORD", "")
+            key = _b64.urlsafe_b64encode(_hl.sha256(secret.encode()).digest())
+            return Fernet(key).decrypt(password_enc[7:].encode()).decode()
+        except Exception as exc:
+            log.warning("Failed to decrypt region password: %s", exc)
+            return os.getenv("PF9_PASSWORD", "")
+    return password_enc  # plaintext fallback
+
+
+def load_enabled_regions(conn) -> List[Dict[str, Any]]:
+    """Return all enabled regions with their region_id and name.
+
+    Only the identifiers are needed for metering – credentials are not used
+    since all collection goes through the shared DB and local monitoring service.
+    Falls back to an empty list on any error (caller uses default region).
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT r.id, r.region_name
+                FROM pf9_regions r
+                JOIN pf9_control_planes cp ON cp.id = r.control_plane_id
+                WHERE r.is_enabled = TRUE AND cp.is_enabled = TRUE
+                ORDER BY r.priority ASC, r.id ASC
+            """)
+            rows = cur.fetchall()
+        return [{"region_id": row[0], "region_name": row[1]} for row in rows]
+    except Exception as exc:
+        log.warning("Could not load regions from DB (%s) – using default region", exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return []
+
+
 def record_metering_sync(
     conn,
     region_id: str,
@@ -137,14 +187,17 @@ def record_metering_sync(
 # Collectors
 # ---------------------------------------------------------------------------
 
-def collect_resource_metrics(conn) -> int:
+def collect_resource_metrics(conn, region_id: str) -> int:
     """
     Fetch per-VM metrics from the monitoring service and insert into
     metering_resources.  Looks up vcpus from the flavors table when
     the monitoring service does not provide them.
     """
     try:
-        resp = requests.get(f"{MONITORING_URL}/metrics/vms", params={"limit": 5000}, timeout=30)
+        params: Dict[str, Any] = {"limit": 5000}
+        if region_id:
+            params["region_id"] = region_id
+        resp = requests.get(f"{MONITORING_URL}/metrics/vms", params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         vms: List[Dict] = data.get("data", [])
@@ -196,6 +249,7 @@ def collect_resource_metrics(conn) -> int:
             vm.get("network_tx_bytes"),
             vm.get("storage_read_bytes"),
             vm.get("storage_write_bytes"),
+            region_id or None,
         ))
 
     insert_sql = """
@@ -205,14 +259,16 @@ def collect_resource_metrics(conn) -> int:
             cpu_usage_percent, ram_usage_mb, ram_usage_percent,
             disk_used_gb, disk_usage_percent,
             network_rx_bytes, network_tx_bytes,
-            storage_read_bytes, storage_write_bytes
+            storage_read_bytes, storage_write_bytes,
+            region_id
         ) VALUES (
             %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s,
             %s, %s, %s,
             %s, %s,
             %s, %s,
-            %s, %s
+            %s, %s,
+            %s
         )
     """
     with conn.cursor() as cur:
@@ -221,13 +277,15 @@ def collect_resource_metrics(conn) -> int:
     return len(rows)
 
 
-def collect_snapshot_metrics(conn) -> int:
+def collect_snapshot_metrics(conn, region_id: str) -> int:
     """
     Read current snapshot data from the database and insert metering records.
     Uses the snapshots table directly (has project_name, domain_name columns)
     and optionally joins compliance_details for compliance info.
+    Scoped to the given region_id when non-empty.
     """
-    select_sql = """
+    region_filter = "AND (%s = '' OR s.region_id = %s)" if region_id is not None else ""
+    select_sql = f"""
         SELECT s.id AS snapshot_id, s.name AS snapshot_name,
                s.volume_id, '' AS volume_name,
                COALESCE(s.project_name, s.tenant_name, '') AS project_name,
@@ -242,30 +300,36 @@ def collect_snapshot_metrics(conn) -> int:
             WHERE volume_id = s.volume_id
             ORDER BY created_at DESC LIMIT 1
         ) cd ON TRUE
-        WHERE s.status IS NULL OR s.status != 'deleted'
+        WHERE (s.status IS NULL OR s.status != 'deleted')
+        {region_filter}
     """
     now = datetime.datetime.now(datetime.timezone.utc)
     rows_inserted = 0
 
+    region_params = (region_id, region_id) if region_id is not None else ()
+    fallback_filter = "AND (%s = '' OR s.region_id = %s)" if region_id is not None else ""
+    fallback_sql = f"""
+        SELECT s.id AS snapshot_id, s.name AS snapshot_name,
+               s.volume_id, '' AS volume_name,
+               COALESCE(s.project_name, s.tenant_name, '') AS project_name,
+               COALESCE(s.domain_name, '') AS domain,
+               COALESCE(s.size_gb, 0) AS size_gb,
+               s.status, s.created_at,
+               NULL AS policy_name, NULL AS is_compliant
+        FROM snapshots s
+        WHERE (s.status IS NULL OR s.status != 'deleted')
+        {fallback_filter}
+    """
+
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         try:
-            cur.execute(select_sql)
+            cur.execute(select_sql, region_params)
         except psycopg2.errors.UndefinedTable as e:
             conn.rollback()
             # Retry without compliance join
             log.info("compliance_details table not found (%s) – trying snapshots only", e)
             try:
-                cur.execute("""
-                    SELECT s.id AS snapshot_id, s.name AS snapshot_name,
-                           s.volume_id, '' AS volume_name,
-                           COALESCE(s.project_name, s.tenant_name, '') AS project_name,
-                           COALESCE(s.domain_name, '') AS domain,
-                           COALESCE(s.size_gb, 0) AS size_gb,
-                           s.status, s.created_at,
-                           NULL AS policy_name, NULL AS is_compliant
-                    FROM snapshots s
-                    WHERE s.status IS NULL OR s.status != 'deleted'
-                """)
+                cur.execute(fallback_sql, region_params)
             except Exception:
                 conn.rollback()
                 log.info("snapshots table not found – skipping snapshot metering")
@@ -280,8 +344,9 @@ def collect_snapshot_metrics(conn) -> int:
     insert_sql = """
         INSERT INTO metering_snapshots (
             collected_at, snapshot_id, snapshot_name, volume_id, volume_name,
-            project_name, domain, size_gb, status, policy_name, is_compliant, created_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            project_name, domain, size_gb, status, policy_name, is_compliant, created_at,
+            region_id
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     batch = []
     for s in snapshots:
@@ -293,6 +358,7 @@ def collect_snapshot_metrics(conn) -> int:
             s.get("size_gb"), s.get("status"),
             s.get("policy_name"), s.get("is_compliant"),
             s.get("created_at"),
+            region_id or None,
         ))
 
     if batch:
@@ -303,7 +369,7 @@ def collect_snapshot_metrics(conn) -> int:
     return rows_inserted
 
 
-def collect_restore_metrics(conn) -> int:
+def collect_restore_metrics(conn, region_id: str) -> int:
     """
     Read recent restore operations from restore_jobs and persist metering records.
     Only collects restores not yet metered (by comparing initiated_at).
@@ -350,8 +416,9 @@ def collect_restore_metrics(conn) -> int:
             collected_at, restore_id, snapshot_id, snapshot_name,
             target_server_id, target_server_name,
             project_name, domain, status, duration_seconds,
-            initiated_by, initiated_at
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            initiated_by, initiated_at,
+            region_id
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     batch = []
     for r in restores:
@@ -363,6 +430,7 @@ def collect_restore_metrics(conn) -> int:
             r.get("project_name"), r.get("domain"),
             r.get("status"), r.get("duration_seconds"),
             r.get("initiated_by"), r.get("initiated_at"),
+            region_id or None,
         ))
 
     with conn.cursor() as cur:
@@ -432,22 +500,25 @@ def collect_api_usage(conn) -> int:
     return len(batch)
 
 
-def collect_efficiency_scores(conn) -> int:
+def collect_efficiency_scores(conn, region_id: str) -> int:
     """
     Compute per-VM efficiency scores from the latest metering_resources row.
     Efficiency = actual_usage / allocated * 100, weighted average across CPU/RAM/Disk.
+    Scoped to the given region_id so multi-region deployments each get their own scores.
     """
-    # Get the latest resource record per VM
+    # Get the latest resource record per VM for this region
     select_sql = """
         SELECT DISTINCT ON (vm_id)
             vm_id, vm_name, project_name, domain,
             vcpus_allocated, ram_allocated_mb, disk_allocated_gb,
             cpu_usage_percent, ram_usage_percent, disk_usage_percent
         FROM metering_resources
+        WHERE (%s = '' OR region_id = %s)
         ORDER BY vm_id, collected_at DESC
     """
+    region_arg = region_id or ""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(select_sql)
+        cur.execute(select_sql, (region_arg, region_arg))
         rows = cur.fetchall()
 
     if not rows:
@@ -504,14 +575,16 @@ def collect_efficiency_scores(conn) -> int:
             round(overall, 2),
             classification,
             recommendation,
+            region_id or None,
         ))
 
     insert_sql = """
         INSERT INTO metering_efficiency (
             collected_at, vm_id, vm_name, project_name, domain,
             cpu_efficiency, ram_efficiency, storage_efficiency,
-            overall_score, classification, recommendation
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            overall_score, classification, recommendation,
+            region_id
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
     with conn.cursor() as cur:
         psycopg2.extras.execute_batch(cur, insert_sql, batch, page_size=200)
@@ -522,15 +595,14 @@ def collect_efficiency_scores(conn) -> int:
 # ---------------------------------------------------------------------------
 # Quota / usage collection  (computed from inventory tables)
 # ---------------------------------------------------------------------------
-def collect_quota_usage(conn) -> int:
+def collect_quota_usage(conn, region_id: str) -> int:
     """
     Compute per-project resource usage from the live inventory tables
     (servers, volumes, snapshots, floating_ips, networks, ports, security_groups)
     and insert into metering_quotas.
 
-    Quota limits are set to NULL because we don't have access to the
-    OpenStack quota API — but the usage columns are real, giving the
-    smart-query layer useful data to answer "quota for <tenant>" questions.
+    Results are scoped to the given region_id so multi-region deployments
+    get separate per-region quota rows for each project.
     """
     sql = """
         SELECT
@@ -561,42 +633,51 @@ def collect_quota_usage(conn) -> int:
             FROM servers s
             LEFT JOIN flavors f ON f.id = s.flavor_id
             WHERE s.project_id = p.id
+            AND (%s = '' OR s.region_id = %s)
         ) comp ON true
         -- Volume usage
         LEFT JOIN LATERAL (
             SELECT count(*)                        AS volumes_used,
                    COALESCE(SUM(size_gb), 0)       AS storage_used_gb
             FROM volumes WHERE project_id = p.id
+            AND (%s = '' OR region_id = %s)
         ) vol ON true
         -- Snapshot usage
         LEFT JOIN LATERAL (
             SELECT count(*) AS snapshots_used
             FROM snapshots WHERE project_id = p.id
+            AND (%s = '' OR region_id = %s)
         ) snap ON true
         -- Floating IPs
         LEFT JOIN LATERAL (
             SELECT count(*) AS floating_ips_used
             FROM floating_ips WHERE project_id = p.id
+            AND (%s = '' OR region_id = %s)
         ) fip ON true
         -- Networks
         LEFT JOIN LATERAL (
             SELECT count(*) AS networks_used
             FROM networks WHERE project_id = p.id
+            AND (%s = '' OR region_id = %s)
         ) net ON true
         -- Ports
         LEFT JOIN LATERAL (
             SELECT count(*) AS ports_used
             FROM ports WHERE project_id = p.id
+            AND (%s = '' OR region_id = %s)
         ) pt ON true
         -- Security Groups
         LEFT JOIN LATERAL (
             SELECT count(*) AS security_groups_used
             FROM security_groups WHERE project_id = p.id
+            AND (%s = '' OR region_id = %s)
         ) sg ON true
         ORDER BY d.name, p.name
     """
+    region_arg = region_id or ""
+    query_params = (region_arg, region_arg) * 7  # one pair per lateral subquery
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql)
+        cur.execute(sql, query_params)
         rows = cur.fetchall()
 
     if not rows:
@@ -618,6 +699,7 @@ def collect_quota_usage(conn) -> int:
             None, r["networks_used"],        # networks_quota, networks_used
             None, r["ports_used"],           # ports_quota, ports_used
             None, r["security_groups_used"], # security_groups_quota, security_groups_used
+            region_id or None,
         ))
 
     insert_sql = """
@@ -632,12 +714,14 @@ def collect_quota_usage(conn) -> int:
             floating_ips_quota, floating_ips_used,
             networks_quota, networks_used,
             ports_quota, ports_used,
-            security_groups_quota, security_groups_used
+            security_groups_quota, security_groups_used,
+            region_id
         ) VALUES (
             %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s
+            %s, %s, %s, %s,
+            %s
         )
     """
     with conn.cursor() as cur:
@@ -679,11 +763,8 @@ def prune_old_records(conn, retention_days: int):
 # Main loop
 # ---------------------------------------------------------------------------
 def run_collection_cycle():
-    """Execute one full metering collection cycle."""
+    """Execute one full metering collection cycle across all enabled regions."""
     conn = None
-    started_at = datetime.datetime.now(datetime.timezone.utc)
-    total_resources = 0
-    total_errors = 0
     try:
         conn = get_conn()
 
@@ -704,38 +785,56 @@ def run_collection_cycle():
 
         retention_days = cfg.get("retention_days", 90)
 
-        log.info("=== Metering collection cycle start ===")
+        # Determine regions to collect for
+        regions = load_enabled_regions(conn)
+        if not regions:
+            # Fall back to a single default-region entry
+            default_rid = load_default_region_id(conn)
+            regions = [{"region_id": default_rid, "region_name": default_rid or "default"}]
 
-        n = collect_resource_metrics(conn)
-        log.info("Resources: %d VM records collected", n)
-        total_resources += n
+        log.info("=== Metering collection cycle start (regions: %d) ===", len(regions))
 
-        n = collect_snapshot_metrics(conn)
-        log.info("Snapshots: %d records collected", n)
-
-        n = collect_restore_metrics(conn)
-        log.info("Restores:  %d records collected", n)
-
+        # API usage is global (not per-region) – collect once per cycle
         n = collect_api_usage(conn)
         log.info("API usage: %d endpoint records collected", n)
 
-        n = collect_efficiency_scores(conn)
-        log.info("Efficiency: %d VM scores computed", n)
+        for region in regions:
+            region_id = region["region_id"] or ""
+            region_name = region.get("region_name") or region_id or "default"
+            started_at = datetime.datetime.now(datetime.timezone.utc)
+            total_resources = 0
+            total_errors = 0
 
-        n = collect_quota_usage(conn)
-        log.info("Quotas:    %d project usage records collected", n)
+            log.info("--- Collecting metrics for region: %s (%s) ---", region_name, region_id)
+            try:
+                n = collect_resource_metrics(conn, region_id)
+                log.info("[%s] Resources: %d VM records collected", region_name, n)
+                total_resources += n
+
+                n = collect_snapshot_metrics(conn, region_id)
+                log.info("[%s] Snapshots: %d records collected", region_name, n)
+
+                n = collect_restore_metrics(conn, region_id)
+                log.info("[%s] Restores:  %d records collected", region_name, n)
+
+                n = collect_quota_usage(conn, region_id)
+                log.info("[%s] Quotas:    %d project usage records", region_name, n)
+
+                n = collect_efficiency_scores(conn, region_id)
+                log.info("[%s] Efficiency: %d VM scores computed", region_name, n)
+
+            except Exception as exc:
+                total_errors += 1
+                log.error("[%s] Collection failed: %s\n%s", region_name, exc, traceback.format_exc())
+
+            finished_at = datetime.datetime.now(datetime.timezone.utc)
+            record_metering_sync(conn, region_id, started_at, finished_at, total_resources, total_errors)
 
         prune_old_records(conn, retention_days)
-
-        # Write per-region sync metric for the default region.
-        finished_at = datetime.datetime.now(datetime.timezone.utc)
-        region_id = load_default_region_id(conn)
-        record_metering_sync(conn, region_id, started_at, finished_at, total_resources, total_errors)
 
         log.info("=== Metering collection cycle complete ===")
 
     except Exception as exc:
-        total_errors += 1
         log.error("Collection cycle failed: %s\n%s", exc, traceback.format_exc())
     finally:
         if conn:

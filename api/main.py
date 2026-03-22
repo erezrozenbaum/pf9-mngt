@@ -844,6 +844,40 @@ async def startup_event():
       else:
         logger.info("Phase 5 workers schema already present — DDL skipped")
 
+      # Phase 5B: add region_id to metering tables and backup_history.
+      # Guard: skip if metering_resources.region_id already exists.
+      try:
+        with get_connection() as _p5b_chk:
+            with _p5b_chk.cursor() as _p5b_cur:
+                _p5b_cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name='metering_resources' AND column_name='region_id' "
+                    "AND table_schema='public')"
+                )
+                _p5b_schema_exists = _p5b_cur.fetchone()[0]
+      except Exception:
+        _p5b_schema_exists = False
+
+      if not _p5b_schema_exists:
+        try:
+          _p5b_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_metering_region.sql")
+          if os.path.exists(_p5b_sql):
+              with open(_p5b_sql, encoding="utf-8") as _f:
+                  _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
+              with get_connection() as _conn:
+                  with _conn.cursor() as _cur:
+                      for _stmt in (s.strip() for s in _sql.split(";")):
+                          if _stmt and any(
+                              ln.strip() and not ln.strip().startswith("--")
+                              for ln in _stmt.splitlines()
+                          ):
+                              _cur.execute(_stmt)
+              logger.info("Phase 5B metering region migration applied")
+        except Exception as _exc:
+          logger.warning("Phase 5B metering region migration skipped: %s", _exc)
+      else:
+        logger.info("Phase 5B metering region schema already present — DDL skipped")
+
       # Seed default control plane + region from env vars, then backfill existing rows.
       # Always runs (ON CONFLICT DO NOTHING — no locks acquired).
       try:

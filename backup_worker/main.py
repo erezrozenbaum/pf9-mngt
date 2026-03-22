@@ -626,13 +626,13 @@ def _should_run_scheduled(cfg, target="database"):
     return True
 
 
-def _create_scheduled_job(conn, target="database"):
+def _create_scheduled_job(conn, target="database", region_id: str = None):
     """Insert a pending job row for the scheduler."""
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO backup_history (status, backup_type, backup_target, initiated_by) "
-            "VALUES ('pending', 'scheduled', %s, 'scheduler') RETURNING id",
-            (target,),
+            "INSERT INTO backup_history (status, backup_type, backup_target, initiated_by, region_id) "
+            "VALUES ('pending', 'scheduled', %s, 'scheduler', %s) RETURNING id",
+            (target, region_id),
         )
         job_id = cur.fetchone()[0]
     conn.commit()

@@ -58,8 +58,9 @@ class HostMetricsCollector:
             print(f"[DB] Failed to load hypervisor hosts for region {region_id}: {e}")
             return []
 
-    def __init__(self):
-        region_id = os.getenv("PF9_REGION_ID", "")
+    def __init__(self, region_id: str = ""):
+        if not region_id:
+            region_id = os.getenv("PF9_REGION_ID", "")
         hosts_env = os.getenv("PF9_HOSTS", "")
         if region_id:
             self.hosts = self._load_hosts_from_db(region_id)

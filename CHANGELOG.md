@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.74.5] - 2026-03-22
+
+### Added — Multi-Region Worker Support
+
+#### `metering_worker/main.py`
+- Added `_decrypt_password()` and `load_enabled_regions()` helpers (same pattern as `scheduler_worker`).
+- All collector functions now accept a `region_id` parameter: `collect_resource_metrics`, `collect_snapshot_metrics`, `collect_restore_metrics`, `collect_quota_usage`, `collect_efficiency_scores`.
+- `collect_resource_metrics` passes `region_id` as a query param to the monitoring service API.
+- `collect_snapshot_metrics` and `collect_quota_usage` filter inventory tables by `region_id` so cross-region data is never mixed.
+- `collect_efficiency_scores` reads `metering_resources WHERE region_id = %s` so efficiency scores are region-scoped.
+- All INSERT statements now write `region_id` into the metering tables.
+- `run_collection_cycle()` iterates over all enabled regions, calling each collector per region and writing a `cluster_sync_metrics` row per region. Falls back to single default-region mode when no regions are in the DB.
+- `collect_api_usage` remains global (one call per cycle, not per region).
+
+#### `host_metrics_collector.py`
+- `HostMetricsCollector.__init__` now accepts an optional `region_id: str = ""` argument. When provided, the constructor uses it directly instead of reading `PF9_REGION_ID` from the environment. Backward-compatible: existing callers that pass no argument continue to work via `os.getenv("PF9_REGION_ID", "")` fallback.
+
+#### `scheduler_worker/main.py` — `metrics_loop()`
+- Replaced single global `HostMetricsCollector` with a per-region collector map loaded from `load_enabled_regions()`.
+- Each region gets its own `metrics_cache_{region_id}.json` and `cpu_state_{region_id}.json` so CPU delta calculations are independent.
+- Falls back to single-collector env-var mode when no region rows exist.
+- After every successful (or failed) `run_once()`, writes a `cluster_sync_metrics` row with `sync_type='host_metrics'`.
+
+#### `snapshots/p9_snapshot_policy_assign.py`
+- Updated `--region-id` help text to document that it scopes the run to region-specific OpenStack credentials (already overlaid in the environment by `snapshot_scheduler.py`).
+- `region_label` is now threaded through all four progress `print` statements and the final summary, so multi-region log output is clearly attributed to a specific region.
+
+#### `backup_worker/main.py`
+- `_create_scheduled_job()` now accepts an optional `region_id: str = None` and writes it to the new `backup_history.region_id` column. Infrastructure-level (scheduled) backups store `NULL`; region-triggered manual jobs can carry the originating region ID for audit trail purposes.
+
+#### `db/migrate_metering_region.sql` *(new)*
+- Adds `region_id TEXT` column (nullable) to `metering_resources`, `metering_snapshots`, `metering_restores`, `metering_quotas`, `metering_efficiency`, and `backup_history`.
+- Creates region-scoped descending indexes on each metering table for query performance.
+- Applied automatically at API startup via `api/main.py` (idempotent — skipped if `metering_resources.region_id` already exists).
+
+---
+
 ## [1.74.4] - 2026-03-22
 
 ### Fixed — Search Worker VM Indexing & Reports OS Info

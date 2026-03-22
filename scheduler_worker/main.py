@@ -163,7 +163,13 @@ def load_enabled_regions() -> list:
 # Metrics collection loop
 # ---------------------------------------------------------------------------
 async def metrics_loop() -> None:
-    """Collect host / VM metrics from PF9 nodes on a fixed cadence."""
+    """Collect host / VM metrics from PF9 nodes on a fixed cadence.
+
+    When multiple regions are configured in pf9_regions, one HostMetricsCollector
+    is created per region so that each region's hypervisor hosts are polled
+    independently.  Falls back to the legacy single-collector (env-var) mode
+    when the DB has no region rows.
+    """
     if DEMO_MODE:
         log.info("DEMO_MODE=true – live metrics collection is disabled.")
         return
@@ -181,30 +187,73 @@ async def metrics_loop() -> None:
         return
 
     # Ensure the cache directory exists inside the container
-    os.makedirs(os.path.dirname(METRICS_CACHE_PATH), exist_ok=True)
+    cache_dir = os.path.dirname(METRICS_CACHE_PATH)
+    os.makedirs(cache_dir, exist_ok=True)
 
-    collector = HostMetricsCollector()
-    # Override the paths that __init__ set relative to the working directory
-    collector.cache_file = METRICS_CACHE_PATH
-    collector._cpu_state_file = os.path.join(
-        os.path.dirname(METRICS_CACHE_PATH), "cpu_state.json"
-    )
+    def _make_collector(region_id: str = "") -> "HostMetricsCollector":
+        c = HostMetricsCollector(region_id=region_id)
+        rid_suffix = f"_{region_id}" if region_id else ""
+        c.cache_file = os.path.join(cache_dir, f"metrics_cache{rid_suffix}.json")
+        c._cpu_state_file = os.path.join(cache_dir, f"cpu_state{rid_suffix}.json")
+        return c
 
-    consecutive_errors = 0
-    while _running:
+    def _write_sync_metric(region_id: str, started_at, finished_at, error: bool):
+        """Write a cluster_sync_metrics row for this metrics run."""
+        if not region_id:
+            return
         try:
-            await collector.run_once()
-            consecutive_errors = 0
-        except Exception as exc:
-            consecutive_errors += 1
-            log.error("Metrics collection error (run %d): %s", consecutive_errors, exc)
-            if consecutive_errors >= 5:
-                log.warning(
-                    "5 consecutive failures – backing off 5 minutes before retrying."
+            import psycopg2 as _pg2
+            conn = _get_db_conn()
+            duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO cluster_sync_metrics
+                           (region_id, sync_type, started_at, finished_at,
+                            duration_ms, resource_count, error_count, status)
+                       VALUES (%s, 'host_metrics', %s, %s, %s, 0, %s, %s)""",
+                    (region_id, started_at, finished_at, duration_ms,
+                     1 if error else 0, "error" if error else "success"),
                 )
-                await asyncio.sleep(300)
-                consecutive_errors = 0
+            conn.commit()
+            conn.close()
+        except Exception as exc:
+            log.debug("Could not write host_metrics sync metric: %s", exc)
+
+    # Build initial collector map from regions
+    regions = load_enabled_regions()
+    if regions:
+        collectors = {r["region_id"]: _make_collector(r["region_id"]) for r in regions}
+        log.info("Metrics loop: %d region(s) configured", len(regions))
+    else:
+        # Single-region / env-var fallback
+        collectors = {"": _make_collector()}
+        log.info("Metrics loop: single-region (env-var) mode")
+
+    consecutive_errors: dict = {rid: 0 for rid in collectors}
+
+    while _running:
+        for region_id, collector in list(collectors.items()):
+            errs = consecutive_errors.get(region_id, 0)
+            if errs >= 5:
+                log.warning(
+                    "Region %s: 5 consecutive failures – backing off; reset next cycle.",
+                    region_id or "default",
+                )
+                consecutive_errors[region_id] = 0
                 continue
+
+            started_at = datetime.now(timezone.utc)
+            try:
+                await collector.run_once()
+                consecutive_errors[region_id] = 0
+                _write_sync_metric(region_id, started_at, datetime.now(timezone.utc), error=False)
+            except Exception as exc:
+                consecutive_errors[region_id] = errs + 1
+                log.error(
+                    "Region %s: metrics collection error (run %d): %s",
+                    region_id or "default", errs + 1, exc,
+                )
+                _write_sync_metric(region_id, started_at, datetime.now(timezone.utc), error=True)
 
         # Sleep in 1-second ticks so SIGTERM is handled promptly
         for _ in range(METRICS_INTERVAL):
