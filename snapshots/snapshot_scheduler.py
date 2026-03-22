@@ -605,4 +605,10 @@ def main():
         if now >= next_compliance_report:
             for region in region_list:
                 run_compliance_report(region)
+            next_compliance_report = now + COMPLIANCE_REPORT_INTERVAL_MINUTES * 60
+
+        time.sleep(10)
+
+
+if __name__ == "__main__":
     main()

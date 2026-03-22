@@ -770,43 +770,82 @@ async def startup_event():
       # -----------------------------------------------------------------------
       # Multi-cluster Phase 1: pf9_control_planes + pf9_regions schema migration
       # then seed the default control plane / region from env vars (idempotent).
+      #
+      # IMPORTANT: ALTER TABLE … ADD COLUMN IF NOT EXISTS still acquires an
+      # ACCESS EXCLUSIVE lock even when the column already exists. On every
+      # restart with 4 gunicorn workers starting simultaneously this would
+      # block every SELECT on servers/hypervisors until the DDL completes.
+      # Guard: check whether the schema is already present and skip the full
+      # DDL block — only run _seed_default_cluster() (which is safe, it uses
+      # ON CONFLICT DO NOTHING and never acquires table-level locks).
       # -----------------------------------------------------------------------
       try:
-        _mc_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_multicluster.sql")
-        if os.path.exists(_mc_sql):
-            with open(_mc_sql, encoding="utf-8") as _f:
-                _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
-            with get_connection() as _conn:
-                with _conn.cursor() as _cur:
-                    for _stmt in (s.strip() for s in _sql.split(";")):
-                        if _stmt and any(
-                            ln.strip() and not ln.strip().startswith("--")
-                            for ln in _stmt.splitlines()
-                        ):
-                            _cur.execute(_stmt)
-            logger.info("Multi-cluster schema migration applied")
-      except Exception as _exc:
-        logger.warning("Multi-cluster schema migration skipped: %s", _exc)
+        with get_connection() as _mc_chk:
+            with _mc_chk.cursor() as _mc_chk_cur:
+                _mc_chk_cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.tables "
+                    "WHERE table_name='pf9_regions' AND table_schema='public')"
+                )
+                _mc_schema_exists = _mc_chk_cur.fetchone()[0]
+      except Exception:
+        _mc_schema_exists = False
 
-      # Phase 5: snapshot_runs.region_id + worker multi-region prerequisites
+      if not _mc_schema_exists:
+        try:
+          _mc_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_multicluster.sql")
+          if os.path.exists(_mc_sql):
+              with open(_mc_sql, encoding="utf-8") as _f:
+                  _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
+              with get_connection() as _conn:
+                  with _conn.cursor() as _cur:
+                      for _stmt in (s.strip() for s in _sql.split(";")):
+                          if _stmt and any(
+                              ln.strip() and not ln.strip().startswith("--")
+                              for ln in _stmt.splitlines()
+                          ):
+                              _cur.execute(_stmt)
+              logger.info("Multi-cluster schema migration applied")
+        except Exception as _exc:
+          logger.warning("Multi-cluster schema migration skipped: %s", _exc)
+      else:
+        logger.info("Multi-cluster schema already present — DDL skipped")
+
+      # Phase 5: snapshot_runs.region_id + worker multi-region prerequisites.
+      # Same guard: skip ALTER TABLEs if the indicator column already exists.
       try:
-        _p5_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_phase5_workers.sql")
-        if os.path.exists(_p5_sql):
-            with open(_p5_sql, encoding="utf-8") as _f:
-                _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
-            with get_connection() as _conn:
-                with _conn.cursor() as _cur:
-                    for _stmt in (s.strip() for s in _sql.split(";")):
-                        if _stmt and any(
-                            ln.strip() and not ln.strip().startswith("--")
-                            for ln in _stmt.splitlines()
-                        ):
-                            _cur.execute(_stmt)
-            logger.info("Phase 5 workers migration applied")
-      except Exception as _exc:
-        logger.warning("Phase 5 workers migration skipped: %s", _exc)
+        with get_connection() as _p5_chk:
+            with _p5_chk.cursor() as _p5_chk_cur:
+                _p5_chk_cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name='snapshot_runs' AND column_name='region_id' "
+                    "AND table_schema='public')"
+                )
+                _p5_schema_exists = _p5_chk_cur.fetchone()[0]
+      except Exception:
+        _p5_schema_exists = False
+
+      if not _p5_schema_exists:
+        try:
+          _p5_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_phase5_workers.sql")
+          if os.path.exists(_p5_sql):
+              with open(_p5_sql, encoding="utf-8") as _f:
+                  _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
+              with get_connection() as _conn:
+                  with _conn.cursor() as _cur:
+                      for _stmt in (s.strip() for s in _sql.split(";")):
+                          if _stmt and any(
+                              ln.strip() and not ln.strip().startswith("--")
+                              for ln in _stmt.splitlines()
+                          ):
+                              _cur.execute(_stmt)
+              logger.info("Phase 5 workers migration applied")
+        except Exception as _exc:
+          logger.warning("Phase 5 workers migration skipped: %s", _exc)
+      else:
+        logger.info("Phase 5 workers schema already present — DDL skipped")
 
       # Seed default control plane + region from env vars, then backfill existing rows.
+      # Always runs (ON CONFLICT DO NOTHING — no locks acquired).
       try:
         _seed_default_cluster()
       except Exception as _exc:

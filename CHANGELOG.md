@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.74.3] - 2026-03-22
+
+### Fixed — Blank-UI-on-Restart: DDL Lock Storm
+
+#### `api/main.py` — `startup_event()`
+- `ALTER TABLE … ADD COLUMN IF NOT EXISTS` acquires `ACCESS EXCLUSIVE` on the target table even when the column already exists. With 4 gunicorn workers restarting simultaneously, all four ran the multi-cluster and phase-5 DDL blocks concurrently; the first winner held the lock while all API reads on `servers`, `hypervisors`, `volumes`, etc. queued behind it — causing every UI page to show blank/loading until the lock cleared (often 30–60 s, sometimes indefinitely if an idle-in-transaction connection held a conflicting lock first)
+- Fixed: both migration blocks now check first whether the schema is already present (`information_schema.tables` for `pf9_regions`, `information_schema.columns` for `snapshot_runs.region_id`) and skip the entire DDL block if it is — no `ALTER TABLE` issued on a healthy restart, zero ACCESS EXCLUSIVE locks, pages load instantly
+- Seed call (`_seed_default_cluster`) is exempt from the guard and always runs — it uses `ON CONFLICT DO NOTHING` and acquires no table-level locks
+
+### Fixed — Snapshot Worker Crash Loop (exit code 0)
+
+#### `snapshots/snapshot_scheduler.py`
+- **Missing module entry point** — `main()` was called unconditionally at module level *inside* the function body's indented block (an indentation error introduced during the multi-region refactor), causing the script to call itself recursively on import and exit immediately with code 0. The `pf9_snapshot_worker` container was `Restarting (0)` with empty logs and no output — exit code 0 masked the crash.
+  Fixed: added `if __name__ == "__main__": main()` guard at module level and removed the misplaced call.
+- **`next_compliance_report` never advanced** — missing `next_compliance_report = now + COMPLIANCE_REPORT_INTERVAL_MINUTES * 60` after the compliance report block meant the report ran on *every* loop iteration instead of once per day.
+- **Missing `time.sleep(10)`** — scheduler loop spun continuously at 100% CPU; added 10-second sleep at end of each iteration.
+
+### Fixed — PostgreSQL Idle-in-Transaction Sessions Blocking Restarts
+
+#### `docker-compose.yml`
+- Added `idle_in_transaction_session_timeout=30000` (30 s) and `statement_timeout=120000` (2 min) to the PostgreSQL `command:` block. A connection left idle-in-transaction (e.g. from a previous crashed worker) holds row/table locks that block incoming DDL — previously this required manual `pg_terminate_backend()` to unblock. These timeouts ensure stale transactions are automatically terminated within 30 s, making restarts self-healing.
+- Setting applied live to the running instance via `ALTER SYSTEM SET … + pg_reload_conf()` (no DB restart required).
+
+---
+
 ## [1.74.2] - 2026-03-22
 
 ### Added — Multi-Region Worker Support

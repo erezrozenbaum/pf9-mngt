@@ -2,6 +2,10 @@ services:
   db:
     image: postgres:16
     container_name: pf9_db
+    command: >
+      postgres
+        -c idle_in_transaction_session_timeout=30000
+        -c statement_timeout=120000
     environment:
       POSTGRES_USER: "${POSTGRES_USER:?ERROR: POSTGRES_USER must be set in .env}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD must be set in .env}"
