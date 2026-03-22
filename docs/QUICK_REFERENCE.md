@@ -137,7 +137,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **SAST Security Fixes & CI Gate Correction** (v1.74.1 — NEW ✨): Bandit HIGH-only gate flags corrected (`-ll -ii` → `-lll -iii`); `hashlib.sha1/md5` and `requests verify=False` annotated with `usedforsecurity=False` / `nosec`; zero HIGH findings
+- **Multi-Region Worker Support** (v1.74.2 — NEW ✨): `p9_common.py` asyncio semaphore fan-out; scheduler/metering/snapshot workers iterate all enabled regions; `snapshot_runs.region_id` column tags runs to source region; host metrics collector multi-region loop; `MAX_PARALLEL_REGIONS` / `REGION_REQUEST_TIMEOUT_SEC` env vars; advisory-lock startup migration (prevents gunicorn worker deadlock on restart); SQL migration parser regression fixed (semicolons in comments)
+- **SAST Security Fixes & CI Gate Correction** (v1.74.1): Bandit HIGH-only gate flags corrected (`-ll -ii` → `-lll -iii`); `hashlib.sha1/md5` and `requests verify=False` annotated with `usedforsecurity=False` / `nosec`; zero HIGH findings
 - **Control Plane & Region Management API** (v1.74.0): 14 superadmin-only REST endpoints for multi-cluster admin (`/admin/control-planes`, `/admin/control-planes/{id}/regions`); Fernet credential encryption; live Keystone connectivity test; SSRF protection; registry hot-reload; 25 new unit tests
 - **System Metadata Routing Fix** (v1.72.5 — NEW ✨): `/system-metadata-summary` and `/export` added to nginx routing and Vite proxy; fixes System Metadata tab empty under Inventory
 - **snapshot-worker Build Context Fix** (v1.72.4): Release build context aligned with docker-compose

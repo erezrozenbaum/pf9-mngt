@@ -88,6 +88,93 @@ RVTOOLS_INTEGRATION_ENABLED = os.getenv("RVTOOLS_INTEGRATION_ENABLED", "true").l
 COMPLIANCE_REPORT_ENABLED = os.getenv("COMPLIANCE_REPORT_ENABLED", "true").lower() in ("true", "1", "yes")
 COMPLIANCE_REPORT_INTERVAL_MINUTES = int(os.getenv("COMPLIANCE_REPORT_INTERVAL_MINUTES", "1440"))
 COMPLIANCE_REPORT_SLA_DAYS = int(os.getenv("COMPLIANCE_REPORT_SLA_DAYS", "2"))
+MAX_PARALLEL_REGIONS = int(os.getenv("MAX_PARALLEL_REGIONS", "3"))
+REGION_REQUEST_TIMEOUT_SEC = int(os.getenv("REGION_REQUEST_TIMEOUT_SEC", "30"))
+
+
+def _decrypt_password(password_enc: str) -> str:
+    """Resolve a control_plane.password_enc value to plaintext."""
+    if not password_enc:
+        return os.getenv("PF9_PASSWORD", "")
+    if password_enc.startswith("env:"):
+        return os.getenv("PF9_PASSWORD", "")
+    if password_enc.startswith("fernet:"):
+        try:
+            import base64 as _b64
+            import hashlib as _hl
+            from cryptography.fernet import Fernet
+            secret = os.getenv("JWT_SECRET", "") or os.getenv("JWT_SECRET_KEY", "")
+            if not secret:
+                log("[WARN] JWT_SECRET not set – cannot decrypt region password")
+                return os.getenv("PF9_PASSWORD", "")
+            key = _b64.urlsafe_b64encode(_hl.sha256(secret.encode()).digest())
+            return Fernet(key).decrypt(password_enc[7:].encode()).decode()
+        except Exception as exc:
+            log(f"[WARN] Failed to decrypt region password: {exc}")
+            return os.getenv("PF9_PASSWORD", "")
+    return password_enc  # plaintext fallback
+
+
+def _get_snap_db_conn():
+    """Open a direct psycopg2 connection for region loading."""
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+    )
+
+
+def load_enabled_regions() -> List[dict]:
+    """Return enabled regions with decrypted credentials.
+    Returns empty list (single-region env-var mode) on any error."""
+    try:
+        conn = _get_snap_db_conn()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT r.id, r.region_name,
+                       cp.auth_url, cp.username, cp.password_enc,
+                       cp.user_domain, cp.project_name, cp.project_domain
+                FROM pf9_regions r
+                JOIN pf9_control_planes cp ON cp.id = r.control_plane_id
+                WHERE r.is_enabled = TRUE AND cp.is_enabled = TRUE
+                ORDER BY r.priority ASC, r.id ASC
+            """)
+            rows = cur.fetchall()
+        conn.close()
+    except Exception as exc:
+        log(f"Could not load regions from DB ({exc}) – using env-var single region")
+        return []
+
+    regions = []
+    for row in rows:
+        region_id, region_name, auth_url, username, password_enc, \
+            user_domain, project_name, project_domain = row
+        regions.append({
+            "region_id": region_id,
+            "region_name": region_name,
+            "auth_url": auth_url,
+            "username": username,
+            "password": _decrypt_password(password_enc),
+            "user_domain": user_domain,
+            "project_name": project_name,
+            "project_domain": project_domain,
+        })
+    return regions
+
+
+def _region_env(region: dict) -> dict:
+    """Build a subprocess environment dict with per-region PF9 credentials."""
+    env = os.environ.copy()
+    env["PF9_AUTH_URL"] = region["auth_url"]
+    env["PF9_USERNAME"] = region["username"]
+    env["PF9_PASSWORD"] = region["password"]
+    env["PF9_USER_DOMAIN"] = region["user_domain"]
+    env["PF9_PROJECT_NAME"] = region["project_name"]
+    env["PF9_PROJECT_DOMAIN"] = region["project_domain"]
+    env["PF9_REGION_ID"] = region["region_id"]
+    return env
 
 
 def log(msg: str) -> None:
@@ -204,7 +291,7 @@ def fetch_active_policies() -> List[str]:
         return []
 
 
-def run_policy_assign():
+def run_policy_assign(region: dict | None = None):
     if POLICY_ASSIGN_SYNC_POLICY_SETS:
         sync_policy_sets_from_rules()
     args = [
@@ -217,35 +304,46 @@ def run_policy_assign():
         args.append("--merge-existing")
     if POLICY_ASSIGN_DRY_RUN:
         args.append("--dry-run")
+    if region:
+        args += ["--region-id", region["region_id"]]
 
-    log("Running policy assignment...")
-    result = subprocess.run(args, text=True)
+    label = f" [{region['region_id']}]" if region else ""
+    log(f"Running policy assignment{label}...")
+    run_kwargs = {"text": True}
+    if region:
+        run_kwargs["env"] = _region_env(region)
+    result = subprocess.run(args, **run_kwargs)
     if result.returncode != 0:
-        log(f"Policy assignment failed with return code {result.returncode}")
+        log(f"Policy assignment{label} failed with return code {result.returncode}")
     else:
-        log("Policy assignment completed.")
+        log(f"Policy assignment{label} completed.")
 
 
-def run_rvtools():
+def run_rvtools(region: dict | None = None):
     """Run RVTools to sync inventory from Platform9 to database."""
     if not RVTOOLS_INTEGRATION_ENABLED:
         log("RVTools integration disabled. Skipping.")
         return
-    
-    log("Running RVTools inventory sync...")
-    result = subprocess.run(["python", "pf9_rvtools.py"], text=True)
+
+    label = f" [{region['region_id']}]" if region else ""
+    log(f"Running RVTools inventory sync{label}...")
+    run_kwargs = {"text": True}
+    if region:
+        run_kwargs["env"] = _region_env(region)
+    result = subprocess.run(["python", "pf9_rvtools.py"], **run_kwargs)
     if result.returncode != 0:
-        log(f"RVTools sync failed with return code {result.returncode}")
+        log(f"RVTools sync{label} failed with return code {result.returncode}")
     else:
-        log("RVTools sync completed.")
+        log(f"RVTools sync{label} completed.")
 
 
-def run_auto_snapshots():
+def run_auto_snapshots(region: dict | None = None):
     policies = fetch_active_policies()
     if not policies:
         log("No active policies found. Skipping auto snapshots.")
         return
 
+    label = f" [{region['region_id']}]" if region else ""
     for policy in policies:
         args = [
             "python",
@@ -253,6 +351,8 @@ def run_auto_snapshots():
             "--policy",
             policy,
         ]
+        if region:
+            args += ["--region-id", region["region_id"]]
         if AUTO_SNAPSHOT_MAX_NEW:
             args += ["--max-new", str(AUTO_SNAPSHOT_MAX_NEW)]
         if AUTO_SNAPSHOT_MAX_SIZE_GB:
@@ -264,33 +364,42 @@ def run_auto_snapshots():
         if AUTO_SNAPSHOT_DRY_RUN:
             args.append("--dry-run")
 
-        log(f"Running auto snapshots for policy: {policy}")
-        result = subprocess.run(args, text=True)
+        log(f"Running auto snapshots for policy: {policy}{label}")
+        run_kwargs = {"text": True}
+        if region:
+            run_kwargs["env"] = _region_env(region)
+        result = subprocess.run(args, **run_kwargs)
         if result.returncode != 0:
-            log(f"Auto snapshots failed for {policy} with return code {result.returncode}")
+            log(f"Auto snapshots failed for {policy}{label} with return code {result.returncode}")
         else:
-            log(f"Auto snapshots completed for {policy}.")
+            log(f"Auto snapshots completed for {policy}{label}.")
 
 
-def run_compliance_report():
+def run_compliance_report(region: dict | None = None):
     """Run snapshot compliance report generation."""
     if not COMPLIANCE_REPORT_ENABLED:
         log("Compliance report generation disabled. Skipping.")
         return
-    
-    log("Running snapshot compliance report generation...")
+
+    label = f" [{region['region_id']}]" if region else ""
+    log(f"Running snapshot compliance report generation{label}...")
     args = [
         "python",
         "snapshots/p9_snapshot_compliance_report.py",
         "--sla-days",
         str(COMPLIANCE_REPORT_SLA_DAYS),
     ]
-    
-    result = subprocess.run(args, text=True)
+    if region:
+        args += ["--region-id", region["region_id"]]
+
+    run_kwargs = {"text": True}
+    if region:
+        run_kwargs["env"] = _region_env(region)
+    result = subprocess.run(args, **run_kwargs)
     if result.returncode != 0:
-        log(f"Compliance report generation failed with return code {result.returncode}")
+        log(f"Compliance report generation{label} failed with return code {result.returncode}")
     else:
-        log("Compliance report generation completed.")
+        log(f"Compliance report generation{label} completed.")
 
 
 # =========================================================================
@@ -473,29 +582,27 @@ def main():
         check_on_demand_trigger()
 
         now = time.time()
+
+        # Load enabled regions (empty list = single env-var region mode)
+        regions = load_enabled_regions()
+        region_list = regions if regions else [None]  # None = use env-var credentials
+
         if now >= next_policy_assign:
-            run_policy_assign()
+            for region in region_list:
+                run_policy_assign(region)
             next_policy_assign = now + POLICY_ASSIGN_INTERVAL_MINUTES * 60
 
         if now >= next_auto_snapshots:
-            # Run RVTools BEFORE snapshots to get fresh inventory
-            run_rvtools()
-            
-            # Run snapshot creation
-            run_auto_snapshots()
-            
-            # Run RVTools AFTER snapshots to capture new snapshots in DB
-            run_rvtools()
-            
+            for region in region_list:
+                # Run RVTools BEFORE snapshots to get fresh inventory
+                run_rvtools(region)
+                # Run snapshot creation
+                run_auto_snapshots(region)
+                # Run RVTools AFTER snapshots to capture new snapshots in DB
+                run_rvtools(region)
             next_auto_snapshots = now + AUTO_SNAPSHOT_INTERVAL_MINUTES * 60
 
         if now >= next_compliance_report:
-            # Run compliance report generation (uses latest RVTools data)
-            run_compliance_report()
-            next_compliance_report = now + COMPLIANCE_REPORT_INTERVAL_MINUTES * 60
-
-        time.sleep(10)
-
-
-if __name__ == "__main__":
+            for region in region_list:
+                run_compliance_report(region)
     main()

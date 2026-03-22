@@ -76,7 +76,7 @@ Snapshot system tables:
 - `snapshot_policy_sets` - Policy set definitions
 - `snapshot_assignments` - Tenant/project policy assignments
 - `snapshot_exclusions` - Volumes/projects excluded from snapshots
-- `snapshot_runs` - Audit records for each scheduler run (includes batch progress columns)
+- `snapshot_runs` - Audit records for each scheduler run; `region_id` column tags runs to the source region when running in multi-region mode
 - `snapshot_records` - Individual snapshot operations (create/delete/skip)
 - `snapshot_run_batches` - Per-batch progress tracking within a run (v1.26.0)
 - `snapshot_quota_blocks` - Volumes skipped due to Cinder quota limits (v1.26.0)
@@ -189,6 +189,9 @@ snapshot_worker:
       # Batching (v1.26.0)
       AUTO_SNAPSHOT_BATCH_SIZE: ${AUTO_SNAPSHOT_BATCH_SIZE:-20}
       AUTO_SNAPSHOT_BATCH_DELAY: ${AUTO_SNAPSHOT_BATCH_DELAY:-5.0}
+      # Multi-region concurrency
+      MAX_PARALLEL_REGIONS: ${MAX_PARALLEL_REGIONS:-3}
+      REGION_REQUEST_TIMEOUT_SEC: ${REGION_REQUEST_TIMEOUT_SEC:-30}
   restart: always
 ```
 

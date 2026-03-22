@@ -47,6 +47,8 @@ RVTOOLS_RUN_ON_START = os.getenv("RVTOOLS_RUN_ON_START", "false").lower() in ("t
 
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in ("true", "1", "yes")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+MAX_PARALLEL_REGIONS = int(os.getenv("MAX_PARALLEL_REGIONS", "3"))
+REGION_REQUEST_TIMEOUT_SEC = int(os.getenv("REGION_REQUEST_TIMEOUT_SEC", "30"))
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -78,6 +80,83 @@ def _handle_signal(signum, _frame):
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
+
+
+# ---------------------------------------------------------------------------
+# Multi-region helpers
+# ---------------------------------------------------------------------------
+
+def _decrypt_password(password_enc: str) -> str:
+    """Resolve a control_plane.password_enc value to plaintext."""
+    if not password_enc:
+        return os.getenv("PF9_PASSWORD", "")
+    if password_enc.startswith("env:"):
+        return os.getenv("PF9_PASSWORD", "")
+    if password_enc.startswith("fernet:"):
+        try:
+            import base64 as _b64
+            import hashlib as _hl
+            from cryptography.fernet import Fernet
+            secret = os.getenv("JWT_SECRET", "") or os.getenv("JWT_SECRET_KEY", "")
+            if not secret:
+                log.warning("JWT_SECRET not set – cannot decrypt region password")
+                return os.getenv("PF9_PASSWORD", "")
+            key = _b64.urlsafe_b64encode(_hl.sha256(secret.encode()).digest())
+            return Fernet(key).decrypt(password_enc[7:].encode()).decode()
+        except Exception as exc:
+            log.warning("Failed to decrypt region password: %s", exc)
+            return os.getenv("PF9_PASSWORD", "")
+    return password_enc  # plaintext fallback (legacy)
+
+
+def _get_db_conn():
+    import psycopg2  # local import – psycopg2 may not be installed in all envs
+    return psycopg2.connect(
+        host=os.getenv("PF9_DB_HOST", "db"),
+        port=int(os.getenv("PF9_DB_PORT", "5432")),
+        dbname=os.getenv("PF9_DB_NAME", os.getenv("POSTGRES_DB", "pf9_mgmt")),
+        user=os.getenv("PF9_DB_USER", os.getenv("POSTGRES_USER", "pf9")),
+        password=os.getenv("PF9_DB_PASSWORD", os.getenv("POSTGRES_PASSWORD", "")),
+        connect_timeout=10,
+    )
+
+
+def load_enabled_regions() -> list:
+    """Return enabled regions with decrypted credentials from the DB.
+    Falls back to an empty list (single-region env-var mode) on any error."""
+    try:
+        conn = _get_db_conn()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT r.id, r.region_name,
+                       cp.auth_url, cp.username, cp.password_enc,
+                       cp.user_domain, cp.project_name, cp.project_domain
+                FROM pf9_regions r
+                JOIN pf9_control_planes cp ON cp.id = r.control_plane_id
+                WHERE r.is_enabled = TRUE AND cp.is_enabled = TRUE
+                ORDER BY r.priority ASC, r.id ASC
+            """)
+            rows = cur.fetchall()
+        conn.close()
+    except Exception as exc:
+        log.warning("Could not load regions from DB (%s) – using env-var single region", exc)
+        return []
+
+    regions = []
+    for row in rows:
+        region_id, region_name, auth_url, username, password_enc, \
+            user_domain, project_name, project_domain = row
+        regions.append({
+            "region_id": region_id,
+            "region_name": region_name,
+            "auth_url": auth_url,
+            "username": username,
+            "password": _decrypt_password(password_enc),
+            "user_domain": user_domain,
+            "project_name": project_name,
+            "project_domain": project_domain,
+        })
+    return regions
 
 
 # ---------------------------------------------------------------------------
@@ -149,25 +228,47 @@ def _next_scheduled_run(schedule_hhmm: str) -> datetime:
     return target
 
 
-def _run_rvtools_sync() -> None:
-    """Run pf9_rvtools.py as an isolated subprocess so global state is clean each time."""
+def _run_rvtools_sync(region: dict | None = None) -> None:
+    """Run pf9_rvtools.py as an isolated subprocess.
+
+    When *region* is provided the subprocess receives per-region credentials
+    via its environment, enabling multi-region inventory collection.
+    """
     script = os.path.join(os.path.dirname(__file__), "pf9_rvtools.py")
 
-    # Per-run log file: /app/logs/rvtools_YYYYMMDD_HHMMSS.log
+    # Per-run log file: /app/logs/rvtools_YYYYMMDD_HHMMSS[_region].log
     log_dir = os.path.join(os.path.dirname(__file__), "logs")
     os.makedirs(log_dir, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
-    log_path = os.path.join(log_dir, f"rvtools_{ts}.log")
+    region_suffix = f"_{region['region_id']}" if region else ""
+    log_path = os.path.join(log_dir, f"rvtools_{ts}{region_suffix}.log")
+
+    # Build environment: start with the current process env and overlay
+    # region-specific credentials when running in multi-region mode.
+    env = os.environ.copy()
+    if region:
+        env["PF9_AUTH_URL"] = region["auth_url"]
+        env["PF9_USERNAME"] = region["username"]
+        env["PF9_PASSWORD"] = region["password"]
+        env["PF9_USER_DOMAIN"] = region["user_domain"]
+        env["PF9_PROJECT_NAME"] = region["project_name"]
+        env["PF9_PROJECT_DOMAIN"] = region["project_domain"]
+        env["PF9_REGION_ID"] = region["region_id"]
+        env["PF9_HOSTS"] = ""  # hosts are loaded from DB per-region
 
     log.info("RVTools: writing run log to %s", log_path)
     with open(log_path, "w", encoding="utf-8") as lf:
         lf.write(f"# RVTools run started at {datetime.now(timezone.utc).isoformat()}\n")
-        lf.write(f"# Script: {script}\n\n")
+        lf.write(f"# Script: {script}\n")
+        if region:
+            lf.write(f"# Region: {region['region_id']} ({region['region_name']})\n")
+        lf.write("\n")
         result = subprocess.run(
             [sys.executable, script],
             timeout=7200,  # 2-hour hard limit
             stdout=lf,
             stderr=subprocess.STDOUT,
+            env=env,
         )
         lf.write(f"\n\n# Exit code: {result.returncode}\n")
         lf.write(f"# Run finished at {datetime.now(timezone.utc).isoformat()}\n")
@@ -182,16 +283,19 @@ def _run_rvtools_sync() -> None:
 async def rvtools_loop(executor: ThreadPoolExecutor) -> None:
     """Run the RVTools inventory at the configured schedule.
 
-    Two modes (RVTOOLS_INTERVAL_MINUTES takes priority over RVTOOLS_SCHEDULE_TIME):
+    Supports both single-region (env-var credentials) and multi-region
+    (credentials loaded from pf9_regions DB table) modes.
+
+    Two scheduling modes (RVTOOLS_INTERVAL_MINUTES takes priority):
       Interval mode  – RVTOOLS_INTERVAL_MINUTES > 0  → run every N minutes.
-      Schedule mode  – RVTOOLS_INTERVAL_MINUTES = 0  → run once daily at RVTOOLS_SCHEDULE_TIME (HH:MM UTC).
+      Schedule mode  – RVTOOLS_INTERVAL_MINUTES = 0  → run once daily at RVTOOLS_SCHEDULE_TIME.
     """
     loop = asyncio.get_event_loop()
 
     if RVTOOLS_RUN_ON_START:
         log.info("RVTools: RVTOOLS_RUN_ON_START=true – running immediately …")
         try:
-            await loop.run_in_executor(executor, _run_rvtools_sync)
+            await _run_rvtools_for_all_regions(executor, loop)
             log.info("RVTools: startup run completed.")
         except Exception as exc:
             log.error("RVTools: startup run failed: %s", exc)
@@ -225,7 +329,7 @@ async def rvtools_loop(executor: ThreadPoolExecutor) -> None:
 
         log.info("RVTools: starting inventory run …")
         try:
-            await loop.run_in_executor(executor, _run_rvtools_sync)
+            await _run_rvtools_for_all_regions(executor, loop)
             log.info("RVTools: inventory run completed.")
         except Exception as exc:
             log.error("RVTools: inventory run failed: %s", exc)
@@ -236,6 +340,36 @@ async def rvtools_loop(executor: ThreadPoolExecutor) -> None:
             await asyncio.sleep(70)
 
     log.info("RVTools loop stopped.")
+
+
+async def _run_rvtools_for_all_regions(
+    executor: ThreadPoolExecutor,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Run rvtools for every enabled region, up to MAX_PARALLEL_REGIONS concurrently.
+
+    Falls back to a single env-var-based run when no regions are configured in the DB.
+    """
+    regions = await loop.run_in_executor(executor, load_enabled_regions)
+    if not regions:
+        log.info("RVTools: no regions in DB – running with env-var credentials")
+        await loop.run_in_executor(executor, _run_rvtools_sync, None)
+        return
+
+    log.info("RVTools: running across %d region(s) (max parallel: %d)", len(regions), MAX_PARALLEL_REGIONS)
+    sem = asyncio.Semaphore(MAX_PARALLEL_REGIONS)
+
+    async def _one_region(region: dict) -> None:
+        async with sem:
+            rname = region["region_name"]
+            log.info("RVTools: [%s] starting", rname)
+            try:
+                await loop.run_in_executor(executor, _run_rvtools_sync, region)
+                log.info("RVTools: [%s] completed", rname)
+            except Exception as exc:
+                log.error("RVTools: [%s] failed: %s", rname, exc)
+
+    await asyncio.gather(*[_one_region(r) for r in regions])
 
 
 # ---------------------------------------------------------------------------

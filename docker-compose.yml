@@ -285,6 +285,10 @@ services:
       AUTO_SNAPSHOT_DRY_RUN: ${AUTO_SNAPSHOT_DRY_RUN:-false}
       AUTO_SNAPSHOT_BATCH_SIZE: ${AUTO_SNAPSHOT_BATCH_SIZE:-20}
       AUTO_SNAPSHOT_BATCH_DELAY: ${AUTO_SNAPSHOT_BATCH_DELAY:-5.0}
+      # --- Phase 5: Multi-region worker config ---
+      MAX_PARALLEL_REGIONS: ${MAX_PARALLEL_REGIONS:-3}
+      REGION_REQUEST_TIMEOUT_SEC: ${REGION_REQUEST_TIMEOUT_SEC:-30}
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY must be set in .env}"
     volumes:
       - app_logs:/app/logs
       - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports
@@ -412,6 +416,10 @@ services:
       RVTOOLS_SCHEDULE_TIME: ${RVTOOLS_SCHEDULE_TIME:-03:00}
       RVTOOLS_RUN_ON_START: ${RVTOOLS_RUN_ON_START:-false}
       DEMO_MODE: ${DEMO_MODE:-false}
+      # --- Phase 5: Multi-region worker config ---
+      MAX_PARALLEL_REGIONS: ${MAX_PARALLEL_REGIONS:-3}
+      REGION_REQUEST_TIMEOUT_SEC: ${REGION_REQUEST_TIMEOUT_SEC:-30}
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY must be set in .env}"
     volumes:
       - ./monitoring/cache:/tmp/cache
       - ${PF9_REPORTS_DIR:-./reports}:/mnt/reports

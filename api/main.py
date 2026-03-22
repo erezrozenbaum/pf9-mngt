@@ -712,8 +712,24 @@ async def startup_event():
     # Setup restore management routes
     setup_restore_routes(app)
 
-    # Apply performance indexes migration (idempotent — CREATE INDEX IF NOT EXISTS)
+    # -----------------------------------------------------------------------
+    # Advisory lock: only the first worker to acquire lock 19740322 runs the
+    # DDL migrations. Others skip immediately (all migrations are idempotent).
+    # This prevents multiple gunicorn workers deadlocking on table-level locks
+    # when the container is restarted and all workers start simultaneously.
+    # -----------------------------------------------------------------------
+    _run_migrations = False
     try:
+        with get_connection() as _lconn:
+            with _lconn.cursor() as _lcur:
+                _lcur.execute("SELECT pg_try_advisory_lock(19740322)")
+                _run_migrations = _lcur.fetchone()[0]
+    except Exception:
+        _run_migrations = False  # DB not ready yet; skip migrations safely
+
+    # Apply performance indexes migration (idempotent — CREATE INDEX IF NOT EXISTS)
+    if _run_migrations:
+      try:
         _idx_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_indexes.sql")
         if os.path.exists(_idx_sql):
             with open(_idx_sql) as _f:
@@ -722,11 +738,11 @@ async def startup_event():
                 with _conn.cursor() as _cur:
                     _cur.execute(_sql)
             logger.info("Performance indexes migration applied")
-    except Exception as _exc:
+      except Exception as _exc:
         logger.warning("Performance indexes migration skipped: %s", _exc)
 
-    # Apply container alerts migration (idempotent)
-    try:
+      # Apply container alerts migration (idempotent)
+      try:
         _ca_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_container_alerts.sql")
         if os.path.exists(_ca_sql):
             with open(_ca_sql) as _f:
@@ -735,11 +751,11 @@ async def startup_event():
                 with _conn.cursor() as _cur:
                     _cur.execute(_sql)
             logger.info("Container alerts migration applied")
-    except Exception as _exc:
+      except Exception as _exc:
         logger.warning("Container alerts migration skipped: %s", _exc)
 
-    # Apply Phase 4A tables migration (migration_flavor_staging, flavor-staging endpoints)
-    try:
+      # Apply Phase 4A tables migration (migration_flavor_staging, flavor-staging endpoints)
+      try:
         _p4a_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_phase4_preparation.sql")
         if os.path.exists(_p4a_sql):
             with open(_p4a_sql) as _f:
@@ -748,14 +764,14 @@ async def startup_event():
                 with _conn.cursor() as _cur:
                     _cur.execute(_sql)
             logger.info("Phase 4A migration applied (migration_flavor_staging ready)")
-    except Exception as _exc:
+      except Exception as _exc:
         logger.warning("Phase 4A migration skipped: %s", _exc)
 
-    # -----------------------------------------------------------------------
-    # Multi-cluster Phase 1: pf9_control_planes + pf9_regions schema migration
-    # then seed the default control plane / region from env vars (idempotent).
-    # -----------------------------------------------------------------------
-    try:
+      # -----------------------------------------------------------------------
+      # Multi-cluster Phase 1: pf9_control_planes + pf9_regions schema migration
+      # then seed the default control plane / region from env vars (idempotent).
+      # -----------------------------------------------------------------------
+      try:
         _mc_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_multicluster.sql")
         if os.path.exists(_mc_sql):
             with open(_mc_sql, encoding="utf-8") as _f:
@@ -769,13 +785,31 @@ async def startup_event():
                         ):
                             _cur.execute(_stmt)
             logger.info("Multi-cluster schema migration applied")
-    except Exception as _exc:
+      except Exception as _exc:
         logger.warning("Multi-cluster schema migration skipped: %s", _exc)
 
-    # Seed default control plane + region from env vars, then backfill existing rows.
-    try:
+      # Phase 5: snapshot_runs.region_id + worker multi-region prerequisites
+      try:
+        _p5_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_phase5_workers.sql")
+        if os.path.exists(_p5_sql):
+            with open(_p5_sql, encoding="utf-8") as _f:
+                _sql = _f.read().replace("\r\n", "\n").replace("\r", "\n")
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    for _stmt in (s.strip() for s in _sql.split(";")):
+                        if _stmt and any(
+                            ln.strip() and not ln.strip().startswith("--")
+                            for ln in _stmt.splitlines()
+                        ):
+                            _cur.execute(_stmt)
+            logger.info("Phase 5 workers migration applied")
+      except Exception as _exc:
+        logger.warning("Phase 5 workers migration skipped: %s", _exc)
+
+      # Seed default control plane + region from env vars, then backfill existing rows.
+      try:
         _seed_default_cluster()
-    except Exception as _exc:
+      except Exception as _exc:
         logger.warning("Multi-cluster default seed skipped: %s", _exc)
 
     # Phase 3: warm the ClusterRegistry now that the DB is seeded.

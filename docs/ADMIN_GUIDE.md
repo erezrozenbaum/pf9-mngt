@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.74.1  
-**Last Updated**: March 21, 2026  
+**Version**: 1.74.2  
+**Last Updated**: March 22, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -577,6 +577,16 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.74.2 — Multi-Region Worker Support (✅ Complete)
+
+- **Thread-safe endpoint storage** — `p9_common.py` uses `threading.local` for per-thread endpoint variables; safe for concurrent region processing without cross-region data corruption
+- **Scheduler multi-region loop** — `scheduler_worker` queries enabled regions from DB and runs RVTools sync for each region concurrently, bounded by `MAX_PARALLEL_REGIONS` (default `3`)
+- **Metering sync tracking** — `metering_worker` records per-cycle stats (resource count, errors, duration) to `cluster_sync_metrics` table; feeds region health status
+- **Snapshot region tagging** — snapshot scheduler delegates to sub-scripts with per-region credentials; `snapshot_runs.region_id` column tracks which region each run belongs to
+- **Host metrics DB-sourced hosts** — `host_metrics_collector` loads hypervisor IPs from `hypervisors` table when `PF9_REGION_ID` is set, replacing static `PF9_HOSTS` env var
+- **SQL migration fix** — `migrate_multicluster.sql` comment-line semicolons were fragmenting the `CREATE TABLE pf9_regions` statement; fixed so multi-cluster schema applies correctly on every API startup
+- **Performance index fix** — `migrate_indexes.sql` corrected to use actual `activity_log` column names (`actor`, `timestamp`) and `support_tickets`/`runbook_executions` actual schema
 
 ### v1.74.1 — SAST Security Fixes & CI Gate Correction (✅ Complete)
 

@@ -76,9 +76,9 @@ CREATE TABLE IF NOT EXISTS pf9_regions (
     last_sync_vm_count      INTEGER,
     health_status           TEXT NOT NULL DEFAULT 'unknown',
     -- 'healthy' | 'degraded' | 'unreachable' | 'auth_failed' | 'unknown'
-    -- auth_failed = Keystone returned 401/403; requires operator action (rotate creds)
+    -- auth_failed = Keystone returned 401/403 (requires operator action to rotate creds)
     -- degraded    = sync completed with partial errors, or avg_api_latency > threshold
-    -- unreachable = TCP/HTTP connection failed; worker will retry next cycle
+    -- unreachable = TCP/HTTP connection failed (worker will retry next cycle)
     health_checked_at       TIMESTAMPTZ,
     priority                INTEGER NOT NULL DEFAULT 100,
     -- Lower number = higher priority. Controls failover order, worker scheduling, cost routing.
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS pf9_regions (
 );
 
 -- Partial unique index: at most one default region across the entire table.
--- More portable than EXCLUDE; a concurrent INSERT of two defaults will fail on one.
+-- More portable than EXCLUDE — a concurrent INSERT of two defaults will fail on one.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pf9_regions_one_default
     ON pf9_regions (is_default)
     WHERE (is_default = TRUE);
@@ -143,7 +143,7 @@ ALTER TABLE deletions_history           ADD COLUMN IF NOT EXISTS region_id TEXT 
 ALTER TABLE vm_provisioning_batches     ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 
 -- Per-cluster RBAC scoping (nullable - NULL = global, current behavior unchanged).
--- Enforcement is deferred to Phase 5; columns added now to avoid a later data migration.
+-- Enforcement is deferred to Phase 5 — columns added now to avoid a later data migration.
 ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS region_id        TEXT REFERENCES pf9_regions(id);
 ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS control_plane_id TEXT REFERENCES pf9_control_planes(id);
 
@@ -159,7 +159,7 @@ ALTER TABLE domains_history    ADD COLUMN IF NOT EXISTS control_plane_id TEXT;
 ALTER TABLE projects_history   ADD COLUMN IF NOT EXISTS control_plane_id TEXT;
 
 -- ---------------------------------------------------------------------------
--- cluster_sync_metrics - per-region sync outcomes; feeds health_status
+-- cluster_sync_metrics - per-region sync outcomes (feeds health_status)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS cluster_sync_metrics (
     id                  BIGSERIAL PRIMARY KEY,

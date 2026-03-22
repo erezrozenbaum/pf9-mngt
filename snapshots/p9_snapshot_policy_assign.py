@@ -338,8 +338,15 @@ def main():
         action="store_true",
         help="Merge new policies with existing snapshot_policies (default: replace).",
     )
+    parser.add_argument(
+        "--region-id",
+        default="",
+        help="Region ID for multi-region scoping (Phase 5). Accepted but informational.",
+    )
 
     args = parser.parse_args()
+    if args.region_id:
+        print(f"[INFO] Policy assign running for region: {args.region_id}")
 
     rules = load_rules(args.config)
     print(f"[1/4] Loaded {len(rules)} rule(s) from {args.config}")

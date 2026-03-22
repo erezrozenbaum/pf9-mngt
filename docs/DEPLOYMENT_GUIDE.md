@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.5
-**Last Updated**: March 21, 2026  
+**Version**: 2.6
+**Last Updated**: March 22, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative**: See [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) for the Kubernetes design plan (not yet implemented)
@@ -734,7 +734,21 @@ METERING_RETENTION_DAYS=90
 
 > **Note**: The metering worker runs as a separate container (`pf9_metering_worker`). It collects resource usage, snapshot, restore, API usage, and efficiency metrics from the monitoring service, API, and database. vCPU data is resolved from the flavors table. Configure cost model via the unified multi-category pricing system (flavors auto-synced from system, storage/snapshot/restore/volume/network pricing with hourly + monthly rates). Toggle metering via the 📊 Metering tab in the UI (superadmin only). When `METERING_ENABLED=false`, the worker starts but does not collect data.
 
-#### Optional Advanced Configuration
+#### Multi-Region Worker Configuration
+
+When multiple Platform9 regions are registered, the scheduler and snapshot workers process each region concurrently. These variables control the concurrency and timeout behaviour:
+
+```bash
+# Maximum number of regions processed simultaneously by scheduler_worker and snapshot_worker
+# Each region runs in its own async task; this caps the fan-out at startup
+MAX_PARALLEL_REGIONS=3
+
+# Per-region hard timeout (seconds) — a slow or hung region is abandoned after this limit
+# Prevents one unresponsive PF9 endpoint from blocking all other regions indefinitely
+REGION_REQUEST_TIMEOUT_SEC=30
+```
+
+> **Note**: `MAX_PARALLEL_REGIONS` and `REGION_REQUEST_TIMEOUT_SEC` are set automatically in `docker-compose.yml` for `scheduler_worker` and `snapshot_worker` services. Override them in `.env` if you need different values per environment (e.g., higher timeout for WAN-connected regions).
 
 ```bash
 # CORS Origins (restrict cross-origin requests)

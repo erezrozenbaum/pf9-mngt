@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.74.2] - 2026-03-22
+
+### Added — Multi-Region Worker Support
+
+#### Thread-safe endpoint management (`p9_common.py`)
+- Endpoint variables (`NOVA_ENDPOINT`, `NEUTRON_ENDPOINT`, `CINDER_ENDPOINT`, `GLANCE_ENDPOINT`) now stored in **per-thread local storage** (`threading.local`) in addition to module-level globals — enables safe parallel region processing without cross-region data corruption
+- Four new accessor functions: `_ep_nova()`, `_ep_neutron()`, `_ep_cinder()`, `_ep_glance()` — internal callers prefer these; module-level globals still updated for backward compatibility with late-binding imports
+
+#### Scheduler worker multi-region loop (`scheduler_worker/main.py`)
+- `load_enabled_regions()` — queries `pf9_regions JOIN pf9_control_planes` for all enabled regions
+- `_run_rvtools_sync(region)` — accepts optional region dict; overlays per-region credentials as subprocess env vars
+- `_run_rvtools_for_all_regions()` — concurrent region processing bounded by `asyncio.Semaphore(MAX_PARALLEL_REGIONS)`
+- `_decrypt_password()` — handles `env:`, `fernet:`, and plaintext password prefixes
+- New env vars: `MAX_PARALLEL_REGIONS` (default `3`), `REGION_REQUEST_TIMEOUT_SEC` (default `30`)
+
+#### Metering worker sync tracking (`metering_worker/main.py`)
+- `record_metering_sync()` — writes per-cycle metrics (resource count, error count, duration) to `cluster_sync_metrics` table after each collection cycle
+- `load_default_region_id()` — resolves default region for tagging metering records
+
+#### Snapshot worker multi-region delegation (`snapshots/snapshot_scheduler.py`)
+- All four run functions (`run_policy_assign`, `run_rvtools`, `run_auto_snapshots`, `run_compliance_report`) now accept a `region` dict and pass per-region credentials + `--region-id` to sub-scripts via subprocess `env=` override
+- `load_enabled_regions()`, `_region_env(region)` helpers added
+
+#### Snapshot scripts region tagging (`snapshots/p9_auto_snapshots.py`, `p9_snapshot_policy_assign.py`)
+- `--region-id` CLI argument added to both scripts
+- `snapshot_runs.region_id` and `snapshot_records.region_id` populated when `--region-id` is provided
+- `start_snapshot_run()` and `create_snapshot_record()` accept optional `region_id` parameter
+
+#### Host metrics region-aware host discovery (`host_metrics_collector.py`)
+- `_load_hosts_from_db(region_id)` static method — queries `hypervisors WHERE region_id = %s AND status = 'enabled'` for management IPs
+- Constructor checks `PF9_REGION_ID` env var; uses DB host list when set, falls back to `PF9_HOSTS`
+
+#### Database schema (`db/migrate_phase5_workers.sql`)
+- `snapshot_runs.region_id TEXT REFERENCES pf9_regions(id)` — tags each snapshot run with its source region
+- `idx_snapshot_runs_region_id` index added
+
+### Fixed — SQL Migration Parser Regression
+
+#### `db/migrate_multicluster.sql`
+- Four `--` comment lines contained semicolons (`;`) which caused Python's `split(";")` migration parser to fragment the `CREATE TABLE pf9_regions` statement, silently skipping the entire multi-cluster schema migration on every API restart — API was logging `Multi-cluster schema migration skipped: syntax error at end of input`
+- Fixed by replacing inline semicolons in comment lines with equivalent phrasing using parentheses/em-dashes; API now logs `Multi-cluster schema migration applied` on startup
+
+### Fixed — Startup DDL Deadlock (Advisory Lock)
+
+#### `api/main.py` — `startup_event()`
+- With 4 gunicorn workers restarting simultaneously, all workers attempted DDL migrations concurrently, causing `relation`-level PostgreSQL lock contention and indefinite `pg_stat_activity` lock waits
+- Fixed: `pg_try_advisory_lock(19740322)` acquired before migrations — only the first worker that wins the lock runs all migrations; the rest skip immediately (all migrations are idempotent, so this is safe)
+
+### Fixed — Performance Index Migration Column Names
+
+#### `db/migrate_indexes.sql`
+- Wrong column/table names caused `column "user_id" does not exist` warning on every API restart: `activity_log.user_id` → `actor`, `activity_log.created_at` → `timestamp`, table `tickets` → `support_tickets`, `tickets.department_id` → `to_dept_id`, `tickets.due_date` → `sla_resolve_at`, `runbook_executions.runbook_id` → `runbook_name`
+
+---
+
 ## [1.74.1] - 2026-03-21
 
 ### Fixed — SAST Security Findings & CI Gate Correction

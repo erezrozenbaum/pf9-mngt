@@ -182,6 +182,9 @@ This document covers:
 - **Region-scoped cache keys** — Redis keys include `region_id` segment (`pf9:{resource}:{region_id}:{hash}`) preventing cross-region data collisions when multiple clients share one Redis instance
 - **Single `requests.Session` per `Pf9Client`** — each client instance owns one session (created in `__init__` and reused for all API calls) preventing TCP/TLS overhead from per-call session creation; sessions are closed cleanly on shutdown via `ClusterRegistry.shutdown()`
 - **Per-region hard timeout** — each region call in `MultiClusterQuery.gather()` is wrapped in `asyncio.wait_for(timeout=REGION_REQUEST_TIMEOUT_SEC)`; a slow or hung region cannot hold a semaphore slot indefinitely and stall all other regions
+- **Worker multi-region loops** — `scheduler_worker`, `snapshot_worker`, and `metering_worker` each call `load_enabled_regions()` on startup, then process each region in parallel bounded by `asyncio.Semaphore(MAX_PARALLEL_REGIONS)`; per-region credentials overlay subprocess env vars so no global state is mutated
+- **Thread-safe endpoint storage** — `p9_common.py` stores `NOVA/NEUTRON/CINDER/GLANCE_ENDPOINT` in `threading.local` (in addition to module-level globals for backward compat) so concurrent region threads cannot overwrite each other's endpoint state
+- **Snapshot region tagging** — `snapshot_runs.region_id` and `snapshot_records.region_id` track which region each snapshot operation belongs to; `snapshot_scheduler.py` passes `--region-id` to sub-scripts via subprocess `env=` override
 - **Backward compatible** — single-region deployments continue working unchanged; existing resources are automatically associated with the `default` region on startup
 
 ---

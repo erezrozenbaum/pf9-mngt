@@ -5,6 +5,7 @@ Common helpers for Platform9/OpenStack tools
 """
 
 import os
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -42,10 +43,31 @@ CFG = {
 ERRORS: List[Dict[str, Any]] = []
 
 # Service endpoints discovered from Keystone catalog
+# Module-level names kept for backward-compatible callers that import them directly.
 NOVA_ENDPOINT: Optional[str] = None
 NEUTRON_ENDPOINT: Optional[str] = None
 CINDER_ENDPOINT: Optional[str] = None
 GLANCE_ENDPOINT: Optional[str] = None
+
+# Thread-local storage so concurrent region workers never see each other's endpoints.
+_thread_local = threading.local()
+
+
+def _ep_nova() -> Optional[str]:
+    """Return NOVA_ENDPOINT, preferring the calling thread's value."""
+    return getattr(_thread_local, "NOVA", None) or NOVA_ENDPOINT
+
+
+def _ep_neutron() -> Optional[str]:
+    return getattr(_thread_local, "NEUTRON", None) or NEUTRON_ENDPOINT
+
+
+def _ep_cinder() -> Optional[str]:
+    return getattr(_thread_local, "CINDER", None) or CINDER_ENDPOINT
+
+
+def _ep_glance() -> Optional[str]:
+    return getattr(_thread_local, "GLANCE", None) or GLANCE_ENDPOINT
 
 
 # --------------------------------------------------------------------
@@ -171,8 +193,9 @@ def paginate(
 
 def _extract_endpoints_from_catalog(catalog: List[Dict[str, Any]]) -> None:
     """
-    Populate global NOVA_ENDPOINT / NEUTRON_ENDPOINT / CINDER_ENDPOINT / GLANCE_ENDPOINT
-    from Keystone service catalog (public endpoints).
+    Store service endpoints from Keystone catalog.
+    Sets thread-local values (for concurrent multi-region workers) AND the
+    module-level globals (backward compat for single-process / subprocess callers).
     """
     global NOVA_ENDPOINT, NEUTRON_ENDPOINT, CINDER_ENDPOINT, GLANCE_ENDPOINT
 
@@ -186,19 +209,23 @@ def _extract_endpoints_from_catalog(catalog: List[Dict[str, Any]]) -> None:
 
     nova = _find("compute")
     if nova:
+        _thread_local.NOVA = nova
         NOVA_ENDPOINT = nova
 
     neutron = _find("network")
     if neutron:
+        _thread_local.NEUTRON = neutron
         NEUTRON_ENDPOINT = neutron
 
     # Cinder can be volumev3, volumev2, or volume depending on cloud
     cinder = _find("volumev3") or _find("volumev2") or _find("volume")
     if cinder:
+        _thread_local.CINDER = cinder
         CINDER_ENDPOINT = cinder
 
     glance = _find("image")
     if glance:
+        _thread_local.GLANCE = glance
         GLANCE_ENDPOINT = glance
 
 
@@ -700,7 +727,7 @@ def list_groups_all(session: requests.Session):
 
 
 def _require_nova():
-    if not NOVA_ENDPOINT:
+    if not _ep_nova():
         raise RuntimeError(
             "NOVA_ENDPOINT not initialized – call get_session_best_scope() first"
         )
@@ -711,7 +738,7 @@ def nova_servers_all(session: requests.Session):
     Fetch all Nova servers (all tenants, detailed).
     """
     _require_nova()
-    url = f"{NOVA_ENDPOINT}/servers/detail"
+    url = f"{_ep_nova()}/servers/detail"
     # all_tenants=1 requires appropriate role
     return paginate(session, url, "servers", extra_params={"all_tenants": "1"})
 
@@ -721,7 +748,7 @@ def nova_hypervisors_all(session: requests.Session):
     Fetch all Nova hypervisors (compute hosts).
     """
     _require_nova()
-    url = f"{NOVA_ENDPOINT}/os-hypervisors/detail"
+    url = f"{_ep_nova()}/os-hypervisors/detail"
     return paginate(session, url, "hypervisors")
 
 
@@ -730,7 +757,7 @@ def nova_flavors(session: requests.Session):
     Fetch all Nova flavors (detailed).
     """
     _require_nova()
-    url = f"{NOVA_ENDPOINT}/flavors/detail"
+    url = f"{_ep_nova()}/flavors/detail"
     return paginate(session, url, "flavors")
 
 
@@ -740,7 +767,7 @@ def nova_flavors(session: requests.Session):
 
 
 def _require_cinder():
-    if not CINDER_ENDPOINT:
+    if not _ep_cinder():
         raise RuntimeError(
             "CINDER_ENDPOINT not initialized – call get_session_best_scope() first"
         )
@@ -753,7 +780,7 @@ def cinder_volumes_all(session: requests.Session, project_id: str):
     """
     _require_cinder()
     # If endpoint already has /v3/<proj>, just append /volumes/detail
-    url = f"{CINDER_ENDPOINT}/volumes/detail"
+    url = f"{_ep_cinder()}/volumes/detail"
     # Only use all_tenants=1 if session is admin (token project == service project)
     extra_params = {"all_tenants": "1"} if getattr(session, "is_admin", False) else {}
     return paginate(session, url, "volumes", extra_params=extra_params)
@@ -768,11 +795,9 @@ def cinder_snapshots_all(session: requests.Session, project_id: str):
     """
     _require_cinder()
     # Reconstruct the URL with the correct project_id
-    if CINDER_ENDPOINT:
-        base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
-        url = f"{base_url}/{project_id}/snapshots/detail"
-    else:
-        raise RuntimeError("CINDER_ENDPOINT not initialized")
+    cinder_ep = _ep_cinder()
+    base_url = "/".join(cinder_ep.split("/")[:-1])  # Remove project_id
+    url = f"{base_url}/{project_id}/snapshots/detail"
     # Only use all_tenants=1 if session is admin
     extra_params = {"all_tenants": "1"} if getattr(session, "is_admin", False) else {}
     return paginate(session, url, "snapshots", extra_params=extra_params)
@@ -812,11 +837,9 @@ def cinder_create_snapshot(
     # Reconstruct the URL with the correct project_id
     # CINDER_ENDPOINT is like: https://api.example.com/cinder/v3/{admin_project_id}
     # We need to replace the project_id part with the actual project for this operation
-    if CINDER_ENDPOINT:
-        base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
-        url = f"{base_url}/{project_id}/snapshots"
-    else:
-        raise RuntimeError("CINDER_ENDPOINT not initialized")
+    cinder_ep = _ep_cinder()
+    base_url = "/".join(cinder_ep.split("/")[:-1])  # Remove project_id
+    url = f"{base_url}/{project_id}/snapshots"
     
     payload = {
         "snapshot": {
@@ -848,11 +871,9 @@ def cinder_delete_snapshot(
     _require_cinder()
     
     # Reconstruct the URL with the correct project_id
-    if CINDER_ENDPOINT:
-        base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])  # Remove project_id
-        url = f"{base_url}/{project_id}/snapshots/{snapshot_id}"
-    else:
-        raise RuntimeError("CINDER_ENDPOINT not initialized")
+    cinder_ep = _ep_cinder()
+    base_url = "/".join(cinder_ep.split("/")[:-1])  # Remove project_id
+    url = f"{base_url}/{project_id}/snapshots/{snapshot_id}"
     
     try:
         session.delete(url, timeout=CFG["REQUEST_TIMEOUT"])
@@ -867,7 +888,7 @@ def cinder_delete_snapshot(
 
 
 def _require_glance():
-    if not GLANCE_ENDPOINT:
+    if not _ep_glance():
         raise RuntimeError(
             "GLANCE_ENDPOINT not initialized – call get_session_best_scope() first"
         )
@@ -878,7 +899,7 @@ def glance_images(session: requests.Session):
     Fetch Glance images (v2).
     """
     _require_glance()
-    base = GLANCE_ENDPOINT.rstrip("/")
+    base = _ep_glance().rstrip("/")
     # Handle both "https://...:9292" and "https://...:9292/v2"
     if not base.endswith("/v2"):
         base = base + "/v2"
@@ -892,7 +913,7 @@ def glance_images(session: requests.Session):
 
 
 def _require_neutron():
-    if not NEUTRON_ENDPOINT:
+    if not _ep_neutron():
         raise RuntimeError(
             "NEUTRON_ENDPOINT not initialized – call get_session_best_scope() first"
         )
@@ -910,7 +931,7 @@ def neutron_list(session: requests.Session, resource: str):
       neutron_list(session, "security-group-rules") -> GET /v2.0/security-group-rules
     """
     _require_neutron()
-    url = f"{NEUTRON_ENDPOINT}/v2.0/{resource}"
+    url = f"{_ep_neutron()}/v2.0/{resource}"
     # Neutron uses hyphens in URLs but underscores in JSON response keys
     # e.g. "security-groups" -> {"security_groups": [...]}
     json_key = resource.replace("-", "_")
@@ -945,7 +966,7 @@ def ensure_admin_role_for_service_user():
 def nova_keypairs(session: requests.Session) -> List[Dict[str, Any]]:
     """Fetch all Nova keypairs (all users requires admin)."""
     _require_nova()
-    url = f"{NOVA_ENDPOINT}/os-keypairs"
+    url = f"{_ep_nova()}/os-keypairs"
     raw = paginate(session, url, "keypairs")
     # Nova returns each keypair wrapped: {"keypair": {actual data}}
     return [kp["keypair"] if isinstance(kp, dict) and "keypair" in kp else kp for kp in raw]
@@ -954,14 +975,14 @@ def nova_keypairs(session: requests.Session) -> List[Dict[str, Any]]:
 def nova_server_groups(session: requests.Session) -> List[Dict[str, Any]]:
     """Fetch all Nova server groups (all tenants)."""
     _require_nova()
-    url = f"{NOVA_ENDPOINT}/os-server-groups"
+    url = f"{_ep_nova()}/os-server-groups"
     return paginate(session, url, "server_groups", extra_params={"all_projects": "true"})
 
 
 def nova_aggregates(session: requests.Session) -> List[Dict[str, Any]]:
     """Fetch all Nova host aggregates."""
     _require_nova()
-    url = f"{NOVA_ENDPOINT}/os-aggregates"
+    url = f"{_ep_nova()}/os-aggregates"
     # Aggregates are not paginated, single response
     resp = http_json(session, "GET", url)
     return resp.get("aggregates", [])
@@ -970,7 +991,7 @@ def nova_aggregates(session: requests.Session) -> List[Dict[str, Any]]:
 def nova_availability_zones(session: requests.Session) -> List[Dict[str, Any]]:
     """Fetch all Nova availability zones (detailed)."""
     _require_nova()
-    url = f"{NOVA_ENDPOINT}/os-availability-zone/detail"
+    url = f"{_ep_nova()}/os-availability-zone/detail"
     resp = http_json(session, "GET", url)
     return resp.get("availabilityZoneInfo", [])
 
@@ -978,7 +999,7 @@ def nova_availability_zones(session: requests.Session) -> List[Dict[str, Any]]:
 def nova_quotas(session: requests.Session, project_id: str) -> Dict[str, Any]:
     """Fetch Nova quota set for a specific project."""
     _require_nova()
-    url = f"{NOVA_ENDPOINT}/os-quota-sets/{project_id}/detail"
+    url = f"{_ep_nova()}/os-quota-sets/{project_id}/detail"
     resp = http_json(session, "GET", url)
     return resp.get("quota_set", {})
 
@@ -991,21 +1012,21 @@ def nova_quotas(session: requests.Session, project_id: str) -> Dict[str, Any]:
 def cinder_volume_types(session: requests.Session) -> List[Dict[str, Any]]:
     """Fetch all Cinder volume types."""
     _require_cinder()
-    url = f"{CINDER_ENDPOINT}/types"
+    url = f"{_ep_cinder()}/types"
     return paginate(session, url, "volume_types")
 
 
 def cinder_volume_backups(session: requests.Session) -> List[Dict[str, Any]]:
     """Fetch all Cinder volume backups (all tenants, detailed)."""
     _require_cinder()
-    url = f"{CINDER_ENDPOINT}/backups/detail"
+    url = f"{_ep_cinder()}/backups/detail"
     return paginate(session, url, "backups", extra_params={"all_tenants": "1"})
 
 
 def cinder_quotas(session: requests.Session, project_id: str) -> Dict[str, Any]:
     """Fetch Cinder quota set for a specific project."""
     _require_cinder()
-    base_url = "/".join(CINDER_ENDPOINT.split("/")[:-1])
+    base_url = "/".join(_ep_cinder().split("/")[:-1])
     url = f"{base_url}/{project_id}/os-quota-sets/{project_id}"
     resp = http_json(session, "GET", url)
     return resp.get("quota_set", {})
@@ -1019,6 +1040,6 @@ def cinder_quotas(session: requests.Session, project_id: str) -> Dict[str, Any]:
 def neutron_quotas(session: requests.Session, project_id: str) -> Dict[str, Any]:
     """Fetch Neutron quota for a specific project."""
     _require_neutron()
-    url = f"{NEUTRON_ENDPOINT}/v2.0/quotas/{project_id}"
+    url = f"{_ep_neutron()}/v2.0/quotas/{project_id}"
     resp = http_json(session, "GET", url)
     return resp.get("quota", {})

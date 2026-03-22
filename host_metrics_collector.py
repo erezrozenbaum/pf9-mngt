@@ -32,9 +32,42 @@ except ImportError:
                     os.environ[key] = value
 
 class HostMetricsCollector:
+    @staticmethod
+    def _load_hosts_from_db(region_id: str) -> list:
+        """Query hypervisors table for management IPs of hosts in the given region."""
+        try:
+            import psycopg2
+            conn = psycopg2.connect(
+                host=os.getenv("PF9_DB_HOST", "localhost"),
+                port=int(os.getenv("PF9_DB_PORT", "5432")),
+                dbname=os.getenv("PF9_DB_NAME", os.getenv("POSTGRES_DB", "pf9_mgmt")),
+                user=os.getenv("PF9_DB_USER", os.getenv("POSTGRES_USER", "pf9")),
+                password=os.getenv("PF9_DB_PASSWORD", os.getenv("POSTGRES_PASSWORD", "")),
+            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COALESCE(raw_json->>'host_ip', hostname) FROM hypervisors "
+                    "WHERE region_id = %s AND status = 'enabled' "
+                    "AND (raw_json->>'host_ip' IS NOT NULL OR hostname IS NOT NULL)",
+                    (region_id,)
+                )
+                hosts = [row[0] for row in cur.fetchall() if row[0]]
+            conn.close()
+            return hosts
+        except Exception as e:
+            print(f"[DB] Failed to load hypervisor hosts for region {region_id}: {e}")
+            return []
+
     def __init__(self):
+        region_id = os.getenv("PF9_REGION_ID", "")
         hosts_env = os.getenv("PF9_HOSTS", "")
-        self.hosts = [h.strip() for h in hosts_env.split(",") if h.strip()] if hosts_env else []
+        if region_id:
+            self.hosts = self._load_hosts_from_db(region_id)
+            if not self.hosts:
+                print(f"[DB] No hypervisor hosts found for region {region_id}; falling back to PF9_HOSTS")
+                self.hosts = [h.strip() for h in hosts_env.split(",") if h.strip()] if hosts_env else []
+        else:
+            self.hosts = [h.strip() for h in hosts_env.split(",") if h.strip()] if hosts_env else []
         self.cache_file = os.path.join("monitoring", "cache", "metrics_cache.json")
         os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
         self.ip_to_hostname = self._build_hostname_map()

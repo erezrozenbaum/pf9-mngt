@@ -141,7 +141,8 @@ def get_db_connection():
         return None
 
 
-def start_snapshot_run(conn, run_type: str, dry_run: bool, trigger_source: str = "manual"):
+def start_snapshot_run(conn, run_type: str, dry_run: bool, trigger_source: str = "manual",
+                       region_id: str = ""):
     """Create snapshot_runs record and return run_id."""
     if not conn:
         return None
@@ -158,6 +159,20 @@ def start_snapshot_run(conn, run_type: str, dry_run: bool, trigger_source: str =
             )
             run_id, started_at = cur.fetchone()
         conn.commit()
+        # Tag region_id if provided (Phase 5 multi-region; column added by migrate_phase5_workers.sql)
+        if region_id and run_id:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE snapshot_runs SET region_id = %s WHERE id = %s",
+                        (region_id, run_id)
+                    )
+                conn.commit()
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
         return run_id
     except Exception as e:
         print(f"[DB] Error starting snapshot run: {e}")
@@ -198,14 +213,15 @@ def finish_snapshot_run(conn, run_id: int, status: str, total_volumes: int,
             pass
 
 
-def create_snapshot_record(conn, run_id: int, action: str, snapshot_id: str, 
+def create_snapshot_record(conn, run_id: int, action: str, snapshot_id: str,
                           snapshot_name: str, volume_id: str, volume_name: str,
                           tenant_id: str, tenant_name: str, project_id: str,
                           project_name: str, vm_id: str, vm_name: str,
                           policy_name: str, size_gb: int, retention_days: int,
-                          status: str, error_message: str = None, 
+                          status: str, error_message: str = None,
                           openstack_created_at: datetime = None,
-                          raw_snapshot_json: dict = None):
+                          raw_snapshot_json: dict = None,
+                          region_id: str = ""):
     """Create snapshot_records entry for audit trail."""
     if not conn or not run_id:
         return
@@ -217,13 +233,14 @@ def create_snapshot_record(conn, run_id: int, action: str, snapshot_id: str,
                 (snapshot_run_id, action, snapshot_id, snapshot_name, volume_id,
                  volume_name, tenant_id, tenant_name, project_id, project_name,
                  vm_id, vm_name, policy_name, size_gb, retention_days, status,
-                 error_message, openstack_created_at, raw_snapshot_json)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 error_message, openstack_created_at, raw_snapshot_json, region_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (run_id, action, snapshot_id, snapshot_name, volume_id,
                  volume_name, tenant_id, tenant_name, project_id, project_name,
                  vm_id, vm_name, policy_name, size_gb, retention_days, status,
-                 error_message, openstack_created_at, Json(raw_snapshot_json) if raw_snapshot_json else None)
+                 error_message, openstack_created_at, Json(raw_snapshot_json) if raw_snapshot_json else None,
+                 region_id or None)
             )
         conn.commit()
     except Exception as e:
@@ -1107,6 +1124,11 @@ def main():
             "limiting. Default: 5.0."
         ),
     )
+    parser.add_argument(
+        "--region-id",
+        default="",
+        help="Region ID for multi-region DB record tagging (Phase 5).",
+    )
 
     args = parser.parse_args()
 
@@ -1118,6 +1140,7 @@ def main():
     report_dir = args.report_dir or CFG.get("OUTPUT_DIR", os.path.join(os.path.expanduser("~"), "Reports", "Platform9"))
     batch_size = args.batch_size
     batch_delay = args.batch_delay
+    region_id = args.region_id
 
     ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
     report_path = os.path.join(
@@ -1132,7 +1155,7 @@ def main():
         try:
             db_conn = get_db_connection()
             if db_conn:
-                run_id = start_snapshot_run(db_conn, policy_name, dry_run)
+                run_id = start_snapshot_run(db_conn, policy_name, dry_run, region_id=region_id)
                 print(f"[DB] Snapshot run started with ID: {run_id}")
         except Exception as e:
             print(f"[DB] Failed to initialize database: {e}")
@@ -1371,6 +1394,7 @@ def main():
                         None, None, policy_name, bv.get("size", 0), 0,
                         "QUOTA_BLOCKED", b["detail"],
                         raw_snapshot_json=bv,
+                        region_id=region_id,
                     )
             # Build summary for notification
             needed_gb = sum(b["volume"].get("size", 0) for b in blocked)
@@ -1573,8 +1597,9 @@ def main():
                             db_conn, run_id, "skipped", None, "", vol_id, vol_name,
                             volume_project_id, tenant_name, volume_project_id, tenant_name,
                             None, None, policy_name, vol_size_gb, 0,
-                            "SKIPPED", f"Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB) - Platform9 API limitation", 
-                            raw_snapshot_json=v
+                            "SKIPPED", f"Volume size ({vol_size_gb}GB) exceeds limit ({max_size_gb}GB) - Platform9 API limitation",
+                            raw_snapshot_json=v,
+                            region_id=region_id,
                         )
                     
                     run_rows.append({
@@ -1665,7 +1690,8 @@ def main():
                         volume_project_id, tenant_name, volume_project_id, tenant_name,
                         attached_server_ids.split(", ")[0] if attached_server_ids else None,
                         primary_server_name, policy_name, v.get("size"), retention,
-                        status, err_msg, raw_snapshot_json=v
+                        status, err_msg, raw_snapshot_json=v,
+                        region_id=region_id,
                     )
 
                 run_rows.append({

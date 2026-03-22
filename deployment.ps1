@@ -806,7 +806,9 @@ $provisioningMigrations = @(
     @{File="db\migrate_tech_fix.sql"; Desc="Migration Planner Phase 5.0 v1.42.0: tech_fix_minutes_override column on migration_vms + migration_fix_settings table (per-project fix weights and OS fix rates)"},
     @{File="db\migrate_phase4d.sql"; Desc="Migration Planner Phase 4D v1.43.0: vjb_api_url/vjb_namespace/vjb_bearer_token on migration_projects + migration_vjailbreak_push_tasks table"},
     @{File="db\migrate_cluster_scoping.sql"; Desc="Migration Planner v1.66.2: cluster include_in_plan/exclude_reason columns + VM manually_assigned column"},
-    @{File="db\migrate_wave_approvals.sql"; Desc="Migration Planner v1.67.0: wave approval_status/approved_by/approved_at/approval_comment, VM dep dep_source/confidence, maintenance_windows table, use_maintenance_windows flag on projects"}
+    @{File="db\migrate_wave_approvals.sql"; Desc="Migration Planner v1.67.0: wave approval_status/approved_by/approved_at/approval_comment, VM dep dep_source/confidence, maintenance_windows table, use_maintenance_windows flag on projects"},
+    @{File="db\migrate_multicluster.sql"; Desc="Multi-region registry: pf9_control_planes, pf9_regions tables; region_id/control_plane_id columns on all resource tables; cluster_sync_metrics, cluster_tasks tables"},
+    @{File="db\migrate_phase5_workers.sql"; Desc="Multi-region workers v1.74.2: snapshot_runs.region_id column + idx_snapshot_runs_region_id index"}
 )
 foreach ($mig in $provisioningMigrations) {
     Write-Info "Applying $($mig.Desc)..."

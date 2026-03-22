@@ -8,11 +8,11 @@ CREATE INDEX IF NOT EXISTS idx_inventory_runs_started_at
 
 -- activity_log: audit queries filter by user and sort recency
 CREATE INDEX IF NOT EXISTS idx_activity_log_user_created
-    ON activity_log (user_id, created_at DESC);
+    ON activity_log (actor, timestamp DESC);
 
 -- activity_log: timestamp-only queries (admin timeline, SLA reports)
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at
-    ON activity_log (created_at DESC);
+    ON activity_log (timestamp DESC);
 
 -- snapshots: snapshot tab queries filter by project and sort by creation time
 CREATE INDEX IF NOT EXISTS idx_snapshots_project_created
@@ -22,14 +22,14 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_project_created
 CREATE INDEX IF NOT EXISTS idx_migration_vms_project_id
     ON migration_vms (project_id);
 
--- tickets: ticket list queries filter by status and/or department
+-- support_tickets: ticket list queries filter by status and/or department
 CREATE INDEX IF NOT EXISTS idx_tickets_status_dept
-    ON tickets (status, department_id);
+    ON support_tickets (status, to_dept_id);
 
--- tickets: SLA breach queries filter by due_date
+-- support_tickets: SLA breach queries filter by sla_resolve_at
 CREATE INDEX IF NOT EXISTS idx_tickets_due_date
-    ON tickets (due_date) WHERE due_date IS NOT NULL;
+    ON support_tickets (sla_resolve_at) WHERE sla_resolve_at IS NOT NULL;
 
--- runbook_executions: history queries filter by runbook_id and sort by started_at
+-- runbook_executions: history queries filter by runbook_name and sort by started_at
 CREATE INDEX IF NOT EXISTS idx_runbook_exec_runbook_started
-    ON runbook_executions (runbook_id, started_at DESC);
+    ON runbook_executions (runbook_name, started_at DESC);

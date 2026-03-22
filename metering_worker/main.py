@@ -86,6 +86,53 @@ def load_config(conn) -> Dict[str, Any]:
         return dict(row) if row else {"enabled": False, "collection_interval_min": 15, "retention_days": 90}
 
 
+def load_default_region_id(conn) -> Optional[str]:
+    """Return the ID of the default (or first enabled) region, or None if unconfigured."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id FROM pf9_regions
+                WHERE is_enabled = TRUE
+                ORDER BY is_default DESC, priority ASC
+                LIMIT 1
+            """)
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
+def record_metering_sync(
+    conn,
+    region_id: str,
+    started_at: datetime.datetime,
+    finished_at: datetime.datetime,
+    resource_count: int,
+    error_count: int,
+) -> None:
+    """Write a cluster_sync_metrics row for the completed metering cycle."""
+    if not region_id:
+        return
+    duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+    status = "success" if error_count == 0 else "partial"
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO cluster_sync_metrics
+                    (region_id, sync_type, started_at, finished_at,
+                     duration_ms, resource_count, error_count, status)
+                VALUES (%s, 'metering', %s, %s, %s, %s, %s, %s)
+            """, (region_id, started_at, finished_at, duration_ms,
+                  resource_count, error_count, status))
+        conn.commit()
+    except Exception as exc:
+        log.warning("Could not write metering sync metric: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Collectors
 # ---------------------------------------------------------------------------
@@ -634,6 +681,9 @@ def prune_old_records(conn, retention_days: int):
 def run_collection_cycle():
     """Execute one full metering collection cycle."""
     conn = None
+    started_at = datetime.datetime.now(datetime.timezone.utc)
+    total_resources = 0
+    total_errors = 0
     try:
         conn = get_conn()
 
@@ -658,6 +708,7 @@ def run_collection_cycle():
 
         n = collect_resource_metrics(conn)
         log.info("Resources: %d VM records collected", n)
+        total_resources += n
 
         n = collect_snapshot_metrics(conn)
         log.info("Snapshots: %d records collected", n)
@@ -676,9 +727,15 @@ def run_collection_cycle():
 
         prune_old_records(conn, retention_days)
 
+        # Write per-region sync metric for the default region.
+        finished_at = datetime.datetime.now(datetime.timezone.utc)
+        region_id = load_default_region_id(conn)
+        record_metering_sync(conn, region_id, started_at, finished_at, total_resources, total_errors)
+
         log.info("=== Metering collection cycle complete ===")
 
     except Exception as exc:
+        total_errors += 1
         log.error("Collection cycle failed: %s\n%s", exc, traceback.format_exc())
     finally:
         if conn:
