@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.1] - 2026-03-25
+
+### Fixed
+- **CI `update-values` job** (`release.yml`) — `actions/checkout@v4` failed with
+  `Error: Input required and not supplied: token` when the `RELEASE_PAT` repository
+  secret was not configured. Changed `token: ${{ secrets.RELEASE_PAT }}` to
+  `token: ${{ secrets.RELEASE_PAT || github.token }}`. The job now falls back to the
+  built-in `github.token` (which already has `contents: write` permission via the
+  job's `permissions:` block) when no PAT is supplied, making the first-run
+  experience zero-config.
+
+---
+
 ## [1.82.0] - 2026-03-24
 
 ### Added — Kubernetes Production Support

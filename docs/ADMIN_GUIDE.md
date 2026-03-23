@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.0  
+**Version**: 1.82.1  
 **Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
@@ -578,6 +578,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.82.1 — CI Pipeline Fix (✅ Complete)
+
+- **`update-values` job** — fixed `actions/checkout@v4` failure when `RELEASE_PAT` secret is not configured; job now falls back to `github.token` automatically
 
 ### v1.82.0 — Kubernetes Production Support (Helm + ArgoCD + CI/CD) (✅ Complete)
 
