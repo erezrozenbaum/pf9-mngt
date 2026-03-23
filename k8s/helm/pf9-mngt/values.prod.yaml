@@ -7,7 +7,7 @@
 # ===========================================================================
 
 global:
-  imageTag: latest    # replaced by CI: sed "s|imageTag:.*|imageTag: vX.Y.Z|"
+  imageTag: v1.82.1
 
 ingress:
   host: pf9-mngt.example.com    # replace with your real domain before deploying
