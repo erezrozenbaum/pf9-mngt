@@ -34,6 +34,20 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z {{ .Values.db.host }} {{ .Values.db.port }}; do
+                echo "Waiting for PostgreSQL at {{ .Values.db.host }}:{{ .Values.db.port }}..."
+                sleep 3
+              done
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
       containers:
         - name: db-migrate
           image: {{ include "pf9mngt.appImage" (dict "repo" .Values.api.image.repository "svcTag" .Values.api.image.tag "global" .Values.global) }}
