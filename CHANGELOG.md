@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.2] - 2026-03-23
+
+### Fixed
+- **`api/Dockerfile`** — `run_migration.py` and all `db/migrate_*.sql` files were not
+  copied into the image, causing the `db-migrate` Kubernetes Job to fail immediately
+  with `FileNotFoundError`. Added `COPY run_migration.py ./` and a `RUN` step that
+  concatenates all `db/migrate_*.sql` files into `/app/run_migration_sql.sql` at
+  build time.
+- **`k8s/helm/pf9-mngt/templates/workers/ldap-sync-worker.yaml`** — injected
+  `LDAP_SYNC_KEY` env var from the `pf9-ldap-secrets` secret (`sync-key` key);
+  worker was exiting on startup without it.
+- **`k8s/helm/pf9-mngt/templates/api/deployment.yaml`** — injected `LDAP_SYNC_KEY`
+  env var (optional) for LDAP federation decrypt path in auth.py.
+- **`k8s/helm/pf9-mngt/templates/ui/deployment.yaml`** — added `emptyDir` volumes
+  for `/var/cache/nginx` and `/var/run`; nginx non-root UID 1000 cannot create
+  these directories in the read-only container filesystem.
+- **`k8s/helm/pf9-mngt/templates/workers/scheduler-worker.yaml`** — added `emptyDir`
+  volume at `/app/monitoring`; `host_metrics_collector.py` writes a cache file to
+  a relative `monitoring/` path that does not exist in the container filesystem.
+
+---
+
 ## [1.82.1] - 2026-03-25
 
 ### Fixed

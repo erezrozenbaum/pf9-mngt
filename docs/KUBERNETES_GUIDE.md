@@ -2,7 +2,7 @@
 
 **Version**: 3.1
 **Last Updated**: March 2026
-**Status**: Production Ready (v1.82.1)
+**Status**: Production Ready (v1.82.2)
 **Minimum Kubernetes**: 1.28
 
 ---
@@ -111,7 +111,7 @@ k8s/
 │       └── HOW_TO_SEAL.md       # kubeseal commands for all 9 required secrets
 └── helm/
     └── pf9-mngt/
-        ├── Chart.yaml            # chart metadata — version 1.82.0, kubeVersion >=1.28
+        ├── Chart.yaml            # chart metadata — version 1.82.2, kubeVersion >=1.28
         ├── values.yaml           # all defaults — no credentials
         ├── values.prod.yaml      # CI-managed image-tag overrides only
         └── templates/
@@ -282,14 +282,14 @@ helm upgrade --install pf9-mngt ./k8s/helm/pf9-mngt \
   --timeout 10m
 ```
 
-The `db-migrate` Job runs automatically as a pre-install hook before any service pods start.
+The `db-migrate` Job runs automatically as a **post-install/post-upgrade hook** after the StatefulSets are ready.
 
 To install from the OCI registry (as ArgoCD or CI would):
 
 ```bash
 helm upgrade --install pf9-mngt \
   oci://ghcr.io/erezrozenbaum/helm/pf9-mngt \
-  --version 1.82.0 \
+  --version 1.82.2 \
   --namespace pf9-mngt \
   -f k8s/helm/pf9-mngt/values.yaml \
   -f k8s/helm/pf9-mngt/values.prod.yaml \
@@ -557,13 +557,38 @@ kubectl delete namespace pf9-mngt
 ### db-migrate job fails at startup
 
 ```bash
-kubectl logs -n pf9-mngt job/pf9-mngt-db-migrate
+kubectl logs -n pf9-mngt -l app.kubernetes.io/component=db-migrate
+# If pod was already cleaned up, describe the job:
+kubectl describe job pf9-db-migrate-<revision> -n pf9-mngt
 ```
 
 Common causes:
-- `pf9-db` StatefulSet not yet Running — wait for it: `kubectl rollout status statefulset/pf9-mngt-db -n pf9-mngt`
+- `pf9-db` StatefulSet not yet Running — job init container waits up to `activeDeadlineSeconds: 300`; if db takes longer (e.g. first NFS mount), the job times out. Fix: delete the failed job and re-trigger sync.
 - `pf9-db-credentials` Secret missing — verify: `kubectl get secret pf9-db-credentials -n pf9-mngt`
 - Schema migration conflict — restore from backup and re-run with corrected migration
+- **`DeadlineExceeded`** — the job's init container (`wait-for-db`) was waiting when `pf9-db` was still starting. Delete the failed job (`kubectl delete job <name> -n pf9-mngt`) and re-trigger the ArgoCD sync.
+
+### Workers or API crash at startup — missing LDAP_SYNC_KEY
+
+```
+ldap_sync_key secret is not set. Worker cannot decrypt bind passwords.
+```
+
+The `pf9-ldap-secrets` Secret must contain a `sync-key` field (a 32-byte URL-safe base64 key). To generate and patch:
+
+```bash
+SYNC_KEY=$(python3 -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+kubectl patch secret pf9-ldap-secrets -n pf9-mngt \
+  --type='json' -p="[{'op':'add','path':'/data/sync-key','value':'$(echo -n $SYNC_KEY | base64)']]}"
+```
+
+### nginx (UI) Permission denied on `/var/cache/nginx`
+
+The UI pod runs as UID 1000 (non-root). If `emptyDir` volumes for `/var/cache/nginx` and `/var/run` are missing from the Deployment, nginx cannot create its temp directories and crashes. Verify the Deployment spec contains these volumes (present since v1.82.2).
+
+### scheduler-worker `PermissionError: 'monitoring'`
+
+`host_metrics_collector.py` writes `monitoring/cache/metrics_cache.json` relative to `/app`. This path is read-only in the container. An `emptyDir` volume mounted at `/app/monitoring` is required (present since v1.82.2).
 
 ### API pods in CrashLoopBackOff
 
@@ -630,14 +655,14 @@ in the base chart.
 - No per-environment cloud IAM setup required
 - Teams can add ExternalSecrets operator later without changing application code
 
-### ADR-K003: db-migrate as a Helm pre-install/pre-upgrade hook
+### ADR-K003: db-migrate as a Helm post-install/post-upgrade hook
 
-**Decision:** The database migration job runs as a `helm.sh/hook: pre-install,pre-upgrade` Job.
+**Decision:** The database migration job runs as a `helm.sh/hook: post-install,post-upgrade` Job (changed from `pre-install,pre-upgrade` in v1.82.2).
 
 **Rationale:**
-- Guarantees schema is up to date before any API or worker pod starts
+- PostgreSQL (StatefulSet) must be Running before the migration job can connect; `post-*` hooks fire after all non-hook resources are applied and healthy, ensuring the DB is available
 - `hook-delete-policy: before-hook-creation,hook-succeeded` keeps the namespace clean
-- Failed migration blocks the upgrade and leaves old pods running — safe fail posture
+- The API Deployment's readiness probe prevents traffic until the API itself is healthy — by which time the migration has completed
 - No init container needed in every pod; single job runs once per release
 
 ### ADR-K004: `values.prod.yaml` for CI-managed image tags
@@ -688,7 +713,7 @@ The CI `update-values` job clones and pushes to this private repo using `RELEASE
 
 ---
 
-*This document reflects the v1.82.1 implementation. For Docker Compose deployment, see
+*This document reflects the v1.82.2 implementation. For Docker Compose deployment, see
 [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). For the full CI/CD pipeline reference, see
 [CI_CD_GUIDE.md](CI_CD_GUIDE.md). For Sealed Secrets creation commands, see
 [k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md](../k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md).*

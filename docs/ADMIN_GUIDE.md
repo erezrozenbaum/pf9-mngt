@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.1  
+**Version**: 1.82.2  
 **Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
@@ -578,6 +578,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.82.2 — Kubernetes Deployment Fixes (✅ Complete)
+
+- `api/Dockerfile` — `run_migration.py` and migration SQL files added to image; `db-migrate` Job was crashing with `FileNotFoundError`
+- `ldap-sync-worker` + `api` — `LDAP_SYNC_KEY` env var injected from `pf9-ldap-secrets` secret
+- `ui` — `emptyDir` volumes for `/var/cache/nginx` and `/var/run` (nginx non-root permission fix)
+- `scheduler-worker` — `emptyDir` at `/app/monitoring` (metrics cache write permission fix)
 
 ### v1.82.1 — CI Pipeline Fix (✅ Complete)
 

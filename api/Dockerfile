@@ -18,7 +18,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy API sources, shared module, and DB migration scripts into the image
 COPY api/ ./
 COPY p9_common.py ./
+COPY run_migration.py ./
 COPY db/ ./db/
+
+# Build the consolidated migration SQL file from all incremental migration scripts.
+# run_migration.py reads this single file at /app/run_migration_sql.sql.
+# Sorting ensures a deterministic order; all statements are idempotent (IF NOT EXISTS / IF EXISTS).
+RUN ls db/migrate_*.sql | sort | xargs cat > run_migration_sql.sql
 
 # C7: 4 workers; max-requests restarts workers after 1000 requests to prevent memory leaks
 CMD ["gunicorn", "main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "300", "--graceful-timeout", "60", "--max-requests", "1000", "--max-requests-jitter", "100"]
