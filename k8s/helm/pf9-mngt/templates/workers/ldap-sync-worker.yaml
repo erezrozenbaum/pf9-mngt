@@ -53,5 +53,10 @@ spec:
               value: {{ .Values.ldap.userDN | quote }}
             - name: LDAP_SYNC_POLL_INTERVAL
               value: {{ .Values.workers.ldapSyncWorker.ldapSyncPollInterval | quote }}
+            - name: LDAP_SYNC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.ldapSecrets }}
+                  key: sync-key
           resources:
             {{- toYaml .Values.workers.ldapSyncWorker.resources | nindent 12 }}

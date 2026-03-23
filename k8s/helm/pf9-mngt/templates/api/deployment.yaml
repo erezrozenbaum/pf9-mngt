@@ -78,6 +78,12 @@ spec:
               value: {{ .Values.ldap.userDN | quote }}
             - name: LDAP_GROUP_DN
               value: {{ .Values.ldap.groupDN | quote }}
+            - name: LDAP_SYNC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.ldapSecrets }}
+                  key: sync-key
+                  optional: true
             # --- JWT ---
             - name: JWT_SECRET_KEY
               valueFrom:
