@@ -8,6 +8,16 @@ on:
     types: [completed]
     branches: [master, main]
 
+# ---------------------------------------------------------------------------
+# Workflow-level configuration variables.
+# Set these in: GitHub → repo Settings → Secrets and variables → Variables
+#
+#   DEPLOY_REPO   — name of the private deploy repo that holds values.prod.yaml
+#                   and sealed-secret manifests (e.g. pf9-mngt-deploy)
+# ---------------------------------------------------------------------------
+env:
+  DEPLOY_REPO: ${{ vars.DEPLOY_REPO }}
+
 jobs:
   # ---------------------------------------------------------------------------
   # Job 1: Parse the latest version from CHANGELOG.md and check whether a
@@ -198,12 +208,14 @@ jobs:
             oci://ghcr.io/${{ github.repository_owner }}/helm
 
   # ---------------------------------------------------------------------------
-  # Job 4: Update values.prod.yaml image tags and commit back to master.
-  # ArgoCD watches master and will auto-sync when this commit lands.
+  # Job 4: Update values.prod.yaml in the private deploy repo and push.
+  # ArgoCD watches the deploy repo and auto-syncs when this commit lands.
   #
-  # Requires a Personal Access Token (PAT) with `contents: write` stored as
-  # the repository secret RELEASE_PAT.  The built-in GITHUB_TOKEN cannot push
-  # to protected branches or trigger downstream workflows.
+  # Required setup (one-time, in GitHub repo Settings → Secrets and variables):
+  #   Secret:   RELEASE_PAT   — Personal Access Token with `repo` scope
+  #   Variable: DEPLOY_REPO   — name of your private deploy repo (see top of file)
+  #
+  # The deploy repo is resolved as: <repository_owner>/<DEPLOY_REPO>
   # ---------------------------------------------------------------------------
   update-values:
     name: Update values.prod.yaml Image Tags
@@ -211,34 +223,33 @@ jobs:
     if: needs.extract-version.outputs.exists == 'false'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.RELEASE_PAT || github.token }}
-          ref: master
+      - name: Clone private deploy repo
+        run: |
+          git clone https://x-access-token:${{ secrets.RELEASE_PAT }}@github.com/${{ github.repository_owner }}/${DEPLOY_REPO}.git deploy-repo
 
       - name: Patch image tags in values.prod.yaml
         run: |
           VERSION="${{ needs.extract-version.outputs.version }}"
-          FILE="k8s/helm/pf9-mngt/values.prod.yaml"
+          FILE="deploy-repo/values.prod.yaml"
           # Update global.imageTag line
           sed -i "s|^  imageTag:.*|  imageTag: v${VERSION}|" "${FILE}"
 
       - name: Commit and push updated values.prod.yaml
         run: |
           VERSION="${{ needs.extract-version.outputs.version }}"
+          cd deploy-repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add k8s/helm/pf9-mngt/values.prod.yaml
+          git add values.prod.yaml
           # Only commit if there are staged changes
           if git diff --cached --quiet; then
             echo "values.prod.yaml already up to date — skipping commit."
           else
             git commit -m "ci: update image tags to v${VERSION} [skip ci]"
-            git push origin master
+            git push origin main
           fi
 
   # ---------------------------------------------------------------------------

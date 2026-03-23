@@ -1,8 +1,8 @@
 # Platform9 Management System — Kubernetes Deployment Guide
 
-**Version**: 3.0
+**Version**: 3.1
 **Last Updated**: March 2026
-**Status**: Production Ready (v1.82.0)
+**Status**: Production Ready (v1.82.1)
 **Minimum Kubernetes**: 1.28
 
 ---
@@ -101,9 +101,14 @@ The Docker Compose stack is unchanged. The Helm chart adds a parallel production
 ```
 k8s/
 ├── argocd/
-│   └── application.yaml         # ArgoCD Application manifest (one-time bootstrap)
-├── sealed-secrets/
-│   └── README.md                # kubeseal commands for all 9 required secrets
+│   └── application.yaml         # Single-source reference template (dev/local use)
+├── deploy-repo-init/            # Bootstrap content for the private pf9-mngt-deploy repo
+│   ├── argocd-application.yaml  # Multi-source Application (copy to private repo at bootstrap)
+│   ├── argocd-appproject.yaml   # AppProject scoping ArgoCD to pf9-mngt namespace only
+│   ├── values.prod.yaml         # Production overrides: imageTag, host, TLS, storageClass
+│   ├── README.md
+│   └── sealed-secrets/
+│       └── HOW_TO_SEAL.md       # kubeseal commands for all 9 required secrets
 └── helm/
     └── pf9-mngt/
         ├── Chart.yaml            # chart metadata — version 1.82.0, kubeVersion >=1.28
@@ -175,11 +180,14 @@ kubectl create namespace argocd
 kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 ```
 
-### GitHub secrets (needed by CI for Helm OCI push and values.prod.yaml commit)
+### GitHub secrets and variables (needed by CI)
 
-| Secret | Purpose |
-|--------|---------|
-| `RELEASE_PAT` | GitHub Personal Access Token with `repo` scope; used by the `update-values` CI job to commit `values.prod.yaml` to master |
+Set these in: GitHub → repo Settings → Secrets and variables
+
+| Type | Name | Purpose |
+|------|------|---------|
+| Secret | `RELEASE_PAT` | Personal Access Token with `repo` scope; used by the `update-values` CI job to push `values.prod.yaml` to the private deploy repo |
+| Variable | `DEPLOY_REPO` | Name of your private deploy repo (e.g. `pf9-mngt-deploy`); see top of `.github/workflows/release.yml` |
 
 ---
 
@@ -329,47 +337,55 @@ pf9-mngt-db-migrate-XXXX                    0/1     Completed   0
 
 ## GitOps with ArgoCD
 
-The file `k8s/argocd/application.yaml` is a ready-to-apply ArgoCD `Application` manifest.
-Apply it once to bootstrap continuous delivery:
+As of v1.82.1 the GitOps setup uses the **App Repo + Config Repo** pattern:
+
+| Repo | Visibility | Contents |
+|------|------------|----------|
+| `pf9-mngt` (this repo) | Public | Helm chart, application code, CI workflows |
+| `pf9-mngt-deploy` | **Private** | `values.prod.yaml`, sealed-secret blobs, ArgoCD manifests |
+
+ArgoCD uses **multi-source** (v2.6+) to combine both repos at sync time:
+- **Source 1** — public repo: Helm chart + `values.yaml` defaults
+- **Source 2** — private deploy repo: `values.prod.yaml` (image tags, host, TLS, storageClass)
+
+### One-time bootstrap
 
 ```bash
-# Authenticate to ArgoCD
-argocd login <argocd-server> --username admin --password <password>
+# 1. Register the private deploy repo with ArgoCD (needs RELEASE_PAT)
+argocd repo add https://github.com/<your-org>/pf9-mngt-deploy \
+  --username <github-user> \
+  --password <RELEASE_PAT>
 
-# Apply the Application manifest
-kubectl apply -f k8s/argocd/application.yaml -n argocd
+# 2. Apply the AppProject (scopes ArgoCD to pf9-mngt namespace only)
+kubectl apply -f k8s/deploy-repo-init/argocd-appproject.yaml -n argocd
 
-# Or directly via argocd CLI
-argocd app create pf9-mngt \
-  --repo https://github.com/erezrozenbaum/pf9-mngt \
-  --path k8s/helm/pf9-mngt \
-  --dest-server https://kubernetes.default.svc \
-  --dest-namespace pf9-mngt \
-  --helm-value-files values.yaml \
-  --helm-value-files values.prod.yaml \
-  --sync-policy automated \
-  --auto-prune \
-  --self-heal
+# 3. Apply the multi-source Application
+kubectl apply -f k8s/deploy-repo-init/argocd-application.yaml -n argocd
 ```
+
+> The files in `k8s/deploy-repo-init/` are the authoritative copies — copy them to the root of
+> your `pf9-mngt-deploy` repo before applying.
 
 ### GitOps sync flow (steady state)
 
 ```
 CI pipeline (release.yml)
         │
-        │  1. Builds + pushes Docker images → ghcr.io
-        │  2. Packages + pushes Helm chart  → ghcr.io/erezrozenbaum/helm
-        │  3. update-values job: patches global.imageTag in values.prod.yaml
-        │     commits [skip ci] to master
+        │  1. Builds + pushes Docker images  → ghcr.io/<org>
+        │  2. Packages + pushes Helm chart   → ghcr.io/<org>/helm
+        │  3. update-values job:
+        │       git clone pf9-mngt-deploy (using RELEASE_PAT)
+        │       patches global.imageTag in values.prod.yaml
+        │       git push → pf9-mngt-deploy main [skip ci]
         ▼
-  master branch
-  (values.prod.yaml now has new imageTag)
+  pf9-mngt-deploy / values.prod.yaml updated
         │
-        │  ArgoCD controller polls repo every 3 minutes
+        │  ArgoCD polls both repos every 3 minutes
         ▼
-  ArgoCD detects drift → auto-syncs
+  ArgoCD detects drift in Source 2 → auto-syncs
         │
-        │  helm upgrade --install (chart + values.yaml + values.prod.yaml)
+        │  helm upgrade --install
+        │    (chart from Source 1 + values.prod.yaml from Source 2)
         ▼
   new pods roll out (RollingUpdate strategy)
   db-migrate pre-upgrade hook runs before pods start
@@ -404,14 +420,16 @@ oci://ghcr.io/erezrozenbaum/helm/pf9-mngt:<VERSION>
 
 ### Job: `update-values`
 
-Runs after `helm-package`. Uses `RELEASE_PAT` to commit a single-line change to `values.prod.yaml`:
+Runs after `helm-package`. Uses `RELEASE_PAT` to push a single-line change to the **private
+`pf9-mngt-deploy` repo** (configured via the `DEPLOY_REPO` repository variable):
 
 ```
 global:
-  imageTag: v<VERSION>    ← this line is updated and committed to master [skip ci]
+  imageTag: v<VERSION>    ← updated in pf9-mngt-deploy/values.prod.yaml [skip ci]
 ```
 
-This is the "trigger" that ArgoCD detects, causing it to roll out the new images.
+ArgoCD (Source 2) detects the change in the private repo and triggers `helm upgrade`.
+The public repo (`pf9-mngt/master`) is **not touched** by this job.
 
 ---
 
@@ -652,9 +670,25 @@ in the base chart.
 - All Ingress v1, StatefulSet, and Job APIs used by this chart are stable since 1.21; 1.28 is purely a security-support floor
 - Setting this prevents accidental installations on EOL clusters that will not receive CVE patches
 
+### ADR-K007: Separate private deploy repo for production GitOps config
+
+**Decision:** Production-specific configuration (`values.prod.yaml`, sealed-secret blobs, ArgoCD
+Application + AppProject manifests) lives in a separate private `pf9-mngt-deploy` repository.
+The CI `update-values` job clones and pushes to this private repo using `RELEASE_PAT`.
+
+**Rationale:**
+- `values.prod.yaml` may contain environment-specific hostnames, IPs, and StorageClass names
+  that are internal infrastructure details not suitable for a public repo
+- Sealed Secret blobs are safe to commit (encrypted), but their presence in a public repo
+  reveals which secrets exist and their namespace — leaking infrastructure topology
+- ArgoCD `Application` and `AppProject` manifests reference the private repo URL and
+  cluster-scoping rules — these are deployment-specific, not generic chart config
+- The public repo remains a clean, forkable open-source project; forks get a working
+  chart structure without any organisation-specific deployment details hardcoded
+
 ---
 
-*This document reflects the v1.82.0 implementation. For Docker Compose deployment, see
+*This document reflects the v1.82.1 implementation. For Docker Compose deployment, see
 [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). For the full CI/CD pipeline reference, see
 [CI_CD_GUIDE.md](CI_CD_GUIDE.md). For Sealed Secrets creation commands, see
-[k8s/sealed-secrets/README.md](../k8s/sealed-secrets/README.md).*
+[k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md](../k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md).*
