@@ -60,6 +60,19 @@ logging.basicConfig(
 )
 log = logging.getLogger("scheduler-worker")
 
+_ALIVE_FILE = "/tmp/alive"
+
+
+def _touch_alive() -> None:
+    """Write a heartbeat file so Kubernetes liveness probes can detect stalled workers."""
+    try:
+        import time as _time
+        with open(_ALIVE_FILE, "w") as fh:
+            fh.write(str(_time.time()))
+    except OSError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Graceful shutdown
 # ---------------------------------------------------------------------------
@@ -256,6 +269,7 @@ async def metrics_loop() -> None:
                 _write_sync_metric(region_id, started_at, datetime.now(timezone.utc), error=True)
 
         # Sleep in 1-second ticks so SIGTERM is handled promptly
+        _touch_alive()  # heartbeat — liveness probe checks /tmp/alive mtime
         for _ in range(METRICS_INTERVAL):
             if not _running:
                 break

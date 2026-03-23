@@ -8,7 +8,9 @@ This module provides:
 - Permission checking
 """
 
+import ipaddress
 import os
+import socket
 import hmac
 import logging
 import ldap
@@ -41,6 +43,12 @@ LDAP_USER_DN = os.getenv("LDAP_USER_DN", "ou=users,dc=pf9mgmt,dc=local")
 
 _jwt_env = read_secret("jwt_secret", env_var="JWT_SECRET_KEY")
 if not _jwt_env:
+    if os.getenv("PRODUCTION_MODE", "").lower() in ("true", "1", "yes"):
+        raise RuntimeError(
+            "PRODUCTION_MODE is enabled but JWT_SECRET_KEY is not configured. "
+            "Set the jwt_secret Docker secret or JWT_SECRET_KEY environment variable "
+            "before starting the API service."
+        )
     _jwt_env = secrets.token_urlsafe(48)
     logger.warning(
         "JWT_SECRET_KEY not set — generated a random ephemeral key. "
@@ -197,6 +205,38 @@ class LDAPAuthenticator:
         from crypto_helper import fernet_decrypt as _fernet_decrypt
 
         config_id = cfg.get("config_id", "unknown")
+
+        # SSRF guard — re-validate host at connection time (defence-in-depth;
+        # the host was checked at config-save time but the DB record could have
+        # been modified directly.  RFC-1918 / loopback are blocked unless the
+        # operator explicitly set allow_private_network = true on this config.)
+        if not cfg.get("allow_private_network", False):
+            _BLOCKED_RANGES = [
+                ipaddress.ip_network("10.0.0.0/8"),
+                ipaddress.ip_network("172.16.0.0/12"),
+                ipaddress.ip_network("192.168.0.0/16"),
+                ipaddress.ip_network("127.0.0.0/8"),
+                ipaddress.ip_network("::1/128"),
+                ipaddress.ip_network("fc00::/7"),
+            ]
+            try:
+                addr_str = socket.getaddrinfo(cfg["host"], None)[0][4][0]
+                addr = ipaddress.ip_address(addr_str)
+                for _blocked in _BLOCKED_RANGES:
+                    if addr in _blocked:
+                        logger.error(
+                            "[AUTH] SSRF guard blocked connection to private host %s (%s) "
+                            "for config %s", cfg["host"], addr_str, config_id
+                        )
+                        raise HTTPException(
+                            status_code=503,
+                            detail="Authentication service configuration error",
+                        )
+            except socket.gaierror:
+                logger.error("[AUTH] Cannot resolve external LDAP host '%s'", cfg["host"])
+                raise HTTPException(
+                    status_code=503, detail="Authentication service unavailable"
+                )
 
         # Decrypt service-account bind password
         svc_password = _fernet_decrypt(

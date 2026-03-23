@@ -150,6 +150,17 @@ async def update_backup_config(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    # Explicit column allowlist — prevents unknown/injected keys from reaching SQL
+    # even though BackupConfigUpdate is a Pydantic model with named fields.
+    _ALLOWED_COLUMNS = {
+        "enabled", "nfs_path", "schedule_type", "schedule_time_utc",
+        "schedule_day_of_week", "retention_count", "retention_days",
+        "ldap_backup_enabled", "ldap_retention_count", "ldap_retention_days",
+    }
+    invalid = set(updates) - _ALLOWED_COLUMNS
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown field(s): {sorted(invalid)}")
+
     set_parts = []
     vals = []
     for k, v in updates.items():

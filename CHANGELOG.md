@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.81.0] - 2026-03-23
+
+### Security — Hardening & Pre-Kubernetes Fixes
+
+#### API
+- **Production JWT guard** (`api/auth.py`) — when `PRODUCTION_MODE=true` is set and no `jwt_secret` Docker secret or `JWT_SECRET_KEY` environment variable is configured, the API now exits at startup with a clear `RuntimeError` instead of silently generating an ephemeral key that would invalidate all sessions on every pod restart
+- **SSRF re-validation in external LDAP auth passthrough** (`api/auth.py`) — `_bind_external_ldap()` now re-validates the LDAP host against RFC-1918, loopback, and ULA address ranges at connection time (defence-in-depth; the host is already checked at config-save time, but this prevents exploitation via direct database modification)
+- **Backup config explicit column allowlist** (`api/backup_routes.py`) — the `PUT /api/backup/config` endpoint now validates that every Pydantic-derived column name appears in an explicit `_ALLOWED_COLUMNS` set before constructing the `UPDATE` statement, preventing any hypothetical future code path from reaching SQL with unexpected column names
+
+#### Workers — Credential Hardening
+- **Eliminated hardcoded default database passwords** in `backup_worker`, `metering_worker`, and `search_worker`: all three now use a `_read_secret()` helper (same pattern already in `ldap_sync_worker`) that reads from Docker secret file `/run/secrets/db_password` first, then falls back to the `DB_PASS` environment variable and finally `POSTGRES_PASSWORD` — the `"pf9pass"` fallback has been removed
+
+#### Workers — Kubernetes Liveness Probes
+- **Heartbeat file** (`/tmp/alive`) added to all long-lived workers: `backup_worker`, `metering_worker`, `search_worker`, `scheduler_worker`, `notification_worker` — each worker touches this file on every main-loop iteration so that a stalled worker (live process but stuck in a blocking call) is detected
+- **Healthchecks** added to `docker-compose.yml` for all five workers — each checks that `/tmp/alive` was updated within a worker-appropriate window:
+  - `backup_worker` — 180 s window (3× the 30 s job-poll interval)
+  - `metering_worker` — 300 s window
+  - `scheduler_worker` — 300 s window
+  - `notification_worker` — 600 s window
+  - `search_worker` — 900 s window (3× the 300 s index interval)
+
+### Added
+- **`_plans/KUBERNETES_PLAN.md`** — full technical roadmap for adding Kubernetes production support: monorepo strategy, Helm chart directory structure, ArgoCD GitOps flow, Sealed Secrets approach, CI/CD pipeline additions, HPA plan, MSP value-add table, and a per-phase checklist
+
 ## [1.80.0] - 2026-03-25
 
 ### Added — External LDAP Sync UI

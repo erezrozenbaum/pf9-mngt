@@ -33,13 +33,29 @@ import psycopg2.extras
 import requests
 
 # ---------------------------------------------------------------------------
+# Secret helper — same pattern as ldap_sync_worker
+# ---------------------------------------------------------------------------
+def _read_secret(name: str, env_var: str, default: str = "") -> str:
+    """Priority: /run/secrets/<name> → env var → default."""
+    path = f"/run/secrets/{name}"
+    if os.path.isfile(path):
+        try:
+            with open(path, "r") as fh:
+                val = fh.read().strip()
+            if val:
+                return val
+        except OSError:
+            pass
+    return os.getenv(env_var, default)
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "pf9_mgmt")
 DB_USER = os.getenv("DB_USER", "pf9")
-DB_PASS = os.getenv("DB_PASS", "pf9pass")
+DB_PASS = _read_secret("db_password", env_var="DB_PASS") or os.getenv("POSTGRES_PASSWORD", "")
 MONITORING_URL = os.getenv("MONITORING_URL", "http://pf9_monitoring:8001")
 API_URL = os.getenv("API_URL", "http://pf9_api:8000")
 POLL_INTERVAL = int(os.getenv("METERING_POLL_INTERVAL", "60"))  # seconds
@@ -759,6 +775,18 @@ def prune_old_records(conn, retention_days: int):
     conn.commit()
 
 
+_ALIVE_FILE = "/tmp/alive"
+
+
+def _touch_alive() -> None:
+    """Write a heartbeat file so Kubernetes liveness probes can detect stalled workers."""
+    try:
+        with open(_ALIVE_FILE, "w") as fh:
+            fh.write(str(time.time()))
+    except OSError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
@@ -877,6 +905,7 @@ def main():
         if now - last_run >= effective_interval:
             run_collection_cycle()
             last_run = time.time()
+        _touch_alive()  # heartbeat — liveness probe checks /tmp/alive mtime
         time.sleep(min(30, effective_interval))  # wake up every 30s to check shutdown
 
 

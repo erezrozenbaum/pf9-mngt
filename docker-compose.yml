@@ -375,6 +375,12 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 600 else 1)"]
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -436,6 +442,12 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 300 else 1)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -475,6 +487,12 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 180 else 1)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -523,6 +541,12 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 300 else 1)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -549,6 +573,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 900 else 1)"]
+      interval: 120s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
     deploy:
       resources:
         limits:

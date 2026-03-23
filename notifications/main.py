@@ -23,6 +23,17 @@ from typing import Optional, List, Dict, Any
 
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
+
+_ALIVE_FILE = "/tmp/alive"
+
+
+def _touch_alive() -> None:
+    """Write a heartbeat file so Kubernetes liveness probes can detect stalled workers."""
+    try:
+        with open(_ALIVE_FILE, "w") as fh:
+            fh.write(str(time.time()))
+    except OSError:
+        pass
 from jinja2 import Environment, FileSystemLoader
 
 # ---------------------------------------------------------------------------
@@ -592,6 +603,7 @@ def main():
             except Exception:
                 pass
 
+        _touch_alive()  # heartbeat — liveness probe checks /tmp/alive mtime
         time.sleep(POLL_INTERVAL)
 
 

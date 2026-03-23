@@ -21,13 +21,27 @@ from typing import Optional
 import psycopg2
 import psycopg2.extras
 
+# ── Secret helper — same pattern as ldap_sync_worker ─────────
+def _read_secret(name: str, env_var: str, default: str = "") -> str:
+    """Priority: /run/secrets/<name> → env var → default."""
+    path = f"/run/secrets/{name}"
+    if os.path.isfile(path):
+        try:
+            with open(path, "r") as fh:
+                val = fh.read().strip()
+            if val:
+                return val
+        except OSError:
+            pass
+    return os.getenv(env_var, default)
+
 # ── Configuration ────────────────────────────────────────────
 
 DB_HOST = os.getenv("DB_HOST", "db")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "pf9_mgmt")
 DB_USER = os.getenv("DB_USER", "pf9")
-DB_PASS = os.getenv("DB_PASS", "pf9pass")
+DB_PASS = _read_secret("db_password", env_var="DB_PASS") or os.getenv("POSTGRES_PASSWORD", "")
 INDEX_INTERVAL = int(os.getenv("SEARCH_INDEX_INTERVAL", "300"))  # seconds
 
 logging.basicConfig(
@@ -37,7 +51,18 @@ logging.basicConfig(
 )
 log = logging.getLogger("search-indexer")
 
+_ALIVE_FILE = "/tmp/alive"
+
 _shutdown = False
+
+
+def _touch_alive() -> None:
+    """Write a heartbeat file so Kubernetes liveness probes can detect stalled workers."""
+    try:
+        with open(_ALIVE_FILE, "w") as fh:
+            fh.write(str(time.time()))
+    except OSError:
+        pass
 
 
 def _handle_signal(signum, _frame):
@@ -1321,6 +1346,7 @@ def main():
         if now - last_run >= INDEX_INTERVAL:
             run_indexing_cycle()
             last_run = time.time()
+        _touch_alive()  # heartbeat — liveness probe checks /tmp/alive mtime
         time.sleep(min(30, INDEX_INTERVAL))
 
     log.info("Search indexer stopped")

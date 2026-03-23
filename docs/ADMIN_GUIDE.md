@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.80.0  
+**Version**: 1.81.0  
 **Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
@@ -578,6 +578,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.81.0 — Security Hardening & Kubernetes Pre-Requisites (✅ Complete)
+
+- Production JWT startup guard (`PRODUCTION_MODE=true` → RuntimeError if no secret)
+- SSRF re-validation in external LDAP auth passthrough (`_bind_external_ldap`)
+- Hardcoded DB password defaults eliminated from `backup_worker`, `metering_worker`, `search_worker`
+- Worker liveness heartbeat (`/tmp/alive` touch + docker-compose healthchecks for 5 workers)
+- Backup config `PUT` explicit column allowlist
+- Kubernetes roadmap plan created (`_plans/KUBERNETES_PLAN.md`)
 
 ### v1.80.0 — External LDAP Sync UI (✅ Complete)
 

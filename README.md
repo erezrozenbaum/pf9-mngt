@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.80.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.81.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -759,7 +759,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.80.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.81.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -903,6 +903,15 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.81.0 — Security Hardening & Kubernetes Pre-Requisites
+
+- **Production JWT guard** — API now crashes at startup (instead of silently generating an ephemeral key) when `PRODUCTION_MODE=true` and no `JWT_SECRET_KEY` / `jwt_secret` Docker secret is configured
+- **SSRF re-validation** in external LDAP auth passthrough — `_bind_external_ldap()` re-checks the host against RFC-1918 / loopback / ULA ranges at connection time (defence-in-depth)
+- **Hardcoded database password defaults removed** — `backup_worker`, `metering_worker`, and `search_worker` now use the same `_read_secret()` helper pattern as `ldap_sync_worker`; the `"pf9pass"` fallback is gone
+- **Worker liveness heartbeats** — all five long-lived workers (`backup`, `metering`, `search`, `scheduler`, `notification`) now touch `/tmp/alive` on every loop; matching `healthcheck` blocks added to `docker-compose.yml`
+- **Backup config column allowlist** — `PUT /api/backup/config` validates column names against an explicit set before building the `UPDATE` query
+- **`_plans/KUBERNETES_PLAN.md`** — full Kubernetes production roadmap (Helm chart, ArgoCD GitOps, Sealed Secrets, CI/CD additions, HPA plan)
 
 ### v1.80.0 — External LDAP Sync UI
 
@@ -1091,4 +1100,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.80.0 | **Last Updated**: March 25, 2026
+**Project Status**: Production Ready | **Version**: 1.81.0 | **Last Updated**: March 23, 2026
