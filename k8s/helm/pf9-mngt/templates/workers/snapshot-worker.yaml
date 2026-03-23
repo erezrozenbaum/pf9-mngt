@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-snapshot-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: snapshot-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: snapshot-worker
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: snapshot-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: snapshot-worker
+          image: {{ include "pf9mngt.appImage" (dict "repo" .Values.workers.snapshotWorker.image.repository "svcTag" .Values.workers.snapshotWorker.image.tag "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: PF9_AUTH_URL
+              value: {{ .Values.pf9.authUrl | quote }}
+            - name: PF9_USER_DOMAIN
+              value: {{ .Values.pf9.userDomain | quote }}
+            - name: PF9_PROJECT_NAME
+              value: {{ .Values.pf9.projectName | quote }}
+            - name: PF9_PROJECT_DOMAIN
+              value: {{ .Values.pf9.projectDomain | quote }}
+            - name: PF9_REGION_NAME
+              value: {{ .Values.pf9.regionName | quote }}
+            - name: PF9_USERNAME
+              value: {{ .Values.pf9.username | quote }}
+            - name: PF9_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.pf9Credentials }}
+                  key: password
+            - name: PF9_DB_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: PF9_DB_PORT
+              value: {{ .Values.db.port | quote }}
+            - name: PF9_DB_NAME
+              value: {{ .Values.db.name | quote }}
+            - name: PF9_DB_USER
+              value: {{ .Values.db.user | quote }}
+            - name: PF9_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentials }}
+                  key: password
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.jwtSecret }}
+                  key: jwt-secret-key
+            - name: SNAPSHOT_PASSWORD_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.snapshotCreds }}
+                  key: password-key
+                  optional: true
+            - name: SNAPSHOT_USER_PASSWORD_ENCRYPTED
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.snapshotCreds }}
+                  key: user-password-encrypted
+                  optional: true
+            - name: SNAPSHOT_SERVICE_USER_EMAIL
+              value: {{ .Values.api.snapshot.serviceUserEmail | quote }}
+            - name: SNAPSHOT_SERVICE_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.snapshotCreds }}
+                  key: service-user-password
+                  optional: true
+            - name: SNAPSHOT_SCHEDULER_ENABLED
+              value: {{ .Values.api.snapshot.schedulerEnabled | quote }}
+            - name: POLICY_ASSIGN_INTERVAL_MINUTES
+              value: {{ .Values.api.snapshot.policyAssignIntervalMinutes | quote }}
+            - name: AUTO_SNAPSHOT_INTERVAL_MINUTES
+              value: {{ .Values.api.snapshot.autoSnapshotIntervalMinutes | quote }}
+            - name: AUTO_SNAPSHOT_MAX_SIZE_GB
+              value: {{ .Values.api.snapshot.maxSizeGB | quote }}
+            - name: RVTOOLS_INTEGRATION_ENABLED
+              value: {{ .Values.api.snapshot.rvtoolsIntegrationEnabled | quote }}
+            - name: COMPLIANCE_REPORT_ENABLED
+              value: {{ .Values.api.snapshot.complianceReportEnabled | quote }}
+            - name: COMPLIANCE_REPORT_INTERVAL_MINUTES
+              value: {{ .Values.api.snapshot.complianceReportIntervalMinutes | quote }}
+            - name: COMPLIANCE_REPORT_SLA_DAYS
+              value: {{ .Values.api.snapshot.complianceReportSLADays | quote }}
+            - name: POLICY_ASSIGN_MERGE_EXISTING
+              value: {{ .Values.api.snapshot.policyAssignMergeExisting | quote }}
+            - name: POLICY_ASSIGN_DRY_RUN
+              value: {{ .Values.api.snapshot.policyAssignDryRun | quote }}
+            - name: POLICY_ASSIGN_SYNC_POLICY_SETS
+              value: {{ .Values.api.snapshot.policyAssignSyncPolicySets | quote }}
+            - name: AUTO_SNAPSHOT_MAX_NEW
+              value: {{ .Values.api.snapshot.autoSnapshotMaxNew | quote }}
+            - name: AUTO_SNAPSHOT_DRY_RUN
+              value: {{ .Values.api.snapshot.autoSnapshotDryRun | quote }}
+            - name: AUTO_SNAPSHOT_BATCH_SIZE
+              value: {{ .Values.api.snapshot.autoSnapshotBatchSize | quote }}
+            - name: AUTO_SNAPSHOT_BATCH_DELAY
+              value: {{ .Values.api.snapshot.autoSnapshotBatchDelay | quote }}
+            - name: MAX_PARALLEL_REGIONS
+              value: {{ .Values.api.parallel.maxRegions | quote }}
+            - name: REGION_REQUEST_TIMEOUT_SEC
+              value: {{ .Values.api.parallel.regionRequestTimeoutSec | quote }}
+          resources:
+            {{- toYaml .Values.workers.snapshotWorker.resources | nindent 12 }}
+          volumeMounts:
+            - name: reports
+              mountPath: /mnt/reports
+            - name: app-logs
+              mountPath: /app/logs
+      volumes:
+        - name: reports
+          emptyDir: {}
+        - name: app-logs
+          emptyDir: {}

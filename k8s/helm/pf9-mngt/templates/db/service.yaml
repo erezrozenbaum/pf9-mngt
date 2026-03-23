@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pf9-db
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  type: ClusterIP
+  clusterIP: None   # headless — StatefulSet pods get stable DNS
+  selector:
+    {{- include "pf9mngt.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+  ports:
+    - port: {{ .Values.postgresql.service.port }}
+      targetPort: 5432
+      protocol: TCP
+      name: postgres

@@ -24,8 +24,10 @@ git push / PR
 ┌──────────────────────────────────────┐
 │  .github/workflows/release.yml       │
 │                                      │
-│  5. release   (tag + GitHub Release) │
-│  6. publish-images → ghcr.io         │
+│  5. release      (tag + GitHub Release)   │
+│  6. publish-images  → ghcr.io (Docker)   │
+│  7. helm-package    → ghcr.io (OCI Helm) │
+│  8. update-values   → commits values.prod.yaml │
 └──────────────────────────────────────┘
 ```
 
@@ -133,6 +135,49 @@ runs on Intel/AMD servers and ARM hosts (AWS Graviton, Apple Silicon).
 
 **Authentication:** uses `GITHUB_TOKEN` (automatically available in all Actions runs). No
 extra secrets need to be configured.
+
+---
+
+### Job 7 — Helm Package (v1.82.0+)
+
+Runs after `publish-images`. Packages the Helm chart and pushes it to the same ghcr.io
+registry as an OCI artifact:
+
+```
+helm package k8s/helm/pf9-mngt --version <VERSION>
+helm push pf9-mngt-<VERSION>.tgz oci://ghcr.io/erezrozenbaum/helm
+```
+
+The packaged chart is available as:
+```
+oci://ghcr.io/erezrozenbaum/helm/pf9-mngt:<VERSION>
+```
+
+ArgoCD points at this OCI registry as its Helm source.
+
+**Authentication:** uses `GITHUB_TOKEN` to push to the `ghcr.io` OCI registry. No extra
+secrets required.
+
+---
+
+### Job 8 — Update Values (v1.82.0+)
+
+Runs after `helm-package`. Uses the `RELEASE_PAT` secret to patch `values.prod.yaml` and
+commit the change back to the `master` branch:
+
+```bash
+# What the job does:
+sed -i "s|^  imageTag:.*|  imageTag: v${VERSION}|" k8s/helm/pf9-mngt/values.prod.yaml
+git commit -am "chore: update imageTag to v${VERSION} [skip ci]"
+git push origin master
+```
+
+The `[skip ci]` annotation prevents a recursive CI run. This commit is what ArgoCD detects
+to trigger an automated sync and rolling deployment.
+
+**Required secret:** `RELEASE_PAT` — a GitHub Personal Access Token with `repo` and
+`workflow` scopes. Set it in **Settings → Secrets and variables → Actions → Repository
+secrets** with the name `RELEASE_PAT`.
 
 ---
 
@@ -272,9 +317,13 @@ matrix in `.github/workflows/release.yml` under the `publish-images` job.
 | File | Purpose |
 |------|---------|
 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | Full CI workflow (lint → unit tests → integration tests) |
-| [`.github/workflows/release.yml`](../.github/workflows/release.yml) | Release tagging + ghcr.io image publishing |
+| [`.github/workflows/release.yml`](../.github/workflows/release.yml) | Release tagging + ghcr.io image publishing + Helm package + values update |
 | [`.env.ci`](../.env.ci) | Stub credentials for CI integration tests |
 | [`tests/seed_ci.py`](../tests/seed_ci.py) | CI stack readiness check and smoke test |
 | [`tests/test_auth.py`](../tests/test_auth.py) | JWT unit tests + auth integration tests |
 | [`tests/test_container_alerts.py`](../tests/test_container_alerts.py) | Container watchdog unit tests |
 | [`CHANGELOG.md`](../CHANGELOG.md) | Version history — parsed by release workflow to create tags |
+| [`k8s/helm/pf9-mngt/values.yaml`](../k8s/helm/pf9-mngt/values.yaml) | Helm chart defaults — human-edited, no CI writes |
+| [`k8s/helm/pf9-mngt/values.prod.yaml`](../k8s/helm/pf9-mngt/values.prod.yaml) | CI-managed image tag overrides — updated by `update-values` job |
+| [`k8s/argocd/application.yaml`](../k8s/argocd/application.yaml) | ArgoCD Application manifest — apply once to bootstrap GitOps |
+| [`k8s/sealed-secrets/README.md`](../k8s/sealed-secrets/README.md) | kubeseal commands for all nine required Kubernetes Secrets |

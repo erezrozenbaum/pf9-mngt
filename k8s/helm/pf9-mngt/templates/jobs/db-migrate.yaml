@@ -1,0 +1,55 @@
+# =============================================================================
+# db-migrate.yaml — Helm pre-upgrade / pre-install hook
+#
+# Runs database schema migrations before the new API pods roll out.
+# Uses the same API image (which carries run_migration.py).
+#
+# Lifecycle:
+#   helm install  → hook runs once, then pod is deleted (hook-delete-policy)
+#   helm upgrade  → hook runs before any Deployment rollout begins
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pf9-db-migrate-{{ .Release.Revision }}
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: db-migrate
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: db-migrate
+          image: {{ include "pf9mngt.appImage" (dict "repo" .Values.api.image.repository "svcTag" .Values.api.image.tag "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["python", "run_migration.py"]
+          env:
+            - name: PF9_DB_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: PF9_DB_PORT
+              value: {{ .Values.db.port | quote }}
+            - name: PF9_DB_NAME
+              value: {{ .Values.db.name | quote }}
+            - name: PF9_DB_USER
+              value: {{ .Values.db.user | quote }}
+            - name: PF9_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentials }}
+                  key: password

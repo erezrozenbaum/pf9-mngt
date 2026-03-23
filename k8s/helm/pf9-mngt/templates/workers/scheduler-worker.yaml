@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-scheduler-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: scheduler-worker
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: scheduler-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: scheduler-worker
+          image: {{ include "pf9mngt.appImage" (dict "repo" .Values.workers.schedulerWorker.image.repository "svcTag" .Values.workers.schedulerWorker.image.tag "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: PF9_AUTH_URL
+              value: {{ .Values.pf9.authUrl | quote }}
+            - name: PF9_USERNAME
+              value: {{ .Values.pf9.username | quote }}
+            - name: PF9_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.pf9Credentials }}
+                  key: password
+            - name: PF9_USER_DOMAIN
+              value: {{ .Values.pf9.userDomain | quote }}
+            - name: PF9_PROJECT_NAME
+              value: {{ .Values.pf9.projectName | quote }}
+            - name: PF9_PROJECT_DOMAIN
+              value: {{ .Values.pf9.projectDomain | quote }}
+            - name: PF9_REGION_NAME
+              value: {{ .Values.pf9.regionName | quote }}
+            - name: PF9_VERIFY_TLS
+              value: {{ .Values.pf9.verifyTLS | quote }}
+            - name: PF9_DB_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: PF9_DB_PORT
+              value: {{ .Values.db.port | quote }}
+            - name: PF9_DB_NAME
+              value: {{ .Values.db.name | quote }}
+            - name: PF9_DB_USER
+              value: {{ .Values.db.user | quote }}
+            - name: PF9_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentials }}
+                  key: password
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.jwtSecret }}
+                  key: jwt-secret-key
+            - name: PF9_OUTPUT_DIR
+              value: /mnt/reports
+            - name: METRICS_CACHE_PATH
+              value: /tmp/cache/metrics_cache.json
+            - name: METRICS_ENABLED
+              value: {{ .Values.workers.schedulerWorker.metricsEnabled | quote }}
+            - name: METRICS_INTERVAL_SECONDS
+              value: {{ .Values.workers.schedulerWorker.metricsIntervalSeconds | quote }}
+            - name: RVTOOLS_ENABLED
+              value: {{ .Values.workers.schedulerWorker.rvtoolsEnabled | quote }}
+            - name: RVTOOLS_INTERVAL_MINUTES
+              value: {{ .Values.workers.schedulerWorker.rvtoolsIntervalMinutes | quote }}
+            - name: RVTOOLS_SCHEDULE_TIME
+              value: {{ .Values.workers.schedulerWorker.rvtoolsScheduleTime | quote }}
+            - name: RVTOOLS_RUN_ON_START
+              value: {{ .Values.workers.schedulerWorker.rvtoolsRunOnStart | quote }}
+            - name: DEMO_MODE
+              value: {{ .Values.api.demoMode | quote }}
+            - name: MAX_PARALLEL_REGIONS
+              value: {{ .Values.api.parallel.maxRegions | quote }}
+            - name: REGION_REQUEST_TIMEOUT_SEC
+              value: {{ .Values.api.parallel.regionRequestTimeoutSec | quote }}
+          livenessProbe:
+            exec:
+              command: ["python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 300 else 1)"]
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.workers.schedulerWorker.resources | nindent 12 }}
+          volumeMounts:
+            - name: metrics-cache
+              mountPath: /tmp/cache
+            - name: reports
+              mountPath: /mnt/reports
+            - name: app-logs
+              mountPath: /app/logs
+      volumes:
+        - name: metrics-cache
+          emptyDir: {}
+        - name: reports
+          emptyDir: {}
+        - name: app-logs
+          emptyDir: {}

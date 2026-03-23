@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pf9-ldap
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ldap
+spec:
+  replicas: 1
+  serviceName: pf9-ldap
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ldap
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ldap
+    spec:
+      containers:
+        - name: openldap
+          image: "{{ .Values.ldapService.image.repository }}:{{ .Values.ldapService.image.tag }}"
+          imagePullPolicy: {{ .Values.ldapService.image.pullPolicy }}
+          ports:
+            - containerPort: 389
+              name: ldap
+          env:
+            - name: LDAP_ORGANISATION
+              value: {{ .Values.ldap.organisation | quote }}
+            - name: LDAP_DOMAIN
+              value: {{ .Values.ldap.domain | quote }}
+            - name: LDAP_BASE_DN
+              value: {{ .Values.ldap.baseDN | quote }}
+            - name: LDAP_ADMIN_DN
+              value: {{ .Values.ldap.adminDN | quote }}
+            - name: LDAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.ldapSecrets }}
+                  key: admin-password
+            - name: LDAP_CONFIG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.ldapSecrets }}
+                  key: config-password
+            - name: LDAP_READONLY_USER
+              value: {{ .Values.ldap.readonlyUser | quote }}
+            - name: LDAP_READONLY_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.ldapSecrets }}
+                  key: readonly-password
+            - name: LDAP_TLS_VERIFY_CLIENT
+              value: "never"
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - 'ldapsearch -x -D "$$LDAP_ADMIN_DN" -w "$$LDAP_ADMIN_PASSWORD" -H ldap://localhost -b $$LDAP_BASE_DN -s base'
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 389
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.ldapService.resources | nindent 12 }}
+          volumeMounts:
+            - name: ldap-data
+              mountPath: /var/lib/ldap
+            - name: ldap-config
+              mountPath: /etc/ldap/slapd.d
+  volumeClaimTemplates:
+    - metadata:
+        name: ldap-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.ldapService.persistence.data.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.ldapService.persistence.data.size }}
+    - metadata:
+        name: ldap-config
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.ldapService.persistence.config.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.ldapService.persistence.config.size }}

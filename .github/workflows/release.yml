@@ -157,13 +157,97 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/pf9-mngt-${{ matrix.service }}:latest
 
   # ---------------------------------------------------------------------------
-  # Job 3: Create the Git tag and GitHub Release.
-  # Only runs after ALL image builds succeed (needs the full publish-images
-  # matrix). This guarantees users never see a release whose images are broken.
+  # Job 3: Package the Helm chart and push it to GHCR OCI registry.
+  # Depends on publish-images so the chart is never ahead of the images.
+  # ---------------------------------------------------------------------------
+  helm-package:
+    name: Package & Push Helm Chart
+    needs: [extract-version, publish-images]
+    if: needs.extract-version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: "3.14.0"
+
+      - name: Log in to GHCR (Helm OCI registry)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io \
+              -u "${{ github.actor }}" \
+              --password-stdin
+
+      - name: Package chart
+        run: |
+          VERSION="${{ needs.extract-version.outputs.version }}"
+          helm package k8s/helm/pf9-mngt \
+            --version "${VERSION}" \
+            --app-version "${VERSION}"
+
+      - name: Push chart to GHCR
+        run: |
+          helm push pf9-mngt-*.tgz \
+            oci://ghcr.io/${{ github.repository_owner }}/helm
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Update values.prod.yaml image tags and commit back to master.
+  # ArgoCD watches master and will auto-sync when this commit lands.
+  #
+  # Requires a Personal Access Token (PAT) with `contents: write` stored as
+  # the repository secret RELEASE_PAT.  The built-in GITHUB_TOKEN cannot push
+  # to protected branches or trigger downstream workflows.
+  # ---------------------------------------------------------------------------
+  update-values:
+    name: Update values.prod.yaml Image Tags
+    needs: [extract-version, helm-package]
+    if: needs.extract-version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_PAT }}
+          ref: master
+
+      - name: Patch image tags in values.prod.yaml
+        run: |
+          VERSION="${{ needs.extract-version.outputs.version }}"
+          FILE="k8s/helm/pf9-mngt/values.prod.yaml"
+          # Update global.imageTag line
+          sed -i "s|^  imageTag:.*|  imageTag: v${VERSION}|" "${FILE}"
+
+      - name: Commit and push updated values.prod.yaml
+        run: |
+          VERSION="${{ needs.extract-version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/helm/pf9-mngt/values.prod.yaml
+          # Only commit if there are staged changes
+          if git diff --cached --quiet; then
+            echo "values.prod.yaml already up to date — skipping commit."
+          else
+            git commit -m "ci: update image tags to v${VERSION} [skip ci]"
+            git push origin master
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Create the Git tag and GitHub Release.
+  # Only runs after ALL image builds AND Helm packaging succeed.
   # ---------------------------------------------------------------------------
   release:
     name: Create GitHub Release
-    needs: [extract-version, publish-images]
+    needs: [extract-version, publish-images, helm-package, update-values]
     if: needs.extract-version.outputs.exists == 'false'
     runs-on: ubuntu-latest
     permissions:

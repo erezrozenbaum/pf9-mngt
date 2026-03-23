@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pf9-api
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.api.service.type }}
+  selector:
+    {{- include "pf9mngt.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  ports:
+    - port: {{ .Values.api.service.port }}
+      targetPort: 8000
+      protocol: TCP
+      name: http

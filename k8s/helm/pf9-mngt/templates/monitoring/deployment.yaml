@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-monitoring
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+spec:
+  replicas: {{ .Values.monitoring.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: monitoring
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: monitoring
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: monitoring
+          image: {{ include "pf9mngt.appImage" (dict "repo" .Values.monitoring.image.repository "svcTag" .Values.monitoring.image.tag "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: 8001
+              name: http
+          env:
+            - name: PF9_HOSTS
+              value: {{ .Values.monitoring.pf9Hosts | quote }}
+            - name: METRICS_CACHE_TTL
+              value: {{ .Values.monitoring.metricsCacheTTL | quote }}
+            - name: LOG_FILE
+              value: "/app/logs/pf9_monitoring.log"
+            - name: API_BASE_URL
+              value: "http://pf9-api:{{ .Values.api.service.port }}"
+            - name: WATCHDOG_INTERVAL
+              value: {{ .Values.monitoring.watchdogInterval | quote }}
+            - name: WATCHDOG_COOLDOWN
+              value: {{ .Values.monitoring.watchdogCooldown | quote }}
+            # No Docker socket in Kubernetes — watchdog uses k8s events instead.
+            - name: DOCKER_SOCKET
+              value: ""
+            - name: SMTP_ENABLED
+              value: {{ .Values.smtp.enabled | quote }}
+            - name: SMTP_HOST
+              value: {{ .Values.smtp.host | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.smtp.port | quote }}
+            - name: SMTP_USE_TLS
+              value: {{ .Values.smtp.useTLS | quote }}
+            - name: SMTP_USERNAME
+              value: {{ .Values.smtp.username | quote }}
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.smtpSecrets }}
+                  key: password
+                  optional: true
+            - name: SMTP_FROM_ADDRESS
+              value: {{ .Values.smtp.fromAddress | quote }}
+            - name: SMTP_FROM_NAME
+              value: {{ .Values.smtp.fromName | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.monitoring.resources | nindent 12 }}
+          volumeMounts:
+            - name: metrics-cache
+              mountPath: /tmp/cache
+            - name: app-logs
+              mountPath: /app/logs
+      volumes:
+        - name: metrics-cache
+          emptyDir: {}
+        - name: app-logs
+          emptyDir: {}

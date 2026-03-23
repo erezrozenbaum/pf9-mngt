@@ -4,7 +4,7 @@
 **Last Updated**: March 22, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
-**Alternative**: See [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) for the Kubernetes design plan (not yet implemented)
+**Alternative (Production HA)**: See [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) for the Kubernetes deployment guide — Helm chart, ArgoCD GitOps, and Sealed Secrets (v1.82.0+)
 
 ---
 
@@ -2035,7 +2035,7 @@ See [SECURITY.md](SECURITY.md) and [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System design details
 - [ADMIN_GUIDE.md](ADMIN_GUIDE.md) - Operational administration
 - [SECURITY.md](SECURITY.md) - Security configuration & hardening
-- [KUBERNETES_MIGRATION_GUIDE.md](KUBERNETES_MIGRATION_GUIDE.md) - Kubernetes deployment
+- [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) - Kubernetes production deployment (Helm + ArgoCD, v1.82.0+)
 - [API Documentation](http://localhost:8000/docs) - Interactive API docs
 - [GitHub Issues](https://github.com/erezrozenbaum/pf9-mngt/issues) - Bug reports & feature requests
 

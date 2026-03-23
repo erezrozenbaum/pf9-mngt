@@ -1,0 +1,18 @@
+apiVersion: v2
+name: pf9-mngt
+description: >
+  Platform9 Management — full-stack platform (API, UI, PostgreSQL, Redis,
+  OpenLDAP, monitoring, and seven background workers).
+type: application
+version: 1.82.0
+appVersion: "1.82.0"
+kubeVersion: ">=1.28.0-0"
+home: https://github.com/erezrozenbaum/pf9-mngt
+maintainers:
+  - name: pf9-mngt maintainers
+    url: https://github.com/erezrozenbaum/pf9-mngt
+keywords:
+  - platform9
+  - management
+  - iaas
+  - openstack

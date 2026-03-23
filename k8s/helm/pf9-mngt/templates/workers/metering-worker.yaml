@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-metering-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metering-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: metering-worker
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: metering-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: metering-worker
+          image: {{ include "pf9mngt.appImage" (dict "repo" .Values.workers.meteringWorker.image.repository "svcTag" .Values.workers.meteringWorker.image.tag "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: DB_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: DB_PORT
+              value: {{ .Values.db.port | quote }}
+            - name: DB_NAME
+              value: {{ .Values.db.name | quote }}
+            - name: DB_USER
+              value: {{ .Values.db.user | quote }}
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentials }}
+                  key: password
+            - name: MONITORING_URL
+              value: "http://pf9-monitoring:{{ .Values.monitoring.service.port }}"
+            - name: API_URL
+              value: "http://pf9-api:{{ .Values.api.service.port }}"
+            - name: METERING_POLL_INTERVAL
+              value: {{ .Values.workers.meteringWorker.meteringPollInterval | quote }}
+          livenessProbe:
+            exec:
+              command: ["python3", "-c", "import os,time; s=os.stat('/tmp/alive'); exit(0 if time.time()-s.st_mtime < 300 else 1)"]
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.workers.meteringWorker.resources | nindent 12 }}

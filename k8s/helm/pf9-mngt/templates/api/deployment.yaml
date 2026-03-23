@@ -1,0 +1,250 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-api
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: api
+          image: {{ include "pf9mngt.appImage" (dict "repo" .Values.api.image.repository "svcTag" .Values.api.image.tag "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            # --- Database ---
+            - name: PF9_DB_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: PF9_DB_PORT
+              value: {{ .Values.db.port | quote }}
+            - name: PF9_DB_NAME
+              value: {{ .Values.db.name | quote }}
+            - name: PF9_DB_USER
+              value: {{ .Values.db.user | quote }}
+            - name: PF9_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentials }}
+                  key: password
+            # --- Platform9 / OpenStack ---
+            - name: PF9_AUTH_URL
+              value: {{ .Values.pf9.authUrl | quote }}
+            - name: PF9_USER_DOMAIN
+              value: {{ .Values.pf9.userDomain | quote }}
+            - name: PF9_PROJECT_NAME
+              value: {{ .Values.pf9.projectName | quote }}
+            - name: PF9_PROJECT_DOMAIN
+              value: {{ .Values.pf9.projectDomain | quote }}
+            - name: PF9_REGION_NAME
+              value: {{ .Values.pf9.regionName | quote }}
+            - name: PF9_USERNAME
+              value: {{ .Values.pf9.username | quote }}
+            - name: PF9_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.pf9Credentials }}
+                  key: password
+            # --- LDAP ---
+            - name: LDAP_SERVER
+              value: {{ .Values.ldap.server | quote }}
+            - name: LDAP_PORT
+              value: {{ .Values.ldap.port | quote }}
+            - name: LDAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.ldapSecrets }}
+                  key: admin-password
+            - name: LDAP_BASE_DN
+              value: {{ .Values.ldap.baseDN | quote }}
+            - name: LDAP_USER_DN
+              value: {{ .Values.ldap.userDN | quote }}
+            - name: LDAP_GROUP_DN
+              value: {{ .Values.ldap.groupDN | quote }}
+            # --- JWT ---
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.jwtSecret }}
+                  key: jwt-secret-key
+            - name: JWT_ALGORITHM
+              value: {{ .Values.jwt.algorithm | quote }}
+            - name: JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+              value: {{ .Values.jwt.accessTokenExpireMinutes | quote }}
+            # --- Logging ---
+            - name: LOG_FILE
+              value: {{ .Values.api.logFile | quote }}
+            # --- Authentication ---
+            - name: ENABLE_AUTHENTICATION
+              value: {{ .Values.api.enableAuthentication | quote }}
+            - name: DEFAULT_ADMIN_USER
+              value: {{ .Values.api.defaultAdminUser | quote }}
+            # --- Demo / feature flags ---
+            - name: DEMO_MODE
+              value: {{ .Values.api.demoMode | quote }}
+            - name: RESTORE_ENABLED
+              value: {{ .Values.api.restore.enabled | quote }}
+            - name: RESTORE_DRY_RUN
+              value: {{ .Values.api.restore.dryRun | quote }}
+            - name: RESTORE_CLEANUP_VOLUMES
+              value: {{ .Values.api.restore.cleanupVolumes | quote }}
+            # --- DB pool ---
+            - name: DB_POOL_MIN_CONN
+              value: {{ .Values.api.dbPool.minConn | quote }}
+            - name: DB_POOL_MAX_CONN
+              value: {{ .Values.api.dbPool.maxConn | quote }}
+            # --- Snapshot service user ---
+            - name: SNAPSHOT_SERVICE_USER_EMAIL
+              value: {{ .Values.api.snapshot.serviceUserEmail | quote }}
+            - name: SNAPSHOT_SERVICE_USER_DOMAIN
+              value: {{ .Values.api.snapshot.serviceUserDomain | quote }}
+            - name: SNAPSHOT_PASSWORD_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.snapshotCreds }}
+                  key: password-key
+                  optional: true
+            - name: SNAPSHOT_USER_PASSWORD_ENCRYPTED
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.snapshotCreds }}
+                  key: user-password-encrypted
+                  optional: true
+            - name: SNAPSHOT_SERVICE_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.snapshotCreds }}
+                  key: service-user-password
+                  optional: true
+            # --- VM Provisioning service user ---
+            - name: PROVISION_SERVICE_USER_EMAIL
+              value: {{ .Values.api.provision.serviceUserEmail | quote }}
+            - name: PROVISION_SERVICE_USER_DOMAIN
+              value: {{ .Values.api.provision.serviceUserDomain | quote }}
+            - name: PROVISION_PASSWORD_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.provisionCreds }}
+                  key: password-key
+                  optional: true
+            - name: PROVISION_USER_PASSWORD_ENCRYPTED
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.provisionCreds }}
+                  key: user-password-encrypted
+                  optional: true
+            # --- SSH log collection ---
+            - name: SSH_PF9_HOSTS
+              value: {{ .Values.api.ssh.hosts | quote }}
+            - name: PF9_SSH_USER
+              value: {{ .Values.api.ssh.user | quote }}
+            - name: PF9_SSH_KEY_PATH
+              value: {{ .Values.api.ssh.keyPath | quote }}
+            - name: PF9_SSH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.sshCredentials }}
+                  key: password
+                  optional: true
+            # --- SMTP ---
+            - name: SMTP_ENABLED
+              value: {{ .Values.smtp.enabled | quote }}
+            - name: SMTP_HOST
+              value: {{ .Values.smtp.host | quote }}
+            - name: SMTP_PORT
+              value: {{ .Values.smtp.port | quote }}
+            - name: SMTP_USE_TLS
+              value: {{ .Values.smtp.useTLS | quote }}
+            - name: SMTP_USERNAME
+              value: {{ .Values.smtp.username | quote }}
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.smtpSecrets }}
+                  key: password
+                  optional: true
+            - name: SMTP_FROM_ADDRESS
+              value: {{ .Values.smtp.fromAddress | quote }}
+            - name: SMTP_FROM_NAME
+              value: {{ .Values.smtp.fromName | quote }}
+            # --- Redis / cache ---
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            - name: CACHE_ENABLED
+              value: {{ .Values.redis.cacheEnabled | quote }}
+            - name: CACHE_TTL_SECONDS
+              value: {{ .Values.redis.cacheTTLSeconds | quote }}
+            # --- Ops Copilot ---
+            - name: COPILOT_BACKEND
+              value: {{ .Values.api.copilot.backend | quote }}
+            - name: COPILOT_OLLAMA_URL
+              value: {{ .Values.api.copilot.ollamaUrl | quote }}
+            - name: COPILOT_OLLAMA_MODEL
+              value: {{ .Values.api.copilot.ollamaModel | quote }}
+            - name: COPILOT_OPENAI_MODEL
+              value: {{ .Values.api.copilot.openaiModel | quote }}
+            - name: COPILOT_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.copilotSecrets }}
+                  key: openai-api-key
+                  optional: true
+            - name: COPILOT_ANTHROPIC_MODEL
+              value: {{ .Values.api.copilot.anthropicModel | quote }}
+            - name: COPILOT_ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.copilotSecrets }}
+                  key: anthropic-api-key
+                  optional: true
+            - name: COPILOT_REDACT_SENSITIVE
+              value: {{ .Values.api.copilot.redactSensitive | quote }}
+            # --- Parallel region config ---
+            - name: MAX_PARALLEL_REGIONS
+              value: {{ .Values.api.parallel.maxRegions | quote }}
+            - name: REGION_REQUEST_TIMEOUT_SEC
+              value: {{ .Values.api.parallel.regionRequestTimeoutSec | quote }}
+            # --- PRODUCTION_MODE guard (JWT startup check) ---
+            - name: PRODUCTION_MODE
+              value: "true"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 45
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: app-logs
+              mountPath: /app/logs
+      volumes:
+        - name: app-logs
+          emptyDir: {}

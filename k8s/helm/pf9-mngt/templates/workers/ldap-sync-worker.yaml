@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-ldap-sync-worker
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ldap-sync-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ldap-sync-worker
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ldap-sync-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: ldap-sync-worker
+          image: {{ include "pf9mngt.appImage" (dict "repo" .Values.workers.ldapSyncWorker.image.repository "svcTag" .Values.workers.ldapSyncWorker.image.tag "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            - name: PF9_DB_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: PF9_DB_PORT
+              value: {{ .Values.db.port | quote }}
+            - name: PF9_DB_NAME
+              value: {{ .Values.db.name | quote }}
+            - name: PF9_DB_USER
+              value: {{ .Values.db.user | quote }}
+            - name: PF9_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.dbCredentials }}
+                  key: password
+            - name: LDAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.ldapSecrets }}
+                  key: admin-password
+            - name: LDAP_PORT
+              value: {{ .Values.ldap.port | quote }}
+            - name: LDAP_BASE_DN
+              value: {{ .Values.ldap.baseDN | quote }}
+            - name: LDAP_USER_DN
+              value: {{ .Values.ldap.userDN | quote }}
+            - name: LDAP_SYNC_POLL_INTERVAL
+              value: {{ .Values.workers.ldapSyncWorker.ldapSyncPollInterval | quote }}
+          resources:
+            {{- toYaml .Values.workers.ldapSyncWorker.resources | nindent 12 }}

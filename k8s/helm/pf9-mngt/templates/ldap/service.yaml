@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pf9-ldap
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ldap
+  annotations:
+    # LDAP must NOT be exposed outside the cluster — ClusterIP only.
+    # External access should go through the API's proxy (never raw LDAP to the internet).
+spec:
+  type: ClusterIP
+  clusterIP: None   # headless — StatefulSet stable DNS
+  selector:
+    {{- include "pf9mngt.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ldap
+  ports:
+    - port: {{ .Values.ldapService.service.port }}
+      targetPort: 389
+      protocol: TCP
+      name: ldap

@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.81.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.82.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -235,7 +235,7 @@ Every service is containerized. That means **you decide**:
 | ☸️ **Kubernetes** | Production-grade HA and horizontal scaling — containers are ready, effort is minimal |
 | 🔧 **Your own orchestration** | Adapt to whatever infrastructure decisions you have already made |
 
-> **Note:** Kubernetes deployment is a design target — the architecture is planned but not yet tested in production. See [docs/KUBERNETES_MIGRATION_GUIDE.md](docs/KUBERNETES_MIGRATION_GUIDE.md) for the design plan.  
+> **Note:** As of v1.82.0, Kubernetes is fully supported. A complete Helm chart, ArgoCD manifest, and Sealed Secrets guide live in `k8s/`. See [docs/KUBERNETES_GUIDE.md](docs/KUBERNETES_GUIDE.md) for the deployment guide.  
 > See [docs/LINUX_DEPLOYMENT_GUIDE.md](docs/LINUX_DEPLOYMENT_GUIDE.md) for running on Linux.
 
 ---
@@ -748,7 +748,7 @@ pf9-mngt/
 | [Snapshot Service User](docs/SNAPSHOT_SERVICE_USER.md) | Service user setup and troubleshooting |
 | [VM Provisioning Setup](docs/DEPLOYMENT_GUIDE.md) | Includes `provisionsrv` service user setup (Runbook 2) |
 | [Quick Reference](docs/QUICK_REFERENCE.md) | Common commands and URLs cheat sheet |
-| [Kubernetes Migration](docs/KUBERNETES_MIGRATION_GUIDE.md) | K8s migration planning guide |
+| [Kubernetes Deployment](docs/KUBERNETES_GUIDE.md) | Helm chart, ArgoCD GitOps, Sealed Secrets, day-2 ops |
 | [Linux Deployment](docs/LINUX_DEPLOYMENT_GUIDE.md) | Running pf9-mngt on Linux instead of Windows |
 | [Multi-Region & Multi-Cluster Guide](docs/MULTICLUSTER_GUIDE.md) | MSP operator guide: onboarding clusters, Region Selector UI, per-region filtering, workers, migration planning |
 | [Support Ticket System Guide](docs/TICKET_GUIDE.md) | Full reference for the ticket lifecycle, API, SLA, email templates, and auto-tickets |
@@ -759,7 +759,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.81.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.82.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -830,7 +830,7 @@ A: No. It is a complementary engineering console that adds operational capabilit
 A: No. This is an independent project built to work with Platform9 OpenStack APIs. It is not endorsed by or affiliated with Platform9 Systems, Inc.
 
 **Q: Can I run this on Kubernetes?**
-A: Yes. Every service is containerized. See [docs/KUBERNETES_MIGRATION_GUIDE.md](docs/KUBERNETES_MIGRATION_GUIDE.md).
+A: Yes — fully supported since v1.82.0. A complete Helm chart ships in `k8s/helm/pf9-mngt/`. See [docs/KUBERNETES_GUIDE.md](docs/KUBERNETES_GUIDE.md) for step-by-step instructions.
 
 **Q: What are the minimum hardware requirements?**
 A: A Docker host with at least 4 GB RAM, 2 CPU cores, and network access to your Platform9 region endpoints.
@@ -903,6 +903,16 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.82.0 — Kubernetes Production Support (Helm + ArgoCD + CI/CD)
+
+- **Helm chart** — complete `k8s/helm/pf9-mngt/` chart covering all 14 services: API (Deployment), UI (Deployment), PostgreSQL (StatefulSet), Redis, OpenLDAP (StatefulSet), Monitoring, and all seven background workers (`backup`, `ldap-sync`, `metering`, `notification`, `scheduler`, `search`, `snapshot`)
+- **ArgoCD GitOps** — `k8s/argocd/application.yaml` bootstrap manifest; ArgoCD auto-syncs on every `master` push that touches `k8s/helm/`
+- **Helm pre-upgrade DB migration hook** — `templates/jobs/db-migrate.yaml` runs `run_migration.py` before each `helm upgrade` so schema is always current before the API rolls out
+- **Ingress template** — nginx-ingress + cert-manager TLS; routes `/api`, `/auth`, `/health` to the API and `/` to the UI; domain and issuer configurable via `values.yaml`
+- **CI Helm jobs** — two new jobs in `release.yml`: `helm-package` (packages + pushes the chart to GHCR OCI registry) and `update-values` (auto-updates `values.prod.yaml` image tags and commits `[skip ci]` back to `master` for ArgoCD to pick up)
+- **Sealed Secrets guide** — `k8s/sealed-secrets/README.md` with copy-paste `kubeseal` commands for all nine Kubernetes Secrets the chart needs
+- **Security posture** — all secret values pulled from named Kubernetes Secrets via `secretKeyRef` (never baked into `values.yaml`); LDAP service exposed as headless ClusterIP only (never reachable from outside the cluster); all pods run as non-root (`runAsUser: 1000`)
 
 ### v1.81.0 — Security Hardening & Kubernetes Pre-Requisites
 
@@ -1100,4 +1110,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.81.0 | **Last Updated**: March 23, 2026
+**Project Status**: Production Ready | **Version**: 1.82.0 | **Last Updated**: March 2026

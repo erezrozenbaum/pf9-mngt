@@ -1,0 +1,53 @@
+# ArgoCD Application — pf9-mngt
+#
+# Apply this manifest once to bootstrap GitOps:
+#   kubectl apply -f k8s/argocd/application.yaml
+#
+# After the first sync, ArgoCD manages all future deployments automatically.
+# Every commit to master that changes k8s/helm/pf9-mngt/ triggers a sync.
+# The CI pipeline (release.yml) updates values.prod.yaml image tags which
+# ArgoCD detects and triggers a helm upgrade automatically.
+#
+# Prerequisites:
+#   1. ArgoCD installed in the cluster (namespace: argocd)
+#      helm install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd -n argocd --create-namespace
+#   2. Sealed Secrets applied (k8s/sealed-secrets/README.md)
+#   3. cert-manager + nginx-ingress-controller installed
+# ---------------------------------------------------------------------------
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pf9-mngt
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: pf9-mngt
+    app.kubernetes.io/managed-by: argocd
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/erezrozenbaum/pf9-mngt
+    targetRevision: master
+    path: k8s/helm/pf9-mngt
+    helm:
+      valueFiles:
+        - values.yaml
+        - values.prod.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pf9-mngt
+
+  syncPolicy:
+    automated:
+      prune: true       # remove resources deleted from git
+      selfHeal: true    # revert manual kubectl edits
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

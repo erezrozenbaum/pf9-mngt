@@ -1,0 +1,389 @@
+# ===========================================================================
+# pf9-mngt Helm values — defaults (safe to commit to a public repo).
+#
+# SECRETS: This file contains NO real credentials. All sensitive values are
+# pulled from pre-existing Kubernetes Secrets whose names are configured in
+# the `secrets:` section below.  In production those Secrets are managed via
+# Bitnami Sealed Secrets (see k8s/sealed-secrets/README.md).
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Global image settings
+# ---------------------------------------------------------------------------
+global:
+  # Base registry + owner path shared by all application images.
+  imageRepo: ghcr.io/erezrozenbaum
+  # Default tag — overridden per service in values.prod.yaml by CI.
+  imageTag: latest
+  imagePullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Namespace
+# ---------------------------------------------------------------------------
+namespace:
+  create: true
+  name: pf9-mngt
+
+# ---------------------------------------------------------------------------
+# Pre-existing Kubernetes Secret names
+# (created via kubeseal before first helm install — see k8s/sealed-secrets/)
+# ---------------------------------------------------------------------------
+secrets:
+  dbCredentials: pf9-db-credentials      # key: password
+  jwtSecret: pf9-jwt-secret              # key: jwt-secret-key
+  ldapSecrets: pf9-ldap-secrets          # keys: admin-password, config-password, readonly-password, sync-key
+  smtpSecrets: pf9-smtp-secrets          # key: password
+  pf9Credentials: pf9-pf9-credentials    # key: password
+  snapshotCreds: pf9-snapshot-creds      # keys: password-key, user-password-encrypted, service-user-password
+  provisionCreds: pf9-provision-creds    # keys: password-key, user-password-encrypted
+  sshCredentials: pf9-ssh-credentials    # key: password (optional)
+  copilotSecrets: pf9-copilot-secrets    # keys: openai-api-key, anthropic-api-key (optional)
+
+# ---------------------------------------------------------------------------
+# Shared configuration (used by multiple services)
+# ---------------------------------------------------------------------------
+db:
+  host: pf9-db
+  port: "5432"
+  name: pf9_mgmt
+  user: pf9
+
+ldap:
+  server: pf9-ldap
+  port: "389"
+  baseDN: dc=pf9mgmt,dc=local
+  userDN: "ou=users,dc=pf9mgmt,dc=local"
+  groupDN: "ou=groups,dc=pf9mgmt,dc=local"
+  organisation: "Platform9 Management"
+  domain: "pf9mgmt.local"
+  readonlyUser: "true"
+  adminDN: "cn=admin,dc=pf9mgmt,dc=local"
+
+pf9:
+  authUrl: ""         # e.g. https://your-cloud.platform9.net/keystone
+  username: ""
+  userDomain: Default
+  projectName: service
+  projectDomain: Default
+  regionName: region-one
+  verifyTLS: "true"
+
+smtp:
+  enabled: "false"
+  host: ""
+  port: "587"
+  useTLS: "true"
+  username: ""
+  fromAddress: "pf9-mgmt@example.com"
+  fromName: "Platform9 Management"
+
+jwt:
+  algorithm: HS256
+  accessTokenExpireMinutes: "480"
+
+redis:
+  url: redis://pf9-redis:6379/0
+  cacheEnabled: "true"
+  cacheTTLSeconds: "60"
+
+# ---------------------------------------------------------------------------
+# API service
+# ---------------------------------------------------------------------------
+api:
+  image:
+    repository: pf9-mngt-api
+    tag: ""         # "" → falls back to global.imageTag
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: "1500m"
+      memory: "1Gi"
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+  logFile: /app/logs/pf9_api.log
+  enableAuthentication: "true"
+  defaultAdminUser: admin
+  demoMode: "false"
+  dbPool:
+    minConn: "2"
+    maxConn: "10"
+  restore:
+    enabled: "false"
+    dryRun: "false"
+    cleanupVolumes: "false"
+  snapshot:
+    serviceUserEmail: ""
+    serviceUserDomain: default
+    schedulerEnabled: "true"
+    policyAssignIntervalMinutes: "60"
+    autoSnapshotIntervalMinutes: "60"
+    maxSizeGB: "260"
+    rvtoolsIntegrationEnabled: "true"
+    complianceReportEnabled: "true"
+    complianceReportIntervalMinutes: "1440"
+    complianceReportSLADays: "2"
+    policyAssignMergeExisting: "true"
+    policyAssignDryRun: "false"
+    policyAssignSyncPolicySets: "true"
+    autoSnapshotMaxNew: "200"
+    autoSnapshotDryRun: "false"
+    autoSnapshotBatchSize: "20"
+    autoSnapshotBatchDelay: "5.0"
+  provision:
+    serviceUserEmail: ""
+    serviceUserDomain: Default
+  ssh:
+    hosts: ""
+    user: pf9
+    keyPath: ""
+  parallel:
+    maxRegions: "3"
+    regionRequestTimeoutSec: "30"
+  copilot:
+    backend: builtin
+    ollamaUrl: http://host.docker.internal:11434
+    ollamaModel: llama3
+    openaiModel: gpt-4o-mini
+    anthropicModel: claude-sonnet-4-20250514
+    redactSensitive: "true"
+  service:
+    type: ClusterIP
+    port: 8000
+
+# ---------------------------------------------------------------------------
+# UI service
+# ---------------------------------------------------------------------------
+ui:
+  image:
+    repository: pf9-mngt-ui
+    tag: ""
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+  service:
+    type: ClusterIP
+    port: 5173
+
+# ---------------------------------------------------------------------------
+# Monitoring service
+# ---------------------------------------------------------------------------
+monitoring:
+  image:
+    repository: pf9-mngt-monitoring
+    tag: ""
+  replicaCount: 1
+  pf9Hosts: ""
+  metricsCacheTTL: "60"
+  watchdogInterval: "60"
+  watchdogCooldown: "1800"
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+  service:
+    type: ClusterIP
+    port: 8001
+
+# ---------------------------------------------------------------------------
+# PostgreSQL (StatefulSet)
+# ---------------------------------------------------------------------------
+postgresql:
+  image:
+    repository: postgres
+    tag: "16"
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 20Gi
+    storageClass: standard
+  resources:
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+  statementTimeout: "120000"
+  idleInTransactionSessionTimeout: "30000"
+  service:
+    port: 5432
+
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+redisService:
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  maxmemory: 128mb
+  resources:
+    limits:
+      cpu: "300m"
+      memory: "192Mi"
+    requests:
+      cpu: "25m"
+      memory: "32Mi"
+  service:
+    port: 6379
+
+# ---------------------------------------------------------------------------
+# OpenLDAP (StatefulSet)
+# ---------------------------------------------------------------------------
+ldapService:
+  image:
+    repository: osixia/openldap
+    tag: "1.5.0"
+    pullPolicy: IfNotPresent
+  persistence:
+    data:
+      size: 5Gi
+      storageClass: standard
+    config:
+      size: 1Gi
+      storageClass: standard
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+    requests:
+      cpu: "25m"
+      memory: "64Mi"
+  service:
+    port: 389
+
+# ---------------------------------------------------------------------------
+# Workers
+# ---------------------------------------------------------------------------
+workers:
+  backupWorker:
+    image:
+      repository: pf9-mngt-backup-worker
+      tag: ""
+    enabled: true
+    backupPath: /backups
+    pollInterval: "3600"
+    jobPollInterval: "30"
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+    persistence:
+      size: 50Gi
+      storageClass: standard
+
+  ldapSyncWorker:
+    image:
+      repository: pf9-mngt-ldap-sync-worker
+      tag: ""
+    ldapSyncPollInterval: "30"
+    resources:
+      limits:
+        cpu: "250m"
+        memory: "128Mi"
+      requests:
+        cpu: "25m"
+        memory: "32Mi"
+
+  meteringWorker:
+    image:
+      repository: pf9-mngt-metering-worker
+      tag: ""
+    meteringPollInterval: "60"
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+
+  notificationWorker:
+    image:
+      repository: pf9-mngt-notification-worker
+      tag: ""
+    pollIntervalSeconds: "120"
+    digestEnabled: "true"
+    digestHourUTC: "8"
+    lookbackSeconds: "300"
+    healthAlertThreshold: "50"
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+
+  schedulerWorker:
+    image:
+      repository: pf9-mngt-scheduler-worker
+      tag: ""
+    metricsEnabled: "true"
+    metricsIntervalSeconds: "60"
+    rvtoolsEnabled: "true"
+    rvtoolsIntervalMinutes: "0"
+    rvtoolsScheduleTime: "03:00"
+    rvtoolsRunOnStart: "false"
+    resources:
+      limits:
+        cpu: "1000m"
+        memory: "512Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+
+  searchWorker:
+    image:
+      repository: pf9-mngt-search-worker
+      tag: ""
+    searchIndexInterval: "300"
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+
+  snapshotWorker:
+    image:
+      repository: pf9-mngt-snapshot-worker
+      tag: ""
+    resources:
+      limits:
+        cpu: "1000m"
+        memory: "768Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+
+# ---------------------------------------------------------------------------
+# Ingress (nginx-ingress + cert-manager)
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  host: pf9-mngt.example.com
+  tls:
+    enabled: true
+    secretName: pf9-mngt-tls
+    clusterIssuer: letsencrypt-prod
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"

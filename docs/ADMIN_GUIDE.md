@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.81.0  
+**Version**: 1.82.0  
 **Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
@@ -578,6 +578,18 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.82.0 — Kubernetes Production Support (Helm + ArgoCD + CI/CD) (✅ Complete)
+
+- **Helm chart** (`k8s/helm/pf9-mngt/`) — full chart covering all 14 services; `values.yaml` holds safe defaults; `values.prod.yaml` holds image tags auto-updated by CI
+- **PostgreSQL + OpenLDAP as StatefulSets** — stable pod identity and `volumeClaimTemplates` for persistent data; headless ClusterIP services
+- **Ingress template** — nginx-ingress + cert-manager; routes `/api`, `/auth`, `/health` to the API and `/` to the UI; TLS via Let's Encrypt
+- **DB migration Helm hook** — `pre-install`/`pre-upgrade` Job that runs `run_migration.py` before any Deployment rollout
+- **All pods run as non-root** (`runAsUser: 1000`, `runAsNonRoot: true`); LDAP never exposed outside cluster
+- **ArgoCD application** (`k8s/argocd/application.yaml`) — bootstrap once; auto-syncs on every `master` push that touches `k8s/helm/`
+- **CI: `helm-package` job** — packages + pushes Helm chart to GHCR OCI registry after Docker images are built
+- **CI: `update-values` job** — patches `global.imageTag` in `values.prod.yaml` and commits `[skip ci]` to `master`; ArgoCD triggers a `helm upgrade` automatically
+- **Sealed Secrets guide** (`k8s/sealed-secrets/README.md`) — copy-paste `kubeseal` commands for all nine Kubernetes Secrets the chart references
 
 ### v1.81.0 — Security Hardening & Kubernetes Pre-Requisites (✅ Complete)
 

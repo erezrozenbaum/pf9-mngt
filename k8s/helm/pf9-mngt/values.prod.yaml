@@ -1,0 +1,52 @@
+# ===========================================================================
+# values.prod.yaml — production overrides
+#
+# This file is auto-updated by the CI release pipeline (release.yml job:
+# update-values).  It contains ONLY image tags and production host settings.
+# NO SECRETS belong here.
+# ===========================================================================
+
+global:
+  imageTag: latest    # replaced by CI: sed "s|imageTag:.*|imageTag: vX.Y.Z|"
+
+ingress:
+  host: pf9-mngt.example.com    # replace with your real domain before deploying
+  tls:
+    enabled: true
+
+# Per-service image tag overrides (also updated by CI's sed pass).
+# Leave empty to use global.imageTag above.
+api:
+  image:
+    tag: ""
+
+ui:
+  image:
+    tag: ""
+
+monitoring:
+  image:
+    tag: ""
+
+workers:
+  backupWorker:
+    image:
+      tag: ""
+  ldapSyncWorker:
+    image:
+      tag: ""
+  meteringWorker:
+    image:
+      tag: ""
+  notificationWorker:
+    image:
+      tag: ""
+  schedulerWorker:
+    image:
+      tag: ""
+  searchWorker:
+    image:
+      tag: ""
+  snapshotWorker:
+    image:
+      tag: ""

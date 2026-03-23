@@ -290,3 +290,72 @@
 - [ ] When per-region RBAC is enabled: `user_roles.region_id IS NOT NULL` rows must be validated to reference real `pf9_regions.id` values
 - [ ] Global roles (`user_roles.region_id IS NULL`) are reviewed quarterly to ensure least-privilege access
 - [12 Factor App - Store config in environment](https://12factor.net/config)
+
+---
+
+## Kubernetes Deployment Security (v1.82.0+)
+
+### Sealed Secrets
+
+- [x] **No credential values in `values.yaml` or `values.prod.yaml`** *(v1.82.0)*
+  - All sensitive values are referenced by Kubernetes Secret **name** only (e.g. `pf9-db-credentials`)
+  - No passwords, API keys, or tokens appear in any committed Helm values file
+  - Verify: `grep -r "password" k8s/helm/pf9-mngt/values.yaml` should return zero credential values
+
+- [ ] **All nine Sealed Secrets created before `helm install`**
+  - Follow the kubeseal commands in `k8s/sealed-secrets/README.md`
+  - Required secrets: `pf9-db-credentials`, `pf9-jwt-secret`, `pf9-ldap-secrets`,
+    `pf9-smtp-secrets`, `pf9-pf9-credentials`, `pf9-snapshot-creds`,
+    `pf9-provision-creds`, `pf9-ssh-credentials`, `pf9-copilot-secrets`
+  - Verify all exist before go-live: `kubectl get secrets -n pf9-mngt`
+
+- [ ] **Sealed Secret blobs committed to git**
+  - SealedSecret YAML files (`k8s/sealed-secrets/*.yaml`) are safe to commit — the encrypted
+    blobs can only be decrypted by the Sealed Secrets controller in your cluster
+  - Commit them to version-control so secrets can be recreated after cluster rebuild
+
+- [ ] **Sealed Secrets controller cert backed up**
+  - If the cluster is destroyed, the controller's private key is needed to re-seal
+  - Backup: `kubectl get secret -n kube-system sealed-secrets-keyXXXX -o yaml > sealed-secrets-key-backup.yaml`
+  - Store the backup file in a secure vault — **never commit it to git**
+
+### Pod & Container Security
+
+- [ ] **Pod security contexts set** *(Chart defaults enforce these)*
+  - `runAsNonRoot: true` on all application pods
+  - `allowPrivilegeEscalation: false`
+  - `readOnlyRootFilesystem: true` where possible (workers write only to `/tmp` or `/backups`)
+  - Verify: `kubectl get pods -n pf9-mngt -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.securityContext}{"\n"}{end}'`
+
+- [ ] **Monitoring pod does NOT mount Docker socket**
+  - The Kubernetes `monitoring` Deployment does not use `hostPath: /var/run/docker.sock`
+  - Confirmed in `templates/monitoring/deployment.yaml` — Docker socket is Docker Compose only
+
+- [x] **`PRODUCTION_MODE=true` always set in API pod** *(Chart enforces)*
+  - The API `Deployment` hard-codes `PRODUCTION_MODE: "true"` in the environment
+  - This cannot be changed via `values.yaml` — it is unconditional in the template
+
+### Network Isolation
+
+- [ ] **`pf9-ldap` Service is ClusterIP only**
+  - LDAP port 389 must never be exposed outside the cluster
+  - Verify: `kubectl get svc pf9-mngt-ldap -n pf9-mngt` — type should be `ClusterIP`
+
+- [ ] **`pf9-db` Service is ClusterIP only**
+  - PostgreSQL port 5432 must never be exposed outside the cluster
+  - Verify: `kubectl get svc pf9-mngt-db -n pf9-mngt` — type should be `ClusterIP`
+
+- [ ] **Ingress enforces TLS** (cert-manager ClusterIssuer must be Ready)
+  - `kubectl describe clusterissuer letsencrypt-prod` — condition `Ready: True`
+  - `kubectl describe certificate pf9-mngt-tls -n pf9-mngt` — `Ready: True`
+
+### Secret Rotation on Kubernetes
+
+To rotate a credential:
+
+1. Generate the new value
+2. Re-seal with kubeseal and update the corresponding `k8s/sealed-secrets/*.yaml`
+3. `kubectl apply -f k8s/sealed-secrets/<secret>.yaml` — Sealed Secrets controller
+   automatically updates the backing Kubernetes Secret
+4. Restart impacted pods: `kubectl rollout restart deployment pf9-mngt-api -n pf9-mngt`
+5. Commit the updated sealed blob to git

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.0] - 2026-03-24
+
+### Added — Kubernetes Production Support
+
+#### Helm Chart (`k8s/helm/pf9-mngt/`)
+- **`Chart.yaml`** — appVersion 1.82.0, kubeVersion `>=1.28.0-0`
+- **`values.yaml`** — full default configuration for all 14 services; all sensitive values reference pre-existing Kubernetes Secrets by name (`secrets:` section) — no credentials are stored in the chart itself
+- **`values.prod.yaml`** — CI-managed override file; contains only image tags; auto-updated by the new `update-values` CI job on each release
+- **`templates/_helpers.tpl`** — chart-wide naming helpers (`pf9mngt.name`, `pf9mngt.fullname`, `pf9mngt.labels`, `pf9mngt.selectorLabels`, `pf9mngt.appImage`)
+- **`templates/namespace.yaml`** — creates the `pf9-mngt` namespace when `namespace.create: true`
+- **API** (`templates/api/`) — Deployment + ClusterIP Service; all env vars wired from `values.yaml` and `secretKeyRef` references; liveness + readiness probes on `/health`; `PRODUCTION_MODE: "true"` always set (JWT startup guard active)
+- **UI** (`templates/ui/`) — Deployment + ClusterIP Service; liveness + readiness probes on `/`
+- **PostgreSQL** (`templates/db/`) — StatefulSet (stable identity + persistent storage) + headless Service; `volumeClaimTemplate` with configurable `storageClass` and size
+- **Redis** (`templates/redis/`) — Deployment + ClusterIP Service; `maxmemory` and `allkeys-lru` policy configured via chart values
+- **OpenLDAP** (`templates/ldap/`) — StatefulSet + headless Service; two `volumeClaimTemplates` (data + config); LDAP never exposed outside cluster (ClusterIP headless only)
+- **Monitoring** (`templates/monitoring/`) — Deployment + ClusterIP Service; Docker socket dependency removed (not applicable in Kubernetes)
+- **Workers** (`templates/workers/`) — seven single-replica Deployments: `backup-worker` (with optional PVC for backup storage), `ldap-sync-worker`, `metering-worker`, `notification-worker`, `scheduler-worker`, `search-worker`, `snapshot-worker`; all workers inherit `/tmp/alive` liveness probe pattern from v1.81.0
+- **Ingress** (`templates/ingress.yaml`) — nginx-ingress + cert-manager; routes `/api` + `/auth` + `/health` to the API service and `/` to the UI; TLS via Let's Encrypt (`cert-manager.io/cluster-issuer` annotation); fully configurable host, TLS secret name, and body-size limit
+- **DB migrate job** (`templates/jobs/db-migrate.yaml`) — Helm `pre-install` / `pre-upgrade` hook that runs `run_migration.py` in an API container before any Deployment rollout; `hook-delete-policy: hook-succeeded` keeps the cluster clean; `activeDeadlineSeconds: 300` prevents indefinite hangs
+
+#### ArgoCD GitOps (`k8s/argocd/`)
+- **`application.yaml`** — ArgoCD `Application` manifest; sources `k8s/helm/pf9-mngt/` from `master`, applies `values.yaml` + `values.prod.yaml`; `automated.prune: true` + `automated.selfHeal: true`; `CreateNamespace=true` + `ServerSideApply=true` sync options; 5-retry backoff
+
+#### Sealed Secrets (`k8s/sealed-secrets/`)
+- **`README.md`** — complete operator guide for Bitnami Sealed Secrets; copy-paste `kubeseal` commands for all nine Kubernetes Secrets the chart references (`pf9-db-credentials`, `pf9-jwt-secret`, `pf9-ldap-secrets`, `pf9-smtp-secrets`, `pf9-pf9-credentials`, `pf9-snapshot-creds`, `pf9-provision-creds`, `pf9-ssh-credentials`, `pf9-copilot-secrets`); rotation instructions
+
+#### CI/CD (`release.yml`)
+- **`helm-package` job** — runs after `publish-images`; installs Helm 3.14, logs into GHCR OCI registry, packages the chart with the release version, pushes to `oci://ghcr.io/<owner>/helm`
+- **`update-values` job** — runs after `helm-package`; patches `global.imageTag` in `values.prod.yaml` using `sed`, commits the change as `ci: update image tags to vX.Y.Z [skip ci]` and pushes to `master` (requires `RELEASE_PAT` repository secret); ArgoCD detects the commit and auto-syncs the cluster
+- **`release` job** now depends on `helm-package` and `update-values` (in addition to the existing `publish-images`) so a GitHub Release is only created once the full pipeline — Docker images + Helm chart + values update — succeeds
+
+### Security
+- All pod specs set `securityContext.runAsNonRoot: true` and `runAsUser: 1000`
+- LDAP service exposed as headless `ClusterIP` only — never reachable from outside the cluster
+- All secret references use `secretKeyRef` with `optional: true` where the secret may not be configured (snapshot creds, provision creds, SSH, copilot API keys, SMTP); required secrets (DB password, JWT key, LDAP admin password) have no `optional` flag so missing secrets fail fast at pod startup
+
 ## [1.81.0] - 2026-03-23
 
 ### Security — Hardening & Pre-Kubernetes Fixes
