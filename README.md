@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.79.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.80.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -759,7 +759,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.79.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.80.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -903,6 +903,12 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.80.0 — External LDAP Sync UI
+
+- **`LdapSyncSettings` component** — full management UI under Admin → User Management → External LDAP Sync (superadmin-only); covers all backend fields across five sections (connection, service account, user search, group mappings, schedule)
+- **Test / Preview / Logs panels** — inline detail pane per config; 🔌 test shows connect+bind results and sample users; 👁 preview shows dry-run create/update/deactivate counts; 📋 logs panel shows last 20 sync runs with expandable error details
+- **docs/LDAP_SYNC_GUIDE.md** — comprehensive operator guide (requirements, step-by-step config, group mapping, TLS, testing, manual sync, logs, MFA delegation, security architecture, troubleshooting)
 
 ### v1.79.0 — External LDAP / AD Identity Federation
 
@@ -1085,4 +1091,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.79.0 | **Last Updated**: March 24, 2026
+**Project Status**: Production Ready | **Version**: 1.80.0 | **Last Updated**: March 25, 2026

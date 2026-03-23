@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.79.0  
-**Last Updated**: March 23, 2026  
+**Version**: 1.80.0  
+**Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -50,6 +50,7 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 13. [Reference: Authentication & Authorization](#authentication--authorization)
 14. [Reference: Monitoring System](#real-time-monitoring-system)
 15. [Appendix: Feature History by Version](#appendix-feature-history-by-version)
+16. [External LDAP Sync Guide](LDAP_SYNC_GUIDE.md) ↗
 
 ---
 
@@ -577,6 +578,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.80.0 — External LDAP Sync UI (✅ Complete)
+
+- **`LdapSyncSettings.tsx`** — new React component added to Admin → User Management → External LDAP Sync tab (superadmin-only); full CRUD UI for LDAP sync configurations with create/edit modal covering all five field sections
+- **Test / Preview / Logs panels** — inline detail pane: 🔌 connectivity test with step-by-step results, 👁️ dry-run preview with per-user action table, 📋 sync logs (last 20 runs, expandable error rows)
+- **Group → Role mapping editor** — dynamic add/remove rows; `superadmin` not offered (mirrors server-side DB constraint)
+- **Security UX** — bind password is write-only (never pre-filled); `allow_private_network` shows a visible ⚠️ warning banner; delete confirmation warns about immediate user deactivation and session revocation
+- **`docs/LDAP_SYNC_GUIDE.md`** — new comprehensive operator guide; linked from ADMIN_GUIDE TOC
 
 ### v1.79.0 — External LDAP / AD Identity Federation (✅ Complete)
 

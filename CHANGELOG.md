@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.80.0] - 2026-03-25
+
+### Added — External LDAP Sync UI
+
+#### New component: `LdapSyncSettings` (`pf9-ui`)
+- Full management UI for external LDAP / Active Directory sync configurations, accessible from **Admin → User Management → External LDAP Sync** (superadmin-only tab)
+- **Config list table** — shows all configs with host:port, TLS mode, enabled state, last sync status badge (success / partial / failed / never run), last sync time, user count, and sync interval
+- **Create / Edit modal** — covers all backend fields: connection (host, port, TLS / STARTTLS / plain, CA cert PEM), service account (bind DN, bind password — write-only on edit), user search (base DN, filter, UID/email/fullname attributes), group→role mapping rows, schedule (interval dropdown), MFA delegation toggle, and private-network warning banner
+- **Group → Role Mapping editor** — dynamic add/remove rows mapping external group DNs to platform roles (viewer / operator / technical / admin); `superadmin` is not offered (matching server-side constraint)
+- **🔌 Test Connection panel** — fires `POST /admin/ldap-sync/configs/{id}/test` and displays connect / bind success badges, user count, and a sample user table
+- **👁️ Preview Sync panel** — fires `POST /admin/ldap-sync/configs/{id}/preview` and displays create / update / deactivate counts plus a per-user action table
+- **▶️ Sync Now button** — fires `POST /admin/ldap-sync/configs/{id}/sync` with loading state
+- **📋 Sync Logs panel** — fetches last 20 sync runs via `GET /admin/ldap-sync/configs/{id}/logs`; each row shows started time, duration, status, counts, error; click any row to expand full error message
+- **🗑️ Delete confirmation modal** — warns that synced users will be deactivated and sessions revoked before confirming
+- Bind password is never pre-filled on edit (write-only by design); blank submission preserves existing encrypted value
+- `allow_private_network` flag shows a visible ⚠️ security warning banner when enabled
+
+#### New documentation
+- `docs/LDAP_SYNC_GUIDE.md` — comprehensive operator guide covering requirements, step-by-step config, group mapping, TLS setup, testing, manual sync, logs, MFA delegation, private network flag, authentication flow, deactivation behaviour, security architecture, and troubleshooting
+
 ## [1.79.0] - 2026-03-24
 
 ### Added — External LDAP / AD Identity Federation

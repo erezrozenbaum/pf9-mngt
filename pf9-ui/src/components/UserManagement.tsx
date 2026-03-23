@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE } from '../config';
+import LdapSyncSettings from './LdapSyncSettings';
 
 type AuthUser = {
   username: string;
@@ -1712,7 +1713,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 'rb_approvals', label: 'Runbook Approvals', icon: '✅', adminOnly: true },
           { id: 'rb_policies', label: 'Runbook Policies', icon: '📐', adminOnly: true },
           { id: 'data_reset', label: 'Data Reset', icon: '⚠️', adminOnly: true },
-          { id: 'container_alerts', label: 'Container Alerts', icon: '🔔', adminOnly: true, superadminOnly: true }
+          { id: 'container_alerts', label: 'Container Alerts', icon: '🔔', adminOnly: true, superadminOnly: true },
+          { id: 'ldap_sync', label: 'External LDAP Sync', icon: '🔄', adminOnly: true, superadminOnly: true }
         ]
           .filter(tab =>
             (!tab.adminOnly || (user && (user.role === 'admin' || user.role === 'superadmin'))) &&
@@ -2555,6 +2557,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
       {/* Container Alert Settings */}
       {activeTab === 'container_alerts' && <ContainerAlertSettings user={user} />}
+
+      {/* External LDAP Sync */}
+      {activeTab === 'ldap_sync' && <LdapSyncSettings user={user} />}
 
       {/* ────── RUNBOOK EXECUTIONS ────── */}
       {activeTab === 'rb_executions' && (
