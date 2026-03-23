@@ -5,9 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.78.0] - 2026-03-23
+
+### Security — Authentication & Middleware Hardening
+
+#### `api/auth.py` — LDAP injection prevention
+- **DN injection closed** — `authenticate()`, `create_user()`, `delete_user()`, and `change_password()` now call `ldap.dn.escape_dn_chars(username)` before interpolating the username into any DN string (e.g. `cn={username},{user_dn}`). Prevents crafted usernames such as `admin,dc=evil,dc=com` from rewriting the bind target.
+- **LDAP network timeout** — all 7 `ldap.initialize()` call sites now call `conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)` immediately after setting `OPT_REFERRALS`. Under an LDAP outage, auth operations now fail fast (≤ 5 s) instead of stalling gunicorn worker threads for minutes.
+
+#### `api/auth.py` — timezone-aware datetimes
+- `create_access_token()` — `exp` and `iat` JWT claims now use `datetime.now(timezone.utc)` instead of the deprecated `datetime.utcnow()`. Removes `DeprecationWarning` on Python 3.12+ and ensures claims are always timezone-aware.
+- `create_user_session()` — `expires_at` written to the `user_sessions.expires_at TIMESTAMPTZ` column is now timezone-aware, consistent with the PostgreSQL column type.
+
+#### `api/main.py` — `verify_admin_credentials` security fixes
+- **Unconfigured-password guard removed** — when `PF9_ADMIN_PASSWORD` is not set, the function previously logged a warning and returned `False`, silently granting access to every admin endpoint. It now raises `HTTP 503 Service Unavailable` (`"Admin authentication not configured"`), requiring the operator to explicitly provision the credential before admin routes are accessible.
+- **Timing-safe comparison** — `credentials.username != ADMIN_USERNAME or credentials.password != ADMIN_PASSWORD` replaced with two `hmac.compare_digest()` calls. Prevents timing-based credential enumeration attacks from a remote attacker measuring response latency.
+- `hmac` added to top-level imports in `main.py`.
+
+#### `api/main.py` — middleware token-verification deduplication
+- `rbac_middleware` stores the validated `TokenData` object in `request.state.token_data` after a successful `verify_token()` call.
+- `access_log_middleware` now reads `request.state.token_data` via `getattr(request.state, "token_data", None)` instead of calling `verify_token()` a second time. Eliminates one round-trip DB query (`user_sessions` lookup) per authenticated HTTP request.
+
+#### `api/main.py` — timezone-aware datetimes in `/auth/login`
+- `datetime.utcnow()` replaced with `datetime.now(timezone.utc)` in both the MFA-pending token response and the normal login response's `expires_at` field. Consistent with the fixes to `auth.py` above.
+
+#### `api/smtp_helper.py` — Docker-secrets-aware SMTP password
+- `SMTP_PASSWORD` was the only credential in the project still read exclusively via `os.getenv("SMTP_PASSWORD", "")`. It now uses `read_secret("smtp_password", env_var="SMTP_PASSWORD", default="")` — checks `/run/secrets/smtp_password` first, falls back to the env var. Consistent with how every other credential is resolved and enables zero-secret-in-env-var deployment.
+
+---
+
 ## [1.77.0] - 2026-03-22
 
-### Added — Migration Planner Region Normalization (Phase 8)
+### Added — Migration Planner Region Normalization
 
 #### `migration_projects` — source and target region FKs
 - **`migration_projects.source_region_id`** *(new column, nullable)* — FK to `pf9_regions.id`; records the PCD source region for cross-region migration projects. NULL for VMware-to-PCD migrations (the common case).

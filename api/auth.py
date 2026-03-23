@@ -14,7 +14,7 @@ import logging
 import ldap
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from functools import wraps
 
@@ -107,14 +107,16 @@ class LDAPAuthenticator:
             # Connect to LDAP server
             
             # Construct user DN - try both cn and uid formats
-            user_dn_cn = f"cn={username},{self.user_dn}"
-            user_dn_uid = f"uid={username},{self.user_dn}"
+            _safe_un = ldap.dn.escape_dn_chars(username)
+            user_dn_cn = f"cn={_safe_un},{self.user_dn}"
+            user_dn_uid = f"uid={_safe_un},{self.user_dn}"
             
             # Try cn format first (our setup)
             try:
                 logger.debug("[AUTH] Trying CN format: %s", user_dn_cn)
                 conn = ldap.initialize(self.server)
                 conn.protocol_version = ldap.VERSION3
+                conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
                 conn.set_option(ldap.OPT_REFERRALS, 0)
                 conn.simple_bind_s(user_dn_cn, password)
                 conn.unbind_s()
@@ -127,6 +129,7 @@ class LDAPAuthenticator:
                     logger.debug("[AUTH] Trying UID format: %s", user_dn_uid)
                     conn = ldap.initialize(self.server)
                     conn.protocol_version = ldap.VERSION3
+                    conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
                     conn.set_option(ldap.OPT_REFERRALS, 0)
                     conn.simple_bind_s(user_dn_uid, password)
                     conn.unbind_s()
@@ -152,6 +155,7 @@ class LDAPAuthenticator:
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
+            conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
             
             # Search for user — escape username to prevent LDAP injection
             safe_username = ldap.filter.escape_filter_chars(username)
@@ -186,6 +190,7 @@ class LDAPAuthenticator:
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
+            conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
             
             # Bind as admin first
             admin_dn = f"cn=admin,{self.base_dn}"
@@ -228,6 +233,7 @@ class LDAPAuthenticator:
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
+            conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
             
             # Bind as admin
             admin_dn = f"cn=admin,{self.base_dn}"
@@ -243,7 +249,7 @@ class LDAPAuthenticator:
             first_name = name_parts[0]
             last_name = name_parts[1] if len(name_parts) > 1 else first_name
             
-            user_dn = f"cn={username},{self.user_dn}"
+            user_dn = f"cn={ldap.dn.escape_dn_chars(username)},{self.user_dn}"
             # Hash the password with SSHA before writing to LDAP
             # (same algorithm used by change_password)
             import base64
@@ -284,6 +290,7 @@ class LDAPAuthenticator:
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
+            conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
             
             # Bind as admin
             admin_dn = f"cn=admin,{self.base_dn}"
@@ -291,7 +298,7 @@ class LDAPAuthenticator:
             conn.simple_bind_s(admin_dn, admin_password)
             
             # Delete user
-            user_dn = f"cn={username},{self.user_dn}"
+            user_dn = f"cn={ldap.dn.escape_dn_chars(username)},{self.user_dn}"
             conn.delete_s(user_dn)
             logger.info("User %s deleted successfully from LDAP", username)
             return True
@@ -313,13 +320,14 @@ class LDAPAuthenticator:
         try:
             conn = ldap.initialize(self.server)
             conn.protocol_version = ldap.VERSION3
+            conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
             admin_dn = f"cn=admin,{self.base_dn}"
             conn.simple_bind_s(admin_dn, read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD"))
             salt = secrets.token_bytes(4)
             # SSHA is the LDAP wire format; not used as a cryptographic security primitive
             h = hashlib.sha1(new_password.encode('utf-8') + salt, usedforsecurity=False)  # nosec B324
             hashed = '{SSHA}' + base64.b64encode(h.digest() + salt).decode()
-            user_dn = f"cn={username},{self.user_dn}"
+            user_dn = f"cn={ldap.dn.escape_dn_chars(username)},{self.user_dn}"
             conn.modify_s(user_dn, [(ldap.MOD_REPLACE, 'userPassword', [hashed.encode('utf-8')])])
             logger.info("Password changed for user %s", username)
             return True
@@ -338,11 +346,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Create JWT access token"""
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     
-    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
+    to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc)})
     encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
@@ -488,7 +496,7 @@ def create_user_session(username: str, role: str, token: str, ip_address: str = 
     try:
         with get_connection() as conn:
             token_hash = hashlib.sha256(token.encode()).hexdigest()
-            expires_at = datetime.utcnow() + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+            expires_at = datetime.now(timezone.utc) + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
             
             with conn.cursor() as cur:
                 cur.execute("""

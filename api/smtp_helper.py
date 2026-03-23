@@ -21,6 +21,7 @@ import os
 import logging
 import smtplib
 import ssl
+from secret_helper import read_secret as _read_secret
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Union
@@ -35,7 +36,7 @@ SMTP_HOST         = os.getenv("SMTP_HOST", "")
 SMTP_PORT         = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USE_TLS      = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
 SMTP_USERNAME     = os.getenv("SMTP_USERNAME", "")
-SMTP_PASSWORD     = os.getenv("SMTP_PASSWORD", "")
+SMTP_PASSWORD     = _read_secret("smtp_password", env_var="SMTP_PASSWORD", default="")
 SMTP_FROM_ADDRESS = os.getenv("SMTP_FROM_ADDRESS", "pf9-mgmt@example.com")
 SMTP_FROM_NAME    = os.getenv("SMTP_FROM_NAME", "Platform9 Management")
 

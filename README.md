@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.77.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.78.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -435,7 +435,7 @@ A 15-minute explainer video walking through the UI and key features:
 - **Feedback & History**: Per-answer thumbs up/down, conversation history persisted per user with automatic trimming
 - **Automatic Fallback**: If the LLM backend fails, seamlessly falls back to the built-in intent engine
 
-### 🌐 Multi-Region & Multi-Cluster Support *(v1.73.0 → v1.77.0)*
+### 🌐 Multi-Region & Multi-Cluster Support *(v1.73.0 → v1.78.0)*
 
 **For MSPs managing multiple Platform9 customers or data centres, this is the operational core.**
 
@@ -758,7 +758,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.77.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.78.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -902,6 +902,15 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.78.0 — Security & Auth Hardening
+
+- **LDAP DN injection closed** — `ldap.dn.escape_dn_chars()` applied to all 4 DN-construction sites in `auth.py`; a crafted username can no longer rewrite the LDAP bind target
+- **LDAP network timeout** — `OPT_NETWORK_TIMEOUT = 5 s` added to all 7 `ldap.initialize()` call sites; hung LDAP connections no longer stall gunicorn worker threads
+- **`verify_admin_credentials` hardened** — unconfigured password now raises HTTP 503 (was silently bypassing auth); credential comparison uses `hmac.compare_digest()` to prevent timing attacks
+- **`datetime.utcnow()` replaced** — all auth JWT/session code now uses `datetime.now(timezone.utc)`; removes deprecation warnings on Python 3.12+
+- **Middleware token cache** — `rbac_middleware` stores `TokenData` in `request.state`; `access_log_middleware` reads it instead of re-calling `verify_token()`, removing one DB round-trip per request
+- **`SMTP_PASSWORD` via Docker secrets** — `smtp_helper.py` now resolves the SMTP password through `read_secret()` (checks `/run/secrets/smtp_password` first, falls back to env var), consistent with every other credential in the project
 
 ### v1.77.0 — Migration Planner Region Normalization
 
@@ -1064,4 +1073,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.77.0 | **Last Updated**: March 22, 2026
+**Project Status**: Production Ready | **Version**: 1.78.0 | **Last Updated**: March 23, 2026

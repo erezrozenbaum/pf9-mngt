@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import hmac
 import re
 import logging
 import json
@@ -287,18 +288,22 @@ def log_admin_operation(operation: str, resource_id: str, request: Request, auth
 
 def verify_admin_credentials(credentials: HTTPBasicCredentials = Depends(security)) -> bool:
     if not ADMIN_PASSWORD:
-        # If no admin password configured, log warning but allow (backward compatibility)
-        audit_logger.warning("Admin operation attempted with no admin password configured")
-        return False
-    
-    if credentials.username != ADMIN_USERNAME or credentials.password != ADMIN_PASSWORD:
+        audit_logger.error("Admin operation attempted but PF9_ADMIN_PASSWORD is not configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin authentication not configured",
+        )
+
+    username_ok = hmac.compare_digest(credentials.username, ADMIN_USERNAME)
+    password_ok = hmac.compare_digest(credentials.password, ADMIN_PASSWORD)
+    if not username_ok or not password_ok:
         audit_logger.warning(f"Admin operation attempted with invalid credentials for user: {credentials.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
             headers={"WWW-Authenticate": "Basic"},
         )
-    
+
     return True
 
 app = FastAPI(title=APP_NAME)
@@ -445,6 +450,7 @@ async def rbac_middleware(request: Request, call_next):
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
 
+    request.state.token_data = token_data
     # Extract segment (first meaningful path component) without query parameters
     clean_path = path.split("?")[0]  # Remove query string
     parts = [p for p in clean_path.split("/") if p]
@@ -540,12 +546,9 @@ async def access_log_middleware(request: Request, call_next):
     response.headers["X-Request-Id"] = request_id
 
     user = "anonymous"
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        token_data = verify_token(token)
-        if token_data:
-            user = token_data.username
+    _cached_td = getattr(request.state, "token_data", None)
+    if _cached_td:
+        user = _cached_td.username
 
     context = {
         "request_id": request_id,
@@ -1055,7 +1058,7 @@ async def login(request: Request, login_data: LoginRequest):
                 "access_token": mfa_token,
                 "token_type": "bearer",
                 "expires_in": 300,
-                "expires_at": (datetime.utcnow() + mfa_expires).isoformat() + "Z",
+                "expires_at": (datetime.now(timezone.utc) + mfa_expires).isoformat() + "Z",
                 "mfa_required": True,
                 "user": {
                     "username": login_data.username,
@@ -1086,7 +1089,7 @@ async def login(request: Request, login_data: LoginRequest):
     log_auth_event(login_data.username, "login", True, client_ip, user_agent)
     
     # Calculate expiration timestamp
-    expires_at = datetime.utcnow() + access_token_expires
+    expires_at = datetime.now(timezone.utc) + access_token_expires
     
     return {
         "access_token": access_token,

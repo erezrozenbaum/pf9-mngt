@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.77.0  
-**Last Updated**: March 22, 2026  
+**Version**: 1.78.0  
+**Last Updated**: March 23, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -577,6 +577,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.78.0 — Security & Auth Hardening (✅ Complete)
+
+- **LDAP DN injection closed** — `ldap.dn.escape_dn_chars()` now applied in `authenticate()`, `create_user()`, `delete_user()`, and `change_password()` before any DN string is constructed; prevents username-crafting attacks that rewrite the LDAP bind target
+- **LDAP network timeout** — `conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)` added to all 7 `ldap.initialize()` call sites; LDAP outages now fail fast (≤ 5 s) instead of blocking worker threads indefinitely
+- **`verify_admin_credentials` hardened** — unconfigured password now raises HTTP 503 instead of silently returning `False` (which bypassed all admin-route auth); credential check uses `hmac.compare_digest()` to prevent timing-based enumeration
+- **`datetime.utcnow()` removed from auth paths** — JWT `exp`/`iat` claims and `user_sessions.expires_at` now use `datetime.now(timezone.utc)`; compatible with Python 3.12+ and the `TIMESTAMPTZ` column type
+- **Middleware token deduplication** — `rbac_middleware` caches `TokenData` in `request.state.token_data`; `access_log_middleware` reads from that cache instead of re-calling `verify_token()`, removing one DB SELECT per authenticated request
+- **`SMTP_PASSWORD` via Docker secrets** — `smtp_helper.py` now resolves SMTP password through `read_secret("smtp_password", env_var="SMTP_PASSWORD")`, consistent with all other credentials in the project
 
 ### v1.77.0 — Migration Planner Region Normalization (✅ Complete)
 
