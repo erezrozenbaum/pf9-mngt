@@ -603,6 +603,42 @@ services:
           cpus: "0.5"
           memory: 128m
 
+  # External LDAP / AD Identity Federation Worker
+  ldap_sync_worker:
+    build: ./ldap_sync_worker
+    container_name: pf9_ldap_sync_worker
+    restart: unless-stopped
+    environment:
+      PF9_DB_HOST: db
+      PF9_DB_PORT: "5432"
+      PF9_DB_NAME: ${POSTGRES_DB}
+      PF9_DB_USER: ${POSTGRES_USER}
+      PF9_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      LDAP_PORT: "389"
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}
+      LDAP_USER_DN: ${LDAP_USER_DN:-ou=users,dc=pf9mgmt,dc=local}
+      LDAP_SYNC_POLL_INTERVAL: ${LDAP_SYNC_POLL_INTERVAL:-30}
+      # db_password, ldap_admin_password, and ldap_sync_key are read from /run/secrets/
+      # env vars above are used in dev when secret files are empty
+    secrets:
+      - db_password
+      - ldap_admin_password
+      - ldap_sync_key
+    depends_on:
+      - db
+      - ldap
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128m
+
 volumes:
   pgdata:
   pgadmin_data:
@@ -639,3 +675,5 @@ secrets:
     file: ./secrets/pf9_password
   jwt_secret:
     file: ./secrets/jwt_secret
+  ldap_sync_key:
+    file: ./secrets/ldap_sync_key

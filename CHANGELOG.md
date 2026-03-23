@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.79.0] - 2026-03-24
+
+### Added — External LDAP / AD Identity Federation
+
+#### New service: `ldap_sync_worker`
+- Background worker that periodically syncs users from one or more external LDAP / Active Directory servers into the pf9-mngt identity store and role mappings
+- Configurable per-source poll interval (default 30 s), with `pg_try_advisory_lock` preventing concurrent sync runs for the same config
+- After 3 consecutive sync failures a notification row is written to alert operators
+- Graceful SIGTERM / SIGINT shutdown between poll cycles
+
+#### New API: `POST/GET/PUT/DELETE /admin/ldap-sync/configs` and related endpoints
+- Full CRUD management of external LDAP / AD connection configs: host, port, TLS, StartTLS, CA cert, bind credentials (Fernet-encrypted at rest), base DN, user attribute, sync interval, group-to-role mappings
+- **`POST /admin/ldap-sync/configs/{id}/test`** — live connectivity and service-account bind test with per-step diagnostics
+- **`POST /admin/ldap-sync/configs/{id}/preview`** — dry-run that returns the first 50 matching users and their derived roles without writing to the DB
+- **`POST /admin/ldap-sync/configs/{id}/sync`** — manual sync trigger (resets `last_sync_at` so the worker picks it up immediately)
+- **`GET /admin/ldap-sync/configs/{id}/logs`** — paginated sync log history with outcome, counts, and duration
+- All endpoints superadmin-only; `/test` and `/preview` rate-limited to 10 requests/minute per user
+
+#### Credential passthrough for externally-synced users
+- `auth.py` — `authenticate()` now checks whether the authenticating user was synced from an external LDAP source; if so, their password is verified directly against their origin LDAP server (no local password stored), via a new `_bind_external_ldap()` helper
+- Complete LDAP connection lifecycle: TLS / StartTLS / plaintext, configurable CA cert, service-account search-bind to resolve the user DN, end-user simple bind for password verification
+- On successful passthrough bind the existing JWT / session flow continues unchanged
+
+#### Group-to-role mapping
+- External LDAP group membership is mapped to pf9-mngt roles (`viewer`, `operator`, `admin`, `technical`) via the `ldap_sync_group_mappings` table; `superadmin` cannot be assigned via sync (DB-level CHECK constraint)
+- Multiple groups can map to the same role; the highest role wins when a user belongs to multiple mapped groups
+- Users removed from all mapped groups during a sync cycle are deactivated and their active sessions are revoked
+
+#### SSRF protection
+- `ldap_sync_routes.py` validates that the configured LDAP host does not resolve to RFC-1918, loopback, link-local, or ULA address ranges before opening any connection
+- Same blocklist as the existing cluster registry SSRF guard
+
+#### Shared Fernet encryption helper
+- **`api/crypto_helper.py`** — new module providing `fernet_encrypt()` / `fernet_decrypt()` with `fernet:<ciphertext>` storage convention; `cluster_registry.py` `_fernet_decrypt` refactored to delegate here (no behaviour change)
+- LDAP bind passwords are encrypted with a dedicated `ldap_sync_key` Docker secret (separate from `jwt_secret`)
+
+#### Database schema
+- **`db/migrate_ldap_sync.sql`** — new idempotent migration; adds `ldap_sync_config`, `ldap_sync_group_mappings`, `ldap_sync_log` tables; adds `sync_source`, `sync_config_id`, `locally_overridden` columns to `user_roles`; adds partial index on synced-user rows; inserts `('superadmin', 'ldap-sync', 'admin')` RBAC row
+
+#### Infrastructure
+- **`ldap_sync_worker/`** — new Docker service (`python:3.11-slim`, `python-ldap`, `psycopg2-binary`, `cryptography`)
+- **`docker-compose.yml`** — `ldap_sync_worker` service added with `db_password`, `ldap_admin_password`, `ldap_sync_key` secrets; `ldap_sync_key` secret file referenced
+- **`docker-compose.prod.yml`** — `ldap_sync_worker` image reference added
+- **`deployment.ps1`** — `ldap_sync_key` generation step added (32-byte cryptographic random, written to `secrets/ldap_sync_key`)
+- **`startup_prod.ps1`** — `secrets/ldap_sync_key` added to preflight secret-files check
+
+---
+
 ## [1.78.0] - 2026-03-23
 
 ### Security — Authentication & Middleware Hardening

@@ -100,6 +100,9 @@ from migration_routes import router as migration_router
 # Admin: Control Plane & Region management
 from cluster_routes import router as cluster_router
 
+# Admin: External LDAP / AD Identity Federation
+from ldap_sync_routes import router as ldap_sync_router
+
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -345,6 +348,9 @@ app.include_router(graph_router)
 app.include_router(ticket_router)
 app.include_router(migration_router)
 app.include_router(cluster_router)
+# RBAC enforced at route level via _require_superadmin() — do NOT add
+# "ldap-sync" to resource_map (first-segment extraction would find "admin").
+app.include_router(ldap_sync_router)
 
 # Public endpoint: tells the UI whether this instance runs in demo mode
 @app.get("/demo-mode")

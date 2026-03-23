@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.78.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.79.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -102,6 +102,7 @@ Worker   Worker   Worker    Worker    Worker         Worker
 | Support Ticket System (SLA, auto-tickets, approvals) | ✅ Production |
 | Container Restart Alerting | ✅ Production |
 | Multi-Region & Multi-Cluster Support | ✅ Production |
+| External LDAP / AD Identity Federation | ✅ Production |
 | Kubernetes Deployment | ⬜ Planned |
 | Tenant Self-Service Portal | ⬜ Planned |
 
@@ -435,7 +436,7 @@ A 15-minute explainer video walking through the UI and key features:
 - **Feedback & History**: Per-answer thumbs up/down, conversation history persisted per user with automatic trimming
 - **Automatic Fallback**: If the LLM backend fails, seamlessly falls back to the built-in intent engine
 
-### 🌐 Multi-Region & Multi-Cluster Support *(v1.73.0 → v1.78.0)*
+### 🌐 Multi-Region & Multi-Cluster Support *(v1.73.0 → v1.79.0)*
 
 **For MSPs managing multiple Platform9 customers or data centres, this is the operational core.**
 
@@ -758,7 +759,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.78.0](CHANGELOG.md) — March 2026
+**Current version:** [v1.79.0](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -902,6 +903,17 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.79.0 — External LDAP / AD Identity Federation
+
+- **External LDAP / AD sync** — configure one or more external LDAP or Active Directory sources; the `ldap_sync_worker` periodically imports users and applies group-to-role mappings automatically
+- **Credential passthrough** — externally-synced users authenticate with their origin LDAP password (no local copy stored); `auth.py` transparently binds to the source directory on login
+- **Group-to-role mapping** — map external LDAP groups to pf9-mngt roles (`viewer`, `operator`, `admin`, `technical`); `superadmin` cannot be assigned via sync by design
+- **CRUD config API** — 10 new superadmin-only endpoints: create/update/delete configs, test connectivity, dry-run preview, manual sync trigger, paginated sync logs
+- **SSRF protection** — host validation blocks RFC-1918, loopback, link-local, and ULA targets before any LDAP connection is opened
+- **Fernet encryption** — bind passwords encrypted at rest with a dedicated `ldap_sync_key` Docker secret; shared `crypto_helper.py` utility used by both LDAP sync and cluster registry
+- **Session revocation** — when a synced user is deactivated or removed from all mapped groups, their active sessions are invalidated immediately
+- **`db/migrate_ldap_sync.sql`** — idempotent migration adds 3 new tables + 3 `user_roles` columns
 
 ### v1.78.0 — Security & Auth Hardening
 
@@ -1073,4 +1085,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.78.0 | **Last Updated**: March 23, 2026
+**Project Status**: Production Ready | **Version**: 1.79.0 | **Last Updated**: March 24, 2026

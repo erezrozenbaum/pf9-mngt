@@ -123,6 +123,10 @@ jobs:
             context: .
             dockerfile: snapshots/Dockerfile
             platforms: linux/amd64,linux/arm64
+          - service: ldap-sync-worker
+            context: ./ldap_sync_worker
+            dockerfile: ldap_sync_worker/Dockerfile
+            platforms: linux/amd64,linux/arm64
 
     steps:
       - name: Checkout code

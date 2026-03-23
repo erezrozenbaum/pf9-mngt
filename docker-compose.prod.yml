@@ -109,3 +109,6 @@ services:
   snapshot_worker:
     image: ghcr.io/erezrozenbaum/pf9-mngt-snapshot-worker:${PF9_IMAGE_TAG:-latest}
 
+  ldap_sync_worker:
+    image: ghcr.io/erezrozenbaum/pf9-mngt-ldap-sync-worker:${PF9_IMAGE_TAG:-latest}
+

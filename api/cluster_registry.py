@@ -184,30 +184,18 @@ class ClusterRegistry:
 
     @staticmethod
     def _fernet_decrypt(ciphertext: str, cp_id: str) -> str:
-        """Decrypt a Fernet-encrypted password (key = SHA-256 of JWT_SECRET)."""
-        try:
-            import base64 as _b64
-            import hashlib as _hl
-            from cryptography.fernet import Fernet, InvalidToken
-            secret = os.getenv("JWT_SECRET", "") or os.getenv("JWT_SECRET_KEY", "")
-            if not secret:
-                raise RuntimeError("JWT_SECRET / JWT_SECRET_KEY is not set")
-            key = _b64.urlsafe_b64encode(_hl.sha256(secret.encode()).digest())
-            return Fernet(key).decrypt(ciphertext.encode()).decode()
-        except ImportError:
-            logger.error(
-                "Cannot decrypt password for control_plane '%s': "
-                "cryptography library not installed (pip install cryptography)",
-                cp_id,
-            )
-            return ""
-        except Exception as exc:
-            logger.error(
-                "Failed to decrypt password for control_plane '%s': %s — "
-                "JWT_SECRET may have changed since the credential was stored.",
-                cp_id, exc,
-            )
-            return ""
+        """Decrypt a Fernet-encrypted password (key = SHA-256 of JWT_SECRET).
+
+        Delegates to crypto_helper.fernet_decrypt — shared implementation used
+        by both ClusterRegistry and ldap_sync_routes.
+        """
+        from crypto_helper import fernet_decrypt
+        return fernet_decrypt(
+            f"fernet:{ciphertext}",
+            secret_name="jwt_secret",
+            env_var="JWT_SECRET_KEY",
+            context=f"control_plane_id={cp_id}",
+        )
 
     def _bootstrap_from_env(self) -> None:
         """

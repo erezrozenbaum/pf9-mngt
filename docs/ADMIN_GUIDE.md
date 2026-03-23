@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.78.0  
+**Version**: 1.79.0  
 **Last Updated**: March 23, 2026  
 **Audience**: System administrators and platform operators
 
@@ -577,6 +577,17 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.79.0 — External LDAP / AD Identity Federation (✅ Complete)
+
+- **`ldap_sync_worker`** — new background Docker service that imports users from external LDAP / AD servers and applies group-to-role mappings on a configurable poll interval; `pg_try_advisory_lock` prevents concurrent runs; 3 consecutive failures generate a notification
+- **10 new `/admin/ldap-sync` endpoints** — superadmin-only CRUD for sync configs, live test (step-by-step diagnostics), dry-run preview (first 50 users + derived roles), manual trigger, and paginated sync logs; `/test` and `/preview` rate-limited to 10 req/min
+- **Credential passthrough** — `auth.py` detects externally-synced users and validates their password directly against the origin LDAP server; no local password stored; on success the standard JWT / session flow continues
+- **Group-to-role mapping** — external LDAP groups mapped to pf9-mngt roles via `ldap_sync_group_mappings`; `superadmin` assignment blocked at DB level (CHECK constraint); deactivated users have active sessions revoked immediately
+- **`api/crypto_helper.py`** — shared `fernet_encrypt()` / `fernet_decrypt()` module; `cluster_registry.py` refactored to delegate here; LDAP bind passwords encrypted with dedicated `ldap_sync_key` Docker secret
+- **SSRF protection** — LDAP host validated against RFC-1918, loopback, link-local, and ULA blocklist before any outbound connection
+- **`db/migrate_ldap_sync.sql`** — idempotent migration: `ldap_sync_config`, `ldap_sync_group_mappings`, `ldap_sync_log` tables; `user_roles` gets `sync_source`, `sync_config_id`, `locally_overridden` columns + indexes
+- **`docker-compose.yml`** — `ldap_sync_worker` service + `ldap_sync_key` secret added; `deployment.ps1` generates 32-byte random key; `startup_prod.ps1` validates the secret file at startup
 
 ### v1.78.0 — Security & Auth Hardening (✅ Complete)
 

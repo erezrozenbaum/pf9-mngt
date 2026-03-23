@@ -81,7 +81,7 @@ Write-Host "✓ Environment validated" -ForegroundColor Green
 
 # ── Step 0b: Warn if secrets/ files are still empty ────────────────────────
 Write-Host "0b. Checking secrets/ files..." -ForegroundColor Yellow
-$secretFiles = @("secrets/db_password", "secrets/ldap_admin_password", "secrets/pf9_password", "secrets/jwt_secret")
+$secretFiles = @("secrets/db_password", "secrets/ldap_admin_password", "secrets/pf9_password", "secrets/jwt_secret", "secrets/ldap_sync_key")
 $emptySecrets = @()
 foreach ($f in $secretFiles) {
     if (-not (Test-Path $f) -or (Get-Item $f).Length -eq 0) { $emptySecrets += $f }

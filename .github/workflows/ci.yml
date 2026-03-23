@@ -217,6 +217,8 @@ jobs:
           grep '^LDAP_ADMIN_PASSWORD=' .env | cut -d'=' -f2- > secrets/ldap_admin_password
           grep '^PF9_PASSWORD='        .env | cut -d'=' -f2- > secrets/pf9_password
           grep '^JWT_SECRET_KEY='      .env | cut -d'=' -f2- > secrets/jwt_secret
+          # ldap_sync_key: generate a fresh random key for this CI run
+          python3 -c "import os,base64; open('secrets/ldap_sync_key','w').write(base64.urlsafe_b64encode(os.urandom(32)).decode())"
 
       - name: Build and start stack
         run: docker compose up --build -d

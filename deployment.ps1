@@ -455,6 +455,17 @@ if (-not (Test-Path ".env")) {
     Set-EnvValue "JWT_SECRET_KEY" $jwtSecret
     Write-Success "Generated JWT secret key"
 
+    # --- LDAP Sync Encryption Key ---
+    $ldapSyncKeyBytes = New-Object byte[] 32
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($ldapSyncKeyBytes)
+    $ldapSyncKey = [Convert]::ToBase64String($ldapSyncKeyBytes)
+    Set-EnvValue "LDAP_SYNC_KEY" $ldapSyncKey
+    # Also write to secrets/ file so Docker Secrets can read it at runtime
+    $ldapSyncKeyDir = ".\secrets"
+    if (-not (Test-Path $ldapSyncKeyDir)) { New-Item -ItemType Directory -Force -Path $ldapSyncKeyDir | Out-Null }
+    $ldapSyncKey | Set-Content ".\secrets\ldap_sync_key" -NoNewline
+    Write-Success "Generated LDAP sync encryption key (secrets/ldap_sync_key)"
+
     Write-Host ""
     # --- LDAP Demo Users ---
     Write-Host "── LDAP Demo User Passwords (viewer/operator) ──" -ForegroundColor Yellow

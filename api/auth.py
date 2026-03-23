@@ -98,12 +98,49 @@ class LDAPAuthenticator:
         self.user_dn = LDAP_USER_DN
 
     def authenticate(self, username: str, password: str) -> bool:
-        """Authenticate user against LDAP"""
+        """Authenticate user against LDAP.
+
+        For users with sync_source='external_ldap' the credential is validated
+        against their originating directory (passthrough auth).  All other users
+        authenticate against the internal OpenLDAP instance unchanged.
+        """
         try:
             # Special case for default admin during setup (only if password is configured)
             if DEFAULT_ADMIN_PASSWORD and username == DEFAULT_ADMIN_USER and hmac.compare_digest(password, DEFAULT_ADMIN_PASSWORD):
                 return True
-                
+
+            # ── External LDAP passthrough ───────────────────────────────────
+            # One DB round-trip (JOIN) per external-user login.  Local users pay
+            # zero extra cost because the query returns nothing for them.
+            try:
+                with get_connection() as _conn:
+                    with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
+                        _cur.execute(
+                            """
+                            SELECT lsc.host, lsc.port, lsc.use_tls, lsc.use_starttls,
+                                   lsc.verify_tls_cert, lsc.ca_cert_pem,
+                                   lsc.bind_password_enc, lsc.bind_dn,
+                                   lsc.base_dn, lsc.user_attr_uid, lsc.id AS config_id
+                            FROM user_roles ur
+                            JOIN ldap_sync_config lsc
+                                ON lsc.id = ur.sync_config_id AND lsc.is_enabled = TRUE
+                            WHERE ur.username = %s AND ur.sync_source = 'external_ldap'
+                            """,
+                            (username,),
+                        )
+                        _ext_cfg = _cur.fetchone()
+
+                if _ext_cfg:
+                    return self._bind_external_ldap(dict(_ext_cfg), username, password)
+            except Exception as _exc:
+                # DB lookup failure must not silently fall through to internal — raise 503.
+                logger.error("[AUTH] External LDAP config lookup failed for %s: %s", username, _exc)
+                raise HTTPException(
+                    status_code=503,
+                    detail="Authentication service temporarily unavailable",
+                )
+            # ── End external passthrough ────────────────────────────────────
+
             # Connect to LDAP server
             
             # Construct user DN - try both cn and uid formats
@@ -148,6 +185,87 @@ class LDAPAuthenticator:
         except Exception as e:
             logger.error("[AUTH] Unexpected error for %s: %s", username, e)
             return False
+
+    def _bind_external_ldap(self, cfg: Dict[str, Any], username: str, password: str) -> bool:
+        """Authenticate *username* against an external LDAP/AD directory.
+
+        Called only when user_roles.sync_source = 'external_ldap'.
+
+        Returns True on success, False on INVALID_CREDENTIALS.
+        Raises HTTP 503 on connectivity failure, timeout, or decryption error.
+        """
+        from crypto_helper import fernet_decrypt as _fernet_decrypt
+
+        config_id = cfg.get("config_id", "unknown")
+
+        # Decrypt service-account bind password
+        svc_password = _fernet_decrypt(
+            cfg["bind_password_enc"],
+            secret_name="ldap_sync_key",
+            env_var="LDAP_SYNC_KEY",
+            context=f"config_id={config_id}",
+        )
+        if not svc_password:
+            logger.error("[AUTH] Cannot decrypt external LDAP password for config %s", config_id)
+            raise HTTPException(status_code=503, detail="Authentication service configuration error")
+
+        scheme = "ldaps" if cfg.get("use_tls") and not cfg.get("use_starttls") else "ldap"
+        uri = f"{scheme}://{cfg['host']}:{cfg['port']}"
+
+        try:
+            conn = ldap.initialize(uri)
+            conn.protocol_version = ldap.VERSION3
+            conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
+            conn.set_option(ldap.OPT_REFERRALS, 0)
+
+            if not cfg.get("verify_tls_cert", True):
+                conn.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
+                conn.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
+            if cfg.get("use_starttls"):
+                conn.start_tls_s()
+
+            # Service-account bind to locate the user's full DN
+            conn.simple_bind_s(cfg["bind_dn"], svc_password)
+
+            uid_attr = cfg.get("user_attr_uid", "sAMAccountName")
+            safe_uid = ldap.filter.escape_filter_chars(username)
+            results = conn.search_s(
+                cfg["base_dn"], ldap.SCOPE_SUBTREE,
+                f"({uid_attr}={safe_uid})", ["dn"],
+            )
+            conn.unbind_s()
+
+            if not results:
+                logger.warning("[AUTH] External LDAP: user '%s' not found in config %s", username, config_id)
+                return False
+
+            user_dn = results[0][0]
+
+            # End-user simple bind — validates the supplied password
+            user_conn = ldap.initialize(uri)
+            user_conn.protocol_version = ldap.VERSION3
+            user_conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
+            user_conn.set_option(ldap.OPT_REFERRALS, 0)
+            if not cfg.get("verify_tls_cert", True):
+                user_conn.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
+                user_conn.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
+            if cfg.get("use_starttls"):
+                user_conn.start_tls_s()
+
+            user_conn.simple_bind_s(user_dn, password)
+            user_conn.unbind_s()
+            logger.debug("[AUTH] External LDAP auth successful for %s (config %s)", username, config_id)
+            return True
+
+        except ldap.INVALID_CREDENTIALS:
+            logger.warning("[AUTH] External LDAP invalid credentials for %s (config %s)", username, config_id)
+            return False
+        except (ldap.SERVER_DOWN, ldap.TIMEOUT) as exc:
+            logger.error("[AUTH] External LDAP unreachable for config %s: %s", config_id, exc)
+            raise HTTPException(status_code=503, detail="External authentication server is unreachable")
+        except ldap.LDAPError as exc:
+            logger.error("[AUTH] External LDAP error for %s (config %s): %s", username, config_id, exc)
+            raise HTTPException(status_code=503, detail="External authentication server error")
 
     def get_user_info(self, username: str) -> Dict[str, Any]:
         """Get user information from LDAP"""
