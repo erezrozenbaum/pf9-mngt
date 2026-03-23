@@ -26,6 +26,12 @@ COPY db/ ./db/
 # Sorting ensures a deterministic order; all statements are idempotent (IF NOT EXISTS / IF EXISTS).
 RUN ls db/migrate_*.sql | sort | xargs cat > run_migration_sql.sql
 
+# Ensure runtime-writable directories exist before ownership transfer.
+# Named volumes (app_logs → /app/logs) are initialised from the image layer;
+# if the directory is absent the volume is created root-owned and UID 1000
+# cannot write to it (logging.FileHandler fails → container never healthy).
+RUN mkdir -p /app/logs /app/static
+
 # Transfer ownership to UID 1000 so the pod (runAsUser: 1000) can write /app/static and other runtime dirs.
 RUN chown -R 1000:1000 /app
 USER 1000

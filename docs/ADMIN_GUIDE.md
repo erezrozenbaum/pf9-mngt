@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.3  
+**Version**: 1.82.4  
 **Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
@@ -578,6 +578,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.82.4 — CI Health-Check Fix (Named Volume Permissions) (✅ Complete)
+
+- `api/Dockerfile` — `RUN mkdir -p /app/logs /app/static` added before `chown`; named volume `app_logs` was root-owned (directory absent in image), `logging.FileHandler` failed at import time → gunicorn never healthy
 
 ### v1.82.3 — API + UI Non-Root Permission Fixes (✅ Complete)
 

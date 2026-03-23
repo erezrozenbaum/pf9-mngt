@@ -2,7 +2,7 @@
 
 **Version**: 3.1
 **Last Updated**: March 2026
-**Status**: Production Ready (v1.82.3)
+**Status**: Production Ready (v1.82.4)
 **Minimum Kubernetes**: 1.28
 
 ---
@@ -713,7 +713,7 @@ The CI `update-values` job clones and pushes to this private repo using `RELEASE
 
 ---
 
-*This document reflects the v1.82.3 implementation. For Docker Compose deployment, see
+*This document reflects the v1.82.4 implementation. For Docker Compose deployment, see
 [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). For the full CI/CD pipeline reference, see
 [CI_CD_GUIDE.md](CI_CD_GUIDE.md). For Sealed Secrets creation commands, see
 [k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md](../k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md).*

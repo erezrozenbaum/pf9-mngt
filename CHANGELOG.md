@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.4] - 2026-03-23
+
+### Fixed
+- **`api/Dockerfile`** — After adding `USER 1000`, the named Docker volume
+  `app_logs` (mounted at `/app/logs`) was initialised as root-owned because
+  `/app/logs` did not exist in the image. `logging.FileHandler` in
+  `structured_logging.py` was called at module load time and failed immediately
+  with `PermissionError`, crashing every gunicorn worker before the health-check
+  endpoint could respond. Fix: added `RUN mkdir -p /app/logs /app/static` before
+  the `chown` step so Docker initialises the named volume from the image layer
+  (owned by UID 1000) and the process can write its log file on startup.
+
+---
+
 ## [1.82.3] - 2026-03-23
 
 ### Fixed
