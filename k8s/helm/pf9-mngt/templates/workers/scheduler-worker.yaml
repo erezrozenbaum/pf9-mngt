@@ -102,10 +102,14 @@ spec:
               mountPath: /mnt/reports
             - name: app-logs
               mountPath: /app/logs
+            - name: monitoring-cache
+              mountPath: /app/monitoring
       volumes:
         - name: metrics-cache
           emptyDir: {}
         - name: reports
           emptyDir: {}
         - name: app-logs
+          emptyDir: {}
+        - name: monitoring-cache
           emptyDir: {}
