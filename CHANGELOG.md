@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.3] - 2026-03-23
+
+### Fixed
+- **`api/Dockerfile`** — Running as UID 1000 (`runAsNonRoot: true`) but `/app` was
+  owned by root, causing `PermissionError: '/app/static'` on every gunicorn worker
+  startup. Added `RUN chown -R 1000:1000 /app` and `USER 1000` after all `COPY`
+  statements so the runtime user can write `/app/static` (logo uploads) and other
+  runtime paths.
+- **`pf9-ui/Dockerfile.prod`** — nginx `listen 80` requires `CAP_NET_BIND_SERVICE`
+  which is not available when the pod runs as UID 1000 (`runAsNonRoot: true`).
+  Changed to `listen 8080` and `EXPOSE 8080`.
+- **`k8s/helm/pf9-mngt/templates/ui/deployment.yaml`** — `containerPort` and both
+  probe ports were still set to `5173` (Vite dev server); the production image uses
+  nginx on `8080`. Updated all three to `8080`.
+- **`k8s/helm/pf9-mngt/templates/ui/service.yaml`** — `targetPort` was `5173`;
+  updated to `8080`.
+- **`k8s/helm/pf9-mngt/values.yaml`** — `ui.service.port` was `5173`; updated to
+  `8080`.
+
+---
+
 ## [1.82.2] - 2026-03-23
 
 ### Fixed

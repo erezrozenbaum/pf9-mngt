@@ -27,7 +27,7 @@ spec:
           image: {{ include "pf9mngt.appImage" (dict "repo" .Values.ui.image.repository "svcTag" .Values.ui.image.tag "global" .Values.global) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
-            - containerPort: 5173
+            - containerPort: 8080
               name: http
           env:
             - name: VITE_API_TARGET
@@ -37,7 +37,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /
-              port: 5173
+              port: 8080
             initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 10
@@ -45,7 +45,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /
-              port: 5173
+              port: 8080
             initialDelaySeconds: 30
             periodSeconds: 15
             timeoutSeconds: 5

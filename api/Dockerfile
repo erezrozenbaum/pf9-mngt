@@ -26,6 +26,10 @@ COPY db/ ./db/
 # Sorting ensures a deterministic order; all statements are idempotent (IF NOT EXISTS / IF EXISTS).
 RUN ls db/migrate_*.sql | sort | xargs cat > run_migration_sql.sql
 
+# Transfer ownership to UID 1000 so the pod (runAsUser: 1000) can write /app/static and other runtime dirs.
+RUN chown -R 1000:1000 /app
+USER 1000
+
 # C7: 4 workers; max-requests restarts workers after 1000 requests to prevent memory leaks
 CMD ["gunicorn", "main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "300", "--graceful-timeout", "60", "--max-requests", "1000", "--max-requests-jitter", "100"]
 

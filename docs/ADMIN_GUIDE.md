@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.2  
+**Version**: 1.82.3  
 **Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
@@ -578,6 +578,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.82.3 — API + UI Non-Root Permission Fixes (✅ Complete)
+
+- `api/Dockerfile` — `chown -R 1000:1000 /app` + `USER 1000`; fixes `PermissionError: '/app/static'` when pod runs as non-root
+- `pf9-ui/Dockerfile.prod` — nginx port changed from 80 → 8080; non-root containers cannot bind ports < 1024
+- Helm UI templates — `containerPort`, probe ports, `targetPort`, `ui.service.port` corrected from 5173 (dev) to 8080 (prod nginx)
 
 ### v1.82.2 — Kubernetes Deployment Fixes (✅ Complete)
 

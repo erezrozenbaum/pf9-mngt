@@ -13,6 +13,6 @@ spec:
     app.kubernetes.io/component: ui
   ports:
     - port: {{ .Values.ui.service.port }}
-      targetPort: 5173
+      targetPort: 8080
       protocol: TCP
       name: http
