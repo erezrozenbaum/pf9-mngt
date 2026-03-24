@@ -59,6 +59,9 @@ _plans/
 improvements_plan.md
 docs_remediation_plan.md
 
+# Private deploy-repo scaffold (content belongs in pf9-mngt-deploy, not here)
+k8s/deploy-repo-init/
+
 # Logs
 *.log
 *.log.err

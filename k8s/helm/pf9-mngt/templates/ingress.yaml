@@ -10,6 +10,8 @@ metadata:
     {{- if and .Values.ingress.tls.enabled .Values.ingress.host }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer | quote }}
     {{- end }}
+    # Enable regex paths so we can match all API prefixes in a single rule
+    nginx.ingress.kubernetes.io/use-regex: "true"
     {{- range $key, $val := .Values.ingress.annotations }}
     {{ $key }}: {{ $val | quote }}
     {{- end }}
@@ -27,30 +29,28 @@ spec:
       {{- end }}
       http:
         paths:
-          # /api and /auth → FastAPI backend
-          - path: /api
-            pathType: Prefix
+          # /metrics/ → monitoring service (exact /metrics → API Prometheus endpoint below)
+          - path: /metrics/.*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: pf9-monitoring
+                port:
+                  number: {{ .Values.monitoring.service.port }}
+
+          # All FastAPI backend paths — mirrors nginx.prod.conf routing exactly.
+          # Covers: /api /auth /health /admin /settings /dashboard /notifications
+          #   /monitoring /history /audit /drift /tenant-health /user /static
+          #   /restore and every top-level resource endpoint the UI calls directly.
+          - path: /(api|auth|health|admin|settings|dashboard|notifications|monitoring|history|audit|drift|tenant-health|user|static|restore|metrics|domains|tenants|projects|servers|volumes|volumes-with-metadata|snapshots|networks|subnets|ports|floatingips|flavors|security-groups|security-group-rules|images|hypervisors|keypairs|host-aggregates|volume-types|server-groups|project-quotas|users|roles|user-activity-summary|role-assignments|os-distribution|demo-mode|docs|redoc|openapi\.json|system-metadata-summary|export)(/.*)?
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: pf9-api
                 port:
                   number: {{ .Values.api.service.port }}
-          - path: /auth
-            pathType: Prefix
-            backend:
-              service:
-                name: pf9-api
-                port:
-                  number: {{ .Values.api.service.port }}
-          # /health → FastAPI health endpoint (also useful for uptime monitors)
-          - path: /health
-            pathType: Prefix
-            backend:
-              service:
-                name: pf9-api
-                port:
-                  number: {{ .Values.api.service.port }}
-          # Everything else → React UI
+
+          # Everything else → React SPA
           - path: /
             pathType: Prefix
             backend:

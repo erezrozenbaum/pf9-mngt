@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.6  
+**Version**: 1.82.7  
 **Last Updated**: March 24, 2026  
 **Audience**: System administrators and platform operators
 
@@ -578,6 +578,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.82.7 — Kubernetes API Routing + Admin Role Fixes (✅ Complete)
+
+- Helm `ingress.yaml` — regex routing rule added; all FastAPI paths now reach the API (was returning HTML for `/dashboard/`, `/os-distribution`, resource endpoints, etc.); `/metrics/.*` → monitoring service
+- `api/auth.py` — `initialize_default_admin()` force-updates role to superadmin on every startup; stale `viewer` row no longer blocks admin access
 
 ### v1.82.6 — Kubernetes Production Login Fixes (✅ Complete)
 

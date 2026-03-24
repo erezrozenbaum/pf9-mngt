@@ -756,8 +756,11 @@ def initialize_default_admin():
     """Initialize default admin user if it doesn't exist"""
     try:
         if ENABLE_AUTHENTICATION and DEFAULT_ADMIN_USER and DEFAULT_ADMIN_PASSWORD:
+            # Always force-set to superadmin — ensures role is correct even if a
+            # previous DB row was created with the wrong role (e.g. "viewer") during
+            # an earlier startup where DEFAULT_ADMIN_PASSWORD was not yet injected.
             set_user_role(DEFAULT_ADMIN_USER, "superadmin", "system")
-            logger.info("Default admin user '%s' initialized", DEFAULT_ADMIN_USER)
+            logger.info("Default admin user '%s' initialized as superadmin", DEFAULT_ADMIN_USER)
     except Exception as e:
         logger.error("Error initializing default admin: %s", e)
 

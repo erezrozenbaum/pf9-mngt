@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.7] - 2026-03-24
+
+### Fixed
+- **`k8s/helm/pf9-mngt/templates/ingress.yaml`** — Kubernetes ingress was only
+  routing `/api`, `/auth`, and `/health` to the FastAPI backend. The React UI
+  makes direct calls to dozens of other paths (`/dashboard/`, `/os-distribution`,
+  `/domains`, `/tenants`, `/snapshots`, `/servers`, `/volumes`, `/monitoring/`,
+  etc.) that the Docker Compose nginx proxies to the API but the ingress was
+  sending to the UI nginx instead — returning `index.html` (HTML) for every API
+  call, causing `SyntaxError: Unexpected token '<'` in the browser. Fixed by
+  adding `nginx.ingress.kubernetes.io/use-regex: "true"` and a single regex
+  path rule that matches all FastAPI path prefixes (mirroring `nginx.prod.conf`
+  exactly). Added `/metrics/.*` → monitoring service routing.
+- **`api/auth.py`** — `initialize_default_admin()` was a no-op if a `user_roles`
+  row for the admin user already existed with role `viewer` (written by an
+  earlier startup before `DEFAULT_ADMIN_PASSWORD` was injected). Changed to
+  always force-update the role to `superadmin` on every startup when
+  `DEFAULT_ADMIN_PASSWORD` is set, ensuring the admin always has full access.
+
+---
+
 ## [1.82.6] - 2026-03-24
 
 ### Fixed
