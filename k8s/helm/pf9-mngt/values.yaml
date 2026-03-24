@@ -338,9 +338,9 @@ workers:
     metricsEnabled: "true"
     metricsIntervalSeconds: "60"
     rvtoolsEnabled: "true"
-    rvtoolsIntervalMinutes: "0"
+    rvtoolsIntervalMinutes: "60"
     rvtoolsScheduleTime: "03:00"
-    rvtoolsRunOnStart: "false"
+    rvtoolsRunOnStart: "true"
     resources:
       limits:
         cpu: "1000m"

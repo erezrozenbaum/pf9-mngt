@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.8] - 2026-03-24
+
+### Fixed
+- **`k8s/helm/pf9-mngt/values.yaml`** — Scheduler worker had incorrect default env vars that prevented RVTools inventory from ever running. `rvtoolsIntervalMinutes` was `"0"` (daily-only mode, no interval) and `rvtoolsRunOnStart` was `"false"` — both override the `.env` file values in Kubernetes. Fixed defaults to `rvtoolsIntervalMinutes: "60"` (run every 60 minutes) and `rvtoolsRunOnStart: "true"` (run immediately on pod start). Result: scheduler worker now syncs OpenStack inventory on startup and every 60 minutes as intended.
+
+---
+
 ## [1.82.7] - 2026-03-24
 
 ### Fixed
