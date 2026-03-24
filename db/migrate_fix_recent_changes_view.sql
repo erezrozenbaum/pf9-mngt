@@ -18,69 +18,37 @@ SELECT
     COALESCE(modified_at, created_at, deleted_at) AS recorded_at
 FROM (
     SELECT
-        'server' AS resource_type,
-        s.id AS resource_id,
-        s.name AS resource_name,
-        s.project_id,
-        p.name AS project_name,
-        d.id AS domain_id,
-        d.name AS domain_name,
+        'server'::text    AS resource_type,
+        s.id              AS resource_id,
+        s.name            AS resource_name,
+        s.project_id      AS project_id,
+        p.name            AS project_name,
+        d.id              AS domain_id,
+        d.name            AS domain_name,
         s.status,
         s.created_at,
-        s.last_seen_at AS modified_at,
+        s.last_seen_at    AS modified_at,
         NULL::TIMESTAMPTZ AS deleted_at,
-        'active' AS change_type
+        'active'::text    AS change_type
     FROM servers s
     LEFT JOIN projects p ON s.project_id = p.id
     LEFT JOIN domains d ON p.domain_id = d.id
     UNION ALL
-    SELECT
-        'volume',
-        v.id,
-        v.name,
-        v.project_id,
-        p.name,
-        d.id,
-        d.name,
-        v.status,
-        v.created_at,
-        v.last_seen_at,
-        NULL,
-        'active'
+    SELECT 'volume'::text, v.id, v.name, v.project_id, p.name, d.id, d.name,
+        v.status, v.created_at, v.last_seen_at, NULL::TIMESTAMPTZ, 'active'::text
     FROM volumes v
     LEFT JOIN projects p ON v.project_id = p.id
     LEFT JOIN domains d ON p.domain_id = d.id
     UNION ALL
-    SELECT
-        'snapshot',
-        s.id,
-        s.name,
-        s.project_id,
-        p.name,
-        d.id,
-        d.name,
-        s.status,
-        s.created_at,
-        s.last_seen_at,
-        NULL,
-        'active'
+    SELECT 'snapshot'::text, s.id, s.name, s.project_id, p.name, d.id, d.name,
+        s.status, s.created_at, s.last_seen_at, NULL::TIMESTAMPTZ, 'active'::text
     FROM snapshots s
     LEFT JOIN projects p ON s.project_id = p.id
     LEFT JOIN domains d ON p.domain_id = d.id
     UNION ALL
-    SELECT
-        dh.resource_type,
-        dh.resource_id,
-        dh.resource_name,
-        NULL AS project_id,
-        dh.project_name,
-        NULL AS domain_id,
-        dh.domain_name,
-        NULL AS status,
-        NULL AS created_at,
-        NULL AS modified_at,
-        dh.deleted_at,
-        'deleted'
+    SELECT dh.resource_type, dh.resource_id, dh.resource_name,
+        NULL::text, dh.project_name, NULL::text, dh.domain_name,
+        NULL::text, NULL::TIMESTAMPTZ, NULL::TIMESTAMPTZ, dh.deleted_at, 'deleted'::text
     FROM deletions_history dh
 ) _base;
 

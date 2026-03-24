@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.13] - 2026-03-24
+
+### Fixed
+- **`db/init.sql`** — Fixed `v_recent_changes` subquery: added explicit `AS` column aliases on the first UNION ALL branch (`s.id AS resource_id`, `p.name AS project_name`, etc.). PostgreSQL derives column names from the first branch only; without aliases the outer SELECT could not reference `resource_id`, `project_name`, `domain_id` by name, causing `ERROR: column does not exist`.
+- **`db/migrate_fix_recent_changes_view.sql`** — Same alias fix applied to the migration file.
+
+---
+
 ## [1.82.12] - 2026-03-24
 
 ### Fixed
