@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.4  
+**Version**: 1.82.5  
 **Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
@@ -578,6 +578,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.82.5 — Kubernetes Probe Host Header Fix (✅ Complete)
+
+- Helm `api/deployment.yaml` — `httpHeaders: Host: localhost` added to `httpGet` liveness/readiness probes; Kubernetes sends pod IP as `Host` header → `TrustedHostMiddleware` returned 400 → restart loop; probes now pass a trusted host
 
 ### v1.82.4 — CI Health-Check Fix (Named Volume Permissions) (✅ Complete)
 

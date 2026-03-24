@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.5] - 2026-03-24
+
+### Fixed
+- **`k8s/helm/pf9-mngt/templates/api/deployment.yaml`** — Kubernetes `httpGet`
+  liveness and readiness probes send the pod IP as the `Host` header. Starlette's
+  `TrustedHostMiddleware` only permits `localhost`, `127.0.0.1`, `pf9_api`, and
+  `pf9_ui`, so every probe returned **400** and the pod restarted in a loop. Fixed
+  by adding `httpHeaders: [{name: Host, value: localhost}]` to both probes so the
+  middleware receives a trusted host name instead of the pod IP.
+
+---
+
 ## [1.82.4] - 2026-03-23
 
 ### Fixed
