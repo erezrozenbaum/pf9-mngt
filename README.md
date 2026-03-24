@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.82.5-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.82.6-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -759,7 +759,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.82.5](CHANGELOG.md) — March 2026
+**Current version:** [v1.82.6](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -903,6 +903,12 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.82.6 — Kubernetes Production Login Fixes
+
+- **`api/main.py`** — `DEFAULT_ADMIN_USER` bypass account now skips MFA check entirely; a missing `user_mfa` table (fresh cluster) was causing a 503 "MFA service unavailable" error even with the correct password.
+- **Helm `api/deployment.yaml`** — Added `APP_ENV`, `PF9_ALLOWED_ORIGINS` (derived from `ingress.host`), and `DEFAULT_ADMIN_PASSWORD` (from `pf9-admin-credentials` Secret); login was blocked by "Invalid host header" 400 and missing admin password.
+- **Helm `ingress.yaml`** — TLS/cert-manager block guarded so chart renders correctly when `ingress.host` is empty.
 
 ### v1.82.5 — Kubernetes Probe Host Header Fix
 
@@ -1136,4 +1142,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.82.5 | **Last Updated**: March 2026
+**Project Status**: Production Ready | **Version**: 1.82.6 | **Last Updated**: March 2026

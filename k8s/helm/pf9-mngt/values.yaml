@@ -35,6 +35,7 @@ secrets:
   dbCredentials: pf9-db-credentials      # key: password
   jwtSecret: pf9-jwt-secret              # key: jwt-secret-key
   ldapSecrets: pf9-ldap-secrets          # keys: admin-password, config-password, readonly-password, sync-key
+  adminCredentials: pf9-admin-credentials # key: admin-password
   smtpSecrets: pf9-smtp-secrets          # key: password
   pf9Credentials: pf9-pf9-credentials    # key: password
   snapshotCreds: pf9-snapshot-creds      # keys: password-key, user-password-encrypted, service-user-password
@@ -97,6 +98,7 @@ api:
     repository: pf9-mngt-api
     tag: ""         # "" → falls back to global.imageTag
   replicaCount: 1
+  allowedOrigins: ""
   resources:
     limits:
       cpu: "1500m"

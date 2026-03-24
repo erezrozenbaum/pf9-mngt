@@ -7,7 +7,7 @@ metadata:
   labels:
     {{- include "pf9mngt.labels" . | nindent 4 }}
   annotations:
-    {{- if .Values.ingress.tls.enabled }}
+    {{- if and .Values.ingress.tls.enabled .Values.ingress.host }}
     cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer | quote }}
     {{- end }}
     {{- range $key, $val := .Values.ingress.annotations }}
@@ -15,14 +15,16 @@ metadata:
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className | quote }}
-  {{- if .Values.ingress.tls.enabled }}
+  {{- if and .Values.ingress.tls.enabled .Values.ingress.host }}
   tls:
     - hosts:
         - {{ .Values.ingress.host | quote }}
       secretName: {{ .Values.ingress.tls.secretName | quote }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host | quote }}
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
       http:
         paths:
           # /api and /auth → FastAPI backend

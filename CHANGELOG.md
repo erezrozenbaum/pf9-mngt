@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.6] - 2026-03-24
+
+### Fixed
+- **`api/main.py`** — The `DEFAULT_ADMIN_USER` emergency bypass account was
+  exempt from LDAP but still hit the MFA check, which queries the `user_mfa`
+  table. In a fresh Kubernetes cluster (or when the database is not yet fully
+  migrated), that query throws an exception; the fail-closed handler returned
+  503 "MFA service temporarily unavailable" even though the password was
+  correct. Added `_is_local_admin` guard so the MFA block is skipped entirely
+  for the local admin bypass account.
+- **`k8s/helm/pf9-mngt/templates/api/deployment.yaml`** — Added three missing
+  environment variables that were required for a functional Kubernetes
+  deployment:
+  - `APP_ENV=production` (hardcoded) — enables `TrustedHostMiddleware` to
+    accept external hostnames.
+  - `PF9_ALLOWED_ORIGINS` — derived from `ingress.host` (or overridden via
+    `api.allowedOrigins`); prevents "Invalid host header" 400 errors on login.
+  - `DEFAULT_ADMIN_PASSWORD` — read from the `pf9-admin-credentials` Kubernetes
+    Secret; without it the local admin bypass silently skipped and all logins
+    fell through to LDAP.
+- **`k8s/helm/pf9-mngt/values.yaml`** — Added `api.allowedOrigins: ""`
+  (override for `PF9_ALLOWED_ORIGINS`) and
+  `secrets.adminCredentials: pf9-admin-credentials` (new Secret reference).
+- **`k8s/helm/pf9-mngt/templates/ingress.yaml`** — TLS block and cert-manager
+  annotation are now guarded by `{{- if and .Values.ingress.tls.enabled
+  .Values.ingress.host }}` so the chart renders a valid Ingress even when
+  `ingress.host` is left empty (IP-only access).
+
+---
+
 ## [1.82.5] - 2026-03-24
 
 ### Fixed

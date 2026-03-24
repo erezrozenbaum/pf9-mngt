@@ -30,6 +30,10 @@ spec:
             - containerPort: 8000
               name: http
           env:
+            {{- $allowedOrigins := .Values.api.allowedOrigins }}
+            {{- if and (not $allowedOrigins) .Values.ingress.host }}
+            {{- $allowedOrigins = printf "https://%s,http://%s" .Values.ingress.host .Values.ingress.host }}
+            {{- end }}
             # --- Database ---
             - name: PF9_DB_HOST
               value: {{ .Values.db.host | quote }}
@@ -97,11 +101,22 @@ spec:
             # --- Logging ---
             - name: LOG_FILE
               value: {{ .Values.api.logFile | quote }}
+            - name: APP_ENV
+              value: "production"
+            {{- if $allowedOrigins }}
+            - name: PF9_ALLOWED_ORIGINS
+              value: {{ $allowedOrigins | quote }}
+            {{- end }}
             # --- Authentication ---
             - name: ENABLE_AUTHENTICATION
               value: {{ .Values.api.enableAuthentication | quote }}
             - name: DEFAULT_ADMIN_USER
               value: {{ .Values.api.defaultAdminUser | quote }}
+            - name: DEFAULT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.adminCredentials }}
+                  key: admin-password
             # --- Demo / feature flags ---
             - name: DEMO_MODE
               value: {{ .Values.api.demoMode | quote }}

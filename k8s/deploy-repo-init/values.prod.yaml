@@ -1,0 +1,46 @@
+# ===========================================================================
+# values.prod.yaml — production overrides for pf9-mngt
+#
+# Lives in the PRIVATE repo: pf9-mngt-deploy
+# Auto-updated by CI (release.yml job: update-values) on every release.
+#
+# Contains ONLY image tags and environment-specific host/TLS settings.
+# NO SECRETS belong here — all credentials come from Sealed Secrets.
+# ===========================================================================
+
+global:
+  imageTag: v1.82.1    # updated automatically by CI
+
+ingress:
+  host: pf9-mngt.example.com    # replace with your public DNS name
+  tls:
+    enabled: true
+    secretName: pf9-mngt-tls
+    clusterIssuer: letsencrypt-prod
+
+# Storage class for all PVCs (NFS provisioner installed on the cluster)
+postgresql:
+  persistence:
+    storageClass: nfs-pf9
+
+ldapService:
+  persistence:
+    data:
+      storageClass: nfs-pf9
+    config:
+      storageClass: nfs-pf9
+
+workers:
+  backupWorker:
+    persistence:
+      storageClass: nfs-pf9
+
+# reports/ PVC shared between scheduler-worker (write) and api (read)
+# storageClass nfs-pf9 supports ReadWriteMany — both pods can mount it
+schedulerWorker:
+  reportsStorageClass: nfs-pf9
+
+# Scheduler worker output dir (RVTools Excel files)
+api:
+  env:
+    PF9_OUTPUT_DIR: /mnt/reports

@@ -30,10 +30,11 @@ from db_pool import get_connection, close_pool
 
 # Authentication imports
 from auth import (
-    ldap_auth, create_access_token, get_current_user, require_authentication, 
+    ldap_auth, create_access_token, get_current_user, require_authentication,
     require_permission, set_user_role, get_user_role, log_auth_event,
     create_user_session, invalidate_user_session, initialize_default_admin,
     ENABLE_AUTHENTICATION, JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
+    DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASSWORD,
     Token, LoginRequest, User, UserRole
 )
 from auth import has_permission, verify_token
@@ -1047,38 +1048,46 @@ async def login(request: Request, login_data: LoginRequest):
     role = get_user_role(login_data.username)
     
     # ── MFA check ──────────────────────────────────────────────────
+    # The local admin bypass account is exempt from MFA — it is intended
+    # for emergency access when LDAP / MFA service are unavailable.
+    _is_local_admin = bool(
+        DEFAULT_ADMIN_PASSWORD
+        and login_data.username == DEFAULT_ADMIN_USER
+    )
+
     # If the user has MFA enabled, return a short-lived mfa_token
     # instead of the real JWT.  The client must call POST /auth/mfa/verify.
-    try:
-        from mfa_routes import _get_mfa_record
-        mfa_record = _get_mfa_record(login_data.username)
-        if mfa_record and mfa_record.get("is_enabled"):
-            # Issue a short-lived token that can only be used for MFA verification
-            mfa_expires = timedelta(minutes=5)
-            mfa_token = create_access_token(
-                data={"sub": login_data.username, "role": role, "mfa_pending": True},
-                expires_delta=mfa_expires,
+    if not _is_local_admin:
+        try:
+            from mfa_routes import _get_mfa_record
+            mfa_record = _get_mfa_record(login_data.username)
+            if mfa_record and mfa_record.get("is_enabled"):
+                # Issue a short-lived token that can only be used for MFA verification
+                mfa_expires = timedelta(minutes=5)
+                mfa_token = create_access_token(
+                    data={"sub": login_data.username, "role": role, "mfa_pending": True},
+                    expires_delta=mfa_expires,
+                )
+                log_auth_event(login_data.username, "mfa_challenge", True, client_ip, user_agent)
+                return {
+                    "access_token": mfa_token,
+                    "token_type": "bearer",
+                    "expires_in": 300,
+                    "expires_at": (datetime.now(timezone.utc) + mfa_expires).isoformat() + "Z",
+                    "mfa_required": True,
+                    "user": {
+                        "username": login_data.username,
+                        "role": role,
+                        "is_active": True,
+                    },
+                }
+        except Exception as exc:
+            # MFA check failed — fail closed to prevent MFA bypass
+            logger.error("MFA check error for %s: %s", login_data.username, exc)
+            raise HTTPException(
+                status_code=503,
+                detail="MFA service temporarily unavailable, please try again",
             )
-            log_auth_event(login_data.username, "mfa_challenge", True, client_ip, user_agent)
-            return {
-                "access_token": mfa_token,
-                "token_type": "bearer",
-                "expires_in": 300,
-                "expires_at": (datetime.now(timezone.utc) + mfa_expires).isoformat() + "Z",
-                "mfa_required": True,
-                "user": {
-                    "username": login_data.username,
-                    "role": role,
-                    "is_active": True,
-                },
-            }
-    except Exception as exc:
-        # MFA check failed — fail closed to prevent MFA bypass
-        logger.error("MFA check error for %s: %s", login_data.username, exc)
-        raise HTTPException(
-            status_code=503,
-            detail="MFA service temporarily unavailable, please try again",
-        )
     # ── End MFA check ─────────────────────────────────────────────
     
     # Create JWT token

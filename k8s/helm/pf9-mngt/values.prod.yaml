@@ -10,7 +10,7 @@ global:
   imageTag: v1.82.1
 
 ingress:
-  host: pf9-mngt.example.com    # replace with your real domain before deploying
+  host: pf9-mngt.example.com    # set a DNS name, or leave empty for IP-only access
   tls:
     enabled: true
 

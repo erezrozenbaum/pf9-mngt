@@ -60,6 +60,17 @@ kubectl create secret generic pf9-jwt-secret \
   > k8s/sealed-secrets/pf9-jwt-secret.yaml
 ```
 
+### pf9-admin-credentials
+
+```bash
+kubectl create secret generic pf9-admin-credentials \
+  --namespace pf9-mngt \
+  --from-literal=admin-password=<CHANGE_ME> \
+  --dry-run=client -o yaml \
+  | kubeseal --format yaml \
+  > k8s/sealed-secrets/pf9-admin-credentials.yaml
+```
+
 ### pf9-ldap-secrets
 
 ```bash

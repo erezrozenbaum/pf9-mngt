@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.5  
-**Last Updated**: March 25, 2026  
+**Version**: 1.82.6  
+**Last Updated**: March 24, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -578,6 +578,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.82.6 — Kubernetes Production Login Fixes (✅ Complete)
+
+- `api/main.py` — `DEFAULT_ADMIN_USER` bypass account skips MFA check; missing `user_mfa` table on a fresh cluster was triggering fail-closed 503 handler
+- Helm `api/deployment.yaml` — `APP_ENV=production`, `PF9_ALLOWED_ORIGINS`, `DEFAULT_ADMIN_PASSWORD` env vars added; login was blocked by TrustedHostMiddleware 400 and silent admin bypass failure
+- Helm `ingress.yaml` — TLS/cert-manager annotation guarded on `ingress.host` being non-empty, fixing render on IP-only deployments
 
 ### v1.82.5 — Kubernetes Probe Host Header Fix (✅ Complete)
 
