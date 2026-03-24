@@ -114,7 +114,7 @@ api:
     minConn: "2"
     maxConn: "10"
   restore:
-    enabled: "false"
+    enabled: "true"
     dryRun: "false"
     cleanupVolumes: "false"
   snapshot:

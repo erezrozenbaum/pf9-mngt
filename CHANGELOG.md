@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.9] - 2026-03-24
+
+### Fixed
+- **`run_migration.py`** — Complete rewrite. The previous implementation split the concatenated migration SQL on `;`, shattering `DO $$ BEGIN...END $$` PL/pgSQL blocks into unparseable fragments. Tables that depend on those blocks (e.g. `migration_projects`, `migration_cohorts`) were never created, silently breaking the Migration Planner on Kubernetes. New implementation: (1) uses `psql -f` subprocess — psql handles dollar-quoting, PL/pgSQL, and any SQL construct correctly; (2) adds a `schema_migrations` tracking table so each migration file is applied exactly once across all future deploys; (3) iterates individual `db/migrate_*.sql` files instead of a single concatenated blob.
+- **`api/Dockerfile`** — Added `postgresql-client` to `apt-get install` so the `psql` binary is available inside the API container (and therefore the `db-migrate` Kubernetes Job). Removed the `RUN ... xargs cat > run_migration_sql.sql` step — no longer needed.
+
+---
+
 ## [1.82.8] - 2026-03-24
 
 ### Fixed

@@ -2,13 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for python-ldap and other packages
+# Install system dependencies for python-ldap and postgresql-client (psql)
 RUN apt-get update && apt-get install -y \
     gcc \
     libldap2-dev \
     libsasl2-dev \
     libssl-dev \
     build-essential \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -20,11 +21,6 @@ COPY api/ ./
 COPY p9_common.py ./
 COPY run_migration.py ./
 COPY db/ ./db/
-
-# Build the consolidated migration SQL file from all incremental migration scripts.
-# run_migration.py reads this single file at /app/run_migration_sql.sql.
-# Sorting ensures a deterministic order; all statements are idempotent (IF NOT EXISTS / IF EXISTS).
-RUN ls db/migrate_*.sql | sort | xargs cat > run_migration_sql.sql
 
 # Ensure runtime-writable directories exist before ownership transfer.
 # Named volumes (app_logs → /app/logs) are initialised from the image layer;

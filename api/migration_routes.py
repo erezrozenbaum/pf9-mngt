@@ -158,7 +158,7 @@ def _ensure_tables():
             """)
             if not cur.fetchone()[0]:
                 migration = os.path.join(
-                    os.path.dirname(__file__), "..", "db", "migrate_migration_planner.sql"
+                    os.path.dirname(__file__), "..", "db", "migrate_00_migration_planner.sql"
                 )
                 if os.path.exists(migration):
                     with open(migration) as f:
