@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.11] - 2026-03-24
+
+### Fixed
+- **`db/init.sql`** — Fixed `v_most_changed_resources` view definition: removed reference to non-existent column `recorded_at`. The source view `v_recent_changes` exposes `created_at`, `modified_at`, and `deleted_at`; replaced `recorded_at` with `COALESCE(modified_at, created_at, deleted_at)` which correctly represents the most recent change timestamp for each resource type.
+- **`db/migrate_fix_most_changed_view.sql`** — New migration that applies the corrected `v_most_changed_resources` view to existing databases. Change Management UI page was returning 500 due to this missing view.
+
+---
+
 ## [1.82.10] - 2026-03-24
 
 ### Fixed

@@ -1485,11 +1485,11 @@ SELECT
     modified_at,
     deleted_at,
     change_type,
-    recorded_at,
+    COALESCE(modified_at, created_at, deleted_at) AS recorded_at,
     COUNT(*) OVER (PARTITION BY resource_type, resource_id) AS change_count,
-    recorded_at AS last_change
+    COALESCE(modified_at, created_at, deleted_at) AS last_change
 FROM v_recent_changes
-ORDER BY recorded_at DESC;
+ORDER BY COALESCE(modified_at, created_at, deleted_at) DESC;
 
 -- =====================================================================
 -- Security Groups (Neutron)
