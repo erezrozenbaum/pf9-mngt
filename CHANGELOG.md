@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.10] - 2026-03-24
+
+### Fixed
+- **`db/migrate_cohort_fixes.sql`** — Wrapped `UPDATE migration_tenants ... WHERE target_confirmed = false` in a `DO $$ BEGIN IF EXISTS` guard. `migrate_cohort_fixes.sql` sorts alphabetically before `migrate_target_preseeding.sql` (which adds the `target_confirmed` column), causing an `ERROR: column does not exist` on fresh installs. Guard skips the UPDATE safely when the column is not yet present; `migrate_target_preseeding.sql` handles backfill when it runs next.
+- **`db/migrate_multicluster.sql`** — Wrapped `ALTER TABLE vm_provisioning_batches ADD COLUMN region_id` in a `DO $$ BEGIN IF EXISTS` guard. `vm_provisioning_batches` is created lazily at runtime by `vm_provisioning_routes.py` (not by any migration file), so the bare `ALTER TABLE` always fails on fresh installs. Guard skips it safely; the API startup code handles the `region_id` column when the table first exists.
+- **`db/migrate_00_migration_planner.sql`** — Restored file deleted at v1.69.0. Contains the base `CREATE TABLE` definitions for all `migration_*` tables (`migration_projects`, `migration_vms`, `migration_tenants`, `migration_clusters`, etc.). Without this file the entire Migration Planner feature was broken on any fresh install.
+- **`api/migration_routes.py`** — Updated `_ensure_tables()` path reference from `migrate_migration_planner.sql` → `migrate_00_migration_planner.sql` (renamed so it sorts before all dependent files that `ALTER` its tables).
+- **`nginx/nginx.prod.conf`** — Fixed upstream for `pf9_ui` from port `80` to `8080`. Production UI nginx (`Dockerfile.prod`) serves on `8080`; the wrong port caused 502 Bad Gateway on fresh Docker production installs.
+- **`docker-compose.prod.yml`** — Fixed `pf9_ui` healthcheck from `http://127.0.0.1:80` → `http://127.0.0.1:8080` to match the actual UI port.
+
+---
+
 ## [1.82.9] - 2026-03-24
 
 ### Fixed

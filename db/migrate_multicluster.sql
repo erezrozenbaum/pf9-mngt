@@ -141,7 +141,16 @@ ALTER TABLE deletions_history           ADD COLUMN IF NOT EXISTS region_id TEXT 
 -- vm_provisioning_batches is created inline in api/vm_provisioning_routes.py
 -- The ALTER is applied here so it runs after table creation on first startup.
 -- IF NOT EXISTS makes it safe even if the column was already added previously.
-ALTER TABLE vm_provisioning_batches     ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+-- vm_provisioning_batches is created lazily by vm_provisioning_routes.py on first request.
+-- Guard: skip if the table doesn't exist yet (it will get region_id via API startup migration).
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_name = 'vm_provisioning_batches' AND table_schema = 'public'
+  ) THEN
+    ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+  END IF;
+END $$;
 
 -- Per-cluster RBAC scoping (nullable - NULL = global, current behavior unchanged).
 -- Enforcement is deferred to Phase 5 — columns added now to avoid a later data migration.

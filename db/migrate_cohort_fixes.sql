@@ -9,11 +9,20 @@ ALTER TABLE migration_cohorts
 -- 2. Fix target_project_name: for vCloud tenants it should be org_vdc, not tenant_name.
 --    Only fix rows where target_project_name = target_domain_name (i.e. auto-seeded wrong)
 --    AND org_vdc is set (it's a vCloud environment where OrgVDC maps to PCD project).
-UPDATE migration_tenants
-SET target_project_name = org_vdc
-WHERE org_vdc IS NOT NULL
-  AND org_vdc != ''
-  AND target_confirmed = false;   -- do not touch rows the operator already confirmed
+--    Guard: target_confirmed column may not exist yet if migrate_target_preseeding.sql
+--    hasn't run (cohort_fixes sorts before target_preseeding alphabetically).
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'migration_tenants' AND column_name = 'target_confirmed'
+  ) THEN
+    UPDATE migration_tenants
+    SET target_project_name = org_vdc
+    WHERE org_vdc IS NOT NULL
+      AND org_vdc != ''
+      AND target_confirmed = false;
+  END IF;
+END $$;
 
 -- 3. Backfill vlan_id in network mappings where it can be parsed from source_network_name
 UPDATE migration_network_mappings
