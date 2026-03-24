@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.12] - 2026-03-24
+
+### Fixed
+- **`db/init.sql`** — Fixed `v_recent_changes` view: wrapped the UNION ALL in a subquery and added `COALESCE(modified_at, created_at, deleted_at) AS recorded_at` to the outer SELECT. Multiple queries in `main.py` (`/history/daily-summary`, `/history/change-velocity`, etc.) filter and sort directly against `v_recent_changes` using `recorded_at`, causing HTTP 500 on Change Management and Customer Onboarding pages.
+- **`db/init.sql`** — Simplified `v_most_changed_resources` to reference `recorded_at` directly from the updated `v_recent_changes` (no longer needs the redundant `COALESCE` expression).
+- **`db/migrate_fix_recent_changes_view.sql`** — New migration: drops `v_most_changed_resources`, recreates `v_recent_changes` with `recorded_at`, recreates `v_most_changed_resources`. Required for existing clusters.
+
+---
+
 ## [1.82.11] - 2026-03-24
 
 ### Fixed
