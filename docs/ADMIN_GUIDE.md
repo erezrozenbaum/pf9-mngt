@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.7  
-**Last Updated**: March 24, 2026  
+**Version**: 1.82.1  
+**Last Updated**: March 25, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -579,329 +579,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
-### v1.82.7 — Kubernetes API Routing + Admin Role Fixes (✅ Complete)
-
-- Helm `ingress.yaml` — regex routing rule added; all FastAPI paths now reach the API (was returning HTML for `/dashboard/`, `/os-distribution`, resource endpoints, etc.); `/metrics/.*` → monitoring service
-- `api/auth.py` — `initialize_default_admin()` force-updates role to superadmin on every startup; stale `viewer` row no longer blocks admin access
-
-### v1.82.6 — Kubernetes Production Login Fixes (✅ Complete)
-
-- `api/main.py` — `DEFAULT_ADMIN_USER` bypass account skips MFA check; missing `user_mfa` table on a fresh cluster was triggering fail-closed 503 handler
-- Helm `api/deployment.yaml` — `APP_ENV=production`, `PF9_ALLOWED_ORIGINS`, `DEFAULT_ADMIN_PASSWORD` env vars added; login was blocked by TrustedHostMiddleware 400 and silent admin bypass failure
-- Helm `ingress.yaml` — TLS/cert-manager annotation guarded on `ingress.host` being non-empty, fixing render on IP-only deployments
-
-### v1.82.5 — Kubernetes Probe Host Header Fix (✅ Complete)
-
-- Helm `api/deployment.yaml` — `httpHeaders: Host: localhost` added to `httpGet` liveness/readiness probes; Kubernetes sends pod IP as `Host` header → `TrustedHostMiddleware` returned 400 → restart loop; probes now pass a trusted host
-
-### v1.82.4 — CI Health-Check Fix (Named Volume Permissions) (✅ Complete)
-
-- `api/Dockerfile` — `RUN mkdir -p /app/logs /app/static` added before `chown`; named volume `app_logs` was root-owned (directory absent in image), `logging.FileHandler` failed at import time → gunicorn never healthy
-
-### v1.82.3 — API + UI Non-Root Permission Fixes (✅ Complete)
-
-- `api/Dockerfile` — `chown -R 1000:1000 /app` + `USER 1000`; fixes `PermissionError: '/app/static'` when pod runs as non-root
-- `pf9-ui/Dockerfile.prod` — nginx port changed from 80 → 8080; non-root containers cannot bind ports < 1024
-- Helm UI templates — `containerPort`, probe ports, `targetPort`, `ui.service.port` corrected from 5173 (dev) to 8080 (prod nginx)
-
-### v1.82.2 — Kubernetes Deployment Fixes (✅ Complete)
-
-- `api/Dockerfile` — `run_migration.py` and migration SQL files added to image; `db-migrate` Job was crashing with `FileNotFoundError`
-- `ldap-sync-worker` + `api` — `LDAP_SYNC_KEY` env var injected from `pf9-ldap-secrets` secret
-- `ui` — `emptyDir` volumes for `/var/cache/nginx` and `/var/run` (nginx non-root permission fix)
-- `scheduler-worker` — `emptyDir` at `/app/monitoring` (metrics cache write permission fix)
-
 ### v1.82.1 — CI Pipeline Fix (✅ Complete)
 
 - **`update-values` job** — fixed `actions/checkout@v4` failure when `RELEASE_PAT` secret is not configured; job now falls back to `github.token` automatically
-
-### v1.82.0 — Kubernetes Production Support (Helm + ArgoCD + CI/CD) (✅ Complete)
-
-- **Helm chart** (`k8s/helm/pf9-mngt/`) — full chart covering all 14 services; `values.yaml` holds safe defaults; `values.prod.yaml` holds image tags auto-updated by CI
-- **PostgreSQL + OpenLDAP as StatefulSets** — stable pod identity and `volumeClaimTemplates` for persistent data; headless ClusterIP services
-- **Ingress template** — nginx-ingress + cert-manager; routes `/api`, `/auth`, `/health` to the API and `/` to the UI; TLS via Let's Encrypt
-- **DB migration Helm hook** — `pre-install`/`pre-upgrade` Job that runs `run_migration.py` before any Deployment rollout
-- **All pods run as non-root** (`runAsUser: 1000`, `runAsNonRoot: true`); LDAP never exposed outside cluster
-- **ArgoCD application** (`k8s/argocd/application.yaml`) — bootstrap once; auto-syncs on every `master` push that touches `k8s/helm/`
-- **CI: `helm-package` job** — packages + pushes Helm chart to GHCR OCI registry after Docker images are built
-- **CI: `update-values` job** — patches `global.imageTag` in `values.prod.yaml` and commits `[skip ci]` to `master`; ArgoCD triggers a `helm upgrade` automatically
-- **Sealed Secrets guide** (`k8s/sealed-secrets/README.md`) — copy-paste `kubeseal` commands for all nine Kubernetes Secrets the chart references
-
-### v1.81.0 — Security Hardening & Kubernetes Pre-Requisites (✅ Complete)
-
-- Production JWT startup guard (`PRODUCTION_MODE=true` → RuntimeError if no secret)
-- SSRF re-validation in external LDAP auth passthrough (`_bind_external_ldap`)
-- Hardcoded DB password defaults eliminated from `backup_worker`, `metering_worker`, `search_worker`
-- Worker liveness heartbeat (`/tmp/alive` touch + docker-compose healthchecks for 5 workers)
-- Backup config `PUT` explicit column allowlist
-- Kubernetes roadmap plan created (`_plans/KUBERNETES_PLAN.md`)
-
-### v1.80.0 — External LDAP Sync UI (✅ Complete)
-
-- **`LdapSyncSettings.tsx`** — new React component added to Admin → User Management → External LDAP Sync tab (superadmin-only); full CRUD UI for LDAP sync configurations with create/edit modal covering all five field sections
-- **Test / Preview / Logs panels** — inline detail pane: 🔌 connectivity test with step-by-step results, 👁️ dry-run preview with per-user action table, 📋 sync logs (last 20 runs, expandable error rows)
-- **Group → Role mapping editor** — dynamic add/remove rows; `superadmin` not offered (mirrors server-side DB constraint)
-- **Security UX** — bind password is write-only (never pre-filled); `allow_private_network` shows a visible ⚠️ warning banner; delete confirmation warns about immediate user deactivation and session revocation
-- **`docs/LDAP_SYNC_GUIDE.md`** — new comprehensive operator guide; linked from ADMIN_GUIDE TOC
-
-### v1.79.0 — External LDAP / AD Identity Federation (✅ Complete)
-
-- **`ldap_sync_worker`** — new background Docker service that imports users from external LDAP / AD servers and applies group-to-role mappings on a configurable poll interval; `pg_try_advisory_lock` prevents concurrent runs; 3 consecutive failures generate a notification
-- **10 new `/admin/ldap-sync` endpoints** — superadmin-only CRUD for sync configs, live test (step-by-step diagnostics), dry-run preview (first 50 users + derived roles), manual trigger, and paginated sync logs; `/test` and `/preview` rate-limited to 10 req/min
-- **Credential passthrough** — `auth.py` detects externally-synced users and validates their password directly against the origin LDAP server; no local password stored; on success the standard JWT / session flow continues
-- **Group-to-role mapping** — external LDAP groups mapped to pf9-mngt roles via `ldap_sync_group_mappings`; `superadmin` assignment blocked at DB level (CHECK constraint); deactivated users have active sessions revoked immediately
-- **`api/crypto_helper.py`** — shared `fernet_encrypt()` / `fernet_decrypt()` module; `cluster_registry.py` refactored to delegate here; LDAP bind passwords encrypted with dedicated `ldap_sync_key` Docker secret
-- **SSRF protection** — LDAP host validated against RFC-1918, loopback, link-local, and ULA blocklist before any outbound connection
-- **`db/migrate_ldap_sync.sql`** — idempotent migration: `ldap_sync_config`, `ldap_sync_group_mappings`, `ldap_sync_log` tables; `user_roles` gets `sync_source`, `sync_config_id`, `locally_overridden` columns + indexes
-- **`docker-compose.yml`** — `ldap_sync_worker` service + `ldap_sync_key` secret added; `deployment.ps1` generates 32-byte random key; `startup_prod.ps1` validates the secret file at startup
-
-### v1.78.0 — Security & Auth Hardening (✅ Complete)
-
-- **LDAP DN injection closed** — `ldap.dn.escape_dn_chars()` now applied in `authenticate()`, `create_user()`, `delete_user()`, and `change_password()` before any DN string is constructed; prevents username-crafting attacks that rewrite the LDAP bind target
-- **LDAP network timeout** — `conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)` added to all 7 `ldap.initialize()` call sites; LDAP outages now fail fast (≤ 5 s) instead of blocking worker threads indefinitely
-- **`verify_admin_credentials` hardened** — unconfigured password now raises HTTP 503 instead of silently returning `False` (which bypassed all admin-route auth); credential check uses `hmac.compare_digest()` to prevent timing-based enumeration
-- **`datetime.utcnow()` removed from auth paths** — JWT `exp`/`iat` claims and `user_sessions.expires_at` now use `datetime.now(timezone.utc)`; compatible with Python 3.12+ and the `TIMESTAMPTZ` column type
-- **Middleware token deduplication** — `rbac_middleware` caches `TokenData` in `request.state.token_data`; `access_log_middleware` reads from that cache instead of re-calling `verify_token()`, removing one DB SELECT per authenticated request
-- **`SMTP_PASSWORD` via Docker secrets** — `smtp_helper.py` now resolves SMTP password through `read_secret("smtp_password", env_var="SMTP_PASSWORD")`, consistent with all other credentials in the project
-
-### v1.77.0 — Migration Planner Region Normalization (✅ Complete)
-
-- **`migration_projects.target_region_id`** — new nullable FK to `pf9_regions.id`; when set, `pcd-gap-analysis` uses the ClusterRegistry client for the registered region (no global config mutation); falls back to ad-hoc `pcd_auth_url` credentials when NULL (fully backward compatible)
-- **`migration_projects.source_region_id`** — new nullable FK to `pf9_regions.id`; tracks PCD source region for cross-region migrations; NULL for VMware-to-PCD projects
-- **`PcdSettingsRequest`** — `PATCH /api/migration/projects/{id}/pcd-settings` now accepts `source_region_id` and `target_region_id` fields
-- **`GET /admin/control-planes/cluster-tasks`** — new superadmin endpoint; returns pending `cluster_tasks` rows with `processor_status: NOT_IMPLEMENTED`; cross-region replication processor deferred pending 2nd region
-- **`migrate_phase8_migration_norm.sql`** — DDL migration; Phase 8 startup guard added to `main.py`
-
-### v1.76.0 — Multi-Region Management UI (✅ Complete)
-
-- **`ClusterContext.tsx`** — React context for global `selectedRegionId` state; loads control planes + regions from `/admin/control-planes`; superadmin-only
-- **`RegionSelector.tsx`** — compact nav-bar dropdown; appears only when ≥ 2 regions are registered; grouped by control plane with health dots
-- **`ClusterManagement.tsx`** — superadmin admin panel: manage control planes (add/delete/test/discover regions) and regions (enable/disable, set-default, sync, sync-log)
-- **Per-region filtering** injected into `MeteringTab`, `ResourceManagementTab`, `ReportsTab`, `LandingDashboard` — all append `?region_id=` when a region is selected
-- **`migrate_phase7_nav.sql`** — `cluster_management` nav item added to `admin_tools` group; startup guard in `main.py` applies it idempotently
-
-### v1.75.0 — Multi-Region API Filtering (✅ Complete)
-
-- **Optional `?region_id=` on all API modules** — 7 API modules updated: `metering_routes`, `dashboards`, `reports`, `resource_management`, `provisioning_routes`, `vm_provisioning_routes`, `search`; all accept `?region_id=` to scope responses to a specific PF9 region
-- **RBAC region enforcement** — `get_effective_region_filter()` in `auth.py`; region-scoped users constrained to their assigned region (HTTP 403 on mismatch); global users may query any region
-- **Live-API registry routing** — when `region_id` is specified, PF9 API calls are routed to the correct region's control-plane client via the cluster registry
-- **DB-query region filters** — all DB-backed endpoints apply `WHERE region_id = %s` parameterized clause
-- **`search_ranked` function updated** — backward-compatible 9th `filter_region` parameter added; `search_documents.region_id` column + index added via `migrate_phase6_api.sql`
-- **Startup migration guard** — `main.py` applies `migrate_phase6_api.sql` idempotently on API restart
-
-### v1.74.6 — Metering Worker Crash Fix (✅ Complete)
-
-- **Phase 5B guard hardened** — `api/main.py` now requires all six target tables to have `region_id` before skipping `migrate_metering_region.sql`; a partial prior run (e.g. from CI) no longer causes a false-positive "already present" skip that leaves 4 tables unpatched
-- **`security_groups.region_id` added** — `init.sql` and `migrate_multicluster.sql` now include `security_groups` in the infra `region_id` sweep; fixes metering_worker crash on `collect_quota_usage` LATERAL subquery (`column "region_id" does not exist`)
-
-### v1.74.5 — Full Per-Region Worker Loops (✅ Complete)
-
-- **metering_worker multi-region** — all five collectors (`collect_resource_metrics`, `collect_snapshot_metrics`, `collect_restore_metrics`, `collect_quota_usage`, `collect_efficiency_scores`) accept `region_id`; `run_collection_cycle()` iterates all enabled regions and writes `cluster_sync_metrics` per region
-- **HostMetricsCollector region binding** — constructor accepts optional `region_id` argument for explicit region binding without env var dependency
-- **scheduler_worker per-region host metrics** — one `HostMetricsCollector` per region with independent `metrics_cache_{rid}.json` / `cpu_state_{rid}.json` files; `cluster_sync_metrics` written after every run
-- **DB migration** (`migrate_metering_region.sql`) — adds `region_id TEXT` (nullable) + descending indexes to all metering tables and `backup_history`
-
-### v1.74.4 — Search Worker VM Indexing Fix (✅ Complete)
-
-- **VM search indexing restored** — `LEFT JOIN images` used wrong join key (`i.image_id`); corrected to `i.id` in `search_worker/main.py` and `api/reports.py`
-
-### v1.74.3 — Blank-UI-on-Restart Fixes (✅ Complete)
-
-- **DDL lock storm eliminated** — migration guards check column/table existence before issuing any `ALTER TABLE`; zero `ACCESS EXCLUSIVE` locks on healthy restarts
-- **Snapshot worker crash loop fixed** — indentation bug causing recursive `main()` call corrected; compliance report timer and sleep loop fixed
-- **PostgreSQL idle-in-transaction protection** — `idle_in_transaction_session_timeout=30s` + `statement_timeout=2min` added to DB service
-
-### v1.74.2 — Multi-Region Worker Support (✅ Complete)
-
-- **Thread-safe endpoint storage** — `p9_common.py` uses `threading.local` for per-thread endpoint variables; safe for concurrent region processing without cross-region data corruption
-- **Scheduler multi-region loop** — `scheduler_worker` queries enabled regions from DB and runs RVTools sync for each region concurrently, bounded by `MAX_PARALLEL_REGIONS` (default `3`)
-- **Metering sync tracking** — `metering_worker` records per-cycle stats (resource count, errors, duration) to `cluster_sync_metrics` table; feeds region health status
-- **Snapshot region tagging** — snapshot scheduler delegates to sub-scripts with per-region credentials; `snapshot_runs.region_id` column tracks which region each run belongs to
-- **Host metrics DB-sourced hosts** — `host_metrics_collector` loads hypervisor IPs from `hypervisors` table when `PF9_REGION_ID` is set, replacing static `PF9_HOSTS` env var
-- **SQL migration fix** — `migrate_multicluster.sql` comment-line semicolons were fragmenting the `CREATE TABLE pf9_regions` statement; fixed so multi-cluster schema applies correctly on every API startup
-- **Performance index fix** — `migrate_indexes.sql` corrected to use actual `activity_log` column names (`actor`, `timestamp`) and `support_tickets`/`runbook_executions` actual schema
-
-### v1.74.1 — SAST Security Fixes & CI Gate Correction (✅ Complete)
-
-- **Bandit CI flags corrected** — HIGH-only gate now uses `-lll -iii`; the previous `-ll -ii` flags were reporting Medium+ findings, causing 259 Medium issues to block every push
-- **HIGH Bandit findings resolved** — `hashlib.sha1` (LDAP SSHA), `hashlib.md5` (cache keys, change fingerprint), and `requests verify=False` (internal PF9 DU endpoint) annotated with `usedforsecurity=False` / `# nosec`
-- **Zero HIGH findings** — `bandit -lll -iii` reports `No issues identified.`
-
-### v1.74.0 — Control Plane & Region Management API (✅ Complete)
-
-- **REST API for multi-cluster admin** — 14 superadmin-only endpoints under `/admin/control-planes` for full CRUD on control planes and regions; no DB restarts or psql commands needed
-- **Fernet credential encryption** — passwords stored as `fernet:<ciphertext>` using AES-128-CBC + HMAC-SHA256 derived from `JWT_SECRET`; `_resolve_password()` in `ClusterRegistry` decrypts at runtime; plaintext never written to DB
-- **Live connectivity test** (`POST /admin/control-planes/{id}/test`) — authenticates against Keystone and returns discovered regions, service catalog endpoints, and which regions are already registered
-- **SSRF protection enforced at write layer** — `auth_url` validated on every create/update; loopback (127.0.0.0/8, ::1) and cloud metadata (169.254.169.254) always blocked; HTTP requires `ALLOW_HTTP_AUTH_URL=true`; RFC-1918 allowed when `allow_private_network=true`
-- **Registry hot-reload** — `get_registry().reload()` called after every write; running workers pick up new regions without restart
-- **Bandit SAST gate** — CI pipeline extended; HIGH severity findings block merge
-- **`metering_routes` registry-aware** — `sync_flavors_to_pricing` now uses `get_registry().get_default_region()` instead of the legacy `get_client()` singleton
-
-### v1.73.0 — Multi-Region & Multi-Cluster Support (✅ Complete)
-
-- **Schema foundation** — four new tables (`pf9_control_planes`, `pf9_regions`, `cluster_sync_metrics`, `cluster_tasks`) + `region_id`/`control_plane_id` FK columns on 25+ existing tables; all nullable for zero regression on existing deployments
-- **Auto-seeding** — `_seed_default_cluster()` in `api/main.py` seeds the `default` control plane and `default:region-one` region from env vars on every startup (`ON CONFLICT DO NOTHING`)
-- **Region-aware endpoint resolution** — `Pf9Client._find_endpoint()` fixed to filter service catalog by `region_name` before falling back to first match; eliminates silent cross-region misrouting on multi-region PF9 control planes
-- **Injectable `Pf9Client`** — constructor now accepts explicit parameters; `from_env()` classmethod preserves existing behavior for all call sites
-- **Region-scoped Redis cache keys** — cache key format changed to `pf9:{resource}:{region_id}:{hash}` preventing cross-region data collisions
-- **`db/init.sql` updated** — fresh installs include the full multi-region schema
-- **`api/Dockerfile` updated** — `COPY db/ ./db/` added for dev builds
-
-- **Migration Planner restored** — `api/migration_routes.py`, `api/migration_engine.py`, all three UI components (`MigrationPlannerTab.tsx`, `ProjectSetup.tsx`, `SourceAnalysis.tsx`), and `App.tsx` integration re-added after removal in v1.69.0; all files are now committed and built by CI into production images
-- **`.gitignore` cleaned** — Migration planner exclusion block removed; all migration files are now tracked
-- **`startup_prod.ps1` fixed** — `up -d --build` replaced with `pull` + `up -d`; prevents local source rebuilds overwriting pulled `ghcr.io` images on every production start
-- **nginx `/tenants` routing** — `location = /tenants` rewrite added to `nginx.prod.conf`; resolves 404 on Migration Planner Projects listing
-- **API migration router registered** — `migration_router` registered in `main.py`; `GET /tenants` alias route added
-
----
-
-### v1.71.0 — Dependency Security Patches & Quality Fixes (✅ Complete)
-
-- **Webhook URL validation** — `SLACK_WEBHOOK_URL` and `TEAMS_WEBHOOK_URL` validated at startup via `urllib.parse.urlparse()`; non-`https` or empty-host URLs are rejected with a warning and the channel is disabled
-- **CSV export quoting** — `csv.DictWriter` in `api/reports.py` now uses `quoting=csv.QUOTE_ALL`; prevents column corruption when fields contain commas or newlines in Excel
-- **Ticket approval note capped** — `ApproveRejectRequest.note` enforces `max_length=5000`; HTTP 422 on violation
-- **Python CVE upgrades** — `fastapi`, `requests`, `python-ldap`, `python-jose`, `python-multipart` upgraded to resolve 13 CVEs
-- **npm transitive CVE overrides** — `flatted`, `minimatch`, `rollup` forced to patched versions via `package.json` overrides
-- **Release pipeline corrected** — all 9 Docker images are built and pushed before GitHub Release tag is created
-- **CI audit tooling corrected** — `pip-audit` `--severity` flag removed (dropped in 2.9+); `npm audit` no longer regenerates lock file before auditing
-
----
-
-### v1.70.0 — Performance, Security & Code Quality (✅ Complete)
-
-- **Report pagination** — `/reports/tenant-quota-usage` and `/reports/domain-overview` accept `page`/`page_size` params; project slice applied before per-project quota API calls; JSON responses include `total`, `page`, `page_size`; CSV always returns full data
-- **Upload row cap** — `rows_as_dicts()` in `_parse_excel()` raises HTTP 400 when any sheet exceeds `MAX_UPLOAD_ROWS = 2000`; prevents memory exhaustion before validation begins
-- **Dependency version bounds** — `httpx`, `redis`, `Jinja2`, `openpyxl`, `reportlab`, `openai`, `anthropic` all pinned with `<N.0.0` upper bounds in `api/requirements.txt`
-- **Copilot markdown** — `renderMarkdown()` replaced with `marked.parse()` + `DOMPurify.sanitize()` (marked v14); fixes nested-pipe table failures and edge-case list corruption
-- **Dependency audit in CI** — new `dependency-audit` job runs `pip-audit` (critical=fail, high=warn) + `npm audit --audit-level=high`; `integration-tests` gated on it
-
----
-
-### v1.69.0 — Bug Fixes Sprint (✅ Complete)
-
-- **Performance metrics `IndexError`** — `get_endpoint_stats()` returns `{}` immediately when `sorted_durations` is empty; prevents index crash on cold-start endpoints
-- **Phase 4A `migration_flavor_staging` table** — `startup_event()` applies `migrate_phase4_preparation.sql` (idempotent); flavor-staging endpoints no longer 500 on a fresh deployment
-- **ISO timestamp `Z`-suffix parse error** — `host_metrics_collector.py` calls `.replace("Z", "+00:00")` before `datetime.fromisoformat()`; fixes `ValueError` on Python < 3.11
-- **Scheduler worker task leak on SIGTERM** — `async_main()` `finally` block cancels and awaits all asyncio tasks before shutting down the thread executor
-- **Metering worker duplicate rows** — `run_collection_cycle()` acquires `pg_try_advisory_lock(8765432)` at cycle start; replicas skip if another holds the lock
-- **Backup worker silent `pg_dump` failure** — file-size check (< 1 KB) after `pg_dump` exits; suspiciously small output raises `RuntimeError` and triggers cleanup
-- **SLA daemon task leaked on API shutdown** — `_sla_task` module variable stores the `asyncio.Task`; `shutdown_event()` cancels and awaits it on API teardown
-
----
-
-### v1.68.0 — Security Hardening Sprint (✅ Complete)
-
-- **OpsSearch XSS fix** — `dangerouslySetInnerHTML` on search headline sanitized via `DOMPurify.sanitize()` with `ALLOWED_TAGS: ["mark"]`; eliminates stored XSS from `ts_headline` output
-- **SMTP TLS enforcement** — `api/smtp_helper.py` and `notifications/main.py` now set `ctx.check_hostname = True` + `ctx.verify_mode = ssl.CERT_REQUIRED`
-- **LDAP `create_user` SSHA hash** — `create_user()` now stores `{SSHA}` hashed password (was plaintext `userPassword`)
-- **LDAP backup password exposure** — `_run_ldap_backup/restore()` uses `-y <0o600 tempfile>` instead of `-w <password>` on the subprocess command line
-- **Password complexity policy** — `AddUserRequest` min length 6→8; validator requires uppercase + digit + special char; HTTP 422 with descriptive message on failure
-- **Rate limit on password reset** — `POST /auth/users/{username}/password` decorated with `@limiter.limit("5/minute")`
-- **Secret file permission warning** — `read_secret()` warns when secret file has group/other read bits set
-- **Backup worker distributed lock** — `pg_try_advisory_lock(9876543)` wraps scheduled-backup decision; prevents duplicate backups in multi-replica deployments
-- **VM OS password lifecycle** — `os_password` wiped from DB after successful provisioning; minimum length raised 6→8
-- **docker-compose.yml fail-fast guards** — `${VAR:?ERROR:...}` for 5 critical env vars; startup blocked if any are empty
-- **JWT config validator** — `JWT_SECRET_KEY` length message changed from "should" to "must" (already a blocking `errors` entry)
-
----
-
-### RVTools Export Browser, Scheduler Logging, Migration Planner PDF Fixes (v1.63.0 ✅ Complete)
-
-#### Migration Planner PDF — Daily Schedule fixes
-- `get_migration_summary` (`api/migration_routes.py`) — `per_day` entries now include `fix_hours` and `downtime_hours` (were missing); computed from `vm_timing_map` + `vm_detail_map` built once per plan
-- **Summary PDF Section 4** (`generate_summary_pdf_report`) — 15-column daily table now includes `Fix(h)` and `Downtime(h)` columns
-- **Plan PDF Daily Schedule** (`generate_pdf_report`) — 11-column table now includes `Fix(h)` and `Downtime(h)` as final two columns; **Power State** column added (5th col: `On`/`Off`/`Susp`); VM Name, Tenant, OS columns wrapped with `Paragraph(text, s_cell8)` to prevent cell overflow; `NameError: name 's_cell' is not defined` (500 on PDF download) fixed — all three `Paragraph` refs corrected to `s_cell8`
-- **KPI total downtime** — removed `plan_ps` override that was replacing `total_downtime_hours` with the cutover-only value; KPI now reflects the full downtime including fix hours from `compute_project_fix_summary`
-
-#### `.gitignore` — `reports/` folder protection
-- Added `reports/` and `/reports/` patterns — prevents accidentally committing hourly RVTools Excel exports (confirmed zero git history for `reports/` before the fix)
-
-#### RVTools Export Browser — added directly to the existing **Reports tab** as a second sub-tab ("📁 RVTools Exports") — no new top-level tab added.
-- **File list table** — filename, date (UTC), size in MB, ⬇ Download button; files served from `/mnt/reports`; authenticated blob download via Bearer token
-- **Run History table** — shows last 100 rows from `inventory_runs` with started, finished, duration, colour-coded status badge, source, and notes columns
-- **Path traversal protection** — `GET /api/reports/rvtools/files/{filename}` rejects any filename containing `..`, `/`, or `os.sep`
-- **Scheduler run logs** — `_run_rvtools_sync()` now captures stdout+stderr into `/app/logs/rvtools_YYYYMMDD_HHMMSSZ.log`
-- **No new DB tables** — uses existing `inventory_runs` table; no migration required
-- **RBAC** — `reports:read` already granted to all 5 roles
-
----
-
-### Graph: Health Scores, Orphan Detection, Blast Radius & Delete Safety (v1.51.0 ✅ Complete)
-
-All features appear inside the existing **Dependency Graph drawer** opened via **"🕸 View Dependencies"** on any resource row (Servers, Volumes, Networks, Snapshots, Projects tabs). No new tab is added.
-
-- **Mode toggle pill** — 3-way control in the graph toolbar: Topology / 💥 Blast Radius / 🗑 Delete Impact
-- **Health Score engine** — per-node 0–100 score shown as a coloured circle (green ≥ 80 / amber ≥ 60 / red < 60):
-  - VM: `error_state` -30, `power_off` -10, `snapshot_missing` -15, `snapshot_stale` -8, `drift` -15
-  - Volume: `error_state` -30, orphan -5, `snapshot_missing` -20, `snapshot_stale` -10
-  - Host: CPU >80% -20, CPU >60% -8, RAM >80% -20, RAM >60% -8
-- **3-state snapshot coverage** — `snapshot_protected` ✅ (< 7 days) / `snapshot_stale` ⚠️ (≥ 7 days) / `snapshot_missing` ❌ per node; replaces old binary `no_snapshot` badge
-- **Orphan detection** — surfaced in graph summary: volumes (`status=available`, unattached), FIPs (no `port_id`), SGs (not referenced by any port, not 'default'), snapshots (parent volume gone)
-- **Capacity pressure tinting** — host nodes tinted green/amber/red by CPU + RAM utilisation; `capacity_pressure` = `healthy` / `warning` / `critical`
-- **Tenant Health Panel** — shown above canvas in Topology mode for tenant-root graphs; shows environment health score, critical/degraded VM counts, orphan count, top-issues list
-- **Blast Radius mode** — highlights all nodes impacted if the selected resource fails; animated edges on impact path; non-impacted nodes dimmed; summary banner: `vms_impacted`, `tenants_impacted`, `floating_ips_stranded`, `volumes_at_risk`
-- **Delete Impact mode** — per-type cascade rules: network (subnets/ports cascade; VMs with no fallback network stranded), volume (snapshots cascade), tenant (all cascade, always unsafe), VM (FIPs stranded, volumes detached), SG (OpenStack blocks if VMs use it); shows `safe_to_delete` flag, `blockers[]`, cascade/stranded overlay on graph
-- **Enhanced sidebar** — health score badge, snapshot coverage row, capacity row (hosts), quick-action links when score < 60: 📸 Create Snapshot (volume), 🔍 View Drift Events (drift badge), 📋 View Logs (error_state)
-- **API changes** — `GET /api/graph` gains `?mode=` param; response extended with `graph_health_score`, `orphan_summary`, `tenant_summary`, `top_issues`, and per-node `health_score`, `capacity_pressure`, `snapshot_coverage` fields; `blast_radius` or `delete_impact` object appended per mode
-
----
-
-### Security Hardening & Code Quality — Phase J (v1.50.0 ✅ Complete)
-
-- **`hmac.compare_digest()`** — timing-safe admin password comparison in `auth.py`
-- **LDAP connection leak fixed** — `get_user_info()` calls `unbind_s()` in `finally` block on all paths
-- **Command injection patched** — `log_collector.py` `get_log_range()` validates `start_time` with `YYYY-MM-DD` regex + `shlex.quote()` before SSH interpolation
-- **`_db()` / `_release()` helpers removed** — VM provisioning thread manages connection lifecycle inline with `getconn()` / `putconn()` in `try/finally`
-- **`print()` removed** — all bare `print()` calls in `auth.py` and `log_collector.py` replaced with structured logger calls
-- **Host disk % fix** — `local_gb - disk_available_least` formula used in server list, monitoring host-metrics, and Hypervisors tab (was always 0% due to Cinder-backed volumes)
-- **Graph host integer ID fix** — `_is_valid_id()` now accepts integer PKs (e.g. `root_id=8`) for hypervisor nodes
-
----
-
-### Cloud Dependency Graph — VMware-Side Migration Graph (v1.48.0 ✅ Complete)
-
-- `GET /api/migration/projects/{id}/graph` — VMware-side dependency graph from RVTools data; same `{ nodes, edges }` format as `/api/graph` so `DependencyGraph` renders unchanged
-- Node types: `tenant` (Org-vDC root), `vm`, `network` (portgroup/VLAN), `disk` (virtual disk), cross-tenant `tenant` nodes
-- VM nodes include multi-line detail: IP, migration status, vCPU/RAM, CPU%/MEM% from RVTools vInfo + perf data
-- Migration status rings on VM nodes: 🟢 complete / 🟡 in progress / 🔴 failed
-- **🕸️ View Graph** button on every tenant row and cohort expansion in Migration Planner Source Analysis tab
-- `graphUrl` prop on `DependencyGraph` — PCD-specific controls suppressed when set
-
----
-
-### Cloud Dependency Graph — Backend API + UI + Node Actions (v1.47.0 ✅ Complete)
-
-- `GET /api/graph?root_type=<type>&root_id=<id>&depth=1-3` — BFS dependency graph; returns `nodes[]`, `edges[]`, `node_count`, `edge_count`, `truncated`
-- 12 node types: `vm`, `volume`, `snapshot`, `network`, `subnet`, `port`, `fip`, `sg`, `tenant`, `host`, `image`, `domain`; 15 edge types; VM→SG via `ports.raw_json` JSONB
-- Badges: `no_snapshot`, `drift`, `error_state`, `power_off`, `restore_source`; 150-node hard cap; RBAC `resources:read`
-- Full-screen `DependencyGraph.tsx` drawer (ReactFlow + dagre); depth pills; type filter checkboxes; dark sidebar
-- **"🔍 Explore from here"** — re-root graph at any clicked node; **← Back** history breadcrumb
-- **"🕸️ View Dependencies"** button on Servers, Volumes, Snapshots, Networks, Projects rows
-- **Node action buttons** — "🔗 Open in tab" (switch tab + pre-select), "📸 Create Snapshot" (volumes), "🚀 View in Migration Planner" (VMs + tenants)
-
----
-
-### Migration Planner Phase 5.0 — Tech Fix Time & Migration Summary (v1.42.0 ✅ Complete)
-
-#### 📊 Migration Summary Tab
-A new **Migration Summary** tab in the Migration Planner provides an executive-level view of the project's readiness and workload, computed on demand from the current assessment data.
-
-**Key Metrics (top bar):**
-- **Total VMs** — in-scope VM count for the project
-- **Total Tech Fix Hours** — sum of all per-VM fix times (hours), factoring in complexity weights and OS-specific rates
-- **Migrated** — VMs with `migration_status = 'migrated'`
-- **At Risk** — VMs with `risk_level = 'RED'`
-
-**OS Breakdown table:** rows per OS family (Windows, Linux, Other) — VM count, total disk GB, average fix time (minutes), total fix hours.
-
-**Cohort Breakdown table:** one row per cohort — cohort name, VM count, total disk GB, total fix hours, average risk score.
-
----
-
-#### ⏱ Tech Fix Time Model
-Each VM's fix time is computed by `compute_vm_fix_time()` in `migration_engine.py` using a weighted factor model. Results feed the executive summary (`compute_project_fix_summary()`).
-
-**Fix Settings** are stored per-project in `migration_fix_settings` (auto-created on first access). Admins can tune them under **Fix Settings** in the Migration Planner UI:
+ed on first access). Admins can tune them under **Fix Settings** in the Migration Planner UI:
 
 | Factor | Default | Effect |
 |--------|---------|--------|
@@ -1193,14 +874,13 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **Dark Mode**: Full dark theme support for panel, messages, chips, help view, welcome screen, and settings.
 - **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
 
-### Policy-as-Code Runbooks (v1.21 → v1.57)
-- **📋 Runbooks Tab**: Operator-facing catalogue of 24 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
-- **24 Built-in Runbooks**:
-  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*, **DR Drill** *(v1.56)*, **Hypervisor Maintenance Evacuate** *(v1.57 Phase C2)*
-  - **Security** — Security Group Audit, Security & Compliance Audit, User Last Login Report, Snapshot Quota Forecast, **Security Group Hardening** *(v1.57)*, **Network Isolation Audit** *(v1.57)*, **Image Lifecycle Audit** *(v1.57)*
-  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, **Quota Adjustment** *(v1.53)*
-  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, **Org Usage Report** *(v1.53)*, **Capacity Forecast** *(v1.55)*
-  - **Provisioning** — **Tenant Offboarding** *(v1.56)*
+### Policy-as-Code Runbooks (v1.21 → v1.25 - NEW ✨)
+- **📋 Runbooks Tab**: Operator-facing catalogue of 14 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
+- **14 Built-in Runbooks**:
+  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
+  - **Security** — Security Group Audit, Security & Compliance Audit
+  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast
+  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning
 - **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout. High-risk runbooks (e.g. `password_reset_console`) default to `single_approval` for operator/admin triggers.
 - **Admin Governance Sub-Tabs**: Three new sub-tabs in Admin → Auth Management: Runbook Executions (filterable history with detail panel), Runbook Approvals (pending queue with approve/reject/cancel), Runbook Policies (per-runbook approval policy editor)
 - **Notification Events**: `runbook_approval_requested`, `runbook_completed`, `runbook_failed`
@@ -1208,111 +888,6 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **RBAC**: viewer=`runbooks:read`, operator=`runbooks:read+write`, admin/superadmin=`runbooks:read+write+admin`
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
 - **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`). `db/migrate_new_runbooks.sql` for adding the 7 new runbooks (v1.25+).
-
-### Action Runbooks — Quota Adjustment + Org Usage Report (v1.53.0)
-- **`quota_adjustment`** (Runbook 15): Set Nova/Neutron/Cinder quota for a project. Dry-run returns a before/after diff and cost estimate. Supports an optional billing gate pre-authorization call before applying changes. Writes a full audit entry with `charge_id`, reason, actor, and before/after diff.
-- **`org_usage_report`** (Runbook 16): Read-only usage + cost report for a single org/project. Covers Nova quota+usage, per-server breakdown, Neutron quota, Cinder quota+usage, floating IPs, snapshots. Outputs `result.html_body` — a pre-rendered HTML table ready to email to the customer.
-- **Friendly Dropdown Lookups** (v1.54.0): `x-lookup: vms` and `x-lookup: projects` schema fields render as live-populated `<select>` dropdowns in the trigger modal instead of free-text fields. Lookup data fetched from `/api/runbooks/lookup/{type}`.
-- **`vms_multi` multi-select** (v1.55.0): `x-lookup: vms_multi` renders as `<select multiple>` so operators can scope a rightsizing run to specific VMs.
-
-### Support Ticket System (v1.58.0)
-- **5 new DB tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`.
-- **Ticket refs**: Human-readable `TKT-YYYY-NNNNN` format via per-year auto-increment stored in `ticket_sequence`.
-- **Types**: `service_request`, `incident`, `change_request`, `inquiry`, `escalation`; auto types: `auto_incident`, `auto_change_request` (reserved for T3).
-- **SLA policies**: 17 seeded policies covering Tier1/Tier2/Tier3/Engineering/Management teams across ticket types and priorities. Admin-editable via UI and API.
-- **6 email templates**: `ticket_created`, `ticket_resolved`, `ticket_escalated`, `ticket_assigned`, `ticket_pending_approval`, `ticket_sla_breach` — HTML with `{{placeholder}}` substitution (XSS-safe).
-- **Full lifecycle API** (35+ endpoints at `/api/tickets`):
-  - Create/list/get/update; assign + first-response tracking; escalate (stamps chain); approve/reject (approval gate); resolve/reopen/close
-  - Comment thread: internal notes blocked from viewer role; structured types for audit trail
-  - SLA policy CRUD (admin); email template list+update (admin)
-  - `POST /_auto` — idempotent auto-ticket creation; used by all T3 triggers. Returns `{ticket_id, ticket_ref, created: bool}`. Duplicate detection: open ticket with same `(auto_source, auto_source_id)` returns existing ref with `created=false`.
-
-### Auto-Ticket Triggers (v1.59.0)
-- **T3 overview**: Five system hooks automatically open tickets on significant events. All use `_auto_ticket()` (in-process, no HTTP round-trip). All are idempotent — repeated events add a comment to the existing open ticket instead of opening duplicates.
-- **Dedup key**: `(auto_source, auto_source_id)` — indexed. An open ticket with matching values is reused; a `system` comment "Condition re-detected" is appended.
-- **Hook locations**:
-  | Trigger | Source file | `auto_source` | Fires when |
-  |---|---|---|---|
-  | Drift event | `db_writer.py` → `_detect_drift()` | `drift` | Severity `critical` or `warning` |
-  | Health score drop | `api/graph_routes.py` → `_build_graph()` | `health_score` | Node `health_score < 40` |
-  | Delete gate | `api/graph_routes.py` → `POST /api/graph/request-delete` | `delete_impact` | Manual request |
-  | Runbook failure | `api/runbook_routes.py` → `_execute_runbook()` | `runbook_failure` | Execution exception |
-  | Migration wave | `api/migration_routes.py` → `advance_wave_status()` | `migration` | Status set to `complete` |
-- **UI access**:
-  - Drift detection side-panel: "🎫 Create Incident Ticket" button per event
-  - Tenant health detail panel: "🚨 Report Incident" button (shown when `health_score < 60`)
-  - Graph delete-impact panel: "🎫 Request Delete Approval" button (shown when `!safe_to_delete`)
-- **Admin tasks**:
-  - View all auto-generated tickets: UI → Support Tickets → filter Type = `auto_incident` or `auto_change_request`
-  - Identify T3 tickets programmatically: `SELECT * FROM support_tickets WHERE auto_source IS NOT NULL AND status NOT IN ('resolved','closed');`
-  - Approve a blocked delete gate ticket: Support Tickets → find `auto_blocked=true` ticket → click Approve
-  - To disable a trigger without code change: resolve or close any open auto-ticket for that source (dedup will re-open on next event)
-- **Runbook integration (T2)**: `POST /{id}/trigger-runbook` dispatches to the runbook engine with a short-lived service JWT; stores `linked_execution_id` on the ticket; `GET /{id}/runbook-result` proxies the execution result.
-- **Email-customer (T2)**: `POST /{id}/email-customer` renders a named template with ticket context and sends via SMTP; stamps `customer_notified_at`.
-- **SLA daemon**: asyncio task runs every 15 minutes — sets `sla_response_breached` / `sla_resolve_breached`, posts Slack/Teams breach notifications, adds `sla_breach` activity comments, auto-escalates per SLA policy.
-- **Webhook notifications**: `post_event()` called on ticket created, assigned, escalated, resolved, SLA breach.
-- **Navigation**: "Operations & Support" group (🎫, `sort_order=9`) with **Support Tickets** (🎫) and **My Queue** (📥) items.
-- **RBAC**: `tickets` resource; viewer/operator/technical → `read+write`; admin/superadmin → `admin`.
-- **Migration**: Run `db/migrate_support_tickets.sql` on existing installs. Fully idempotent.
-- **Quick admin tasks**:
-  - View SLA policies: UI → Support Tickets → ⚙ Admin → SLA Policies tab
-  - Edit email template: UI → Support Tickets → ⚙ Admin → Email Templates tab → click template name
-  - Manually breach-check: calls `run_sla_checks()` via background loop; cannot be triggered from UI (runs automatically every 15 min)
-
-### Analytics, Bulk Actions & Polish — T4 (v1.60.0)
-- **Analytics endpoint**: `GET /api/tickets/analytics?days=30` (admin/superadmin only) — returns:
-  - `resolution_by_dept`: average resolution hours per destination department
-  - `sla_by_dept`: SLA breach rate % per department
-  - `top_openers`: top 10 users by ticket count
-  - `volume_trend`: daily opened ticket counts over the window
-  - Available in UI: Support Tickets → ⚙ Admin → Analytics tab
-- **Stats bar improvements**: `GET /api/tickets/stats` now includes `resolved_today` and `opened_today`. Priority breakdown is hidden in the stats bar when a status filter is active (prevents misleading counts).
-- **Bulk actions**: `POST /api/tickets/bulk-action` — admin/superadmin only:
-  - `close_stale` — closes open tickets older than `stale_days` with a "bulk closed" note
-  - `reassign` — reassigns a set of tickets to `assigned_to` and marks them `in_progress`
-  - `export_csv` — returns a CSV file attachment of the selected ticket IDs
-  - UI: checkboxes appear per row; bulk toolbar shown when ≥1 ticket selected
-- **Team-member picker**: `GET /api/tickets/team-members/{dept_id}` returns active users from `user_roles` for the given department. Create Ticket modal shows a "Assign to user (optional)" dropdown after team selection. `TicketCreate.assigned_to` field added; if provided, initial status is set to `assigned`.
-- **Opener confirmation email**: when a ticket is created, the `ticket_created` email template is sent to the opener's email (looked up via `users.name = username`). Fires silently; failure is logged as a warning only.
-- **Dept dropdown fix**: `GET /api/navigation/departments` now returns `{"departments": [...]}` — previously returned a plain list, causing empty dropdowns in Create Ticket modal and dept filter across TicketsTab, MeteringTab, and RunbooksTab.
-- **LandingDashboard widget**: ticket KPI card (Open / SLA Breached / Resolved Today / Opened Today) — visible by default on the main dashboard for all roles.
-- **MeteringTab integration**: 📋 "Open Inquiry" button on every resource row opens an inline modal to create a `service_request` ticket linked to that resource.
-- **RunbooksTab integration**: 📎 "Ticket" button on every execution row opens an inline modal pre-filled from runbook name and status.
-- **Quick admin tasks for T4**:
-  - View analytics: UI → Support Tickets → ⚙ Admin → Analytics tab
-  - Bulk close stale tickets: ⚙ Admin → Bulk Actions → enter stale days → Close Stale
-  - Query team members for a dept: `SELECT username FROM user_roles WHERE department_id = <id> AND is_active = true`
-  - Check opener email lookup: `SELECT name, email FROM users WHERE name = '<username>'`
-
-### Action Runbooks — Security Hardening + Isolation Audit + Hypervisor Evacuate (v1.57.0)
-- **`security_group_hardening`** (Runbook 21): Scans all SGs for ingress rules open to `0.0.0.0/0`/`::/0` on sensitive ports (22, 3389, 5432, 3306, 6379, 27017 by default). Dry-run returns a proposed replacement CIDR per rule using graph adjacency data (fallback `10.0.0.0/8`). Execute: DELETE violating rule → CREATE replacement rule(s) with tighter CIDRs.
-  - **Parameters**: `target_project` (projects_optional), `flag_ports=[22,3389,5432,3306,6379,27017]`, `replacement_cidr_fallback="10.0.0.0/8"`
-  - **Risk**: high | **Dry-run**: yes | **Approval**: all roles → single_approval | **Dept**: Engineering, Tier3
-- **`network_isolation_audit`** (Runbook 22): Read-only isolation scan — flags shared networks, cross-tenant routers, overlapping CIDRs (using stdlib `ipaddress`), and FIPs on non-compute device owners. Severity: critical / warning / info.
-  - **Parameters**: `target_project` (projects_optional), `include_fip_check=true`
-  - **Risk**: low | **Read-only** | **Approval**: all roles → auto_approve | **Dept**: Engineering, Tier3
-- **`image_lifecycle_audit`** (Runbook 23): Scores Glance images 0–100 by age (`max_age_days`), EOL OS detection, FIP exposure of in-use VMs, and orphan status. Outputs per-image risk level + recommendation.
-  - **Parameters**: `target_project` (projects_optional), `max_age_days=365`, `include_unused=true`
-  - **Risk**: low | **Read-only** | **Approval**: all roles → auto_approve | **Dept**: Engineering, Management
-- **`hypervisor_maintenance_evacuate`** (Runbook 24, Phase C2): Drains a hypervisor before maintenance. Lists all VMs from `os-hypervisors/{id}/servers`, orders by graph dependency depth (leaf-first), live-migrates each VM, with graceful-stop + cold-migrate fallback. Disables `nova-compute` service after a clean drain.
-  - **Parameters**: `hypervisor_hostname` (required, x-lookup: hypervisors), `migration_strategy=live_first`, `graceful_stop_fallback=true`, `disable_host_after_drain=true`, `max_concurrent_migrations=3`
-  - **Risk**: high | **Dry-run**: yes (migration plan + order) | **Approval**: all roles → single_approval | **Dept**: Engineering only
-- **New lookup endpoint**: `GET /api/runbooks/lookup/hypervisors` — returns hypervisor list (hostname, state, status, vCPU usage, running VMs) for the trigger modal dropdown.
-
-### Action Runbooks — DR Drill + Tenant Offboarding (v1.56.0)
-- **`disaster_recovery_drill`** (Runbook 19): Clones VMs tagged `dr_candidate` into an ephemeral isolated Neutron network, polls until each boots `ACTIVE`, records per-VM boot times, then tears down all DR resources (VMs → subnet → network). Dry-run lists candidates and quota check without creating anything.
-  - **Parameters**: `target_project` (projects_optional), `server_ids` (vms_multi), `tag_filter=dr_candidate`, `boot_timeout_minutes=10`, `max_vms=10`, `network_cidr=192.168.99.0/24`, `skip_teardown_on_failure=false`
-  - **Risk**: medium | **Dry-run**: yes | **Approval**: all roles → single_approval | **Dept**: Engineering only
-- **`tenant_offboarding`** (Runbook 20): 10-step customer exit workflow. Requires `confirm_project_name` to exactly match the Keystone project name	— any mismatch aborts immediately. Steps: release FIPs → stop VMs → delete unattached ports → disable Keystone project → tag resources with `retention_until` metadata → CRM churn notification → email final usage report → ticket stub (deferred to T1).
-  - **Parameters**: `project_id` (projects), `confirm_project_name` (required safety string), `retention_days=30`, `email_final_report=true`, `customer_email`
-  - **Risk**: critical | **Dry-run**: yes (full plan preview) | **Approval**: all roles → single_approval | **Dept**: Management + Engineering
-
-### Action Runbooks — VM Rightsizing + Capacity Forecast (v1.55.0)
-- **`vm_rightsizing`** (Runbook 17): Analyses `metering_resources` CPU/RAM usage (default 14-day window), identifies over-provisioned VMs, and suggests the cheapest fitting flavor using peak usage + 25 % vCPU / 50 % RAM headroom. Execute mode: pre-snapshot → stop → resize → confirmResize → start. Dry-run returns `candidates[]` with current/suggested flavor, savings_per_month, and `skipped[]` with skip reason.
-  - **Parameters**: `target_project` (projects_optional), `server_ids` (vms_multi), `analysis_days=14`, `cpu_idle_pct=15`, `ram_idle_pct=30`, `min_savings_per_month=5`, `require_snapshot_first=true`
-  - **Risk**: high | **Approval**: operator/admin → single_approval; superadmin → auto | **Dept**: Engineering, Tier3, Management
-- **`capacity_forecast`** (Runbook 18): Reads `hypervisors_history`, aggregates weekly vCPU + RAM usage, runs numpy-free linear regression, and projects days until the cluster reaches `capacity_warn_pct` (default 80 %). Generates `alerts[]` when breach is within `warn_days_threshold` days. Optional `trigger_ticket` param stubs a future ticket workflow.
-  - **Risk**: low | **Read-only** | **Dept**: Engineering, Tier3, Management
 
 ### Runbook Department Visibility (v1.52.0)
 - **Department-scoped filtering**: Non-admin users receive only the runbooks their department is permitted to see. Admin and superadmin bypass the filter entirely and always see all runbooks.
@@ -1697,7 +1272,7 @@ The Platform9 Management System is a comprehensive OpenStack infrastructure mana
 - **Audit & Compliance**: 90-day authentication event tracking and permission logging
 - **Comprehensive Inventory Management**: Real-time tracking of VMs, volumes, snapshots, networks, subnets, ports, floating IPs, security groups, security group rules, hypervisors, flavors, and images
 - **Automated Snapshot Management**: Policy-driven snapshot creation with cross-tenant support via dedicated service user, configurable retention periods, and hourly scheduling (default 60 min)
-- **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" UI button and `POST /api/snapshot/run-now` API for immediate policy assignment and snapshot creation
+- **On-Demand Snapshot Pipeline**: "Sync & Snapshot Now" UI button and `POST /snapshot/run-now` API for immediate policy assignment and snapshot creation
 - **Compliance Reporting**: Detailed compliance reports with policy adherence tracking
 - **Multi-Tenant Resource Administration**: Domain and project-level filtering with role-based permissions
 - **Complete RVTools Parity**: Full infrastructure visibility including ports and floating IP tracking
@@ -1930,10 +1505,10 @@ Get-Content monitoring\cache\metrics_cache.json | ConvertFrom-Json
 3. **Monitoring service errors**:
    ```bash
    # Check monitoring container logs
-   docker compose logs pf9_monitoring
+   docker-compose logs pf9_monitoring
    
    # Verify cache file is mounted
-   docker compose exec pf9_monitoring ls -la /tmp/cache/metrics_cache.json
+   docker-compose exec pf9_monitoring ls -la /tmp/cache/metrics_cache.json
    ```
 
 **Performance Optimization**:
@@ -2094,22 +1669,21 @@ git clone <repository-url>
 cd pf9-mngt
 
 # Configure credentials (one-time setup)
-copy .env.template .env
-# Edit .env with your Platform9 credentials, DB passwords, and LDAP settings
+cp .env.template .env
+# Edit .env with your Platform9 credentials
 
-# First-time provisioning: creates DB schema, seeds LDAP, runs all migrations
-.\deployment.ps1
-
-# --- Development startup (local/lab use) ---
-# Exposes all ports directly; uses Vite dev server; auto-merges docker-compose.override.yml
+# Complete automated setup
 .\startup.ps1
-.\startup.ps1 -StopOnly    # to stop
 
-# --- Production startup ---
-# All traffic via nginx TLS (443 only); pre-built ghcr.io images; 4 API workers
-# Set PF9_IMAGE_TAG=v1.70.0 in .env to pin the release version
-.\startup_prod.ps1
-.\startup_prod.ps1 -StopOnly    # to stop
+# This automatically:
+# - Starts all Docker services (DB, API, UI, Monitoring) 
+# - Collects initial metrics from PF9 hosts
+# - Sets up scheduled metrics collection (every 2 minutes)
+# - Verifies all services are operational
+# - Zero manual intervention required after .env setup
+
+# To stop everything
+.\startup.ps1 -StopOnly
 ```
 
 #### Option 2: Manual Docker Setup
@@ -2159,11 +1733,11 @@ chmod 600 .env
 #### 3. Deploy Services
 ```bash
 # Start all services
-docker compose up -d
+docker-compose up -d
 
 # Verify deployment
-docker compose ps
-docker compose logs -f pf9_api  # Check for errors
+docker-compose ps
+docker-compose logs -f pf9_api  # Check for errors
 ```
 
 #### 4. Initial Data Collection
@@ -2714,7 +2288,7 @@ allow_origins=["*"]  # Should be restricted
 ```python
 allow_origins=[
     "http://localhost:5173",  # Development
-    "https://pf9-mgmt.example.com",  # Production
+    "https://pf9-mgmt.company.com",  # Production
     os.getenv("ALLOWED_ORIGINS", "").split(",")
 ]
 ```
@@ -3192,12 +2766,12 @@ curl -I http://localhost:5173
 #### Container Status
 ```bash
 # Check all containers
-docker compose ps
+docker-compose ps
 
 # View container logs
-docker compose logs pf9_api
-docker compose logs pf9_ui
-docker compose logs pf9_db
+docker-compose logs pf9_api
+docker-compose logs pf9_ui
+docker-compose logs pf9_db
 ```
 
 ### Common Issues
@@ -3212,7 +2786,7 @@ docker compose logs pf9_db
 **Solutions**:
 ```bash
 # Verify credentials
-docker compose logs pf9_api | grep -i auth
+docker-compose logs pf9_api | grep -i auth
 
 # Test Platform9 connectivity
 curl -k https://your-platform9-cluster.com/keystone/v3
@@ -3223,10 +2797,10 @@ curl -k https://your-platform9-cluster.com/keystone/v3
 **Solutions**:
 ```bash
 # Restart database
-docker compose restart pf9_db
+docker-compose restart pf9_db
 
 # Check database logs
-docker compose logs pf9_db
+docker-compose logs pf9_db
 
 # Verify database connectivity
 docker exec pf9_api psql -h db -U pf9 -d pf9_mgmt -c "SELECT 1;"
@@ -3253,16 +2827,16 @@ services:
 #### API Logs
 ```bash
 # Real-time monitoring
-docker compose logs -f pf9_api
+docker-compose logs -f pf9_api
 
 # Error filtering
-docker compose logs pf9_api | grep ERROR
+docker-compose logs pf9_api | grep ERROR
 ```
 
 #### Database Logs
 ```bash
 # PostgreSQL logs
-docker compose logs pf9_db
+docker-compose logs pf9_db
 
 # Query performance
 docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT * FROM pg_stat_activity;"
@@ -3404,11 +2978,11 @@ Smart Queries execute read-only SQL against live database tables — no indexing
 git pull origin main
 
 # Rebuild containers
-docker compose build --no-cache
+docker-compose build --no-cache
 
 # Restart services
-docker compose down
-docker compose up -d
+docker-compose down
+docker-compose up -d
 ```
 
 #### Database Updates
@@ -3445,14 +3019,25 @@ find $BACKUP_DIR -name "*.gz" -mtime +30 -delete
 
 ## Code Quality Issues
 
-### Resolved Security Items ✅
+### Critical Security Issues
 
-| Item | Status | Resolved In |
-|------|--------|-------------|
-| Hardcoded credentials (`docker-compose.yml`, `p9_common.py`) | ✅ Replaced with Docker Secrets (`/run/secrets/`) | v1.50.0 |
-| CORS wildcard `allow_origins=["*"]` | ✅ Restricted to configured origins | v1.50.0 |
-| SQL injection risk in dynamic queries | ✅ Parameterized queries enforced throughout | v1.50.0 |
-| Missing authentication & authorization | ✅ LDAP + JWT + granular RBAC permission matrix | v1.50.0 |
+#### 1. Credential Exposure
+- **Location**: `docker-compose.yml`, `p9_common.py`
+- **Issue**: Hardcoded production credentials
+- **Risk**: HIGH - Complete infrastructure access
+- **Fix**: Use environment variables and secrets management
+
+#### 2. SQL Injection Risk
+- **Location**: `api/main.py` various query functions
+- **Issue**: Some dynamic SQL construction
+- **Risk**: MEDIUM - Data exposure
+- **Fix**: Use parameterized queries consistently
+
+#### 3. CORS Configuration
+- **Location**: `api/main.py`
+- **Issue**: `allow_origins=["*"]` too permissive
+- **Risk**: MEDIUM - Cross-origin attacks
+- **Fix**: Restrict to specific domains
 
 ### Code Duplication Issues
 
@@ -3480,12 +3065,17 @@ find $BACKUP_DIR -name "*.gz" -mtime +30 -delete
 - **Impact**: Slow response times with large datasets
 - **Fix**: Add database indexes on commonly filtered columns
 
-### Documentation Status ✅
+### Documentation Issues
 
-| Item | Status |
-|------|--------|
-| API documentation | ✅ `docs/API_REFERENCE.md` — full endpoint reference with RBAC requirements per endpoint |
-| Deployment guide | ✅ `docs/DEPLOYMENT_GUIDE.md` v2.5 — production hardening, TLS, secrets, multi-arch |
+#### 1. Missing API Documentation
+- **Issue**: No comprehensive API documentation
+- **Impact**: Developer experience, integration difficulty
+- **Fix**: Complete OpenAPI/Swagger documentation
+
+#### 2. Deployment Documentation
+- **Issue**: Basic deployment instructions only
+- **Impact**: Production deployment challenges
+- **Fix**: Comprehensive deployment guide with security considerations
 
 ---
 
@@ -3630,30 +3220,22 @@ def test_server_list():
 ```
 
 #### 2. CI/CD Pipeline
-
-The pipeline is defined in two workflow files under `.github/workflows/`:
-
-**CI workflow — `.github/workflows/ci.yml`** (triggers on every `push` and `pull_request`):
-
-| Job | What it does |
-|-----|-------------|
-| `lint` | `flake8 --select=E9,F63,F7,F82` + `python -m py_compile` on every `.py` file |
-| `compose-validate` | `docker compose config` for both dev and prod overlays — catches YAML errors before any container starts |
-| `unit-tests` | 14 fast tests (JWT helpers + container watchdog logic) — no live stack needed |
-| `integration-tests` | Full Docker Compose stack, waits for healthy API, runs `tests/seed_ci.py` smoke test, then full `pytest tests/` suite |
-
-**Release workflow — `.github/workflows/release.yml`** (triggers when CI fully passes on `master`/`main`):
-
-1. **Create tag** — parses version from `CHANGELOG.md`, creates the git tag and GitHub Release with changelog notes
-2. **Publish images** — builds all 9 service images for `linux/amd64` + `linux/arm64` and pushes to `ghcr.io/erezrozenbaum/pf9-mngt-<service>:<version>`; uses the built-in `GITHUB_TOKEN`, no extra secrets required
-
-**To pin a specific release version in production:**
-```bash
-# In .env
-PF9_IMAGE_TAG=v1.69.0
+```yaml
+# .github/workflows/ci.yml
+name: CI/CD
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run tests
+        run: |
+          docker-compose -f docker-compose.test.yml up --abort-on-container-exit
+      - name: Security scan
+        run: |
+          docker run --rm -v $(pwd):/app securecodewarrior/docker-scout /app
 ```
-
-For a full reference see [`docs/CI_CD_GUIDE.md`](CI_CD_GUIDE.md).
 
 #### 3. Code Quality Tools
 ```yaml
@@ -3677,21 +3259,27 @@ repos:
 
 ## Conclusion
 
-The Platform9 Management System is a production-ready infrastructure management platform. Previously identified security gaps — hardcoded credentials, missing authentication, and open CORS — were resolved in v1.50.0 with Docker Secrets, LDAP-backed JWT authentication, and a granular RBAC permission matrix.
+The Platform9 Management System provides valuable infrastructure visibility and management capabilities. However, several critical security and architectural improvements are needed before production deployment:
 
-### Security Features Implemented ✅
+### Immediate Actions Required:
+1. **Remove hardcoded credentials** from all configuration files
+2. **Implement proper secret management**
+3. **Restrict CORS policy** to specific origins
+4. **Add authentication and authorization**
+5. **Implement comprehensive input validation**
 
-| Feature | Detail |
-|---------|--------|
-| **Secrets management** | Docker Secrets at `/run/secrets/`; no credentials in source or `.env` |
-| **Authentication** | LDAP-backed login with JWT session tokens and MFA support |
-| **Authorization** | Editable RBAC matrix — Superadmin, Admin, Operator, Viewer roles |
-| **TLS & network security** | nginx TLS termination; LDAP and DB ports not exposed to host |
-| **Audit trail** | Full change history; deletion events; restore audit records |
-| **Log management** | Structured logging + log rotation across all services |
+### Medium-term Improvements:
+1. **Database optimization** with proper indexing
+2. **Connection pooling** implementation
+3. **Comprehensive monitoring** and alerting
+4. **Automated testing** and CI/CD pipeline
+5. **Code consolidation** to eliminate duplication
 
-### Ongoing Development (Non-blocking)
-1. **Multi-cluster support** for complex multi-region environments
-2. **Mobile-responsive interface** refinements for field use
-3. **Additional integration connectors** (CRM, billing, custom webhooks)
-4. **Code consolidation** — UI component library unification
+### Long-term Enhancements:
+1. **Multi-cluster support** for complex environments
+2. **Role-based access control** for different user types
+3. **Advanced reporting** with business intelligence features
+4. **Mobile-responsive interface** improvements
+5. **Integration capabilities** with other management tools
+
+This system has strong foundational architecture but requires security hardening and operational improvements before production use.

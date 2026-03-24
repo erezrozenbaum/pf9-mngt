@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.14] - 2026-03-24
+
+### Fixed
+- **`pf9_rvtools.py`** — Critical: `upsert_snapshots` FK violation was rolling back the entire core inventory transaction (servers, volumes, networks, hypervisors all lost). Fixed by committing core inventory first, then running snapshots in a separate isolated try/except transaction.
+- **`db_writer.py`** — `upsert_snapshots` now filters out orphaned snapshots whose parent `volume_id` is not present in the `volumes` table (deleted in OpenStack), preventing FK constraint violations.
+- **`pf9_rvtools.py`** — `STATE_FILE` path changed from a bare relative filename (`p9_rvtools_state.json`) to `$PF9_OUTPUT_DIR/p9_rvtools_state.json` so the state file is written to a writable mounted volume instead of the read-only image layer.
+
+---
+
 ## [1.82.13] - 2026-03-24
 
 ### Fixed

@@ -784,7 +784,22 @@ def upsert_snapshots(conn, snapshots: List[Dict[str, Any]], run_id: Optional[int
             'updated_at': updated_at,
             'raw_json': json.dumps(s) if isinstance(s, dict) else s,
         })
-    
+
+    # Filter out snapshots whose parent volume no longer exists in our DB.
+    # OpenStack may return snapshots of already-deleted volumes; inserting them
+    # would violate the snapshots_volume_id_fkey FK constraint.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM volumes")
+            valid_volume_ids = {row[0] for row in cur.fetchall()}
+        before = len(records)
+        records = [r for r in records if not r['volume_id'] or r['volume_id'] in valid_volume_ids]
+        skipped = before - len(records)
+        if skipped:
+            print(f"    [WARN] Skipping {skipped} snapshot(s) with missing parent volume (orphaned in OpenStack)")
+    except Exception:
+        pass  # If the query fails, proceed and let the FK constraint surface naturally
+
     return _upsert_with_history(conn, 'snapshots', records, 'id', run_id)
 
 

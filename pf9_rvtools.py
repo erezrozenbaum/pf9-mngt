@@ -81,7 +81,7 @@ from db_writer import (
     upsert_project_quotas,       # ✅ Project Quotas
 )
 
-STATE_FILE = "p9_rvtools_state.json"
+STATE_FILE = os.path.join(os.getenv("PF9_OUTPUT_DIR", "/tmp"), "p9_rvtools_state.json")
 
 ENABLE_DB = os.getenv("PF9_ENABLE_DB", "1") == "1"
 
@@ -812,7 +812,6 @@ def main():
             n_hv           = upsert_hypervisors(conn, hypervisors, run_id=run_id)
             n_servers      = upsert_servers(conn, servers, run_id=run_id)
             n_vols         = upsert_volumes(conn, volumes, run_id=run_id)
-            n_snaps        = upsert_snapshots(conn, snapshots, run_id=run_id)  # ✅ NEW
             n_nets         = upsert_networks(conn, networks, run_id=run_id)
             n_subnets      = upsert_subnets(conn, subnets, run_id=run_id)
             n_ports        = upsert_ports(conn, ports, run_id=run_id)
@@ -820,6 +819,22 @@ def main():
             n_fips         = upsert_floating_ips(conn, floatingips, run_id=run_id)
             n_sgs          = upsert_security_groups(conn, security_groups, run_id=run_id)
             n_sg_rules     = upsert_security_group_rules(conn, security_group_rules, run_id=run_id)
+
+            # Commit core inventory now so a snapshot failure cannot roll it back
+            conn.commit()
+
+            # Snapshots are non-critical: a snapshot may reference a volume that was
+            # deleted in OpenStack (orphaned snapshot). Wrap in its own transaction.
+            n_snaps = 0
+            try:
+                n_snaps = upsert_snapshots(conn, snapshots, run_id=run_id)
+                conn.commit()
+            except Exception as snap_err:
+                print(f"    [WARN] Snapshots DB write failed (orphaned volumes?): {snap_err}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
             # Additional metadata (non-critical, won't fail the run)
             n_keypairs = n_sgroups = n_aggs = n_vtypes = n_quotas = 0
