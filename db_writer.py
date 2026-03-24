@@ -270,6 +270,9 @@ def _upsert_with_history(
         execute_values(cur, insert_query, values)
         
         # ---- History tracking + drift detection ----
+        # Use a savepoint so that a missing/broken history table NEVER rolls back
+        # the main upsert that was just executed above.
+        cur.execute("SAVEPOINT before_history")
         history_table = f"{table_name}_history"
         try:
             for record in records:
@@ -312,9 +315,9 @@ def _upsert_with_history(
                         _detect_drift(cur, table_name, rid, old_row, record, drift_rules)
 
         except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn) as e:
-            # History table doesn't exist or is missing columns, skip
-            conn.rollback()
-            pass
+            # History table doesn't exist or has wrong schema — roll back only
+            # the history writes, preserving the main upsert above.
+            cur.execute("ROLLBACK TO SAVEPOINT before_history")
     
     return len(records)
 

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.16] - 2026-03-24
+
+### Fixed
+- **`db_writer.py`** — Critical: `_upsert_with_history()` called `conn.rollback()` in the history-tracking exception handler, which silently wiped the just-inserted main rows (servers, volumes, networks, hypervisors) before the caller's `conn.commit()` could save them. Replaced `conn.rollback()` with a PostgreSQL `SAVEPOINT`/`ROLLBACK TO SAVEPOINT` so only the history writes are undone, never the main upsert. This is why all inventory runs reported `success` with non-zero counts but tables always showed 0 rows.
+
+---
+
 ## [1.82.15] - 2026-03-24
 
 ### Fixed
