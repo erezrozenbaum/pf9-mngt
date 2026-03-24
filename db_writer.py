@@ -533,7 +533,7 @@ def upsert_subnets(conn, subnets: List[Dict[str, Any]], run_id: Optional[int] = 
     """Upsert subnets into the database"""
     if not subnets:
         return 0
-    
+
     records = []
     for s in subnets:
         records.append({
@@ -545,7 +545,22 @@ def upsert_subnets(conn, subnets: List[Dict[str, Any]], run_id: Optional[int] = 
             'enable_dhcp': s.get('enable_dhcp'),
             'raw_json': json.dumps(s) if isinstance(s, dict) else s,
         })
-    
+
+    # Filter out subnets whose parent network no longer exists in our DB.
+    # OpenStack may return subnets for networks not included in the network list,
+    # which would violate the subnets_network_id_fkey FK constraint.
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM networks")
+            valid_network_ids = {row[0] for row in cur.fetchall()}
+        before = len(records)
+        records = [r for r in records if r['network_id'] and r['network_id'] in valid_network_ids]
+        skipped = before - len(records)
+        if skipped:
+            print(f"    [WARN] Skipping {skipped} subnet(s) with missing parent network (orphaned in OpenStack)")
+    except Exception:
+        pass  # If the query fails, proceed and let the FK constraint surface naturally
+
     return _upsert_with_history(conn, 'subnets', records, 'id', run_id)
 
 

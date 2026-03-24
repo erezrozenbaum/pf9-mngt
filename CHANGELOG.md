@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.15] - 2026-03-24
+
+### Fixed
+- **`pf9_rvtools.py`** — Critical: derived network tables (subnets, ports, routers, floating IPs, security groups) could still FK-violate and roll back the entire core inventory. Fixed by committing servers/volumes/networks first, then writing each derived table in an isolated loop with individual commit/rollback. No single derived-table failure can now affect committed core data.
+- **`db_writer.py`** — `upsert_subnets` now filters orphaned subnets whose `network_id` is not present in the `networks` table (same pattern as `upsert_snapshots` in v1.82.14).
+
+---
+
 ## [1.82.14] - 2026-03-24
 
 ### Fixed

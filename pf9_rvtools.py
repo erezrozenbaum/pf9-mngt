@@ -813,15 +813,37 @@ def main():
             n_servers      = upsert_servers(conn, servers, run_id=run_id)
             n_vols         = upsert_volumes(conn, volumes, run_id=run_id)
             n_nets         = upsert_networks(conn, networks, run_id=run_id)
-            n_subnets      = upsert_subnets(conn, subnets, run_id=run_id)
-            n_ports        = upsert_ports(conn, ports, run_id=run_id)
-            n_routers      = upsert_routers(conn, routers, run_id=run_id)
-            n_fips         = upsert_floating_ips(conn, floatingips, run_id=run_id)
-            n_sgs          = upsert_security_groups(conn, security_groups, run_id=run_id)
-            n_sg_rules     = upsert_security_group_rules(conn, security_group_rules, run_id=run_id)
 
-            # Commit core inventory now so a snapshot failure cannot roll it back
+            # Commit core inventory (servers / volumes / networks) BEFORE derived tables.
+            # OpenStack can return subnets/ports/etc. that reference networks or volumes
+            # not present in the parent list (orphaned FKs). Each derived table is written
+            # in its own isolated try/except so any failure never rolls back the core data.
             conn.commit()
+
+            n_subnets = n_ports = n_routers = n_fips = n_sgs = n_sg_rules = 0
+            for _label, _fn, _obj in [
+                ("subnets",              upsert_subnets,              subnets),
+                ("ports",                upsert_ports,                ports),
+                ("routers",              upsert_routers,              routers),
+                ("floating_ips",         upsert_floating_ips,         floatingips),
+                ("security_groups",      upsert_security_groups,      security_groups),
+                ("security_group_rules", upsert_security_group_rules, security_group_rules),
+            ]:
+                try:
+                    _count = _fn(conn, _obj, run_id=run_id)
+                    conn.commit()
+                    if _label == "subnets":               n_subnets  = _count
+                    elif _label == "ports":               n_ports    = _count
+                    elif _label == "routers":             n_routers  = _count
+                    elif _label == "floating_ips":        n_fips     = _count
+                    elif _label == "security_groups":     n_sgs      = _count
+                    elif _label == "security_group_rules": n_sg_rules = _count
+                except Exception as _err:
+                    print(f"    [WARN] {_label} DB write failed (orphaned FK?): {_err}")
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
 
             # Snapshots are non-critical: a snapshot may reference a volume that was
             # deleted in OpenStack (orphaned snapshot). Wrap in its own transaction.
