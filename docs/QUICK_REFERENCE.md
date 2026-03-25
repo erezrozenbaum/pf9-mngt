@@ -137,7 +137,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **K8s storageClass hotfix + Phase 4 observability** (v1.82.19 — NEW ✨):
+- **ArgoCD StatefulSet ignoreDifferences** (v1.82.20 — NEW ✨): `application.yaml` now ignores `volumeClaimTemplates` diffs to eliminate permanent OutOfSync noise
+- **K8s storageClass hotfix + Phase 4 observability** (v1.82.19):
   - **Critical fix** — all PVCs had `storageClass: standard` (non-existent on cluster); changed to `nfs-pf9`. Affected: PostgreSQL, LDAP, backup-worker, reports PVC. Caused new pods to hang in Pending indefinitely.
   - **Phase 4 monitoring** — `k8s/monitoring/prometheus-values.yaml` + `loki-values.yaml`: `kube-prometheus-stack` (Prometheus/Grafana/AlertManager) + `loki-stack` (Loki/Promtail); sized for 3-node × 4 CPU / 8 GB cluster; 6 custom AlertManager rules for pf9-mngt.
 - **RVTools K8s shared storage, file retention & per-dept default tab** (v1.82.18):

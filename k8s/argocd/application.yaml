@@ -38,6 +38,15 @@ spec:
     server: https://kubernetes.default.svc
     namespace: pf9-mngt
 
+  # StatefulSet volumeClaimTemplates are immutable in Kubernetes — once a
+  # StatefulSet is created, the storageClassName and other VCT fields cannot
+  # be patched. Ignore this field to prevent permanent OutOfSync noise.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/volumeClaimTemplates
+
   syncPolicy:
     automated:
       prune: true       # remove resources deleted from git

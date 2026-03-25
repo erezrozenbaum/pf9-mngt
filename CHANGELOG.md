@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.20] - 2026-03-25
+
+### Fixed
+- **ArgoCD: StatefulSet OutOfSync noise** — `k8s/argocd/application.yaml` now includes `ignoreDifferences` for `StatefulSet /spec/volumeClaimTemplates`. Kubernetes treats `volumeClaimTemplates` as immutable after creation, so any change to `storageClass` in Helm values causes a permanent OutOfSync indicator in ArgoCD even after a successful sync. The running PVCs are unaffected.
+
+---
+
 ## [1.82.19] - 2026-03-25
 
 ### Fixed
