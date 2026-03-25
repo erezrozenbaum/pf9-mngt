@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.18] - 2026-03-26
+
+### Fixed
+- **K8s: RVTools Excel files not downloadable** — Root cause: `scheduler-worker` mounted an `emptyDir` (pod-local ephemeral storage) for `/mnt/reports`, so generated `.xlsx` files were invisible to the API pod. The API pod had no reports volume mount at all. Fixed by:
+  - Adding `k8s/helm/pf9-mngt/templates/reports-pvc.yaml` — new `PersistentVolumeClaim` (`pf9-reports`, `ReadWriteMany`).
+  - Updating `templates/api/deployment.yaml` to mount the PVC at `/mnt/reports`.
+  - Updating `templates/workers/scheduler-worker.yaml` to reference the PVC instead of `emptyDir`.
+  - Both mounts use a Helm conditional: `{{- if .Values.reports.persistence.enabled }}` so the PVC is opt-in; falls back to `emptyDir` when disabled.
+
+### Added
+- **RVTools file retention / rotation** (`scheduler_worker/main.py`, `api/reports.py`, `values.yaml`, `scheduler-worker.yaml`):
+  - New `RVTOOLS_RETENTION_DAYS` env var (default: `30`). After each inventory run the scheduler deletes `.xlsx` files older than the configured window.
+  - New `GET /api/reports/rvtools/retention` — returns current retention setting.
+  - New `PUT /api/reports/rvtools/retention` — updates retention (admin/superadmin only); persisted to `system_settings` table.
+  - UI: Reports → RVTools Exports tab now shows a **File Retention** input card (admin-only) to view and update the retention window.
+- **Per-department default landing tab** (`api/navigation_routes.py`, `pf9-ui/src/components/UserManagement.tsx`):
+  - `departments` table gains `default_nav_item_key TEXT` column (added via migration).
+  - `GET /api/departments` now returns `default_nav_item_key`.
+  - `POST /api/departments` and `PUT /api/departments/{id}` accept `default_nav_item_key`.
+  - `GET /api/auth/me/navigation` response now includes `"default_tab"` — the nav item key the frontend should navigate to on login.
+  - Admin Tools → Departments tab: each row gains a **Default Landing Tab** dropdown. The add-department form also includes the dropdown.
+- **`db/migrate_v1_82_18.sql`** — idempotent migration that:
+  - Creates `system_settings` table and seeds `rvtools_retention_days = 30`.
+  - Adds `departments.default_nav_item_key` column.
+  - Re-inserts all nav groups and nav items with `ON CONFLICT DO NOTHING`  so existing K8s clusters that were deployed before a nav item was added automatically pick up the missing items.
+  - Back-fills `department_nav_groups` and `department_nav_items` for any newly inserted items.
+
+### config
+- `values.yaml`: added `reports.persistence` block (`enabled: true`, `storageClass: standard`, `size: 10Gi`) and `workers.schedulerWorker.rvtoolsRetentionDays: "30"`. Change `storageClass` to `nfs-client` if an NFS dynamic provisioner is installed on the cluster.
+
+---
+
 ## [1.82.17] - 2026-03-25
 
 ### Fixed

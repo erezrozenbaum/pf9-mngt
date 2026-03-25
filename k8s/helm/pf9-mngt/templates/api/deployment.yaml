@@ -272,6 +272,15 @@ spec:
           volumeMounts:
             - name: app-logs
               mountPath: /app/logs
+            - name: reports
+              mountPath: /mnt/reports
       volumes:
         - name: app-logs
           emptyDir: {}
+        - name: reports
+          {{- if .Values.reports.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: pf9-reports
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

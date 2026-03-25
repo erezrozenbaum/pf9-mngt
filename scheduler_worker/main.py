@@ -44,6 +44,7 @@ RVTOOLS_ENABLED = os.getenv("RVTOOLS_ENABLED", "true").lower() in ("true", "1", 
 RVTOOLS_INTERVAL_MINUTES = int(os.getenv("RVTOOLS_INTERVAL_MINUTES", "0"))  # 0 = use RVTOOLS_SCHEDULE_TIME
 RVTOOLS_SCHEDULE_TIME = os.getenv("RVTOOLS_SCHEDULE_TIME", "03:00")         # HH:MM UTC, used when interval=0
 RVTOOLS_RUN_ON_START = os.getenv("RVTOOLS_RUN_ON_START", "false").lower() in ("true", "1", "yes")
+RVTOOLS_RETENTION_DAYS = int(os.getenv("RVTOOLS_RETENTION_DAYS", "30"))      # xlsx files older than this are deleted
 
 DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() in ("true", "1", "yes")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -405,6 +406,27 @@ async def rvtools_loop(executor: ThreadPoolExecutor) -> None:
     log.info("RVTools loop stopped.")
 
 
+def _cleanup_old_reports() -> None:
+    """Delete xlsx files in PF9_OUTPUT_DIR older than RVTOOLS_RETENTION_DAYS."""
+    import time as _time
+    output_dir = os.getenv("PF9_OUTPUT_DIR", "/mnt/reports")
+    if not os.path.isdir(output_dir):
+        return
+    if RVTOOLS_RETENTION_DAYS <= 0:
+        return  # retention disabled
+    cutoff = _time.time() - RVTOOLS_RETENTION_DAYS * 86400
+    for fname in os.listdir(output_dir):
+        if not fname.endswith(".xlsx"):
+            continue
+        fpath = os.path.join(output_dir, fname)
+        try:
+            if os.path.getmtime(fpath) < cutoff:
+                os.remove(fpath)
+                log.info("RVTools: removed expired report %s (older than %d days)", fname, RVTOOLS_RETENTION_DAYS)
+        except OSError as exc:
+            log.warning("RVTools: could not remove %s: %s", fname, exc)
+
+
 async def _run_rvtools_for_all_regions(
     executor: ThreadPoolExecutor,
     loop: asyncio.AbstractEventLoop,
@@ -417,22 +439,24 @@ async def _run_rvtools_for_all_regions(
     if not regions:
         log.info("RVTools: no regions in DB – running with env-var credentials")
         await loop.run_in_executor(executor, _run_rvtools_sync, None)
-        return
+    else:
+        log.info("RVTools: running across %d region(s) (max parallel: %d)", len(regions), MAX_PARALLEL_REGIONS)
+        sem = asyncio.Semaphore(MAX_PARALLEL_REGIONS)
 
-    log.info("RVTools: running across %d region(s) (max parallel: %d)", len(regions), MAX_PARALLEL_REGIONS)
-    sem = asyncio.Semaphore(MAX_PARALLEL_REGIONS)
+        async def _one_region(region: dict) -> None:
+            async with sem:
+                rname = region["region_name"]
+                log.info("RVTools: [%s] starting", rname)
+                try:
+                    await loop.run_in_executor(executor, _run_rvtools_sync, region)
+                    log.info("RVTools: [%s] completed", rname)
+                except Exception as exc:
+                    log.error("RVTools: [%s] failed: %s", rname, exc)
 
-    async def _one_region(region: dict) -> None:
-        async with sem:
-            rname = region["region_name"]
-            log.info("RVTools: [%s] starting", rname)
-            try:
-                await loop.run_in_executor(executor, _run_rvtools_sync, region)
-                log.info("RVTools: [%s] completed", rname)
-            except Exception as exc:
-                log.error("RVTools: [%s] failed: %s", rname, exc)
+        await asyncio.gather(*[_one_region(r) for r in regions])
 
-    await asyncio.gather(*[_one_region(r) for r in regions])
+    # Purge xlsx files that exceed the retention window
+    await loop.run_in_executor(executor, _cleanup_old_reports)
 
 
 # ---------------------------------------------------------------------------

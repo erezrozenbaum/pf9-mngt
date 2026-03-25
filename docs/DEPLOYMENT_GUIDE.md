@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.6
-**Last Updated**: March 22, 2026  
+**Version**: 2.7
+**Last Updated**: March 25, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative (Production HA)**: See [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) for the Kubernetes deployment guide — Helm chart, ArgoCD GitOps, and Sealed Secrets (v1.82.0+)
@@ -1521,8 +1521,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 # docker-compose build
 
 # 6. Run migrations (if any)
-docker-compose up -d db
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/init.sql
+# Preferred: single automated runner (idempotent — safe to re-run)
+docker exec pf9_api python run_migration.py
 
 # 7. Start services
 docker-compose up -d
@@ -1647,11 +1647,23 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_ru
 # Changes sort_order of the group to 9 (avoids conflict with migration_planning=8).
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_support_tickets.sql
 
-# 31. Verify schema
+# 31. Apply Support Ticket System (already included above)
+
+# 32. Apply v1.82.18 — system_settings, departments.default_nav_item_key,
+#     nav re-seed (fixes missing items on existing clusters), dept back-fill
+docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_v1_82_18.sql
+
+# 33. Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 ```
 
-> **Note**: All migration scripts are idempotent (use `IF NOT EXISTS` / `ON CONFLICT DO NOTHING`). Safe to re-run.
+> **Note**: All migration scripts are idempotent (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`). Safe to re-run.
+>
+> **Shortcut**: Instead of running individual files, use the automated runner (preferred):
+> ```bash
+> docker exec pf9_api python run_migration.py
+> ```
+> This discovers and applies every `db/migrate_*.sql` in alphabetical order, skipping already-applied files.
 
 ---
 

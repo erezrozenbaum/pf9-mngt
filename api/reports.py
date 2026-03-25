@@ -2278,3 +2278,47 @@ async def list_rvtools_runs(
             "notes":            r["notes"],
         })
     return {"runs": result}
+
+
+# ---------------------------------------------------------------------------
+# RVTools Retention Settings
+# ---------------------------------------------------------------------------
+
+_DEFAULT_RETENTION_DAYS = int(os.getenv("RVTOOLS_RETENTION_DAYS", "30"))
+
+
+@router.get("/rvtools/retention")
+async def get_rvtools_retention(
+    user: User = Depends(require_permission("reports", "read")),
+):
+    """Return the current RVTools file retention setting (in days)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT value FROM system_settings WHERE key = 'rvtools_retention_days'"
+            )
+            row = cur.fetchone()
+    days = int(row[0]) if row else _DEFAULT_RETENTION_DAYS
+    return {"retention_days": days}
+
+
+@router.put("/rvtools/retention")
+async def set_rvtools_retention(
+    body: dict,
+    user: User = Depends(require_permission("reports", "admin")),
+):
+    """Update the RVTools file retention period (superadmin only)."""
+    try:
+        days = int(body.get("retention_days", _DEFAULT_RETENTION_DAYS))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="retention_days must be an integer")
+    if days < 1 or days > 3650:
+        raise HTTPException(status_code=400, detail="retention_days must be between 1 and 3650")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO system_settings (key, value, description)
+                VALUES ('rvtools_retention_days', %s, 'Number of days to keep RVTools Excel exports')
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+            """, (str(days),))
+    return {"retention_days": days}

@@ -341,6 +341,7 @@ workers:
     rvtoolsIntervalMinutes: "60"
     rvtoolsScheduleTime: "03:00"
     rvtoolsRunOnStart: "true"
+    rvtoolsRetentionDays: "30"
     resources:
       limits:
         cpu: "1000m"
@@ -373,6 +374,15 @@ workers:
       requests:
         cpu: "100m"
         memory: "128Mi"
+
+# ---------------------------------------------------------------------------
+# Reports shared storage (RVTools Excel exports — shared between API and scheduler)
+# ---------------------------------------------------------------------------
+reports:
+  persistence:
+    enabled: true
+    storageClass: standard      # change to nfs-client if NFS provisioner is installed
+    size: 10Gi
 
 # ---------------------------------------------------------------------------
 # Ingress (nginx-ingress + cert-manager)

@@ -677,13 +677,14 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_active ON user_sessions(is_active, 
 -- (must exist before user_roles which has a FK to departments)
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS departments (
-    id          SERIAL PRIMARY KEY,
-    name        VARCHAR(100) NOT NULL UNIQUE,
-    description TEXT,
-    is_active   BOOLEAN NOT NULL DEFAULT true,
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                   SERIAL PRIMARY KEY,
+    name                 VARCHAR(100) NOT NULL UNIQUE,
+    description          TEXT,
+    is_active            BOOLEAN NOT NULL DEFAULT true,
+    sort_order           INTEGER NOT NULL DEFAULT 0,
+    default_nav_item_key TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 INSERT INTO departments (name, description, sort_order) VALUES
@@ -3632,3 +3633,19 @@ CREATE INDEX IF NOT EXISTS idx_prov_jobs_region_id    ON provisioning_jobs(regio
 CREATE INDEX IF NOT EXISTS idx_snap_policy_region_id  ON snapshot_policy_sets(region_id);
 CREATE INDEX IF NOT EXISTS idx_user_roles_region_id   ON user_roles(region_id);
 CREATE INDEX IF NOT EXISTS idx_user_roles_cp_id       ON user_roles(control_plane_id);
+
+-- =====================================================================
+-- SYSTEM SETTINGS — generic key/value runtime configuration store
+-- (added v1.82.18)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS system_settings (
+    key         VARCHAR(200) PRIMARY KEY,
+    value       TEXT         NOT NULL DEFAULT '',
+    description TEXT,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+INSERT INTO system_settings (key, value, description)
+VALUES ('rvtools_retention_days', '30', 'Number of days to keep RVTools Excel exports on disk')
+ON CONFLICT (key) DO NOTHING;

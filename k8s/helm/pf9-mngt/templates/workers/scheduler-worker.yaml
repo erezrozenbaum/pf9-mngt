@@ -80,6 +80,8 @@ spec:
               value: {{ .Values.workers.schedulerWorker.rvtoolsScheduleTime | quote }}
             - name: RVTOOLS_RUN_ON_START
               value: {{ .Values.workers.schedulerWorker.rvtoolsRunOnStart | quote }}
+            - name: RVTOOLS_RETENTION_DAYS
+              value: {{ .Values.workers.schedulerWorker.rvtoolsRetentionDays | quote }}
             - name: DEMO_MODE
               value: {{ .Values.api.demoMode | quote }}
             - name: MAX_PARALLEL_REGIONS
@@ -108,7 +110,12 @@ spec:
         - name: metrics-cache
           emptyDir: {}
         - name: reports
+          {{- if .Values.reports.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: pf9-reports
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         - name: app-logs
           emptyDir: {}
         - name: monitoring-cache

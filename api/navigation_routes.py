@@ -38,12 +38,14 @@ class DepartmentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
     sort_order: int = 0
+    default_nav_item_key: Optional[str] = None
 
 class DepartmentUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     description: Optional[str] = None
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
+    default_nav_item_key: Optional[str] = None
 
 class NavGroupCreate(BaseModel):
     key: str = Field(..., min_length=1, max_length=100)
@@ -110,7 +112,8 @@ async def list_departments(
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, name, description, is_active, sort_order, created_at, updated_at
+                SELECT id, name, description, is_active, sort_order,
+                       default_nav_item_key, created_at, updated_at
                 FROM departments
                 ORDER BY sort_order, name
             """)
@@ -127,10 +130,11 @@ async def create_department(
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                INSERT INTO departments (name, description, sort_order)
-                VALUES (%s, %s, %s)
-                RETURNING id, name, description, is_active, sort_order, created_at, updated_at
-            """, (body.name, body.description, body.sort_order))
+                INSERT INTO departments (name, description, sort_order, default_nav_item_key)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, name, description, is_active, sort_order,
+                          default_nav_item_key, created_at, updated_at
+            """, (body.name, body.description, body.sort_order, body.default_nav_item_key))
             dept = cur.fetchone()
             # Auto-grant all nav groups + items to the new department (backward compat)
             cur.execute("""
@@ -163,6 +167,12 @@ async def update_department(
         if val is not None:
             fields.append(f"{attr} = %s")
             values.append(val)
+    # default_nav_item_key handled separately via model_fields_set so that
+    # an explicit null in the JSON body clears the column (not just skipped).
+    if "default_nav_item_key" in body.model_fields_set:
+        fields.append("default_nav_item_key = %s")
+        # empty string treated as NULL (e.g. user picks "— None —" in the UI)
+        values.append(body.default_nav_item_key or None)
     if not fields:
         raise HTTPException(400, "No fields to update")
     fields.append("updated_at = now()")
@@ -172,7 +182,8 @@ async def update_department(
             cur.execute(f"""
                 UPDATE departments SET {', '.join(fields)}
                 WHERE id = %s
-                RETURNING id, name, description, is_active, sort_order, created_at, updated_at
+                RETURNING id, name, description, is_active, sort_order,
+                          default_nav_item_key, created_at, updated_at
             """, values)
             dept = cur.fetchone()
             if not dept:
@@ -584,6 +595,13 @@ def get_user_navigation(username: str, role: str, department_id: Optional[int]) 
                     ORDER BY ni.sort_order
                 """, (department_id,))
                 items = cur.fetchall()
+
+                # Get default landing tab for the department
+                cur.execute("""
+                    SELECT default_nav_item_key FROM departments WHERE id = %s
+                """, (department_id,))
+                dept_row = cur.fetchone()
+                default_tab = dept_row["default_nav_item_key"] if dept_row else None
             else:
                 # No department → show everything (backward compat for unassigned users)
                 cur.execute("""
@@ -596,6 +614,7 @@ def get_user_navigation(username: str, role: str, department_id: Optional[int]) 
                     FROM nav_items WHERE is_active = true ORDER BY sort_order
                 """)
                 items = cur.fetchall()
+                default_tab = None
 
             # Apply per-user overrides
             cur.execute("""
@@ -677,6 +696,7 @@ def get_user_navigation(username: str, role: str, department_id: Optional[int]) 
     return {
         "nav": nav_tree,
         "permissions": permissions,
+        "default_tab": default_tab,
     }
 
 
@@ -712,6 +732,7 @@ async def get_my_navigation(
         },
         "nav": nav_data["nav"],
         "permissions": nav_data["permissions"],
+        "default_tab": nav_data["default_tab"],
     }
 
 

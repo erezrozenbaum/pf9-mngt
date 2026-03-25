@@ -102,6 +102,10 @@ export default function ReportsTab({ isAdmin }: Props) {
   const [rvLoading, setRvLoading]     = useState(false);
   const [rvError, setRvError]         = useState("");
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
+  const [rvRetentionDays, setRvRetentionDays]   = useState<number>(30);
+  const [rvRetentionInput, setRvRetentionInput] = useState<string>("30");
+  const [rvRetentionSaving, setRvRetentionSaving] = useState(false);
+  const [rvRetentionMsg, setRvRetentionMsg]     = useState("");
 
   // Filter params
   const [filterCategory, setFilterCategory] = useState("");
@@ -142,12 +146,15 @@ export default function ReportsTab({ isAdmin }: Props) {
     setRvLoading(true);
     setRvError("");
     try {
-      const [filesResp, runsResp] = await Promise.all([
+      const [filesResp, runsResp, retResp] = await Promise.all([
         apiFetch<{ files: RVToolsFile[] }>("/api/reports/rvtools/files"),
         apiFetch<{ runs: RVToolsRun[] }>("/api/reports/rvtools/runs?limit=100"),
+        apiFetch<{ retention_days: number }>("/api/reports/rvtools/retention").catch(() => ({ retention_days: 30 })),
       ]);
       setRvFiles(filesResp.files);
       setRvRuns(runsResp.runs);
+      setRvRetentionDays(retResp.retention_days);
+      setRvRetentionInput(String(retResp.retention_days));
     } catch (e: any) {
       setRvError(e.message);
     } finally {
@@ -462,6 +469,55 @@ export default function ReportsTab({ isAdmin }: Props) {
           {rvError && (
             <div style={{ padding: "10px 16px", borderRadius: "8px", background: "#991b1b33", color: "#ef4444", marginBottom: "16px", fontSize: "13px" }}>
               {rvError}
+            </div>
+          )}
+
+          {/* Retention settings — admin only */}
+          {isAdmin && (
+            <div style={{ ...sectionStyle, marginBottom: "20px", display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "14px", fontWeight: 600 }}>🗑️ File Retention:</span>
+              <input
+                type="number"
+                min={1}
+                max={3650}
+                value={rvRetentionInput}
+                onChange={e => setRvRetentionInput(e.target.value)}
+                style={{ width: "80px", padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "14px" }}
+              />
+              <span style={{ fontSize: "13px", color: "var(--pf9-text-secondary, #6b7280)" }}>days (current: {rvRetentionDays}d)</span>
+              <button
+                disabled={rvRetentionSaving}
+                onClick={async () => {
+                  const d = parseInt(rvRetentionInput, 10);
+                  if (!d || d < 1) return;
+                  setRvRetentionSaving(true);
+                  setRvRetentionMsg("");
+                  try {
+                    const token = getToken();
+                    const res = await fetch(`${API_BASE}/api/reports/rvtools/retention`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                      body: JSON.stringify({ retention_days: d }),
+                    });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    setRvRetentionDays(d);
+                    setRvRetentionMsg("✅ Saved");
+                  } catch (e: any) {
+                    setRvRetentionMsg(`⚠️ ${e.message}`);
+                  } finally {
+                    setRvRetentionSaving(false);
+                    setTimeout(() => setRvRetentionMsg(""), 3000);
+                  }
+                }}
+                style={{ ...btnStyle("primary"), padding: "4px 14px", fontSize: "13px", opacity: rvRetentionSaving ? 0.6 : 1 }}
+              >
+                {rvRetentionSaving ? "Saving…" : "Save"}
+              </button>
+              {rvRetentionMsg && (
+                <span style={{ fontSize: "13px", color: rvRetentionMsg.startsWith("✅") ? "#10b981" : "#ef4444" }}>
+                  {rvRetentionMsg}
+                </span>
+              )}
             </div>
           )}
 

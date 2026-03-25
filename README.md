@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.82.17-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.82.18-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -759,7 +759,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.82.17](CHANGELOG.md) — March 2026
+**Current version:** [v1.82.18](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -903,6 +903,12 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.82.18 — RVTools K8s file sharing, retention, nav visibility & default landing tab
+- **K8s fix**: RVTools Excel exports now served correctly on Kubernetes — replaced pod-local `emptyDir` with a shared PVC (`pf9-reports`) mounted to both API and scheduler-worker pods
+- **RVTools retention**: configurable file rotation (default 30 days). Scheduler cleans up old `.xlsx` files after each run. Admin UI retention card added to Reports → RVTools Exports tab
+- **Nav visibility gap fixed**: DB migration (`migrate_v1_82_18.sql`) re-seeds all nav items idempotently — existing clusters that were deployed before an item was added automatically pick it up on next `helm upgrade`
+- **Per-department default landing tab**: `departments.default_nav_item_key` column + API support + Admin Tools → Departments table now has a **Default Landing Tab** dropdown per department. `/api/auth/me/navigation` returns `default_tab` for the frontend to redirect on login
 
 ### v1.82.17 — Fix LDAP users empty on fresh K8s deployment + System Config tab
 - `ensure_ldap_structure()`: new startup method creates `ou=users`, `ou=groups` OUs and default admin user in LDAP if absent — self-heals a fresh K8s LDAP StatefulSet
@@ -1200,4 +1206,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.82.17 | **Last Updated**: March 2026
+**Project Status**: Production Ready | **Version**: 1.82.18 | **Last Updated**: March 2026

@@ -561,7 +561,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [navGroups, setNavGroups] = useState<any[]>([]);
   const [navItems, setNavItems] = useState<any[]>([]);
   const [visibilityMatrix, setVisibilityMatrix] = useState<any>(null);
-  const [deptForm, setDeptForm] = useState({ name: '', description: '', sort_order: 0 });
+  const [deptForm, setDeptForm] = useState({ name: '', description: '', sort_order: 0, default_nav_item_key: '' });
   const [deptEditing, setDeptEditing] = useState<number | null>(null);
   const [deptMsg, setDeptMsg] = useState('');
   const [visMsg, setVisMsg] = useState('');
@@ -891,7 +891,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setDeptMsg('✅ Department created');
-      setDeptForm({ name: '', description: '', sort_order: 0 });
+      setDeptForm({ name: '', description: '', sort_order: 0, default_nav_item_key: '' });
       loadDeptNavData();
       setTimeout(() => setDeptMsg(''), 3000);
     } catch (e: any) { setDeptMsg(`⚠️ ${e.message}`); }
@@ -2213,6 +2213,14 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
             <input type="number" placeholder="Order" value={deptForm.sort_order}
               onChange={e => setDeptForm(p => ({ ...p, sort_order: Number(e.target.value) }))}
               className="px-3 py-2 border rounded text-sm" style={{ width: '80px' }} />
+            <select value={deptForm.default_nav_item_key}
+              onChange={e => setDeptForm(p => ({ ...p, default_nav_item_key: e.target.value }))}
+              className="px-3 py-2 border rounded text-sm" style={{ minWidth: '180px' }}>
+              <option value="">— No default tab —</option>
+              {navItems.filter((i: any) => !i.is_action).map((i: any) => (
+                <option key={i.key} value={i.key}>{i.label}</option>
+              ))}
+            </select>
             <button onClick={handleCreateDepartment}
               className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
               ➕ Add
@@ -2226,6 +2234,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Description</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Order</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Active</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Default Landing Tab</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-900">Actions</th>
               </tr>
             </thead>
@@ -2237,13 +2246,32 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                   <td className="px-4 py-3 text-sm">{d.sort_order}</td>
                   <td className="px-4 py-3 text-sm">{d.is_active ? '✅' : '❌'}</td>
                   <td className="px-4 py-3 text-sm">
+                    <select
+                      value={d.default_nav_item_key || ''}
+                      onChange={async e => {
+                        const token = localStorage.getItem('auth_token');
+                        await fetch(`${API_BASE}/api/departments/${d.id}`, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ default_nav_item_key: e.target.value }),
+                        });
+                        loadDeptNavData();
+                      }}
+                      className="px-2 py-1 border rounded text-sm" style={{ minWidth: '150px' }}>
+                      <option value="">— None —</option>
+                      {navItems.filter((i: any) => !i.is_action).map((i: any) => (
+                        <option key={i.key} value={i.key}>{i.label}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-3 text-sm">
                     <button onClick={() => handleDeleteDepartment(d.id)}
                       className="text-red-600 hover:text-red-900 text-sm">🗑️ Delete</button>
                   </td>
                 </tr>
               ))}
               {departments.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-500">No departments yet</td></tr>
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">No departments yet</td></tr>
               )}
             </tbody>
           </table>

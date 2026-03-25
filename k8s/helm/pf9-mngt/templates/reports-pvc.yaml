@@ -1,0 +1,24 @@
+{{- if .Values.reports.persistence.enabled }}
+# =============================================================================
+# reports-pvc.yaml — Shared PersistentVolumeClaim for RVTools Excel exports
+#
+# Mounted by BOTH the API pod (/mnt/reports read-only serving) and the
+# scheduler-worker pod (/mnt/reports write). Both pods must be able to access
+# the volume simultaneously → requires ReadWriteMany (NFS or equivalent).
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pf9-reports
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: reports-storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: {{ .Values.reports.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.reports.persistence.size }}
+{{- end }}
