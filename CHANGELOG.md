@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.22] - 2026-03-25
+
+### Security
+- **Service user emails removed from `values.yaml`** — `SNAPSHOT_SERVICE_USER_EMAIL` and
+  `PROVISION_SERVICE_USER_EMAIL` were stored in `values.yaml` (even as empty strings, the field
+  was a prompt to fill in a real value). Both are now sourced exclusively from sealed secrets:
+  `pf9-snapshot-creds` (key `service-user-email`) and `pf9-provision-creds` (key
+  `service-user-email`). The Helm templates (`api/deployment.yaml`,
+  `workers/snapshot-worker.yaml`) mount the value via `secretKeyRef` with `optional: true`.
+  Storing real email addresses in `values.yaml` would have exposed your organisation's
+  identity in public repository history.
+
+### Fixed
+- **Snapshot / provisioning wrong tenant bug** — When `SNAPSHOT_SERVICE_USER_EMAIL` or
+  `PROVISION_SERVICE_USER_EMAIL` were empty, `ensure_service_user("")` silently raised a
+  `RuntimeError` (Keystone returns an empty list for `GET /users?name=`), which was caught by
+  a bare `except Exception` block that printed "Falling back to admin session". The fallback
+  set `project_id` to the service user's own tenant instead of the VM's actual tenant, so
+  every Cinder snapshot and every provisioned volume landed in the wrong project. Moving the
+  emails into sealed secrets (always non-empty) fixes the root cause.
+
+### Added
+- **Monitoring ingress** (`k8s/monitoring/prometheus-values.yaml`) — Prometheus, AlertManager,
+  and Grafana are now reachable through the existing nginx-ingress controller on path prefixes:
+  `/prometheus`, `/alertmanager`, and `/grafana` respectively. No new DNS record required — the
+  same hostname as the main app is reused. Grafana service changed from `NodePort 30300` to
+  `ClusterIP`; `GF_SERVER_ROOT_URL` and `GF_SERVER_SERVE_FROM_SUB_PATH` are set automatically.
+
+### Changed
+- **`docs/KUBERNETES_GUIDE.md` → v4.0** — Full rewrite based on real deployment experience.
+  Reorganised into 15 ordered sections: cluster pre-checks (storage class, NFS gotchas) →
+  add-ons → DNS → credential generation → namespace → all secrets (including both service-user
+  email secrets with explanations) → Helm install → DB migration → first LDAP admin → verify →
+  optional monitoring stack with ArgoCD + Day-2 operations → common issues. Version status
+  updated to `Production Ready (v1.82.22)`.
+- **`docs/DEPLOYMENT_GUIDE.md`** — K8s callout notes added to the Snapshot Service User and
+  VM Provisioning Service User sections, directing K8s deployers to use sealed secrets instead
+  of `values.yaml`. Migration section updated to use `run_migration.py` as the primary method.
+- **`docs/LINUX_DEPLOYMENT_GUIDE.md` → v1.1** — Migration section updated: the manual `for f
+  in db/migrate_*.sql` loop replaced with `docker exec pf9_api python3 run_migration.py` as
+  the recommended approach. Cross-reference to `KUBERNETES_GUIDE.md` added at the top.
+- **`README.md`** — "Kubernetes Deployment" feature status updated from `⬜ Planned` to
+  `✅ Production` (Helm + ArgoCD + Sealed Secrets). Maturity statement updated to 16 of 17
+  tracked features production-grade.
+- **`k8s/sealed-secrets/README.md`** — `--from-literal=service-user-email=<CHANGE_ME>` added
+  to both `pf9-snapshot-creds` and `pf9-provision-creds` kubeseal command blocks. The
+  generated `*.yaml` sealed manifests themselves are gitignored — they are cluster-specific
+  and belong in your private deploy repo, not here.
+
+---
+
 ## [1.82.21] - 2026-03-25
 
 ### Fixed

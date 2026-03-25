@@ -108,3 +108,8 @@ docs_remediation_plan.md
 nginx/certs/*.key
 nginx/certs/*.crt
 nginx/certs/*.pem
+
+# Sealed Secret manifests - cluster-specific encrypted values.
+# These are generated per-deployment and belong in your private deploy repo.
+# The public repo only contains README instructions on how to generate them.
+k8s/sealed-secrets/*.yaml

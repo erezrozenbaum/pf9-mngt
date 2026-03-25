@@ -75,7 +75,11 @@ spec:
                   key: user-password-encrypted
                   optional: true
             - name: SNAPSHOT_SERVICE_USER_EMAIL
-              value: {{ .Values.api.snapshot.serviceUserEmail | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.snapshotCreds }}
+                  key: service-user-email
+                  optional: true
             - name: SNAPSHOT_SERVICE_USER_PASSWORD
               valueFrom:
                 secretKeyRef:

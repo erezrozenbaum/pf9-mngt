@@ -112,6 +112,7 @@ kubectl create secret generic pf9-pf9-credentials \
 ```bash
 kubectl create secret generic pf9-snapshot-creds \
   --namespace pf9-mngt \
+  --from-literal=service-user-email=<CHANGE_ME> \
   --from-literal=password-key=<CHANGE_ME> \
   --from-literal=user-password-encrypted=<CHANGE_ME> \
   --from-literal=service-user-password=<CHANGE_ME> \
@@ -125,6 +126,7 @@ kubectl create secret generic pf9-snapshot-creds \
 ```bash
 kubectl create secret generic pf9-provision-creds \
   --namespace pf9-mngt \
+  --from-literal=service-user-email=<CHANGE_ME> \
   --from-literal=password-key=<CHANGE_ME> \
   --from-literal=user-password-encrypted=<CHANGE_ME> \
   --dry-run=client -o yaml \

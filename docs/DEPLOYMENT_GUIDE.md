@@ -808,6 +808,11 @@ SNAPSHOT_SERVICE_USER_DISABLED=false
 
 See [Snapshot Service User Guide](SNAPSHOT_SERVICE_USER.md) for full setup details.
 
+> **Kubernetes deployments:** Do **not** set `SNAPSHOT_SERVICE_USER_EMAIL` in `values.yaml`.
+> The email (and password) live entirely inside the `pf9-snapshot-creds` sealed secret
+> under the key `service-user-email`. See §6 of the [Kubernetes Guide](KUBERNETES_GUIDE.md)
+> for the exact `kubeseal` command.
+
 #### VM Provisioning Service User (`provisionsrv`)
 
 The VM provisioning service user enables creating volumes and virtual machines in the correct tenant project with a properly-scoped OpenStack token. Unlike `snapshotsrv`, this user is a **native Keystone user (NOT in LDAP)** — it is completely invisible to tenant customers in the management UI.
@@ -849,6 +854,10 @@ hw_firmware_type = bios
 This ensures Nova creates the VM with the correct virtual hardware regardless of how the image was originally uploaded. The patch is idempotent — re-running on an already-patched image is safe.
 
 > **Note**: The `provisionsrv` user must **not** be an LDAP-managed user (do not add it in OpenLDAP). Keeping it Keystone-native ensures it never appears in tenant-facing user lists or is accidentally included in exports.
+
+> **Kubernetes deployments:** Do **not** set `PROVISION_SERVICE_USER_EMAIL` in `values.yaml`.
+> The email lives inside the `pf9-provision-creds` sealed secret under the key `service-user-email`.
+> See §6 of the [Kubernetes Guide](KUBERNETES_GUIDE.md) for the exact `kubeseal` command.
 
 #### Platform9 DU Super-Admin Fallback (`PF9_OS_ADMIN_*`) — Optional
 
@@ -1534,13 +1543,29 @@ docker-compose logs --tail=50
 
 ### Database Migrations
 
-If schema changes are needed:
+**Always use the automated runner.** It discovers all `db/migrate_*.sql` files, applies them in alphabetical order, and records each one in the `schema_migrations` table so re-runs are safe:
 
 ```bash
-# 1. Review migration files
-ls -la db/migrate_*.sql
+# Run all pending migrations (idempotent — safe to re-run)
+docker exec pf9_api python run_migration.py
+```
 
-# 2. Apply migrations (example: security groups — v1.7)
+Watch progress:
+```bash
+docker logs pf9_api --follow | grep -E "migration|Applying|Skipping|Error"
+```
+
+Verify what was applied:
+```bash
+docker exec pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+  -c "SELECT filename, applied_at FROM schema_migrations ORDER BY applied_at;"
+```
+
+There are currently ~55 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+
+> **Manual fallback (single file only):** If you need to apply one specific file outside the runner:
+> ```bash
+> # Example: re-apply one file manually (bypasses tracking — use only for debugging)
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_security_groups.sql
 
 # 3. Apply restore tables migration (v1.2+)
@@ -1653,17 +1678,9 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_su
 #     nav re-seed (fixes missing items on existing clusters), dept back-fill
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_v1_82_18.sql
 
-# 33. Verify schema
+# Verify schema
 docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
-```
-
-> **Note**: All migration scripts are idempotent (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`). Safe to re-run.
->
-> **Shortcut**: Instead of running individual files, use the automated runner (preferred):
-> ```bash
-> docker exec pf9_api python run_migration.py
 > ```
-> This discovers and applies every `db/migrate_*.sql` in alphabetical order, skipping already-applied files.
 
 ---
 

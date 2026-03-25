@@ -1,209 +1,130 @@
 # Platform9 Management System — Kubernetes Deployment Guide
 
-**Version**: 3.1
+**Version**: 4.0
 **Last Updated**: March 2026
-**Status**: Production Ready (v1.82.15)
+**Status**: Production Ready (v1.82.22)
 **Minimum Kubernetes**: 1.28
+
+> **This guide is written from real deployment experience.** Every warning in it
+> hit us in production. Follow the steps in order — skipping ahead causes failures
+> that are hard to diagnose.
 
 ---
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [Repository Layout](#repository-layout)
-4. [Prerequisites](#prerequisites)
-5. [First-Time Deployment](#first-time-deployment)
-   - [Step 1 — Cluster Prerequisites](#step-1--cluster-prerequisites)
-   - [Step 2 — Create Sealed Secrets](#step-2--create-sealed-secrets)
-   - [Step 3 — Helm Install](#step-3--helm-install)
-   - [Step 4 — Verify Rollout](#step-4--verify-rollout)
-6. [GitOps with ArgoCD](#gitops-with-argocd)
-7. [CI/CD Flow](#cicd-flow)
-8. [Values Reference](#values-reference)
-9. [Day-2 Operations](#day-2-operations)
-   - [Upgrade a Release](#upgrade-a-release)
-   - [Rollback](#rollback)
-   - [Scale Replicas](#scale-replicas)
-   - [Rotate a Secret](#rotate-a-secret)
-10. [Troubleshooting](#troubleshooting)
-11. [Architecture Decision Records](#architecture-decision-records)
+1. [Before You Start — Know Your Cluster](#1-before-you-start--know-your-cluster)
+2. [Cluster Add-ons](#2-cluster-add-ons)
+3. [DNS Setup](#3-dns-setup)
+4. [Generate Your Credential Values](#4-generate-your-credential-values)
+5. [Create the Namespace](#5-create-the-namespace)
+6. [Create All Secrets](#6-create-all-secrets)
+7. [Deploy the App — Helm Install](#7-deploy-the-app--helm-install)
+8. [Database Migration](#8-database-migration)
+9. [Create the First LDAP Admin User](#9-create-the-first-ldap-admin-user)
+10. [Verify and First Login](#10-verify-and-first-login)
+11. [Optional: Monitoring Stack — Prometheus, Grafana, Loki](#11-optional-monitoring-stack)
+12. [GitOps with ArgoCD](#12-gitops-with-argocd)
+13. [Day-2 Operations](#13-day-2-operations)
+14. [Common Issues & Fixes](#14-common-issues--fixes)
+15. [Architecture Decision Records](#15-architecture-decision-records)
 
 ---
 
-## Overview
+## 1. Before You Start — Know Your Cluster
 
-As of **v1.82.0**, pf9-mngt ships a complete, production-ready Helm chart for deploying every
-service to **Kubernetes 1.28+**. The chart lives in `k8s/helm/pf9-mngt/` and covers all 14
-services: API, UI, Monitoring, PostgreSQL, Redis, OpenLDAP, and seven background workers.
+**Do these checks first. Every problem that caused hours of debugging traces back to
+skipping this step.**
 
-**Both deployment models are supported and maintained:**
+### 1.1 What storage classes does your cluster have?
 
-| Model | When to use |
-|-------|-------------|
-| **Docker Compose** | Single-host, developer, or small-team deployments |
-| **Kubernetes (Helm)** | Production with HA, rolling upgrades, and GitOps |
-
-The Docker Compose stack is unchanged. The Helm chart adds a parallel production-grade path.
-
----
-
-## Architecture
-
-### Service Topology
-
-```
-                       ┌─────────────────────────────────┐
-          Internet ──▶ │    nginx Ingress Controller      │
-                       │  :443  (TLS via cert-manager)    │
-                       └────────────┬────────────────────┘
-                                    │
-            ┌───────────────────────┼───────────────────────┐
-            ▼                                               ▼
-    ┌───────────────┐                               ┌────────────────┐
-    │  pf9-ui       │                               │  pf9-api       │
-    │  (ClusterIP)  │                               │  (ClusterIP)   │
-    │   :5173       │                               │   :8000        │
-    └───────────────┘                               └───────┬────────┘
-                                                            │
-           ┌────────────────────────────┬──────────────────┤
-           ▼                            ▼                   ▼
-    ┌────────────┐              ┌──────────────┐    ┌───────────────┐
-    │  pf9-db    │              │  pf9-redis   │    │  pf9-ldap     │
-    │ StatefulSet│              │  (ClusterIP) │    │  StatefulSet  │
-    │  :5432     │              │   :6379      │    │   :389        │
-    └────────────┘              └──────────────┘    └───────────────┘
-           │
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  Workers (Deployments, 1 replica each)                           │
-  │  backup-worker · ldap-sync-worker · metering-worker             │
-  │  notification-worker · scheduler-worker · search-worker         │
-  │  snapshot-worker                                                 │
-  └──────────────────────────────────────────────────────────────────┘
+```bash
+kubectl get storageclass
 ```
 
-### What is deployed in the `pf9-mngt` namespace
-
-| Resource type | Count | Services |
-|---------------|-------|---------|
-| Deployment | 5 | api, ui, monitoring, redis, + each worker (7) = 12 total |
-| StatefulSet | 2 | postgresql, openldap |
-| Job (hook) | 1 | db-migrate (pre-install + pre-upgrade) |
-| Service | 7+ | one ClusterIP per service |
-| Ingress | 1 | routes `/`, `/api`, `/auth`, `/health` |
-| PVC (StatefulSet) | 3 | postgresql data, ldap data, ldap config |
-| PVC (worker) | 1 | backup-worker `/backups` |
-
----
-
-## Repository Layout
+You will see output like:
 
 ```
-k8s/
-├── argocd/
-│   └── application.yaml         # Single-source reference template (dev/local use)
-├── deploy-repo-init/            # Bootstrap content for the private pf9-mngt-deploy repo
-│   ├── argocd-application.yaml  # Multi-source Application (copy to private repo at bootstrap)
-│   ├── argocd-appproject.yaml   # AppProject scoping ArgoCD to pf9-mngt namespace only
-│   ├── values.prod.yaml         # Production overrides: imageTag, host, TLS, storageClass
-│   ├── README.md
-│   └── sealed-secrets/
-│       └── HOW_TO_SEAL.md       # kubeseal commands for all 9 required secrets
-└── helm/
-    └── pf9-mngt/
-        ├── Chart.yaml            # chart metadata — version 1.82.2, kubeVersion >=1.28
-        ├── values.yaml           # all defaults — no credentials
-        ├── values.prod.yaml      # CI-managed image-tag overrides only
-        └── templates/
-            ├── _helpers.tpl
-            ├── namespace.yaml
-            ├── ingress.yaml
-            ├── jobs/
-            │   └── db-migrate.yaml      # Helm pre-install/pre-upgrade hook
-            ├── api/
-            │   ├── deployment.yaml
-            │   └── service.yaml
-            ├── ui/
-            │   ├── deployment.yaml
-            │   └── service.yaml
-            ├── db/
-            │   ├── statefulset.yaml
-            │   └── service.yaml
-            ├── redis/
-            │   ├── deployment.yaml
-            │   └── service.yaml
-            ├── ldap/
-            │   ├── statefulset.yaml
-            │   └── service.yaml
-            ├── monitoring/
-            │   ├── deployment.yaml
-            │   └── service.yaml
-            └── workers/
-                ├── backup-worker.yaml       # includes PVC
-                ├── ldap-sync-worker.yaml
-                ├── metering-worker.yaml
-                ├── notification-worker.yaml
-                ├── scheduler-worker.yaml
-                ├── search-worker.yaml
-                └── snapshot-worker.yaml
+NAME                 PROVISIONER            RECLAIMPOLICY   VOLUMEBINDINGMODE
+standard (default)   rancher.io/local-path  Delete          WaitForFirstConsumer
+nfs-pf9              nfs-provisioner        Delete          Immediate
 ```
 
----
+**Write down the name of your storage class.** You will need it in two places:
+- `helm upgrade ... --set postgresql.persistence.storageClass=<YOUR-CLASS>`
+- `k8s/monitoring/prometheus-values.yaml` (for the monitoring stack PVCs)
 
-## Prerequisites
+> **If you skip this**, all your PVCs will stay in `Pending` forever and every pod
+> will fail to start. This is the #1 silent killer for first-time installs.
 
-### Cluster
+> **NFS users**: NFS is fully supported but has one known issue — Grafana's
+> `init-chown-data` init container runs `chown -R` on the volume, which fails on
+> NFS because of a read-only `.snapshot` directory. See §11 for the fix.
+
+### 1.2 Does your cluster support LoadBalancer services?
+
+```bash
+# Managed clusters (EKS, GKE, AKS): LoadBalancer works out of the box.
+# Bare-metal / on-premises: you need MetalLB or you must switch to NodePort.
+kubectl get nodes -o wide   # note your node IPs for NodePort fallback
+```
+
+If your cluster is bare-metal and has no LoadBalancer support, install MetalLB:
+```bash
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/manifests/metallb-native.yaml
+# Then configure an IPAddressPool with IPs from your network range.
+# See https://metallb.universe.tf/configuration/
+```
+
+### 1.3 Cluster requirements checklist
 
 | Requirement | Minimum |
 |-------------|---------|
-| Kubernetes version | 1.28 |
+| Kubernetes version | 1.28+ |
 | Helm | 3.12+ |
-| Nodes | 3 (1 control-plane + 2 worker) |
-| RAM per worker | 8 GB |
-| CPU per worker | 4 cores |
-| Storage | PVC-capable StorageClass (standard or fast SSD) |
-
-### Cluster add-ons (must be installed before the Helm chart)
-
-```bash
-# 1. cert-manager (v1.14+) — manages TLS certificates
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-
-# 2. ingress-nginx (v1.9+) — Ingress controller
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
-
-# 3. Sealed Secrets controller (v0.26+) — encrypts Secrets at rest in git
-kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/latest/download/controller.yaml
-
-# 4. ArgoCD (optional — needed only for GitOps auto-sync)
-kubectl create namespace argocd
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-```
-
-### GitHub secrets and variables (needed by CI)
-
-Set these in: GitHub → repo Settings → Secrets and variables
-
-| Type | Name | Purpose |
-|------|------|---------|
-| Secret | `RELEASE_PAT` | Personal Access Token with `repo` scope; used by the `update-values` CI job to push `values.prod.yaml` to the private deploy repo |
-| Variable | `DEPLOY_REPO` | Name of your private deploy repo (e.g. `pf9-mngt-deploy`); see top of `.github/workflows/release.yml` |
+| Nodes | 3 (1 control-plane + 2 workers recommended) |
+| RAM per worker node | 8 GB |
+| CPU per worker node | 4 cores |
+| Storage | PVC-capable StorageClass (see §1.1) |
+| Tools on your workstation | `kubectl`, `helm`, `kubeseal`, `openssl`, `python3` |
 
 ---
 
-## First-Time Deployment
+## 2. Cluster Add-ons
 
-### Step 1 — Cluster Prerequisites
+Install these **before** the Helm chart. Check each one is healthy before moving on.
 
-Verify the add-ons are healthy:
+### 2.1 ingress-nginx (required)
 
 ```bash
-kubectl get pods -n cert-manager
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm install ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx --create-namespace
+
+# Verify — wait until the controller pod is Running
 kubectl get pods -n ingress-nginx
-kubectl get pods -n kube-system -l app.kubernetes.io/name=sealed-secrets-controller
+kubectl get svc -n ingress-nginx
 ```
 
-Create a `ClusterIssuer` for Let's Encrypt:
+You need to see a LoadBalancer service with an EXTERNAL-IP assigned. **Save that IP** — it is
+the address you point all your DNS records at.
+
+```
+NAME                               TYPE           EXTERNAL-IP
+ingress-nginx-controller           LoadBalancer   203.0.113.10   ← your cluster IP
+```
+
+### 2.2 cert-manager (required for HTTPS)
+
+```bash
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+
+# Wait for all 3 pods to be Running (takes ~30 seconds)
+kubectl get pods -n cert-manager --watch
+```
+
+Create the Let's Encrypt ClusterIssuer — replace the email address:
 
 ```yaml
 # letsencrypt-issuer.yaml
@@ -214,7 +135,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: ops@your-domain.com
+    email: ops@your-domain.com          # ← change this
     privateKeySecretRef:
       name: letsencrypt-prod-key
     solvers:
@@ -225,495 +146,880 @@ spec:
 
 ```bash
 kubectl apply -f letsencrypt-issuer.yaml
+kubectl describe clusterissuer letsencrypt-prod   # should say "The ACME account was registered"
 ```
 
-### Step 2 — Create Sealed Secrets
-
-All sensitive credentials are stored as SealedSecret resources. The file
-`k8s/sealed-secrets/README.md` contains ready-to-customise `kubeseal` commands for
-all nine required secrets. The basic pattern is:
+### 2.3 Sealed Secrets controller (required)
 
 ```bash
-# Fetch the controller's public key (one-time, any machine with cluster access)
-kubeseal --fetch-cert --controller-name=sealed-secrets-controller \
+helm install sealed-secrets \
+  oci://registry-1.docker.io/bitnamicharts/sealed-secrets \
+  --namespace kube-system \
+  --set fullnameOverride=sealed-secrets-controller
+
+# Verify
+kubectl get pods -n kube-system -l app.kubernetes.io/name=sealed-secrets
+
+# Fetch the cluster's public key — store this file, you need it every time you create a secret
+kubeseal --fetch-cert \
+  --controller-name=sealed-secrets-controller \
   --controller-namespace=kube-system > sealed-secrets.pub
-
-# Example — database password
-kubectl create secret generic pf9-db-credentials \
-  --namespace pf9-mngt \
-  --from-literal=password='<your-db-password>' \
-  --dry-run=client -o yaml \
-  | kubeseal --cert sealed-secrets.pub --format yaml \
-  > k8s/sealed-secrets/pf9-db-credentials.yaml
-
-kubectl apply -f k8s/sealed-secrets/pf9-db-credentials.yaml
 ```
 
-Repeat for each of the nine secrets listed in `k8s/sealed-secrets/README.md`:
+> Keep `sealed-secrets.pub` somewhere safe on your workstation. If you lose it you
+> can always re-fetch it with the same command above (as long as the controller is running).
 
-| Secret name | Keys |
-|-------------|------|
-| `pf9-db-credentials` | `password` |
-| `pf9-jwt-secret` | `jwt-secret-key` |
-| `pf9-ldap-secrets` | `admin-password`, `config-password`, `readonly-password`, `sync-key` |
-| `pf9-smtp-secrets` | `password` |
-| `pf9-pf9-credentials` | `password` |
-| `pf9-snapshot-creds` | `password-key`, `user-password-encrypted`, `service-user-password` |
-| `pf9-provision-creds` | `password-key`, `user-password-encrypted` |
-| `pf9-ssh-credentials` | `password` (optional) |
-| `pf9-copilot-secrets` | `openai-api-key`, `anthropic-api-key` (optional) |
-
-### Step 3 — Helm Install
+### 2.4 ArgoCD (optional — only for GitOps auto-sync)
 
 ```bash
-# Add the Helm OCI registry (where CI pushes packaged charts)
-helm registry login ghcr.io -u <github-user> -p <github-pat>
+kubectl create namespace argocd
+kubectl apply -n argocd \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
-# Install from the local chart (or pull from OCI registry)
-helm upgrade --install pf9-mngt ./k8s/helm/pf9-mngt \
-  --namespace pf9-mngt \
-  --create-namespace \
-  -f k8s/helm/pf9-mngt/values.yaml \
-  -f k8s/helm/pf9-mngt/values.prod.yaml \
-  --set ingress.host=pf9-mngt.your-domain.com \
-  --set pf9.authUrl=https://your-cloud.platform9.net/keystone \
-  --set pf9.username=service-account@your-domain.com \
-  --wait \
-  --timeout 10m
-```
+# Wait for all pods Running
+kubectl get pods -n argocd --watch
 
-The `db-migrate` Job runs automatically as a **post-install/post-upgrade hook** after the StatefulSets are ready.
-
-To install from the OCI registry (as ArgoCD or CI would):
-
-```bash
-helm upgrade --install pf9-mngt \
-  oci://ghcr.io/erezrozenbaum/helm/pf9-mngt \
-  --version 1.82.2 \
-  --namespace pf9-mngt \
-  -f k8s/helm/pf9-mngt/values.yaml \
-  -f k8s/helm/pf9-mngt/values.prod.yaml \
-  --set ingress.host=pf9-mngt.your-domain.com \
-  --wait
-```
-
-### Step 4 — Verify Rollout
-
-```bash
-# Check all pods are Running / Completed
-kubectl get pods -n pf9-mngt
-
-# Check the db-migrate job succeeded
-kubectl get jobs -n pf9-mngt
-
-# Check the Ingress has an address
-kubectl get ingress -n pf9-mngt
-
-# Smoke-test the API health endpoint
-curl https://pf9-mngt.your-domain.com/health
-```
-
-Expected output for `kubectl get pods -n pf9-mngt`:
-
-```
-NAME                                        READY   STATUS      RESTARTS
-pf9-mngt-api-XXXX                           1/1     Running     0
-pf9-mngt-ui-XXXX                            1/1     Running     0
-pf9-mngt-monitoring-XXXX                    1/1     Running     0
-pf9-mngt-redis-XXXX                         1/1     Running     0
-pf9-mngt-db-0                               1/1     Running     0
-pf9-mngt-ldap-0                             1/1     Running     0
-pf9-mngt-backup-worker-XXXX                 1/1     Running     0
-pf9-mngt-ldap-sync-worker-XXXX              1/1     Running     0
-pf9-mngt-metering-worker-XXXX               1/1     Running     0
-pf9-mngt-notification-worker-XXXX           1/1     Running     0
-pf9-mngt-scheduler-worker-XXXX              1/1     Running     0
-pf9-mngt-search-worker-XXXX                 1/1     Running     0
-pf9-mngt-snapshot-worker-XXXX               1/1     Running     0
-pf9-mngt-db-migrate-XXXX                    0/1     Completed   0
+# Get initial admin password
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath="{.data.password}" | base64 -d; echo
 ```
 
 ---
 
-## GitOps with ArgoCD
+## 3. DNS Setup
 
-As of v1.82.1 the GitOps setup uses the **App Repo + Config Repo** pattern:
+Point a DNS A record at the EXTERNAL-IP you noted in §2.1:
+
+```
+your-app.your-domain.com.   A   203.0.113.10
+```
+
+**Important**: The DNS record must be live and propagated **before** cert-manager can issue
+a TLS certificate via the ACME HTTP-01 challenge.
+
+To verify propagation from your workstation:
+```bash
+nslookup your-app.your-domain.com
+# Should return the ingress-nginx EXTERNAL-IP
+```
+
+> **No public DNS?** For an internal cluster accessible only on your LAN, add the record
+> to your internal DNS server (e.g. Windows DNS, Bind, or Pi-hole). You will need to use
+> a self-signed certificate or skip TLS — set `ingress.tls.enabled: false` in values.
+
+---
+
+## 4. Generate Your Credential Values
+
+Generate all secrets **before** creating any Kubernetes resources.
+Keep these values in a local password manager — never commit them to git.
+
+```bash
+# PostgreSQL password (used by the DB and all services that connect to it)
+openssl rand -base64 32
+# → save as: DB_PASSWORD
+
+# JWT signing key — minimum 32 characters, must be the same across all API replicas
+openssl rand -base64 64
+# → save as: JWT_SECRET_KEY
+
+# LDAP admin password (for the OpenLDAP server admin bind)
+openssl rand -base64 24
+# → save as: LDAP_ADMIN_PASSWORD
+
+# LDAP config password (phpLDAPadmin / olcRootPW for cn=config)
+openssl rand -base64 24
+# → save as: LDAP_CONFIG_PASSWORD
+
+# LDAP readonly password (used by the API for LDAP searches)
+openssl rand -base64 24
+# → save as: LDAP_READONLY_PASSWORD
+
+# LDAP sync key — encrypts bind passwords at rest in the DB (MUST be exactly 32 URL-safe base64 bytes)
+python3 -c "import os, base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+# → save as: LDAP_SYNC_KEY
+
+# pf9-mngt first admin password (initial login to the web UI)
+openssl rand -base64 24
+# → save as: ADMIN_PASSWORD
+
+# Platform9 / OpenStack service account password (the account pf9-mngt uses to call the APIs)
+# → use the password of your Platform9 service account: save as PF9_PASSWORD
+```
+
+**What each secret is used for:**
+
+| Secret | Used by | Notes |
+|--------|---------|-------|
+| `DB_PASSWORD` | PostgreSQL, API, all workers | All services share one DB user (`pf9`) |
+| `JWT_SECRET_KEY` | API | Signs login tokens; changing it logs everyone out |
+| `LDAP_ADMIN_PASSWORD` | OpenLDAP container, API admin bind | Used to create/manage LDAP users |
+| `LDAP_CONFIG_PASSWORD` | OpenLDAP cn=config | Internal LDAP server config; rarely used directly |
+| `LDAP_READONLY_PASSWORD` | API LDAP search bind | Read-only service account for auth lookups |
+| `LDAP_SYNC_KEY` | ldap-sync-worker, API | AES encryption key for LDAP bind passwords stored in DB |
+| `ADMIN_PASSWORD` | API first-run bootstrap | Password for the initial `admin` user in the web UI |
+| `PF9_PASSWORD` | API, scheduler-worker | Calls Platform9 / OpenStack APIs |
+
+---
+
+## 5. Create the Namespace
+
+The namespace must exist before you apply Sealed Secrets (they are namespace-scoped).
+
+```bash
+kubectl create namespace pf9-mngt
+```
+
+---
+
+## 6. Create All Secrets
+
+These commands seal your credentials with the cluster's public key.
+The resulting `*.yaml` files are safe to commit to your (private) deploy repo.
+
+> **Order matters.** Do not start the Helm install until all required secrets exist.
+> The API and workers crash immediately if a required secret is missing.
+
+### Required secrets (must create all of these)
+
+**pf9-db-credentials** — PostgreSQL password
+```bash
+kubectl create secret generic pf9-db-credentials \
+  --namespace pf9-mngt \
+  --from-literal=password='<DB_PASSWORD>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-db-credentials.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-db-credentials.yaml
+```
+
+**pf9-jwt-secret** — JWT signing key
+```bash
+kubectl create secret generic pf9-jwt-secret \
+  --namespace pf9-mngt \
+  --from-literal=jwt-secret-key='<JWT_SECRET_KEY>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-jwt-secret.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-jwt-secret.yaml
+```
+
+**pf9-ldap-secrets** — all four LDAP credentials in one secret
+```bash
+kubectl create secret generic pf9-ldap-secrets \
+  --namespace pf9-mngt \
+  --from-literal=admin-password='<LDAP_ADMIN_PASSWORD>' \
+  --from-literal=config-password='<LDAP_CONFIG_PASSWORD>' \
+  --from-literal=readonly-password='<LDAP_READONLY_PASSWORD>' \
+  --from-literal=sync-key='<LDAP_SYNC_KEY>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-ldap-secrets.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-ldap-secrets.yaml
+```
+
+> **Missing sync-key is the #1 cause of worker CrashLoopBackOff.** If workers start
+> crashing with `ldap_sync_key secret is not set`, this is why. The sync-key must be
+> exactly the output of the python3 command in §4 — a URL-safe base64 string, 44 chars.
+
+**pf9-admin-credentials** — first web UI admin password
+```bash
+kubectl create secret generic pf9-admin-credentials \
+  --namespace pf9-mngt \
+  --from-literal=admin-password='<ADMIN_PASSWORD>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-admin-credentials.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-admin-credentials.yaml
+```
+
+**pf9-pf9-credentials** — Platform9 / OpenStack service account
+```bash
+kubectl create secret generic pf9-pf9-credentials \
+  --namespace pf9-mngt \
+  --from-literal=password='<PF9_PASSWORD>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-pf9-credentials.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-pf9-credentials.yaml
+```
+
+### Optional secrets (create only if you use these features)
+
+**pf9-smtp-secrets** — for email notifications
+```bash
+kubectl create secret generic pf9-smtp-secrets \
+  --namespace pf9-mngt \
+  --from-literal=password='<SMTP_PASSWORD>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-smtp-secrets.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-smtp-secrets.yaml
+```
+
+**pf9-snapshot-creds** — for the snapshot worker
+
+> **Why the email goes here, not in `values.yaml`:** The service user email identifies your
+> organisation in public repository history. Storing it in a sealed secret keeps the repo clean
+> and lets each environment use its own account without touching `values.yaml`.
+
+```bash
+kubectl create secret generic pf9-snapshot-creds \
+  --namespace pf9-mngt \
+  --from-literal=service-user-email='<SNAPSHOT_SERVICE_USER_EMAIL>' \
+  --from-literal=password-key='<SNAPSHOT_PASSWORD_KEY>' \
+  --from-literal=user-password-encrypted='<SNAPSHOT_USER_PASSWORD_ENCRYPTED>' \
+  --from-literal=service-user-password='<SNAPSHOT_SERVICE_USER_PASSWORD>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-snapshot-creds.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-snapshot-creds.yaml
+```
+
+**pf9-provision-creds** — for the VM provisioning service user
+
+> **Why the email goes here, not in `values.yaml`:** The service user email identifies your
+> organisation in public repository history. Storing it in a sealed secret keeps the repo clean
+> and lets each environment use its own account without touching `values.yaml`.
+
+```bash
+kubectl create secret generic pf9-provision-creds \
+  --namespace pf9-mngt \
+  --from-literal=service-user-email='<PROVISION_SERVICE_USER_EMAIL>' \
+  --from-literal=password-key='<PROVISION_PASSWORD_KEY>' \
+  --from-literal=user-password-encrypted='<PROVISION_USER_PASSWORD_ENCRYPTED>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-provision-creds.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-provision-creds.yaml
+```
+
+**pf9-copilot-secrets** — for the AI Copilot feature
+```bash
+kubectl create secret generic pf9-copilot-secrets \
+  --namespace pf9-mngt \
+  --from-literal=openai-api-key='<OPENAI_KEY>' \
+  --from-literal=anthropic-api-key='<ANTHROPIC_KEY>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-copilot-secrets.yaml
+kubectl apply -f k8s/sealed-secrets/pf9-copilot-secrets.yaml
+```
+
+### Verify all secrets exist before proceeding
+
+```bash
+kubectl get secrets -n pf9-mngt
+# Must see: pf9-db-credentials, pf9-jwt-secret, pf9-ldap-secrets,
+#           pf9-admin-credentials, pf9-pf9-credentials,
+#           pf9-snapshot-creds, pf9-provision-creds
+```
+
+---
+
+## 7. Deploy the App — Helm Install
+
+```bash
+helm upgrade --install pf9-mngt ./k8s/helm/pf9-mngt \
+  --namespace pf9-mngt \
+  --create-namespace \
+  -f k8s/helm/pf9-mngt/values.yaml \
+  --set ingress.host=your-app.your-domain.com \
+  --set ingress.tls.enabled=true \
+  --set ingress.tls.clusterIssuer=letsencrypt-prod \
+  --set postgresql.persistence.storageClass=<YOUR-STORAGE-CLASS> \
+  --set ldapService.persistence.data.storageClass=<YOUR-STORAGE-CLASS> \
+  --set ldapService.persistence.config.storageClass=<YOUR-STORAGE-CLASS> \
+  --set workers.backupWorker.persistence.storageClass=<YOUR-STORAGE-CLASS> \
+  --set pf9.authUrl=https://your-cloud.platform9.net/keystone \
+  --set pf9.username=service-account@your-domain.com \
+  --wait --timeout 10m
+```
+
+> **`--set postgresql.persistence.storageClass`** is the single most important override.
+> Without it, PVCs use the chart default which may not match your cluster and will stay
+> in `Pending` forever. Set it to the value you found in §1.1.
+
+### Watch the rollout
+
+```bash
+# Watch pods come up (Ctrl+C when all are Running)
+kubectl get pods -n pf9-mngt --watch
+
+# Expected final state
+NAME                                        READY   STATUS      RESTARTS
+pf9-mngt-api-xxxx                           1/1     Running     0
+pf9-mngt-ui-xxxx                            1/1     Running     0
+pf9-mngt-monitoring-xxxx                    1/1     Running     0
+pf9-mngt-redis-xxxx                         1/1     Running     0
+pf9-mngt-db-0                               1/1     Running     0
+pf9-mngt-ldap-0                             1/1     Running     0
+pf9-mngt-backup-worker-xxxx                 1/1     Running     0
+pf9-mngt-ldap-sync-worker-xxxx              1/1     Running     0
+pf9-mngt-metering-worker-xxxx               1/1     Running     0
+pf9-mngt-notification-worker-xxxx           1/1     Running     0
+pf9-mngt-scheduler-worker-xxxx              1/1     Running     0
+pf9-mngt-search-worker-xxxx                 1/1     Running     0
+pf9-mngt-snapshot-worker-xxxx               1/1     Running     0
+pf9-mngt-db-migrate-xxxx                    0/1     Completed   0   ← this is correct
+```
+
+> If any pod is stuck in `Pending`, `CrashLoopBackOff`, or `Init:Error` — stop here and
+> see §14 before continuing. Do not proceed to the database migration step until all pods
+> are Running (or Completed for the db-migrate job).
+
+---
+
+## 8. Database Migration
+
+### How it works
+
+The `db-migrate` Job runs automatically as part of `helm install` and `helm upgrade`.
+It uses the API container image to execute `run_migration.py`, which:
+
+1. Connects to PostgreSQL using the credentials from `pf9-db-credentials`
+2. Applies `db/init.sql` if it hasn't been applied yet (creates base tables)
+3. Reads every `db/migrate_*.sql` file, sorted by name
+4. Skips files already recorded in `schema_migrations` table (idempotent — safe to re-run)
+5. Applies each new file and records it in `schema_migrations`
+
+There are currently **~55 migration files**, all applied in alphabetical order.
+
+### Watching the migration run
+
+```bash
+# Find the job name
+kubectl get jobs -n pf9-mngt
+
+# Stream the logs as it runs
+kubectl logs -n pf9-mngt -l app.kubernetes.io/component=db-migrate -f
+
+# When done, status should show Completed
+kubectl get jobs -n pf9-mngt
+```
+
+The migration takes 20–60 seconds on first install (all 55 files). Subsequent upgrades
+take a few seconds (only new files run).
+
+### What success looks like
+
+```
+Applying db/init.sql ... OK
+Applying db/migrate_activity_log.sql ... OK
+Applying db/migrate_backup.sql ... OK
+...
+Applying db/migrate_v1_82_18.sql ... OK
+All migrations applied. 55 files processed, 55 applied, 0 skipped.
+```
+
+### Common migration failures and fixes
+
+**Job stuck in `Init:0/1` — database not ready yet**
+
+The job has an init container (`wait-for-db`) that retries the PostgreSQL connection for up
+to 5 minutes. During a first install on NFS, the PostgreSQL pod can take 2–3 minutes to
+write its data directory, which is normal.
+
+```bash
+# Check if pf9-db is still starting
+kubectl get pods -n pf9-mngt -l app.kubernetes.io/name=pf9-mngt-db
+
+# Watch init container progress
+kubectl logs -n pf9-mngt -l app.kubernetes.io/component=db-migrate -c wait-for-db -f
+```
+
+If the job times out (`DeadlineExceeded`) before the DB came up:
+```bash
+# 1. Delete the failed job
+kubectl delete job -n pf9-mngt -l app.kubernetes.io/component=db-migrate
+
+# 2. Trigger the job again (Helm hook re-runs on sync)
+#    With ArgoCD:
+argocd app sync pf9-mngt
+#    Without ArgoCD (manual re-run):
+helm upgrade pf9-mngt ./k8s/helm/pf9-mngt -n pf9-mngt --reuse-values
+```
+
+**`pf9-db-credentials` secret missing**
+
+```
+psycopg2.OperationalError: FATAL: password authentication failed for user "pf9"
+```
+
+Verify the secret exists and has the right key:
+```bash
+kubectl get secret pf9-db-credentials -n pf9-mngt -o jsonpath='{.data.password}' | base64 -d
+# Should print your DB_PASSWORD
+```
+
+If missing, create it (see §6) then delete the failed job and re-run.
+
+**Migration file fails halfway through**
+
+All migration files use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` —
+they are safe to re-run. If a file fails:
+
+```bash
+# See exactly which SQL statement failed
+kubectl logs -n pf9-mngt -l app.kubernetes.io/component=db-migrate | grep -A5 "ERROR"
+```
+
+Fix the underlying issue (e.g. missing secret, wrong DB user permissions), delete the job,
+and re-run. Already-applied files are skipped automatically.
+
+**The job ran on a broken state and now the schema is inconsistent**
+
+```bash
+# Connect directly to check what was applied
+kubectl exec -it -n pf9-mngt pf9-mngt-db-0 -- \
+  psql -U pf9 -d pf9_mgmt -c "SELECT filename, applied_at FROM schema_migrations ORDER BY applied_at;"
+```
+
+If you need a clean start (development only — destructive):
+```bash
+# Drop and recreate the database
+kubectl exec -it -n pf9-mngt pf9-mngt-db-0 -- \
+  psql -U pf9 -c "DROP DATABASE pf9_mgmt; CREATE DATABASE pf9_mgmt;"
+# Then delete the job and re-run
+kubectl delete job -n pf9-mngt -l app.kubernetes.io/component=db-migrate
+helm upgrade pf9-mngt ./k8s/helm/pf9-mngt -n pf9-mngt --reuse-values
+```
+
+---
+
+## 9. Create the First LDAP Admin User
+
+After the pods are Running and the db-migrate job has Completed, create the initial admin
+user. This user will be used to log in to the web UI for the first time.
+
+```bash
+# 1. Get the LDAP pod name
+LDAP_POD=$(kubectl get pod -n pf9-mngt -l app.kubernetes.io/name=pf9-mngt-ldap \
+  -o jsonpath='{.items[0].metadata.name}')
+
+# 2. Check LDAP is running
+kubectl exec -n pf9-mngt $LDAP_POD -- ldapsearch \
+  -x -H ldap://localhost:389 \
+  -D "cn=admin,dc=pf9mgmt,dc=local" \
+  -w "$LDAP_ADMIN_PASSWORD" \
+  -b "dc=pf9mgmt,dc=local" \
+  "(objectClass=organizationalUnit)" dn 2>&1 | head -20
+# Should return: dn: ou=users,dc=pf9mgmt,dc=local
+
+# 3. Create a temporary ldif file inside the pod and add the admin user
+kubectl exec -n pf9-mngt $LDAP_POD -- bash -c "cat > /tmp/admin_user.ldif << 'LDIF'
+dn: cn=admin,ou=users,dc=pf9mgmt,dc=local
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: admin
+sn: admin
+uid: admin
+mail: admin@your-domain.com
+userPassword: <YOUR_ADMIN_PASSWORD>
+LDIF"
+
+# 4. Add the user
+kubectl exec -n pf9-mngt $LDAP_POD -- \
+  ldapadd -x \
+  -H ldap://localhost:389 \
+  -D "cn=admin,dc=pf9mgmt,dc=local" \
+  -w "<LDAP_ADMIN_PASSWORD>" \
+  -f /tmp/admin_user.ldif
+```
+
+Expected output:
+```
+adding new entry "cn=admin,ou=users,dc=pf9mgmt,dc=local"
+```
+
+If you see `Already exists` — the user was created already (this is fine).
+
+> **After you can log in**, go to Administration → Users in the web UI to manage users
+> from there. The LDAP approach above is only needed for the very first login.
+
+---
+
+## 10. Verify and First Login
+
+```bash
+# All pods Running?
+kubectl get pods -n pf9-mngt
+
+# Ingress has an address?
+kubectl get ingress -n pf9-mngt
+
+# TLS certificate issued?
+kubectl describe certificate -n pf9-mngt
+
+# API health check
+curl https://your-app.your-domain.com/health
+# Expected: {"status": "ok", ...}
+```
+
+Open your browser: **`https://your-app.your-domain.com`**
+
+- **Username**: `admin`
+- **Password**: the `ADMIN_PASSWORD` you generated in §4
+
+> Change the admin password immediately after first login via Profile → Change Password.
+
+---
+
+## 11. Optional: Monitoring Stack
+
+These are installed separately as Helm charts in a dedicated `monitoring` namespace.
+They are **not** managed by the `pf9-mngt` Helm chart.
+
+### 11.1 Install kube-prometheus-stack (Prometheus + Grafana + AlertManager)
+
+The values file `k8s/monitoring/prometheus-values.yaml` is pre-configured for this stack.
+Edit it before installing:
+
+```bash
+# Check the file and set your storage class if it differs from nfs-pf9
+grep storageClassName k8s/monitoring/prometheus-values.yaml
+```
+
+> **NFS users — critical**: The file already has `grafana.initChownData.enabled: false`.
+> Do NOT remove this. On NFS clusters, the default Grafana init container runs
+> `chown -R 472 /var/lib/grafana` which hits a read-only `.snapshot` directory
+> and crashes. This setting disables that init container. Leave it in place.
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  -n monitoring --create-namespace \
+  -f k8s/monitoring/prometheus-values.yaml \
+  --set "grafana.ingress.hosts[0]=your-app.your-domain.com" \
+  --set "grafana.env.GF_SERVER_ROOT_URL=https://your-app.your-domain.com/grafana" \
+  --set "prometheus.ingress.hosts[0]=your-app.your-domain.com" \
+  --set "alertmanager.ingress.hosts[0]=your-app.your-domain.com" \
+  --timeout 10m
+```
+
+### 11.2 Install Loki + Promtail (log aggregation)
+
+```bash
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+
+helm install loki grafana/loki-stack \
+  -n monitoring \
+  -f k8s/monitoring/loki-values.yaml \
+  --timeout 5m
+```
+
+### 11.3 Verify all monitoring pods are Running
+
+```bash
+kubectl get pods -n monitoring
+```
+
+Expected (all Running):
+```
+alertmanager-kube-prometheus-stack-alertmanager-0     2/2   Running
+kube-prometheus-stack-grafana-xxxx                    3/3   Running
+kube-prometheus-stack-kube-state-metrics-xxxx         1/1   Running
+kube-prometheus-stack-operator-xxxx                   1/1   Running
+kube-prometheus-stack-prometheus-node-exporter-xxxx   1/1   Running   (one per node)
+loki-0                                                 1/1   Running
+loki-promtail-xxxx                                     1/1   Running   (one per node)
+prometheus-kube-prometheus-stack-prometheus-0          2/2   Running
+```
+
+> **If Grafana is in `Init:CrashLoopBackOff`** on NFS — check that
+> `initChownData.enabled: false` is in the values file and run:
+> `helm upgrade kube-prometheus-stack ... --set grafana.initChownData.enabled=false`
+
+### 11.4 Access Grafana and the other tools
+
+The default values file exposes all three tools via subpaths on your existing domain.
+No new DNS record is needed.
+
+| Tool | URL | Default credentials |
+|------|-----|---------------------|
+| Grafana | `https://your-app.your-domain.com/grafana` | `admin` / set in values file |
+| Prometheus | `https://your-app.your-domain.com/prometheus` | none (no auth) |
+| AlertManager | `https://your-app.your-domain.com/alertmanager` | none (no auth) |
+
+**Change the Grafana admin password immediately after first login.**
+
+### 11.5 Verify Grafana data sources
+
+1. Go to **Connections → Data Sources**
+2. Both `Prometheus` and `Loki` should appear
+3. Click each → **Save & Test** → both should show "Data source connected"
+
+If Loki shows an error, check the URL in the datasource config matches
+`http://loki.monitoring.svc.cluster.local:3100`.
+
+### 11.6 Upgrading the monitoring stack
+
+```bash
+# Copy updated values file to the cluster control plane, then:
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  -n monitoring \
+  -f ~/prometheus-values.yaml \
+  --set "grafana.ingress.hosts[0]=your-app.your-domain.com" \
+  --set "grafana.env.GF_SERVER_ROOT_URL=https://your-app.your-domain.com/grafana" \
+  --set "prometheus.ingress.hosts[0]=your-app.your-domain.com" \
+  --set "alertmanager.ingress.hosts[0]=your-app.your-domain.com" \
+  --timeout 5m
+```
+
+---
+
+## 12. GitOps with ArgoCD
+
+GitOps uses two repos:
 
 | Repo | Visibility | Contents |
 |------|------------|----------|
 | `pf9-mngt` (this repo) | Public | Helm chart, application code, CI workflows |
 | `pf9-mngt-deploy` | **Private** | `values.prod.yaml`, sealed-secret blobs, ArgoCD manifests |
 
-ArgoCD uses **multi-source** (v2.6+) to combine both repos at sync time:
-- **Source 1** — public repo: Helm chart + `values.yaml` defaults
-- **Source 2** — private deploy repo: `values.prod.yaml` (image tags, host, TLS, storageClass)
-
-### One-time bootstrap
+### Bootstrap (one time)
 
 ```bash
-# 1. Register the private deploy repo with ArgoCD (needs RELEASE_PAT)
+# Register the private deploy repo with ArgoCD
 argocd repo add https://github.com/<your-org>/pf9-mngt-deploy \
   --username <github-user> \
-  --password <RELEASE_PAT>
+  --password <GITHUB_PAT>
 
-# 2. Apply the AppProject (scopes ArgoCD to pf9-mngt namespace only)
+# Apply AppProject and Application from the init directory
 kubectl apply -f k8s/deploy-repo-init/argocd-appproject.yaml -n argocd
-
-# 3. Apply the multi-source Application
 kubectl apply -f k8s/deploy-repo-init/argocd-application.yaml -n argocd
 ```
 
-> The files in `k8s/deploy-repo-init/` are the authoritative copies — copy them to the root of
-> your `pf9-mngt-deploy` repo before applying.
+### Fix: ArgoCD permanently OutOfSync on StatefulSets
 
-### GitOps sync flow (steady state)
+After the first deploy you may notice `pf9-db` and `pf9-ldap` show as OutOfSync in ArgoCD.
+This is a known Kubernetes limitation: `volumeClaimTemplates` in StatefulSets are immutable
+after creation. ArgoCD sees a diff but cannot fix it.
 
-```
-CI pipeline (release.yml)
-        │
-        │  1. Builds + pushes Docker images  → ghcr.io/<org>
-        │  2. Packages + pushes Helm chart   → ghcr.io/<org>/helm
-        │  3. update-values job:
-        │       git clone pf9-mngt-deploy (using RELEASE_PAT)
-        │       patches global.imageTag in values.prod.yaml
-        │       git push → pf9-mngt-deploy main [skip ci]
-        ▼
-  pf9-mngt-deploy / values.prod.yaml updated
-        │
-        │  ArgoCD polls both repos every 3 minutes
-        ▼
-  ArgoCD detects drift in Source 2 → auto-syncs
-        │
-        │  helm upgrade --install
-        │    (chart from Source 1 + values.prod.yaml from Source 2)
-        ▼
-  new pods roll out (RollingUpdate strategy)
-  db-migrate pre-upgrade hook runs before pods start
+The fix is already in `k8s/argocd/application.yaml` as `ignoreDifferences`:
+```yaml
+ignoreDifferences:
+  - group: apps
+    kind: StatefulSet
+    jsonPointers:
+      - /spec/volumeClaimTemplates
 ```
 
-### Manual sync / force sync
-
+If your ArgoCD app was applied before this was added, patch it:
 ```bash
-argocd app sync pf9-mngt
-argocd app wait pf9-mngt --health
+kubectl patch application pf9-mngt -n argocd \
+  --type merge \
+  --patch '{"spec":{"ignoreDifferences":[{"group":"apps","kind":"StatefulSet","jsonPointers":["/spec/volumeClaimTemplates"]}]}}'
 ```
+
+### GitHub secrets required for CI
+
+| Name | Type | Purpose |
+|------|------|---------|
+| `RELEASE_PAT` | Secret | GitHub Personal Access Token (repo scope) for pushing image tag updates to the private deploy repo |
+| `DEPLOY_REPO` | Variable | Name of your private deploy repo (e.g. `pf9-mngt-deploy`) |
 
 ---
 
-## CI/CD Flow
+## 13. Day-2 Operations
 
-The release pipeline (`.github/workflows/release.yml`) has two Helm-specific jobs added in v1.82.0:
-
-### Job: `helm-package`
-
-Runs after `publish-images`. Packages the Helm chart and pushes it as an OCI artifact:
-
-```
-helm package k8s/helm/pf9-mngt --version <VERSION>
-helm push pf9-mngt-<VERSION>.tgz oci://ghcr.io/erezrozenbaum/helm
-```
-
-The chart is then available as:
-```
-oci://ghcr.io/erezrozenbaum/helm/pf9-mngt:<VERSION>
-```
-
-### Job: `update-values`
-
-Runs after `helm-package`. Uses `RELEASE_PAT` to push a single-line change to the **private
-`pf9-mngt-deploy` repo** (configured via the `DEPLOY_REPO` repository variable):
-
-```
-global:
-  imageTag: v<VERSION>    ← updated in pf9-mngt-deploy/values.prod.yaml [skip ci]
-```
-
-ArgoCD (Source 2) detects the change in the private repo and triggers `helm upgrade`.
-The public repo (`pf9-mngt/master`) is **not touched** by this job.
-
----
-
-## Values Reference
-
-All configurable values are documented with inline comments in `k8s/helm/pf9-mngt/values.yaml`.
-Key sections:
-
-| Section | What it controls |
-|---------|-----------------|
-| `global.imageTag` | Image tag for all app services (overridden by CI in `values.prod.yaml`) |
-| `global.imageRepo` | Base registry path (`ghcr.io/erezrozenbaum`) |
-| `secrets.*` | Names of pre-existing Kubernetes Secrets — do **not** put credential values here |
-| `api.*` | API replica count, resource limits, feature toggles (snapshot, provision, copilot) |
-| `ui.*` | UI replica count and resources |
-| `postgresql.*` | PVC size, storage class, resource limits |
-| `ldapService.*` | OpenLDAP PVC sizes, storage class |
-| `ingress.*` | `host`, TLS secret name, cert-manager `clusterIssuer` |
-| `workers.*` | Per-worker resource limits and feature knobs |
-
-### Overriding values at install time
-
-```bash
-# Change replica count and storage class
-helm upgrade --install pf9-mngt ./k8s/helm/pf9-mngt \
-  --set api.replicaCount=3 \
-  --set postgresql.persistence.storageClass=fast-ssd \
-  --set ldapService.persistence.data.storageClass=fast-ssd
-```
-
----
-
-## Day-2 Operations
-
-### Upgrade a Release
-
-Helm upgrades are handled automatically via ArgoCD in GitOps mode. For a manual upgrade:
+### Upgrade a release
 
 ```bash
 helm upgrade pf9-mngt ./k8s/helm/pf9-mngt \
   --namespace pf9-mngt \
   -f k8s/helm/pf9-mngt/values.yaml \
-  -f k8s/helm/pf9-mngt/values.prod.yaml \
-  --set ingress.host=pf9-mngt.your-domain.com \
+  --reuse-values \
   --wait --timeout 10m
 ```
 
-The `db-migrate` Job re-runs automatically as a `pre-upgrade` hook before any pod is replaced.
+The db-migrate job runs automatically before pods are replaced.
 
 ### Rollback
 
 ```bash
-# List revision history
 helm history pf9-mngt -n pf9-mngt
-
-# Roll back to previous revision
-helm rollback pf9-mngt -n pf9-mngt
-
-# Roll back to a specific revision
-helm rollback pf9-mngt 3 -n pf9-mngt --wait
+helm rollback pf9-mngt -n pf9-mngt        # rolls back one revision
+helm rollback pf9-mngt 3 -n pf9-mngt      # rolls back to revision 3
 ```
 
-> **Note:** Helm rollback reverts templates and values but does **not** reverse database migrations.
-> If a migration broke the schema, restore from a PostgreSQL backup first.
+> Helm rollback does NOT reverse database migrations. If a migration broke the schema,
+> restore from a PostgreSQL backup first.
 
-### Scale Replicas
+### Rotate a secret
 
 ```bash
-# Scale API to 3 replicas (via helm upgrade — preferred)
-helm upgrade pf9-mngt ./k8s/helm/pf9-mngt -n pf9-mngt \
-  --reuse-values --set api.replicaCount=3
+# 1. Re-seal with new value
+kubectl create secret generic pf9-jwt-secret \
+  --namespace pf9-mngt \
+  --from-literal=jwt-secret-key='<new-value>' \
+  --dry-run=client -o yaml \
+  | kubeseal --cert sealed-secrets.pub --format yaml \
+  > k8s/sealed-secrets/pf9-jwt-secret.yaml
 
-# Or directly via kubectl (not persistent across helm upgrades)
-kubectl scale deployment pf9-mngt-api -n pf9-mngt --replicas=3
+# 2. Apply
+kubectl apply -f k8s/sealed-secrets/pf9-jwt-secret.yaml
+
+# 3. Restart affected pods
+kubectl rollout restart deployment pf9-mngt-api -n pf9-mngt
 ```
 
-### Rotate a Secret
-
-1. Generate the new value locally.
-2. Create an updated SealedSecret:
-   ```bash
-   kubectl create secret generic pf9-jwt-secret \
-     --namespace pf9-mngt \
-     --from-literal=jwt-secret-key='<new-secret>' \
-     --dry-run=client -o yaml \
-     | kubeseal --cert sealed-secrets.pub --format yaml \
-     > k8s/sealed-secrets/pf9-jwt-secret.yaml
-   ```
-3. Apply the new SealedSecret:
-   ```bash
-   kubectl apply -f k8s/sealed-secrets/pf9-jwt-secret.yaml
-   ```
-4. Restart the affected pods to pick up the updated Secret:
-   ```bash
-   kubectl rollout restart deployment pf9-mngt-api -n pf9-mngt
-   ```
-
-### Inspect / debug a pod
+### Debug a pod
 
 ```bash
-# Tail API logs
 kubectl logs -n pf9-mngt -l app.kubernetes.io/name=pf9-mngt-api --follow
-
-# Shell into API pod
+kubectl logs -n pf9-mngt deploy/pf9-mngt-api --previous   # logs from last crash
 kubectl exec -it -n pf9-mngt deploy/pf9-mngt-api -- /bin/bash
-
-# Check db-migrate job logs
-kubectl logs -n pf9-mngt job/pf9-mngt-db-migrate
 ```
 
-### Uninstall
+### Uninstall (destructive)
 
 ```bash
 helm uninstall pf9-mngt -n pf9-mngt
-
-# To also remove PVCs (DESTRUCTIVE — deletes database data):
-kubectl delete pvc -n pf9-mngt --all
+# To also delete all data:
+kubectl delete pvc --all -n pf9-mngt
 kubectl delete namespace pf9-mngt
 ```
 
 ---
 
-## Troubleshooting
+## 14. Common Issues & Fixes
 
-### db-migrate job fails at startup
+### PVCs stuck in Pending
+
+**Symptom:** `kubectl get pvc -n pf9-mngt` shows `Pending` for all PVCs.  
+**Cause:** The storageClass in values doesn't match any StorageClass on your cluster.  
+**Fix:**
+```bash
+kubectl get storageclass                  # find the right name
+helm upgrade pf9-mngt ./k8s/helm/pf9-mngt -n pf9-mngt --reuse-values \
+  --set postgresql.persistence.storageClass=<correct-class> \
+  --set ldapService.persistence.data.storageClass=<correct-class> \
+  --set ldapService.persistence.config.storageClass=<correct-class>
+```
+
+### db-migrate job DeadlineExceeded
+
+**Symptom:** Job shows `BackoffLimitExceeded` or `DeadlineExceeded` in `kubectl get jobs`.  
+**Cause:** PostgreSQL wasn't ready in time (common on first NFS mount — can take 2–3 minutes).  
+**Fix:**
+```bash
+kubectl delete job -n pf9-mngt -l app.kubernetes.io/component=db-migrate
+helm upgrade pf9-mngt ./k8s/helm/pf9-mngt -n pf9-mngt --reuse-values
+```
+
+### Workers CrashLoopBackOff — missing sync-key
+
+**Symptom:** `ldap_sync_key secret is not set. Worker cannot decrypt bind passwords.`  
+**Cause:** `pf9-ldap-secrets` is missing the `sync-key` field.  
+**Fix:** Recreate the secret with all four fields (see §6). The sync-key must be a
+URL-safe base64 string from `python3 -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"`.
+
+### Grafana CrashLoopBackOff on NFS
+
+**Symptom:** Grafana init container exits with `chown: changing ownership of /var/lib/grafana/.snapshot: Read-only file system`  
+**Cause:** NFS provisioner exposes a read-only `.snapshot` directory that blocks `chown -R`.  
+**Fix:** Ensure `k8s/monitoring/prometheus-values.yaml` contains:
+```yaml
+grafana:
+  initChownData:
+    enabled: false
+```
+Then re-run `helm upgrade`.
+
+### ArgoCD permanently OutOfSync on pf9-db / pf9-ldap
+
+**Symptom:** ArgoCD shows `OutOfSync` on the StatefulSets but sync doesn't fix it.  
+**Cause:** StatefulSet `volumeClaimTemplates` are immutable in Kubernetes — ArgoCD
+sees a diff it can never apply.  
+**Fix:** See §12 for the `ignoreDifferences` patch.
+
+### Ingress 404 or no EXTERNAL-IP
 
 ```bash
-kubectl logs -n pf9-mngt -l app.kubernetes.io/component=db-migrate
-# If pod was already cleaned up, describe the job:
-kubectl describe job pf9-db-migrate-<revision> -n pf9-mngt
+kubectl get svc -n ingress-nginx          # check EXTERNAL-IP is assigned
+kubectl describe ingress pf9-mngt -n pf9-mngt  # check host + backend
+kubectl describe clusterissuer letsencrypt-prod   # check cert-manager
 ```
 
 Common causes:
-- `pf9-db` StatefulSet not yet Running — job init container waits up to `activeDeadlineSeconds: 300`; if db takes longer (e.g. first NFS mount), the job times out. Fix: delete the failed job and re-trigger sync.
-- `pf9-db-credentials` Secret missing — verify: `kubectl get secret pf9-db-credentials -n pf9-mngt`
-- Schema migration conflict — restore from backup and re-run with corrected migration
-- **`DeadlineExceeded`** — the job's init container (`wait-for-db`) was waiting when `pf9-db` was still starting. Delete the failed job (`kubectl delete job <name> -n pf9-mngt`) and re-trigger the ArgoCD sync.
-
-### Workers or API crash at startup — missing LDAP_SYNC_KEY
-
-```
-ldap_sync_key secret is not set. Worker cannot decrypt bind passwords.
-```
-
-The `pf9-ldap-secrets` Secret must contain a `sync-key` field (a 32-byte URL-safe base64 key). To generate and patch:
-
-```bash
-SYNC_KEY=$(python3 -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
-kubectl patch secret pf9-ldap-secrets -n pf9-mngt \
-  --type='json' -p="[{'op':'add','path':'/data/sync-key','value':'$(echo -n $SYNC_KEY | base64)']]}"
-```
-
-### nginx (UI) Permission denied on `/var/cache/nginx`
-
-The UI pod runs as UID 1000 (non-root). If `emptyDir` volumes for `/var/cache/nginx` and `/var/run` are missing from the Deployment, nginx cannot create its temp directories and crashes. Verify the Deployment spec contains these volumes (present since v1.82.2).
-
-### scheduler-worker `PermissionError: 'monitoring'`
-
-`host_metrics_collector.py` writes `monitoring/cache/metrics_cache.json` relative to `/app`. This path is read-only in the container. An `emptyDir` volume mounted at `/app/monitoring` is required (present since v1.82.2).
+- DNS not propagated yet — wait and retry
+- ingress-nginx controller not running
+- `ingress.host` in values doesn't match your DNS record exactly
 
 ### API pods in CrashLoopBackOff
 
 ```bash
-kubectl describe pod <api-pod-name> -n pf9-mngt
-kubectl logs <api-pod-name> -n pf9-mngt --previous
+kubectl logs deploy/pf9-mngt-api -n pf9-mngt --previous
+kubectl get secrets -n pf9-mngt   # verify all required secrets exist
 ```
 
 Common causes:
-- Missing Sealed Secret — check `kubectl get secrets -n pf9-mngt`
-- `POSTGRES_HOST` / connection refused — ensure `pf9-db` Service is running
-- Wrong JWT_SECRET_KEY format
+- A required secret is missing (see §6)
+- `pf9-db` Service not yet running — wait for StatefulSet to be Ready
+- JWT_SECRET_KEY is less than 32 characters
 
-### Ingress not getting an external IP / URL returns 404
+### Prometheus/AlertManager UI shows 404 in Grafana
 
-```bash
-kubectl describe ingress pf9-mngt -n pf9-mngt
-kubectl get svc -n ingress-nginx
-```
-
-Common causes:
-- `ingress.host` in values doesn't match your DNS record
-- cert-manager `ClusterIssuer` not ready — check: `kubectl describe clusterissuer letsencrypt-prod`
-- ingress-nginx controller not running
-
-### Workers restarting repeatedly
-
-```bash
-kubectl logs -n pf9-mngt deployment/pf9-mngt-<worker-name>
-```
-
-Workers use a `/tmp/alive` liveness probe (touch file written at startup). If the process dies
-before writing the file the pod is restarted. Check for unhandled exceptions in the logs.
-
-### ArgoCD shows OutOfSync after manual kubectl apply
-
-ArgoCD with `selfHeal: true` will revert any manual changes to bring the cluster back in sync
-with `master`. To make a config change permanent, modify `values.yaml` or `values.prod.yaml`
-and push to `master`.
+**Cause:** Adding `routePrefix` to `prometheusSpec` makes Prometheus serve at `/prometheus`
+internally, which breaks Grafana's datasource that calls the root API path.  
+**Fix:** Do not set `routePrefix` or `externalUrl` in `prometheusSpec`. Use the nginx
+`rewrite-target` annotation instead (already correct in the provided values file).
 
 ---
 
-## Architecture Decision Records
+## 15. Architecture Decision Records
 
 ### ADR-K001: Helm chart co-located in the application repository
 
 **Decision:** The Helm chart lives in `k8s/helm/pf9-mngt/` inside the application repo.
 
-**Rationale:**
-- Chart and application code are versioned together — chart version always matches app version
-- Developers only need one repo to check out
-- CI can validate chart and application in the same pipeline run
-- Release tagging (git tag → Helm version) is trivially automated
+**Rationale:** Chart and application code are versioned together. CI validates chart and
+application in the same pipeline run. Developers check out one repo.
 
 ### ADR-K002: Bitnami Sealed Secrets over external secret store
 
-**Decision:** Secrets are encrypted with kubeseal and committed to git as SealedSecret
-resources. No cloud-specific secret store (AWS Secrets Manager, Azure Key Vault, etc.) is used
-in the base chart.
+**Decision:** Credentials are encrypted with kubeseal and committed to git as SealedSecret
+resources. No cloud-specific secret store is used.
 
-**Rationale:**
-- Works identically on EKS, AKS, GKE, and self-hosted clusters — no cloud lock-in
-- Sealed Secret blobs are safe to commit; only the cluster's Sealed Secrets controller can decrypt them
-- No per-environment cloud IAM setup required
-- Teams can add ExternalSecrets operator later without changing application code
+**Rationale:** Works identically on EKS, AKS, GKE, and self-hosted clusters — no vendor
+lock-in. Sealed blobs are safe to commit publicly. Teams can add ExternalSecrets later
+without changing application code.
 
 ### ADR-K003: db-migrate as a Helm post-install/post-upgrade hook
 
-**Decision:** The database migration job runs as a `helm.sh/hook: post-install,post-upgrade` Job (changed from `pre-install,pre-upgrade` in v1.82.2).
+**Decision:** The database migration job runs as a `post-install,post-upgrade` Helm hook.
 
-**Rationale:**
-- PostgreSQL (StatefulSet) must be Running before the migration job can connect; `post-*` hooks fire after all non-hook resources are applied and healthy, ensuring the DB is available
-- `hook-delete-policy: before-hook-creation,hook-succeeded` keeps the namespace clean
-- The API Deployment's readiness probe prevents traffic until the API itself is healthy — by which time the migration has completed
-- No init container needed in every pod; single job runs once per release
+**Rationale:** The hook fires after all non-hook resources (including the PostgreSQL
+StatefulSet) are applied and healthy. This ensures the DB is reachable when the migration
+runs. `hook-delete-policy: before-hook-creation,hook-succeeded` cleans up old job pods.
 
-### ADR-K004: `values.prod.yaml` for CI-managed image tags
-
-**Decision:** CI writes only `global.imageTag` (and per-service overrides) to a separate
-`values.prod.yaml` file. All other configuration lives in `values.yaml`.
-
-**Rationale:**
-- `values.yaml` is a stable, human-edited file — no CI noise in its git history
-- `values.prod.yaml` has a mechanical commit history from the `update-values` CI job
-- ArgoCD detects the `values.prod.yaml` change and syncs automatically
-- Developers never need to manually edit a version in a yaml file
-
-### ADR-K005: StatefulSet for PostgreSQL, Deployment for Redis
+### ADR-K004: StatefulSet for PostgreSQL and LDAP, Deployment for Redis
 
 **Decision:** PostgreSQL and OpenLDAP use StatefulSets; Redis uses a plain Deployment.
 
-**Rationale:**
-- PostgreSQL and LDAP need stable network identities and ordered pod numbering for data integrity
-- Redis is used only as a cache layer — losing in-flight cache data is acceptable; the cache self-warms within one TTL cycle (60 s by default)
-- Simplifies the Redis manifest significantly; no PVC needed
+**Rationale:** PostgreSQL and LDAP need stable network identities and ordered startup for
+data integrity. Redis is a cache — losing in-flight data is acceptable; it self-warms
+within one TTL cycle. StatefulSet adds unnecessary complexity for a pure cache.
 
-### ADR-K006: kubeVersion minimum set to 1.28
+### ADR-K005: Monitoring stack installed separately (not in the pf9-mngt Helm chart)
 
-**Decision:** `Chart.yaml` specifies `kubeVersion: ">=1.28.0-0"`.
+**Decision:** Prometheus, Grafana, Loki, and AlertManager are installed as separate Helm
+charts in the `monitoring` namespace.
 
-**Rationale:**
-- Kubernetes 1.24 reached EOL in July 2023; 1.27 reached EOL in June 2024
-- 1.28 is the oldest release still receiving security patches as of early 2026 on most managed services (GKE, EKS, AKS)
-- All Ingress v1, StatefulSet, and Job APIs used by this chart are stable since 1.21; 1.28 is purely a security-support floor
-- Setting this prevents accidental installations on EOL clusters that will not receive CVE patches
+**Rationale:** kube-prometheus-stack is a cluster-wide concern — it monitors all workloads,
+not just pf9-mngt. Bundling it in the app chart would force every pf9-mngt install to
+deploy cluster-level monitoring even if the cluster already has it.
 
-### ADR-K007: Separate private deploy repo for production GitOps config
+### ADR-K006: Grafana at /grafana subpath instead of a separate hostname
 
-**Decision:** Production-specific configuration (`values.prod.yaml`, sealed-secret blobs, ArgoCD
-Application + AppProject manifests) lives in a separate private `pf9-mngt-deploy` repository.
-The CI `update-values` job clones and pushes to this private repo using `RELEASE_PAT`.
+**Decision:** Grafana is exposed at `/grafana` on the same ingress host as the app.
 
-**Rationale:**
-- `values.prod.yaml` may contain environment-specific hostnames, IPs, and StorageClass names
-  that are internal infrastructure details not suitable for a public repo
-- Sealed Secret blobs are safe to commit (encrypted), but their presence in a public repo
-  reveals which secrets exist and their namespace — leaking infrastructure topology
-- ArgoCD `Application` and `AppProject` manifests reference the private repo URL and
-  cluster-scoping rules — these are deployment-specific, not generic chart config
-- The public repo remains a clean, forkable open-source project; forks get a working
-  chart structure without any organisation-specific deployment details hardcoded
-
----
-
-*This document reflects the v1.82.15 implementation. For Docker Compose deployment, see
-[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md). For the full CI/CD pipeline reference, see
-[CI_CD_GUIDE.md](CI_CD_GUIDE.md). For Sealed Secrets creation commands, see
-[k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md](../k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md).*
+**Rationale:** Avoids requiring an extra DNS A record. nginx `rewrite-target` strips the
+prefix before forwarding to Grafana, so Grafana's internal datasource calls (to Prometheus
+at ClusterIP) are unaffected. GF_SERVER_SERVE_FROM_SUB_PATH tells Grafana to set correct
+relative URLs for its static assets.

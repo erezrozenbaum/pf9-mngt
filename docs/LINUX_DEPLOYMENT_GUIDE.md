@@ -1,9 +1,11 @@
 # Platform9 Management System — Linux Deployment Guide
 
-**Version**: 1.0  
-**Date**: February 2026  
+**Version**: 1.1  
+**Date**: March 2026  
 **Status**: Production-Ready  
 **Scope**: Running pf9-mngt on Linux (Ubuntu/Debian, RHEL/CentOS, or any Docker-capable distribution)
+
+> **Deployment options:** This guide covers Docker Compose on Linux. If you need production-grade HA, horizontal scaling, or GitOps, see [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) for the Kubernetes / Helm deployment.
 
 ---
 
@@ -197,15 +199,20 @@ chmod +x ldap/setup.sh
 
 ### 10. Run Database Migrations
 
-The `init.sql` script runs automatically on first PostgreSQL start. For subsequent migrations:
+The `init.sql` script runs automatically on first PostgreSQL start. For all subsequent migrations, use the automated runner — do **not** apply `.sql` files manually. The runner tracks every applied file in the `schema_migrations` table and skips already-applied files, making it safe to re-run at any time:
 
 ```bash
-# Run all migration scripts
-for f in db/migrate_*.sql; do
-  echo "Running $f..."
-  docker exec -i pf9_db psql -U pf9 -d pf9_mgmt < "$f"
-done
+# Run all pending migrations (idempotent)
+docker exec pf9_api python3 run_migration.py
 ```
+
+Verify what was applied:
+```bash
+docker exec -i pf9_db psql -U pf9 -d pf9_mgmt \
+  -c "SELECT filename, applied_at FROM schema_migrations ORDER BY applied_at;"
+```
+
+There are currently ~55 migration files; first-run takes ~30 seconds. Subsequent runs (only new files) take a few seconds.
 
 ### 11. Initialize Service Accounts
 

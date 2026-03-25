@@ -133,7 +133,11 @@ spec:
               value: {{ .Values.api.dbPool.maxConn | quote }}
             # --- Snapshot service user ---
             - name: SNAPSHOT_SERVICE_USER_EMAIL
-              value: {{ .Values.api.snapshot.serviceUserEmail | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.snapshotCreds }}
+                  key: service-user-email
+                  optional: true
             - name: SNAPSHOT_SERVICE_USER_DOMAIN
               value: {{ .Values.api.snapshot.serviceUserDomain | quote }}
             - name: SNAPSHOT_PASSWORD_KEY
@@ -156,7 +160,11 @@ spec:
                   optional: true
             # --- VM Provisioning service user ---
             - name: PROVISION_SERVICE_USER_EMAIL
-              value: {{ .Values.api.provision.serviceUserEmail | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.provisionCreds }}
+                  key: service-user-email
+                  optional: true
             - name: PROVISION_SERVICE_USER_DOMAIN
               value: {{ .Values.api.provision.serviceUserDomain | quote }}
             - name: PROVISION_PASSWORD_KEY

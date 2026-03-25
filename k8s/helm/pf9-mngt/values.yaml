@@ -118,7 +118,7 @@ api:
     dryRun: "false"
     cleanupVolumes: "false"
   snapshot:
-    serviceUserEmail: ""
+    # serviceUserEmail moved to sealed secret pf9-snapshot-creds (key: service-user-email)
     serviceUserDomain: default
     schedulerEnabled: "true"
     policyAssignIntervalMinutes: "60"
@@ -136,7 +136,7 @@ api:
     autoSnapshotBatchSize: "20"
     autoSnapshotBatchDelay: "5.0"
   provision:
-    serviceUserEmail: ""
+    # serviceUserEmail moved to sealed secret pf9-provision-creds (key: service-user-email)
     serviceUserDomain: Default
   ssh:
     hosts: ""

@@ -16,7 +16,25 @@
 # Prometheus
 # ---------------------------------------------------------------------------
 prometheus:
+  # Expose at http://<your-domain>/prometheus via existing nginx-ingress.
+  # nginx strips /prometheus prefix before forwarding so Prometheus serves at /
+  # and Grafana's internal datasource (ClusterIP:9090) requires no path prefix.
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      nginx.ingress.kubernetes.io/use-regex: "true"
+    hosts:
+      - pf9-mngt.example.com
+    paths:
+      - /prometheus(/|$)(.*)
+    pathType: ImplementationSpecific
+
   prometheusSpec:
+    # No routePrefix / externalUrl — Prometheus serves at /
+    # Grafana datasource uses http://kube-prometheus-stack-prometheus:9090 (root path, no prefix)
+
     # 15-day retention, capped at 9 GiB to stay under the 10 GiB PVC
     retention: 15d
     retentionSize: "9GB"
@@ -57,7 +75,23 @@ prometheus:
 # AlertManager
 # ---------------------------------------------------------------------------
 alertmanager:
+  # Expose at http://<your-domain>/alertmanager via existing nginx-ingress.
+  # nginx strips /alertmanager prefix before forwarding — serves at / internally.
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      nginx.ingress.kubernetes.io/use-regex: "true"
+    hosts:
+      - pf9-mngt.example.com
+    paths:
+      - /alertmanager(/|$)(.*)
+    pathType: ImplementationSpecific
+
   alertmanagerSpec:
+    # No routePrefix / externalUrl — AlertManager serves at /
+
     storage:
       volumeClaimTemplate:
         spec:
@@ -115,8 +149,23 @@ grafana:
     enabled: false
 
   service:
-    type: NodePort
-    nodePort: 30300
+    type: ClusterIP
+
+  # Expose Grafana at http://<your-domain>/grafana via the existing nginx-ingress.
+  # No new DNS record needed — same host as the main app.
+  # Override at deploy time:
+  #   helm upgrade ... --set grafana.env.GF_SERVER_ROOT_URL=http://pf9-mngt.example.com/grafana
+  env:
+    GF_SERVER_ROOT_URL: "http://pf9-mngt.example.com/grafana"
+    GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - pf9-mngt.example.com
+    path: /grafana
+    pathType: Prefix
 
   persistence:
     enabled: true

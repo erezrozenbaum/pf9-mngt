@@ -103,7 +103,7 @@ Worker   Worker   Worker    Worker    Worker         Worker
 | Container Restart Alerting | ✅ Production |
 | Multi-Region & Multi-Cluster Support | ✅ Production |
 | External LDAP / AD Identity Federation | ✅ Production |
-| Kubernetes Deployment | ⬜ Planned |
+| Kubernetes Deployment (Helm + ArgoCD + Sealed Secrets) | ✅ Production |
 | Tenant Self-Service Portal | ⬜ Planned |
 
 ---
@@ -765,7 +765,7 @@ pf9-mngt/
 
 **Platform:** Docker Compose with nginx TLS termination. All core containers (14) have restart policies and resource limits; a 15th `pf9_scheduler_worker` container handles automated collection, and `pf9_backup_worker` is added when `COMPOSE_PROFILES=backup` is set. Redis cache, rate limiting, and structured logging active.
 
-**Maturity:** 15 of 17 tracked features are production-grade. AI Copilot is in beta. Kubernetes deployment is a planned future option.
+**Maturity:** 16 of 17 tracked features are production-grade. AI Copilot is in beta. Kubernetes deployment (Helm chart, ArgoCD, Sealed Secrets) is fully supported since v1.82.0.
 
 ---
 
