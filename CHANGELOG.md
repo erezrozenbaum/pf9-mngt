@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.21] - 2026-03-25
+
+### Fixed
+- **Grafana CrashLoopBackOff on NFS** — `k8s/monitoring/prometheus-values.yaml`: disabled `initChownData` init container. The NFS provisioner exposes a read-only `.snapshot` directory inside the volume; Grafana's default `busybox` init container runs `chown -R 472:472 /var/lib/grafana` which hits `.snapshot` and exits with code 1. Disabled the init container — NFS already creates the directory with correct ownership.
+
+---
+
 ## [1.82.20] - 2026-03-25
 
 ### Fixed

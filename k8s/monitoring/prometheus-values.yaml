@@ -107,6 +107,13 @@ grafana:
   # Change this password immediately after first login!
   adminPassword: "pf9-grafana-admin"
 
+  # NFS volumes expose a read-only .snapshot directory. The default
+  # init-chown-data container does `chown -R 472:472 /var/lib/grafana`
+  # which hits .snapshot and exits with code 1. Disable it — the NFS
+  # provisioner already creates the directory with correct ownership.
+  initChownData:
+    enabled: false
+
   service:
     type: NodePort
     nodePort: 30300
