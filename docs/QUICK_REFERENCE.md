@@ -137,7 +137,10 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **RVTools K8s shared storage, file retention & per-dept default tab** (v1.82.18 — NEW ✨):
+- **K8s storageClass hotfix + Phase 4 observability** (v1.82.19 — NEW ✨):
+  - **Critical fix** — all PVCs had `storageClass: standard` (non-existent on cluster); changed to `nfs-pf9`. Affected: PostgreSQL, LDAP, backup-worker, reports PVC. Caused new pods to hang in Pending indefinitely.
+  - **Phase 4 monitoring** — `k8s/monitoring/prometheus-values.yaml` + `loki-values.yaml`: `kube-prometheus-stack` (Prometheus/Grafana/AlertManager) + `loki-stack` (Loki/Promtail); sized for 3-node × 4 CPU / 8 GB cluster; 6 custom AlertManager rules for pf9-mngt.
+- **RVTools K8s shared storage, file retention & per-dept default tab** (v1.82.18):
   - **K8s RVTools fix** — `scheduler-worker` was using an `emptyDir` (pod-local); API pod had no reports mount at all. New `pf9-reports` `ReadWriteMany` PVC shared by both pods. Helm conditional falls back to `emptyDir` when `reports.persistence.enabled=false`.
   - **File retention** — `RVTOOLS_RETENTION_DAYS` env var (default 30). Scheduler deletes `.xlsx` older than the window after each run. `GET/PUT /api/reports/rvtools/retention` (admin) persists to `system_settings` table; shown in Reports → RVTools UI.
   - **Per-department default landing tab** — `departments.default_nav_item_key` column; `/api/auth/me/navigation` returns `default_tab`; Admin Tools → Departments table has an inline dropdown to set it.

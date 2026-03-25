@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.82.18] - 2026-03-26
+## [1.82.19] - 2026-03-25
+
+### Fixed
+- **K8s: all PVCs stuck in Pending** — `values.yaml` had `storageClass: standard` for all five persistent volumes (PostgreSQL, LDAP data, LDAP config, backup-worker, and reports). The cluster's default storage class is `nfs-pf9`; `standard` does not exist, so every PVC created by Helm was permanently unbound. Updated all five `storageClass` values to `nfs-pf9`.
+
+### Added
+- **Phase 4 Observability** — `k8s/monitoring/prometheus-values.yaml` and `k8s/monitoring/loki-values.yaml` added. Prometheus + Grafana + AlertManager (via `kube-prometheus-stack`) and Loki + Promtail (via `loki-stack`) sized for the 3-node × 4 CPU / 8 GB cluster. Custom AlertManager rules included: `PodCrashLoopBackOff`, `PodNotReady`, `PVCAlmostFull`, `PVCFull`, `API5xxHighRate`, `NodeMemoryHighUsage`.
+
+---
+
+## [1.82.18] - 2026-03-25
 
 ### Fixed
 - **K8s: RVTools Excel files not downloadable** — Root cause: `scheduler-worker` mounted an `emptyDir` (pod-local ephemeral storage) for `/mnt/reports`, so generated `.xlsx` files were invisible to the API pod. The API pod had no reports volume mount at all. Fixed by:

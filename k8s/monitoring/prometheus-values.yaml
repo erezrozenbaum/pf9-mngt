@@ -1,0 +1,300 @@
+# =============================================================================
+# kube-prometheus-stack values — pf9-mngt cluster
+#
+# Cluster:  3 nodes × 4 CPU / 8 GB RAM
+# Storage:  nfs-pf9 (NFS dynamic provisioner, cluster default)
+#
+# Install:
+#   helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     -n monitoring -f k8s/monitoring/prometheus-values.yaml
+# Upgrade:
+#   helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     -n monitoring -f k8s/monitoring/prometheus-values.yaml
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Prometheus
+# ---------------------------------------------------------------------------
+prometheus:
+  prometheusSpec:
+    # 15-day retention, capped at 9 GiB to stay under the 10 GiB PVC
+    retention: 15d
+    retentionSize: "9GB"
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: nfs-pf9
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+    resources:
+      requests:
+        cpu: 300m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+    # Discover ALL ServiceMonitors / PodMonitors / PrometheusRules cluster-wide
+    # (not just those labelled release=kube-prometheus-stack).
+    # This lets us add ServiceMonitors for pf9-mngt without modifying this file.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector: {}
+    serviceMonitorNamespaceSelector: {}
+
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelector: {}
+    podMonitorNamespaceSelector: {}
+
+    ruleSelectorNilUsesHelmValues: false
+    ruleSelector: {}
+    ruleNamespaceSelector: {}
+
+# ---------------------------------------------------------------------------
+# AlertManager
+# ---------------------------------------------------------------------------
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: nfs-pf9
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 1Gi
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+  # Minimal routing config — all alerts go to a null (log-only) receiver by default.
+  # To enable email alerts add an SMTP receiver and update the route below.
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ['namespace', 'alertname', 'pod']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: 'null'
+      routes:
+        # Silence Watchdog and InfoInhibitor (built-in always-firing alerts)
+        - matchers:
+            - alertname =~ "InfoInhibitor|Watchdog"
+          receiver: 'null'
+    receivers:
+      - name: 'null'
+    inhibit_rules:
+      - source_matchers:
+          - severity="critical"
+        target_matchers:
+          - severity="warning"
+        equal: [namespace, pod]
+
+# ---------------------------------------------------------------------------
+# Grafana
+# ---------------------------------------------------------------------------
+grafana:
+  # Change this password immediately after first login!
+  adminPassword: "pf9-grafana-admin"
+
+  service:
+    type: NodePort
+    nodePort: 30300
+
+  persistence:
+    enabled: true
+    storageClassName: nfs-pf9
+    size: 2Gi
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  defaultDashboardsEnabled: true
+  defaultDashboardsTimezone: "browser"
+
+  # Pre-configure Loki as a datasource (installed via loki-stack in same namespace)
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.monitoring.svc.cluster.local:3100
+      access: proxy
+      isDefault: false
+      jsonData:
+        maxLines: 1000
+
+# ---------------------------------------------------------------------------
+# Node Exporter — lean requests for small cluster
+# ---------------------------------------------------------------------------
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 30m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Kube State Metrics
+# ---------------------------------------------------------------------------
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 30m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Custom AlertManager rules — pf9-mngt namespace
+# ---------------------------------------------------------------------------
+additionalPrometheusRulesMap:
+  pf9-mngt-alerts:
+    groups:
+      - name: pf9-mngt.pods
+        interval: 1m
+        rules:
+
+          # ---------------------------------------------------------------
+          # Pod repeatedly restarting
+          # ---------------------------------------------------------------
+          - alert: PodCrashLoopBackOff
+            expr: |
+              kube_pod_container_status_waiting_reason{
+                reason="CrashLoopBackOff",
+                namespace="pf9-mngt"
+              } == 1
+            for: 5m
+            labels:
+              severity: critical
+              namespace: pf9-mngt
+            annotations:
+              summary: "Pod {{ $labels.pod }} is in CrashLoopBackOff"
+              description: >
+                Container {{ $labels.container }} in pod {{ $labels.pod }}
+                has been restarting repeatedly for 5+ minutes.
+
+          # ---------------------------------------------------------------
+          # Pod stuck not-ready
+          # ---------------------------------------------------------------
+          - alert: PodNotReady
+            expr: |
+              kube_pod_status_ready{
+                condition="true",
+                namespace="pf9-mngt"
+              } == 0
+            for: 10m
+            labels:
+              severity: warning
+              namespace: pf9-mngt
+            annotations:
+              summary: "Pod {{ $labels.pod }} has been not-ready for 10+ minutes"
+              description: >
+                Pod {{ $labels.pod }} in namespace pf9-mngt has not reported
+                Ready=true for more than 10 minutes.
+
+          # ---------------------------------------------------------------
+          # PVC getting full — warning at 85%, critical at 95%
+          # ---------------------------------------------------------------
+          - alert: PVCAlmostFull
+            expr: |
+              (
+                kubelet_volume_stats_used_bytes{namespace="pf9-mngt"}
+                / kubelet_volume_stats_capacity_bytes{namespace="pf9-mngt"}
+              ) > 0.85
+            for: 5m
+            labels:
+              severity: warning
+              namespace: pf9-mngt
+            annotations:
+              summary: "PVC {{ $labels.persistentvolumeclaim }} is over 85% full"
+              description: >
+                PVC {{ $labels.persistentvolumeclaim }} in pf9-mngt is at
+                {{ $value | humanizePercentage }} capacity. Consider increasing
+                size or cleaning up old data.
+
+          - alert: PVCFull
+            expr: |
+              (
+                kubelet_volume_stats_used_bytes{namespace="pf9-mngt"}
+                / kubelet_volume_stats_capacity_bytes{namespace="pf9-mngt"}
+              ) > 0.95
+            for: 1m
+            labels:
+              severity: critical
+              namespace: pf9-mngt
+            annotations:
+              summary: "PVC {{ $labels.persistentvolumeclaim }} is 95%+ full — CRITICAL"
+              description: >
+                PVC {{ $labels.persistentvolumeclaim }} in pf9-mngt is nearly
+                full ({{ $value | humanizePercentage }}). Immediate action required.
+
+          # ---------------------------------------------------------------
+          # API 5xx error rate > 1%  (requires ingress-nginx metrics)
+          # ---------------------------------------------------------------
+          - alert: API5xxHighRate
+            expr: |
+              sum(
+                rate(nginx_ingress_controller_requests{
+                  exported_namespace="pf9-mngt",
+                  status=~"5.."
+                }[5m])
+              )
+              /
+              sum(
+                rate(nginx_ingress_controller_requests{
+                  exported_namespace="pf9-mngt"
+                }[5m])
+              ) > 0.01
+            for: 5m
+            labels:
+              severity: critical
+              namespace: pf9-mngt
+            annotations:
+              summary: "pf9-mngt API 5xx error rate exceeds 1%"
+              description: >
+                More than 1% of ingress requests to pf9-mngt are returning
+                5xx responses. Check pf9_api and pf9_monitoring pods.
+
+          # ---------------------------------------------------------------
+          # Node memory pressure (cluster-wide)
+          # ---------------------------------------------------------------
+          - alert: NodeMemoryHighUsage
+            expr: |
+              (
+                1 - node_memory_MemAvailable_bytes
+                  / node_memory_MemTotal_bytes
+              ) > 0.90
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Node {{ $labels.instance }} memory usage > 90%"
+              description: >
+                Node {{ $labels.instance }} is using more than 90% of its
+                available memory. Consider scaling down workloads or adding
+                nodes.
+
+          # ---------------------------------------------------------------
+          # NOTE: "Backup worker last-success > 25h" and
+          # "DB connection pool exhaustion" require custom metrics exported
+          # from the pf9_monitoring service. Add a ServiceMonitor after
+          # verifying the /metrics endpoint on port 8001, then add rules
+          # against the exposed metric names.
+          # ---------------------------------------------------------------

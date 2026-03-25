@@ -208,7 +208,7 @@ postgresql:
     pullPolicy: IfNotPresent
   persistence:
     size: 20Gi
-    storageClass: standard
+    storageClass: nfs-pf9
   resources:
     limits:
       cpu: "1000m"
@@ -251,10 +251,10 @@ ldapService:
   persistence:
     data:
       size: 5Gi
-      storageClass: standard
+      storageClass: nfs-pf9
     config:
       size: 1Gi
-      storageClass: standard
+      storageClass: nfs-pf9
   resources:
     limits:
       cpu: "500m"
@@ -286,7 +286,7 @@ workers:
         memory: "64Mi"
     persistence:
       size: 50Gi
-      storageClass: standard
+      storageClass: nfs-pf9
 
   ldapSyncWorker:
     image:
@@ -381,7 +381,7 @@ workers:
 reports:
   persistence:
     enabled: true
-    storageClass: standard      # change to nfs-client if NFS provisioner is installed
+    storageClass: nfs-pf9
     size: 10Gi
 
 # ---------------------------------------------------------------------------

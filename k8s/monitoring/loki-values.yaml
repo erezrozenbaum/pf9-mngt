@@ -1,0 +1,95 @@
+# =============================================================================
+# Loki Stack values — pf9-mngt cluster
+#
+# Chart: grafana/loki-stack  (Loki + Promtail in one chart)
+# Cluster:  3 nodes × 4 CPU / 8 GB RAM
+# Storage:  nfs-pf9 (NFS dynamic provisioner, cluster default)
+#
+# Install:
+#   helm install loki grafana/loki-stack \
+#     -n monitoring -f k8s/monitoring/loki-values.yaml
+# Upgrade:
+#   helm upgrade loki grafana/loki-stack \
+#     -n monitoring -f k8s/monitoring/loki-values.yaml
+#
+# NOTE: Grafana is disabled here — it is already installed via
+# kube-prometheus-stack and pre-configured with Loki as a datasource.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Loki
+# ---------------------------------------------------------------------------
+loki:
+  enabled: true
+
+  persistence:
+    enabled: true
+    storageClassName: nfs-pf9
+    size: 10Gi
+    accessModes:
+      - ReadWriteOnce
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+  config:
+    auth_enabled: false
+
+    # Retain logs for 15 days
+    limits_config:
+      retention_period: 360h
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+
+    chunk_store_config:
+      max_look_back_period: 360h
+
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 360h
+
+# ---------------------------------------------------------------------------
+# Promtail — ships pod logs to Loki from every node
+# ---------------------------------------------------------------------------
+promtail:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 30m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+  # Add namespace label so logs can be filtered per-namespace in Grafana
+  config:
+    snippets:
+      pipelineStages:
+        - cri: {}
+        - labeldrop:
+            - filename
+      extraRelabelConfigs:
+        - action: replace
+          source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - action: replace
+          source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+        - action: replace
+          source_labels: [__meta_kubernetes_pod_container_name]
+          target_label: container
+        - action: replace
+          source_labels: [__meta_kubernetes_pod_label_app]
+          target_label: app
+
+# ---------------------------------------------------------------------------
+# Grafana — disabled, already in kube-prometheus-stack
+# ---------------------------------------------------------------------------
+grafana:
+  enabled: false
