@@ -364,6 +364,159 @@ function rbFormatDate(iso: string | null | undefined): string {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
+// ---------------------------------------------------------------------------
+// System Config Panel — Admin Tools → System Config tab
+// ---------------------------------------------------------------------------
+const SystemConfigPanel: React.FC<{ user?: AuthUser | null }> = ({ user: _user }) => {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const token = localStorage.getItem('auth_token') || '';
+    fetch(`${API_BASE}/admin/system-config`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.detail || `HTTP ${r.status}`)))
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(String(e)); setLoading(false); });
+  }, []);
+
+  const badge = (ok: boolean | null, trueLabel = 'Healthy', falseLabel = 'Unreachable') => {
+    const color = ok === null ? '#6b7280' : ok ? '#16a34a' : '#dc2626';
+    const bg    = ok === null ? '#f3f4f6' : ok ? '#dcfce7' : '#fee2e2';
+    return (
+      <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '999px', background: bg, color }}>
+        {ok === null ? 'Unknown' : ok ? trueLabel : falseLabel}
+      </span>
+    );
+  };
+
+  const card = (title: string, icon: string, children: React.ReactNode) => (
+    <div style={{ background: 'var(--color-surface, #fff)', border: '1px solid var(--color-border, #e5e7eb)', borderRadius: '10px', padding: '20px', marginBottom: '16px' }}>
+      <h3 style={{ margin: '0 0 14px', fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span>{icon}</span>{title}
+      </h3>
+      {children}
+    </div>
+  );
+
+  const row = (label: string, value: React.ReactNode) => (
+    <div style={{ display: 'flex', gap: '12px', marginBottom: '8px', fontSize: '13px', alignItems: 'flex-start' }}>
+      <span style={{ minWidth: '160px', color: 'var(--color-text-secondary, #6b7280)', fontWeight: 500, flexShrink: 0 }}>{label}</span>
+      <span style={{ color: 'var(--color-text-primary, #111)', wordBreak: 'break-all' }}>{value ?? '—'}</span>
+    </div>
+  );
+
+  if (loading) return <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>Loading system config…</div>;
+  if (error)   return <div style={{ padding: '20px', background: '#fee2e2', borderRadius: '8px', color: '#991b1b' }}>⚠️ {error}</div>;
+  if (!data)   return null;
+
+  const { ldap, pf9_regions, smtp, inventory, setup_wizard } = data;
+  const lastRun = inventory?.recent_runs?.[0];
+  const counts  = inventory?.counts ?? {};
+
+  return (
+    <div style={{ maxWidth: '900px' }}>
+
+      {/* Setup Wizard Banner */}
+      {setup_wizard?.show && (
+        <div style={{ marginBottom: '20px', padding: '16px 20px', borderRadius: '10px', background: '#fef3c7', border: '1px solid #fde68a', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+          <span style={{ fontSize: '22px', lineHeight: 1 }}>🧙</span>
+          <div>
+            <div style={{ fontWeight: 700, color: '#92400e', marginBottom: '4px' }}>Setup Wizard</div>
+            <div style={{ fontSize: '13px', color: '#78350f' }}>
+              {setup_wizard.reason === 'ldap_unreachable'
+                ? 'LDAP is unreachable. Check that the pf9-ldap service is running and the LDAP_SERVER environment variable is correct.'
+                : 'Only the default admin account exists. Create additional users via the LDAP Users tab or configure External LDAP Sync.'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LDAP Card */}
+      {card('Internal LDAP Directory', '📂', <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+          {badge(ldap.health === 'healthy', 'Healthy', 'Unreachable')}
+          <span style={{ fontSize: '12px', color: '#6b7280' }}>{ldap.user_count} user{ldap.user_count !== 1 ? 's' : ''} found</span>
+        </div>
+        {row('Server', `${ldap.server}:${ldap.port}`)}
+        {row('Base DN', <code style={{ fontSize: '12px', background: '#f3f4f6', padding: '1px 5px', borderRadius: '4px' }}>{ldap.base_dn}</code>)}
+        {row('Users OU', <code style={{ fontSize: '12px', background: '#f3f4f6', padding: '1px 5px', borderRadius: '4px' }}>{ldap.user_dn}</code>)}
+        {row('Groups OU', <code style={{ fontSize: '12px', background: '#f3f4f6', padding: '1px 5px', borderRadius: '4px' }}>{ldap.group_dn}</code>)}
+      </>)}
+
+      {/* PF9 Regions Card */}
+      {card('Platform9 Regions', '🌍', <>
+        {pf9_regions.length === 0 ? (
+          <div style={{ fontSize: '13px', color: '#6b7280' }}>No regions configured.</div>
+        ) : pf9_regions.map((r: any) => (
+          <div key={r.id} style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px solid #f3f4f6' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <span style={{ fontWeight: 600, fontSize: '13px' }}>{r.display_name || r.region_name}</span>
+              {r.is_default && <span style={{ fontSize: '10px', background: '#dbeafe', color: '#1d4ed8', padding: '1px 7px', borderRadius: '999px', fontWeight: 600 }}>Default</span>}
+              {badge(r.health_status === 'healthy', 'Healthy', r.health_status || 'Unknown')}
+            </div>
+            {row('Auth URL', r.auth_url || '—')}
+            {row('Username', r.username || '—')}
+          </div>
+        ))}
+      </>)}
+
+      {/* SMTP Card */}
+      {card('SMTP / Email', '✉️', <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+          {badge(smtp.enabled, 'Enabled', 'Disabled')}
+        </div>
+        {smtp.enabled ? <>
+          {row('Host', smtp.host || '—')}
+          {row('Port', smtp.port)}
+          {row('TLS', smtp.use_tls ? 'Yes' : 'No')}
+          {row('From', smtp.from_address || '—')}
+          {row('Auth', smtp.username_configured ? 'Configured' : 'None (unauthenticated relay)')}
+        </> : (
+          <div style={{ fontSize: '13px', color: '#6b7280' }}>
+            Set <code style={{ background: '#f3f4f6', padding: '1px 5px', borderRadius: '4px' }}>SMTP_ENABLED=true</code> and SMTP_HOST in your environment to enable email notifications.
+          </div>
+        )}
+      </>)}
+
+      {/* Inventory Card */}
+      {card('Inventory', '📦', <>
+        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
+          {[
+            { label: 'Servers',     val: counts.servers },
+            { label: 'Volumes',     val: counts.volumes },
+            { label: 'Networks',    val: counts.networks },
+            { label: 'Hypervisors', val: counts.hypervisors },
+            { label: 'Floating IPs',val: counts.floating_ips },
+          ].map(({ label, val }) => (
+            <div key={label} style={{ textAlign: 'center', background: '#f9fafb', borderRadius: '8px', padding: '10px 18px', border: '1px solid #e5e7eb' }}>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: val > 0 ? '#111' : '#9ca3af' }}>{val ?? 0}</div>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>{label}</div>
+            </div>
+          ))}
+        </div>
+        {lastRun ? <>
+          <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '6px' }}>Last inventory run</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            {badge(lastRun.status === 'success', 'Success', lastRun.status || 'Unknown')}
+            <span style={{ fontSize: '13px', color: '#374151' }}>{lastRun.started_at ? new Date(lastRun.started_at).toLocaleString() : '—'}</span>
+            {lastRun.duration_seconds != null && (
+              <span style={{ fontSize: '12px', color: '#6b7280' }}>{lastRun.duration_seconds}s</span>
+            )}
+          </div>
+          {lastRun.notes && (
+            <div style={{ marginTop: '8px', fontSize: '12px', color: '#6b7280', fontStyle: 'italic' }}>{lastRun.notes}</div>
+          )}
+        </> : (
+          <div style={{ fontSize: '13px', color: '#6b7280' }}>No inventory runs recorded yet. The scheduler will run automatically based on RVTOOLS_INTERVAL_MINUTES.</div>
+        )}
+      </>)}
+    </div>
+  );
+};
+
 const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -1714,7 +1867,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           { id: 'rb_policies', label: 'Runbook Policies', icon: '📐', adminOnly: true },
           { id: 'data_reset', label: 'Data Reset', icon: '⚠️', adminOnly: true },
           { id: 'container_alerts', label: 'Container Alerts', icon: '🔔', adminOnly: true, superadminOnly: true },
-          { id: 'ldap_sync', label: 'External LDAP Sync', icon: '🔄', adminOnly: true, superadminOnly: true }
+          { id: 'ldap_sync', label: 'External LDAP Sync', icon: '🔄', adminOnly: true, superadminOnly: true },
+          { id: 'system_config', label: 'System Config', icon: '⚙️', adminOnly: true, superadminOnly: true }
         ]
           .filter(tab =>
             (!tab.adminOnly || (user && (user.role === 'admin' || user.role === 'superadmin'))) &&
@@ -2560,6 +2714,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
       {/* External LDAP Sync */}
       {activeTab === 'ldap_sync' && <LdapSyncSettings user={user} />}
+
+      {/* System Config */}
+      {activeTab === 'system_config' && <SystemConfigPanel user={user} />}
 
       {/* ────── RUNBOOK EXECUTIONS ────── */}
       {activeTab === 'rb_executions' && (

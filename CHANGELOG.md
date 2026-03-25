@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.17] - 2026-03-25
+
+### Fixed
+- **`api/auth.py`** — `LDAPAuthenticator.ensure_ldap_structure()`: new idempotent startup method that creates `ou=users` and `ou=groups` OUs and the default admin app-user in LDAP if they are absent. In a fresh K8s deployment the LDAP StatefulSet starts with an empty directory and no OUs, so every `create_user()` call was silently failing with `NO_SUCH_OBJECT` and the user list was always empty.
+- **`api/auth.py`** — `initialize_default_admin()` now calls `ensure_ldap_structure()` at startup so the LDAP directory is bootstrapped automatically without any manual `ldapadd` intervention.
+- **`api/auth.py`** — `get_all_users()` now injects `DEFAULT_ADMIN_USER` into the returned list if the user is not present in LDAP (the bypass-admin can always log in via env-var but had no LDAP entry, making them invisible in the Users tab).
+
+### Added
+- **`api/main.py`** — `GET /admin/system-config` endpoint: returns a read-only health snapshot of LDAP (live bind + user count), PF9 regions (auth URL + username, no passwords), SMTP (enabled/host/port/flags), last 3 inventory runs and live table row counts. Requires admin or superadmin role.
+- **`pf9-ui`** — Admin Tools → **System Config** tab (`⚙️`, superadmin-only): shows LDAP health card, PF9 Region card, SMTP card, and Inventory card with resource counts. Displays a Setup Wizard banner when LDAP is unreachable or only the default admin exists.
+
+---
+
 ## [1.82.16] - 2026-03-24
 
 ### Fixed

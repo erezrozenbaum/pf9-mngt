@@ -40,6 +40,7 @@ LDAP_SERVER = os.getenv("LDAP_SERVER", "localhost")
 LDAP_PORT = int(os.getenv("LDAP_PORT", "389"))
 LDAP_BASE_DN = os.getenv("LDAP_BASE_DN", "dc=pf9mgmt,dc=local")
 LDAP_USER_DN = os.getenv("LDAP_USER_DN", "ou=users,dc=pf9mgmt,dc=local")
+LDAP_GROUP_DN = os.getenv("LDAP_GROUP_DN", "ou=groups,dc=pf9mgmt,dc=local")
 
 _jwt_env = read_secret("jwt_secret", env_var="JWT_SECRET_KEY")
 if not _jwt_env:
@@ -342,6 +343,68 @@ class LDAPAuthenticator:
 
         return {'username': username, 'name': username, 'email': '', 'groups': []}
 
+    def ensure_ldap_structure(self) -> None:
+        """Idempotent bootstrap: create ou=users, ou=groups and the default admin
+        app-user in LDAP if they are absent.  Called once at API startup so that
+        a fresh K8s deployment (where the LDAP StatefulSet starts with an empty
+        directory) is self-healing without manual ldapadd commands.
+        """
+        conn = None
+        try:
+            conn = ldap.initialize(self.server)
+            conn.protocol_version = ldap.VERSION3
+            conn.set_option(ldap.OPT_NETWORK_TIMEOUT, 5)
+            ldap_admin_dn = f"cn=admin,{self.base_dn}"
+            ldap_admin_password = read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD")
+            conn.simple_bind_s(ldap_admin_dn, ldap_admin_password)
+
+            # Create ou=users if missing
+            for ou_dn, ou_name in [(LDAP_USER_DN, b'users'), (LDAP_GROUP_DN, b'groups')]:
+                try:
+                    conn.add_s(ou_dn, [
+                        ('objectclass', [b'organizationalUnit']),
+                        ('ou', [ou_name]),
+                    ])
+                    logger.info("[LDAP] Created OU: %s", ou_dn)
+                except ldap.ALREADY_EXISTS:
+                    pass
+                except Exception as e:
+                    logger.warning("[LDAP] Could not create OU %s: %s", ou_dn, e)
+
+            # Create the default admin app-user in LDAP if not present
+            if DEFAULT_ADMIN_USER and DEFAULT_ADMIN_PASSWORD:
+                admin_user_dn = f"cn={ldap.dn.escape_dn_chars(DEFAULT_ADMIN_USER)},{self.user_dn}"
+                try:
+                    import base64 as _b64
+                    _salt = secrets.token_bytes(4)
+                    _h = hashlib.sha1(
+                        DEFAULT_ADMIN_PASSWORD.encode('utf-8') + _salt,
+                        usedforsecurity=False,  # nosec B324
+                    )
+                    _hpw = '{SSHA}' + _b64.b64encode(_h.digest() + _salt).decode()
+                    conn.add_s(admin_user_dn, [
+                        ('objectclass', [b'person', b'inetOrgPerson']),
+                        ('cn', [DEFAULT_ADMIN_USER.encode()]),
+                        ('sn', [DEFAULT_ADMIN_USER.encode()]),
+                        ('uid', [DEFAULT_ADMIN_USER.encode()]),
+                        ('mail', [f'{DEFAULT_ADMIN_USER}@local'.encode()]),
+                        ('userPassword', [_hpw.encode('utf-8')]),
+                        ('description', [b'Default admin (auto-created at startup)']),
+                    ])
+                    logger.info("[LDAP] Created default admin user: %s", admin_user_dn)
+                except ldap.ALREADY_EXISTS:
+                    pass
+                except Exception as e:
+                    logger.warning("[LDAP] Could not create admin user in LDAP: %s", e)
+        except Exception as e:
+            logger.warning("[LDAP] ensure_ldap_structure failed (non-fatal): %s", e)
+        finally:
+            if conn is not None:
+                try:
+                    conn.unbind_s()
+                except Exception:
+                    pass
+
     def get_all_users(self) -> List[Dict[str, Any]]:
         """Get all users from LDAP"""
         conn = None
@@ -372,11 +435,33 @@ class LDAPAuthenticator:
                         'firstName': attrs.get('givenName', [b''])[0].decode() if 'givenName' in attrs else '',
                         'lastName': attrs.get('sn', [b''])[0].decode() if 'sn' in attrs else ''
                     })
-            
+
+            # The DEFAULT_ADMIN_USER authenticates via env-var bypass (no LDAP entry
+            # required for login) but must still appear in the user list. Inject if absent.
+            if DEFAULT_ADMIN_USER and not any(u['username'] == DEFAULT_ADMIN_USER for u in users):
+                users.append({
+                    'id': DEFAULT_ADMIN_USER,
+                    'username': DEFAULT_ADMIN_USER,
+                    'name': DEFAULT_ADMIN_USER,
+                    'email': f'{DEFAULT_ADMIN_USER}@local',
+                    'firstName': '',
+                    'lastName': '',
+                })
+
             return users
             
         except Exception as e:
             logger.error("Error getting all LDAP users: %s", e)
+            # Still return the bypass admin so the UI is never completely empty
+            if DEFAULT_ADMIN_USER:
+                return [{
+                    'id': DEFAULT_ADMIN_USER,
+                    'username': DEFAULT_ADMIN_USER,
+                    'name': DEFAULT_ADMIN_USER,
+                    'email': f'{DEFAULT_ADMIN_USER}@local',
+                    'firstName': '',
+                    'lastName': '',
+                }]
             return []
         finally:
             if conn is not None:
@@ -753,9 +838,19 @@ def require_permission(resource: str, permission: str):
 
 # Initialize default admin user on startup
 def initialize_default_admin():
-    """Initialize default admin user if it doesn't exist"""
+    """Initialize default admin user if it doesn't exist.
+
+    Also bootstraps the LDAP directory (ou=users, ou=groups, admin app-user)
+    so that a fresh K8s deployment is self-healing without manual ldapadd.
+    """
     try:
         if ENABLE_AUTHENTICATION and DEFAULT_ADMIN_USER and DEFAULT_ADMIN_PASSWORD:
+            # Ensure LDAP OUs and admin LDAP user exist (idempotent, non-fatal)
+            try:
+                ldap_auth.ensure_ldap_structure()
+            except Exception as e:
+                logger.warning("ensure_ldap_structure failed at startup: %s", e)
+
             # Always force-set to superadmin — ensures role is correct even if a
             # previous DB row was created with the wrong role (e.g. "viewer") during
             # an earlier startup where DEFAULT_ADMIN_PASSWORD was not yet injected.

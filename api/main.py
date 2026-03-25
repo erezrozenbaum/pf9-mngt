@@ -3171,6 +3171,147 @@ async def refresh_inventory(
 
 
 # ---------------------------------------------------------------------------
+#  System Config — health snapshot for Admin Tools → System Config tab
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/system-config")
+async def get_system_config(
+    request: Request,
+    current_user: User = Depends(require_authentication),
+):
+    """
+    Return a read-only snapshot of current system configuration and health
+    status for the Admin Tools → System Config tab.
+    Requires admin or superadmin role.
+    Never returns passwords, secret keys, or encryption material.
+    """
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(403, "Admin access required")
+
+    # ── LDAP health + user count (reuse existing method) ─────────────────
+    ldap_health = "unknown"
+    ldap_user_count = 0
+    try:
+        _users = ldap_auth.get_all_users()
+        ldap_user_count = len(_users)
+        ldap_health = "healthy"
+    except Exception as _le:
+        logger.warning("system-config: LDAP health check failed: %s", _le)
+        ldap_health = "unreachable"
+
+    _ldap_section = {
+        "server": os.getenv("LDAP_SERVER", "pf9-ldap"),
+        "port": int(os.getenv("LDAP_PORT", "389")),
+        "base_dn": os.getenv("LDAP_BASE_DN", "dc=pf9mgmt,dc=local"),
+        "user_dn": os.getenv("LDAP_USER_DN", "ou=users,dc=pf9mgmt,dc=local"),
+        "group_dn": os.getenv("LDAP_GROUP_DN", "ou=groups,dc=pf9mgmt,dc=local"),
+        "health": ldap_health,
+        "user_count": ldap_user_count,
+    }
+
+    # ── PF9 regions (auth_url + username visible, password never returned) ─
+    _pf9_regions: list = []
+    try:
+        with get_connection() as _conn:
+            with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
+                _cur.execute(
+                    """
+                    SELECT r.id, r.region_name, r.display_name,
+                           r.is_default, r.is_enabled, r.health_status,
+                           cp.auth_url, cp.username
+                    FROM pf9_regions r
+                    JOIN pf9_control_planes cp ON cp.id = r.control_plane_id
+                    ORDER BY r.is_default DESC, r.created_at ASC
+                    LIMIT 10
+                    """
+                )
+                for _row in _cur.fetchall():
+                    _pf9_regions.append({
+                        "id": _row["id"],
+                        "region_name": _row["region_name"],
+                        "display_name": _row["display_name"],
+                        "is_default": _row["is_default"],
+                        "is_enabled": _row["is_enabled"],
+                        "health_status": _row["health_status"],
+                        "auth_url": _row["auth_url"],
+                        "username": _row["username"],
+                    })
+    except Exception as _re:
+        logger.warning("system-config: pf9_regions query failed: %s", _re)
+
+    # ── SMTP (host/port/flags only — password is never returned) ─────────
+    from smtp_helper import (  # noqa: PLC0415
+        SMTP_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS,
+        SMTP_FROM_ADDRESS, SMTP_USERNAME,
+    )
+    _smtp_section = {
+        "enabled": SMTP_ENABLED,
+        "host": SMTP_HOST,
+        "port": SMTP_PORT,
+        "use_tls": SMTP_USE_TLS,
+        "from_address": SMTP_FROM_ADDRESS,
+        "username_configured": bool(SMTP_USERNAME),
+    }
+
+    # ── Inventory: last 3 runs + live table row counts ────────────────────
+    _inv_runs: list = []
+    _inv_counts: dict = {}
+    try:
+        with get_connection() as _conn:
+            with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
+                _cur.execute(
+                    """
+                    SELECT id, started_at, finished_at, status, source,
+                           duration_seconds, notes
+                    FROM inventory_runs
+                    ORDER BY started_at DESC LIMIT 3
+                    """
+                )
+                for _row in _cur.fetchall():
+                    _inv_runs.append({
+                        "id": _row["id"],
+                        "started_at": _row["started_at"].isoformat() if _row["started_at"] else None,
+                        "finished_at": _row["finished_at"].isoformat() if _row["finished_at"] else None,
+                        "status": _row["status"],
+                        "source": _row["source"],
+                        "duration_seconds": _row["duration_seconds"],
+                        "notes": _row["notes"],
+                    })
+                _cur.execute(
+                    """
+                    SELECT
+                        (SELECT COUNT(*) FROM servers)      AS servers,
+                        (SELECT COUNT(*) FROM volumes)      AS volumes,
+                        (SELECT COUNT(*) FROM networks)     AS networks,
+                        (SELECT COUNT(*) FROM hypervisors)  AS hypervisors,
+                        (SELECT COUNT(*) FROM floating_ips) AS floating_ips
+                    """
+                )
+                _cnt = _cur.fetchone()
+                if _cnt:
+                    _inv_counts = {k: int(v) for k, v in dict(_cnt).items()}
+    except Exception as _ie:
+        logger.warning("system-config: inventory query failed: %s", _ie)
+
+    return {
+        "ldap": _ldap_section,
+        "pf9_regions": _pf9_regions,
+        "smtp": _smtp_section,
+        "inventory": {
+            "recent_runs": _inv_runs,
+            "counts": _inv_counts,
+        },
+        "setup_wizard": {
+            "show": ldap_health != "healthy" or ldap_user_count <= 1,
+            "reason": (
+                "ldap_unreachable" if ldap_health != "healthy"
+                else ("only_admin" if ldap_user_count <= 1 else None)
+            ),
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 #  Inventory snapshots — list & diff  (E6)
 # ---------------------------------------------------------------------------
 
