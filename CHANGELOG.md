@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.25] - 2026-03-26
+
+### Fixed
+- **CI: per-service tag overrides blocking api/snapshot-worker rollouts** (`.github/workflows/release.yml`)
+  — The `update-values` job only patched `global.imageTag` via `sed`, leaving any hardcoded
+  per-service `tag:` overrides (e.g. `api.image.tag: v1.82.21`) untouched in the deploy repo's
+  `values.prod.yaml`. Those overrides shadow `global.imageTag`, causing specific services to stay
+  on old images after a release (observed: `pf9-api` and `pf9-snapshot-worker` stuck at v1.82.21
+  while all other workers updated to v1.82.24). The job now also clears all versioned per-service
+  tag overrides with a Python regex pass, ensuring every service falls back to `global.imageTag`.
+
 ## [1.82.24] - 2026-03-26
 
 ### Security

@@ -234,8 +234,28 @@ jobs:
         run: |
           VERSION="${{ needs.extract-version.outputs.version }}"
           FILE="deploy-repo/values.prod.yaml"
-          # Update global.imageTag line
+
+          # 1. Update global.imageTag
           sed -i "s|^  imageTag:.*|  imageTag: v${VERSION}|" "${FILE}"
+
+          # 2. Clear any per-service tag overrides that would shadow global.imageTag.
+          #    These can accumulate from manual edits or past CI bugs.  Setting them
+          #    to "" lets every service fall back to global.imageTag uniformly.
+          python3 - <<'PYEOF'
+import re, os
+path = os.environ["FILE"]
+content = open(path).read()
+# Match lines like:  `    tag: "v1.82.21"` or `    tag: v1.82.21`
+# and reset them to empty string so global.imageTag applies.
+content = re.sub(
+    r'(\s+tag:\s+)"?v\d+\.\d+\.\d+"?(\s*(?:#.*)?)$',
+    r'\1""\2',
+    content,
+    flags=re.MULTILINE,
+)
+open(path, "w").write(content)
+print("Per-service tag overrides cleared.")
+PYEOF
 
       - name: Commit and push updated values.prod.yaml
         run: |
