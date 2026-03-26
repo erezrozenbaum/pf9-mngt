@@ -5704,6 +5704,20 @@ def get_branding():
                     settings["login_hero_features"] = json.loads(settings["login_hero_features"])
                 except Exception:
                     settings["login_hero_features"] = []
+            # If the logo URL points to a static file that no longer exists (e.g. after a
+            # pod restart in Kubernetes where /app/static is ephemeral), fall back to the
+            # base64-encoded copy stored in the DB.
+            logo_url = settings.get("company_logo_url", "")
+            if logo_url.startswith("/static/"):
+                static_path = os.path.join(os.path.dirname(__file__), logo_url.lstrip("/"))
+                if not os.path.exists(static_path):
+                    logo_data = settings.get("company_logo_data", "")
+                    logo_mime = settings.get("company_logo_mime", "image/png")
+                    if logo_data:
+                        settings["company_logo_url"] = f"data:{logo_mime};base64,{logo_data}"
+            # Strip internal-only keys before sending to the client
+            for _k in ("company_logo_data", "company_logo_mime"):
+                settings.pop(_k, None)
             return settings
     except Exception as e:
         logger.error(f"Failed to fetch branding settings: {e}")
@@ -5773,6 +5787,7 @@ async def upload_branding_logo(
         raise HTTPException(status_code=413, detail="Logo file must be under 2 MB")
     if len(body) == 0:
         raise HTTPException(status_code=400, detail="Empty file body")
+    import base64 as _b64
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     os.makedirs(static_dir, exist_ok=True)
     for old in os.listdir(static_dir):
@@ -5783,17 +5798,25 @@ async def upload_branding_logo(
     with open(filepath, "wb") as f:
         f.write(body)
     logo_url = f"/static/{filename}"
+    # Also persist the raw bytes as base64 in the DB so the logo survives pod restarts
+    # (the /app/static directory is ephemeral in Kubernetes).
+    logo_b64 = _b64.b64encode(body).decode("ascii")
     try:
         with get_connection() as conn:
             cur = conn.cursor()
-            cur.execute(
-                """INSERT INTO app_settings (key, value, updated_at, updated_by)
-                   VALUES ('company_logo_url', %s, now(), 'admin')
-                   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = 'admin'""",
-                (logo_url,),
-            )
+            for key, val in [
+                ("company_logo_url", logo_url),
+                ("company_logo_data", logo_b64),
+                ("company_logo_mime", content_type.split(";")[0].strip().lower()),
+            ]:
+                cur.execute(
+                    """INSERT INTO app_settings (key, value, updated_at, updated_by)
+                       VALUES (%s, %s, now(), 'admin')
+                       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = 'admin'""",
+                    (key, val),
+                )
     except Exception as e:
-        logger.error(f"Failed to save logo URL to DB: {e}")
+        logger.error(f"Failed to save logo to DB: {e}")
     return {"status": "success", "logo_url": logo_url}
 
 

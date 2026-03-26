@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.23] - 2026-03-26
+
+### Fixed
+- **Session restore on page reload** (`pf9-ui/src/App.tsx`) — The on-mount session-check
+  `useEffect` validated the stored token for expiry but never called `setIsAuthenticated(true)`
+  for valid sessions. Every page refresh forced a re-login and caused all data-loading effects
+  to fire without a Bearer token, resulting in 401 responses from the API for `/domains`,
+  `/tenants`, `/os-distribution`, and every other protected endpoint.
+- **401 on `/domains` / `/tenants` / `/os-distribution` before login** (`pf9-ui/src/App.tsx`)
+  — `loadDomains` and `loadTenants` effects had no authentication guard and fired on component
+  mount (before login). Auth tokens were absent at that point, so the backend returned 401.
+  Both effects now guard on `isAuthenticated` and are re-run when it becomes `true`.
+- **`/metrics/vms`, `/metrics/hosts`, `/metrics/summary`, `/metrics/alerts` returning 404**
+  (`k8s/helm/pf9-mngt/templates/ingress.yaml`) — The K8s ingress had `metrics` in both the
+  `/metrics/.*` → `pf9-monitoring` rule AND the broad pf9-api regex. NGINX Ingress selects the
+  rule whose path pattern is longest (highest specificity), so the API rule won and FastAPI
+  returned 404 for all sub-paths. Removed `metrics` from the pf9-api regex; `/metrics/.*` now
+  routes exclusively to `pf9-monitoring`. The bare `/metrics` Prometheus endpoint is only
+  scraped cluster-internally via `ServiceMonitor` and does not need ingress exposure.
+- **Logo not persisting across pod restarts in Kubernetes** (`api/main.py`) — The logo upload
+  endpoint wrote the file to `/app/static/` (ephemeral container storage) and stored only the
+  `/static/<filename>` URL in the DB. After a pod restart the file was gone but the URL
+  remained, causing an endless 404.  The upload endpoint now also saves the raw bytes as
+  `base64` in `app_settings` (keys `company_logo_data` and `company_logo_mime`). The
+  `GET /settings/branding` endpoint detects a missing static file and returns a `data:` URL
+  built from the stored base64 instead, so the logo survives pod restarts without any PVC.
+  **Action required after deploy**: re-upload your logo once via Admin Tools → Branding to
+  populate the new DB keys; subsequent pod restarts will then serve it automatically.
+- **Default Landing Tab not visible in Visibility settings**
+  (`pf9-ui/src/components/UserManagement.tsx`) — The per-department Default Landing Tab
+  dropdown was only available on the Departments tab, not on the Visibility tab where admins
+  spend most of their time. It is now inline in the Visibility section header row for each
+  department, showing only the nav items that are currently checked visible for that
+  department.
+
 ## [1.82.22] - 2026-03-25
 
 ### Security

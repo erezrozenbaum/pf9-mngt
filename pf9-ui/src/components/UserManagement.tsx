@@ -2600,14 +2600,44 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
           )}
           {departments.map(dept => {
             const deptVis = visEdits[dept.id] || { groups: new Set(), items: new Set() };
+            const visibleNavItems = navItems.filter(i => deptVis.items.has(i.id));
             return (
               <div key={dept.id} style={{ marginBottom: '24px', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                   <h4 style={{ margin: 0, fontWeight: 600 }}>🏢 {dept.name}</h4>
-                  <button onClick={() => handleSaveVisibility(dept.id)}
-                    className="px-4 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
-                    💾 Save
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#374151' }}>
+                      <span style={{ whiteSpace: 'nowrap' }}>🏠 Default Landing Tab:</span>
+                      <select
+                        value={dept.default_nav_item_key || ''}
+                        onChange={async e => {
+                          const key = e.target.value;
+                          const token = localStorage.getItem('auth_token');
+                          try {
+                            const res = await fetch(`${API_BASE}/api/departments/${dept.id}`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                              body: JSON.stringify({ default_nav_item_key: key }),
+                            });
+                            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                            setDepartments(prev => prev.map(d => d.id === dept.id ? { ...d, default_nav_item_key: key } : d));
+                            setVisMsg('✅ Default landing tab updated');
+                            setTimeout(() => setVisMsg(''), 3000);
+                          } catch (err: any) { setVisMsg(`⚠️ ${err.message}`); }
+                        }}
+                        style={{ fontSize: '0.82rem', padding: '3px 6px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                      >
+                        <option value="">— first visible tab —</option>
+                        {visibleNavItems.map(item => (
+                          <option key={item.key} value={item.key}>{item.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button onClick={() => handleSaveVisibility(dept.id)}
+                      className="px-4 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
+                      💾 Save
+                    </button>
+                  </div>
                 </div>
                 {navGroups.map(group => {
                   const groupChecked = deptVis.groups.has(group.id);

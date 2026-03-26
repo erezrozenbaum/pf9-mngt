@@ -595,7 +595,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ isLoggingIn, loginError, handleLo
   }, []);
 
   const logoUrl = branding.company_logo_url
-    ? (branding.company_logo_url.startsWith("http") ? branding.company_logo_url : `${API_BASE}${branding.company_logo_url}`)
+    ? (branding.company_logo_url.startsWith("http") || branding.company_logo_url.startsWith("data:")
+        ? branding.company_logo_url
+        : `${API_BASE}${branding.company_logo_url}`)
     : "";
 
   return (
@@ -1032,7 +1034,7 @@ const App: React.FC = () => {
       .catch(() => setIsDemo(false));
   }, []);
 
-  // Check for existing token on mount
+  // Check for existing token on mount — restore session if valid
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
     const user = localStorage.getItem('auth_user');
@@ -1052,8 +1054,15 @@ const App: React.FC = () => {
             localStorage.removeItem('auth_user');
             localStorage.removeItem('token_expires_at');
             setLoginError('Your session has expired. Please login again.');
+            return;
           }
         }
+        // Valid token found — restore session without requiring re-login
+        const parsedUser = JSON.parse(user);
+        setAuthToken(token);
+        setAuthUser(parsedUser);
+        if (expiresAt) setTokenExpiresAt(expiresAt);
+        setIsAuthenticated(true);
       } catch (e) {
         // Clear invalid data
         localStorage.removeItem('auth_token');
@@ -1710,6 +1719,7 @@ const App: React.FC = () => {
   // -----------------------------------------------------------------------
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     async function loadDomains() {
       try {
         const res = await fetchJson<{ items: Domain[] }>(`${API_BASE}/domains`);
@@ -1718,13 +1728,13 @@ const App: React.FC = () => {
         setDomains([{ domain_id: "__ALL__", domain_name: "__ALL__" }, ...d]);
       } catch (e: any) {
         console.error(e);
-        setError(e.message || "Failed to load domains");
       }
     }
     loadDomains();
-  }, [inventoryRefreshKey]);
+  }, [inventoryRefreshKey, isAuthenticated]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     async function loadTenants() {
       try {
         const params = new URLSearchParams();
@@ -1744,11 +1754,10 @@ const App: React.FC = () => {
         ]);
       } catch (e: any) {
         console.error(e);
-        setError(e.message || "Failed to load tenants");
       }
     }
     loadTenants();
-  }, [selectedDomain]);
+  }, [selectedDomain, isAuthenticated]);
 
   // Reset paging when filters change
   useEffect(() => {
@@ -2190,13 +2199,14 @@ const App: React.FC = () => {
   // Load OS distribution (for dashboard)
   useEffect(() => {
     if (activeTab !== "dashboard") return;
+    if (!isAuthenticated) return;
     (async () => {
       try {
         const res = await fetchJson<{items: any[]}>(`${API_BASE}/os-distribution`);
         if (res) { setOsDistribution(res.items || []); }
       } catch { /* non-critical */ }
     })();
-  }, [activeTab, inventoryRefreshKey]);
+  }, [activeTab, inventoryRefreshKey, isAuthenticated]);
 
   // Load system metadata summary
   useEffect(() => {

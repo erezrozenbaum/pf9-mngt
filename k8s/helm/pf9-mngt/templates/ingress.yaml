@@ -42,7 +42,10 @@ spec:
           # Covers: /api /auth /health /admin /settings /dashboard /notifications
           #   /monitoring /history /audit /drift /tenant-health /user /static
           #   /restore and every top-level resource endpoint the UI calls directly.
-          - path: /(api|auth|health|admin|settings|dashboard|notifications|monitoring|history|audit|drift|tenant-health|user|static|restore|metrics|domains|tenants|projects|servers|volumes|volumes-with-metadata|snapshots|networks|subnets|ports|floatingips|flavors|security-groups|security-group-rules|images|hypervisors|keypairs|host-aggregates|volume-types|server-groups|project-quotas|users|roles|user-activity-summary|role-assignments|os-distribution|demo-mode|docs|redoc|openapi\.json|system-metadata-summary|export)(/.*)?
+          # NOTE: "metrics" is intentionally EXCLUDED here — /metrics/.* is routed to
+          # pf9-monitoring above. In K8s, Prometheus scrapes pods directly (ServiceMonitor),
+          # so the bare /metrics endpoint does not need to be exposed through ingress.
+          - path: /(api|auth|health|admin|settings|dashboard|notifications|monitoring|history|audit|drift|tenant-health|user|static|restore|domains|tenants|projects|servers|volumes|volumes-with-metadata|snapshots|networks|subnets|ports|floatingips|flavors|security-groups|security-group-rules|images|hypervisors|keypairs|host-aggregates|volume-types|server-groups|project-quotas|users|roles|user-activity-summary|role-assignments|os-distribution|demo-mode|docs|redoc|openapi\.json|system-metadata-summary|export)(/.*)?
             pathType: ImplementationSpecific
             backend:
               service:

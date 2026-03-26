@@ -3,7 +3,7 @@
 **Operational Management Platform for Platform9 / OpenStack**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.82.21-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.82.23-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
@@ -759,7 +759,7 @@ pf9-mngt/
 
 ## �️ Project Status
 
-**Current version:** [v1.82.21](CHANGELOG.md) — March 2026
+**Current version:** [v1.82.23](CHANGELOG.md) — March 2026
 
 **Development phase:** Production-hardened and ready for deployment. Full CI pipeline active (lint → unit tests → integration tests against a live Docker stack on every push). Docker images for all 9 services are automatically built and published to `ghcr.io` on every release. CORS restricted in production mode, database performance indexes applied automatically on startup.
 
@@ -903,6 +903,13 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 ---
 
 ## 🎯 Recent Updates
+
+### v1.82.23 — K8s UI fixes: session restore, 401 auth, metrics routing, logo persistence, visibility UX
+- **Session restore**: page refresh no longer forces re-login; stored JWT is re-validated and `isAuthenticated` is restored on mount
+- **401 on domains/tenants/os-distribution**: data-loading effects now guard on `isAuthenticated`, eliminating token-less requests before login
+- **Metrics 404**: removed `metrics` from the ingress pf9-api regex — `/metrics/.*` now routes exclusively to `pf9-monitoring` as intended
+- **Logo persistence**: logo upload saves base64 in DB; `GET /settings/branding` returns a `data:` URL when the static file is absent after a pod restart
+- **Default Landing Tab in Visibility**: inline dropdown added per-department in the Visibility section (was only on Departments tab)
 
 ### v1.82.21 — Fix: Grafana CrashLoopBackOff on NFS volumes
 - `k8s/monitoring/prometheus-values.yaml`: disabled `initChownData` init container — NFS exposes a read-only `.snapshot` dir that blocks `chown -R`
@@ -1216,4 +1223,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.82.21 | **Last Updated**: March 2026
+**Project Status**: Production Ready | **Version**: 1.82.23 | **Last Updated**: March 2026

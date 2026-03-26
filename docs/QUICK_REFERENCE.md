@@ -137,7 +137,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Grafana NFS initChownData fix** (v1.82.21 — NEW ✨): disabled `initChownData` in `prometheus-values.yaml` — NFS `.snapshot` dir caused CrashLoopBackOff
+- **K8s UI fixes: session restore, 401 auth, metrics routing, logo persistence, visibility UX** (v1.82.23 — NEW ✨):
+  - **Session restore** — page refresh no longer forces re-login; stored JWT is re-validated on mount and `isAuthenticated` is restored
+  - **401 on domains/tenants/os-distribution** — data-loading effects now guard on `isAuthenticated`; eliminates token-less requests before login
+  - **Metrics 404** — removed `metrics` from pf9-api ingress regex; `/metrics/.*` routes exclusively to `pf9-monitoring`
+  - **Logo persistence** — upload saves base64 in `app_settings`; `GET /settings/branding` returns `data:` URL fallback when static file is absent after pod restart
+  - **Default Landing Tab in Visibility** — inline dropdown per-department in Visibility section (was only on Departments tab)
+- **Grafana NFS initChownData fix** (v1.82.21): disabled `initChownData` in `prometheus-values.yaml` — NFS `.snapshot` dir caused CrashLoopBackOff
 - **ArgoCD StatefulSet ignoreDifferences** (v1.82.20): `application.yaml` now ignores `volumeClaimTemplates` diffs to eliminate permanent OutOfSync noise
 - **K8s storageClass hotfix + Phase 4 observability** (v1.82.19):
   - **Critical fix** — all PVCs had `storageClass: standard` (non-existent on cluster); changed to `nfs-pf9`. Affected: PostgreSQL, LDAP, backup-worker, reports PVC. Caused new pods to hang in Pending indefinitely.
