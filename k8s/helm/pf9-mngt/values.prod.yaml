@@ -7,7 +7,7 @@
 # ===========================================================================
 
 global:
-  imageTag: v1.82.1
+  imageTag: v1.82.24
 
 ingress:
   host: pf9-mngt.example.com    # set a DNS name, or leave empty for IP-only access
