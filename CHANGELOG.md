@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.27] - 2026-03-26
+
+### Fixed
+- **CI: `sed` regex misses single-quoted per-service tag overrides** (`.github/workflows/release.yml`)
+  — The `update-values` job used `"?` in the sed pattern, which only matches double-quote
+  characters. Per-service tag overrides written with single quotes (e.g. `tag: 'v1.82.21'`) or
+  with no quotes were not being cleared, leaving `pf9-api` and `pf9-snapshot-worker` stuck on
+  `v1.82.21` across multiple deployments. Updated the pattern to `["']*` so it handles
+  unquoted, double-quoted, and single-quoted values, and relaxed the post-colon whitespace
+  to `[[:space:]]*` for robustness.
+
 ## [1.82.26] - 2026-03-26
 
 ### Fixed

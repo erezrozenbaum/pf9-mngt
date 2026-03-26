@@ -239,9 +239,12 @@ jobs:
           sed -i "s|^  imageTag:.*|  imageTag: v${VERSION}|" "${FILE}"
 
           # 2. Clear any per-service tag overrides that shadow global.imageTag.
-          #    Matches lines like `    tag: "v1.82.21"` or `    tag: v1.82.21`
-          #    and resets them to `    tag: ""` so global.imageTag applies.
-          sed -i -E 's/^([[:space:]]+tag:[[:space:]])"?v[0-9]+\.[0-9]+\.[0-9]+"?[[:space:]]*(#.*)?$/\1""/' "${FILE}"
+          #    Handles unquoted, double-quoted, AND single-quoted version strings,
+          #    plus flexible whitespace after the colon.
+          #    e.g.  tag: v1.82.21          → tag: ""
+          #          tag: "v1.82.21"        → tag: ""
+          #          tag: 'v1.82.21'        → tag: ""
+          sed -i -E "s/^([[:space:]]+tag:[[:space:]]*)[\"']*v[0-9]+[.][0-9]+[.][0-9]+[\"']*[[:space:]]*\$/\1\"\"/" "${FILE}"
 
           echo "values.prod.yaml patched to v${VERSION}, per-service overrides cleared."
 
