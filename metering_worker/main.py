@@ -206,9 +206,12 @@ def record_metering_sync(
 def collect_resource_metrics(conn, region_id: str) -> int:
     """
     Fetch per-VM metrics from the monitoring service and insert into
-    metering_resources.  Looks up vcpus from the flavors table when
-    the monitoring service does not provide them.
+    metering_resources.  Falls back to the API's DB-backed /monitoring/vm-metrics
+    endpoint when the prometheus-based monitoring service returns no VMs (e.g.
+    PF9_HOSTS not yet configured).  Looks up vcpus from the flavors table when
+    neither source provides them.
     """
+    vms: List[Dict] = []
     try:
         params: Dict[str, Any] = {"limit": 5000}
         if region_id:
@@ -216,10 +219,25 @@ def collect_resource_metrics(conn, region_id: str) -> int:
         resp = requests.get(f"{MONITORING_URL}/metrics/vms", params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
-        vms: List[Dict] = data.get("data", [])
+        vms = data.get("data", [])
     except Exception as exc:
-        log.warning("Could not fetch VM metrics from monitoring: %s", exc)
-        return 0
+        log.warning("Could not fetch VM metrics from monitoring service: %s", exc)
+
+    if not vms:
+        # Fallback: DB-backed API endpoint (/monitoring/vm-metrics) — always populated
+        # from the inventory tables regardless of prometheus exporter availability.
+        try:
+            fb_resp = requests.get(f"{API_URL}/monitoring/vm-metrics", timeout=30)
+            fb_resp.raise_for_status()
+            fb_data = fb_resp.json()
+            vms = fb_data.get("data", [])
+            if vms:
+                log.info(
+                    "VM metrics: monitoring service empty, using API DB-fallback (%d VMs)",
+                    len(vms),
+                )
+        except Exception as exc:
+            log.warning("Could not fetch VM metrics from API fallback: %s", exc)
 
     if not vms:
         return 0
@@ -237,8 +255,8 @@ def collect_resource_metrics(conn, region_id: str) -> int:
     now = datetime.datetime.now(datetime.timezone.utc)
     rows = []
     for vm in vms:
-        # Try monitoring data first, fall back to flavor lookup
-        vcpus = vm.get("vcpus") or vm.get("vcpus_allocated")
+        # vcpus: monitoring source uses "vcpus"/"vcpus_allocated"; API fallback uses "cpu_total"
+        vcpus = vm.get("vcpus") or vm.get("vcpus_allocated") or vm.get("cpu_total")
         if not vcpus:
             flavor_name = vm.get("flavor", "")
             vcpus = flavor_vcpus.get(flavor_name)
@@ -253,9 +271,11 @@ def collect_resource_metrics(conn, region_id: str) -> int:
             vm.get("host"),
             vm.get("flavor"),
             vcpus,
-            vm.get("ram_mb") or vm.get("memory_total_mb"),
-            vm.get("disk_gb") or vm.get("storage_total_gb"),
-            # actual usage from PCD
+            # ram: monitoring uses "ram_mb"/"memory_total_mb"; API fallback uses "memory_allocated_mb"
+            vm.get("ram_mb") or vm.get("memory_total_mb") or vm.get("memory_allocated_mb"),
+            # disk: monitoring uses "disk_gb"/"storage_total_gb"; API fallback uses "storage_allocated_gb"
+            vm.get("disk_gb") or vm.get("storage_total_gb") or vm.get("storage_allocated_gb"),
+            # actual usage from PCD / hypervisor-estimated
             vm.get("cpu_usage_percent"),
             vm.get("memory_usage_mb") or vm.get("ram_usage_mb"),
             vm.get("memory_usage_percent") or vm.get("ram_usage_percent"),

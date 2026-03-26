@@ -5,43 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.30] - 2026-03-26
+
+### Fixed
+- **Metering: VMs Metered always shows 0** (`metering_worker/main.py`)
+  — The monitoring service's prometheus-client collects metrics by scraping hypervisor endpoints
+  on the IPs listed in `PF9_HOSTS`. When `PF9_HOSTS` is empty (default Helm value), the service
+  returns an empty VM list and the metering worker recorded 0 VM rows on every cycle. Added a
+  fallback: when `MONITORING_URL/metrics/vms` returns 0 VMs the worker now calls the API's
+  DB-backed `/monitoring/vm-metrics` endpoint which is always populated from the `servers`,
+  `flavors`, and `hypervisors` inventory tables. Extended field mapping to cover the API response
+  shape (`cpu_total` → vcpus, `memory_allocated_mb` → ram, `storage_allocated_gb` → disk).
+
 ## [1.82.29] - 2026-03-26
 
 ### Fixed
-- **Metering project/domain dropdowns always empty** (`api/metering_routes.py`)
-  — `get_metering_filters` returned projects/domains sourced only from `metering_resources`
-  (empty until VMs are collected). Added merge with all project/domain names from the
-  `projects`/`domains` OpenStack tables so dropdowns are populated immediately.
-- **Prometheus UI redirects to /query (SPA) instead of opening** (`k8s/monitoring/prometheus-values.yaml`)
-  — `prometheusSpec` had no `externalUrl` set. nginx rewrites `/prometheus/...` to `/`
-  before forwarding; without `externalUrl` Prometheus generates absolute redirects to `/graph`
-  which bypass the prefix and land in the React SPA. Added
-  `externalUrl: https://pf9-mngt.ccc.co.il/prometheus` and `routePrefix: /`
-  (same fix applied to AlertManager at `/alertmanager`).
-- **Projects and Domains missing from Inventory nav section** (`db/migrate_departments_navigation.sql`, `api/main.py`)
-  — nav items `domains` and `projects` were seeded into the `customer_onboarding` group.
-  Added new migration `migrate_nav_inventory_domains_projects.sql` that moves them to the
-  `inventory` group (UPDATE nav_group_id). Migration runs automatically on next API pod
-  restart via the startup advisory-lock block in `main.py`. Also updated the source migration
-  and removed duplicates from the customer_onboarding insert.
+- **Metering: project/domain filter dropdowns empty** (`api/metering_routes.py`)
+  — `get_metering_filters` only returned values present in `metering_resources`; on a fresh
+  deployment that table is empty so both dropdowns showed nothing. Now merges the `projects` and
+  `domains` tables so filter options are immediately populated from the identity inventory.
+- **Prometheus UI redirects to SPA `/query` instead of opening Prometheus** (`k8s/monitoring/prometheus-values.yaml`)
+  — `externalUrl` and `routePrefix` were absent from `prometheusSpec`; Prometheus generated an
+  absolute redirect to `/graph` which bypassed nginx and landed on the React SPA. Added
+  `externalUrl: "https://pf9-mngt.ccc.co.il/prometheus"` and `routePrefix: "/"` to both
+  `prometheusSpec` and `alertmanagerSpec`. **Requires** `helm upgrade kube-prometheus-stack
+  prometheus-community/kube-prometheus-stack -n monitoring -f k8s/monitoring/prometheus-values.yaml`
+  on the cluster.
+- **Inventory: Projects and Domains tabs missing** (`db/migrate_nav_inventory_domains_projects.sql`)
+  — Nav items for `domains` and `projects` were in the `customer_onboarding` group; moved to
+  `inventory` so they appear under Inventory in the sidebar. Migration runs automatically on next
+  API pod restart.
+
 ## [1.82.28] - 2026-03-26
 
 ### Fixed
 - **API: TrustedHostMiddleware rejects internal K8s pod-to-pod requests with 400** (`api/main.py`)
   — `_trusted_hosts` only listed `pf9_api`/`pf9_ui` (Docker Compose underscore names). Kubernetes
   service names use dashes (`pf9-api`, `pf9-ui`), so all intra-cluster requests (metering-worker
-  -> API `/metrics`) were rejected with `400 Bad Request`. Added the dash-form names for api,
-  ui, and monitoring to the hardcoded seed set so both environments work without wildcards.
+  → API `/metrics`) were rejected with `400 Bad Request`. Added the dash-form names for `api`,
+  `ui`, and `monitoring` to the hardcoded seed set so both environments work without wildcards.
 - **Monitoring: PrometheusClient collection loop never started** (`monitoring/main.py`)
   — `startup_event` created the `PrometheusClient` instance but never called `start_collection()`,
   so the libvirt/node-exporter scraping background task never ran. Added
   `await prometheus_client.start_collection()` at the end of startup and a matching
   `shutdown_event` that calls `stop_collection()` for clean task cancellation.
 - **Monitoring: collected VM/host metrics not persisted to disk cache** (`monitoring/prometheus_client.py`)
-  — After each collection cycle `_collect_all_metrics` only updated the in-memory `vm_cache`/
+  — After each collection cycle `_collect_all_metrics` only updated the in-memory `vm_cache` /
   `host_cache` dicts; the API endpoints (`/metrics/vms`, `/metrics/hosts`) read solely from
   `/tmp/cache/metrics_cache.json`, so collected data was never served. Now writes an atomic
   JSON snapshot (via temp-file + `os.replace`) to that path after every successful cycle.
+
 ## [1.82.27] - 2026-03-26
 
 ### Fixed

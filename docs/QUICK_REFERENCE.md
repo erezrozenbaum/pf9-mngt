@@ -137,7 +137,10 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **CI: fix sed regex for single-quoted tag overrides** (v1.82.27 — NEW ✨): Fixed `sed` pattern to handle `'`, `"`, and unquoted `tag:` values; api+snapshot-worker were stuck at v1.82.21
+- **Metering: 0 VMs / Resources / Efficiency empty** (v1.82.30 — NEW ✨): Metering worker falls back to API's DB-backed `/monitoring/vm-metrics` when monitoring service has no data (PF9_HOSTS not configured). VMs Metered now populates immediately.
+- **Fix metering dropdowns, Prometheus redirect, Inventory nav** (v1.82.29): Projects/domains filter dropdowns populated from identity tables; Prometheus externalUrl set so `/prometheus` no longer redirects to SPA; Domains/Projects nav items moved to Inventory group
+- **Fix TrustedHostMiddleware 400 + monitoring collection** (v1.82.28): K8s dash-form service names added to trusted hosts; PrometheusClient start_collection() now called on startup; metrics cache written to disk after each cycle
+- **CI: fix sed regex for single-quoted tag overrides** (v1.82.27): Fixed `sed` pattern to handle `'`, `"`, and unquoted `tag:` values; api+snapshot-worker were stuck at v1.82.21
 - **CI: fix YAML syntax error in release.yml** (v1.82.26): Replaced Python3 heredoc with `sed -E` one-liner; heredoc caused GitHub Actions parser error on line 245, breaking Release workflow
 - **CI: fix per-service tag overrides blocking api/snapshot-worker updates** (v1.82.25): Fixed release.yml to clear stale image tag overrides in deploy repo values.prod.yaml
 - **Security: picomatch ReDoS patch** (v1.82.24): Upgraded picomatch 4.0.3→4.0.4 (GHSA-c2c7-rcms-vvq1)
