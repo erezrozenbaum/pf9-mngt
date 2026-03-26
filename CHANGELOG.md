@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.26] - 2026-03-26
+
+### Fixed
+- **CI: YAML syntax error in `release.yml` crashing Release workflow** (`.github/workflows/release.yml`)
+  — A Python3 heredoc (`<<'PYEOF'`) inside a YAML `run: |` block triggered the GitHub Actions
+  YAML parser's merge-key handler, producing *"You have an error in your yaml on line 245"*.
+  Release runs #96 and #97 failed immediately without executing any jobs. Fixed by replacing the
+  heredoc with a single `sed -E` one-liner that clears versioned per-service tag overrides.
+
 ## [1.82.25] - 2026-03-26
 
 ### Fixed

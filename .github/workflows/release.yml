@@ -238,24 +238,12 @@ jobs:
           # 1. Update global.imageTag
           sed -i "s|^  imageTag:.*|  imageTag: v${VERSION}|" "${FILE}"
 
-          # 2. Clear any per-service tag overrides that would shadow global.imageTag.
-          #    These can accumulate from manual edits or past CI bugs.  Setting them
-          #    to "" lets every service fall back to global.imageTag uniformly.
-          python3 - <<'PYEOF'
-import re, os
-path = os.environ["FILE"]
-content = open(path).read()
-# Match lines like:  `    tag: "v1.82.21"` or `    tag: v1.82.21`
-# and reset them to empty string so global.imageTag applies.
-content = re.sub(
-    r'(\s+tag:\s+)"?v\d+\.\d+\.\d+"?(\s*(?:#.*)?)$',
-    r'\1""\2',
-    content,
-    flags=re.MULTILINE,
-)
-open(path, "w").write(content)
-print("Per-service tag overrides cleared.")
-PYEOF
+          # 2. Clear any per-service tag overrides that shadow global.imageTag.
+          #    Matches lines like `    tag: "v1.82.21"` or `    tag: v1.82.21`
+          #    and resets them to `    tag: ""` so global.imageTag applies.
+          sed -i -E 's/^([[:space:]]+tag:[[:space:]])"?v[0-9]+\.[0-9]+\.[0-9]+"?[[:space:]]*(#.*)?$/\1""/' "${FILE}"
+
+          echo "values.prod.yaml patched to v${VERSION}, per-service overrides cleared."
 
       - name: Commit and push updated values.prod.yaml
         run: |

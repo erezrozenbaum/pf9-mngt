@@ -137,7 +137,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **CI: fix per-service tag overrides blocking api/snapshot-worker updates** (v1.82.25 — NEW ✨): Fixed release.yml to clear stale image tag overrides in deploy repo values.prod.yaml
+- **CI: fix YAML syntax error in release.yml** (v1.82.26 — NEW ✨): Replaced Python3 heredoc with `sed -E` one-liner; heredoc caused GitHub Actions parser error on line 245, breaking Release workflow
+- **CI: fix per-service tag overrides blocking api/snapshot-worker updates** (v1.82.25): Fixed release.yml to clear stale image tag overrides in deploy repo values.prod.yaml
 - **Security: picomatch ReDoS patch** (v1.82.24): Upgraded picomatch 4.0.3→4.0.4 (GHSA-c2c7-rcms-vvq1)
 - **K8s UI fixes: session restore, 401 auth, metrics routing, logo persistence, visibility UX** (v1.82.23):
   - **Session restore** — page refresh no longer forces re-login; stored JWT is re-validated on mount and `isAuthenticated` is restored
