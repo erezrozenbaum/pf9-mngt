@@ -88,7 +88,9 @@ INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'security_groups', 'Security Groups', '🔒', '/security_groups', 'security_groups', 8),
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'hypervisors',     'Hypervisors',     '',   '/hypervisors',     'hypervisors',     9),
     ((SELECT id FROM nav_groups WHERE key='inventory'), 'images',          'Images',          '',   '/images',          'images',          10),
-    ((SELECT id FROM nav_groups WHERE key='inventory'), 'flavors',         'Flavors',         '🔧', '/flavors',         'flavors',         11)
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'flavors',         'Flavors',         '🔧', '/flavors',         'flavors',         11),
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'domains',         'Domains',         '',   '/domains',         'domains',         12),
+    ((SELECT id FROM nav_groups WHERE key='inventory'), 'projects',        'Projects',        '',   '/projects',        'projects',        13)
 ON CONFLICT (key) DO NOTHING;
 
 -- Snapshot Management group
@@ -110,13 +112,11 @@ INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort
     ((SELECT id FROM nav_groups WHERE key='change_logs'), 'drift',    'Drift Detection', '🔍', '/drift',    'drift',   4)
 ON CONFLICT (key) DO NOTHING;
 
--- Customer Onboarding group
+-- Customer Onboarding group (domains/projects moved to inventory group)
 INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order) VALUES
-    ((SELECT id FROM nav_groups WHERE key='customer_onboarding'), 'domains',            'Domains',         '',   '/domains',            'domains',       1),
-    ((SELECT id FROM nav_groups WHERE key='customer_onboarding'), 'projects',           'Projects',        '',   '/projects',           'projects',      2),
-    ((SELECT id FROM nav_groups WHERE key='customer_onboarding'), 'users',              'Users',           '🔧', '/users',              'users',         3),
-    ((SELECT id FROM nav_groups WHERE key='customer_onboarding'), 'provisioning',       'Provisioning',    '🚀', '/provisioning',       'provisioning',  4),
-    ((SELECT id FROM nav_groups WHERE key='customer_onboarding'), 'domain_management',  'Domain Mgmt',    '🏢', '/domain_management',  'provisioning',  5)
+    ((SELECT id FROM nav_groups WHERE key='customer_onboarding'), 'users',              'Users',           '🔧', '/users',              'users',         1),
+    ((SELECT id FROM nav_groups WHERE key='customer_onboarding'), 'provisioning',       'Provisioning',    '🚀', '/provisioning',       'provisioning',  2),
+    ((SELECT id FROM nav_groups WHERE key='customer_onboarding'), 'domain_management',  'Domain Mgmt',    '🏢', '/domain_management',  'provisioning',  3)
 ON CONFLICT (key) DO NOTHING;
 
 -- Metering & Reporting group

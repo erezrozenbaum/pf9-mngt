@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.29] - 2026-03-26
+
+### Fixed
+- **Metering project/domain dropdowns always empty** (`api/metering_routes.py`)
+  — `get_metering_filters` returned projects/domains sourced only from `metering_resources`
+  (empty until VMs are collected). Added merge with all project/domain names from the
+  `projects`/`domains` OpenStack tables so dropdowns are populated immediately.
+- **Prometheus UI redirects to /query (SPA) instead of opening** (`k8s/monitoring/prometheus-values.yaml`)
+  — `prometheusSpec` had no `externalUrl` set. nginx rewrites `/prometheus/...` to `/`
+  before forwarding; without `externalUrl` Prometheus generates absolute redirects to `/graph`
+  which bypass the prefix and land in the React SPA. Added
+  `externalUrl: https://pf9-mngt.ccc.co.il/prometheus` and `routePrefix: /`
+  (same fix applied to AlertManager at `/alertmanager`).
+- **Projects and Domains missing from Inventory nav section** (`db/migrate_departments_navigation.sql`, `api/main.py`)
+  — nav items `domains` and `projects` were seeded into the `customer_onboarding` group.
+  Added new migration `migrate_nav_inventory_domains_projects.sql` that moves them to the
+  `inventory` group (UPDATE nav_group_id). Migration runs automatically on next API pod
+  restart via the startup advisory-lock block in `main.py`. Also updated the source migration
+  and removed duplicates from the customer_onboarding insert.
 ## [1.82.28] - 2026-03-26
 
 ### Fixed

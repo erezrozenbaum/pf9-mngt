@@ -32,8 +32,11 @@ prometheus:
     pathType: ImplementationSpecific
 
   prometheusSpec:
-    # No routePrefix / externalUrl — Prometheus serves at /
-    # Grafana datasource uses http://kube-prometheus-stack-prometheus:9090 (root path, no prefix)
+    # Tell Prometheus its external URL so redirects (e.g. / → /graph) use the
+    # /prometheus prefix rather than an absolute root path that bypasses nginx.
+    # routePrefix stays "/" because nginx strips /prometheus before forwarding.
+    externalUrl: "https://pf9-mngt.ccc.co.il/prometheus"
+    routePrefix: "/"
 
     # 15-day retention, capped at 9 GiB to stay under the 10 GiB PVC
     retention: 15d
@@ -90,7 +93,8 @@ alertmanager:
     pathType: ImplementationSpecific
 
   alertmanagerSpec:
-    # No routePrefix / externalUrl — AlertManager serves at /
+    externalUrl: "https://pf9-mngt.ccc.co.il/alertmanager"
+    routePrefix: "/"
 
     storage:
       volumeClaimTemplate:

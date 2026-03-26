@@ -1001,6 +1001,19 @@ async def startup_event():
       except Exception as _exc:
         logger.warning("Multi-cluster default seed skipped: %s", _exc)
 
+      # Move domains + projects nav items into the Inventory nav group (idempotent DO $$ block)
+      try:
+        _nav_inv_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_nav_inventory_domains_projects.sql")
+        if os.path.exists(_nav_inv_sql):
+            with open(_nav_inv_sql, encoding="utf-8") as _f:
+                _sql = _f.read()
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(_sql)
+            logger.info("Nav inventory domains/projects migration applied")
+      except Exception as _exc:
+        logger.warning("Nav inventory domains/projects migration skipped: %s", _exc)
+
     # Phase 3: warm the ClusterRegistry now that the DB is seeded.
     # reload() discards any premature lazy-init that may have run before seeding
     # and rebuilds fresh from the now-populated pf9_regions / pf9_control_planes.

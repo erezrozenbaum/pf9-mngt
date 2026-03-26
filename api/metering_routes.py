@@ -449,9 +449,14 @@ async def get_metering_filters(
             cur.execute("SELECT name, vcpus, ram_mb, disk_gb FROM flavors ORDER BY name")
             flavors = [{"name": r[0], "vcpus": r[1], "ram_mb": r[2], "disk_gb": r[3]} for r in cur.fetchall()]
 
+    # Merge OpenStack project/domain names so dropdowns are populated
+    # even before metering_resources has any rows.
+    merged_projects = sorted(set(projects) | {t["project"] for t in all_tenants if t["project"]})
+    merged_domains  = sorted(set(domains)  | {t["domain"]  for t in all_tenants if t["domain"]})
+
     return {
-        "projects": projects,
-        "domains": domains,
+        "projects": merged_projects,
+        "domains": merged_domains,
         "all_tenants": all_tenants,
         "flavors": flavors,
     }
