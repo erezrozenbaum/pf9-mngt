@@ -26,7 +26,7 @@ prometheus:
       nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/use-regex: "true"
     hosts:
-      - pf9-mngt.example.com
+      - pf9-mngt.ccc.co.il
     paths:
       - /prometheus(/|$)(.*)
     pathType: ImplementationSpecific
@@ -84,7 +84,7 @@ alertmanager:
       nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/use-regex: "true"
     hosts:
-      - pf9-mngt.example.com
+      - pf9-mngt.ccc.co.il
     paths:
       - /alertmanager(/|$)(.*)
     pathType: ImplementationSpecific
@@ -154,16 +154,16 @@ grafana:
   # Expose Grafana at http://<your-domain>/grafana via the existing nginx-ingress.
   # No new DNS record needed — same host as the main app.
   # Override at deploy time:
-  #   helm upgrade ... --set grafana.env.GF_SERVER_ROOT_URL=http://pf9-mngt.example.com/grafana
+  #   helm upgrade ... --set grafana.env.GF_SERVER_ROOT_URL=http://pf9-mngt.ccc.co.il/grafana
   env:
-    GF_SERVER_ROOT_URL: "http://pf9-mngt.example.com/grafana"
+    GF_SERVER_ROOT_URL: "http://pf9-mngt.ccc.co.il/grafana"
     GF_SERVER_SERVE_FROM_SUB_PATH: "true"
 
   ingress:
     enabled: true
     ingressClassName: nginx
     hosts:
-      - pf9-mngt.example.com
+      - pf9-mngt.ccc.co.il
     path: /grafana
     pathType: Prefix
 
