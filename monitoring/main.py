@@ -141,6 +141,14 @@ async def startup_event():
         except Exception as e:
             logger.error("Could not create cache file", extra={"context": {"error": str(e)}})
 
+    # Start background metrics collection from PF9 host Prometheus endpoints
+    await prometheus_client.start_collection()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop background metrics collection gracefully."""
+    await prometheus_client.stop_collection()
+
 # Helper functions
 def load_cache_data() -> Dict[str, Any]:
     """Load metrics from cache file"""

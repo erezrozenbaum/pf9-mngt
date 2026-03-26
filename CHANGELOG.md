@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.28] - 2026-03-26
+
+### Fixed
+- **API: TrustedHostMiddleware rejects internal K8s pod-to-pod requests with 400** (`api/main.py`)
+  — `_trusted_hosts` only listed `pf9_api`/`pf9_ui` (Docker Compose underscore names). Kubernetes
+  service names use dashes (`pf9-api`, `pf9-ui`), so all intra-cluster requests (metering-worker
+  -> API `/metrics`) were rejected with `400 Bad Request`. Added the dash-form names for api,
+  ui, and monitoring to the hardcoded seed set so both environments work without wildcards.
+- **Monitoring: PrometheusClient collection loop never started** (`monitoring/main.py`)
+  — `startup_event` created the `PrometheusClient` instance but never called `start_collection()`,
+  so the libvirt/node-exporter scraping background task never ran. Added
+  `await prometheus_client.start_collection()` at the end of startup and a matching
+  `shutdown_event` that calls `stop_collection()` for clean task cancellation.
+- **Monitoring: collected VM/host metrics not persisted to disk cache** (`monitoring/prometheus_client.py`)
+  — After each collection cycle `_collect_all_metrics` only updated the in-memory `vm_cache`/
+  `host_cache` dicts; the API endpoints (`/metrics/vms`, `/metrics/hosts`) read solely from
+  `/tmp/cache/metrics_cache.json`, so collected data was never served. Now writes an atomic
+  JSON snapshot (via temp-file + `os.replace`) to that path after every successful cycle.
 ## [1.82.27] - 2026-03-26
 
 ### Fixed

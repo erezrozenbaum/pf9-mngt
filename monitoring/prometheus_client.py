@@ -80,11 +80,40 @@ class PrometheusClient:
             vm_metrics.extend(host_vm_metrics)
             host_metrics.extend(host_host_metrics)
             
-        # Update cache
+        # Update in-memory cache
         self.vm_cache = {vm.vm_id: vm for vm in vm_metrics}
         self.host_cache = {host.hostname: host for host in host_metrics}
         self.last_update = datetime.utcnow()
-        
+
+        # Persist to disk so the API endpoints can serve the collected data
+        try:
+            import os, json as _json
+            vm_list = [vm.dict() for vm in vm_metrics]
+            host_list = [h.dict() for h in host_metrics]
+            # Serialize datetime objects
+            def _default(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            cache_payload = {
+                "vms": vm_list,
+                "hosts": host_list,
+                "alerts": [],
+                "summary": {
+                    "total_vms": len(vm_list),
+                    "total_hosts": len(host_list),
+                    "last_update": self.last_update.isoformat(),
+                },
+                "timestamp": self.last_update.isoformat(),
+            }
+            os.makedirs("/tmp/cache", exist_ok=True)
+            tmp_path = "/tmp/cache/metrics_cache.json.tmp"
+            with open(tmp_path, "w") as fh:
+                _json.dump(cache_payload, fh, default=_default)
+            os.replace(tmp_path, "/tmp/cache/metrics_cache.json")
+        except Exception as exc:
+            logger.error(f"Failed to write metrics cache to disk: {exc}")
+
         logger.info(f"Updated cache: {len(vm_metrics)} VMs, {len(host_metrics)} hosts")
         
     async def _collect_host_metrics(self, host: str) -> tuple:

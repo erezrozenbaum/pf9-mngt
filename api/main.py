@@ -397,7 +397,13 @@ async def add_cache_control_headers(request: Request, call_next):
 # Security middleware (TrustedHost) — derive trusted hosts from ALLOWED_ORIGINS; never wildcard
 # Always include localhost variants and Docker internal service names so Vite proxy and
 # container-to-container requests are accepted without 400 Bad Request.
-_trusted_hosts: set = {"localhost", "127.0.0.1", "pf9_api", "pf9_ui"}
+# Include both underscore (Docker Compose) and dash (Kubernetes) service name variants.
+_trusted_hosts: set = {
+    "localhost", "127.0.0.1",
+    "pf9_api", "pf9-api",
+    "pf9_ui", "pf9-ui",
+    "pf9_monitoring", "pf9-monitoring",
+}
 for _origin in ALLOWED_ORIGINS:
     try:
         _trusted_hosts.add(_origin.split("://", 1)[1].rstrip("/").split(":")[0])
