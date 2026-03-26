@@ -137,7 +137,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **K8s UI fixes: session restore, 401 auth, metrics routing, logo persistence, visibility UX** (v1.82.23 — NEW ✨):
+- **Security: picomatch ReDoS patch** (v1.82.24 — NEW ✨): Upgraded picomatch 4.0.3→4.0.4 (GHSA-c2c7-rcms-vvq1)
+- **K8s UI fixes: session restore, 401 auth, metrics routing, logo persistence, visibility UX** (v1.82.23):
   - **Session restore** — page refresh no longer forces re-login; stored JWT is re-validated on mount and `isAuthenticated` is restored
   - **401 on domains/tenants/os-distribution** — data-loading effects now guard on `isAuthenticated`; eliminates token-less requests before login
   - **Metrics 404** — removed `metrics` from pf9-api ingress regex; `/metrics/.*` routes exclusively to `pf9-monitoring`
