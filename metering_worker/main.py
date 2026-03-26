@@ -916,8 +916,11 @@ def main():
     except Exception:
         interval_min = 15
 
-    effective_interval = max(interval_min * 60, POLL_INTERVAL)
-    log.info("Effective collection interval: %d seconds (%d min)", effective_interval, effective_interval // 60)
+    # POLL_INTERVAL (env var, Helm-controlled) governs the actual cadence.
+    # collection_interval_min from the DB is a display-only admin setting;
+    # previously a max() made it override the env var to 15 min.
+    effective_interval = POLL_INTERVAL
+    log.info("Effective collection interval: %d seconds (collection_interval_min=%d min ignored — using METERING_POLL_INTERVAL)", effective_interval, interval_min)
 
     last_run = 0.0
     while not _shutdown:

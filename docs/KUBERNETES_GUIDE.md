@@ -2,7 +2,7 @@
 
 **Version**: 4.0
 **Last Updated**: March 2026
-**Status**: Production Ready (v1.82.30)
+**Status**: Production Ready (v1.82.31)
 **Minimum Kubernetes**: 1.28
 
 > **This guide is written from real deployment experience.** Every warning in it

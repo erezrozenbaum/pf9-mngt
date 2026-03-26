@@ -137,7 +137,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - `GET /api/navigation/departments` fixed to return `{departments: [...]}` — resolves empty teams in Create Ticket modal and dept filter
   - LandingDashboard: ticket KPI widget (Open / SLA Breached / Resolved Today / Opened Today)
   - MeteringTab: 📋 Open Inquiry button per resource row; RunbooksTab: 📎 Ticket button per execution row
-- **Metering: 0 VMs / Resources / Efficiency empty** (v1.82.30 — NEW ✨): Metering worker falls back to API's DB-backed `/monitoring/vm-metrics` when monitoring service has no data (PF9_HOSTS not configured). VMs Metered now populates immediately.
+- **Metering: 0 VMs / Resources / Efficiency empty** (v1.82.31 — NEW ✨): Metering worker falls back to API's DB-backed `/monitoring/vm-metrics` when monitoring service has no data (PF9_HOSTS not configured). VMs Metered now populates immediately.
 - **Fix metering dropdowns, Prometheus redirect, Inventory nav** (v1.82.29): Projects/domains filter dropdowns populated from identity tables; Prometheus externalUrl set so `/prometheus` no longer redirects to SPA; Domains/Projects nav items moved to Inventory group
 - **Fix TrustedHostMiddleware 400 + monitoring collection** (v1.82.28): K8s dash-form service names added to trusted hosts; PrometheusClient start_collection() now called on startup; metrics cache written to disk after each cycle
 - **CI: fix sed regex for single-quoted tag overrides** (v1.82.27): Fixed `sed` pattern to handle `'`, `"`, and unquoted `tag:` values; api+snapshot-worker were stuck at v1.82.21

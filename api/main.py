@@ -4340,16 +4340,16 @@ def monitoring_summary():
         "last_update": str(datetime.now()),
         "source": "database",
         "vm_stats": {
-            "avg_cpu_usage": float(h.get("avg_cpu_usage", 0) or 0),
-            "max_cpu_usage": float(h.get("max_cpu_usage", 0) or 0),
-            "avg_memory_usage": float(h.get("avg_memory_usage", 0) or 0),
-            "max_memory_usage": float(h.get("max_memory_usage", 0) or 0),
+            "avg_cpu":    float(h.get("avg_cpu_usage", 0) or 0),
+            "max_cpu":    float(h.get("max_cpu_usage", 0) or 0),
+            "avg_memory": float(h.get("avg_memory_usage", 0) or 0),
+            "max_memory": float(h.get("max_memory_usage", 0) or 0),
         },
         "host_stats": {
-            "avg_cpu_usage": float(h.get("avg_cpu_usage", 0) or 0),
-            "max_cpu_usage": float(h.get("max_cpu_usage", 0) or 0),
-            "avg_memory_usage": float(h.get("avg_memory_usage", 0) or 0),
-            "max_memory_usage": float(h.get("max_memory_usage", 0) or 0),
+            "avg_cpu":    float(h.get("avg_cpu_usage", 0) or 0),
+            "max_cpu":    float(h.get("max_cpu_usage", 0) or 0),
+            "avg_memory": float(h.get("avg_memory_usage", 0) or 0),
+            "max_memory": float(h.get("max_memory_usage", 0) or 0),
         }
     }
 

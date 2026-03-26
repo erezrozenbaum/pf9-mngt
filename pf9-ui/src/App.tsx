@@ -268,16 +268,16 @@ type MetricsSummary = {
   total_hosts: number;
   last_update?: string;
   vm_stats: {
-    avg_cpu_usage?: number;
-    max_cpu_usage?: number;
-    avg_memory_usage?: number;
-    max_memory_usage?: number;
+    avg_cpu?: number;
+    max_cpu?: number;
+    avg_memory?: number;
+    max_memory?: number;
   };
   host_stats: {
-    avg_cpu_usage?: number;
-    max_cpu_usage?: number;
-    avg_memory_usage?: number;
-    max_memory_usage?: number;
+    avg_cpu?: number;
+    max_cpu?: number;
+    avg_memory?: number;
+    max_memory?: number;
   };
 };
 

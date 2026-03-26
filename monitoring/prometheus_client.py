@@ -88,13 +88,28 @@ class PrometheusClient:
         # Persist to disk so the API endpoints can serve the collected data
         try:
             import os, json as _json
-            vm_list = [vm.dict() for vm in vm_metrics]
+            # Serialize VM list; Pydantic .dict() omits @property values so we add them manually
+            vm_list = []
+            for _vm in vm_metrics:
+                _d = _vm.dict()
+                _d['storage_usage_percent'] = _vm.storage_usage_percent
+                _d['memory_allocation_percent'] = _vm.memory_allocation_percent
+                vm_list.append(_d)
             host_list = [h.dict() for h in host_metrics]
             # Serialize datetime objects
             def _default(obj):
                 if isinstance(obj, datetime):
                     return obj.isoformat()
                 raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+            # Compute summary averages (frontend reads vm_stats.avg_cpu / avg_memory)
+            _vm_cpus = [d['cpu_usage_percent'] for d in vm_list if d.get('cpu_usage_percent') is not None]
+            _vm_mems = [d['memory_usage_percent'] for d in vm_list if d.get('memory_usage_percent') is not None]
+            _h_cpus  = [d['cpu_usage_percent'] for d in host_list if d.get('cpu_usage_percent') is not None]
+            _h_mem_pcts = [
+                d['memory_used_mb'] / d['memory_total_mb'] * 100
+                for d in host_list
+                if d.get('memory_used_mb') is not None and d.get('memory_total_mb')
+            ]
             cache_payload = {
                 "vms": vm_list,
                 "hosts": host_list,
@@ -102,6 +117,18 @@ class PrometheusClient:
                 "summary": {
                     "total_vms": len(vm_list),
                     "total_hosts": len(host_list),
+                    "vm_stats": {
+                        "avg_cpu":    round(sum(_vm_cpus) / len(_vm_cpus), 1) if _vm_cpus else 0.0,
+                        "max_cpu":    round(max(_vm_cpus), 1) if _vm_cpus else 0.0,
+                        "avg_memory": round(sum(_vm_mems) / len(_vm_mems), 1) if _vm_mems else 0.0,
+                        "max_memory": round(max(_vm_mems), 1) if _vm_mems else 0.0,
+                    },
+                    "host_stats": {
+                        "avg_cpu":    round(sum(_h_cpus) / len(_h_cpus), 1) if _h_cpus else 0.0,
+                        "max_cpu":    round(max(_h_cpus), 1) if _h_cpus else 0.0,
+                        "avg_memory": round(sum(_h_mem_pcts) / len(_h_mem_pcts), 1) if _h_mem_pcts else 0.0,
+                        "max_memory": round(max(_h_mem_pcts), 1) if _h_mem_pcts else 0.0,
+                    },
                     "last_update": self.last_update.isoformat(),
                 },
                 "timestamp": self.last_update.isoformat(),

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.31] - 2026-03-27
+
+### Fixed
+- **Monitoring: Avg VM CPU / Avg VM Memory always show 0%** (`monitoring/prometheus_client.py`)
+  — The metrics-cache payload written to disk had no `vm_stats` key; the frontend reads
+  `vm_stats.avg_cpu` and `vm_stats.avg_memory`. The cache write now computes per-collection
+  averages and maxima for both VMs and hosts and stores them in the summary under the field
+  names the UI expects (`avg_cpu` / `avg_memory`).
+- **Monitoring: VM Storage always shows 0%** (`monitoring/prometheus_client.py`)
+  — `storage_usage_percent` is a Pydantic `@property` rather than a model `Field`; calling
+  `vm.dict()` omitted it from the serialised cache. Each VM dict is now patched with the
+  computed property value before writing.
+- **Metering: collects every 15 minutes instead of 60 seconds** (`metering_worker/main.py`)
+  — `effective_interval = max(interval_min * 60, POLL_INTERVAL)` caused the DB default of
+  15 min to override the `METERING_POLL_INTERVAL=60` env-var. Changed to
+  `effective_interval = POLL_INTERVAL` so the Helm-controlled env var governs the cadence;
+  `collection_interval_min` is now treated as a display-only admin setting.
+- **API /monitoring/summary returns wrong field names** (`api/main.py`)
+  — DB-fallback endpoint returned `avg_cpu_usage` / `avg_memory_usage` but the UI and the
+  monitoring-service payload both use `avg_cpu` / `avg_memory`. Renamed to match.
+- **TypeScript `MetricsSummary` type inconsistency** (`pf9-ui/src/App.tsx`)
+  — `MetricsSummary.vm_stats` declared `avg_cpu_usage` / `avg_memory_usage` while the
+  render code read `avg_cpu` / `avg_memory`. Updated the type to match the render code and
+  the backend payload.
+
 ## [1.82.30] - 2026-03-26
 
 ### Fixed
