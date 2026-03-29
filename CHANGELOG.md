@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.1] - 2026-03-29
+
+### Fixed
+- **UI — sidebar collapse**: All nav groups (including the default `is_default` group) can now be toggled closed by clicking their header again. Previously the default group was permanently pinned open.
+- **UI — light mode sidebar**: Sidebar now uses a distinct blue-tinted background (`#EBF2FB` / `--color-sidebar-bg`) and a matching expanded-items tint (`#F4F8FE`), visually separating it from the white page body. Dark mode is unchanged.
+- **API — `/monitoring/vm-metrics` fallback formula**: The `cpu_usage_percent` / `memory_usage_percent` expressions previously returned `NULL` when OpenStack reported `vcpus_used = 0` (division by zero via `NULLIF`), silently causing `collect_efficiency_scores` to skip all VMs and record 0% efficiency. Replaced with a simpler VM-allocation-share formula (`fl.vcpus / h.vcpus × 100`) that always returns a non-NULL estimate when flavor and hypervisor data are available.
+- **DB writer — history tracking silent failures**: `_upsert_with_history` now logs a `WARNING` message (visible in pod/container logs) when a history insert is skipped due to a missing column or table, guiding operators to the required migration file.
+- **API**: Added missing `inventory` resource rows to `role_permissions` for all roles; `GET /system-metadata-summary` was returning 403 for all users including superadmin.
+- **UI**: Moved Copilot FAB and Dependency Graph drawer outside the `pf9-app` scroll container — fixes FAB stretching full-width and graph drawer opening at bottom of page instead of full-screen overlay.
+
 ## [1.83.0] - 2026-03-29
 
 ### Changed

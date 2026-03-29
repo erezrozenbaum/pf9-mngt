@@ -1281,17 +1281,12 @@ const App: React.FC = () => {
   }, [navData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToggleExpand = useCallback((groupKey: string) => {
-    setExpandedGroupKey((prev) => {
-      // If clicking the already-expanded group, collapse it
-      // UNLESS it's the default group (default stays expanded)
-      if (prev === groupKey) {
-        const group = navData?.nav.find((g: any) => g.key === groupKey);
-        if (group?.is_default) return prev; // Keep default expanded
-        return null; // Collapse non-default
-      }
-      return groupKey; // Expand the clicked group
-    });
-  }, [navData]);
+    setExpandedGroupKey((prev) =>
+      // Clicking the already-expanded group always collapses it.
+      // Clicking any other group expands it (and implicitly collapses the previous one).
+      prev === groupKey ? null : groupKey
+    );
+  }, []);
 
   // Persist tab order
   const persistTabOrder = useCallback((order: ActiveTab[]) => {
@@ -6436,7 +6431,11 @@ const App: React.FC = () => {
         isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
       />
 
-      {/* Ops Copilot floating panel — visible when user has copilot:read permission */}
+        </div>{/* end pf9-page-body */}
+      </div>{/* end pf9-app */}
+
+      {/* Ops Copilot floating panel — rendered outside pf9-app to avoid
+          overflow:auto scroll-container trapping position:fixed elements */}
       {authUser && navHasPermission('copilot', 'read') && (
         <CopilotPanel
           token={authToken}
@@ -6444,7 +6443,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Cloud Dependency Graph drawer */}
+      {/* Cloud Dependency Graph drawer — outside pf9-app for same reason */}
       {graphTarget && (
         <div className="graph-drawer-backdrop">
           <DependencyGraph
@@ -6459,8 +6458,6 @@ const App: React.FC = () => {
           />
         </div>
       )}
-        </div>
-      </div>
       </ClusterContextProvider>
     </ThemeProvider>
   );

@@ -317,7 +317,17 @@ def _upsert_with_history(
         except (psycopg2.errors.UndefinedTable, psycopg2.errors.UndefinedColumn) as e:
             # History table doesn't exist or has wrong schema — roll back only
             # the history writes, preserving the main upsert above.
+            # This is intentional fail-safe behaviour, but log a warning so
+            # operators know which migration is missing.
             cur.execute("ROLLBACK TO SAVEPOINT before_history")
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "History tracking silently skipped for table '%s' — "
+                "schema mismatch (%s: %s). "
+                "Run the corresponding migration (e.g. migrate_os_tracking.sql) "
+                "against the database to re-enable history recording.",
+                table_name, type(e).__name__, e
+            )
     
     return len(records)
 

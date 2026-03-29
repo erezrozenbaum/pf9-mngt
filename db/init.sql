@@ -3357,6 +3357,15 @@ INSERT INTO role_permissions (role, resource, action) VALUES
     ('technical',  'tickets', 'write')
 ON CONFLICT (role, resource, action) DO NOTHING;
 
+-- Inventory resource (required by /system-metadata-summary endpoint)
+INSERT INTO role_permissions (role, resource, action) VALUES
+    ('viewer',     'inventory', 'read'),
+    ('operator',   'inventory', 'read'),
+    ('admin',      'inventory', 'admin'),
+    ('superadmin', 'inventory', 'admin'),
+    ('technical',  'inventory', 'read')
+ON CONFLICT (role, resource, action) DO NOTHING;
+
 -- Navigation: Operations & Support group
 INSERT INTO nav_groups (key, label, icon, description, sort_order)
 VALUES ('operations', 'Operations & Support', '🎫',

@@ -38,6 +38,10 @@
   --color-status-pending: #FF9800;
   --color-status-building: #2196F3;
   
+  /* Sidebar: distinct tinted background separates it from the page body */
+  --color-sidebar-bg: #EBF2FB;
+  --color-nav-items-bg: #F4F8FE;
+
   /* Action tab accent (write-capable tabs) */
   --color-action-accent: #E65100;
   --color-action-accent-light: #FF8A65;
@@ -130,6 +134,10 @@
   --color-status-pending: #F59E0B;
   --color-status-building: #3B82F6;
   
+  /* Sidebar — keep dark surface */
+  --color-sidebar-bg: var(--color-surface);
+  --color-nav-items-bg: rgba(255,255,255,0.03);
+
   /* Dark action tab accent */
   --color-action-accent: #FFB74D;
   --color-action-accent-light: #FFE0B2;

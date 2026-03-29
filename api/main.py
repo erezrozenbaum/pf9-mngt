@@ -4269,16 +4269,14 @@ def monitoring_vm_metrics():
                            WHERE att->>'server_id' = s.id))
         ) AS storage_allocated_gb,
         -- Per-VM CPU/RAM usage cannot be determined from DB alone;
-        -- show proportional share of host usage as estimate
+        -- use VM vCPU/RAM share of host capacity as a best-effort allocation estimate.
+        -- (Real usage requires Prometheus node exporters — see monitoring service.)
         CASE WHEN h.vcpus > 0 AND fl.vcpus > 0
-            THEN ROUND(COALESCE((h.raw_json->>'vcpus_used')::numeric, 0) / h.vcpus * 100 
-                        * fl.vcpus::numeric / NULLIF(COALESCE((h.raw_json->>'vcpus_used')::integer, 1), 0), 1)
+            THEN ROUND(fl.vcpus::numeric / h.vcpus * 100, 1)
             ELSE 0
         END AS cpu_usage_percent,
         CASE WHEN h.memory_mb > 0 AND fl.ram_mb > 0
-            THEN ROUND(fl.ram_mb::numeric / h.memory_mb * 
-                        COALESCE((h.raw_json->>'memory_mb_used')::numeric, 0) / 
-                        NULLIF(COALESCE((h.raw_json->>'memory_mb_used')::numeric, 1), 0) * 100, 1)
+            THEN ROUND(fl.ram_mb::numeric / h.memory_mb * 100, 1)
             ELSE 0
         END AS memory_usage_percent
     FROM servers s
