@@ -1,8 +1,8 @@
-﻿# pf9-mngt
+# pf9-mngt
 
 <p align="center">
   <strong>Operational Control Plane for Platform9 / OpenStack</strong><br>
-  Visibility &nbsp;ֲ·&nbsp; Automation &nbsp;ֲ·&nbsp; Recovery &nbsp;ֲ·&nbsp; Governance &nbsp;ֲ·&nbsp; Multi-Region Control
+  Visibility &nbsp;·&nbsp; Automation &nbsp;·&nbsp; Recovery &nbsp;·&nbsp; Governance &nbsp;·&nbsp; Multi-Region Control
 </p>
 
 <p align="center">
@@ -16,9 +16,10 @@
 
 </p>
 
-> ג­ If pf9-mngt saves your team time, [**star the repo**](https://github.com/erezrozenbaum/pf9-mngt) ג€” it helps others find it.
+> ⭐ If pf9-mngt saves your team time, [**star the repo**](https://github.com/erezrozenbaum/pf9-mngt) — it helps others find it.
 
 ---
+
 
 ## 🧭 In One Sentence
 
@@ -33,7 +34,7 @@ All in one self-hosted engineering console that works alongside Platform9 via it
 
 ---
 
-## נ¨ The Day-2 Operations Reality
+## 🚨 The Day-2 Operations Reality
 
 Provisioning is not the hard part anymore.
 
@@ -41,32 +42,32 @@ Running infrastructure at scale is.
 
 What actually breaks in real Platform9 / OpenStack environments:
 
-- **Snapshot SLAs** across tenants ג€” no native scheduler exists
-- **VM restore under pressure** ג€” no native workflow; everything is manual reconstruction
-- **Metadata ownership** ג€” resource names, relationships, and topology live on the platform, not with you
-- **Cross-tenant visibility** at scale ג€” the native UI is per-tenant, not operational-aggregate
-- **Multi-region complexity** ג€” managing multiple clusters with no unified console
-- **Coordination gaps** ג€” between support, engineering, and management teams
+- **Snapshot SLAs** across tenants — no native scheduler exists
+- **VM restore under pressure** — no native workflow; everything is manual reconstruction
+- **Metadata ownership** — resource names, relationships, and topology live on the platform, not with you
+- **Cross-tenant visibility** at scale — the native UI is per-tenant, not operational-aggregate
+- **Multi-region complexity** — managing multiple clusters with no unified console
+- **Coordination gaps** — between support, engineering, and management teams
 
 These are **Day-2 operations problems**. pf9-mngt solves them.
 
 ---
 
-## נ’¡ What pf9-mngt Is
+## 💡 What pf9-mngt Is
 
-A self-hosted operational platform that **extends** Platform9 / OpenStack ג€” not replaces it.
+A self-hosted operational platform that **extends** Platform9 / OpenStack — not replaces it.
 
-- A **persistent inventory engine** ג€” all Platform9 / OpenStack metadata in your own PostgreSQL, always available, independent of platform uptime (the RVTools equivalent for OpenStack)
-- A **snapshot automation engine** ג€” no native scheduler exists in Platform9 or OpenStack; this one is quota-aware, cross-tenant, policy-driven, with SLA compliance reporting
-- A **VM restore system** ג€” full automation of flavor, network, IPs, credentials, and volumes; two modes (side-by-side and replace); no native equivalent exists in OpenStack
-- A **migration planning workbench** ג€” from RVTools ingestion through cohort design, wave planning, and PCD auto-provisioning
-- A **unified engineering console** ג€” 30+ management tabs, RBAC, metering, chargeback, runbooks, tickets, and AI Ops Copilot
+- A **persistent inventory engine** — all Platform9 / OpenStack metadata in your own PostgreSQL, always available, independent of platform uptime (the RVTools equivalent for OpenStack)
+- A **snapshot automation engine** — no native scheduler exists in Platform9 or OpenStack; this one is quota-aware, cross-tenant, policy-driven, with SLA compliance reporting
+- A **VM restore system** — full automation of flavor, network, IPs, credentials, and volumes; two modes (side-by-side and replace); no native equivalent exists in OpenStack
+- A **migration planning workbench** — from RVTools ingestion through cohort design, wave planning, and PCD auto-provisioning
+- A **unified engineering console** — 30+ management tabs, RBAC, metering, chargeback, runbooks, tickets, and AI Ops Copilot
 
-ג” Works alongside Platform9 via its APIs &nbsp;ֲ·&nbsp; ג Not a UI replacement &nbsp;ֲ·&nbsp; ג Not an official Platform9 product
+✔ Works alongside Platform9 via its APIs &nbsp;·&nbsp; ❌ Not a UI replacement &nbsp;·&nbsp; ❌ Not an official Platform9 product
 
 ---
 
-## נ§  Why This Matters
+## 🧠 Why This Matters
 
 | Challenge | Native Platform9 | pf9-mngt |
 |-----------|-----------------|----------|
@@ -76,25 +77,26 @@ A self-hosted operational platform that **extends** Platform9 / OpenStack ג€�
 | Metadata ownership | Lives on the platform | Your PostgreSQL, always available |
 | Multi-region ops | Operationally complex | Unified console, one-click context switch |
 | Day-2 workflows | External tools | Built-in tickets, runbooks, metering |
-| VMware migration | No native tooling | End-to-end planner: RVTools ג†’ PCD |
+| VMware migration | No native tooling | End-to-end planner: RVTools → PCD |
 
 ---
 
-## ג¡ Try It Now ג€” Demo Mode (No Platform9 Required)
+## ⚡ Try It Now — Demo Mode (No Platform9 Required)
 
 Explore the full dashboard without a Platform9 environment:
 
 ```powershell
 git clone https://github.com/erezrozenbaum/pf9-mngt.git
 cd pf9-mngt
-.\deployment.ps1   # select option 2 ג€” Demo
+.\deployment.ps1   # select option 2 — Demo
 ```
 
-Populates the database with 3 tenants, 35 VMs, 50+ volumes, snapshots, drift events, compliance reports, and a metrics cache. Every dashboard, report, and workflow is fully functional ג€” no live cluster needed.
+Populates the database with 3 tenants, 35 VMs, 50+ volumes, snapshots, drift events, compliance reports, and a metrics cache. Every dashboard, report, and workflow is fully functional — no live cluster needed.
 
-> **UI:** http://localhost:5173 &nbsp;ֲ·&nbsp; **API Docs:** http://localhost:8000/docs
+> **UI:** http://localhost:5173 &nbsp;·&nbsp; **API Docs:** http://localhost:8000/docs
 
 ---
+
 
 ## ⚡ What You Get in 30 Seconds
 
@@ -110,83 +112,84 @@ After running Demo Mode you'll find:
 
 ---
 
-## נ—ן¸ Architecture
+## 🏗️ Architecture
 
 **16-container microservices platform:**
 
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
-| **nginx (TLS proxy)** | nginx:1.27-alpine | 80/443 | HTTPS termination, HTTPג†’HTTPS redirect, reverse proxy to API and UI |
+| **nginx (TLS proxy)** | nginx:1.27-alpine | 80/443 | HTTPS termination, HTTP→HTTPS redirect, reverse proxy to API and UI |
 | **Frontend UI** | React 19.2+ / TypeScript / Vite | 5173 | 30+ management tabs + admin panel |
 | **Backend API** | FastAPI / Gunicorn / Python | 8000 | 170+ REST endpoints, RBAC middleware, 4 workers + --max-requests 1000 |
-| **Redis** | redis:7-alpine | internal | OpenStack inventory/quota cache (60ג€“300 s TTL, allkeys-lru, 128 MiB cap) |
+| **Redis** | redis:7-alpine | internal | OpenStack inventory/quota cache (60–300 s TTL, allkeys-lru, 128 MiB cap) |
 | **LDAP Server** | OpenLDAP | internal | Enterprise authentication directory (not exposed to host) |
 | **LDAP Admin** | phpLDAPadmin | 8081 *(dev profile)* | Web-based LDAP management (`--profile dev`) |
 | **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
 | **Database** | PostgreSQL 16 | internal | 65+ tables, audit, metering, migration planner (not exposed to host) |
 | **Database Admin** | pgAdmin4 | 8080 *(dev profile)* | Web-based PostgreSQL management (`--profile dev`) |
-| **Snapshot Worker** | Python | ג€” | Automated snapshot management |
-| **Notification Worker** | Python / SMTP | ג€” | Email alerts for drift, snapshots, compliance |
-| **Backup Worker** | Python / PostgreSQL | ג€” | Scheduled DB + LDAP backups to NFS, restore *(backup profile)* |
-| **Scheduler Worker** | Python | ג€” | Host metrics collection + RVTools inventory (runs inside Docker) |
-| **Metering Worker** | Python / PostgreSQL | ג€” | Resource metering every 15 minutes |
-| **Search Worker** | Python / PostgreSQL | ג€” | Incremental full-text indexing for Ops Assistant |
-| **LDAP Sync Worker** | Python / PostgreSQL / OpenLDAP | ג€” | Bi-directional DB ג†” LDAP sync, polls every 30 s |
+| **Snapshot Worker** | Python | — | Automated snapshot management |
+| **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
+| **Backup Worker** | Python / PostgreSQL | — | Scheduled DB + LDAP backups to NFS, restore *(backup profile)* |
+| **Scheduler Worker** | Python | — | Host metrics collection + RVTools inventory (runs inside Docker) |
+| **Metering Worker** | Python / PostgreSQL | — | Resource metering every 15 minutes |
+| **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
+| **LDAP Sync Worker** | Python / PostgreSQL / OpenLDAP | — | Bi-directional DB ↔ LDAP sync, polls every 30 s |
 
 ```text
 Platform9 / OpenStack APIs
-           ג”‚
-     ג”ג”€ג”€ג”€ג”€ג”€ג”´ג”€ג”€ג”€ג”€ג”€ג”
-     ג”‚  pf9-api  ג”‚  FastAPI / Gunicorn (4 workers)
-     ג””ג”€ג”€ג”€ג”€ג”€ג”¬ג”€ג”€ג”€ג”€ג”€ג”˜
-           ג”‚
-  ג”ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”¼ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”¬ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”
-  ג”‚        ג”‚        ג”‚        ג”‚
+           │
+     ┌─────┴─────┐
+     │  pf9-api  │  FastAPI / Gunicorn (4 workers)
+     └─────┬─────┘
+           │
+  ┌────────┼────────┬────────┐
+  │        │        │        │
 Redis     LDAP   pf9_db   nginx
 (cache)  (auth)(PostgreSQL)(TLS)
-           ג”‚
-  ג”ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”¼ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”
-  ג”‚        ג”‚         ג”‚         ג”‚          ג”‚          ג”‚
+           │
+  ┌────────┼──────────────────────────────────────┐
+  │        │         │         │          │          │
 Snapshot Backup  Metering   Search  Notifications  Scheduler  LDAP-Sync
 Worker   Worker   Worker    Worker    Worker         Worker     Worker
-           ג”‚
-     ג”ג”€ג”€ג”€ג”€ג”€ג”´ג”€ג”€ג”€ג”€ג”€ג”
-     ג”‚  pf9-ui   ג”‚  React / Vite (served via nginx)
-     ג””ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”€ג”˜
+           │
+     ┌─────┴─────┐
+     │  pf9-ui   │  React / Vite (served via nginx)
+     └───────────┘
 ```
 
 > `pf9_scheduler_worker` (Docker container) runs `host_metrics_collector.py` (every 60 s) and `pf9_rvtools.py` (configurable interval or daily schedule) for infrastructure discovery and metrics collection. No Windows Task Scheduler dependency.
 
 ---
 
-## נ“ Feature Status
+## 📊 Feature Status
 
 | Feature | Status |
 |---------|--------|
-| Inventory Engine (RVTools-style, 29 resource types) | ג… Production |
-| Snapshot Automation | ג… Production |
-| VM Restore (side-by-side + replace modes) | ג… Production |
-| Reports (20 types + CSV export) | ג… Production |
-| Customer Provisioning & Domain Management | ג… Production |
-| Metering & Chargeback | ג… Production |
-| Notifications (SMTP + Slack + Teams) | ג… Production |
-| Drift Detection | ג… Production |
-| Ops Assistant ג€” Full-Text Search & Smart Queries | ג… Production |
-| Runbooks (25 built-in, dept visibility, approval workflows) | ג… Production |
-| External Integrations Framework (billing gate, CRM, webhooks) | ג… Production |
-| Dependency Graph: Health Scores, Blast Radius, Delete Impact | ג… Production |
-| Backup & Restore (DB) with Integrity Validation | ג… Production |
-| Inventory Versioning & Diff | ג… Production |
-| AI Ops Copilot | ג… Production |
-| Migration Planner (end-to-end) | ג… Production |
-| Support Ticket System (SLA, auto-tickets, approvals) | ג… Production |
-| Container Restart Alerting | ג… Production |
-| Multi-Region & Multi-Cluster Support | ג… Production |
-| External LDAP / AD Identity Federation | ג… Production |
-| Kubernetes Deployment (Helm + ArgoCD + Sealed Secrets) | ג… Production |
-| Tenant Self-Service Portal | ג¬ Planned |
+| Inventory Engine (RVTools-style, 29 resource types) | ✅ Production |
+| Snapshot Automation | ✅ Production |
+| VM Restore (side-by-side + replace modes) | ✅ Production |
+| Reports (20 types + CSV export) | ✅ Production |
+| Customer Provisioning & Domain Management | ✅ Production |
+| Metering & Chargeback | ✅ Production |
+| Notifications (SMTP + Slack + Teams) | ✅ Production |
+| Drift Detection | ✅ Production |
+| Ops Assistant — Full-Text Search & Smart Queries | ✅ Production |
+| Runbooks (25 built-in, dept visibility, approval workflows) | ✅ Production |
+| External Integrations Framework (billing gate, CRM, webhooks) | ✅ Production |
+| Dependency Graph: Health Scores, Blast Radius, Delete Impact | ✅ Production |
+| Backup & Restore (DB) with Integrity Validation | ✅ Production |
+| Inventory Versioning & Diff | ✅ Production |
+| AI Ops Copilot | ✅ Production |
+| Migration Planner (end-to-end) | ✅ Production |
+| Support Ticket System (SLA, auto-tickets, approvals) | ✅ Production |
+| Container Restart Alerting | ✅ Production |
+| Multi-Region & Multi-Cluster Support | ✅ Production |
+| External LDAP / AD Identity Federation | ✅ Production |
+| Kubernetes Deployment (Helm + ArgoCD + Sealed Secrets) | ✅ Production |
+| Tenant Self-Service Portal | ⬜ Planned |
 
 ---
+
 
 ## 🧭 Why This Was Built
 
@@ -198,7 +201,7 @@ Rather than pause the evaluation, we solved them. The result is pf9-mngt — 409
 
 ---
 
-## נ“¸ Screenshots
+## 📸 Screenshots
 
 ### Landing Dashboard
 ![Landing Dashboard](docs/images/dashboard-overview.png)
@@ -223,43 +226,43 @@ Rather than pause the evaluation, we solved them. The result is pf9-mngt — 409
 
 ---
 
-## נ¬ Video Walkthrough
+## 🎬 Video Walkthrough
 
 A 15-minute explainer video walking through the UI and key features:
 
 [![Watch on YouTube](https://img.shields.io/badge/YouTube-Watch%20Video-red?logo=youtube)](https://www.youtube.com/watch?v=68-LQ9ugU_E)
 
-ג–¶ן¸ [**PF9 Management System ג€” Full UI Walkthrough (15 min)**](https://www.youtube.com/watch?v=68-LQ9ugU_E)
+▶️ [**PF9 Management System — Full UI Walkthrough (15 min)**](https://www.youtube.com/watch?v=68-LQ9ugU_E)
 
 ---
 
-## ג™ן¸ Core Capabilities
+## ⚙️ Core Capabilities
 
-### נ” Inventory & Drift Detection
-Persistent inventory outside Platform9 ג€” 29 resource types, historical tracking, drift detection across tenants, domain/project mapping, CSV / Excel export.
+### 🔍 Inventory & Drift Detection
+Persistent inventory outside Platform9 — 29 resource types, historical tracking, drift detection across tenants, domain/project mapping, CSV / Excel export.
 
-### נ“¸ Snapshot Automation & Compliance
+### 📸 Snapshot Automation & Compliance
 Policy-based snapshots (daily / monthly / custom), cross-tenant execution, quota-aware batching, retention enforcement, SLA compliance tracking, full audit visibility.
 
-### ג™»ן¸ Restore Workflows
+### ♻️ Restore Workflows
 Side-by-side and replace modes, dry-run validation, full flavor / network / IP / credentials / volume automation, concurrent-restore prevention, complete audit logging.
 
-### נ—÷ן¸ Migration Planner
-RVTools ingestion ג†’ VM risk scoring ג†’ tenant scoping ג†’ network + flavor mapping ג†’ cohort design with ease scoring ג†’ wave planning with approval gates ג†’ PCD auto-provisioning ג†’ migration summary with throughput modeling.
+### 🗺️ Migration Planner
+RVTools ingestion → VM risk scoring → tenant scoping → network + flavor mapping → cohort design with ease scoring → wave planning with approval gates → PCD auto-provisioning → migration summary with throughput modeling.
 
-### נ Multi-Region / Multi-Cluster
+### 🌍 Multi-Region / Multi-Cluster
 Register multiple Platform9 control planes and regions. All inventory, reporting, and workers are region-aware. Unified console with one-click context switch. No restart required to add a new cluster.
 
-### נ« Ticketing System
+### 🎫 Ticketing System
 Full incident / change / request lifecycle, SLA tracking, auto-ticketing from health events (health score < 40, drift, graph deletes, runbook failures), department workflows, approval gates.
 
-### נ“‹ Runbooks
-25 built-in operational procedures covering VM recovery, security audits, quota management, capacity forecasting, and tenant offboarding. Parameterized, dry-run support, approval flows, export to CSV / JSON / PDF ג€” integrated with the ticket system.
+### 📋 Runbooks
+25 built-in operational procedures covering VM recovery, security audits, quota management, capacity forecasting, and tenant offboarding. Parameterized, dry-run support, approval flows, export to CSV / JSON / PDF — integrated with the ticket system.
 
-### נ“ Metering & Chargeback
+### 📊 Metering & Chargeback
 Per-VM resource tracking, snapshot / restore metering, API usage metrics, efficiency scoring (excellent / good / fair / poor / idle), multi-category pricing, one-click CSV chargeback export.
 
-### נ₪– AI Ops Copilot
+### 🤖 AI Ops Copilot
 40+ built-in intents with live SQL answers. Tenant / project / host scoping. Ollama (local, data never leaves your network) or OpenAI / Anthropic backends with automatic sensitive-data redaction.
 
 ---
@@ -282,13 +285,13 @@ A custom script solves one problem once. pf9-mngt enforces operational disciplin
 
 ---
 
-## נ€ Quick Start
+## 🚀 Quick Start
 
 ### Prerequisites
 - **Docker & Docker Compose** (for complete platform)
 - **Python 3.11+** with packages: `requests`, `openpyxl`, `psycopg2-binary`, `aiofiles`
-- **Valid Platform9 credentials** (service account recommended) ג€” *not required in Demo Mode*
-- **Network access** to Platform9 cluster and compute nodes ג€” *not required in Demo Mode*
+- **Valid Platform9 credentials** (service account recommended) — *not required in Demo Mode*
+- **Network access** to Platform9 cluster and compute nodes — *not required in Demo Mode*
 
 ### 1. Complete Automated Setup (Recommended)
 ```powershell
@@ -304,15 +307,15 @@ cp .env.template .env
 .\deployment.ps1
 
 # What deployment.ps1 does:
-# ג“ Checks/installs Docker Desktop
-# ג“ Creates and validates .env configuration
-# ג“ Creates required directories (logs, secrets, cache)
-# ג“ Installs Python dependencies
-# ג“ Builds and starts all Docker containers
-# ג“ Initializes PostgreSQL database schema
-# ג“ Configures LDAP directory structure
-# ג“ Creates automated scheduled tasks
-# ג“ Runs comprehensive health checks
+# ✓ Checks/installs Docker Desktop
+# ✓ Creates and validates .env configuration
+# ✓ Creates required directories (logs, secrets, cache)
+# ✓ Installs Python dependencies
+# ✓ Builds and starts all Docker containers
+# ✓ Initializes PostgreSQL database schema
+# ✓ Configures LDAP directory structure
+# ✓ Creates automated scheduled tasks
+# ✓ Runs comprehensive health checks
 
 # Alternative quick startup (assumes Docker installed)
 .\startup.ps1
@@ -335,7 +338,7 @@ drift events, compliance reports, etc.) and generates a static metrics cache.
 git clone https://github.com/erezrozenbaum/pf9-mngt.git
 cd pf9-mngt
 
-# The deployment wizard will ask "Production or Demo?" ג€” choose 2 for Demo
+# The deployment wizard will ask "Production or Demo?" — choose 2 for Demo
 .\deployment.ps1
 
 # Or enable demo mode manually on an existing install:
@@ -396,7 +399,7 @@ python snapshots/p9_snapshot_policy_assign.py --config snapshots/snapshot_policy
 
 ---
 
-## נ”§ Configuration
+## 🔧 Configuration
 
 ### Snapshot Policies
 ```bash
@@ -430,39 +433,39 @@ docker exec pf9_scheduler_worker python pf9_rvtools.py
 
 ---
 
-## נ“ Project Structure
+## 📁 Project Structure
 
 ```
 pf9-mngt/
-ג”ג”€ג”€ api/                          # FastAPI backend (155+ endpoints)
-ג”ג”€ג”€ pf9-ui/                       # React 19 + TypeScript frontend
-ג”ג”€ג”€ monitoring/                   # Prometheus metrics service
-ג”ג”€ג”€ snapshots/                    # Snapshot automation engine
-ג”‚   ג”ג”€ג”€ p9_auto_snapshots.py      # Cross-tenant snapshot automation
-ג”‚   ג”ג”€ג”€ snapshot_service_user.py  # Service user management
-ג”‚   ג”ג”€ג”€ p9_snapshot_compliance_report.py
-ג”‚   ג”ג”€ג”€ p9_snapshot_policy_assign.py
-ג”‚   ג””ג”€ג”€ snapshot_policy_rules.json
-ג”ג”€ג”€ db/                           # PostgreSQL schema + migrations
-ג”ג”€ג”€ backup_worker/                # Scheduled backup service
-ג”ג”€ג”€ metering_worker/              # Resource metering service
-ג”ג”€ג”€ search_worker/                # Full-text search indexer (Ops Assistant)
-ג”ג”€ג”€ notifications/                # Email notification service
-ג”ג”€ג”€ ldap/                         # OpenLDAP configuration
-ג”ג”€ג”€ docs/                         # Full documentation suite
-ג”ג”€ג”€ pf9_rvtools.py                # RVTools-style inventory export
-ג”ג”€ג”€ host_metrics_collector.py     # Prometheus metrics collection
-ג”ג”€ג”€ seed_demo_data.py             # Demo mode: populate DB + metrics cache
-ג”ג”€ג”€ p9_common.py                  # Shared utilities
-ג”ג”€ג”€ docker-compose.yml            # Full stack orchestration
-ג”ג”€ג”€ deployment.ps1                # One-command deployment
-ג”ג”€ג”€ startup.ps1                   # Quick start script
-ג””ג”€ג”€ .env.template                 # Environment configuration template
+├── api/                          # FastAPI backend (155+ endpoints)
+├── pf9-ui/                       # React 19 + TypeScript frontend
+├── monitoring/                   # Prometheus metrics service
+├── snapshots/                    # Snapshot automation engine
+│   ├── p9_auto_snapshots.py      # Cross-tenant snapshot automation
+│   ├── snapshot_service_user.py  # Service user management
+│   ├── p9_snapshot_compliance_report.py
+│   ├── p9_snapshot_policy_assign.py
+│   └── snapshot_policy_rules.json
+├── db/                           # PostgreSQL schema + migrations
+├── backup_worker/                # Scheduled backup service
+├── metering_worker/              # Resource metering service
+├── search_worker/                # Full-text search indexer (Ops Assistant)
+├── notifications/                # Email notification service
+├── ldap/                         # OpenLDAP configuration
+├── docs/                         # Full documentation suite
+├── pf9_rvtools.py                # RVTools-style inventory export
+├── host_metrics_collector.py     # Prometheus metrics collection
+├── seed_demo_data.py             # Demo mode: populate DB + metrics cache
+├── p9_common.py                  # Shared utilities
+├── docker-compose.yml            # Full stack orchestration
+├── deployment.ps1                # One-command deployment
+├── startup.ps1                   # Quick start script
+└── .env.template                 # Environment configuration template
 ```
 
 ---
 
-## נ“ Documentation
+## 📚 Documentation
 
 | Document | Purpose |
 |----------|---------|
@@ -488,6 +491,7 @@ pf9-mngt/
 
 ---
 
+
 ## 🆘 Troubleshooting
 
 Common issues and solutions are covered in [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md).
@@ -500,13 +504,14 @@ Quick commands:
 
 ---
 
+
 ## ❓ FAQ
 
 **Q: Does this replace the Platform9 UI?** No — it is a complementary engineering console adding operational workflows not present in the native UI.
 
 **Q: Is this an official Platform9 product?** No. Independent project, not endorsed by or affiliated with Platform9 Systems, Inc.
 
-**Q: Can I try this without a Platform9 environment?** Yes — choose Demo Mode in deployment.ps1 or set DEMO_MODE=true in .env.
+**Q: Can I try this without a Platform9 environment?** Yes — choose Demo Mode in `deployment.ps1` or set `DEMO_MODE=true` in `.env`.
 
 **Q: Can I run this on Kubernetes?** Yes — fully supported since v1.82.0. See [docs/KUBERNETES_GUIDE.md](docs/KUBERNETES_GUIDE.md).
 
@@ -516,6 +521,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ---
 
+
 ## 🕐 Latest Release
 
 **[v1.82.33](CHANGELOG.md)** — Monitoring pod restart loop hotfix: `TrustedHostMiddleware` removed from `monitoring/main.py` — it blocked Kubernetes kubelet health probes.
@@ -524,40 +530,40 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ---
 
-## נ‘¥ Who This Is For
+## 👥 Who This Is For
 
-- **MSPs running multi-tenant Platform9 environments** ג€” multi-region console, per-customer chargeback, SLA enforcement, automated tenant onboarding and offboarding
-- **Enterprise OpenStack teams** ג€” operational governance, snapshot compliance, capacity planning, VMware migration tooling
-- **Engineering teams responsible for Day-2 operations** ג€” not provisioning, but everything that comes after it
+- **MSPs running multi-tenant Platform9 environments** — multi-region console, per-customer chargeback, SLA enforcement, automated tenant onboarding and offboarding
+- **Enterprise OpenStack teams** — operational governance, snapshot compliance, capacity planning, VMware migration tooling
+- **Engineering teams responsible for Day-2 operations** — not provisioning, but everything that comes after it
 
 ---
 
-## נ¯ Positioning
+## 🎯 Positioning
 
 pf9-mngt is:
 
-- ג Not a UI replacement ג€” it is an engineering console that adds workflows the native Platform9 UI does not provide
-- ג Not a cloud control plane ג€” it orchestrates Platform9 / OpenStack via their existing APIs
-- ג Not a provisioning tool ג€” it operates on what has already been provisioned
-- ג… The **operational layer on top** ג€” what you reach for when something breaks, needs auditing, or must be tracked at scale
+- ❌ Not a UI replacement — it is an engineering console that adds workflows the native Platform9 UI does not provide
+- ❌ Not a cloud control plane — it orchestrates Platform9 / OpenStack via their existing APIs
+- ❌ Not a provisioning tool — it operates on what has already been provisioned
+- ✅ The **operational layer on top** — what you reach for when something breaks, needs auditing, or must be tracked at scale
 
 ---
 
-## נ”¥ What Makes It Different
+## 🔥 What Makes It Different
 
 Most platforms solve provisioning.
 
-pf9-mngt solves **what happens after deployment** ג€” the snapshot SLAs that must hold, the 3am restore that must succeed, the compliance report due tomorrow, the capacity forecast before the cluster fills up, the VMware migration that has to go right.
+pf9-mngt solves **what happens after deployment** — the snapshot SLAs that must hold, the 3am restore that must succeed, the compliance report due tomorrow, the capacity forecast before the cluster fills up, the VMware migration that has to go right.
 
 Built from real-world operations. 409+ commits, 121 releases, 16 containerized services.
 
-Not theory ג€” from what actually breaks in production.
+Not theory — from what actually breaks in production.
 
 ---
 
-## נ₪ Contributing
+## 🤝 Contributing
 
-Contributions are welcome ג€” code, documentation, bug reports, feature suggestions, or feedback.
+Contributions are welcome — code, documentation, bug reports, feature suggestions, or feedback.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 - How to report bugs
@@ -567,16 +573,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 ---
 
-## נ’ Support the Project
+## 💝 Support the Project
 
 If pf9-mngt saves your team time, consider:
 
-- ג­ **Star the repository** ג€” helps others discover the project
-- נ› **Report bugs** ג€” open an issue
-- נ’» **Contribute code** ג€” PRs are welcome
-- נ’¬ **Share feedback** ג€” what would you add?
+- ⭐ **Star the repository** — helps others discover the project
+- 🐛 **Report bugs** — open an issue
+- 💻 **Contribute code** — PRs are welcome
+- 💬 **Share feedback** — what would you add?
 
-### ג˜• Buy Me a Coffee
+### ☕ Buy Me a Coffee
 
 If this project saves you time or makes your Platform9 operations easier, you can support its continued development:
 
@@ -584,19 +590,19 @@ If this project saves you time or makes your Platform9 operations easier, you ca
 
 ---
 
-## נ‘₪ About the Creator
+## 👤 About the Creator
 
-**Erez Rozenbaum** ג€” Cloud Engineering Manager & Original Developer
+**Erez Rozenbaum** — Cloud Engineering Manager & Original Developer
 
-Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 422+ commits, 121 releases, 16 containerized services, 170+ API endpoints ג€” built alongside regular responsibilities.
+Built as part of a serious Platform9 evaluation to solve real operational gaps for MSP and enterprise teams. 422+ commits, 121 releases, 16 containerized services, 170+ API endpoints — built alongside regular responsibilities.
 
 ---
 
-## נ“„ License
+## 📄 License
 
-MIT License ג€” see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
-**Copyright ֲ© 2026 Erez Rozenbaum and Contributors**
+**Copyright © 2026 Erez Rozenbaum and Contributors**
 
 ---
 
