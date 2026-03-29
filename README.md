@@ -20,6 +20,19 @@
 
 ---
 
+## 🔄 What This Actually Replaces
+
+| Without pf9-mngt | With pf9-mngt |
+|-----------------|--------------|
+| Scripts that dump inventory to CSV, manually maintained | Persistent PostgreSQL inventory, 29 resource types, always current |
+| VM restore = manual reconstruction at 3am under SLA pressure | Fully automated restore — flavor, network, IPs, volumes, credentials |
+| No snapshot scheduler → custom cron per tenant, no SLA tracking | Policy-driven snapshot automation, cross-tenant, quota-aware, SLA-compliant |
+| Migration planning in spreadsheets → guesswork | End-to-end planner: RVTools → risk scoring → wave planning → PCD provisioning |
+| Separate ticketing tool + separate runbook wiki + separate billing exports | Built-in: tickets, 25 runbooks, metering, chargeback — one system |
+
+One system. No duct tape.
+
+---
 
 ## 🧭 In One Sentence
 
@@ -262,8 +275,25 @@ Full incident / change / request lifecycle, SLA tracking, auto-ticketing from he
 ### 📊 Metering & Chargeback
 Per-VM resource tracking, snapshot / restore metering, API usage metrics, efficiency scoring (excellent / good / fair / poor / idle), multi-category pricing, one-click CSV chargeback export.
 
-### 🤖 AI Ops Copilot
-40+ built-in intents with live SQL answers. Tenant / project / host scoping. Ollama (local, data never leaves your network) or OpenAI / Anthropic backends with automatic sensitive-data redaction.
+### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
+Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
+
+---
+
+## 🧪 Real Scenario — What a Day-2 Operator Actually Does
+
+> *A tenant reports a critical VM is down. Here's what happens next with pf9-mngt:*
+
+1. **Alert fires** — health score drops below 40 → auto-ticket created, team notified via Slack/email
+2. **Diagnose** — Dependency Graph shows the VM's blast radius: which volumes, ports, and downstream services are affected
+3. **Restore** — launch side-by-side restore: system reconstructs flavor, network, IPs, and credentials automatically; dry-run validates the plan first
+4. **Verify** — new VM boots alongside the original; operator confirms, original deleted only after sign-off
+5. **Audit** — full restore log: who triggered it, what mode, duration, outcome — auto-attached to the ticket
+6. **Report** — SLA compliance report updated; metering records the restore operation for chargeback
+
+*Total operator effort: decisions and approvals. The system handles the rest.*
+
+> This same workflow applies to snapshot SLA breaches, drift events, capacity warnings, and tenant offboarding — all integrated, all audited.
 
 ---
 
@@ -535,6 +565,17 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 - **MSPs running multi-tenant Platform9 environments** — multi-region console, per-customer chargeback, SLA enforcement, automated tenant onboarding and offboarding
 - **Enterprise OpenStack teams** — operational governance, snapshot compliance, capacity planning, VMware migration tooling
 - **Engineering teams responsible for Day-2 operations** — not provisioning, but everything that comes after it
+
+---
+
+## ❌ When NOT to Use pf9-mngt
+
+- **You manage a single small tenant with no SLA requirements** — the native Platform9 UI is sufficient
+- **You don't need automation or governance** — if manual workflows are acceptable at your scale, this is over-engineered for you
+- **Your team doesn't own Day-2 operations** — if Platform9 SaaS handles everything and you never touch restore, compliance, or chargeback, you don't need this layer
+- **You want a Platform9-supported product** — pf9-mngt is independent and community-maintained, not an official Platform9 offering
+
+If any of the above applies, save yourself the setup. If they don't — this is built for you.
 
 ---
 
