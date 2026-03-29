@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Query, HTTPException, Depends
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -107,19 +107,19 @@ class NotificationPreference(BaseModel):
     delivery_mode: str = "immediate"
     enabled: bool = True
 
-    @validator("event_type")
+    @field_validator("event_type")
     def validate_event_type(cls, v):
         if v not in VALID_EVENT_TYPES:
             raise ValueError(f"Invalid event_type. Must be one of: {VALID_EVENT_TYPES}")
         return v
 
-    @validator("severity_min")
+    @field_validator("severity_min")
     def validate_severity(cls, v):
         if v not in VALID_SEVERITIES:
             raise ValueError(f"Invalid severity. Must be one of: {VALID_SEVERITIES}")
         return v
 
-    @validator("delivery_mode")
+    @field_validator("delivery_mode")
     def validate_delivery_mode(cls, v):
         if v not in VALID_DELIVERY_MODES:
             raise ValueError(f"Invalid delivery_mode. Must be one of: {VALID_DELIVERY_MODES}")

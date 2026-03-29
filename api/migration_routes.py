@@ -87,7 +87,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 from auth import require_permission, get_current_user
 
@@ -351,13 +351,13 @@ class CreateProjectRequest(BaseModel):
     # Warm migration
     daily_change_rate_pct: Optional[float] = 5.0
 
-    @validator("name")
+    @field_validator("name")
     def name_not_empty(cls, v):
         if not v or not v.strip():
             raise ValueError("Project name cannot be empty")
         return v.strip()
 
-    @validator("topology_type")
+    @field_validator("topology_type")
     def valid_topology(cls, v):
         allowed = ("local", "cross_site_dedicated", "cross_site_internet")
         if v and v not in allowed:
@@ -412,7 +412,7 @@ class VMReassignRequest(BaseModel):
     tenant_name: Optional[str] = None  # None = unassign
     create_if_missing: bool = False
 
-    @validator("tenant_name")
+    @field_validator("tenant_name")
     def _strip_tenant_name(cls, v):
         if v is not None:
             v = v.strip()

@@ -27,7 +27,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 
 from auth import require_permission, get_current_user, ldap_auth, get_effective_region_filter
 from pf9_control import get_client
@@ -342,7 +342,7 @@ class VmRowRequest(BaseModel):
     os_type: str = "linux"
     delete_on_termination: bool = True
 
-    @validator("vm_name_suffix")
+    @field_validator("vm_name_suffix")
     def validate_suffix(cls, v):
         if not v or not v.strip():
             raise ValueError("vm_name_suffix is required")
@@ -352,19 +352,19 @@ class VmRowRequest(BaseModel):
             raise ValueError("vm_name_suffix max 30 chars")
         return v.lower()
 
-    @validator("count")
+    @field_validator("count")
     def validate_count(cls, v):
         if v < 1 or v > 20:
             raise ValueError("count must be 1–20")
         return v
 
-    @validator("volume_gb")
+    @field_validator("volume_gb")
     def validate_vol(cls, v):
         if v < 1 or v > 2048:
             raise ValueError("volume_gb must be 1–2048")
         return v
 
-    @validator("os_password")
+    @field_validator("os_password")
     def validate_pw(cls, v):
         if len(v) < 8:
             raise ValueError("os_password min 8 characters")
@@ -379,7 +379,7 @@ class CreateBatchRequest(BaseModel):
     region_id: Optional[str] = None  # target PF9 region (Phase 6)
     vms: List[VmRowRequest]
 
-    @validator("name")
+    @field_validator("name")
     def validate_name(cls, v):
         if not v or not v.strip():
             raise ValueError("batch name required")
@@ -390,7 +390,7 @@ class DecisionRequest(BaseModel):
     decision: str  # "approve" | "reject"
     comment: Optional[str] = None
 
-    @validator("decision")
+    @field_validator("decision")
     def validate_decision(cls, v):
         if v not in ("approve", "reject"):
             raise ValueError("decision must be 'approve' or 'reject'")

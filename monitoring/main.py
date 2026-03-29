@@ -3,6 +3,7 @@ import json
 import logging
 import time
 import uuid
+from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 
@@ -17,7 +18,13 @@ from slowapi.errors import RateLimitExceeded
 from prometheus_client import PrometheusClient
 from models import VMMetrics, HostMetrics, MetricsResponse
 
-app = FastAPI(title="PF9 Monitoring Service", version="1.0.0")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    await startup_event()
+    yield
+    await shutdown_event()
+
+app = FastAPI(title="PF9 Monitoring Service", version="1.0.0", lifespan=_lifespan)
 
 LOG_FILE = os.getenv("LOG_FILE", "")
 
@@ -98,8 +105,8 @@ limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Security middleware
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "*"])
+# Security middleware — no wildcard; allow localhost variants and Docker/K8s service names
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "pf9_monitoring", "pf9-monitoring", "pf9_api", "pf9-api"])
 
 # Secure CORS for UI integration
 app.add_middleware(
@@ -116,7 +123,6 @@ prometheus_client = PrometheusClient(
     cache_ttl=int(os.getenv("METRICS_CACHE_TTL", "60"))
 )
 
-@app.on_event("startup")
 async def startup_event():
     """Initialize the application"""
     from container_watchdog import start_watchdog
@@ -144,7 +150,6 @@ async def startup_event():
     # Start background metrics collection from PF9 host Prometheus endpoints
     await prometheus_client.start_collection()
 
-@app.on_event("shutdown")
 async def shutdown_event():
     """Stop background metrics collection gracefully."""
     await prometheus_client.stop_collection()

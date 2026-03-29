@@ -6,6 +6,29 @@ import os
 import sys
 from typing import Dict, List, Tuple
 
+# Credential vars that may be supplied via Docker secrets file instead of an
+# environment variable.  Keys are the env var name; values are the secret
+# file name under /run/secrets/ (Docker Compose / Swarm convention).
+_SECRET_FILE_MAP: Dict[str, str] = {
+    "PF9_DB_PASSWORD": "db_password",
+    "PF9_PASSWORD":    "pf9_password",
+    "JWT_SECRET_KEY":  "jwt_secret",
+}
+
+def _var_is_set(name: str) -> bool:
+    """Return True if *name* is available either as an env var or Docker secret file."""
+    value = os.getenv(name, "")
+    if value and value.strip():
+        return True
+    secret_file = _SECRET_FILE_MAP.get(name)
+    if secret_file:
+        path = os.path.join("/run/secrets", secret_file)
+        try:
+            return bool(open(path).read().strip())
+        except OSError:
+            pass
+    return False
+
 class ConfigValidator:
     """Validates environment configuration on startup"""
     
@@ -48,8 +71,7 @@ class ConfigValidator:
         
         # Check required variables
         for var, description in cls.REQUIRED_VARS.items():
-            value = os.getenv(var)
-            if not value or value.strip() == "":
+            if not _var_is_set(var):
                 errors.append(f"Missing required env var: {var} ({description})")
         
         # Check optional variables and apply defaults

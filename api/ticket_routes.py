@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Any
 
 from fastapi import APIRouter, HTTPException, Depends, Request, Query, status
-from pydantic import BaseModel, Field, EmailStr, validator, root_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 from psycopg2.extras import RealDictCursor
 
 from db_pool import get_connection
@@ -292,13 +292,13 @@ class TicketCreate(BaseModel):
     assigned_to: Optional[str] = None
     requires_approval: bool = False
 
-    @validator("ticket_type")
+    @field_validator("ticket_type")
     def _vtype(cls, v: str) -> str:
         if v not in _VALID_TYPES:
             raise ValueError(f"Invalid ticket_type: {v}")
         return v
 
-    @validator("priority")
+    @field_validator("priority")
     def _vprio(cls, v: str) -> str:
         if v not in _VALID_PRIORITIES:
             raise ValueError(f"Invalid priority: {v}")
@@ -316,19 +316,19 @@ class TicketUpdate(BaseModel):
     customer_email: Optional[str] = None
     auto_notify_customer: Optional[bool] = None
 
-    @validator("ticket_type")
+    @field_validator("ticket_type")
     def _vtype(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _VALID_TYPES:
             raise ValueError(f"Invalid ticket_type: {v}")
         return v
 
-    @validator("priority")
+    @field_validator("priority")
     def _vprio(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _VALID_PRIORITIES:
             raise ValueError(f"Invalid priority: {v}")
         return v
 
-    @validator("status")
+    @field_validator("status")
     def _vstatus(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _VALID_STATUSES:
             raise ValueError(f"Invalid status: {v}")
@@ -384,7 +384,7 @@ class SLAPolicyCreate(BaseModel):
     auto_escalate_on_breach: bool = False
     escalate_to_dept_id: Optional[int] = None
 
-    @validator("priority")
+    @field_validator("priority")
     def _vprio(cls, v: str) -> str:
         if v not in _VALID_PRIORITIES:
             raise ValueError(f"Invalid priority: {v}")
@@ -421,7 +421,8 @@ class AutoTicketCreate(BaseModel):
     auto_blocked:   bool = False
     requires_approval: bool = False
 
-    @root_validator(skip_on_failure=True)
+    @model_validator(mode='before')
+    @classmethod
     def _check_dept_provided(cls, values: dict) -> dict:
         if values.get("to_dept_id") is None and not values.get("to_dept_name"):
             raise ValueError("Either to_dept_id or to_dept_name must be provided")

@@ -1,15 +1,15 @@
 """
-Migration Engine  Γאפ  Pure logic for VMware Γזע PCD migration planning
+Migration Engine  —  Pure logic for VMware -> PCD migration planning
 ====================================================================
-All functions are pure (data in Γזע result out). No HTTP, no DB access.
+All functions are pure (data in -> result out). No HTTP, no DB access.
 Designed for testability and config-driven behaviour.
 
 Responsibilities:
-  Γאó RVTools XLSX column normalization & fuzzy matching
-  Γאó Tenant detection heuristics
-  Γאó Risk / complexity scoring
-  Γאó Warm vs cold classification
-  Γאó Bandwidth & downtime estimation (Phase 3 Γאפ stubs here)
+  - RVTools XLSX column normalization & fuzzy matching
+  - Tenant detection heuristics
+  - Risk / complexity scoring
+  - Warm vs cold classification
+  - Bandwidth & downtime estimation (Phase 3 — stubs here)
 """
 
 from __future__ import annotations
@@ -1465,12 +1465,12 @@ def compute_node_sizing(
 
     Key principles
     ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
-    Γאó The max_util_pct (default 70 %) IS the HA strategy.  At 70 % utilisation
+    - The max_util_pct (default 70 %) IS the HA strategy.  At 70 % utilisation
       the cluster can absorb a node failure without guest impact Γאפ we do NOT add
       separate "HA spare" nodes on top.
-    Γאó If live_cluster data is provided it takes precedence over node_profile
+    - If live_cluster data is provided it takes precedence over node_profile
       dimensions, so per-node capacity is derived from the real hardware.
-    Γאó peak_buffer_pct adds a future-growth / spike buffer to the migration
+    - peak_buffer_pct adds a future-growth / spike buffer to the migration
       workload before checking whether it fits into available headroom.
     """
     import math

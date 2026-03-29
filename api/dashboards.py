@@ -500,20 +500,21 @@ async def get_health_summary(
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-            region_filter = "AND region_id = %s" if region_id else ""
+            region_where  = "WHERE region_id = %s" if region_id else ""
+            region_and    = "AND region_id = %s"   if region_id else ""
             region_params = (region_id,) if region_id else ()
         
             # Get resource counts (separate queries to avoid cartesian products)
             cursor.execute("SELECT COUNT(*) as total_tenants FROM projects")
             total_tenants = (cursor.fetchone() or {}).get("total_tenants", 0)
 
-            cursor.execute(f"SELECT COUNT(*) as total_vms FROM servers {region_filter.replace('AND', 'WHERE', 1)}", region_params)
+            cursor.execute(f"SELECT COUNT(*) as total_vms FROM servers {region_where}", region_params)
             total_vms_count = (cursor.fetchone() or {}).get("total_vms", 0)
 
-            cursor.execute(f"SELECT COUNT(*) as total_volumes FROM volumes {region_filter.replace('AND', 'WHERE', 1)}", region_params)
+            cursor.execute(f"SELECT COUNT(*) as total_volumes FROM volumes {region_where}", region_params)
             total_volumes_count = (cursor.fetchone() or {}).get("total_volumes", 0)
 
-            cursor.execute(f"SELECT COUNT(*) as total_networks FROM networks {region_filter.replace('AND', 'WHERE', 1)}", region_params)
+            cursor.execute(f"SELECT COUNT(*) as total_networks FROM networks {region_where}", region_params)
             total_networks_count = (cursor.fetchone() or {}).get("total_networks", 0)
 
             counts = {
@@ -531,11 +532,11 @@ async def get_health_summary(
             running = dict(cursor.fetchone() or {})
 
             # Get total hosts (hypervisors)
-            cursor.execute(f"SELECT COUNT(*) as total_hosts FROM hypervisors {region_filter.replace('AND', 'WHERE', 1)}", region_params)
+            cursor.execute(f"SELECT COUNT(*) as total_hosts FROM hypervisors {region_where}", region_params)
             hosts_count = dict(cursor.fetchone() or {})
 
             # Snapshot coverage and freshness
-            cursor.execute(f"SELECT COUNT(*) as total_snapshots FROM snapshots {region_filter.replace('AND', 'WHERE', 1)}", region_params)
+            cursor.execute(f"SELECT COUNT(*) as total_snapshots FROM snapshots {region_where}", region_params)
             snapshots_count = dict(cursor.fetchone() or {})
 
             if region_id:

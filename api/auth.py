@@ -92,12 +92,11 @@ class UserRole(BaseModel):
 
 # Database connection helper
 def get_auth_db_conn():
-    """Get database connection for authentication operations.
-    DEPRECATED: prefer `with get_connection() as conn:` from db_pool.
-    Kept for backward compat — returns a pooled connection.
-    """
-    from db_pool import get_pool
-    return get_pool().getconn()
+    """DEPRECATED: use `with get_connection() as conn:` from db_pool instead."""
+    raise RuntimeError(
+        "get_auth_db_conn() is deprecated. "
+        "Use 'with get_connection() as conn:' from db_pool instead."
+    )
 
 # LDAP Authentication
 class LDAPAuthenticator:

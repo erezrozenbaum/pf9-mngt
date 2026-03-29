@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.82.31  
+**Version**: 1.82.32  
 **Last Updated**: March 26, 2026  
 **Audience**: System administrators and platform operators
 
@@ -2132,6 +2132,12 @@ async def get_api_metrics_authenticated():
 - Track error rates and patterns
 - Capacity planning (requests/second trends)
 - SLA compliance monitoring
+
+> **Note — per-worker counters**: `PerformanceMetrics` stores data in process memory.
+> In a multi-worker gunicorn deployment or a multi-pod Kubernetes deployment each
+> worker / pod exposes its own slice of traffic from `/api-metrics`. There is no
+> cross-process aggregation. To get a cluster-wide view, scrape the endpoint on each
+> pod and sum the counters in your observability tool (Prometheus / Grafana).
 
 ---
 

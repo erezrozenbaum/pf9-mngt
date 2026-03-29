@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
-from pydantic import BaseModel, validator, root_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from pf9_control import get_client
 from auth import require_permission, get_current_user, get_effective_region_filter
@@ -362,13 +362,13 @@ class NetworkConfig(BaseModel):
     allocation_pool_start: str = ""
     allocation_pool_end: str = ""
 
-    @validator("network_kind")
+    @field_validator("network_kind")
     def validate_kind(cls, v):
         if v not in ("physical_managed", "physical_l2", "virtual"):
             raise ValueError("network_kind must be physical_managed, physical_l2, or virtual")
         return v
 
-    @validator("network_type")
+    @field_validator("network_type")
     def validate_net_type(cls, v):
         if v not in ("vlan", "flat"):
             raise ValueError("network_type must be vlan or flat")
@@ -420,14 +420,15 @@ class ProvisionRequest(BaseModel):
     # Region
     region_id: Optional[str] = None   # target PF9 region (Phase 6)
 
-    @validator("user_role")
+    @field_validator("user_role")
     def validate_role(cls, v):
         # Accept any role name — will be validated against Keystone at provision time
         if not v or not v.strip():
             raise ValueError("user_role is required")
         return v.strip()
 
-    @root_validator(pre=True)
+    @model_validator(mode='before')
+    @classmethod
     def backfill_networks_from_legacy(cls, values):
         """If `networks` is absent/empty but legacy create_network=True, convert to NetworkConfig."""
         nets = values.get("networks") or []

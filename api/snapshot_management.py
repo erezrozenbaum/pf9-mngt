@@ -5,7 +5,7 @@ Handles snapshot policy sets, assignments, exclusions, runs, and records
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ValidationInfo
 from fastapi import HTTPException, status, Depends
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -34,16 +34,16 @@ class SnapshotPolicySetCreate(BaseModel):
     retention_map: Dict[str, int] = Field(..., min_items=1)  # {"daily_5": 5}
     priority: int = Field(default=0, ge=0, le=1000)
     
-    @validator('policies')
+    @field_validator('policies')
     def validate_policies(cls, v):
         if not v:
             raise ValueError("At least one policy must be specified")
         return v
     
-    @validator('retention_map')
-    def validate_retention_map(cls, v, values):
-        if 'policies' in values:
-            for policy in values['policies']:
+    @field_validator('retention_map')
+    def validate_retention_map(cls, v, info: ValidationInfo):
+        if 'policies' in (info.data or {}):
+            for policy in info.data['policies']:
                 if policy not in v:
                     raise ValueError(f"retention_map must include all policies. Missing: {policy}")
         return v

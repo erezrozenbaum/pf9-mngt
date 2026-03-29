@@ -7,6 +7,7 @@ import logging
 import json
 import time
 import uuid
+from contextlib import asynccontextmanager
 from typing import Optional, List, Any, Dict
 from datetime import datetime, timedelta, timezone
 
@@ -17,7 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -119,7 +120,7 @@ class CreateFlavorRequest(BaseModel):
     ephemeral: Optional[int] = 0
     is_public: Optional[bool] = True
     
-    @validator('name')
+    @field_validator('name')
     def validate_name(cls, v):
         if not v or not v.strip():
             raise ValueError('Name cannot be empty')
@@ -129,19 +130,19 @@ class CreateFlavorRequest(BaseModel):
             raise ValueError('Name must be 64 characters or less')
         return v.strip()
     
-    @validator('vcpus')
+    @field_validator('vcpus')
     def validate_vcpus(cls, v):
         if v < 1 or v > 64:
             raise ValueError('vCPUs must be between 1 and 64')
         return v
     
-    @validator('ram')
+    @field_validator('ram')
     def validate_ram(cls, v):
         if v < 128 or v > 131072:  # 128MB to 128GB
             raise ValueError('RAM must be between 128MB and 128GB')
         return v
     
-    @validator('disk')
+    @field_validator('disk')
     def validate_disk(cls, v):
         if v < 0 or v > 2048:  # 0GB to 2TB
             raise ValueError('Disk must be between 0GB and 2TB')
@@ -153,7 +154,7 @@ class CreateNetworkRequest(BaseModel):
     shared: Optional[bool] = False
     external: Optional[bool] = False
     
-    @validator('name')
+    @field_validator('name')
     def validate_name(cls, v):
         if not v or not v.strip():
             raise ValueError('Name cannot be empty')
@@ -163,7 +164,7 @@ class CreateNetworkRequest(BaseModel):
             raise ValueError('Name must be 64 characters or less')
         return v.strip()
     
-    @validator('tenant_id')
+    @field_validator('tenant_id')
     def validate_tenant_id(cls, v):
         if not v or not v.strip():
             raise ValueError('Tenant ID cannot be empty')
@@ -175,7 +176,7 @@ class CreateSecurityGroupRequest(BaseModel):
     description: Optional[str] = ""
     project_id: Optional[str] = None
 
-    @validator('name')
+    @field_validator('name')
     def validate_name(cls, v):
         if not v or not v.strip():
             raise ValueError('Name cannot be empty')
@@ -197,31 +198,31 @@ class CreateSecurityGroupRuleRequest(BaseModel):
     ethertype: Optional[str] = "IPv4"
     description: Optional[str] = ""
 
-    @validator('direction')
+    @field_validator('direction')
     def validate_direction(cls, v):
         if v not in ('ingress', 'egress'):
             raise ValueError('Direction must be "ingress" or "egress"')
         return v
 
-    @validator('protocol')
+    @field_validator('protocol')
     def validate_protocol(cls, v):
         if v is not None and v not in ('tcp', 'udp', 'icmp', 'icmpv6', 'any'):
             raise ValueError('Protocol must be tcp, udp, icmp, icmpv6, any, or null')
         return v
 
-    @validator('ethertype')
+    @field_validator('ethertype')
     def validate_ethertype(cls, v):
         if v not in ('IPv4', 'IPv6'):
             raise ValueError('Ethertype must be "IPv4" or "IPv6"')
         return v
 
-    @validator('port_range_min')
+    @field_validator('port_range_min')
     def validate_port_min(cls, v):
         if v is not None and (v < 1 or v > 65535):
             raise ValueError('Port must be between 1 and 65535')
         return v
 
-    @validator('port_range_max')
+    @field_validator('port_range_max')
     def validate_port_max(cls, v):
         if v is not None and (v < 1 or v > 65535):
             raise ValueError('Port must be between 1 and 65535')
@@ -310,11 +311,16 @@ def verify_admin_credentials(credentials: HTTPBasicCredentials = Depends(securit
 
     return True
 
-app = FastAPI(title=APP_NAME)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await startup_event()
+    yield
+    await shutdown_event()
+
+app = FastAPI(title=APP_NAME, lifespan=lifespan)
 
 _sla_task: asyncio.Task = None
 
-@app.on_event("shutdown")
 async def shutdown_event():
     if _sla_task and not _sla_task.done():
         _sla_task.cancel()
@@ -718,7 +724,6 @@ def _seed_default_cluster() -> None:
 
 
 
-@app.on_event("startup")
 async def startup_event():
     """Initialize authentication system on startup"""
     import asyncio

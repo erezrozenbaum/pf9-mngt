@@ -24,7 +24,7 @@ import logging
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, get_current_user, User, get_effective_region_filter
@@ -119,7 +119,7 @@ class AddUserRequest(BaseModel):
     project_id: str = Field(..., description="Tenant to assign the user to")
     domain_id: str = Field(..., description="Domain the user belongs to")
 
-    @validator("password")
+    @field_validator("password")
     def validate_password(cls, v):
         if len(v) < 8:
             raise ValueError("password must be at least 8 characters")
@@ -131,7 +131,7 @@ class AddUserRequest(BaseModel):
             raise ValueError("password must contain at least one special character")
         return v
 
-    @validator("role")
+    @field_validator("role")
     def validate_role(cls, v):
         if v not in ("admin", "member", "reader"):
             raise ValueError("Role must be admin, member, or reader")
@@ -143,7 +143,7 @@ class AssignRoleRequest(BaseModel):
     project_id: str
     role_name: str = Field(..., description="Role: admin, member, or reader")
 
-    @validator("role_name")
+    @field_validator("role_name")
     def validate_role(cls, v):
         if v not in ("admin", "member", "reader"):
             raise ValueError("Role must be admin, member, or reader")
@@ -157,7 +157,7 @@ class CreateFlavorRequest(BaseModel):
     disk_gb: int = Field(..., ge=0, le=2048, description="Root disk in GB")
     is_public: bool = True
 
-    @validator("name")
+    @field_validator("name")
     def validate_name(cls, v):
         import re
         if not re.match(r'^[a-zA-Z0-9._-]+$', v):
@@ -223,7 +223,7 @@ class CreateSGRuleRequest(BaseModel):
     ethertype: str = "IPv4"
     description: str = ""
 
-    @validator("direction")
+    @field_validator("direction")
     def validate_direction(cls, v):
         if v not in ("ingress", "egress"):
             raise ValueError("Direction must be ingress or egress")

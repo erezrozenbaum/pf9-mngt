@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.32] - 2026-03-29
+
+### Fixed
+- **API startup/shutdown: deprecated `@app.on_event` replaced with lifespan** (`api/main.py`, `monitoring/main.py`)
+  — FastAPI deprecated `@app.on_event("startup"/"shutdown")` in v0.93+. Both apps now use the
+  recommended `@asynccontextmanager` lifespan context manager, eliminating deprecation warnings
+  on every startup.
+- **Pydantic v2: all `@validator` decorators upgraded to `@field_validator`** (`api/main.py`,
+  `api/notification_routes.py`, `api/provisioning_routes.py`, `api/migration_routes.py`,
+  `api/resource_management.py`, `api/snapshot_management.py`, `api/ticket_routes.py`)
+  — The project uses Pydantic `==2.9.2` but retained v1 compatibility shims. All models now
+  use the native v2 `@field_validator` / `@model_validator` API, removing deprecation warnings
+  and aligning with Pydantic v2 semantics. `validate_retention_map` in
+  `snapshot_management.py` updated to use `ValidationInfo`.
+- **LDAP sync rate limiter: Redis-backed sliding window** (`api/ldap_sync_routes.py`)
+  — The previous in-memory `_rate_store` dict was per-process: with multiple gunicorn workers
+  or K8s pods the effective limit was `N × 10 req/min`. Rate-limit state is now stored in
+  Redis using a sorted-set sliding window; falls back to the per-process dict when Redis is
+  unavailable, preserving Docker Compose dev behaviour.
+- **Dashboard queries: fragile `region_filter.replace()` removed** (`api/dashboards.py`)
+  — Five SQL COUNT queries built the `WHERE` clause from a bare string replace on an `AND`
+  prefix. Replaced with explicit `region_where` / `region_and` variables, making each query
+  safe under any future refactor.
+- **Docker Compose: `snapshot_worker` and `scheduler_worker` now use Docker secrets** (`docker-compose.yml`)
+  — Both workers received `PF9_PASSWORD`, `PF9_DB_PASSWORD`, and `JWT_SECRET_KEY` as plain
+  environment variables (visible in `docker inspect`). They now mount the `pf9_password`,
+  `db_password`, and `jwt_secret` secret files already defined in the `secrets:` block, matching
+  the pattern used by `ldap_sync_worker` and `pf9_api`.
+- **`get_auth_db_conn()` raises `RuntimeError`** (`api/auth.py`)
+  — The deprecated helper silently leaked pooled connections when called. It now raises
+  `RuntimeError` to surface any remaining callers immediately.
+- **`migration_engine.py` docstring mojibake fixed** (`api/migration_engine.py`)
+  — Module docstring contained `Γאפ` / `Γזע` / `Γאó` garbled from a Windows-1252 / UTF-8
+  encoding mismatch. Replaced with correct ASCII punctuation.
+- **Config validator: Docker secret files accepted for credential vars** (`api/config_validator.py`)
+  — The startup validator raised a false-alarm error for `PF9_DB_PASSWORD`, `PF9_PASSWORD`,
+  and `JWT_SECRET_KEY` when those values were supplied via Docker secrets (file under
+  `/run/secrets/`) rather than environment variables. A `_var_is_set()` helper now checks
+  both sources, removing the false-alarm without altering validation for genuinely missing creds.
+- **`monitoring/main.py`: `TrustedHostMiddleware` wildcard removed** (`monitoring/main.py`)
+  — `allowed_hosts=["localhost", "127.0.0.1", "*"]` negated the middleware. Replaced with an
+  explicit list of Docker Compose (`pf9_monitoring`, `pf9_api`) and Kubernetes (`pf9-monitoring`,
+  `pf9-api`) service name variants.
+
+### Notes
+- `/api-metrics` reports per-worker counters. In a multi-worker gunicorn or multi-pod K8s
+  deployment each worker/pod shows its own slice of traffic — there is no cross-process
+  aggregation. See ADMIN_GUIDE.md for details.
+
 ## [1.82.31] - 2026-03-27
 
 ### Fixed

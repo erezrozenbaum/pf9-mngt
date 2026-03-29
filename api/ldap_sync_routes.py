@@ -33,6 +33,7 @@ Security notes
 
 import ipaddress
 import logging
+import os
 import socket
 import time
 from collections import defaultdict
@@ -75,24 +76,57 @@ _BLOCKED_RANGES = [
 ]
 
 # ---------------------------------------------------------------------------
-# Simple in-memory rate limiter for /test and /preview (10 req/min per user)
+# Rate limiter for /test and /preview (10 req/min per user)
+# Uses Redis when available so the limit is shared across all gunicorn workers
+# and K8s pods; falls back to a per-process dict when Redis is unavailable.
 # ---------------------------------------------------------------------------
 _rate_store: Dict[str, List[float]] = defaultdict(list)
 _RATE_LIMIT = 10
 _RATE_WINDOW = 60  # seconds
 
+def _get_redis():
+    """Return a Redis client or None if Redis is not reachable."""
+    try:
+        import redis as _redis_lib
+        _r = _redis_lib.Redis(
+            host=os.getenv("REDIS_HOST", "redis"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
+            db=int(os.getenv("REDIS_DB", "0")),
+            socket_connect_timeout=1,
+        )
+        _r.ping()
+        return _r
+    except Exception:
+        return None
+
 
 def _check_rate_limit(username: str, endpoint: str) -> None:
-    key = f"{username}:{endpoint}"
-    now = time.monotonic()
-    window_start = now - _RATE_WINDOW
-    _rate_store[key] = [t for t in _rate_store[key] if t > window_start]
-    if len(_rate_store[key]) >= _RATE_LIMIT:
+    key = f"ldap_rate:{username}:{endpoint}"
+    r = _get_redis()
+    if r is not None:
+        # Sliding-window counter in Redis using a sorted set
+        now = time.time()
+        window_start = now - _RATE_WINDOW
+        pipe = r.pipeline()
+        pipe.zremrangebyscore(key, "-inf", window_start)
+        pipe.zadd(key, {str(now): now})
+        pipe.zcard(key)
+        pipe.expire(key, _RATE_WINDOW + 5)
+        results = pipe.execute()
+        count = results[2]
+    else:
+        # In-memory fallback (per-process only)
+        now = time.monotonic()
+        window_start = now - _RATE_WINDOW
+        _rate_store[key] = [t for t in _rate_store[key] if t > window_start]
+        _rate_store[key].append(now)
+        count = len(_rate_store[key])
+
+    if count > _RATE_LIMIT:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Rate limit exceeded: max {_RATE_LIMIT} requests per minute",
         )
-    _rate_store[key].append(now)
 
 
 # ---------------------------------------------------------------------------
