@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.0] - 2026-03-29
+
+### Changed
+- **UI: navigation migrated from horizontal two-row bar to vertical collapsible sidebar** (`pf9-ui/src/components/GroupedNavBar.tsx`, `pf9-ui/src/App.tsx`, `pf9-ui/src/App.css`)
+  — The top two-row navigation (group pills row + tab items row) has been replaced with a
+  fixed 240 px left sidebar. Group headers are collapsible accordion sections; tab items
+  appear as indented rows beneath the active group. All existing RBAC visibility rules,
+  department controls, `is_action` accent styling, and drag-to-reorder behaviour are fully
+  preserved — only the rendering axis changed (horizontal → vertical).
+  The main content area (`pf9-page-body`) now occupies the remaining viewport width.
+
+### Added
+- **Architecture diagram in README** — ASCII block replaced with `docs/images/Architecture.png`,
+  a full system-boundary diagram showing ingress, API, background workers, and external Platform9
+  integration.
+
+---
+
 ## [1.82.33] - 2026-03-29
 
 ### Fixed

@@ -3065,98 +3065,107 @@ const App: React.FC = () => {
     <ThemeProvider>
       <ClusterContextProvider userRole={authUser?.role ?? ""}>
       <div className="pf9-app">
-        {isDemo && (
-          <div className="demo-banner">
-            <span className="demo-badge">DEMO</span>
-            You are viewing the portal with sample data — no live Platform9 environment is connected.
-          </div>
-        )}
-        <header className="pf9-header">
-          <h1>PF9 Management Portal</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            {authUser && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '8px' }}>
-                <span style={{ fontSize: '0.9rem', color: 'var(--color-text-secondary)' }}>
-                  👤 {authUser.username} ({authUser.role})
-                </span>
+        {/* ── Sidebar ── */}
+        <aside className="pf9-sidebar">
+          <div className="pf9-sidebar-brand">PF9 Management Portal</div>
+          {useGroupedNav ? (
+            <GroupedNavBar
+              groups={navData!.nav}
+              activeGroupKey={activeGroupKey}
+              activeTabKey={activeTab}
+              expandedGroupKey={expandedGroupKey}
+              onGroupChange={setActiveGroupKey}
+              onTabChange={(key) => setActiveTab(key as ActiveTab)}
+              onToggleExpand={handleToggleExpand}
+              onGroupReorder={reorderGroups}
+              onItemReorder={reorderItems}
+              onResetOrder={resetOrder}
+            />
+          ) : (
+            <div className="pf9-tabs">
+              {visibleTabs.map(tab => (
                 <button
-                  onClick={() => setShowMfaSettings(true)}
-                  title="MFA Settings"
-                  style={{
-                    padding: '6px 12px',
-                    fontSize: '0.85rem',
-                    background: '#6366f1',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
+                  key={tab.id}
+                  className={[
+                    'pf9-tab',
+                    tab.actionStyle ? 'pf9-tab-action' : '',
+                    activeTab === tab.id ? 'pf9-tab-active' : '',
+                  ].filter(Boolean).join(' ')}
+                  onClick={() => setActiveTab(tab.id)}
+                  draggable
+                  onDragStart={() => handleTabDragStart(tab.id)}
+                  onDragOver={(e) => handleTabDragOver(e, tab.id)}
+                  onDrop={handleTabDrop}
+                  title="Drag to reorder"
                 >
-                  🔐 MFA
+                  {tab.label}
                 </button>
-                <button
-                  onClick={handleLogout}
-                  style={{
-                    padding: '6px 14px',
-                    fontSize: '0.85rem',
-                    background: '#f44336',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Logout
-                </button>
-              </div>
-            )}
-            {useGroupedNav ? (
-              <GroupedNavBar
-                groups={navData!.nav}
-                activeGroupKey={activeGroupKey}
-                activeTabKey={activeTab}
-                expandedGroupKey={expandedGroupKey}
-                onGroupChange={setActiveGroupKey}
-                onTabChange={(key) => setActiveTab(key as ActiveTab)}
-                onToggleExpand={handleToggleExpand}
-                onGroupReorder={reorderGroups}
-                onItemReorder={reorderItems}
-                onResetOrder={resetOrder}
-              />
-            ) : (
-              <div className="pf9-tabs">
-                {visibleTabs.map(tab => (
-                  <button
-                    key={tab.id}
-                    className={[
-                      'pf9-tab',
-                      tab.actionStyle ? 'pf9-tab-action' : '',
-                      activeTab === tab.id ? 'pf9-tab-active' : '',
-                    ].filter(Boolean).join(' ')}
-                    onClick={() => setActiveTab(tab.id)}
-                    draggable
-                    onDragStart={() => handleTabDragStart(tab.id)}
-                    onDragOver={(e) => handleTabDragOver(e, tab.id)}
-                    onDrop={handleTabDrop}
-                    title="Drag to reorder"
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-                <button
-                  className="pf9-tab"
-                  onClick={handleResetTabOrder}
-                  title="Reset tab order to default"
-                  style={{ fontSize: '0.75rem', opacity: 0.6, padding: '4px 8px', minWidth: 'auto' }}
-                >
-                  ↩
-                </button>
-              </div>
-            )}
+              ))}
+              <button
+                className="pf9-tab"
+                onClick={handleResetTabOrder}
+                title="Reset tab order to default"
+                style={{ fontSize: '0.75rem', opacity: 0.6, padding: '4px 8px', minWidth: 'auto' }}
+              >
+                ↩
+              </button>
+            </div>
+          )}
+          <div className="pf9-sidebar-footer">
             <RegionSelector />
-            <ThemeToggle />
           </div>
-        </header>
+        </aside>
+
+        {/* ── Main page body ── */}
+        <div className="pf9-page-body">
+          {isDemo && (
+            <div className="demo-banner">
+              <span className="demo-badge">DEMO</span>
+              You are viewing the portal with sample data — no live Platform9 environment is connected.
+            </div>
+          )}
+          <header className="pf9-header">
+            <h1>PF9 Management Portal</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              {authUser && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '8px' }}>
+                  <span style={{ fontSize: '0.9rem', color: 'var(--color-text-secondary)' }}>
+                    👤 {authUser.username} ({authUser.role})
+                  </span>
+                  <button
+                    onClick={() => setShowMfaSettings(true)}
+                    title="MFA Settings"
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '0.85rem',
+                      background: '#6366f1',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🔐 MFA
+                  </button>
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      padding: '6px 14px',
+                      fontSize: '0.85rem',
+                      background: '#f44336',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Logout
+                  </button>
+                </div>
+              )}
+              <ThemeToggle />
+            </div>
+          </header>
 
       <section className="pf9-subtitle">
         {activeTab === "dashboard"
@@ -6450,7 +6459,8 @@ const App: React.FC = () => {
           />
         </div>
       )}
-    </div>
+        </div>
+      </div>
       </ClusterContextProvider>
     </ThemeProvider>
   );

@@ -1,24 +1,74 @@
 .pf9-app {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
-  padding: 20px;
-  background: linear-gradient(135deg, var(--color-background) 0%, var(--color-surface) 100%);
+  padding: 0;
+  background: var(--color-background);
   color: var(--color-text-primary);
   transition: background-color 0.3s ease, color 0.3s ease;
   min-height: 100vh;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+/* ── Sidebar ── */
+.pf9-sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.06);
+  scrollbar-width: thin;
+}
+
+.pf9-sidebar-brand {
+  padding: 18px 16px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-primary);
+  border-bottom: 1px solid var(--color-border);
+  letter-spacing: -0.3px;
+  flex-shrink: 0;
+  line-height: 1.3;
+}
+
+.pf9-sidebar-footer {
+  margin-top: auto;
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+/* ── Main page body (right of sidebar) ── */
+.pf9-page-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-background);
+  padding: 0 20px;
 }
 
 .pf9-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
-  padding: 16px 0;
-  border-bottom: 2px solid var(--color-border);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border);
   background: var(--color-surface);
-  margin: -20px -20px 20px -20px;
-  padding: 20px;
   box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+  margin: 0 -20px;
+  padding-left: 20px;
+  padding-right: 20px;
 }
 
 .pf9-header h1 {
@@ -98,107 +148,178 @@
   border-left: 3px solid var(--color-action-accent-dark);
 }
 
-/* ── Grouped navigation (2-level) ── */
+/* ── Sidebar navigation (vertical 2-level) ── */
 .pf9-grouped-nav {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: 100%;
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+  gap: 0;
 }
 
-.pf9-nav-groups {
+.pf9-nav-section {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--color-border);
+  flex-direction: column;
 }
 
 .pf9-nav-group-pill {
-  padding: 8px 18px;
-  border-radius: 20px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  padding: 9px 12px 9px 16px;
+  border-radius: 0;
+  border: none;
+  border-left: 3px solid transparent;
+  background: transparent;
   color: var(--color-text-primary);
   cursor: pointer;
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.2px;
-  transition: all 0.2s ease;
+  letter-spacing: 0.1px;
+  transition: all 0.15s ease;
   display: flex;
   align-items: center;
-  gap: 6px;
-  box-shadow: var(--shadow-sm);
+  gap: 7px;
+  box-shadow: none;
   user-select: none;
+  width: 100%;
+  text-align: left;
 }
 
 .pf9-nav-group-pill:hover {
-  background: var(--color-primary-light);
-  color: white;
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  background: var(--color-surface-elevated);
+  color: var(--color-primary);
+  transform: none;
+  box-shadow: none;
 }
 
 .pf9-nav-group-active {
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
-  color: white;
-  border-color: var(--color-primary);
-  box-shadow: var(--shadow-md);
+  border-left: 3px solid var(--color-primary);
+  background: rgba(25, 118, 210, 0.07);
+  color: var(--color-primary);
+  box-shadow: none;
 }
 
 .pf9-nav-group-icon {
-  font-size: 15px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.pf9-nav-group-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf9-nav-chevron {
+  margin-left: auto;
+  font-size: 10px;
+  opacity: 0.5;
+  flex-shrink: 0;
 }
 
 .pf9-nav-items {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0;
+  background: var(--color-surface-elevated);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+/* Sidebar tab (nav item under a group) */
+.pf9-grouped-nav .pf9-tab {
+  padding: 7px 12px 7px 30px;
+  border-radius: 0;
+  border: none;
+  border-left: 3px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 400;
+  transition: all 0.15s ease;
+  width: 100%;
+  text-align: left;
+  box-shadow: none;
+  margin-right: 0;
+  transform: none;
+  user-select: none;
+}
+
+.pf9-grouped-nav .pf9-tab:hover {
+  background: var(--color-table-row-hover);
+  color: var(--color-primary);
+  transform: none;
+  box-shadow: none;
+}
+
+.pf9-grouped-nav .pf9-tab-active {
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-table-row-hover);
+  color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: none;
+  transform: none;
+}
+
+.pf9-grouped-nav .pf9-tab-action {
+  border-left: 3px solid var(--color-action-accent);
+  background: var(--color-action-accent-bg);
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+}
+
+.pf9-grouped-nav .pf9-tab-action:hover {
+  background: rgba(230, 81, 0, 0.1);
+  color: var(--color-action-accent);
+}
+
+.pf9-grouped-nav .pf9-tab-action.pf9-tab-active {
+  border-left: 3px solid var(--color-action-accent);
+  background: rgba(230, 81, 0, 0.12);
+  color: var(--color-action-accent);
 }
 
 /* Drag-and-drop visual feedback */
 .pf9-nav-dragging {
   opacity: 0.5;
-  transform: scale(0.95);
+  transform: scale(0.97);
 }
 
 /* Action / write-capable group pill accent */
 .pf9-nav-group-action:not(.pf9-nav-group-active) {
-  border-color: var(--color-action-accent-border);
+  border-left-color: var(--color-action-accent-border);
   background: var(--color-action-accent-bg);
 }
 
 .pf9-nav-group-action:not(.pf9-nav-group-active):hover {
-  background: var(--color-action-accent);
-  color: white;
-  border-color: var(--color-action-accent);
+  background: rgba(230, 81, 0, 0.08);
+  color: var(--color-action-accent);
 }
 
 .pf9-nav-group-action.pf9-nav-group-active {
-  background: linear-gradient(135deg, var(--color-action-accent), var(--color-action-accent-dark));
-  border-color: var(--color-action-accent);
-}
-
-.pf9-nav-group-expanded:not(.pf9-nav-group-active) {
-  border-color: var(--color-primary-light);
-  box-shadow: 0 0 0 1px var(--color-primary-light);
+  border-left-color: var(--color-action-accent);
+  background: rgba(230, 81, 0, 0.07);
+  color: var(--color-action-accent);
 }
 
 .pf9-nav-default-badge {
-  font-size: 10px;
+  font-size: 9px;
   color: #fbbf24;
-  margin-left: 2px;
+  flex-shrink: 0;
 }
 
 .pf9-nav-reset-btn {
-  font-size: 0.75rem !important;
-  opacity: 0.5;
-  padding: 4px 10px !important;
+  font-size: 0.72rem !important;
+  opacity: 0.4;
+  padding: 8px 16px !important;
   min-width: auto;
   transition: opacity 0.2s;
+  margin-top: 4px;
+  border-top: 1px solid var(--color-border-light) !important;
 }
 .pf9-nav-reset-btn:hover {
-  opacity: 1;
+  opacity: 0.8;
 }
 
 /* Enhanced Theme Toggle Styles */
@@ -229,6 +350,7 @@
   font-size: 13px;
   color: var(--color-text-secondary);
   margin-bottom: 8px;
+  padding-top: 8px;
 }
 
 .pf9-toolbar {
