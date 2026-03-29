@@ -1,4 +1,4 @@
-# pf9-mngt
+﻿# pf9-mngt
 
 <p align="center">
   <strong>Operational Control Plane for Platform9 / OpenStack</strong><br>
@@ -148,27 +148,7 @@ After running Demo Mode you'll find:
 | **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
 | **LDAP Sync Worker** | Python / PostgreSQL / OpenLDAP | — | Bi-directional DB ↔ LDAP sync, polls every 30 s |
 
-```text
-Platform9 / OpenStack APIs
-           │
-     ┌─────┴─────┐
-     │  pf9-api  │  FastAPI / Gunicorn (4 workers)
-     └─────┬─────┘
-           │
-  ┌────────┼────────┬────────┐
-  │        │        │        │
-Redis     LDAP   pf9_db   nginx
-(cache)  (auth)(PostgreSQL)(TLS)
-           │
-  ┌────────┼──────────────────────────────────────┐
-  │        │         │         │          │          │
-Snapshot Backup  Metering   Search  Notifications  Scheduler  LDAP-Sync
-Worker   Worker   Worker    Worker    Worker         Worker     Worker
-           │
-     ┌─────┴─────┐
-     │  pf9-ui   │  React / Vite (served via nginx)
-     └───────────┘
-```
+![Architecture](docs/images/Architecture.png)
 
 > `pf9_scheduler_worker` (Docker container) runs `host_metrics_collector.py` (every 60 s) and `pf9_rvtools.py` (configurable interval or daily schedule) for infrastructure discovery and metrics collection. No Windows Task Scheduler dependency.
 
