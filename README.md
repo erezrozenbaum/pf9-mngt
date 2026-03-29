@@ -1,39 +1,91 @@
-# Platform9 Management System
+# pf9-mngt
 
-**Operational Management Platform for Platform9 / OpenStack**
+<p align="center">
+  <strong>Operational Control Plane for Platform9 / OpenStack</strong><br>
+  Visibility &nbsp;·&nbsp; Automation &nbsp;·&nbsp; Recovery &nbsp;·&nbsp; Governance &nbsp;·&nbsp; Multi-Region Control
+</p>
+
+<p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-1.82.33-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
-[![Platform](https://img.shields.io/badge/platform-Docker%20%7C%20Windows%20%7C%20Linux-informational.svg)](#-deployment-flexibility--you-decide-how-to-run-this)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
+[![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange.svg)](https://www.buymeacoffee.com/erezrozenbaum)
 
-pf9-mngt is an open-source operational management platform for Platform9 / OpenStack — it gives engineering and MSP teams automated snapshots, VM restore, full inventory persistence, and day-to-day monitoring in a single self-hosted stack.
+</p>
+
+> ⭐ If pf9-mngt saves your team time, [**star the repo**](https://github.com/erezrozenbaum/pf9-mngt) — it helps others find it.
 
 ---
 
-## What pf9-mngt Is
+## 🚨 The Day-2 Operations Reality
 
-- A **self-hosted operational layer** that continuously persists all Platform9 / OpenStack metadata into your own PostgreSQL database — independently of platform availability
-- A **snapshot automation engine** built from scratch (no native scheduler exists in Platform9 or OpenStack): quota-aware, multi-tenant, policy-driven, with SLA compliance reporting
-- A **VM restore system** with side-by-side and replace modes — full flavor, network, IP, credential, and volume automation (no native equivalent exists in OpenStack)
-- A **migration planning workbench** from RVTools ingestion through cohort design, wave planning, and PCD auto-provisioning
-- An **engineering dashboard** with 30+ management tabs, RBAC, full audit trail, metering/chargeback, notifications, runbooks, a support ticket system, and an AI Ops Copilot
+Provisioning is not the hard part anymore.
+
+Running infrastructure at scale is.
+
+What actually breaks in real Platform9 / OpenStack environments:
+
+- **Snapshot SLAs** across tenants — no native scheduler exists
+- **VM restore under pressure** — no native workflow; everything is manual reconstruction
+- **Metadata ownership** — resource names, relationships, and topology live on the platform, not with you
+- **Cross-tenant visibility** at scale — the native UI is per-tenant, not operational-aggregate
+- **Multi-region complexity** — managing multiple clusters with no unified console
+- **Coordination gaps** — between support, engineering, and management teams
+
+These are **Day-2 operations problems**. pf9-mngt solves them.
 
 ---
 
-## What pf9-mngt Is Not
+## 💡 What pf9-mngt Is
 
-- **Not a replacement for the official Platform9 UI** — it is a complementary operational layer that adds engineering workflows the native UI does not provide
-- **Not an official Platform9 product** — it is an independent open-source project, not endorsed by or affiliated with Platform9 Systems, Inc.
-- **Not a cloud control plane** — it does not replace Keystone, Nova, Cinder, or Neutron; it orchestrates them via their APIs
-- **Not intended for end users** — it is an engineering and MSP operations console for the team managing the platform
+A self-hosted operational platform that **extends** Platform9 / OpenStack — not replaces it.
+
+- A **persistent inventory engine** — all Platform9 / OpenStack metadata in your own PostgreSQL, always available, independent of platform uptime (the RVTools equivalent for OpenStack)
+- A **snapshot automation engine** — no native scheduler exists in Platform9 or OpenStack; this one is quota-aware, cross-tenant, policy-driven, with SLA compliance reporting
+- A **VM restore system** — full automation of flavor, network, IPs, credentials, and volumes; two modes (side-by-side and replace); no native equivalent exists in OpenStack
+- A **migration planning workbench** — from RVTools ingestion through cohort design, wave planning, and PCD auto-provisioning
+- A **unified engineering console** — 30+ management tabs, RBAC, metering, chargeback, runbooks, tickets, and AI Ops Copilot
+
+✔ Works alongside Platform9 via its APIs &nbsp;·&nbsp; ❌ Not a UI replacement &nbsp;·&nbsp; ❌ Not an official Platform9 product
 
 ---
 
-## 🚀 System Architecture
+## 🧠 Why This Matters
 
-**14-container microservices platform:**
+| Challenge | Native Platform9 | pf9-mngt |
+|-----------|-----------------|----------|
+| Cross-tenant visibility | Per-tenant only | Centralized persistent inventory |
+| Snapshot SLA enforcement | None built-in | Policy-driven, multi-tenant, audited |
+| VM restore workflow | Manual reconstruct | Full automation, two modes, dry-run |
+| Metadata ownership | Lives on the platform | Your PostgreSQL, always available |
+| Multi-region ops | Operationally complex | Unified console, one-click context switch |
+| Day-2 workflows | External tools | Built-in tickets, runbooks, metering |
+| VMware migration | No native tooling | End-to-end planner: RVTools → PCD |
+
+---
+
+## ⚡ Try It Now — Demo Mode (No Platform9 Required)
+
+Explore the full dashboard without a Platform9 environment:
+
+```powershell
+git clone https://github.com/erezrozenbaum/pf9-mngt.git
+cd pf9-mngt
+.\deployment.ps1   # select option 2 — Demo
+```
+
+Populates the database with 3 tenants, 35 VMs, 50+ volumes, snapshots, drift events, compliance reports, and a metrics cache. Every dashboard, report, and workflow is fully functional — no live cluster needed.
+
+> **UI:** http://localhost:5173 &nbsp;·&nbsp; **API Docs:** http://localhost:8000/docs
+
+---
+
+## 🏗️ Architecture
+
+**16-container microservices platform:**
 
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
@@ -52,6 +104,7 @@ pf9-mngt is an open-source operational management platform for Platform9 / OpenS
 | **Scheduler Worker** | Python | — | Host metrics collection + RVTools inventory (runs inside Docker) |
 | **Metering Worker** | Python / PostgreSQL | — | Resource metering every 15 minutes |
 | **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
+| **LDAP Sync Worker** | Python / PostgreSQL / OpenLDAP | — | Bi-directional DB ↔ LDAP sync, polls every 30 s |
 
 ```text
 Platform9 / OpenStack APIs
@@ -65,10 +118,10 @@ Platform9 / OpenStack APIs
 Redis     LDAP   pf9_db   nginx
 (cache)  (auth)(PostgreSQL)(TLS)
            │
-  ┌────────┼──────────────────────────────┐
-  │        │         │         │          │
-Snapshot Backup  Metering   Search  Notifications  Scheduler
-Worker   Worker   Worker    Worker    Worker         Worker
+  ┌────────┼──────────────────────────────────────┐
+  │        │         │         │          │          │
+Snapshot Backup  Metering   Search  Notifications  Scheduler  LDAP-Sync
+Worker   Worker   Worker    Worker    Worker         Worker     Worker
            │
      ┌─────┴─────┐
      │  pf9-ui   │  React / Vite (served via nginx)
@@ -275,7 +328,38 @@ A 15-minute explainer video walking through the UI and key features:
 
 ---
 
-## 🌟 Key Features
+## ⚙️ Core Capabilities
+
+### 🔍 Inventory & Drift Detection
+Persistent inventory outside Platform9 — 29 resource types, historical tracking, drift detection across tenants, domain/project mapping, CSV / Excel export.
+
+### 📸 Snapshot Automation & Compliance
+Policy-based snapshots (daily / monthly / custom), cross-tenant execution, quota-aware batching, retention enforcement, SLA compliance tracking, full audit visibility.
+
+### ♻️ Restore Workflows
+Side-by-side and replace modes, dry-run validation, full flavor / network / IP / credentials / volume automation, concurrent-restore prevention, complete audit logging.
+
+### 🗺️ Migration Planner
+RVTools ingestion → VM risk scoring → tenant scoping → network + flavor mapping → cohort design with ease scoring → wave planning with approval gates → PCD auto-provisioning → migration summary with throughput modeling.
+
+### 🌍 Multi-Region / Multi-Cluster
+Register multiple Platform9 control planes and regions. All inventory, reporting, and workers are region-aware. Unified console with one-click context switch. No restart required to add a new cluster.
+
+### 🎫 Ticketing System
+Full incident / change / request lifecycle, SLA tracking, auto-ticketing from health events (health score < 40, drift, graph deletes, runbook failures), department workflows, approval gates.
+
+### 📋 Runbooks
+25 built-in operational procedures covering VM recovery, security audits, quota management, capacity forecasting, and tenant offboarding. Parameterized, dry-run support, approval flows, export to CSV / JSON / PDF — integrated with the ticket system.
+
+### 📊 Metering & Chargeback
+Per-VM resource tracking, snapshot / restore metering, API usage metrics, efficiency scoring (excellent / good / fair / poor / idle), multi-category pricing, one-click CSV chargeback export.
+
+### 🤖 AI Ops Copilot
+40+ built-in intents with live SQL answers. Tenant / project / host scoping. Ollama (local, data never leaves your network) or OpenAI / Anthropic backends with automatic sensitive-data redaction.
+
+---
+
+## 🌟 Key Features — Technical Reference
 
 ### 🔐 Enterprise Authentication & Authorization
 - **LDAP Integration**: Production-ready OpenLDAP authentication — also compatible with Active Directory
@@ -902,7 +986,9 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 
 ---
 
-## 🎯 Recent Updates
+## 🎯 Recent Releases
+
+> 📋 Full version history for all 121 releases: [CHANGELOG.md](CHANGELOG.md)
 
 ### v1.82.33 — Hotfix: monitoring pod restart loop in Kubernetes
 
@@ -920,322 +1006,40 @@ A: Swagger docs at `http://<host>:8000/docs`, ReDoc at `http://<host>:8000/redoc
 - `monitoring/main.py` `TrustedHostMiddleware` wildcard `"*"` removed.
 - `migration_engine.py` module docstring mojibake fixed.
 
-### v1.82.31 — Fix metering worker 0 VMs via API fallback
+---
 
-- Metering worker now falls back to `/monitoring/vm-metrics` (DB-backed) when the monitoring
-  service returns 0 VMs (e.g. `PF9_HOSTS` not yet configured in Helm values). VMs Metered,
-  Resources, and Efficiency pages now populate immediately.
-- Extended field mapping to cover API shape: `cpu_total` → vcpus, `memory_allocated_mb`,
-  `storage_allocated_gb`.
+> For the full version history, see [CHANGELOG.md](CHANGELOG.md).
 
-### v1.82.29 — Fix metering dropdowns, Prometheus redirect, Inventory nav
+---
 
-- Metering filter dropdowns now show all projects/domains from identity tables, not just those
-  already present in metering_resources
-- Fixed Prometheus UI external URL (helm upgrade required on cluster)
-- Projects and Domains nav items moved to Inventory group (auto-migration on pod restart)
+## 👥 Who This Is For
 
-### v1.82.28 — Fix TrustedHostMiddleware 400 + monitoring collection not started
+- **MSPs running multi-tenant Platform9 environments** — multi-region console, per-customer chargeback, SLA enforcement, automated tenant onboarding and offboarding
+- **Enterprise OpenStack teams** — operational governance, snapshot compliance, capacity planning, VMware migration tooling
+- **Engineering teams responsible for Day-2 operations** — not provisioning, but everything that comes after it
 
-- Fixed `TrustedHostMiddleware` in `api/main.py` — added Kubernetes-style dash service names
-  (`pf9-api`, `pf9-ui`, `pf9-monitoring`) so intra-cluster requests no longer return 400
-- Fixed monitoring service startup: `prometheus_client.start_collection()` was never called;
-  VM/host metrics collection loop now starts on service startup
-- Fixed `PrometheusClient._collect_all_metrics()` to persist results to
-  `/tmp/cache/metrics_cache.json` so API endpoints actually serve collected data
+---
 
-### v1.82.27 — CI: fix sed regex to handle single-quoted tag overrides
+## 🎯 Positioning
 
-- Fixed `release.yml` `update-values` sed pattern to match single-quoted, double-quoted,
-  and unquoted per-service `tag:` overrides; `"?` only caught double-quotes, leaving
-  `pf9-api` and `pf9-snapshot-worker` stuck at the old image version after every release
+pf9-mngt is:
 
-### v1.82.26 — CI: fix YAML syntax error in release.yml (heredoc removed)
+- ❌ Not a UI replacement — it is an engineering console that adds workflows the native Platform9 UI does not provide
+- ❌ Not a cloud control plane — it orchestrates Platform9 / OpenStack via their existing APIs
+- ❌ Not a provisioning tool — it operates on what has already been provisioned
+- ✅ The **operational layer on top** — what you reach for when something breaks, needs auditing, or must be tracked at scale
 
-- Replaced Python3 heredoc (`<<'PYEOF'`) with `sed -E` one-liner in `release.yml`;
-  heredoc triggered GitHub Actions YAML parser error on line 245, causing Release
-  workflows #96/#97 to fail immediately without running any jobs
+---
 
-### v1.82.25 — CI: fix per-service tag overrides blocking api/snapshot-worker updates
+## 🔥 What Makes It Different
 
-- Fixed `release.yml` `update-values` job to clear stale per-service image tag overrides
-  in the deploy repo's `values.prod.yaml`, ensuring all services update on every release
+Most platforms solve provisioning.
 
-### v1.82.24 — Security: picomatch ReDoS patch
+pf9-mngt solves **what happens after deployment** — the snapshot SLAs that must hold, the 3am restore that must succeed, the compliance report due tomorrow, the capacity forecast before the cluster fills up, the VMware migration that has to go right.
 
-- Upgraded `picomatch` 4.0.3 → 4.0.4 (GHSA-c2c7-rcms-vvq1, GHSA-3y7f-55p6-f55q) in UI dependencies
+Built from real-world operations. 409+ commits, 121 releases, 16 containerized services.
 
-### v1.82.23 — K8s UI fixes: session restore, 401 auth, metrics routing, logo persistence, visibility UX
-- **Session restore**: page refresh no longer forces re-login; stored JWT is re-validated and `isAuthenticated` is restored on mount
-- **401 on domains/tenants/os-distribution**: data-loading effects now guard on `isAuthenticated`, eliminating token-less requests before login
-- **Metrics 404**: removed `metrics` from the ingress pf9-api regex — `/metrics/.*` now routes exclusively to `pf9-monitoring` as intended
-- **Logo persistence**: logo upload saves base64 in DB; `GET /settings/branding` returns a `data:` URL when the static file is absent after a pod restart
-- **Default Landing Tab in Visibility**: inline dropdown added per-department in the Visibility section (was only on Departments tab)
-
-### v1.82.21 — Fix: Grafana CrashLoopBackOff on NFS volumes
-- `k8s/monitoring/prometheus-values.yaml`: disabled `initChownData` init container — NFS exposes a read-only `.snapshot` dir that blocks `chown -R`
-
-### v1.82.20 — Fix: ArgoCD StatefulSet OutOfSync noise
-- `k8s/argocd/application.yaml`: added `ignoreDifferences` for `StatefulSet /spec/volumeClaimTemplates` to suppress permanent OutOfSync caused by immutable VCT fields after storageClass change
-
-### v1.82.19 — Hotfix: K8s storageClass + Phase 4 observability values
-- **Critical hotfix**: all PVCs were using `storageClass: standard` (non-existent); changed to `nfs-pf9` (cluster default)
-- **Phase 4 monitoring**: `k8s/monitoring/prometheus-values.yaml` + `loki-values.yaml` added with pf9-mngt-specific AlertManager rules
-
-### v1.82.18 — RVTools K8s file sharing, retention, nav visibility & default landing tab
-- **K8s fix**: RVTools Excel exports now served correctly on Kubernetes — replaced pod-local `emptyDir` with a shared PVC (`pf9-reports`) mounted to both API and scheduler-worker pods
-- **RVTools retention**: configurable file rotation (default 30 days). Scheduler cleans up old `.xlsx` files after each run. Admin UI retention card added to Reports → RVTools Exports tab
-- **Nav visibility gap fixed**: DB migration (`migrate_v1_82_18.sql`) re-seeds all nav items idempotently — existing clusters that were deployed before an item was added automatically pick it up on next `helm upgrade`
-- **Per-department default landing tab**: `departments.default_nav_item_key` column + API support + Admin Tools → Departments table now has a **Default Landing Tab** dropdown per department. `/api/auth/me/navigation` returns `default_tab` for the frontend to redirect on login
-
-### v1.82.17 — Fix LDAP users empty on fresh K8s deployment + System Config tab
-- `ensure_ldap_structure()`: new startup method creates `ou=users`, `ou=groups` OUs and default admin user in LDAP if absent — self-heals a fresh K8s LDAP StatefulSet
-- `initialize_default_admin()` now calls `ensure_ldap_structure()` at API startup
-- `get_all_users()` injects DEFAULT_ADMIN_USER into the list even when they have no LDAP entry (bypass-admin was always invisible in the Users tab)
-- New `GET /admin/system-config` endpoint: live LDAP health + user count, PF9 region info, SMTP status, last 3 inventory runs and table row counts (no passwords returned)
-- Admin Tools → **⚙️ System Config** tab (superadmin-only): LDAP health card, PF9 Region card, SMTP card, Inventory card, Setup Wizard banner for fresh deployments
-
-### v1.82.16 — Fix inventory always empty (history tracking rollback wipes main data)
-- `_upsert_with_history()` used `conn.rollback()` in its history-table exception handler, silently rolling back all just-inserted rows (servers, volumes, networks, hypervisors) before the caller committed
-- Replaced with a PostgreSQL `SAVEPOINT` so only history writes are undone on failure — main upsert is always preserved
-- Runs 29–32 all showed `success` with correct counts but tables stayed at 0 because of this bug
-
-### v1.82.15 — Fix inventory empty (subnets FK + derived tables isolation)
-- Committed core inventory (servers/volumes/networks) before any derived table write
-- Each derived table (subnets, ports, routers, floating IPs, security groups) now runs in its own isolated transaction — any FK failure is a warning, never a rollback of core data
-- `upsert_subnets` filters orphaned subnets (missing parent network) before insert
-
-### v1.82.14 — Fix inventory empty (snapshots FK violation)
-- Fixed critical bug: `upsert_snapshots` FK violation was rolling back the entire core inventory transaction — all servers, volumes, and networks written to DB were silently lost on every run
-- Snapshots are now committed in an isolated transaction after core inventory is safely committed
-- `upsert_snapshots` in `db_writer.py` now filters orphaned snapshots (snapshots whose parent volume no longer exists in OpenStack) before attempting insert
-- Fixed `STATE_FILE` path: now writes to `$PF9_OUTPUT_DIR` (writable volume) instead of `/app` (read-only image layer)
-
-### v1.82.13 — Fix v_recent_changes column alias bug
-- Fixed missing AS aliases on first UNION ALL branch — `resource_id`, `project_name` etc. were not referenceable by name in outer SELECT
-- Fixes `ERROR: column does not exist` when applying `migrate_fix_recent_changes_view.sql`
-
-### v1.82.12 — Fix Change Management / Customer Onboarding 500 (recorded_at)
-- Fixed `v_recent_changes`: added `recorded_at` column (`COALESCE(modified_at, created_at, deleted_at)`)
-- All `/history/daily-summary`, change-velocity, and audit queries now work correctly
-- Added `migrate_fix_recent_changes_view.sql` for existing cluster patching
-
-### v1.82.11 — Fix Change Management View (recorded_at)
-- Fixed `v_most_changed_resources`: `v_recent_changes` has no `recorded_at` column — replaced with `COALESCE(modified_at, created_at, deleted_at)`
-- Added `migrate_fix_most_changed_view.sql` to apply fix to existing databases
-- Change Management UI page now loads correctly (was returning 500)
-
-### v1.82.10 — Migration Ordering & Missing Table Fixes
-- Restored deleted `migrate_00_migration_planner.sql` (core migration tables)
-- Guarded `target_confirmed` column ref in `migrate_cohort_fixes.sql`
-- Guarded `vm_provisioning_batches` ALTER in `migrate_multicluster.sql`
-- Fixed Docker prod 502: UI nginx upstream port 80→8080
-
-### v1.82.9 — Migration Runner Rewrite (psql + tracking table)
-
-- **`run_migration.py`** — Rewritten to use `psql -f` subprocess per migration file, eliminating the `;`-split bug that shattered `DO $$ BEGIN...END $$` PL/pgSQL blocks. Adds a `schema_migrations` tracking table — each file runs exactly once, every deploy is idempotent.
-- **`api/Dockerfile`** — Added `postgresql-client` so `psql` is available in the API container and the `db-migrate` Kubernetes Job.
-
-### v1.82.8 — Scheduler RVTools Defaults Fix
-
-- **`k8s/helm/pf9-mngt/values.yaml`** — Scheduler worker had wrong default env vars that silently prevented RVTools inventory from running in Kubernetes. `rvtoolsIntervalMinutes` was `"0"` (daily-only mode) and `rvtoolsRunOnStart` was `"false"`. Both Helm values override the `.env` file in-cluster. Fixed to `"60"` and `"true"` respectively — inventory now runs on pod start and every 60 minutes.
-
-### v1.82.7 — Kubernetes API Routing + Admin Role Fixes
-
-- **Helm `ingress.yaml`** — Ingress now routes all FastAPI paths (`/dashboard/`, `/os-distribution`, `/domains`, `/tenants`, `/snapshots`, `/servers`, etc.) to the API using an nginx regex rule, mirroring `nginx.prod.conf` exactly. Previously these went to the UI nginx returning HTML, causing `SyntaxError` in the dashboard.
-- **Helm `ingress.yaml`** — Added `/metrics/.*` → monitoring service routing.
-- **`api/auth.py`** — `initialize_default_admin()` now always force-sets the admin role to `superadmin` on startup, fixing the case where a stale `viewer` role row prevented admin access.
-
-### v1.82.6 — Kubernetes Production Login Fixes
-
-- **`api/main.py`** — `DEFAULT_ADMIN_USER` bypass account now skips MFA check entirely; a missing `user_mfa` table (fresh cluster) was causing a 503 "MFA service unavailable" error even with the correct password.
-- **Helm `api/deployment.yaml`** — Added `APP_ENV`, `PF9_ALLOWED_ORIGINS` (derived from `ingress.host`), and `DEFAULT_ADMIN_PASSWORD` (from `pf9-admin-credentials` Secret); login was blocked by "Invalid host header" 400 and missing admin password.
-- **Helm `ingress.yaml`** — TLS/cert-manager block guarded so chart renders correctly when `ingress.host` is empty.
-
-### v1.82.5 — Kubernetes Probe Host Header Fix
-
-- **Helm `api/deployment.yaml`** — Added `httpHeaders: [{name: Host, value: localhost}]` to `httpGet` liveness and readiness probes. Kubernetes sends the pod IP as the `Host` header; `TrustedHostMiddleware` was rejecting it with 400, causing a restart loop. Probes now pass a trusted hostname.
-
-### v1.82.4 — CI Health-Check Fix (Named Volume Permissions)
-
-- **`api/Dockerfile`** — Named Docker volume `app_logs` was root-owned because `/app/logs` didn't exist in the image. `logging.FileHandler` runs at import time and failed with `PermissionError`, crashing gunicorn before the health endpoint could respond. Fixed by adding `RUN mkdir -p /app/logs /app/static` before the `chown` step.
-
-### v1.82.3 — API + UI Non-Root Permission Fixes
-
-- **`api/Dockerfile`** — pod runs as UID 1000 but `/app` was owned by root; `PermissionError: '/app/static'` on every startup. Added `RUN chown -R 1000:1000 /app` + `USER 1000` after all `COPY` steps.
-- **`pf9-ui/Dockerfile.prod`** — nginx `listen 80` requires root; changed to `listen 8080` + `EXPOSE 8080`.
-- **Helm UI templates** — `containerPort`, probe ports, `targetPort`, and `ui.service.port` were all `5173` (Vite dev server); updated to `8080`.
-
-### v1.82.2 — Kubernetes Deployment Fixes
-
-- **`api/Dockerfile`** — `run_migration.py` and all `db/migrate_*.sql` files were missing from the API image; the `db-migrate` Job was failing immediately with `FileNotFoundError`. Fixed by adding `COPY run_migration.py ./` and a `RUN` step that concatenates all migration SQL files into `/app/run_migration_sql.sql` at build time.
-- **`ldap-sync-worker`** — injected `LDAP_SYNC_KEY` env var from the `pf9-ldap-secrets` secret; worker was exiting immediately on startup without it.
-- **`api` deployment** — injected `LDAP_SYNC_KEY` env var for LDAP federation decrypt path.
-- **`ui` deployment** — added `emptyDir` volumes for `/var/cache/nginx` and `/var/run`; nginx running as non-root (UID 1000) cannot create these directories.
-- **`scheduler-worker`** — added `emptyDir` volume at `/app/monitoring`; `host_metrics_collector.py` writes a cache file to a relative path unavailable in the container filesystem.
-
-### v1.82.1 — CI Pipeline Fix
-
-- **`update-values` job** — fixed `actions/checkout@v4` failure (`Error: Input required and not supplied: token`) when `RELEASE_PAT` secret is not configured; job now falls back to `github.token` automatically, making the release pipeline zero-config on first run.
-
-### v1.82.0 — Kubernetes Production Support (Helm + ArgoCD + CI/CD)
-
-- **Helm chart** — complete `k8s/helm/pf9-mngt/` chart covering all 14 services: API (Deployment), UI (Deployment), PostgreSQL (StatefulSet), Redis, OpenLDAP (StatefulSet), Monitoring, and all seven background workers (`backup`, `ldap-sync`, `metering`, `notification`, `scheduler`, `search`, `snapshot`)
-- **ArgoCD GitOps** — `k8s/argocd/application.yaml` bootstrap manifest; ArgoCD auto-syncs on every `master` push that touches `k8s/helm/`
-- **Helm pre-upgrade DB migration hook** — `templates/jobs/db-migrate.yaml` runs `run_migration.py` before each `helm upgrade` so schema is always current before the API rolls out
-- **Ingress template** — nginx-ingress + cert-manager TLS; routes `/api`, `/auth`, `/health` to the API and `/` to the UI; domain and issuer configurable via `values.yaml`
-- **CI Helm jobs** — two new jobs in `release.yml`: `helm-package` (packages + pushes the chart to GHCR OCI registry) and `update-values` (auto-updates `values.prod.yaml` image tags and commits `[skip ci]` back to `master` for ArgoCD to pick up)
-- **Sealed Secrets guide** — `k8s/sealed-secrets/README.md` with copy-paste `kubeseal` commands for all nine Kubernetes Secrets the chart needs
-- **Security posture** — all secret values pulled from named Kubernetes Secrets via `secretKeyRef` (never baked into `values.yaml`); LDAP service exposed as headless ClusterIP only (never reachable from outside the cluster); all pods run as non-root (`runAsUser: 1000`)
-
-### v1.81.0 — Security Hardening & Kubernetes Pre-Requisites
-
-- **Production JWT guard** — API now crashes at startup (instead of silently generating an ephemeral key) when `PRODUCTION_MODE=true` and no `JWT_SECRET_KEY` / `jwt_secret` Docker secret is configured
-- **SSRF re-validation** in external LDAP auth passthrough — `_bind_external_ldap()` re-checks the host against RFC-1918 / loopback / ULA ranges at connection time (defence-in-depth)
-- **Hardcoded database password defaults removed** — `backup_worker`, `metering_worker`, and `search_worker` now use the same `_read_secret()` helper pattern as `ldap_sync_worker`; the `"pf9pass"` fallback is gone
-- **Worker liveness heartbeats** — all five long-lived workers (`backup`, `metering`, `search`, `scheduler`, `notification`) now touch `/tmp/alive` on every loop; matching `healthcheck` blocks added to `docker-compose.yml`
-- **Backup config column allowlist** — `PUT /api/backup/config` validates column names against an explicit set before building the `UPDATE` query
-- **`_plans/KUBERNETES_PLAN.md`** — full Kubernetes production roadmap (Helm chart, ArgoCD GitOps, Sealed Secrets, CI/CD additions, HPA plan)
-
-### v1.80.0 — External LDAP Sync UI
-
-- **`LdapSyncSettings` component** — full management UI under Admin → User Management → External LDAP Sync (superadmin-only); covers all backend fields across five sections (connection, service account, user search, group mappings, schedule)
-- **Test / Preview / Logs panels** — inline detail pane per config; 🔌 test shows connect+bind results and sample users; 👁 preview shows dry-run create/update/deactivate counts; 📋 logs panel shows last 20 sync runs with expandable error details
-- **docs/LDAP_SYNC_GUIDE.md** — comprehensive operator guide (requirements, step-by-step config, group mapping, TLS, testing, manual sync, logs, MFA delegation, security architecture, troubleshooting)
-
-### v1.79.0 — External LDAP / AD Identity Federation
-
-- **External LDAP / AD sync** — configure one or more external LDAP or Active Directory sources; the `ldap_sync_worker` periodically imports users and applies group-to-role mappings automatically
-- **Credential passthrough** — externally-synced users authenticate with their origin LDAP password (no local copy stored); `auth.py` transparently binds to the source directory on login
-- **Group-to-role mapping** — map external LDAP groups to pf9-mngt roles (`viewer`, `operator`, `admin`, `technical`); `superadmin` cannot be assigned via sync by design
-- **CRUD config API** — 10 new superadmin-only endpoints: create/update/delete configs, test connectivity, dry-run preview, manual sync trigger, paginated sync logs
-- **SSRF protection** — host validation blocks RFC-1918, loopback, link-local, and ULA targets before any LDAP connection is opened
-- **Fernet encryption** — bind passwords encrypted at rest with a dedicated `ldap_sync_key` Docker secret; shared `crypto_helper.py` utility used by both LDAP sync and cluster registry
-- **Session revocation** — when a synced user is deactivated or removed from all mapped groups, their active sessions are invalidated immediately
-- **`db/migrate_ldap_sync.sql`** — idempotent migration adds 3 new tables + 3 `user_roles` columns
-
-### v1.78.0 — Security & Auth Hardening
-
-- **LDAP DN injection closed** — `ldap.dn.escape_dn_chars()` applied to all 4 DN-construction sites in `auth.py`; a crafted username can no longer rewrite the LDAP bind target
-- **LDAP network timeout** — `OPT_NETWORK_TIMEOUT = 5 s` added to all 7 `ldap.initialize()` call sites; hung LDAP connections no longer stall gunicorn worker threads
-- **`verify_admin_credentials` hardened** — unconfigured password now raises HTTP 503 (was silently bypassing auth); credential comparison uses `hmac.compare_digest()` to prevent timing attacks
-- **`datetime.utcnow()` replaced** — all auth JWT/session code now uses `datetime.now(timezone.utc)`; removes deprecation warnings on Python 3.12+
-- **Middleware token cache** — `rbac_middleware` stores `TokenData` in `request.state`; `access_log_middleware` reads it instead of re-calling `verify_token()`, removing one DB round-trip per request
-- **`SMTP_PASSWORD` via Docker secrets** — `smtp_helper.py` now resolves the SMTP password through `read_secret()` (checks `/run/secrets/smtp_password` first, falls back to env var), consistent with every other credential in the project
-
-### v1.77.0 — Migration Planner Region Normalization
-
-- **`migration_projects.target_region_id`** — new FK column to `pf9_regions`; `pcd-gap-analysis` now uses the ClusterRegistry client when a registered region is linked to a project (no more global config mutation)
-- **`migration_projects.source_region_id`** — new FK column for cross-region migration tracking; nullable, NULL for VMware-to-PCD migrations
-- **`GET /admin/control-planes/cluster-tasks`** — new superadmin endpoint exposing pending cluster_tasks rows with `processor_status: NOT_IMPLEMENTED`
-- **`db/migrate_phase8_migration_norm.sql`** — adds both FK columns + selective indexes + `idx_cluster_tasks_pending`
-- Full backward compatibility: projects without `target_region_id` continue using ad-hoc `pcd_auth_url` credentials
-
-### v1.76.0 — Multi-Region Management UI
-
-- **Region selector** in top nav bar — compact dropdown that appears only when ≥ 2 regions are registered; groups options by control plane with health-state indicators
-- **Cluster Management panel** — new superadmin-only tab for managing control planes and regions (add/delete/test CPs; register/enable/sync regions)
-- **Per-region filtering** in MeteringTab, ResourceManagementTab, ReportsTab, and LandingDashboard — all views now pass `?region_id=` when a region is selected
-- **`ClusterContext`** React context provides shared state to the entire authenticated shell
-- **`migrate_phase7_nav.sql`** — adds `cluster_management` nav item to the admin tools group
-
-### v1.75.0 — Multi-Region API Filtering
-
-- **Optional `?region_id=` on all API modules** — metering, dashboards, reports, resource management, provisioning, VM provisioning, and search endpoints all accept a `?region_id=` query parameter to scope results to a specific PF9 region
-- **RBAC region enforcement** — `get_effective_region_filter()` in `auth.py`: region-scoped users are automatically constrained to their assigned region (HTTP 403 if they request another); global users may query any region
-- **Live-API routing** — when `region_id` is specified, all PF9 API calls route to the correct region registry client
-- **DB-query filtering** — all DB-backed endpoints apply `WHERE region_id = %s` with the effective region when specified
-- **`search_ranked` updated** — backward-compatible 9th parameter `filter_region` added to PostgreSQL function; `search_documents.region_id` column + index added via `migrate_phase6_api.sql`
-- **Startup migration guard** — `main.py` applies `migrate_phase6_api.sql` idempotently on restart
-
-### v1.74.6 — Metering Worker Crash Fix
-
-- **Hardened Phase 5B migration guard** — guard now verifies all six target tables have `region_id` before skipping `migrate_metering_region.sql`; a partial prior run (e.g. from CI) no longer causes a false-positive skip that leaves 4 tables unpatched
-- **`security_groups.region_id` column added** — `init.sql` and `migrate_multicluster.sql` now include `security_groups` in the infra `region_id` sweep; fixes metering_worker crash on `collect_quota_usage` LATERAL subquery
-
-### v1.74.5 — Multi-Region Worker Support
-
-- **metering_worker**: Full multi-region loop — each enabled region gets its own metering collection cycle with `region_id`-tagged rows in all metering tables. `collect_resource_metrics` passes `region_id` to the monitoring API; `collect_snapshot_metrics` and `collect_quota_usage` filter inventory tables by region. `run_collection_cycle` now iterates all regions and writes a `cluster_sync_metrics` row per region.
-- **HostMetricsCollector**: Constructor accepts optional `region_id` argument for explicit region binding.
-- **scheduler_worker**: `metrics_loop` now creates one `HostMetricsCollector` per region, writes `cluster_sync_metrics` after each collection, and falls back to single-region env-var mode when no region rows exist.
-- **p9_snapshot_policy_assign**: `--region-id` now properly scopes all progress output; `region_label` prefixes every print line for clear multi-region log attribution.
-- **backup_worker**: `backup_history` rows now carry `region_id` tracking metadata for manual region-triggered backup jobs.
-- **DB migration** (`migrate_metering_region.sql`): adds `region_id TEXT` column and indexes to all metering tables and `backup_history`.
-
-### v1.74.4 — Search Worker VM Indexing Fix
-- ✅ **VM search indexing restored** — `LEFT JOIN images` used `i.image_id` (non-existent column); corrected to `i.id` in `search_worker/main.py` and `api/reports.py`; VM records now index correctly every 5 minutes and OS info appears in reports
-
-### v1.74.3 — Blank-UI-on-Restart Fixes
-- ✅ **DDL lock storm eliminated** — `api/main.py` now checks whether `pf9_regions` / `snapshot_runs.region_id` already exist before issuing any `ALTER TABLE`; zero `ACCESS EXCLUSIVE` locks on healthy restarts → pages load instantly after `startup_prod.ps1`
-- ✅ **Snapshot worker crash loop fixed** — corrected indentation bug that placed a recursive `main()` call inside the function body, causing exit code 0 with empty logs; `next_compliance_report` counter now advances correctly; 10 s sleep added to scheduler loop
-- ✅ **PostgreSQL idle-in-transaction protection** — `idle_in_transaction_session_timeout=30s` + `statement_timeout=2min` added to DB service; stale transactions that block DDL are auto-terminated on restart
-
-### v1.74.2 — Multi-Region Worker Support
-- ✅ **Thread-safe endpoint storage** — `p9_common.py` uses `threading.local` for per-thread endpoint variables; safe for concurrent region processing
-- ✅ **Scheduler multi-region loop** — `scheduler_worker` queries enabled regions from DB and runs RVTools sync for each region concurrently, bounded by `MAX_PARALLEL_REGIONS`
-- ✅ **Metering sync tracking** — `metering_worker` records per-cycle stats (resource count, errors, duration) to `cluster_sync_metrics` after each collection cycle
-- ✅ **Snapshot region tagging** — snapshot scheduler delegates to sub-scripts with per-region credentials; `snapshot_runs` and `snapshot_records` gain `region_id` column
-- ✅ **Host metrics DB-sourced hosts** — `host_metrics_collector` loads hypervisor IPs from DB when `PF9_REGION_ID` is set, replacing static `PF9_HOSTS` env var
-- ✅ **SQL migration parser fix** — semicolons in `--` comment lines in `migrate_multicluster.sql` were fragmenting `CREATE TABLE pf9_regions`; fixed, multi-cluster schema now applies correctly on startup
-
-### v1.74.1 — SAST Security Fixes & CI Gate Correction
-- ✅ **Bandit CI gate fixed** — HIGH-severity gate flags corrected from `-ll -ii` (Medium+) to `-lll -iii` (HIGH only); was causing 259 Medium issues to block every push
-- ✅ **Bandit HIGH findings resolved** — `hashlib.sha1` (LDAP SSHA), `hashlib.md5` (cache keys, change fingerprinting), and `requests verify=False` (internal PF9 endpoint) annotated with `usedforsecurity=False` / `nosec`; all four B324 and B501 HIGH/HIGH findings cleared
-- ✅ **Zero HIGH findings** — `bandit -lll -iii` scans clean: `No issues identified.`
-
-### v1.74.0 — Control Plane & Region Management API
-- ✅ **REST API for multi-cluster admin** — 14 new superadmin-only endpoints under `/admin/control-planes` for full CRUD on control planes and regions; no DB restarts or psql commands needed
-- ✅ **Fernet credential encryption** — passwords for additional control planes are encrypted with Fernet (AES-128-CBC + HMAC-SHA256) derived from `JWT_SECRET`; prefix `fernet:<ciphertext>` stored in `password_enc`; plaintext never written to DB
-- ✅ **Live connectivity test** — `POST /admin/control-planes/{id}/test` authenticates against Keystone and returns discovered regions and service catalog endpoints
-- ✅ **SSRF protection enforced** — `auth_url` validated on write: loopback and 169.254.169.254 always blocked; HTTP blocked unless `ALLOW_HTTP_AUTH_URL=true`; RFC-1918 private IPs allowed for on-premises deployments when `allow_private_network=true`
-- ✅ **Superadmin-only guard** — all control-plane and region management operations require `superadmin` role; full audit log entries written on every create/update/delete
-- ✅ **Registry hot-reload** — in-memory `ClusterRegistry` is reloaded after every write; running workers pick up new regions without restart
-- ✅ **Bandit SAST job** — CI pipeline extended with a high-severity security gate using Bandit; HIGH findings block merge, MEDIUM findings are reported but non-blocking
-- ✅ **25 new unit tests** — SSRF validation, Fernet roundtrip, `superadmin` role guard, password never returned in responses, router registration
-
-### v1.73.3 — Security Patch (npm)
-- ✅ **GHSA-rf6f-7fwh-wjgh resolved** — `flatted` override bumped to `>=3.4.2`; patches Prototype Pollution (high severity) in transitive UI dependency
-- ✅ **GHSA-2g4f-4pwh-qvx6 resolved** — `ajv` override added at `>=6.14.0`; patches ReDoS via `$data` option (moderate severity)
-
-### v1.73.2 — Security Patch
-- ✅ **CVE-2026-30922 resolved** — `pyasn1>=0.6.3` pinned in `api/requirements.txt`; patches uncontrolled recursion / DoS vulnerability in the ASN.1 decoder (transitive dependency of `paramiko`, `python-jose`, `python-ldap`)
-
-### v1.73.1 — ClusterRegistry + Multi-Region Client Hub
-- ✅ **ClusterRegistry module** — new `api/cluster_registry.py`; synchronous, thread-safe two-level registry (control planes → regions) replaces the global `get_client()` singleton; all 100+ existing callers are unchanged
-- ✅ **Auto-initializes from DB** — loads `pf9_control_planes` / `pf9_regions` on startup; falls back to env vars if DB empty so existing single-region installs need no changes
-- ✅ **MultiClusterQuery** — parallel fan-out across all enabled regions with `asyncio + run_in_executor`; concurrency cap (`MAX_PARALLEL_REGIONS`, default 3); per-region hard timeout (`REGION_REQUEST_TIMEOUT_SEC`, default 30 s) prevents slow regions from blocking the others
-- ✅ **Clean shutdown** — `ClusterRegistry.shutdown()` closes every `requests.Session` on app exit; no dangling connections
-- ✅ **22 unit tests** — full coverage with no live DB or Platform9 instance required
-
-### v1.73.0 — Multi-Region & Multi-Cluster Support
-- ✅ **Control plane registry** — `pf9_control_planes` table: register multiple Platform9 installations (distinct Keystone endpoints) with independent service-account credentials
-- ✅ **Region registry** — `pf9_regions` table: two-level model matching OpenStack's architecture; per-region health tracking (`healthy` / `degraded` / `unreachable` / `auth_failed`), sync metrics, and failover priority
-- ✅ **Auto-seeded on first start** — existing deployments are automatically migrated; current `PF9_AUTH_URL` + `PF9_REGION_NAME` become the `default` control plane/region with no operator action
-- ✅ **Cross-region task engine** — `cluster_tasks` state machine for snapshot replication, DR failover, and cross-region migration; workers use `FOR UPDATE SKIP LOCKED` to prevent double-execution
-- ✅ **Region-scoped resources** — `region_id` FK added to all infrastructure tables (VMs, volumes, networks, snapshots, provisioning jobs, etc.)
-- ✅ **Service catalog region bug fixed** — `_find_endpoint()` now correctly filters by `region_id`; prevents silent wrong-region API calls in multi-region control planes
-- ✅ **Cache key namespacing** — Redis keys include `region_id`; prevents cross-region cache collisions on shared Redis instances
-
-### v1.72.5 — System Metadata Routing Fix
-- ✅ `/system-metadata-summary` and `/export` endpoints added to `nginx.prod.conf`, `nginx.conf`, and the Vite dev proxy — fixes System Metadata tab showing empty under Inventory
-
-### v1.72.0 — Migration Planner Restored & Production Startup Fixes
-- ✅ **Migration Planner restored** — `migration_routes.py`, `migration_engine.py`, and all frontend components re-added after being removed in v1.69.0; committed and included in CI-built images
-- ✅ **`startup_prod.ps1` fixed** — replaced `--build` with `docker compose pull` + `docker compose up -d`; was silently overwriting pulled `ghcr.io` images with local source
-- ✅ **nginx `/tenants` routing fixed** — `GET /tenants` alias added to resolve Migration Planner 404
-
-### v1.71.0 — Dependency Security Patches & Quality Fixes
-- ✅ **Python dependency CVEs** — `fastapi`, `requests`, `python-ldap`, `python-jose`, `python-multipart` upgraded (13 CVEs resolved)
-- ✅ **npm CVE overrides** — `flatted`, `minimatch`, `rollup` forced to patched versions
-- ✅ **CSV export quoting** — `QUOTE_ALL` prevents column corruption on fields with commas/newlines
-
-### v1.68.0–v1.70.0 — Security Hardening, Bug Fixes & Performance
-- ✅ **XSS fix** — OpsSearch `ts_headline` sanitized via DOMPurify; SMTP TLS certificate enforcement
-- ✅ **LDAP fixes** — `create_user()` stores `{SSHA}` hashed passwords; backup uses `-y <tempfile>` (no plaintext in `ps aux`)
-- ✅ **Report pagination** — `tenant-quota-usage` and `domain-overview` paged before per-project API calls; upload row cap (2,000) prevents memory exhaustion
-- ✅ **Dependency vulnerability scanning in CI** — `pip-audit` + `npm audit` gating integration tests
-
-> For the full history of all 121 releases, see [CHANGELOG.md](CHANGELOG.md).
+Not theory — from what actually breaks in production.
 
 ---
 
