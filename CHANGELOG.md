@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.82.33] - 2026-03-29
+
+### Fixed
+- **monitoring: remove `TrustedHostMiddleware` blocking Kubernetes kubelet health probes** (`monitoring/main.py`)
+  — The middleware added in v1.82.32 rejected requests from kubelet node IPs,
+  causing `/health` to return 400 Bad Request on every readiness probe and putting the
+  monitoring pod into a restart loop. The monitoring service is internal-only behind the nginx
+  ingress; host validation for external traffic is already handled by nginx. Removed the
+  middleware entirely.
+
+---
+
 ## [1.82.32] - 2026-03-29
 
 ### Fixed
