@@ -240,6 +240,67 @@ def collect_resource_metrics(conn, region_id: str) -> int:
             log.warning("Could not fetch VM metrics from API fallback: %s", exc)
 
     if not vms:
+        # Second fallback: query the DB directly (same logic as /monitoring/vm-metrics).
+        # This works even when the API service is unreachable from the metering worker.
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT
+                        s.id AS vm_id,
+                        COALESCE(s.name, s.id) AS vm_name,
+                        s.raw_json->'addresses' AS _addresses_json,
+                        COALESCE(s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname', '') AS host,
+                        d.name AS domain,
+                        p.name AS project_name,
+                        fl.name AS flavor,
+                        COALESCE(fl.vcpus, 0) AS cpu_total,
+                        COALESCE(fl.ram_mb, 0) AS memory_allocated_mb,
+                        COALESCE(NULLIF(fl.disk_gb, 0),
+                            (SELECT COALESCE(SUM(vol.size_gb), 0) FROM volumes vol
+                             WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(vol.raw_json->'attachments') att
+                                           WHERE att->>'server_id' = s.id))
+                        ) AS storage_allocated_gb,
+                        CASE WHEN h.vcpus > 0 AND fl.vcpus > 0
+                            THEN ROUND(fl.vcpus::numeric / h.vcpus * 100, 1) ELSE 0
+                        END AS cpu_usage_percent
+                    FROM servers s
+                    LEFT JOIN projects p ON p.id = s.project_id
+                    LEFT JOIN domains d ON d.id = p.domain_id
+                    LEFT JOIN flavors fl ON fl.id = s.flavor_id
+                    LEFT JOIN hypervisors h ON h.hostname = s.raw_json->>'OS-EXT-SRV-ATTR:hypervisor_hostname'
+                    WHERE s.status = 'ACTIVE'
+                    ORDER BY s.name
+                """)
+                db_rows = cur.fetchall()
+
+            for row in db_rows:
+                vm_ip = "Unknown"
+                addresses = row.pop("_addresses_json", None)
+                if addresses:
+                    if isinstance(addresses, str):
+                        import json as _json
+                        try:
+                            addresses = _json.loads(addresses)
+                        except Exception:
+                            addresses = None
+                    if isinstance(addresses, dict):
+                        for addrs in addresses.values():
+                            if isinstance(addrs, list):
+                                for entry in addrs:
+                                    if isinstance(entry, dict) and "addr" in entry:
+                                        vm_ip = entry["addr"]
+                                        break
+                            if vm_ip != "Unknown":
+                                break
+                row["vm_ip"] = vm_ip
+
+            vms = [dict(r) for r in db_rows]
+            if vms:
+                log.info("VM metrics: using direct DB fallback (%d VMs)", len(vms))
+        except Exception as exc:
+            log.warning("Could not fetch VM metrics from direct DB fallback: %s", exc)
+
+    if not vms:
         return 0
 
     # Build a flavor → vcpus lookup from the DB

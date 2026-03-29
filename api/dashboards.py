@@ -139,6 +139,38 @@ def _calculate_metrics_summary(metrics_data: Optional[Dict[str, Any]]) -> Dict[s
     if metrics_host_count == 0 and vm_host_aggregates:
         metrics_host_count = len(vm_host_aggregates)
 
+    # DB fallback: if the metrics cache had no usable host data, read directly from the
+    # hypervisors table (vcpus_used / memory_mb_used are populated by the inventory worker).
+    if (avg_cpu <= 0 or metrics_host_count == 0):
+        try:
+            with get_connection() as _conn:
+                with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
+                    _cur.execute("""
+                        SELECT
+                            COUNT(*) AS host_count,
+                            ROUND(AVG(CASE WHEN vcpus > 0
+                                THEN COALESCE((raw_json->>'vcpus_used')::numeric, 0) / vcpus * 100
+                                END)::numeric, 1) AS avg_cpu,
+                            ROUND(AVG(CASE WHEN memory_mb > 0
+                                THEN COALESCE((raw_json->>'memory_mb_used')::numeric, 0) / memory_mb * 100
+                                END)::numeric, 1) AS avg_memory
+                        FROM hypervisors
+                        WHERE (state = 'up' OR state IS NULL)
+                    """)
+                    hrow = _cur.fetchone() or {}
+            db_host_count = int(hrow.get("host_count") or 0)
+            db_avg_cpu    = float(hrow.get("avg_cpu") or 0)
+            db_avg_memory = float(hrow.get("avg_memory") or 0)
+            if db_host_count > 0:
+                if metrics_host_count == 0:
+                    metrics_host_count = db_host_count
+                if avg_cpu <= 0:
+                    avg_cpu = db_avg_cpu
+                if avg_memory <= 0:
+                    avg_memory = db_avg_memory
+        except Exception:
+            pass  # non-fatal – keep zeros
+
     return {
         "avg_cpu": avg_cpu,
         "avg_memory": avg_memory,
@@ -865,7 +897,10 @@ async def get_top_hosts_utilization(limit: int = Query(5, ge=1, le=20), sort: st
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute(
                 """
-                SELECT hostname, vcpus, memory_mb
+                SELECT
+                    hostname, vcpus, memory_mb,
+                    COALESCE((raw_json->>'vcpus_used')::numeric, 0) AS vcpus_used,
+                    COALESCE((raw_json->>'memory_mb_used')::numeric, 0) AS memory_mb_used
                 FROM hypervisors
                 WHERE hostname IS NOT NULL
                 ORDER BY hostname
@@ -879,16 +914,26 @@ async def get_top_hosts_utilization(limit: int = Query(5, ge=1, le=20), sort: st
                 hostname = row.get("hostname")
                 host_key = _normalize_host_key(hostname)
                 display_name = display_map.get(host_key, hostname)
+                vcpus = row.get("vcpus") or 0
+                mem_mb = row.get("memory_mb") or 0
+                vcpus_used = float(row.get("vcpus_used") or 0)
+                mem_used = float(row.get("memory_mb_used") or 0)
+                cpu_pct = round(vcpus_used / vcpus * 100, 1) if vcpus > 0 else None
+                mem_pct = round(mem_used / mem_mb * 100, 1) if mem_mb > 0 else None
                 fallback_hosts.append({
                     "hostname": hostname,
                     "host_display_name": display_name,
-                    "cpu_utilization_percent": None,
-                    "memory_utilization_percent": None,
+                    "cpu_utilization_percent": cpu_pct,
+                    "memory_utilization_percent": mem_pct,
                     "vm_count": int(vm_counts.get(host_key, 0)),
-                    "capacity_vcpus": row.get("vcpus"),
-                    "capacity_memory_mb": row.get("memory_mb"),
-                    "is_critical": False,
+                    "capacity_vcpus": vcpus,
+                    "capacity_memory_mb": mem_mb,
+                    "is_critical": (cpu_pct or 0) > 85 or (mem_pct or 0) > 85,
                 })
+
+            # Sort fallback hosts by the requested metric
+            sort_key = "memory_utilization_percent" if sort == "memory" else "cpu_utilization_percent"
+            fallback_hosts.sort(key=lambda h: h.get(sort_key) if h.get(sort_key) is not None else -1, reverse=True)
 
             return {
                 "hosts": fallback_hosts,

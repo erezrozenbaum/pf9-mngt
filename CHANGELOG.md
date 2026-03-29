@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.2] - 2026-03-29
+
+### Fixed
+- **UI — Resource History bleeding into Migration Planner**: `migration_planner` and `cluster_management` added to the `hideDetailsPanel` list. The persistent history state no longer renders on unrelated pages.
+- **API — Dashboard CPU/Memory 0% and Metrics Hosts 0**: `_calculate_metrics_summary` now falls back to the `hypervisors` table (`vcpus_used`, `memory_mb_used`) when the metrics cache is empty (e.g. in K8s where the monitoring service runs in a separate pod and writes to a different filesystem).
+- **API — Top Hosts all N/A**: The inventory fallback path in `get_top_hosts_utilization` now computes `cpu_utilization_percent` and `memory_utilization_percent` directly from `hypervisors.raw_json->vcpus_used / vcpus` instead of returning `null`. Results are sorted by the requested metric.
+- **API — VM Storage shows 0% instead of N/A**: `storage_used_gb` and `storage_usage_percent` in the `/monitoring/vm-metrics` DB fallback are now `null` (previously hard-coded `0`), so the UI correctly displays N/A rather than a misleading 0%.
+- **DB writer — Drift auto-ticket creation**: `_auto_ticket_for_drift` now resolves the target department dynamically. If the preferred department ("Engineering" / "Tier2 Support") does not exist — as on a fresh K8s install — it falls back to the first available department so the ticket is always created.
+- **Metering worker — 0 VMs metered**: Added a third fallback to `collect_resource_metrics`: if both the monitoring service and the API HTTP endpoint are unreachable, the worker queries the `servers`/`flavors`/`hypervisors` tables directly (same logic as `/monitoring/vm-metrics`). This ensures VM records flow into `metering_resources` and `metering_efficiency` even in K8s environments where inter-pod HTTP calls may fail.
+
 ## [1.83.1] - 2026-03-29
 
 ### Fixed

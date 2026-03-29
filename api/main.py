@@ -4313,9 +4313,9 @@ def monitoring_vm_metrics():
 
         # Map storage_allocated_gb → storage_total_gb for UI compatibility
         alloc = row.get("storage_allocated_gb", 0) or 0
-        row["storage_total_gb"] = alloc
-        row["storage_used_gb"] = 0  # Not knowable from DB, but prevents N/A
-        row["storage_usage_percent"] = 0
+        row["storage_total_gb"] = alloc if alloc > 0 else None
+        row["storage_used_gb"] = None   # Actual disk usage not available from DB inventory
+        row["storage_usage_percent"] = None  # N/A — requires live monitoring
 
     return {"data": rows, "timestamp": str(datetime.now()), "source": "database"}
 

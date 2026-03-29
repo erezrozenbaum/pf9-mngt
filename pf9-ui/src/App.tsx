@@ -3027,6 +3027,8 @@ const App: React.FC = () => {
     "system_metadata",
     "tickets",
     "my_queue",
+    "migration_planner",
+    "cluster_management",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------

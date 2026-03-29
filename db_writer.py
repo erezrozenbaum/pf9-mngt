@@ -114,13 +114,32 @@ def _auto_ticket_for_drift(
         if api_dir not in sys.path:
             sys.path.insert(0, api_dir)
 
+        # Resolve department: try preferred name, fall back to any existing department
+        resolved_dept = to_dept_name
+        try:
+            from db_pool import get_connection as _gc
+            with _gc() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute("SELECT name FROM departments WHERE name = %s LIMIT 1", (to_dept_name,))
+                    if not _cur.fetchone():
+                        _cur.execute("SELECT name FROM departments ORDER BY id LIMIT 1")
+                        row = _cur.fetchone()
+                        if row:
+                            resolved_dept = row[0]
+                            _log.info(
+                                "_auto_ticket_for_drift: dept '%s' not found, using '%s'",
+                                to_dept_name, resolved_dept,
+                            )
+        except Exception:
+            pass  # keep preferred name; _auto_ticket will log the missing-dept warning
+
         from ticket_routes import _auto_ticket
         _auto_ticket(
             title=title,
             description=description,
             ticket_type="auto_incident",
             priority=priority,
-            to_dept_name=to_dept_name,
+            to_dept_name=resolved_dept,
             auto_source="drift",
             auto_source_id=auto_source_id,
             resource_type=resource_type,
