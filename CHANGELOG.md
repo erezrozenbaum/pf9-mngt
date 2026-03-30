@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.5] - 2026-03-30
+
+### Fixed
+- **Metering — SQL column names**: Fixed three endpoints (`chargeback-summary`, `export/chargeback-excel`, `tenant-growth`) that referenced non-existent columns (`vcpus`, `ram_mb`, `flavor`). Correct column names are `vcpus_allocated`, `ram_allocated_mb`, `flavor` (from `metering_resources`).
+- **Metering — interval parameterization**: Fixed psycopg2 interval syntax in `chargeback-summary` and `tenant-growth` from `interval '%s hours'` (invalid) to `(%s * interval '1 hour')` / `(%s * interval '1 month')`.
+- **Metering — compliant count always 0**: `COUNT(*) FILTER (WHERE is_compliant = true)` returns 0 when `is_compliant IS NULL` (snapshot has no compliance policy assigned). Changed to `IS TRUE`/`IS FALSE` and added `unknown_count` for snapshots with no policy; UI now shows a grey "No Policy" card when applicable.
+- **Users — inventory tab empty**: `GET /api/auth/users` response used key `"data"` but the frontend `PagedResponse<User>` type expects `"items"`. Changed response key to `"items"`.
+- **VM Provisioning — password validation mismatch**: Frontend validated minimum password length at 12 characters while backend requires only 8. Aligned frontend to `>= 8`; also tightened VM name suffix regex to `^[a-z0-9][a-z0-9-]*$`.
+- **Metering export — wrong button label**: `ExportCard` always showed "Download CSV" regardless of the selected export format. Label is now dynamic: "Download PDF", "Download Excel", or "Download CSV".
+- **Drift detection — deletions not detected**: `db_writer.py` never flagged resources that disappeared from OpenStack. Added deletion detection: load all existing IDs before upsert, compute the diff, emit `drift_event` records and auto-tickets for each deleted resource.
+- **SMTP — no runtime config override**: SMTP settings were baked into environment variables at container start. Added `get_smtp_config()` helper that checks `system_settings` DB table first. New `POST /api/notifications/smtp-config` endpoint and Admin → Notification Settings UI form to update SMTP config at runtime without restart.
+- **Dependency graph — missing resource types**: "View Dependencies" button was absent for Subnets, Ports, Floating IPs, and Security Groups. Added inline buttons/columns for all four resource types wired to `setGraphTarget`.
+- **Admin — Roles tab cannot assign users**: Roles tab showed a static list with no action. Added an "➕ Assign User" inline form per role that calls `POST /api/auth/users/{username}/role`.
+- **UI — dark mode nav active item invisible**: `.pf9-nav-group-active` used a hardcoded `rgba(25,118,210,0.07)` that was near-invisible on the dark sidebar background. Added proper dark-mode CSS overrides for active nav items, hover states, and tab highlights.
+- **Snapshot monitor — stuck at 0%**: When a run starts with `total_volumes=0` or no batches yet, the progress bar showed a static "0%" label. Now displays an animated indeterminate bar with "Starting…" label until real progress data is available.
+- **Customer provisioning — 500 on submit**: `dns_nameservers` from `NetworkConfig` is a `List[str]` but the legacy field builder called `.split(",")` on it (valid only for strings), raising `AttributeError` before the job INSERT, resulting in an uncaught HTTP 500. Fixed to use the list directly.
+
 ## [1.83.4] - 2026-03-30
 
 ### Fixed

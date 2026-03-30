@@ -270,10 +270,12 @@ const SnapshotMonitor: React.FC = () => {
           </div>
           <div className="progress-bar-container">
             <div
-              className="progress-bar-fill"
-              style={{ width: `${activeProgress.run.progress_pct || 0}%` }}
+              className={`progress-bar-fill${!activeProgress.run.progress_pct ? ' indeterminate' : ''}`}
+              style={{ width: activeProgress.run.progress_pct ? `${activeProgress.run.progress_pct}%` : undefined }}
             />
-            <span className="progress-pct">{activeProgress.run.progress_pct || 0}%</span>
+            <span className="progress-pct">
+              {activeProgress.run.progress_pct ? `${activeProgress.run.progress_pct}%` : 'Starting…'}
+            </span>
           </div>
           {activeProgress.batches && activeProgress.batches.length > 0 && (
             <div className="batch-indicators">

@@ -77,13 +77,14 @@ interface SecurityGroupsTabProps {
   token: string;
   isAdmin: boolean;
   projects: Project[];
+  onViewDependencies?: (id: string, label: string) => void;
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-const SecurityGroupsTab: React.FC<SecurityGroupsTabProps> = ({ token, isAdmin, projects }) => {
+const SecurityGroupsTab: React.FC<SecurityGroupsTabProps> = ({ token, isAdmin, projects, onViewDependencies }) => {
   // List state
   const [securityGroups, setSecurityGroups] = useState<SecurityGroup[]>([]);
   const [total, setTotal] = useState(0);
@@ -783,6 +784,15 @@ const SecurityGroupsTab: React.FC<SecurityGroupsTabProps> = ({ token, isAdmin, p
             <div style={{ fontSize: "13px", color: "var(--color-text-secondary)", marginBottom: "16px" }}>
               {selectedSg.security_group_id}
             </div>
+            {onViewDependencies && (
+              <button
+                className="graph-view-deps-btn"
+                onClick={() => onViewDependencies(selectedSg.security_group_id, selectedSg.security_group_name)}
+                style={{ marginBottom: "16px" }}
+              >
+                🕸️ View Dependencies
+              </button>
+            )}
 
             {selectedSg.description && (
               <p style={{ fontStyle: "italic", color: "var(--color-text-secondary)" }}>{selectedSg.description}</p>

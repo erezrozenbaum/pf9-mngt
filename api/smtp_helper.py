@@ -41,28 +41,74 @@ SMTP_FROM_ADDRESS = os.getenv("SMTP_FROM_ADDRESS", "pf9-mgmt@example.com")
 SMTP_FROM_NAME    = os.getenv("SMTP_FROM_NAME", "Platform9 Management")
 
 
+def _load_db_smtp_override() -> dict:
+    """Load SMTP overrides from system_settings table (DB-configured SMTP beats env vars)."""
+    try:
+        from db_pool import get_connection as _gc
+        with _gc() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT key, value FROM system_settings WHERE key LIKE 'smtp.%%'"
+                )
+                return {row[0]: row[1] for row in cur.fetchall()}
+    except Exception:
+        return {}
+
+
+def get_smtp_config() -> dict:
+    """Return effective SMTP config (DB overrides env vars)."""
+    db = _load_db_smtp_override()
+    enabled_val = db.get("smtp.enabled", "true" if SMTP_ENABLED else "false")
+    host = db.get("smtp.host") or SMTP_HOST
+    port_val = db.get("smtp.port")
+    port = int(port_val) if port_val and port_val.isdigit() else SMTP_PORT
+    tls_val = db.get("smtp.use_tls")
+    use_tls = (tls_val.lower() in ("true", "1", "yes")) if tls_val else SMTP_USE_TLS
+    username = db.get("smtp.username") or SMTP_USERNAME
+    password = db.get("smtp.password") or SMTP_PASSWORD
+    from_address = db.get("smtp.from_address") or SMTP_FROM_ADDRESS
+    from_name = db.get("smtp.from_name") or SMTP_FROM_NAME
+    return {
+        "enabled": enabled_val.lower() in ("true", "1", "yes"),
+        "host": host,
+        "port": port,
+        "use_tls": use_tls,
+        "username": username,
+        "password": password,
+        "from_address": from_address,
+        "from_name": from_name,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Internal transport
 # ---------------------------------------------------------------------------
 def _do_send(msg, to_addrs: List[str]) -> None:
     """Low-level SMTP transport.  Raises smtplib exceptions on failure."""
-    if SMTP_USE_TLS:
+    cfg = get_smtp_config()
+    smtp_host = cfg["host"]
+    smtp_port = cfg["port"]
+    smtp_use_tls = cfg["use_tls"]
+    smtp_username = cfg["username"]
+    smtp_password = cfg["password"]
+    smtp_from = cfg["from_address"]
+    if smtp_use_tls:
         ctx = ssl.create_default_context()
         ctx.check_hostname = True
         ctx.verify_mode = ssl.CERT_REQUIRED
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
             server.ehlo()
             server.starttls(context=ctx)
             server.ehlo()
-            if SMTP_USERNAME:
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM_ADDRESS, to_addrs, msg.as_string())
+            if smtp_username:
+                server.login(smtp_username, smtp_password)
+            server.sendmail(smtp_from, to_addrs, msg.as_string())
     else:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
             server.ehlo()
-            if SMTP_USERNAME:
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM_ADDRESS, to_addrs, msg.as_string())
+            if smtp_username:
+                server.login(smtp_username, smtp_password)
+            server.sendmail(smtp_from, to_addrs, msg.as_string())
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +141,8 @@ def send_email(
     bool
         True on success; False on delivery failure (when raise_on_error=False).
     """
-    if not SMTP_ENABLED or not SMTP_HOST:
+    cfg = get_smtp_config()
+    if not cfg["enabled"] or not cfg["host"]:
         logger.info("SMTP disabled — would send '%s' to %s", subject, to_addrs)
         return True
 
@@ -103,7 +150,7 @@ def send_email(
         to_addrs = [to_addrs]
 
     msg = MIMEMultipart("alternative")
-    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_ADDRESS}>"
+    msg["From"] = f"{cfg['from_name']} <{cfg['from_address']}>"
     msg["To"] = ", ".join(to_addrs)
     msg["Subject"] = subject
     msg.attach(MIMEText(html_body, "html"))
@@ -119,7 +166,7 @@ def send_email(
     except smtplib.SMTPConnectError:
         if raise_on_error:
             raise
-        logger.error("SMTP connect failed to %s:%s", SMTP_HOST, SMTP_PORT)
+        logger.error("SMTP connect failed to %s:%s", cfg["host"], cfg["port"])
         return False
     except Exception as exc:
         if raise_on_error:

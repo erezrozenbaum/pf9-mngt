@@ -1564,6 +1564,31 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const isSuperadmin = user?.role === 'superadmin';
   const [permSaving, setPermSaving] = useState<string | null>(null); // "role:resource:action" currently saving
 
+  // Role assignment state
+  const [assigningRole, setAssigningRole] = useState<UmRole | null>(null);
+  const [assignUser, setAssignUser] = useState('');
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignMsg, setAssignMsg] = useState('');
+
+  const handleAssignRole = async () => {
+    if (!assigningRole || !assignUser) return;
+    setAssignSaving(true); setAssignMsg('');
+    try {
+      const token = localStorage.getItem('auth_token') || '';
+      const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(assignUser)}/role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ role: assigningRole.name }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      setAssignMsg(`✅ Role "${assigningRole.name}" assigned to ${assignUser}`);
+      setTimeout(() => { setAssigningRole(null); setAssignUser(''); setAssignMsg(''); }, 2000);
+      // Refresh users list
+      loadData();
+    } catch (e: any) { setAssignMsg(`⚠️ ${e.message}`); }
+    finally { setAssignSaving(false); }
+  };
+
   const handleTogglePermission = async (role: string, resource: string, action: string, currentlyEnabled: boolean) => {
     const key = `${role}:${resource}:${action}`;
     setPermSaving(key);
@@ -2040,6 +2065,41 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
       {activeTab === 'roles' && (
         <div className="bg-white rounded-lg border">
+          {assigningRole && (
+            <div style={{ padding: '16px', borderBottom: '1px solid #e5e7eb', background: '#f0f9ff' }}>
+              <div style={{ fontWeight: 600, marginBottom: '8px' }}>
+                ➕ Assign user to role: <strong>{assigningRole.name}</strong>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <select
+                  value={assignUser}
+                  onChange={e => setAssignUser(e.target.value)}
+                  style={{ padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '13px', minWidth: '200px' }}
+                >
+                  <option value="">— Select user —</option>
+                  {users.filter(u => u.role !== assigningRole.name).map(u => (
+                    <option key={u.username} value={u.username}>{u.username}{u.email ? ` (${u.email})` : ''} — {u.role || 'viewer'}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleAssignRole}
+                  disabled={!assignUser || assignSaving}
+                  style={{ padding: '6px 16px', background: '#2563eb', color: 'white', border: 'none', borderRadius: '4px', cursor: assignUser && !assignSaving ? 'pointer' : 'not-allowed', fontSize: '13px' }}
+                >
+                  {assignSaving ? 'Saving…' : 'Assign'}
+                </button>
+                <button
+                  onClick={() => { setAssigningRole(null); setAssignUser(''); setAssignMsg(''); }}
+                  style={{ padding: '6px 12px', background: '#6b7280', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
+                >
+                  Cancel
+                </button>
+                {assignMsg && (
+                  <span style={{ fontSize: '13px', color: assignMsg.startsWith('✅') ? '#166534' : '#991b1b' }}>{assignMsg}</span>
+                )}
+              </div>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50">
@@ -2056,10 +2116,17 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                     <td className="px-4 py-3 text-sm font-medium">{role.name}</td>
                     <td className="px-4 py-3 text-sm">{role.description}</td>
                     <td className="px-4 py-3 text-sm">{role.userCount}</td>
-                    <td className="px-4 py-3 text-sm">
-                      <button className="text-blue-600 hover:text-blue-900">
-                        <span>✏️</span>
-                      </button>
+                    <td className="px-4 py-3 text-sm" style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      {isSuperadmin && role.name !== 'superadmin' && (
+                        <button
+                          className="text-blue-600 hover:text-blue-900"
+                          style={{ fontSize: '12px', padding: '3px 8px', border: '1px solid #bfdbfe', borderRadius: '4px', background: '#eff6ff', cursor: 'pointer' }}
+                          onClick={() => { setAssigningRole(role); setAssignUser(''); setAssignMsg(''); }}
+                          title="Assign a user to this role"
+                        >
+                          ➕ Assign User
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

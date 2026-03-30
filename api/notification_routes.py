@@ -141,15 +141,38 @@ class TestEmailRequest(BaseModel):
 @router.get("/smtp-status", dependencies=[Depends(require_permission("notifications", "read"))])
 async def get_smtp_status():
     """Return SMTP configuration status (no secrets exposed)."""
+    from smtp_helper import get_smtp_config
+    cfg = get_smtp_config()
     return {
-        "smtp_enabled": SMTP_ENABLED,
-        "smtp_host": SMTP_HOST if SMTP_ENABLED else "",
-        "smtp_port": SMTP_PORT if SMTP_ENABLED else 0,
-        "smtp_use_tls": SMTP_USE_TLS,
-        "smtp_from_address": SMTP_FROM_ADDRESS,
-        "smtp_from_name": SMTP_FROM_NAME,
-        "smtp_username_configured": bool(SMTP_USERNAME),
+        "smtp_enabled": cfg["enabled"],
+        "smtp_host": cfg["host"] if cfg["enabled"] else "",
+        "smtp_port": cfg["port"] if cfg["enabled"] else 0,
+        "smtp_use_tls": cfg["use_tls"],
+        "smtp_from_address": cfg["from_address"],
+        "smtp_from_name": cfg["from_name"],
+        "smtp_username_configured": bool(cfg["username"]),
     }
+
+
+@router.post("/smtp-config", dependencies=[Depends(require_permission("notifications", "admin"))])
+async def update_smtp_config(payload: dict):
+    """Save SMTP configuration to system_settings (DB-level override of env vars)."""
+    allowed = {
+        "smtp.enabled", "smtp.host", "smtp.port", "smtp.use_tls",
+        "smtp.username", "smtp.password", "smtp.from_address", "smtp.from_name",
+    }
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for key, value in payload.items():
+                if key not in allowed:
+                    continue
+                str_val = str(value) if value is not None else ""
+                cur.execute("""
+                    INSERT INTO system_settings (key, value, description)
+                    VALUES (%s, %s, 'SMTP runtime configuration')
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+                """, (key, str_val))
+    return {"status": "saved"}
 
 
 # ---------------------------------------------------------------------------

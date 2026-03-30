@@ -256,6 +256,22 @@
   cursor: not-allowed;
 }
 
+.notif-btn-secondary {
+  padding: 8px 18px;
+  border: 1px solid var(--color-border, #d0d0d0);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary, #333);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.notif-btn-secondary:hover {
+  background: var(--color-surface-elevated, #f5f5f5);
+}
+
 .notif-msg {
   font-size: 14px;
   padding: 6px 12px;

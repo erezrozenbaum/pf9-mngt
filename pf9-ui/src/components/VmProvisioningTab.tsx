@@ -650,10 +650,11 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
   // ──────────────────────────────────────────────────────────────
   function step2Valid() {
     if (!vmRows.every((r) => r.vmNameSuffix && r.selectedImageId && r.selectedFlavorId && r.selectedNetworkId && r.volumeGb >= 1)) return false;
+    if (!vmRows.every((r) => /^[a-z0-9][a-z0-9-]*$/.test(r.vmNameSuffix.toLowerCase()) && r.vmNameSuffix.length <= 30)) return false;
     const staticIps = vmRows.filter((r) => r.useStaticIp && r.fixedIp).map((r) => r.fixedIp);
     return new Set(staticIps).size === staticIps.length;
   }
-  function step3Valid() { return vmRows.every((r) => r.osUsername && r.osPassword.length >= 6); }
+  function step3Valid() { return vmRows.every((r) => r.osUsername && r.osPassword.length >= 8); }
 
   // ──────────────────────────────────────────────────────────────
   // Quota bar rendering

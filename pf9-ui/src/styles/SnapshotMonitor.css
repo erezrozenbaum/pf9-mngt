@@ -524,6 +524,18 @@
   min-width: 2%;
 }
 
+.progress-bar-fill.indeterminate {
+  width: 40% !important;
+  background: linear-gradient(90deg, #0066cc, #00cc66, #0066cc);
+  background-size: 200% 100%;
+  animation: progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
 .progress-pct {
   position: absolute;
   top: 50%;

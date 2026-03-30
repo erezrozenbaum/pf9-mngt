@@ -5145,6 +5145,7 @@ const App: React.FC = () => {
                   <th>MAC Address</th>
                   <th>IP Addresses</th>
                   <th>Last Seen</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -5162,6 +5163,14 @@ const App: React.FC = () => {
                          port.ip_addresses.map((ip: any) => ip.ip_address || JSON.stringify(ip)).join(", ") : 
                          "N/A"}</td>
                     <td>{formatDate(port.last_seen_at)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <button
+                        className="graph-view-deps-btn"
+                        onClick={() => setGraphTarget({ type: "port", id: port.id, label: port.name || port.id })}
+                      >
+                        🕸️ View Dependencies
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -5181,6 +5190,7 @@ const App: React.FC = () => {
                   <th>Port ID</th>
                   <th>Router ID</th>
                   <th>Last Seen</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -5198,6 +5208,14 @@ const App: React.FC = () => {
                     <td className="pf9-cell-subtle">{fip.port_id ? fip.port_id.substring(0, 8) + "..." : "N/A"}</td>
                     <td className="pf9-cell-subtle">{fip.router_id ? fip.router_id.substring(0, 8) + "..." : "N/A"}</td>
                     <td>{formatDate(fip.last_seen_at)}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <button
+                        className="graph-view-deps-btn"
+                        onClick={() => setGraphTarget({ type: "floating_ip", id: fip.id, label: fip.floating_ip || fip.id })}
+                      >
+                        🕸️ View Dependencies
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -5846,6 +5864,7 @@ const App: React.FC = () => {
               token={authToken}
               isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
               projects={tenants.filter(t => t.tenant_id !== '__ALL__')}
+              onViewDependencies={(id, label) => setGraphTarget({ type: "security_group", id, label })}
             />
           )}
 
@@ -6440,6 +6459,12 @@ const App: React.FC = () => {
                 <strong>Last seen:</strong>{" "}
                 {formatDate(selectedSubnet.last_seen_at)}
               </p>
+              <button
+                className="graph-view-deps-btn"
+                onClick={() => setGraphTarget({ type: "subnet", id: selectedSubnet.id, label: selectedSubnet.name || selectedSubnet.id })}
+              >
+                🕸️ View Dependencies
+              </button>
             </div>
           )}
 

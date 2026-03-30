@@ -274,6 +274,7 @@ def _upsert_with_history(
 
         # ---- Snapshot old rows BEFORE the upsert (for drift detection) ----
         old_rows: Dict[str, Dict] = {}
+        all_existing_ids: set = set()
         if drift_rules:
             record_ids = [r[id_field] for r in records if r.get(id_field)]
             if record_ids:
@@ -283,6 +284,10 @@ def _upsert_with_history(
                 )
                 for row in cur.fetchall():
                     old_rows[str(row[id_field])] = dict(row)
+            # Load all existing IDs to detect deletions
+            cur.execute(f"SELECT {id_field} FROM {table_name}")
+            for row in cur.fetchall():
+                all_existing_ids.add(str(row[id_field]))
 
         # ---- Perform the upsert ----
         values = [[record.get(col) for col in columns] for record in records]
@@ -347,6 +352,67 @@ def _upsert_with_history(
                 "against the database to re-enable history recording.",
                 table_name, type(e).__name__, e
             )
+
+        # ---- Deletion drift detection ----
+        # Emit a drift event for any resource present in the DB but absent from
+        # the current collection (i.e. it was deleted from OpenStack).
+        if drift_rules and all_existing_ids:
+            incoming_ids = {str(r[id_field]) for r in records if r.get(id_field)}
+            deleted_ids = all_existing_ids - incoming_ids
+            if deleted_ids:
+                # Load full rows for deleted IDs
+                cur.execute(
+                    f"SELECT * FROM {table_name} WHERE {id_field} = ANY(%s)",
+                    (list(deleted_ids),),
+                )
+                deleted_rows = {str(row[id_field]): dict(row) for row in cur.fetchall()}
+                deletion_rule = next(
+                    (ru for ru in drift_rules if ru.get("field_name") == "status"),
+                    drift_rules[0],
+                )
+                for missing_id in deleted_ids:
+                    missing_row = deleted_rows.get(missing_id, {})
+                    try:
+                        cur.execute("""
+                            INSERT INTO drift_events
+                                (rule_id, resource_type, resource_id, resource_name,
+                                 project_id, project_name, domain_id, domain_name,
+                                 severity, field_changed, old_value, new_value, description)
+                            VALUES (%s, %s, %s, %s,
+                                    %s, %s, %s, %s,
+                                    %s, %s, %s, %s, %s)
+                        """, (
+                            deletion_rule["id"],
+                            table_name,
+                            missing_id,
+                            missing_row.get("name") or missing_row.get("hostname") or missing_id,
+                            missing_row.get("project_id"),
+                            missing_row.get("project_name"),
+                            missing_row.get("domain_id"),
+                            missing_row.get("domain_name"),
+                            deletion_rule["severity"],
+                            "status",
+                            "active",
+                            "deleted",
+                            f"{table_name[:-1]} '{missing_row.get('name') or missing_id}' was deleted from OpenStack",
+                        ))
+                        _auto_ticket_for_drift(
+                            conn,
+                            severity=deletion_rule["severity"],
+                            resource_type=table_name,
+                            resource_id=missing_id,
+                            resource_name=missing_row.get("name") or missing_row.get("hostname") or missing_id,
+                            project_id=missing_row.get("project_id"),
+                            project_name=missing_row.get("project_name"),
+                            field_changed="status",
+                            description=f"{table_name[:-1]} '{missing_row.get('name') or missing_id}' was deleted from OpenStack",
+                        )
+                    except Exception as del_drift_err:
+                        import logging
+                        logging.getLogger("db_writer").warning(
+                            "Deletion drift event failed for %s/%s: %s",
+                            table_name, missing_id, del_drift_err,
+                        )
     
     return len(records)
 

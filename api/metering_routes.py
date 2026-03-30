@@ -544,8 +544,9 @@ async def get_metering_overview(
                 SELECT
                     COUNT(*) AS total_snapshots,
                     COALESCE(SUM(size_gb), 0) AS total_snapshot_gb,
-                    COUNT(*) FILTER (WHERE is_compliant = true) AS compliant_count,
-                    COUNT(*) FILTER (WHERE is_compliant = false) AS non_compliant_count
+                    COUNT(*) FILTER (WHERE is_compliant IS TRUE)  AS compliant_count,
+                    COUNT(*) FILTER (WHERE is_compliant IS FALSE) AS non_compliant_count,
+                    COUNT(*) FILTER (WHERE is_compliant IS NULL)  AS unknown_count
                 FROM (
                     SELECT DISTINCT ON (snapshot_id) size_gb, is_compliant
                     FROM metering_snapshots
@@ -1210,7 +1211,8 @@ async def get_chargeback_summary(
 
         sql = f"""
             SELECT DISTINCT ON (vm_id)
-                vm_id, vm_name, project_name, domain, vcpus, ram_mb, flavor_name,
+                vm_id, vm_name, project_name, domain,
+                vcpus_allocated AS vcpus, ram_allocated_mb AS ram_mb, flavor AS flavor_name,
                 collected_at
             FROM metering_resources
             WHERE {' AND '.join(where_parts)}
@@ -1273,7 +1275,7 @@ async def get_tenant_growth(
     """
     with get_connection() as conn:
         where_parts = [
-            "collected_at > now() - interval '%s months'"
+            "collected_at > now() - (%s * interval '1 month')"
         ]
         params: list = [months]
         if domain:
@@ -1476,7 +1478,7 @@ async def _collect_vm_rows_for_export(
         flavor_pricing = {p["item_name"]: float(p.get("cost_per_hour") or 0)
                           for p in pricing_rows if p["category"] == "flavor"}
 
-        where_parts = ["collected_at > now() - interval '%s hours'"]
+        where_parts = ["collected_at > now() - (%s * interval '1 hour')"]
         params: list = [hours]
         if project:
             where_parts.append("project_name = %s")
@@ -1488,7 +1490,8 @@ async def _collect_vm_rows_for_export(
         sql = f"""
             SELECT DISTINCT ON (vm_id)
                 vm_id, vm_name, project_name, domain,
-                vcpus, ram_mb, disk_allocated_gb AS disk_gb,
+                vcpus_allocated AS vcpus, ram_allocated_mb AS ram_mb,
+                disk_allocated_gb AS disk_gb,
                 cpu_usage_percent, ram_usage_percent, flavor AS flavor_name,
                 collected_at
             FROM metering_resources

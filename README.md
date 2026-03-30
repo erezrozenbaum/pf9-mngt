@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.4-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.5-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,6 +534,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.5](CHANGELOG.md)** — 14 production bug fixes: metering compliant=0, snapshot monitor 0% bar, provisioning 500 on submit, dark mode nav, missing View Dependencies buttons, role assignment UI, SMTP runtime config, drift deletion detection, and more.
 **[v1.83.4](CHANGELOG.md)** — Fix all 200+ TypeScript CI errors (`frontend-typecheck` job) across 14 frontend source files; clean `tsc -b` with zero errors.
 **[v1.83.3](CHANGELOG.md)** — Fix Swagger UI returning 401 at `/api/docs` in K8s; moved FastAPI `docs_url`, `redoc_url`, and `openapi_url` to `/api/docs`, `/api/redoc`, `/api/openapi.json` and updated auth middleware bypass list.
 **[v1.83.2](CHANGELOG.md)** — Fix resource history bleeding into Migration Planner; fix dashboard CPU/Memory 0% and Top Hosts N/A via DB fallback; fix VM storage showing 0% instead of N/A; fix drift auto-ticket failing on fresh K8s installs; fix metering showing 0 VMs via direct DB fallback in worker.
@@ -631,4 +632,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.4 | **Last Updated**: March 2026
+**Project Status**: Production Ready | **Version**: 1.83.5 | **Last Updated**: March 2026

@@ -5390,7 +5390,7 @@ async def get_users(
             pages = max(1, (total + page_size - 1) // page_size) if total > 0 and page_size > 0 else 1
         
             return {
-                "data": users,
+                "items": users,
                 "total": total,
                 "page": page,
                 "page_size": page_size,

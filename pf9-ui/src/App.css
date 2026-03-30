@@ -1332,3 +1332,31 @@ body,
   color: var(--color-text, #111827);
 }
 
+/* ── Dark mode nav sidebar fixes ───────────────────────────────── */
+/* Active group pill: use a more visible highlight in dark mode */
+:root[data-theme="dark"] .pf9-nav-group-active {
+  background: rgba(144, 202, 249, 0.12) !important;
+  border-left-color: var(--color-primary) !important;
+  color: var(--color-primary) !important;
+}
+
+:root[data-theme="dark"] .pf9-nav-group-pill:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: var(--color-primary) !important;
+}
+
+/* Active nav tab in dark mode */
+:root[data-theme="dark"] .pf9-grouped-nav .pf9-tab-active {
+  background: rgba(144, 202, 249, 0.12) !important;
+  color: var(--color-primary) !important;
+}
+
+:root[data-theme="dark"] .pf9-grouped-nav .pf9-tab:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: var(--color-primary) !important;
+}
+
+/* Sidebar brand separator aligns with header bottom border */
+.pf9-sidebar-brand {
+  /* Already has padding: 18px 16px 14px — keep it, height ~49px matches header ~48px */
+}

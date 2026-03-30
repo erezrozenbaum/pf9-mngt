@@ -139,6 +139,12 @@ const NotificationSettings: React.FC<Props> = ({ isAdmin }) => {
   const [sendingTest, setSendingTest] = useState(false);
   const [stats, setStats] = useState<NotificationStats | null>(null);
 
+  // SMTP config form state
+  const [smtpForm, setSmtpForm] = useState({ host: "", port: "587", use_tls: true, username: "", password: "", from_address: "", from_name: "", enabled: true });
+  const [smtpFormMsg, setSmtpFormMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [smtpFormSaving, setSmtpFormSaving] = useState(false);
+  const [showSmtpForm, setShowSmtpForm] = useState(false);
+
   const PAGE_SIZE = 25;
 
   // ─── Load preferences ──────────────────────────────────────────────────────
@@ -278,6 +284,33 @@ const NotificationSettings: React.FC<Props> = ({ isAdmin }) => {
       setTestMsg({ type: "err", text: e.message });
     } finally {
       setSendingTest(false);
+    }
+  };
+
+  const handleSmtpSave = async () => {
+    setSmtpFormSaving(true);
+    setSmtpFormMsg(null);
+    try {
+      await apiFetch("/notifications/smtp-config", {
+        method: "POST",
+        body: JSON.stringify({
+          "smtp.enabled": String(smtpForm.enabled),
+          "smtp.host": smtpForm.host,
+          "smtp.port": smtpForm.port,
+          "smtp.use_tls": String(smtpForm.use_tls),
+          "smtp.username": smtpForm.username,
+          ...(smtpForm.password ? { "smtp.password": smtpForm.password } : {}),
+          "smtp.from_address": smtpForm.from_address,
+          "smtp.from_name": smtpForm.from_name,
+        }),
+      });
+      setSmtpFormMsg({ type: "ok", text: "SMTP configuration saved. Changes apply immediately." });
+      setShowSmtpForm(false);
+      loadSettings();
+    } catch (e: any) {
+      setSmtpFormMsg({ type: "err", text: e.message });
+    } finally {
+      setSmtpFormSaving(false);
     }
   };
 
@@ -513,6 +546,56 @@ const NotificationSettings: React.FC<Props> = ({ isAdmin }) => {
               </div>
             ) : (
               <p className="notif-loading">Loading SMTP status…</p>
+            )}
+            {isAdmin && (
+              <div style={{ marginTop: 12 }}>
+                <button
+                  className="notif-btn-secondary"
+                  onClick={() => {
+                    setSmtpForm({
+                      host: smtpStatus?.smtp_host || "",
+                      port: String(smtpStatus?.smtp_port || 587),
+                      use_tls: smtpStatus?.smtp_use_tls ?? true,
+                      username: "",
+                      password: "",
+                      from_address: smtpStatus?.smtp_from_address || "",
+                      from_name: smtpStatus?.smtp_from_name || "",
+                      enabled: smtpStatus?.smtp_enabled ?? false,
+                    });
+                    setShowSmtpForm((v) => !v);
+                    setSmtpFormMsg(null);
+                  }}
+                >
+                  ⚙️ {showSmtpForm ? "Hide Config Form" : "Configure SMTP"}
+                </button>
+              </div>
+            )}
+            {showSmtpForm && isAdmin && (
+              <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={smtpForm.enabled} onChange={e => setSmtpForm(f => ({ ...f, enabled: e.target.checked }))} />
+                  Enabled
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <label>SMTP Host<br /><input className="notif-input" value={smtpForm.host} onChange={e => setSmtpForm(f => ({ ...f, host: e.target.value }))} placeholder="smtp.gmail.com" /></label>
+                  <label>Port<br /><input className="notif-input" value={smtpForm.port} onChange={e => setSmtpForm(f => ({ ...f, port: e.target.value }))} placeholder="587" /></label>
+                  <label>From Address<br /><input className="notif-input" value={smtpForm.from_address} onChange={e => setSmtpForm(f => ({ ...f, from_address: e.target.value }))} placeholder="no-reply@example.com" /></label>
+                  <label>From Name<br /><input className="notif-input" value={smtpForm.from_name} onChange={e => setSmtpForm(f => ({ ...f, from_name: e.target.value }))} placeholder="PF9 Management" /></label>
+                  <label>Username (optional)<br /><input className="notif-input" value={smtpForm.username} onChange={e => setSmtpForm(f => ({ ...f, username: e.target.value }))} placeholder="username" /></label>
+                  <label>Password (leave blank to keep current)<br /><input className="notif-input" type="password" value={smtpForm.password} onChange={e => setSmtpForm(f => ({ ...f, password: e.target.value }))} placeholder="••••••••" /></label>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="checkbox" checked={smtpForm.use_tls} onChange={e => setSmtpForm(f => ({ ...f, use_tls: e.target.checked }))} />
+                  Use STARTTLS
+                </label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="notif-btn-primary" onClick={handleSmtpSave} disabled={smtpFormSaving}>
+                    {smtpFormSaving ? "Saving…" : "💾 Save SMTP Settings"}
+                  </button>
+                  <button className="notif-btn-secondary" onClick={() => setShowSmtpForm(false)}>Cancel</button>
+                </div>
+                {smtpFormMsg && <div className={`notif-msg ${smtpFormMsg.type}`}>{smtpFormMsg.text}</div>}
+              </div>
             )}
           </div>
 

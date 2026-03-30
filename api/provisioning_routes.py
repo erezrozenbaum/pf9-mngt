@@ -1059,7 +1059,7 @@ async def provision_customer(
             _leg_vlan_id  = int(first_net.vlan_id) if (first_net and first_net.vlan_id) else req.vlan_id
             _leg_cidr     = (first_net.subnet_cidr if first_net else None) or req.subnet_cidr
             _leg_gw       = (first_net.gateway_ip if first_net else None) or req.gateway_ip
-            _leg_dns      = (first_net.dns_nameservers.split(",") if (first_net and first_net.dns_nameservers) else None) or req.dns_nameservers
+            _leg_dns      = (first_net.dns_nameservers if (first_net and first_net.dns_nameservers) else None) or req.dns_nameservers
             cur.execute("""
                 INSERT INTO provisioning_jobs
                     (domain_name, project_name, username, user_email, user_role,

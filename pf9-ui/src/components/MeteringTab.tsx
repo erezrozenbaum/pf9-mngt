@@ -99,6 +99,7 @@ interface OverviewData {
     total_snapshot_gb: number;
     compliant_count: number;
     non_compliant_count: number;
+    unknown_count: number;
   };
   restores: {
     total_restores: number;
@@ -799,6 +800,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <SummaryCard title="Snapshot Storage" value={`${fmtNum(overview.snapshots.total_snapshot_gb)} GB`} />
             <SummaryCard title="Compliant" value={overview.snapshots.compliant_count} color="#4CAF50" />
             <SummaryCard title="Non-Compliant" value={overview.snapshots.non_compliant_count} color="#F44336" />
+            {(overview.snapshots.unknown_count ?? 0) > 0 && (
+              <SummaryCard title="No Policy" value={overview.snapshots.unknown_count} color="#9E9E9E" />
+            )}
           </div>
 
           {/* Restores row */}
@@ -1750,6 +1754,9 @@ function ExportCard({
   onExport: () => void;
   highlight?: boolean;
 }) {
+  const isPdf = title.toLowerCase().includes("pdf");
+  const isExcel = title.toLowerCase().includes("excel");
+  const buttonLabel = isPdf ? "📄 Download PDF" : isExcel ? "📊 Download Excel" : "📥 Download CSV";
   return (
     <div
       style={{
@@ -1779,7 +1786,7 @@ function ExportCard({
           fontSize: "0.85em",
         }}
       >
-        📥 Download CSV
+        {buttonLabel}
       </button>
     </div>
   );
