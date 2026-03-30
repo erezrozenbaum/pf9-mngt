@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.2  
-**Last Updated**: March 29, 2026  
+**Version**: 1.83.3  
+**Last Updated**: March 30, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -21,8 +21,10 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 | Stop all services | `docker compose down` | Host access |
 | Check service health | `docker compose ps` | Host access |
 | View logs | `docker compose logs <service>` | Host access |
-| Add a user | UI → Users → Add | Superadmin |
-| Reset a password | UI → Users → 🔑 | Superadmin |
+| Create PF9 user | UI → Resources → Users → ➕ | Admin+ |
+| Change user role | UI → Resources → Users → ✏️ | Admin+ |
+| Reset a password | UI → Resources → Users → 🔑 | Admin+ |
+| Delete a user | UI → Resources → Users → 🗑️ | Superadmin |
 | Trigger snapshot run | UI → Snapshot Policies → Run Now | Admin |
 | Trigger restore | UI → Restore → New Restore Job | Admin |
 | Run backup now | UI → Backup → 🚀 Run Backup Now | Superadmin |
@@ -165,51 +167,71 @@ docker compose restart <container-name>
 
 ## 3. User Administration
 
-### Add a new user
+The **Resources → Users** tab provides a full user management interface. Each row shows the user's name/ID, email, domain, PF9 role (colour-coded badge), OpenStack OS roles, enabled status, creation date and last login.
 
-1. Create the user in LDAP:
+### Create a Platform9 user (UI)
 
-```bash
-docker compose exec pf9_ldap ldapadd -x \
-  -D "cn=admin,${LDAP_BASE_DN}" \
-  -w "${LDAP_ADMIN_PASSWORD}" << 'EOF'
-dn: uid=jsmith,ou=users,dc=company,dc=local
-objectClass: inetOrgPerson
-uid: jsmith
-cn: John Smith
-sn: Smith
-mail: jsmith@example.com
-userPassword: <your-temporary-password>
-EOF
-```
+Available to **admin** and **superadmin** roles.
 
-2. Assign a role in the UI: **Users** tab → find user → **Assign Role**
+1. Navigate to **Resources → Users**.
+2. Click **➕ Create Platform9 User** (top right of the table).
+3. Fill in the form:
+   - **Username** — unique login name (no spaces)
+   - **Email** — used for notifications
+   - **Full Name** — display name
+   - **Password** — minimum 8 characters; user should change on first login
+   - **Role** — `viewer`, `operator`, `technical`, `admin`, or `superadmin`
+4. Click **Save**. The user is created in the authentication service and a `user_roles` row is inserted.
 
-### Reset a password
+> **LDAP alternative:** For SSO-based users, add the user to LDAP instead and let the LDAP Sync worker provision the account automatically (see [LDAP_SYNC_GUIDE.md](LDAP_SYNC_GUIDE.md)).
 
-UI: **Users** tab → find user → click 🔑 → enter new password → Save.
-Superadmin only. Action is fully audit-logged.
+### Change a user's PF9 role (UI)
 
-### Disable / remove a user
+Available to **admin** and **superadmin**.
 
-1. Remove the user from LDAP (they can no longer authenticate)
-2. Their active JWT session expires within 480 minutes (8 hours) automatically
-3. For immediate revocation set `active=false` in `user_roles` table:
+1. **Resources → Users** → click **✏️** on the target row.
+2. Select the new role in the Edit modal → **Save**.
+
+The change takes effect on the user's next API call (within the JWT TTL window).
+
+### Reset a password (UI)
+
+Available to **admin** and **superadmin**.
+
+1. **Resources → Users** → click **🔑** on the target row.
+2. An inline form expands directly below the row — enter the new password (min 8 chars) and click **Reset**.
+
+Action is fully audit-logged.
+
+### Delete a user (UI)
+
+Available to **superadmin** only.
+
+1. **Resources → Users** → click **🗑️** on the target row.
+2. Confirm the browser prompt. The user record and active session are removed.
+
+> Deletion is irreversible. For a softer approach, change the user's role to `viewer` or deactivate them in LDAP.
+
+### Disable / remove a user (CLI)
+
+For immediate session revocation without UI access:
 
 ```bash
 docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
-  -c "UPDATE user_roles SET active=false WHERE username='jsmith';"
+  -c "UPDATE user_roles SET is_active=false WHERE username='jsmith';"
 ```
+
+Their JWT tokens will fail permission checks immediately. The JWT itself expires within 480 minutes (8 hours) automatically.
 
 ### Role hierarchy
 
-| Role | Capabilities |
-|------|--------------|
-| `viewer` | Read all data |
-| `operator` | Read + limited write (no delete) |
-| `technical` | Read + write (no delete) |
-| `admin` | Full admin except user management |
-| `superadmin` | Full access including user management and destructive operations |
+| Role | PF9 Role Badge Colour | Capabilities |
+|------|----------------------|--------------|
+| `viewer` | grey | Read all data |
+| `operator` | green | Read + limited write (no delete) |
+| `technical` | blue | Read + write (no delete) |
+| `admin` | orange/info | Full admin except user management |
+| `superadmin` | red | Full access including user management and destructive operations |
 
 ---
 

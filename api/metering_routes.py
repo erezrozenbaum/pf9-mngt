@@ -15,16 +15,37 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field
 from psycopg2.extras import RealDictCursor
 
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    _XLSX_AVAILABLE = True
+except ImportError:
+    _XLSX_AVAILABLE = False
+
+try:
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    _PDF_AVAILABLE = True
+except ImportError:
+    _PDF_AVAILABLE = False
+
 from auth import require_permission, get_current_user, User, get_effective_region_filter
 from db_pool import get_connection
+from smtp_helper import (
+    SMTP_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS,
+    SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_ADDRESS, SMTP_FROM_NAME,
+)
 
 logger = logging.getLogger("pf9.metering")
 
@@ -1137,6 +1158,578 @@ async def export_chargeback(
 
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
         return _rows_to_csv(chargeback, f"chargeback_report_{ts}.csv")
+
+
+# ---------------------------------------------------------------------------
+# Chargeback Summary (JSON — for the UI Chargeback tab)
+# ---------------------------------------------------------------------------
+
+@router.get("/chargeback-summary")
+async def get_chargeback_summary(
+    hours: int = Query(720, ge=1, le=8760, description="Lookback hours (default 30 days)"),
+    currency: Optional[str] = Query(None, description="Override display currency (e.g. ILS, EUR, GBP)"),
+    domain: Optional[str] = Query(None),
+    user: User = Depends(require_permission("metering", "read")),
+):
+    """
+    JSON chargeback summary — total estimated cost per tenant for the UI Chargeback tab.
+    Aggregates the latest metering record per VM, computes cost from pricing table,
+    and returns one row per (domain, project_name) sorted by cost descending.
+    """
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM metering_config WHERE id = 1")
+            cfg = cur.fetchone()
+        fb_vcpu = float(cfg["cost_per_vcpu_hour"]) if cfg else 0
+        fb_ram = float(cfg["cost_per_gb_ram_hour"]) if cfg else 0
+        config_currency = cfg["cost_currency"] if cfg else "USD"
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM metering_pricing ORDER BY id")
+            pricing_rows = cur.fetchall()
+
+        if not currency:
+            if pricing_rows:
+                currency = pricing_rows[0].get("currency") or config_currency
+            else:
+                currency = config_currency
+
+        flavor_pricing = {}
+        for p in pricing_rows:
+            if p["category"] == "flavor":
+                flavor_pricing[p["item_name"]] = {
+                    "cost_per_hour": float(p.get("cost_per_hour") or 0),
+                }
+
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        where_parts = ["collected_at > %s"]
+        params: list = [since]
+        if domain:
+            where_parts.append("domain = %s")
+            params.append(domain)
+
+        sql = f"""
+            SELECT DISTINCT ON (vm_id)
+                vm_id, vm_name, project_name, domain, vcpus, ram_mb, flavor_name,
+                collected_at
+            FROM metering_resources
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY vm_id, collected_at DESC
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, params)
+            vms = cur.fetchall()
+
+    tenant_totals: dict = {}
+    for vm in vms:
+        key = (vm.get("domain") or "unknown", vm.get("project_name") or "unknown")
+        fp = flavor_pricing.get(vm.get("flavor_name") or "")
+        if fp and fp["cost_per_hour"] > 0:
+            cost_per_hour = fp["cost_per_hour"]
+        else:
+            vcpu_cost = (vm.get("vcpus") or 0) * fb_vcpu
+            ram_cost = ((vm.get("ram_mb") or 0) / 1024) * fb_ram
+            cost_per_hour = vcpu_cost + ram_cost
+
+        entry = tenant_totals.setdefault(key, {
+            "domain": key[0],
+            "project_name": key[1],
+            "vm_count": 0,
+            "total_vcpus": 0,
+            "total_ram_gb": 0.0,
+            "estimated_cost": 0.0,
+        })
+        entry["vm_count"] += 1
+        entry["total_vcpus"] += vm.get("vcpus") or 0
+        entry["total_ram_gb"] += round((vm.get("ram_mb") or 0) / 1024, 2)
+        entry["estimated_cost"] += cost_per_hour * hours
+
+    rows = sorted(tenant_totals.values(), key=lambda x: x["estimated_cost"], reverse=True)
+    for r in rows:
+        r["estimated_cost"] = round(r["estimated_cost"], 2)
+
+    return {
+        "currency": currency,
+        "period_hours": hours,
+        "tenants": rows,
+        "total_cost": round(sum(r["estimated_cost"] for r in rows), 2),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tenant Growth (JSON — monthly VM counts per tenant)
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant-growth")
+async def get_tenant_growth(
+    months: int = Query(6, ge=1, le=24, description="Number of months to look back"),
+    domain: Optional[str] = Query(None),
+    user: User = Depends(require_permission("metering", "read")),
+):
+    """
+    Returns monthly VM counts per tenant for the last N months.
+    Used by the Tenant Growth tab in the Metering section.
+    """
+    with get_connection() as conn:
+        where_parts = [
+            "collected_at > now() - interval '%s months'"
+        ]
+        params: list = [months]
+        if domain:
+            where_parts.append("domain = %s")
+            params.append(domain)
+
+        sql = f"""
+            SELECT
+                TO_CHAR(DATE_TRUNC('month', collected_at), 'YYYY-MM') AS month,
+                domain,
+                project_name,
+                COUNT(DISTINCT vm_id) AS vm_count
+            FROM metering_resources
+            WHERE {' AND '.join(where_parts)}
+            GROUP BY 1, 2, 3
+            ORDER BY 1, 2, 3
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+    # Build sorted month list
+    months_seen: list = sorted({r["month"] for r in rows})
+    tenants_seen: list = sorted({
+        f"{r['domain'] or 'unknown'}/{r['project_name'] or 'unknown'}"
+        for r in rows
+    })
+
+    # Pivot: tenant label → {month: vm_count}
+    pivot: dict = {t: {} for t in tenants_seen}
+    for r in rows:
+        label = f"{r['domain'] or 'unknown'}/{r['project_name'] or 'unknown'}"
+        pivot[label][r["month"]] = r["vm_count"]
+
+    series = [
+        {
+            "tenant": t,
+            "data": [pivot[t].get(m, 0) for m in months_seen],
+        }
+        for t in tenants_seen
+    ]
+
+    return {
+        "months": months_seen,
+        "series": series,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Excel export — row per VM with summary row (chargeback)
+# ---------------------------------------------------------------------------
+
+def _build_chargeback_xlsx(rows: list, currency: str, summary: dict) -> bytes:
+    """Build an Excel workbook: one row per VM, a summary sheet, styled."""
+    if not _XLSX_AVAILABLE:
+        raise RuntimeError("openpyxl not installed")
+
+    wb = openpyxl.Workbook()
+
+    # ── Sheet 1: VM Details ──────────────────────────────────────────────
+    ws = wb.active
+    ws.title = "VM Details"
+
+    hdr_fill = PatternFill("solid", fgColor="1D4ED8")
+    hdr_font = Font(bold=True, color="FFFFFF")
+    sum_fill = PatternFill("solid", fgColor="DBEAFE")
+    sum_font = Font(bold=True, color="1E3A8A")
+
+    vm_headers = [
+        "Domain", "Project / Tenant", "VM Name", "VM ID",
+        "vCPUs", "RAM (GB)", "Disk (GB)", "CPU Usage %", "RAM Usage %",
+        "Flavor", f"Est. Compute Cost ({currency})",
+    ]
+    ws.append(vm_headers)
+    for cell in ws[1]:
+        cell.fill = hdr_fill
+        cell.font = hdr_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for r in rows:
+        ws.append([
+            r.get("domain", ""),
+            r.get("project_name", ""),
+            r.get("vm_name", ""),
+            r.get("vm_id", ""),
+            r.get("vcpus"),
+            round((r.get("ram_mb") or 0) / 1024, 2),
+            r.get("disk_gb"),
+            r.get("cpu_usage_percent"),
+            r.get("ram_usage_percent"),
+            r.get("flavor_name", ""),
+            r.get("estimated_cost", 0),
+        ])
+
+    # Summary row
+    total_cost = sum(r.get("estimated_cost", 0) for r in rows)
+    summary_row = [
+        "TOTAL", "", f"{len(rows)} VMs", "",
+        sum(r.get("vcpus") or 0 for r in rows), "", "", "", "", "",
+        round(total_cost, 2),
+    ]
+    ws.append(summary_row)
+    for cell in ws[ws.max_row]:
+        cell.fill = sum_fill
+        cell.font = sum_font
+
+    # Auto-width
+    for col in ws.columns:
+        max_len = max((len(str(c.value or "")) for c in col), default=10)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 40)
+
+    # ── Sheet 2: Summary by Tenant ───────────────────────────────────────
+    ws2 = wb.create_sheet("Tenant Summary")
+    sum_headers = [
+        "Domain", "Project / Tenant", "VM Count",
+        "Total vCPUs", "Total RAM (GB)", f"Est. Cost ({currency})",
+    ]
+    ws2.append(sum_headers)
+    for cell in ws2[1]:
+        cell.fill = hdr_fill
+        cell.font = hdr_font
+        cell.alignment = Alignment(horizontal="center")
+
+    from collections import defaultdict
+    by_tenant: dict = defaultdict(lambda: {"vm_count": 0, "total_vcpus": 0, "total_ram_gb": 0.0, "total_cost": 0.0})
+    for r in rows:
+        key = (r.get("domain", ""), r.get("project_name", ""))
+        by_tenant[key]["vm_count"] += 1
+        by_tenant[key]["total_vcpus"] += r.get("vcpus") or 0
+        by_tenant[key]["total_ram_gb"] += (r.get("ram_mb") or 0) / 1024
+        by_tenant[key]["total_cost"] += r.get("estimated_cost", 0)
+
+    for (domain, project), v in sorted(by_tenant.items()):
+        ws2.append([domain, project, v["vm_count"], v["total_vcpus"],
+                    round(v["total_ram_gb"], 2), round(v["total_cost"], 2)])
+
+    ws2.append(["GRAND TOTAL", "", sum(v["vm_count"] for v in by_tenant.values()), "", "", round(total_cost, 2)])
+    for cell in ws2[ws2.max_row]:
+        cell.fill = sum_fill
+        cell.font = sum_font
+
+    for col in ws2.columns:
+        max_len = max((len(str(c.value or "")) for c in col), default=10)
+        ws2.column_dimensions[col[0].column_letter].width = min(max_len + 2, 40)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+@router.get("/export/chargeback-excel")
+async def export_chargeback_excel(
+    project: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+    hours: int = Query(720, ge=1, le=8760),
+    currency: Optional[str] = Query(None),
+    user: User = Depends(require_permission("metering", "read")),
+):
+    """Export chargeback as an Excel file with one row per VM + a tenant summary sheet."""
+    if not _XLSX_AVAILABLE:
+        raise HTTPException(status_code=501, detail="openpyxl not installed")
+
+    rows, resolved_currency = await _collect_vm_rows_for_export(project, domain, hours, currency)
+    xlsx_bytes = _build_chargeback_xlsx(rows, resolved_currency, {})
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    filename = f"chargeback_vm_{ts}.xlsx"
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+async def _collect_vm_rows_for_export(
+    project: Optional[str],
+    domain: Optional[str],
+    hours: int,
+    currency: Optional[str],
+) -> tuple:
+    """Shared query: return (rows, currency) where rows has per-VM data + estimated_cost."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM metering_config WHERE id = 1")
+            cfg = cur.fetchone()
+        fb_vcpu = float(cfg["cost_per_vcpu_hour"]) if cfg else 0
+        fb_ram = float(cfg["cost_per_gb_ram_hour"]) if cfg else 0
+        config_currency = (cfg["cost_currency"] if cfg else "USD") or "USD"
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM metering_pricing ORDER BY id")
+            pricing_rows = cur.fetchall()
+
+        if not currency:
+            if pricing_rows:
+                currency = pricing_rows[0].get("currency") or config_currency
+            else:
+                currency = config_currency
+
+        flavor_pricing = {p["item_name"]: float(p.get("cost_per_hour") or 0)
+                          for p in pricing_rows if p["category"] == "flavor"}
+
+        where_parts = ["collected_at > now() - interval '%s hours'"]
+        params: list = [hours]
+        if project:
+            where_parts.append("project_name = %s")
+            params.append(project)
+        if domain:
+            where_parts.append("domain = %s")
+            params.append(domain)
+
+        sql = f"""
+            SELECT DISTINCT ON (vm_id)
+                vm_id, vm_name, project_name, domain,
+                vcpus, ram_mb, disk_allocated_gb AS disk_gb,
+                cpu_usage_percent, ram_usage_percent, flavor AS flavor_name,
+                collected_at
+            FROM metering_resources
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY vm_id, collected_at DESC
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, params)
+            vms = cur.fetchall()
+
+    result = []
+    for vm in vms:
+        fp_cost = flavor_pricing.get(vm.get("flavor_name") or "")
+        if fp_cost and fp_cost > 0:
+            cost = fp_cost * hours
+        else:
+            cost = ((vm.get("vcpus") or 0) * fb_vcpu + (vm.get("ram_mb") or 0) / 1024 * fb_ram) * hours
+        row = dict(vm)
+        row["estimated_cost"] = round(cost, 2)
+        result.append(row)
+
+    return result, currency
+
+
+# ---------------------------------------------------------------------------
+# PDF export — chargeback summary
+# ---------------------------------------------------------------------------
+
+@router.get("/export/chargeback-pdf")
+async def export_chargeback_pdf(
+    project: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+    hours: int = Query(720, ge=1, le=8760),
+    currency: Optional[str] = Query(None),
+    user: User = Depends(require_permission("metering", "read")),
+):
+    """Export chargeback per-tenant summary as PDF."""
+    if not _PDF_AVAILABLE:
+        raise HTTPException(status_code=501, detail="reportlab not installed")
+
+    rows, resolved_currency = await _collect_vm_rows_for_export(project, domain, hours, currency)
+
+    # Aggregate by tenant
+    from collections import defaultdict
+    by_tenant: dict = defaultdict(lambda: {"vm_count": 0, "total_vcpus": 0, "total_ram_gb": 0.0, "total_cost": 0.0})
+    for r in rows:
+        key = (r.get("domain", ""), r.get("project_name", ""))
+        by_tenant[key]["vm_count"] += 1
+        by_tenant[key]["total_vcpus"] += r.get("vcpus") or 0
+        by_tenant[key]["total_ram_gb"] += (r.get("ram_mb") or 0) / 1024
+        by_tenant[key]["total_cost"] += r.get("estimated_cost", 0)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=15*mm, rightMargin=15*mm,
+                            topMargin=15*mm, bottomMargin=15*mm)
+    styles = getSampleStyleSheet()
+    elements = []
+
+    ts_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    elements.append(Paragraph(f"Chargeback Report — {ts_str}", styles["Title"]))
+    elements.append(Paragraph(f"Period: {hours // 24} days | Currency: {resolved_currency}", styles["Normal"]))
+    elements.append(Spacer(1, 6*mm))
+
+    # Table header
+    data = [["Domain", "Project / Tenant", "VMs", "vCPUs", "RAM (GB)", f"Est. Cost ({resolved_currency})"]]
+    total_cost = 0.0
+    for (domain_v, project_v), v in sorted(by_tenant.items()):
+        cost_val = round(v["total_cost"], 2)
+        total_cost += cost_val
+        data.append([
+            domain_v, project_v,
+            str(v["vm_count"]), str(v["total_vcpus"]),
+            f"{v['total_ram_gb']:.1f}", f"{cost_val:,.2f}",
+        ])
+    data.append(["TOTAL", "", str(sum(v["vm_count"] for v in by_tenant.values())),
+                 "", "", f"{total_cost:,.2f}"])
+
+    col_widths = [55*mm, 70*mm, 20*mm, 20*mm, 25*mm, 40*mm]
+    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#1D4ED8")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
+        ("BACKGROUND", (0, -1), (-1, -1), rl_colors.HexColor("#DBEAFE")),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [rl_colors.white, rl_colors.HexColor("#F1F5F9")]),
+        ("GRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+        ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(t)
+    doc.build(elements)
+
+    ts_file = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="chargeback_{ts_file}.pdf"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Email export — send chargeback as attachment
+# ---------------------------------------------------------------------------
+
+class ExportEmailRequest(BaseModel):
+    to_email: str = Field(..., description="Recipient email address")
+    format: str = Field("excel", description="excel | pdf | csv")
+    project: Optional[str] = None
+    domain: Optional[str] = None
+    hours: int = Field(720, ge=1, le=8760)
+    currency: Optional[str] = None
+
+
+@router.post("/export/send-email")
+async def send_chargeback_email(
+    req: ExportEmailRequest,
+    user: User = Depends(require_permission("metering", "read")),
+):
+    """Send a chargeback report as an email attachment."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart as _MIMEMulti
+    from email.mime.text import MIMEText as _MIMEText
+    from email.mime.base import MIMEBase as _MIMEBase
+    from email import encoders as _encoders
+
+    if not SMTP_ENABLED or not SMTP_HOST:
+        raise HTTPException(status_code=503, detail="SMTP is not configured on this server")
+
+    rows, resolved_currency = await _collect_vm_rows_for_export(
+        req.project, req.domain, req.hours, req.currency
+    )
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+
+    if req.format == "excel":
+        if not _XLSX_AVAILABLE:
+            raise HTTPException(status_code=501, detail="openpyxl not installed")
+        content = _build_chargeback_xlsx(rows, resolved_currency, {})
+        filename = f"chargeback_{ts}.xlsx"
+        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif req.format == "pdf":
+        if not _PDF_AVAILABLE:
+            raise HTTPException(status_code=501, detail="reportlab not installed")
+        # Reuse PDF endpoint logic inline
+        from collections import defaultdict
+        by_tenant: dict = defaultdict(lambda: {"vm_count": 0, "total_vcpus": 0, "total_ram_gb": 0.0, "total_cost": 0.0})
+        for r in rows:
+            key = (r.get("domain", ""), r.get("project_name", ""))
+            by_tenant[key]["vm_count"] += 1
+            by_tenant[key]["total_vcpus"] += r.get("vcpus") or 0
+            by_tenant[key]["total_ram_gb"] += (r.get("ram_mb") or 0) / 1024
+            by_tenant[key]["total_cost"] += r.get("estimated_cost", 0)
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                                leftMargin=15*mm, rightMargin=15*mm,
+                                topMargin=15*mm, bottomMargin=15*mm)
+        styles = getSampleStyleSheet()
+        elements = []
+        ts_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        elements.append(Paragraph(f"Chargeback Report — {ts_str}", styles["Title"]))
+        elements.append(Paragraph(f"Period: {req.hours // 24} days | Currency: {resolved_currency}", styles["Normal"]))
+        elements.append(Spacer(1, 6*mm))
+        data = [["Domain", "Project / Tenant", "VMs", "vCPUs", "RAM (GB)", f"Est. Cost ({resolved_currency})"]]
+        total_cost = 0.0
+        for (d_, p_), v in sorted(by_tenant.items()):
+            c_ = round(v["total_cost"], 2)
+            total_cost += c_
+            data.append([d_, p_, str(v["vm_count"]), str(v["total_vcpus"]), f"{v['total_ram_gb']:.1f}", f"{c_:,.2f}"])
+        data.append(["TOTAL", "", str(sum(v["vm_count"] for v in by_tenant.values())), "", "", f"{total_cost:,.2f}"])
+        col_widths = [55*mm, 70*mm, 20*mm, 20*mm, 25*mm, 40*mm]
+        tbl = Table(data, colWidths=col_widths, repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#1D4ED8")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [rl_colors.white, rl_colors.HexColor("#F1F5F9")]),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("BACKGROUND", (0, -1), (-1, -1), rl_colors.HexColor("#DBEAFE")),
+            ("GRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+            ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+        ]))
+        elements.append(tbl)
+        doc.build(elements)
+        content = buf.getvalue()
+        filename = f"chargeback_{ts}.pdf"
+        mime_type = "application/pdf"
+    else:
+        # CSV
+        out = io.StringIO()
+        writer = csv.DictWriter(out, fieldnames=["domain", "project_name", "vm_name", "vm_id", "vcpus", "ram_mb", "flavor_name", f"estimated_cost_{resolved_currency}"])
+        writer.writeheader()
+        for r in rows:
+            row_dict = {k: r.get(k) for k in ["domain", "project_name", "vm_name", "vm_id", "vcpus", "ram_mb", "flavor_name"]}
+            row_dict[f"estimated_cost_{resolved_currency}"] = r.get("estimated_cost", 0)
+            writer.writerow(row_dict)
+        content = out.getvalue().encode("utf-8")
+        filename = f"chargeback_{ts}.csv"
+        mime_type = "text/csv"
+
+    # Build email with attachment
+    msg = _MIMEMulti()
+    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_ADDRESS}>"
+    msg["To"] = req.to_email
+    msg["Subject"] = f"Chargeback Report — {datetime.now(timezone.utc).strftime('%Y-%m-%d')} ({resolved_currency})"
+
+    body = _MIMEText(
+        f"<p>Please find the chargeback report attached (<strong>{filename}</strong>).</p>"
+        f"<p>Period: {req.hours // 24} days | Currency: {resolved_currency}</p>",
+        "html",
+    )
+    msg.attach(body)
+
+    part = _MIMEBase("application", "octet-stream")
+    part.set_payload(content if isinstance(content, bytes) else content)
+    _encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+    part.add_header("Content-Type", mime_type)
+    msg.attach(part)
+
+    try:
+        import ssl as _ssl
+        if SMTP_USE_TLS:
+            ctx = _ssl.create_default_context()
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx, timeout=30) as server:
+                if SMTP_USERNAME:
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD or "")
+                server.sendmail(SMTP_FROM_ADDRESS, [req.to_email], msg.as_string())
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+                if SMTP_USERNAME:
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD or "")
+                server.sendmail(SMTP_FROM_ADDRESS, [req.to_email], msg.as_string())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {exc}")
+
+    return {"ok": True, "message": f"Report sent to {req.to_email}", "filename": filename}
 
 
 # ---------------------------------------------------------------------------

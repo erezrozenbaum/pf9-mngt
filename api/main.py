@@ -317,7 +317,13 @@ async def lifespan(app: FastAPI):
     yield
     await shutdown_event()
 
-app = FastAPI(title=APP_NAME, lifespan=lifespan)
+app = FastAPI(
+    title=APP_NAME,
+    lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+)
 
 _sla_task: asyncio.Task = None
 
@@ -439,7 +445,7 @@ async def rbac_middleware(request: Request, call_next):
         path.startswith("/auth") or
         path.startswith("/settings/") or
         path.startswith("/static/") or
-        path in ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/demo-mode"]
+        path in ["/health", "/metrics", "/api/openapi.json", "/api/docs", "/api/redoc", "/demo-mode"]
     ):
         return await call_next(request)
 
@@ -5338,12 +5344,15 @@ async def get_users(
                         d.name as domain_name,
                         p.name as default_project_name,
                         COUNT(DISTINCT ra.role_id) as role_count,
-                        STRING_AGG(DISTINCT r.name, ', ') as roles
+                        STRING_AGG(DISTINCT r.name, ', ') as roles,
+                        ur.role as pf9_role,
+                        ur.department_id as pf9_department_id
                     FROM users u
                     LEFT JOIN domains d ON d.id = u.domain_id
                     LEFT JOIN projects p ON p.id = u.default_project_id
                     LEFT JOIN role_assignments ra ON ra.user_id = u.id
                     LEFT JOIN roles r ON r.id = ra.role_id
+                    LEFT JOIN user_roles ur ON ur.username = u.name AND ur.is_active = TRUE
                     WHERE 1=1
                 """
                 params = []
@@ -5356,7 +5365,7 @@ async def get_users(
                     query += " AND u.domain_id = %s" 
                     params.append(domain_id)
                 
-                query += f" GROUP BY u.id, u.name, u.email, u.enabled, u.domain_id, u.description, u.default_project_id, u.created_at, u.last_login, u.last_seen_at, d.name, p.name ORDER BY {sort_column} {sort_dir.upper()} LIMIT %s OFFSET %s"
+                query += f" GROUP BY u.id, u.name, u.email, u.enabled, u.domain_id, u.description, u.default_project_id, u.created_at, u.last_login, u.last_seen_at, d.name, p.name, ur.role, ur.department_id ORDER BY {sort_column} {sort_dir.upper()} LIMIT %s OFFSET %s"
                 params.extend([page_size, offset])
             
                 cur.execute(query, params)

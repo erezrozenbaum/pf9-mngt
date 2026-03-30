@@ -200,6 +200,9 @@ type User = {
   created_at: string | null;
   last_login: string | null;
   last_seen_at: string | null;
+  roles: string | null;
+  pf9_role: string | null;
+  pf9_department_id: number | null;
 };
 
 type Project = {
@@ -1239,6 +1242,16 @@ const App: React.FC = () => {
   });
   const dragTabRef = useRef<ActiveTab | null>(null);
   const dragOverTabRef = useRef<ActiveTab | null>(null);
+  const prevTabRef = useRef<ActiveTab | null>(null);
+
+  // Refresh navigation when leaving the admin tab so sidebar reflects
+  // any navigation visibility changes the admin just saved.
+  useEffect(() => {
+    if (prevTabRef.current === "admin" && activeTab !== "admin") {
+      refreshNavigation();
+    }
+    prevTabRef.current = activeTab;
+  }, [activeTab, refreshNavigation]);
 
   // Build lookup map once
   const tabDefMap = useMemo(() => {
@@ -1463,6 +1476,20 @@ const App: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [usersTotal, setUsersTotal] = useState(0);
   const [selectedHypervisor, setSelectedHypervisor] = useState<Hypervisor | null>(null);
+  const [selectedUserItem, setSelectedUserItem] = useState<User | null>(null);
+  const [selectedDomainItem, setSelectedDomainItem] = useState<Domain | null>(null);
+
+  // Platform9 user management (create / edit / reset-password / change-role)
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [userModalMode, setUserModalMode] = useState<"create" | "edit">("create");
+  const [userModalTarget, setUserModalTarget] = useState<User | null>(null);
+  const [userModalFields, setUserModalFields] = useState({ username: "", email: "", password: "", full_name: "", role: "viewer" });
+  const [userModalError, setUserModalError] = useState<string | null>(null);
+  const [userModalSaving, setUserModalSaving] = useState(false);
+  const [userResetPwTarget, setUserResetPwTarget] = useState<string | null>(null);
+  const [userResetPwValue, setUserResetPwValue] = useState("");
+  const [userResetPwMsg, setUserResetPwMsg] = useState<string | null>(null);
+  const [userResetPwSaving, setUserResetPwSaving] = useState(false);
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsTotal, setProjectsTotal] = useState(0);
@@ -2248,6 +2275,80 @@ const App: React.FC = () => {
     }
     loadUsers();
   }, [activeTab, userPage, userPageSize, userSortBy, userSortDir]);
+
+  // PF9 user management handlers
+  const handleUserModalSave = useCallback(async () => {
+    setUserModalSaving(true);
+    setUserModalError(null);
+    try {
+      const token = localStorage.getItem("auth_token");
+      const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+      if (userModalMode === "create") {
+        const { username, email, password, full_name, role } = userModalFields;
+        if (!username.trim() || !email.trim() || !password) {
+          setUserModalError("Username, email and password are required.");
+          return;
+        }
+        if (password.length < 8) { setUserModalError("Password must be at least 8 characters."); return; }
+        const res = await fetch(`${API_BASE}/auth/users`, {
+          method: "POST", headers,
+          body: JSON.stringify({ username: username.trim(), email: email.trim(), password, full_name: full_name.trim() || username.trim(), role }),
+        });
+        if (!res.ok) { const d = await res.json(); setUserModalError(d.detail || "Failed to create user"); return; }
+      } else {
+        // edit mode — only role change (password has its own inline form)
+        const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(userModalTarget!.name)}/role`, {
+          method: "POST", headers,
+          body: JSON.stringify({ username: userModalTarget!.name, role: userModalFields.role }),
+        });
+        if (!res.ok) { const d = await res.json(); setUserModalError(d.detail || "Failed to update role"); return; }
+      }
+      setShowUserModal(false);
+      // Refresh users list
+      const params = new URLSearchParams({ page: userPage.toString(), page_size: userPageSize.toString(), sort_by: userSortBy, sort_dir: userSortDir });
+      const refreshed = await fetchJson<PagedResponse<User>>(`${API_BASE}/users?${params}`);
+      if (refreshed) { setUsers(refreshed.data || []); setUsersTotal(refreshed.total || 0); }
+    } catch (e: any) {
+      setUserModalError(e.message || "Unexpected error");
+    } finally {
+      setUserModalSaving(false);
+    }
+  }, [userModalMode, userModalFields, userModalTarget, userPage, userPageSize, userSortBy, userSortDir]);
+
+  const handleUserDelete = useCallback(async (username: string) => {
+    if (!window.confirm(`Delete platform9 user "${username}"? This will remove them from LDAP.`)) return;
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(username)}`, {
+        method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) { const d = await res.json(); setError(d.detail || "Delete failed"); return; }
+      const params = new URLSearchParams({ page: userPage.toString(), page_size: userPageSize.toString(), sort_by: userSortBy, sort_dir: userSortDir });
+      const refreshed = await fetchJson<PagedResponse<User>>(`${API_BASE}/users?${params}`);
+      if (refreshed) { setUsers(refreshed.data || []); setUsersTotal(refreshed.total || 0); }
+    } catch (e: any) { setError(e.message || "Delete failed"); }
+  }, [userPage, userPageSize, userSortBy, userSortDir]);
+
+  const handleUserResetPassword = useCallback(async () => {
+    if (!userResetPwTarget || userResetPwValue.length < 8) {
+      setUserResetPwMsg("Password must be at least 8 characters.");
+      return;
+    }
+    setUserResetPwSaving(true);
+    setUserResetPwMsg(null);
+    try {
+      const token = localStorage.getItem("auth_token");
+      const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(userResetPwTarget)}/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ new_password: userResetPwValue }),
+      });
+      const d = await res.json();
+      if (res.ok) { setUserResetPwMsg("✅ Password reset successfully."); setUserResetPwValue(""); }
+      else { setUserResetPwMsg(`❌ ${d.detail || "Failed"}`); }
+    } catch (e: any) { setUserResetPwMsg(`❌ ${e.message}`); }
+    finally { setUserResetPwSaving(false); }
+  }, [userResetPwTarget, userResetPwValue]);
 
   // Load ports
   useEffect(() => {
@@ -4099,8 +4200,8 @@ const App: React.FC = () => {
                   domains.filter(d => d.domain_id !== "__ALL__").map((d) => (
                     <tr
                       key={d.domain_id}
-                      onClick={() => setSelectedDomain(d.domain_name)}
-                      className={selectedDomain === d.domain_name ? "pf9-row-selected" : ""}
+                      onClick={() => { setSelectedDomain(d.domain_name); setSelectedDomainItem(d); }}
+                      className={selectedDomainItem?.domain_id === d.domain_id ? "pf9-row-selected" : ""}
                     >
                       <td>{d.domain_id}</td>
                       <td>{d.domain_name}</td>
@@ -4842,18 +4943,36 @@ const App: React.FC = () => {
 
           {/* Users Table */}
           {activeTab === "users" && (
+            <>
+              {/* Create Platform9 User button — admin/superadmin only */}
+              {authUser && (authUser.role === "admin" || authUser.role === "superadmin") && (
+                <div style={{ marginBottom: 8 }}>
+                  <button
+                    className="pf9-btn-primary"
+                    onClick={() => {
+                      setUserModalMode("create");
+                      setUserModalTarget(null);
+                      setUserModalFields({ username: "", email: "", password: "", full_name: "", role: "viewer" });
+                      setUserModalError(null);
+                      setShowUserModal(true);
+                    }}
+                  >
+                    ➕ Create Platform9 User
+                  </button>
+                </div>
+              )}
             <table className="pf9-table">
               <thead>
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
                   <th>Domain</th>
+                  <th>PF9 Role</th>
+                  <th>OS Roles</th>
                   <th>Enabled</th>
-                  <th>Description</th>
-                  <th>Roles</th>
                   <th>Created</th>
                   <th>Last Login</th>
-                  <th>Last Seen</th>
+                  {authUser && (authUser.role === "admin" || authUser.role === "superadmin") && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -4866,8 +4985,14 @@ const App: React.FC = () => {
                     <td colSpan={9}>No users found.</td>
                   </tr>
                 ) : (
-                  users.map((user, idx) => (
-                    <tr key={user.id}>
+                  users.map((user) => (
+                    <>
+                    <tr
+                      key={user.id}
+                      onClick={() => setSelectedUserItem(user)}
+                      className={selectedUserItem?.id === user.id ? "pf9-row-selected" : ""}
+                      style={{ cursor: "pointer" }}
+                    >
                       <td>
                         <div>{user.name}</div>
                         <div className="pf9-cell-subtle">{user.id}</div>
@@ -4875,26 +5000,141 @@ const App: React.FC = () => {
                       <td>{user.email || "N/A"}</td>
                       <td>{user.domain_name || "N/A"}</td>
                       <td>
-                        <span
-                          className={
-                            user.enabled
-                              ? "pf9-badge pf9-badge-success"
-                              : "pf9-badge pf9-badge-danger"
-                          }
-                        >
+                        {user.pf9_role ? (
+                          <span className={`pf9-badge ${
+                            user.pf9_role === "superadmin" ? "pf9-badge-danger" :
+                            user.pf9_role === "admin" ? "pf9-badge-info" :
+                            user.pf9_role === "operator" ? "pf9-badge-success" :
+                            "pf9-badge-default"
+                          }`}>{user.pf9_role}</span>
+                        ) : <span className="pf9-cell-subtle">—</span>}
+                      </td>
+                      <td className="pf9-cell-subtle">{user.roles || "—"}</td>
+                      <td>
+                        <span className={user.enabled ? "pf9-badge pf9-badge-success" : "pf9-badge pf9-badge-danger"}>
                           {user.enabled ? "Enabled" : "Disabled"}
                         </span>
                       </td>
-                      <td className="pf9-cell-subtle">{user.description || "N/A"}</td>
-                      <td className="pf9-cell-subtle">{user.roles || "Roles not collected"}</td>
                       <td>{formatDate(user.created_at)}</td>
                       <td>{formatDate(user.last_login)}</td>
-                      <td>{formatDate(user.last_seen_at)}</td>
+                      {authUser && (authUser.role === "admin" || authUser.role === "superadmin") && (
+                        <td onClick={e => e.stopPropagation()}>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button
+                              title="Change role"
+                              className="pf9-icon-btn"
+                              onClick={() => {
+                                setUserModalMode("edit");
+                                setUserModalTarget(user);
+                                setUserModalFields({ username: user.name, email: user.email || "", password: "", full_name: user.name, role: user.pf9_role || "viewer" });
+                                setUserModalError(null);
+                                setShowUserModal(true);
+                              }}
+                            >✏️</button>
+                            <button
+                              title="Reset password"
+                              className="pf9-icon-btn"
+                              onClick={() => {
+                                setUserResetPwTarget(userResetPwTarget === user.name ? null : user.name);
+                                setUserResetPwValue("");
+                                setUserResetPwMsg(null);
+                              }}
+                            >🔑</button>
+                            <button
+                              title="Delete user"
+                              className="pf9-icon-btn pf9-icon-btn-danger"
+                              onClick={() => handleUserDelete(user.name)}
+                            >🗑️</button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
+                    {userResetPwTarget === user.name && (
+                      <tr key={`${user.id}-pw`}>
+                        <td colSpan={authUser && (authUser.role === "admin" || authUser.role === "superadmin") ? 9 : 8}
+                            style={{ background: "#fffbea", padding: "8px 16px" }}
+                            onClick={e => e.stopPropagation()}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <strong style={{ fontSize: 13 }}>Reset password for {user.name}:</strong>
+                            <input
+                              type="password"
+                              value={userResetPwValue}
+                              onChange={e => setUserResetPwValue(e.target.value)}
+                              placeholder="New password (min 8 chars)"
+                              style={{ padding: "4px 8px", border: "1px solid #ccc", borderRadius: 4, fontSize: 13, width: 220 }}
+                            />
+                            <button
+                              className="pf9-btn-primary"
+                              onClick={handleUserResetPassword}
+                              disabled={userResetPwSaving}
+                              style={{ fontSize: 13, padding: "4px 10px" }}
+                            >{userResetPwSaving ? "Saving…" : "Save"}</button>
+                            <button
+                              className="pf9-btn-secondary"
+                              onClick={() => { setUserResetPwTarget(null); setUserResetPwValue(""); setUserResetPwMsg(null); }}
+                              style={{ fontSize: 13, padding: "4px 10px" }}
+                            >Cancel</button>
+                            {userResetPwMsg && <span style={{ fontSize: 13, color: userResetPwMsg.startsWith("✅") ? "green" : "red" }}>{userResetPwMsg}</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </>
                   ))
                 )}
               </tbody>
             </table>
+
+            {/* Create / Edit User Modal */}
+            {showUserModal && (
+              <div className="pf9-modal-overlay" onClick={() => setShowUserModal(false)}>
+                <div className="pf9-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+                  <h3 style={{ marginTop: 0 }}>{userModalMode === "create" ? "Create Platform9 User" : `Edit User: ${userModalTarget?.name}`}</h3>
+                  {userModalMode === "create" && (
+                    <>
+                      <label className="pf9-form-label">Username *
+                        <input className="pf9-form-input" value={userModalFields.username}
+                          onChange={e => setUserModalFields(f => ({ ...f, username: e.target.value }))}
+                          placeholder="e.g. jsmith" autoFocus />
+                      </label>
+                      <label className="pf9-form-label">Email *
+                        <input className="pf9-form-input" type="email" value={userModalFields.email}
+                          onChange={e => setUserModalFields(f => ({ ...f, email: e.target.value }))}
+                          placeholder="user@example.com" />
+                      </label>
+                      <label className="pf9-form-label">Full Name
+                        <input className="pf9-form-input" value={userModalFields.full_name}
+                          onChange={e => setUserModalFields(f => ({ ...f, full_name: e.target.value }))}
+                          placeholder="John Smith" />
+                      </label>
+                      <label className="pf9-form-label">Password *
+                        <input className="pf9-form-input" type="password" value={userModalFields.password}
+                          onChange={e => setUserModalFields(f => ({ ...f, password: e.target.value }))}
+                          placeholder="Minimum 8 characters" />
+                      </label>
+                    </>
+                  )}
+                  <label className="pf9-form-label">Platform9 Role
+                    <select className="pf9-form-input" value={userModalFields.role}
+                      onChange={e => setUserModalFields(f => ({ ...f, role: e.target.value }))}>
+                      <option value="viewer">viewer</option>
+                      <option value="operator">operator</option>
+                      <option value="technical">technical</option>
+                      <option value="admin">admin</option>
+                      {authUser?.role === "superadmin" && <option value="superadmin">superadmin</option>}
+                    </select>
+                  </label>
+                  {userModalError && <div style={{ color: "red", fontSize: 13, marginBottom: 8 }}>{userModalError}</div>}
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button className="pf9-btn-secondary" onClick={() => setShowUserModal(false)} disabled={userModalSaving}>Cancel</button>
+                    <button className="pf9-btn-primary" onClick={handleUserModalSave} disabled={userModalSaving}>
+                      {userModalSaving ? "Saving…" : userModalMode === "create" ? "Create" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            </>
           )}
 
           {/* Admin Panel for LDAP Management */}
@@ -6296,8 +6536,73 @@ const App: React.FC = () => {
             </div>
           )}
 
+          {/* Domain Details Panel */}
+          {activeTab === "domains" && selectedDomainItem && (
+            <div>
+              <h2>Domain Details</h2>
+              <p>
+                <strong>Name:</strong> {selectedDomainItem.domain_name}
+              </p>
+              <p>
+                <strong>ID:</strong> {selectedDomainItem.domain_id}
+              </p>
+              <button
+                className="graph-view-deps-btn"
+                onClick={() => setGraphTarget({ type: "domain", id: selectedDomainItem.domain_id, label: selectedDomainItem.domain_name })}
+              >
+                🕸️ View Dependencies
+              </button>
+            </div>
+          )}
+
+          {/* User Details Panel */}
+          {activeTab === "users" && selectedUserItem && (
+            <div>
+              <h2>User Details</h2>
+              <p>
+                <strong>Name:</strong> {selectedUserItem.name}
+              </p>
+              <p>
+                <strong>ID:</strong> {selectedUserItem.id}
+              </p>
+              {selectedUserItem.email && (
+                <p>
+                  <strong>Email:</strong> {selectedUserItem.email}
+                </p>
+              )}
+              <p>
+                <strong>Domain:</strong> {selectedUserItem.domain_name || "N/A"}
+              </p>
+              <p>
+                <strong>Status:</strong>{" "}
+                <span className={selectedUserItem.enabled ? "pf9-badge pf9-badge-success" : "pf9-badge pf9-badge-danger"}>
+                  {selectedUserItem.enabled ? "Enabled" : "Disabled"}
+                </span>
+              </p>
+              {selectedUserItem.description && (
+                <p>
+                  <strong>Description:</strong> {selectedUserItem.description}
+                </p>
+              )}
+              <p>
+                <strong>Created:</strong> {formatDate(selectedUserItem.created_at)}
+              </p>
+              <p>
+                <strong>Last Login:</strong> {formatDate(selectedUserItem.last_login)}
+              </p>
+              {selectedUserItem.domain_id && (
+                <button
+                  className="graph-view-deps-btn"
+                  onClick={() => setGraphTarget({ type: "domain", id: selectedUserItem.domain_id!, label: selectedUserItem.domain_name || selectedUserItem.domain_id! })}
+                >
+                  🕸️ View Domain Dependencies
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Resource History Details Panel */}
-          {(selectedResourceHistory.length > 0 || (loading && historyResourceType)) && (
+          {activeTab === "history" && (selectedResourceHistory.length > 0 || (loading && historyResourceType)) && (
             <div>
               <h2>Resource History</h2>
               {loading && historyResourceType ? (

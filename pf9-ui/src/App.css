@@ -629,6 +629,11 @@ section h3 {
   color: white;
 }
 
+.pf9-badge-danger {
+  background: #dc2626;
+  color: white;
+}
+
 .pf9-badge-warning {
   background: var(--color-warning);
   color: white;
@@ -1246,5 +1251,84 @@ body,
   background: #1e3a5f;
   border-color: #3b82f6;
   color: #93c5fd;
+}
+
+/* ── Platform9 User management helpers ─────────────────────────── */
+.pf9-btn-primary {
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  background: var(--color-accent, #2563eb);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pf9-btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+.pf9-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.pf9-btn-secondary {
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  background: var(--color-surface-alt, #e5e7eb);
+  color: var(--color-text, #1f2937);
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pf9-btn-secondary:hover:not(:disabled) { background: #d1d5db; }
+.pf9-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.pf9-icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 1rem;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+.pf9-icon-btn:hover { background: rgba(0,0,0,0.07); }
+.pf9-icon-btn-danger:hover { background: rgba(220,38,38,0.1); }
+
+.pf9-form-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-text-secondary, #374151);
+  margin-bottom: 10px;
+}
+.pf9-form-input {
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--color-text, #111827);
+  background: var(--color-surface, #fff);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.pf9-form-input:focus { border-color: #2563eb; }
+
+.pf9-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+.pf9-modal {
+  background: var(--color-surface, #fff);
+  border-radius: 8px;
+  padding: 24px;
+  width: 90%;
+  max-width: 520px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.22);
+  color: var(--color-text, #111827);
 }
 

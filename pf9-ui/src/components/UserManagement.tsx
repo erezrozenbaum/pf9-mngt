@@ -563,6 +563,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [visibilityMatrix, setVisibilityMatrix] = useState<any>(null);
   const [deptForm, setDeptForm] = useState({ name: '', description: '', sort_order: 0, default_nav_item_key: '' });
   const [deptEditing, setDeptEditing] = useState<number | null>(null);
+  const [deptEditFields, setDeptEditFields] = useState({ name: '', description: '', sort_order: 0 });
   const [deptMsg, setDeptMsg] = useState('');
   const [visMsg, setVisMsg] = useState('');
   // Track visibility changes: { [deptId]: { groups: Set<groupId>, items: Set<itemId> } }
@@ -908,6 +909,27 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setDeptMsg('✅ Department deleted');
+      loadDeptNavData();
+      setTimeout(() => setDeptMsg(''), 3000);
+    } catch (e: any) { setDeptMsg(`⚠️ ${e.message}`); }
+  };
+
+  const handleSaveDepartment = async (id: number) => {
+    const token = localStorage.getItem('auth_token');
+    setDeptMsg('');
+    try {
+      const res = await fetch(`${API_BASE}/api/departments/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: deptEditFields.name.trim(),
+          description: deptEditFields.description.trim() || null,
+          sort_order: deptEditFields.sort_order,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      setDeptMsg('✅ Department updated');
+      setDeptEditing(null);
       loadDeptNavData();
       setTimeout(() => setDeptMsg(''), 3000);
     } catch (e: any) { setDeptMsg(`⚠️ ${e.message}`); }
@@ -2241,9 +2263,36 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
             <tbody className="divide-y divide-gray-200">
               {departments.map(d => (
                 <tr key={d.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm font-medium">{d.name}</td>
-                  <td className="px-4 py-3 text-sm">{d.description || '—'}</td>
-                  <td className="px-4 py-3 text-sm">{d.sort_order}</td>
+                  <td className="px-4 py-3 text-sm font-medium">
+                    {deptEditing === d.id ? (
+                      <input
+                        type="text"
+                        value={deptEditFields.name}
+                        onChange={e => setDeptEditFields(p => ({ ...p, name: e.target.value }))}
+                        className="px-2 py-1 border rounded text-sm" style={{ minWidth: '140px' }}
+                      />
+                    ) : d.name}
+                  </td>
+                  <td className="px-4 py-3 text-sm">
+                    {deptEditing === d.id ? (
+                      <input
+                        type="text"
+                        value={deptEditFields.description}
+                        onChange={e => setDeptEditFields(p => ({ ...p, description: e.target.value }))}
+                        className="px-2 py-1 border rounded text-sm" style={{ minWidth: '180px' }}
+                      />
+                    ) : (d.description || '—')}
+                  </td>
+                  <td className="px-4 py-3 text-sm">
+                    {deptEditing === d.id ? (
+                      <input
+                        type="number"
+                        value={deptEditFields.sort_order}
+                        onChange={e => setDeptEditFields(p => ({ ...p, sort_order: Number(e.target.value) }))}
+                        className="px-2 py-1 border rounded text-sm" style={{ width: '70px' }}
+                      />
+                    ) : d.sort_order}
+                  </td>
                   <td className="px-4 py-3 text-sm">{d.is_active ? '✅' : '❌'}</td>
                   <td className="px-4 py-3 text-sm">
                     <select
@@ -2264,7 +2313,21 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                       ))}
                     </select>
                   </td>
-                  <td className="px-4 py-3 text-sm">
+                  <td className="px-4 py-3 text-sm" style={{ whiteSpace: 'nowrap' }}>
+                    {deptEditing === d.id ? (
+                      <>
+                        <button
+                          onClick={() => handleSaveDepartment(d.id)}
+                          className="text-green-700 hover:text-green-900 text-sm mr-2">💾 Save</button>
+                        <button
+                          onClick={() => setDeptEditing(null)}
+                          className="text-gray-500 hover:text-gray-700 text-sm mr-2">✖ Cancel</button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => { setDeptEditing(d.id); setDeptEditFields({ name: d.name, description: d.description || '', sort_order: d.sort_order }); }}
+                        className="text-blue-600 hover:text-blue-900 text-sm mr-2">✏️ Edit</button>
+                    )}
                     <button onClick={() => handleDeleteDepartment(d.id)}
                       className="text-red-600 hover:text-red-900 text-sm">🗑️ Delete</button>
                   </td>

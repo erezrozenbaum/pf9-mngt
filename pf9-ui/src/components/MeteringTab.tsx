@@ -69,7 +69,7 @@ function fmtDuration(sec: number | null | undefined): string {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type SubTab = "overview" | "resources" | "snapshots" | "restores" | "api_usage" | "efficiency" | "pricing" | "export";
+type SubTab = "overview" | "resources" | "snapshots" | "restores" | "api_usage" | "efficiency" | "pricing" | "chargeback" | "growth" | "export";
 
 interface MeteringConfig {
   enabled: boolean;
@@ -347,6 +347,8 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: "api_usage", label: "🔌 API Usage" },
   { id: "efficiency", label: "⚡ Efficiency" },
   { id: "pricing", label: "💰 Pricing" },
+  { id: "chargeback", label: "🧾 Chargeback" },
+  { id: "growth", label: "📈 Tenant Growth" },
   { id: "export", label: "📥 Export" },
 ];
 
@@ -378,6 +380,21 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
 
   // Export currency override
   const [exportCurrency, setExportCurrency] = useState("");
+
+  // Chargeback summary
+  const [chargebackData, setChargebackData] = useState<any | null>(null);
+  const [chargebackCurrency, setChargebackCurrency] = useState("USD");
+  const [chargebackHours, setChargebackHours] = useState(720);
+
+  // Tenant growth
+  const [growthData, setGrowthData] = useState<any | null>(null);
+  const [growthMonths, setGrowthMonths] = useState(6);
+
+  // Email export
+  const [emailTo, setEmailTo] = useState("");
+  const [emailFormat, setEmailFormat] = useState("excel");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailMsg, setEmailMsg] = useState<string | null>(null);
 
   // Flavor pricing edit
   const [editingPricing, setEditingPricing] = useState<Partial<PricingItem> | null>(null);
@@ -513,6 +530,34 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     }
   }, []);
 
+  const loadChargebackSummary = useCallback(async (currency: string, hours: number) => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({ currency, hours: String(hours) });
+      if (domainFilter) params.set("domain", domainFilter);
+      const data = await apiFetch<any>(`/api/metering/chargeback-summary?${params}`);
+      setChargebackData(data);
+    } catch (err: any) {
+      setError(err.message || "Failed to load chargeback summary");
+    } finally {
+      setLoading(false);
+    }
+  }, [domainFilter]);
+
+  const loadGrowth = useCallback(async (months: number) => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams({ months: String(months) });
+      if (domainFilter) params.set("domain", domainFilter);
+      const data = await apiFetch<any>(`/api/metering/tenant-growth?${params}`);
+      setGrowthData(data);
+    } catch (err: any) {
+      setError(err.message || "Failed to load tenant growth");
+    } finally {
+      setLoading(false);
+    }
+  }, [domainFilter]);
+
   const loadFilters = useCallback(async () => {
     try {
       const data = await apiFetch<FiltersData>("/api/metering/filters");
@@ -537,7 +582,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     else if (subTab === "api_usage") loadApiUsage();
     else if (subTab === "efficiency") loadEfficiency();
     else if (subTab === "pricing") loadPricing();
-  }, [subTab, loadOverview, loadResources, loadSnapshots, loadRestores, loadApiUsage, loadEfficiency, loadPricing]);
+    else if (subTab === "chargeback") loadChargebackSummary(chargebackCurrency, chargebackHours);
+    else if (subTab === "growth") loadGrowth(growthMonths);
+  }, [subTab, loadOverview, loadResources, loadSnapshots, loadRestores, loadApiUsage, loadEfficiency, loadPricing, loadChargebackSummary, loadGrowth, chargebackCurrency, chargebackHours, growthMonths]);
 
   // ─── Sorted data ──────────────────────────────────────────────────────
 
@@ -555,7 +602,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     if (projectFilter) params.set("project", projectFilter);
     if (domainFilter) params.set("domain", domainFilter);
     params.set("hours", String(hoursFilter));
-    if (type === "chargeback" && exportCurrency) {
+    if ((type === "chargeback" || type === "chargeback-excel" || type === "chargeback-pdf") && exportCurrency) {
       params.set("currency", exportCurrency);
     }
 
@@ -651,6 +698,8 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     else if (subTab === "api_usage") loadApiUsage();
     else if (subTab === "efficiency") loadEfficiency();
     else if (subTab === "pricing") loadPricing();
+    else if (subTab === "chargeback") loadChargebackSummary(chargebackCurrency, chargebackHours);
+    else if (subTab === "growth") loadGrowth(growthMonths);
   };
 
   // ─── Filter bar (shared) ──────────────────────────────────────────────
@@ -1383,6 +1432,123 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
         </div>
       )}
 
+      {/* ═══════════════════════════ CHARGEBACK SUMMARY ═══════════════════════════ */}
+      {subTab === "chargeback" && (
+        <div>
+          <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
+            <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
+              Currency:
+              <select value={chargebackCurrency} onChange={e => { setChargebackCurrency(e.target.value); loadChargebackSummary(e.target.value, chargebackHours); }} style={selectStyle}>
+                {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
+              Period:
+              <select value={chargebackHours} onChange={e => { setChargebackHours(Number(e.target.value)); loadChargebackSummary(chargebackCurrency, Number(e.target.value)); }} style={selectStyle}>
+                <option value={168}>Last 7 days</option>
+                <option value={720}>Last 30 days</option>
+                <option value={2160}>Last 90 days</option>
+                <option value={8760}>Last 12 months</option>
+              </select>
+            </label>
+            <button onClick={() => loadChargebackSummary(chargebackCurrency, chargebackHours)} style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #ccc", cursor: "pointer", fontSize: "0.85em" }}>
+              🔄 Refresh
+            </button>
+          </div>
+
+          {loading && <div style={{ padding: 20 }}>Loading chargeback summary…</div>}
+          {!loading && chargebackData && (
+            <>
+              <div style={{ marginBottom: 12, padding: "8px 14px", background: "var(--color-surface-elevated, #f9fafb)", borderRadius: 8, display: "inline-block" }}>
+                <strong>Total estimated cost:</strong>&nbsp;
+                <span style={{ fontSize: "1.2em", fontWeight: 700, color: "#1d4ed8" }}>
+                  {chargebackData.total_cost?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {chargebackData.currency}
+                </span>
+                &nbsp;<span style={{ color: "#888", fontSize: "0.8em" }}>({chargebackHours / 24} days)</span>
+              </div>
+              <table className="pf9-table" style={{ width: "100%" }}>
+                <thead>
+                  <tr>
+                    <th>Domain</th>
+                    <th>Project / Tenant</th>
+                    <th>VMs</th>
+                    <th>Total vCPUs</th>
+                    <th>Total RAM (GB)</th>
+                    <th>Estimated Cost ({chargebackData.currency})</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chargebackData.tenants?.length === 0 && (
+                    <tr><td colSpan={6} style={{ textAlign: "center", padding: 20 }}>No data available for this period.</td></tr>
+                  )}
+                  {chargebackData.tenants?.map((t: any, i: number) => (
+                    <tr key={i}>
+                      <td>{t.domain}</td>
+                      <td>{t.project_name}</td>
+                      <td>{t.vm_count}</td>
+                      <td>{t.total_vcpus}</td>
+                      <td>{t.total_ram_gb.toFixed(1)}</td>
+                      <td style={{ fontWeight: 600 }}>{t.estimated_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          {!loading && !chargebackData && (
+            <div style={{ padding: 20, color: "#888" }}>No chargeback data loaded. Click refresh.</div>
+          )}
+        </div>
+      )}
+
+      {/* ═══════════════════════════ TENANT GROWTH ═══════════════════════════ */}
+      {subTab === "growth" && (
+        <div>
+          <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
+            <label style={{ fontSize: "0.85em", display: "flex", alignItems: "center", gap: 4 }}>
+              Look back:
+              <select value={growthMonths} onChange={e => { setGrowthMonths(Number(e.target.value)); loadGrowth(Number(e.target.value)); }} style={selectStyle}>
+                <option value={3}>3 months</option>
+                <option value={6}>6 months</option>
+                <option value={12}>12 months</option>
+                <option value={24}>24 months</option>
+              </select>
+            </label>
+            <button onClick={() => loadGrowth(growthMonths)} style={{ padding: "4px 12px", borderRadius: 4, border: "1px solid #ccc", cursor: "pointer", fontSize: "0.85em" }}>
+              🔄 Refresh
+            </button>
+          </div>
+
+          {loading && <div style={{ padding: 20 }}>Loading tenant growth data…</div>}
+          {!loading && growthData && growthData.months?.length > 0 && (
+            <table className="pf9-table" style={{ width: "100%" }}>
+              <thead>
+                <tr>
+                  <th>Tenant (Domain/Project)</th>
+                  {growthData.months.map((m: string) => <th key={m}>{m}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {growthData.series?.length === 0 && (
+                  <tr><td colSpan={growthData.months.length + 1} style={{ textAlign: "center", padding: 20 }}>No data available.</td></tr>
+                )}
+                {growthData.series?.map((s: any, i: number) => (
+                  <tr key={i}>
+                    <td style={{ fontWeight: 500 }}>{s.tenant}</td>
+                    {s.data.map((count: number, j: number) => (
+                      <td key={j} style={{ textAlign: "center", color: count === 0 ? "#aaa" : undefined }}>{count}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {!loading && (!growthData || growthData.months?.length === 0) && (
+            <div style={{ padding: 20, color: "#888" }}>No growth data loaded. Click refresh.</div>
+          )}
+        </div>
+      )}
+
       {/* ═══════════════════════════ EXPORT ═══════════════════════════ */}
       {subTab === "export" && (
         <div>
@@ -1405,11 +1571,81 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
             <ExportCard title="API Usage" description="API call volume, latency, and error rates" onExport={() => triggerExport("api-usage")} />
             <ExportCard title="Efficiency Scores" description="Per-VM efficiency classification and recommendations" onExport={() => triggerExport("efficiency")} />
             <ExportCard
-              title="Chargeback Report"
-              description={`Per-tenant cost aggregation according to pricing currency (${exportCurrency || "auto"}) — VMs, volumes, snapshots, networks, floating IPs`}
+              title="Chargeback CSV (per tenant)"
+              description={`Per-tenant cost aggregation (${exportCurrency || "auto"}) — VMs, volumes, snapshots, networks, floating IPs`}
               onExport={() => triggerExport("chargeback")}
               highlight
             />
+            <ExportCard
+              title="Chargeback Excel (row per VM)"
+              description="One row per VM with a Summary sheet — ideal for detailed cost review"
+              onExport={() => triggerExport("chargeback-excel")}
+              highlight
+            />
+            <ExportCard
+              title="Chargeback PDF"
+              description="Printable tenant summary report with styled cost table"
+              onExport={() => triggerExport("chargeback-pdf")}
+            />
+          </div>
+
+          {/* Email export */}
+          <div style={{ marginTop: 24, ...cardStyle }}>
+            <h4 style={{ margin: "0 0 12px", fontSize: "0.95em", fontWeight: 600 }}>📧 Send Report by Email</h4>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <input
+                type="email"
+                placeholder="Recipient email"
+                value={emailTo}
+                onChange={e => setEmailTo(e.target.value)}
+                style={{ padding: "6px 10px", border: "1px solid var(--color-border,#ddd)", borderRadius: 6, minWidth: 220, fontSize: "0.85em" }}
+              />
+              <select value={emailFormat} onChange={e => setEmailFormat(e.target.value)} style={selectStyle}>
+                <option value="excel">Excel (row per VM)</option>
+                <option value="pdf">PDF Summary</option>
+                <option value="csv">CSV</option>
+              </select>
+              <button
+                disabled={emailSending || !emailTo}
+                onClick={async () => {
+                  setEmailSending(true);
+                  setEmailMsg(null);
+                  const token = localStorage.getItem("auth_token");
+                  try {
+                    const res = await fetch(`${API_BASE}/api/metering/export/send-email`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({
+                        to_email: emailTo,
+                        format: emailFormat,
+                        project: projectFilter || null,
+                        domain: domainFilter || null,
+                        hours: hoursFilter,
+                        currency: exportCurrency || null,
+                      }),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                      setEmailMsg(`✅ ${data.message}`);
+                    } else {
+                      setEmailMsg(`⚠️ ${data.detail || "Failed to send"}`);
+                    }
+                  } catch (e: any) {
+                    setEmailMsg(`⚠️ ${e.message}`);
+                  } finally {
+                    setEmailSending(false);
+                  }
+                }}
+                style={{ padding: "6px 16px", background: "#1D4ED8", color: "#fff", borderRadius: 6, border: "none", cursor: "pointer", fontSize: "0.85em", opacity: emailSending ? 0.7 : 1 }}
+              >
+                {emailSending ? "Sending…" : "📨 Send"}
+              </button>
+            </div>
+            {emailMsg && (
+              <div style={{ marginTop: 8, fontSize: "0.85em", color: emailMsg.startsWith("✅") ? "#166534" : "#991B1B", padding: "6px 10px", background: emailMsg.startsWith("✅") ? "#DCFCE7" : "#FEE2E2", borderRadius: 6 }}>
+                {emailMsg}
+              </div>
+            )}
           </div>
 
           <div style={{ marginTop: 20, ...cardStyle, fontSize: "0.83em", color: "var(--color-text-secondary, #666)" }}>

@@ -988,17 +988,22 @@ const LdapSyncSettings: React.FC<{ user?: AuthUser | null }> = () => {
                           placeholder="cn=pf9-admins,ou=groups,dc=corp,dc=com"
                           className="flex-1 px-2 py-1.5 border rounded text-xs font-mono"
                         />
-                        <select
-                          value={m.pf9_role}
-                          onChange={e => {
-                            const updated = [...groupMappings];
-                            updated[i] = { ...updated[i], pf9_role: e.target.value };
-                            setGroupMappings(updated);
-                          }}
-                          className="px-2 py-1.5 border rounded text-xs"
-                        >
-                          {ASSIGNABLE_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                        </select>
+                        <>
+                          <input
+                            list="ldap-role-options"
+                            value={m.pf9_role}
+                            onChange={e => {
+                              const updated = [...groupMappings];
+                              updated[i] = { ...updated[i], pf9_role: e.target.value };
+                              setGroupMappings(updated);
+                            }}
+                            placeholder="e.g. viewer"
+                            className="w-28 px-2 py-1.5 border rounded text-xs"
+                          />
+                          <datalist id="ldap-role-options">
+                            {ASSIGNABLE_ROLES.map(r => <option key={r} value={r} />)}
+                          </datalist>
+                        </>
                         <button
                           type="button"
                           onClick={() => setGroupMappings(m => m.filter((_, j) => j !== i))}

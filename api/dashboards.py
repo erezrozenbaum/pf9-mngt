@@ -71,16 +71,17 @@ async def get_rvtools_last_run():
 
 def _calculate_metrics_summary(metrics_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Normalize metrics cache and calculate summary stats."""
-    if not metrics_data:
-        return {
-            "avg_cpu": 0,
-            "avg_memory": 0,
-            "metrics_host_count": 0,
-            "metrics_last_update": None,
-        }
+    avg_cpu: float = 0
+    avg_memory: float = 0
+    metrics_host_count: int = 0
+    metrics_last_update = None
 
-    vm_host_aggregates = _aggregate_vm_metrics_by_host(metrics_data)
-    hosts = metrics_data.get("hosts", []) or []
+    if metrics_data:
+        vm_host_aggregates = _aggregate_vm_metrics_by_host(metrics_data)
+    else:
+        vm_host_aggregates = {}
+
+    hosts = metrics_data.get("hosts", []) or [] if metrics_data else []
     cpu_values: List[float] = []
     mem_values: List[float] = []
 
@@ -118,16 +119,16 @@ def _calculate_metrics_summary(metrics_data: Optional[Dict[str, Any]]) -> Dict[s
         if vm_mem_values:
             avg_memory = sum(vm_mem_values) / len(vm_mem_values)
 
-    metrics_last_update = None
-    summary_last_update = metrics_data.get("summary", {}).get("last_update")
-    if summary_last_update:
-        metrics_last_update = summary_last_update
-    elif metrics_data.get("timestamp"):
-        metrics_last_update = metrics_data.get("timestamp")
-    else:
-        timestamps = [h.get("timestamp") for h in hosts if h.get("timestamp")]
-        if timestamps:
-            metrics_last_update = sorted(timestamps)[-1]
+    if metrics_data:
+        summary_last_update = metrics_data.get("summary", {}).get("last_update")
+        if summary_last_update:
+            metrics_last_update = summary_last_update
+        elif metrics_data.get("timestamp"):
+            metrics_last_update = metrics_data.get("timestamp")
+        else:
+            timestamps = [h.get("timestamp") for h in hosts if h.get("timestamp")]
+            if timestamps:
+                metrics_last_update = sorted(timestamps)[-1]
 
     if not metrics_last_update and vm_host_aggregates:
         vm_timestamps = [data.get("last_timestamp") for data in vm_host_aggregates.values() if data.get("last_timestamp")]
@@ -1276,6 +1277,55 @@ async def get_vm_hotspots(limit: int = Query(5, ge=1, le=20), sort: str = Query(
     try:
         metrics_data = _load_metrics_cache()
         vms = _normalize_vm_metrics(metrics_data)
+
+        if not vms:
+            # DB fallback: derive allocation-based utilisation from inventory tables
+            try:
+                with get_connection() as _conn:
+                    with _conn.cursor(cursor_factory=RealDictCursor) as _cur:
+                        _cur.execute("""
+                            SELECT
+                                s.id          AS vm_id,
+                                s.name        AS vm_name,
+                                p.name        AS project_name,
+                                p.id          AS project_id,
+                                d.name        AS domain,
+                                h.hostname    AS host,
+                                fl.vcpus,
+                                fl.ram_mb     AS memory_total_mb,
+                                CASE WHEN COALESCE(h.vcpus, 0) > 0 AND COALESCE(fl.vcpus, 0) > 0
+                                    THEN ROUND(fl.vcpus::numeric / h.vcpus * 100, 1)
+                                    ELSE NULL
+                                END AS cpu_usage_percent,
+                                CASE WHEN COALESCE(h.memory_mb, 0) > 0 AND COALESCE(fl.ram_mb, 0) > 0
+                                    THEN ROUND(fl.ram_mb::numeric / h.memory_mb * 100, 1)
+                                    ELSE NULL
+                                END AS memory_usage_percent
+                            FROM servers s
+                            LEFT JOIN projects  p  ON s.project_id            = p.id
+                            LEFT JOIN domains   d  ON p.domain_id             = d.id
+                            LEFT JOIN flavors   fl ON s.flavor_id             = fl.id
+                            LEFT JOIN hypervisors h ON s.hypervisor_hostname  = h.hostname
+                            WHERE s.status = 'ACTIVE'
+                        """)
+                        rows = _cur.fetchall()
+                vms = [
+                    {
+                        "vm_id":                 r["vm_id"],
+                        "vm_name":               r["vm_name"] or r["vm_id"],
+                        "project_name":          r["project_name"] or "unknown",
+                        "project_id":            r["project_id"],
+                        "domain":                r["domain"] or "unknown",
+                        "host":                  r["host"],
+                        "cpu_usage_percent":     float(r["cpu_usage_percent"])  if r["cpu_usage_percent"]    is not None else None,
+                        "memory_usage_percent":  float(r["memory_usage_percent"]) if r["memory_usage_percent"] is not None else None,
+                        "storage_usage_percent": None,
+                    }
+                    for r in rows
+                ]
+            except Exception as _db_err:
+                logger.warning("VM hotspots DB fallback failed: %s", _db_err)
+                vms = []
 
         if not vms:
             return {

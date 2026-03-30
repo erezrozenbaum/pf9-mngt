@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.3] - 2026-03-30
+
+### Added
+- **Metering — Chargeback per-tenant tab**: New `🧾 Chargeback` sub-tab in Metering shows per-tenant cost breakdown (vCPUs, RAM, estimated cost) with currency and billing-period selectors. Backed by new `GET /api/metering/chargeback-summary` endpoint.
+- **Metering — Tenant Growth tab**: New `📈 Tenant Growth` sub-tab shows month-over-month VM count changes per tenant as a pivot table. Backed by new `GET /api/metering/tenant-growth` endpoint.
+- **Metering — Excel export (row per VM)**: `GET /api/metering/export/chargeback-excel` generates a two-sheet workbook: "VM Details" (one row per VM with flavor, vCPUs, RAM, hours, cost) and "Tenant Summary".
+- **Metering — PDF export**: `GET /api/metering/export/chargeback-pdf` generates a landscape A4 PDF of the chargeback summary using reportlab.
+- **Metering — Email export**: `POST /api/metering/export/send-email` emails the chargeback report (Excel/PDF/CSV) as an attachment via the configured SMTP server.
+- **Domains — Dependency graph**: Clicking a domain in the Domains inventory tab now shows a Domain Details panel with a `🕸️ View Dependencies` button that opens the dependency graph scoped to that domain.
+- **Users — Dependency graph**: Clicking a user row in the Users inventory tab shows a User Details panel with a `🕸️ View Domain Dependencies` button.
+- **Admin — Department rename**: Department rows in Admin → Departments now have inline edit support (✏️ Edit → name/description/sort-order inputs → 💾 Save / ✖ Cancel).
+- **LDAP — Custom role mapping**: The Group → PF9 Role input in LDAP Sync Settings now accepts any freeform role name in addition to the preset suggestions (viewer, operator, technical, admin).
+
+### Fixed
+- **API — Swagger UI inaccessible at `/api/docs` in K8s**: FastAPI's built-in Swagger, ReDoc, and OpenAPI schema endpoints were served at `/docs`, `/redoc`, and `/openapi.json` respectively, while all application routes live under `/api/...`. In K8s (no path-rewriting ingress) requests to `/api/docs` reached the auth middleware as `/api/docs`, which was not in the bypass list and returned 401 "Not authenticated". Fixed by changing `docs_url`, `redoc_url`, and `openapi_url` to `/api/docs`, `/api/redoc`, and `/api/openapi.json` in the FastAPI app constructor, and updating the middleware bypass list to match.
+- **Dashboard — CPU/Memory widgets showing 0% in K8s**: `_calculate_metrics_summary` crashed with `AttributeError` when the metrics cache file was absent (K8s pod restarts). All `metrics_data.get(...)` accesses are now guarded behind `if metrics_data:`, and the DB fallback (hypervisors table) runs correctly.
+- **Dashboard — VM Hotspot empty in K8s**: `get_vm_hotspots` had no fallback when the metrics cache was unavailable. Added a DB fallback that JOINs `servers`, `projects`, `domains`, `flavors`, and `hypervisors` to compute allocation-based CPU and memory percentages.
+- **Snapshot monitor — progress bar stuck at 0%**: `get_active_run_progress` now dynamically computes `progress_pct` from `(snapshots_created + snapshots_failed + volumes_skipped) / total_volumes` when the stored value is 0 or None.
+- **UI — Resource History panel bleeding into all inventory tabs**: Added `activeTab === "history"` guard so the Resource History results panel only renders when the History tab is active.
+- **UI — Navigation sidebar not reflecting admin changes**: Added a `useEffect` that calls `refreshNavigation()` whenever the user leaves the Admin tab, ensuring department/nav renames are immediately visible in the sidebar.
+
 ## [1.83.2] - 2026-03-29
 
 ### Fixed

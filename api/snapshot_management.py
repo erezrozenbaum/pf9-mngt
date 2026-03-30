@@ -1260,6 +1260,25 @@ def setup_snapshot_routes(app):
                 if not run:
                     return {"active": False, "run": None, "batches": []}
 
+                run = dict(run)
+
+                # Dynamically compute progress_pct when the stored value is 0
+                # (the worker sets it before each batch starts, so it starts at 0
+                # and only reaches 100 after the last batch completes).
+                if not run.get("progress_pct"):
+                    total_vols = run.get("total_volumes") or 0
+                    processed = (
+                        (run.get("snapshots_created") or 0)
+                        + (run.get("snapshots_failed") or 0)
+                        + (run.get("volumes_skipped") or 0)
+                    )
+                    total_batches = run.get("total_batches") or 0
+                    completed_batches = run.get("completed_batches") or 0
+                    if total_vols > 0 and processed > 0:
+                        run["progress_pct"] = round(processed / total_vols * 100, 1)
+                    elif total_batches > 0 and completed_batches > 0:
+                        run["progress_pct"] = round(completed_batches / total_batches * 100, 1)
+
                 cur.execute("""
                     SELECT batch_number, tenant_names,
                            total_volumes, completed, status,
