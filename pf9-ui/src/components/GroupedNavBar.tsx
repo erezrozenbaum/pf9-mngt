@@ -38,8 +38,6 @@ const GroupedNavBar: React.FC<GroupedNavBarProps> = ({
   onItemReorder,
   onResetOrder,
 }) => {
-  const expandedGroup = groups.find((g) => g.key === expandedGroupKey) ?? null;
-
   // Helper: is a nav item an "action" item? Uses the is_action flag from the database.
   const isActionItem = (item: any): boolean => !!item.is_action;
 

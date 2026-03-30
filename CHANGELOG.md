@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.4] - 2026-03-30
+
+### Fixed
+- **CI — frontend-typecheck**: Resolved all 200+ TypeScript errors caught by the `tsc -b` CI job across 14 source files (`App.tsx`, `UserManagement.tsx`, `VmProvisioningTab.tsx`, `RunbooksTab.tsx`, `TicketsTab.tsx`, `MeteringTab.tsx`, `MigrationPlannerTab.tsx`, `ResourceManagementTab.tsx`, `CustomerProvisioningTab.tsx`, `GroupedNavBar.tsx`, `DriftDetection.tsx`, `TenantHealthView.tsx`, `SnapshotRestoreWizard.tsx`, `graph/DependencyGraph.tsx`, `migration/ProjectSetup.tsx`, `migration/SourceAnalysis.tsx`). Root causes: untyped `useState([])` arrays inferred as `never[]`, missing optional fields on `Server`/`Snapshot`/`Subnet`/`Hypervisor` types, `PagedResponse<User>.data` should be `.items`, unused local variables and parameters, and implicit `any` in event handlers.
+
 ## [1.83.3] - 2026-03-30
 
 ### Added

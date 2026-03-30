@@ -10,7 +10,7 @@
  *   3) Rules   – toggle enable/disable, change severity
  */
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { API_BASE } from "../config";
 import "../styles/DriftDetection.css";
 

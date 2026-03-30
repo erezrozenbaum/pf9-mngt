@@ -145,6 +145,7 @@ interface NetworkSummary {
   vlan_id: number | null;
   network_type: string;
   vm_count: number;
+  tenant_names: string | null;
   subnet: string | null;
   gateway: string | null;
   dns_servers: string | null;
@@ -181,6 +182,10 @@ interface Wave {
   started_at: string | null;
   completed_at: string | null;
   vms?: WaveVM[];
+  approval_status?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  approval_comment?: string | null;
 }
 
 interface WaveVM {
@@ -221,7 +226,7 @@ interface MigrationFunnel {
 /* ------------------------------------------------------------------ */
 
 export default function SourceAnalysis({ project, onProjectUpdated, onViewTenantGraph }: Props) {
-  const pid = project.project_id;
+  const pid = project.id;
   const [subView, setSubView] = useState<SubView>("dashboard");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -251,7 +256,7 @@ export default function SourceAnalysis({ project, onProjectUpdated, onViewTenant
 
   /* ---- VM detail expansion ---- */
   const [expandedVm, setExpandedVm] = useState<string | null>(null);
-  const [expandedVmData, setExpandedVmData] = useState<MigrationVM | null>(null);
+  const [, setExpandedVmData] = useState<MigrationVM | null>(null);
   const [vmDisks, setVmDisks] = useState<any[]>([]);
   const [vmNics, setVmNics] = useState<any[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -4285,7 +4290,7 @@ const PREFLIGHT_STATUS_ICONS: Record<string, string> = {
   pending: "⏳", pass: "✅", fail: "❌", skipped: "⏭️", na: "—",
 };
 
-function WavePlannerView({ projectId, project, tenants }: {
+function WavePlannerView({ projectId, project, tenants: _tenants }: {
   projectId: number;
   project: MigrationProject;
   tenants: Tenant[];
@@ -4306,7 +4311,6 @@ function WavePlannerView({ projectId, project, tenants }: {
   const [autoMaxDiskTb, setAutoMaxDiskTb] = useState<number | null>(null);
   const [autoPilotCount, setAutoPilotCount] = useState(5);
   const [autoPrefix, setAutoPrefix] = useState("Wave");
-  const [autoDryRun, setAutoDryRun] = useState(true);
   const [autoPreview, setAutoPreview] = useState<any>(null);
   const [loadingAuto, setLoadingAuto] = useState(false);
   const [advancingWave, setAdvancingWave] = useState<number | null>(null);
@@ -6075,23 +6079,23 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
     setError("");
     try {
       const [profResp, nodeProf] = await Promise.all([
-        apiFetch("/api/migration/overcommit-profiles"),
-        apiFetch(`/api/migration/projects/${projectId}/node-profiles`),
+        apiFetch<{ profiles: any[] }>("/api/migration/overcommit-profiles"),
+        apiFetch<{ profiles: any[] }>(`/api/migration/projects/${projectId}/node-profiles`),
       ]);
       setProfiles(profResp.profiles || []);
       setNodeProfiles(nodeProf.profiles || []);
 
       // Load live PCD cluster data from hypervisors table
-      const liveResp = await apiFetch(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
+      const liveResp = await apiFetch<{ live?: any }>(`/api/migration/projects/${projectId}/pcd-live-inventory`).catch(() => null);
       if (liveResp?.live) setLiveCluster(liveResp.live);
 
-      const quotaResp = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const quotaResp = await apiFetch<{ quota?: any }>(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
       const quota = quotaResp?.quota;
       if (quota) setQuotaResult(quota);
       if (quota?.profile) setActiveProfile(typeof quota.profile === 'object' ? quota.profile.profile_name : quota.profile);
 
       // Auto-compute sizing if node profiles exist
-      const sizingResp = await apiFetch(`/api/migration/projects/${projectId}/node-sizing?max_util_pct=${maxUtilPct}&peak_buffer_pct=${peakBufferPct}`).catch(() => null);
+      const sizingResp = await apiFetch<{ sizing?: any; live_cluster?: any }>(`/api/migration/projects/${projectId}/node-sizing?max_util_pct=${maxUtilPct}&peak_buffer_pct=${peakBufferPct}`).catch(() => null);
       if (sizingResp?.sizing) {
         setSizingResult(sizingResp.sizing);
         if (sizingResp.live_cluster) setLiveCluster(sizingResp.live_cluster);
@@ -6103,7 +6107,7 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
   const computeSizing = async (util = maxUtilPct, peak = peakBufferPct) => {
     setError("");
     try {
-      const result = await apiFetch(`/api/migration/projects/${projectId}/node-sizing?max_util_pct=${util}&peak_buffer_pct=${peak}`);
+      const result = await apiFetch<{ sizing?: any; live_cluster?: any }>(`/api/migration/projects/${projectId}/node-sizing?max_util_pct=${util}&peak_buffer_pct=${peak}`);
       setSizingResult(result.sizing || null);
       if (result.live_cluster) setLiveCluster(result.live_cluster);
     } catch (e: any) { setError(e.message); }
@@ -6117,7 +6121,7 @@ function CapacityPlanningView({ projectId }: { projectId: number }) {
         body: JSON.stringify({ overcommit_profile_name: name }),
       });
       setActiveProfile(name);
-      const quotaResp = await apiFetch(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
+      const quotaResp = await apiFetch<{ quota?: any }>(`/api/migration/projects/${projectId}/quota-requirements`).catch(() => null);
       const quota = quotaResp?.quota;
       if (quota) setQuotaResult(quota);
       setMsg("Overcommit profile updated.");
@@ -6726,7 +6730,7 @@ interface PcdGap {
 
 function PcdReadinessView({ projectId }: { projectId: number }) {
   const [pcdUrl, setPcdUrl] = useState("");
-  const [pcdRegion, setPcdRegion] = useState("region-one");
+  const [_pcdRegion, setPcdRegion] = useState("region-one");
   const [readinessScore, setReadinessScore] = useState<number | null>(null);
   const [gaps, setGaps] = useState<PcdGap[]>([]);
   const [running, setRunning] = useState(false);

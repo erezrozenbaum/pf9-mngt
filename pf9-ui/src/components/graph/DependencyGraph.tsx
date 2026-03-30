@@ -929,7 +929,7 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
               <tbody>
                 <SidebarRow label="Type"   value={selectedNode.type} />
                 <SidebarRow label="Status" value={selectedNode.status ?? "—"} />
-                {selectedNode.extra?.ip_address && (
+                {!!(selectedNode.extra?.ip_address) && (
                   <SidebarRow
                     label="IP Address"
                     value={

@@ -474,7 +474,6 @@ export default function ProjectSetup({ project, onProjectUpdated, onNavigate }: 
     reasoning.push(`Per agent: ${vcpu} vCPU, ${ram} GB RAM, 0 GB disk`);
 
     if (durationDays > 0) {
-      const effectiveDays = Math.max(1, (durationDays / 7.0) * workingDays);
       const slotsPerDay = workingHours / 2.0;
       const dailyCapacity = recommended * concurrent * slotsPerDay;
       const estDays = dailyCapacity > 0 ? vmCount / dailyCapacity : 999;

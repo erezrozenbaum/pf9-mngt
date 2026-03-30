@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../config";
 import "../styles/TicketsTab.css";
 
@@ -1053,7 +1053,7 @@ function AdminPanel({
   adminTab, setAdminTab,
   slaPolicy, emailTpl,
   editTpl, setEditTpl, saveTemplate,
-  depts, showToast, analyticsData, reload,
+  depts: _depts, showToast: _showToast, analyticsData, reload: _reload,
 }: {
   adminTab: "sla" | "templates" | "analytics";
   setAdminTab: (v: "sla" | "templates" | "analytics") => void;

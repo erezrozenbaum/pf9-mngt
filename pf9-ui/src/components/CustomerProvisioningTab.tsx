@@ -101,6 +101,7 @@ interface ProvisionForm {
   compute_quotas: ComputeQuotas;
   network_quotas: NetworkQuotas;
   storage_quotas: StorageQuotas;
+  physical_network?: string;
 }
 
 interface DomainCheckResult {

@@ -100,7 +100,7 @@ export default function ResourceManagementTab({ isAdmin }: Props) {
   const [newNetName, setNewNetName] = useState("");
   const [newNetProject, setNewNetProject] = useState("");
   const [newNetShared, setNewNetShared] = useState(false);
-  const [newNetExternal, setNewNetExternal] = useState(false);
+  const [_newNetExternal, _setNewNetExternal] = useState(false);
   const [newNetSubnetCidr, setNewNetSubnetCidr] = useState("");
   const [newNetEnableDhcp, setNewNetEnableDhcp] = useState(true);
   const [newNetKind, setNewNetKind] = useState<"virtual" | "physical_managed" | "physical_l2">("virtual");

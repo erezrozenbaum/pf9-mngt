@@ -80,6 +80,7 @@ export interface MigrationProject {
   risk_summary?: Record<string, number>;
   mode_summary?: Record<string, number>;
   totals?: Record<string, any>;
+  use_maintenance_windows?: boolean;
 }
 
 type SubView = "projects" | "setup" | "analysis";
@@ -110,7 +111,7 @@ const STATUS_COLORS: Record<string, string> = {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function MigrationPlannerTab({ isAdmin, onViewTenantGraph }: Props) {
+export default function MigrationPlannerTab({ isAdmin: _isAdmin, onViewTenantGraph }: Props) {
   const [subView, setSubView] = useState<SubView>("projects");
   const [projects, setProjects] = useState<MigrationProject[]>([]);
   const [selectedProject, setSelectedProject] = useState<MigrationProject | null>(null);

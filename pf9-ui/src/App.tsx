@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
-import { ErrorBoundary } from "react-error-boundary";
 import "./App.css";
 import { ThemeProvider, useTheme } from "./hooks/useTheme";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -87,6 +86,8 @@ type Server = {
   ips: string | null;
   image_name: string | null;
   created_at: string | null;
+  os_type?: string | null;
+  os_version?: string | null;
   // Host utilization
   hypervisor_hostname: string | null;
   host_vcpus_total: number | null;
@@ -110,6 +111,7 @@ type Snapshot = {
   created_at: string | null;
   last_seen_at: string | null;
   is_deleted: boolean;
+  volume_id?: string | null;
 };
 
 type Network = {
@@ -186,6 +188,8 @@ type Hypervisor = {
   status: string | null;
   state: string | null;
   last_seen_at: string | null;
+  pf9_roles?: string | null;
+  uptime_seconds?: number | null;
 };
 
 type User = {
@@ -295,6 +299,7 @@ type Subnet = {
   cidr: string | null;
   ip_version: number | null;
   network_id: string | null;
+  network_name?: string | null;
   gateway_ip: string | null;
   enable_dhcp: boolean | null;
   created_at: string | null;
@@ -386,20 +391,6 @@ type ResourceHistory = {
   current_state: any;
   previous_hash: string | null;
   change_sequence: number;
-};
-
-type VolumeHistory = {
-  volume_id: string;
-  volume_name: string | null;
-  status: string;
-  size_gb: number;
-  volume_type: string;
-  bootable: boolean;
-  recorded_at: string;
-  change_hash: string;
-  auto_snapshot: string;
-  snapshot_policy: string | null;
-  full_state: any;
 };
 
 type ComplianceReport = {
@@ -1020,8 +1011,8 @@ const App: React.FC = () => {
     navData,
     activeGroupKey,
     setActiveGroupKey,
-    activeGroup,
-    isTabVisible,
+    activeGroup: _activeGroup,
+    isTabVisible: _isTabVisible,
     hasPermission: navHasPermission,
     refreshNavigation,
     reorderGroups,
@@ -1404,18 +1395,18 @@ const App: React.FC = () => {
   // New resource types paging/sorting
   const [flavorPage, setFlavorPage] = useState(1);
   const [flavorPageSize, setFlavorPageSize] = useState(50);
-  const [flavorSortBy, setFlavorSortBy] = useState("flavor_name");
-  const [flavorSortDir, setFlavorSortDir] = useState<"asc" | "desc">("asc");
+  const [flavorSortBy, _setFlavorSortBy] = useState("flavor_name");
+  const [flavorSortDir, _setFlavorSortDir] = useState<"asc" | "desc">("asc");
 
   const [imagePage, setImagePage] = useState(1);
   const [imagePageSize, setImagePageSize] = useState(50);
-  const [imageSortBy, setImageSortBy] = useState("image_name");
-  const [imageSortDir, setImageSortDir] = useState<"asc" | "desc">("asc");
+  const [imageSortBy, _setImageSortBy] = useState("image_name");
+  const [imageSortDir, _setImageSortDir] = useState<"asc" | "desc">("asc");
 
   const [hypervisorPage, setHypervisorPage] = useState(1);
   const [hypervisorPageSize, setHypervisorPageSize] = useState(50);
-  const [hypervisorSortBy, setHypervisorSortBy] = useState("hypervisor_hostname");
-  const [hypervisorSortDir, setHypervisorSortDir] = useState<"asc" | "desc">("asc");
+  const [hypervisorSortBy, _setHypervisorSortBy] = useState("hypervisor_hostname");
+  const [hypervisorSortDir, _setHypervisorSortDir] = useState<"asc" | "desc">("asc");
 
   // User pagination and sorting
   const [userPage, setUserPage] = useState(1);
@@ -1425,18 +1416,18 @@ const App: React.FC = () => {
 
   const [projectPage, setProjectPage] = useState(1);
   const [projectPageSize, setProjectPageSize] = useState(50);
-  const [projectSortBy, setProjectSortBy] = useState("tenant_name");
-  const [projectSortDir, setProjectSortDir] = useState<"asc" | "desc">("asc");
+  const [projectSortBy, _setProjectSortBy] = useState("tenant_name");
+  const [projectSortDir, _setProjectSortDir] = useState<"asc" | "desc">("asc");
 
   const [portPage, setPortPage] = useState(1);
   const [portPageSize, setPortPageSize] = useState(50);
-  const [portSortBy, setPortSortBy] = useState("domain_name");
-  const [portSortDir, setPortSortDir] = useState<"asc" | "desc">("asc");
+  const [portSortBy, _setPortSortBy] = useState("domain_name");
+  const [portSortDir, _setPortSortDir] = useState<"asc" | "desc">("asc");
 
   const [floatingIPPage, setFloatingIPPage] = useState(1);
   const [floatingIPPageSize, setFloatingIPPageSize] = useState(50);
-  const [floatingIPSortBy, setFloatingIPSortBy] = useState("floating_ip");
-  const [floatingIPSortDir, setFloatingIPSortDir] = useState<"asc" | "desc">("asc");
+  const [floatingIPSortBy, _setFloatingIPSortBy] = useState("floating_ip");
+  const [floatingIPSortDir, _setFloatingIPSortDir] = useState<"asc" | "desc">("asc");
 
   // Data
   const [servers, setServers] = useState<Server[]>([]);
@@ -1533,18 +1524,18 @@ const App: React.FC = () => {
 
   const [ports, setPorts] = useState<Port[]>([]);
   const [portsTotal, setPortsTotal] = useState(0);
-  const [selectedPort, setSelectedPort] = useState<Port | null>(null);
+  const [_selectedPort, _setSelectedPort] = useState<Port | null>(null);
 
   const [floatingIPs, setFloatingIPs] = useState<FloatingIP[]>([]);
   const [floatingIPsTotal, setFloatingIPsTotal] = useState(0);
-  const [selectedFloatingIP, setSelectedFloatingIP] = useState<FloatingIP | null>(null);
+  const [_selectedFloatingIP, _setSelectedFloatingIP] = useState<FloatingIP | null>(null);
     useState<Volume | null>(null);
 
   // History & Audit data
   const [recentChanges, setRecentChanges] = useState<ChangeRecord[]>([]);
   const [changeTimeframe, setChangeTimeframe] = useState<number>(24);
-  const [dailySummary, setDailySummary] = useState<DailyChangeSummary[]>([]);
-  const [velocityStats, setVelocityStats] = useState<VelocityStats[]>([]);
+  const [_dailySummary, setDailySummary] = useState<DailyChangeSummary[]>([]);
+  const [_velocityStats, setVelocityStats] = useState<VelocityStats[]>([]);
   const [mostChangedResources, setMostChangedResources] = useState<MostChangedResource[]>([]);
 
   // History tab filters & sort
@@ -1555,7 +1546,7 @@ const App: React.FC = () => {
   const [historyFilterSearch, setHistoryFilterSearch] = useState<string>("");
   const [historySortField, setHistorySortField] = useState<string>("time");
   const [historySortDir, setHistorySortDir] = useState<"asc" | "desc">("desc");
-  const [complianceReport, setComplianceReport] = useState<ComplianceReport | null>(null);
+  const [_complianceReport, setComplianceReport] = useState<ComplianceReport | null>(null);
   const [selectedResourceHistory, setSelectedResourceHistory] = useState<ResourceHistory[]>([]);
   const [historyResourceType, setHistoryResourceType] = useState<string>("");
   const [historyResourceId, setHistoryResourceId] = useState<string>("");
@@ -1579,16 +1570,16 @@ const App: React.FC = () => {
 
   // New metadata resource tabs
   const [keypairsData, setKeypairsData] = useState<any[]>([]);
-  const [keypairsTotal, setKeypairsTotal] = useState(0);
+  const [_keypairsTotal, setKeypairsTotal] = useState(0);
   const [aggregatesData, setAggregatesData] = useState<any[]>([]);
-  const [aggregatesTotal, setAggregatesTotal] = useState(0);
+  const [_aggregatesTotal, setAggregatesTotal] = useState(0);
   const [volumeTypesData, setVolumeTypesData] = useState<any[]>([]);
-  const [volumeTypesTotal, setVolumeTypesTotal] = useState(0);
+  const [_volumeTypesTotal, setVolumeTypesTotal] = useState(0);
   const [serverGroupsData, setServerGroupsData] = useState<any[]>([]);
-  const [serverGroupsTotal, setServerGroupsTotal] = useState(0);
+  const [_serverGroupsTotal, setServerGroupsTotal] = useState(0);
   const [quotasData, setQuotasData] = useState<any[]>([]);
-  const [quotasTotal, setQuotasTotal] = useState(0);
-  const [osDistribution, setOsDistribution] = useState<any[]>([]);
+  const [_quotasTotal, setQuotasTotal] = useState(0);
+  const [_osDistribution, setOsDistribution] = useState<any[]>([]);
 
   // System Metadata unified view
   const [systemMetadata, setSystemMetadata] = useState<any>(null);
@@ -2263,12 +2254,9 @@ const App: React.FC = () => {
 
         const res = await fetchJson<PagedResponse<User>>(`${API_BASE}/users?${params}`);
         if (res) {
-          setUsers(res.data || []);
+          setUsers(res.items || []);
           setUsersTotal(res.total || 0);
         }
-      } catch (e: any) {
-        console.error(e);
-        setError(e.message || "Failed to load users");
       } finally {
         setLoading(false);
       }
@@ -2307,7 +2295,7 @@ const App: React.FC = () => {
       // Refresh users list
       const params = new URLSearchParams({ page: userPage.toString(), page_size: userPageSize.toString(), sort_by: userSortBy, sort_dir: userSortDir });
       const refreshed = await fetchJson<PagedResponse<User>>(`${API_BASE}/users?${params}`);
-      if (refreshed) { setUsers(refreshed.data || []); setUsersTotal(refreshed.total || 0); }
+      if (refreshed) { setUsers(refreshed.items || []); setUsersTotal(refreshed.total || 0); }
     } catch (e: any) {
       setUserModalError(e.message || "Unexpected error");
     } finally {
@@ -2325,7 +2313,7 @@ const App: React.FC = () => {
       if (!res.ok) { const d = await res.json(); setError(d.detail || "Delete failed"); return; }
       const params = new URLSearchParams({ page: userPage.toString(), page_size: userPageSize.toString(), sort_by: userSortBy, sort_dir: userSortDir });
       const refreshed = await fetchJson<PagedResponse<User>>(`${API_BASE}/users?${params}`);
-      if (refreshed) { setUsers(refreshed.data || []); setUsersTotal(refreshed.total || 0); }
+      if (refreshed) { setUsers(refreshed.items || []); setUsersTotal(refreshed.total || 0); }
     } catch (e: any) { setError(e.message || "Delete failed"); }
   }, [userPage, userPageSize, userSortBy, userSortDir]);
 
@@ -4053,7 +4041,7 @@ const App: React.FC = () => {
                       <td>{yesNo(n.is_shared)}</td>
                       <td>{yesNo(n.is_external)}</td>
                       <td>
-                        {n.network_name.includes("VLAN") || n.network_name.includes("vLAN") ? 
+                        {n.network_name && (n.network_name.includes("VLAN") || n.network_name.includes("vLAN")) ? 
                           n.network_name.match(/[vV]LAN[\s\-_]*([\d]+)/)?.[1] || "N/A" : "N/A"}
                       </td>
                       <td>{formatDate(n.last_seen_at)}</td>
@@ -4871,7 +4859,7 @@ const App: React.FC = () => {
                       className={selectedImage?.image_id === img.image_id ? "pf9-row-selected" : ""}
                     >
                       <td>{img.image_name}</td>
-                      <td>{img.size_bytes ? Math.round(img.size_bytes / 1024 / 1024).toLocaleString() : "-"}</td>
+                      <td>{img.size ? Math.round(img.size / 1024 / 1024).toLocaleString() : "-"}</td>
                       <td>{formatDate(img.last_seen_at)}</td>
                     </tr>
                   ))
@@ -4908,7 +4896,7 @@ const App: React.FC = () => {
                   </tr>
                 ) : (
                   hypervisors.map((h) => {
-                    const formatUptime = (seconds) => {
+                    const formatUptime = (seconds: number | null) => {
                       if (!seconds) return "N/A";
                       const days = Math.floor(seconds / 86400);
                       const hours = Math.floor((seconds % 86400) / 3600);
@@ -4924,7 +4912,7 @@ const App: React.FC = () => {
                         <td>{h.hypervisor_hostname}</td>
                         <td>{h.host_ip || "-"}</td>
                         <td><span className="pf9-badge pf9-badge-info">{h.pf9_roles || "Unknown"}</span></td>
-                        <td>{formatUptime(h.uptime_seconds)}</td>
+                        <td>{formatUptime(h.uptime_seconds ?? null)}</td>
                         <td>{h.vcpus || "-"}</td>
                         <td>{h.vcpus_used || "-"}</td>
                         <td>{h.memory_mb ? Math.round(h.memory_mb / 1024).toLocaleString() : "-"}</td>
@@ -5370,7 +5358,7 @@ const App: React.FC = () => {
                             </td>
                             <td>{resource.resource_name || "N/A"}</td>
                             <td>{resource.change_count}</td>
-                            <td>{formatDate(resource.last_change_at)}</td>
+                            <td>{formatDate(resource.last_change)}</td>
                             <td>
                               <button 
                                 className="pf9-button-small"
@@ -5716,10 +5704,10 @@ const App: React.FC = () => {
                     </thead>
                     <tbody>
                       {hypervisors.map(hyp => {
-                        const cpuUsage = hyp.vcpus > 0 ? (hyp.vcpus_used / hyp.vcpus * 100) : 0;
-                        const memUsage = hyp.memory_mb > 0 ? (hyp.memory_mb_used / hyp.memory_mb * 100) : 0;
-                        const storageUsage = hyp.local_gb > 0 ? (hyp.local_gb_used / hyp.local_gb * 100) : 0;
-                        const formatUptime = (seconds) => {
+                        const cpuUsage = (hyp.vcpus ?? 0) > 0 ? ((hyp.vcpus_used ?? 0) / (hyp.vcpus ?? 1) * 100) : 0;
+                        const memUsage = (hyp.memory_mb ?? 0) > 0 ? ((hyp.memory_mb_used ?? 0) / (hyp.memory_mb ?? 1) * 100) : 0;
+                        const storageUsage = (hyp.local_gb ?? 0) > 0 ? ((hyp.local_gb_used ?? 0) / (hyp.local_gb ?? 1) * 100) : 0;
+                        const formatUptime = (seconds: number | null) => {
                           if (!seconds) return "N/A";
                           const days = Math.floor(seconds / 86400);
                           const hours = Math.floor((seconds % 86400) / 3600);
@@ -5729,7 +5717,7 @@ const App: React.FC = () => {
                           <tr key={hyp.hypervisor_id}>
                             <td>{hyp.hypervisor_hostname}</td>
                             <td><span className="pf9-badge pf9-badge-info">{hyp.pf9_roles}</span></td>
-                            <td>{formatUptime(hyp.uptime_seconds)}</td>
+                            <td>{formatUptime(hyp.uptime_seconds ?? null)}</td>
                             <td>{cpuUsage.toFixed(1)}%</td>
                             <td>{memUsage.toFixed(1)}%</td>
                             <td>{storageUsage.toFixed(1)}%</td>
@@ -5761,13 +5749,13 @@ const App: React.FC = () => {
                               const img = images.find(i => i.image_name === server.image_name);
                               acc[server.image_name] = {
                                 count: 0,
-                                size: img ? (img.size_bytes || 0) / 1024 / 1024 / 1024 : 0
+                                size: img ? (img.size || 0) / 1024 / 1024 / 1024 : 0
                               };
                             }
                             acc[server.image_name].count++;
                           }
                           return acc;
-                        }, {} as any)
+                        }, {} as Record<string, { count: number; size: number }>)
                       ).sort(([, a], [, b]) => b.count - a.count).slice(0, 10).map(([imageName, stats]) => (
                         <tr key={imageName}>
                           <td>{imageName}</td>
@@ -6254,7 +6242,7 @@ const App: React.FC = () => {
           {activeTab === "search" && (
             <OpsSearch
               isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
-              onNavigateToReport={(slug) => {
+              onNavigateToReport={(_slug) => {
                 setActiveTab("reports");
               }}
             />
@@ -6529,7 +6517,7 @@ const App: React.FC = () => {
               </p>
               <button
                 className="graph-view-deps-btn"
-                onClick={() => setGraphTarget({ type: "volume", id: selectedVolume.id || selectedVolume.volume_id, label: selectedVolume.volume_name })}
+                onClick={() => setGraphTarget({ type: "volume", id: selectedVolume.id, label: selectedVolume.volume_name ?? "" })}
               >
                 🕸️ View Dependencies
               </button>
@@ -6711,8 +6699,7 @@ const App: React.FC = () => {
             !selectedNetwork &&
             !selectedSubnet &&
             !selectedVolume &&
-            selectedResourceHistory.length === 0 &&
-            (activeTab !== "history" && activeTab !== "audit") && (
+            selectedResourceHistory.length === 0 && (
               <div>
                 <h2>Details</h2>
                 <p>Click a row in the table to see details.</p>

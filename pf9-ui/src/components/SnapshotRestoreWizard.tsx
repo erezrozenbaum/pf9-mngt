@@ -1096,7 +1096,6 @@ const SnapshotRestoreWizard: React.FC = () => {
   // -----------------------------------------------------------------------
   const renderConfigureScreen = () => {
     const selectedVm = vms.find((v) => v.vm_id === selectedVmId);
-    const selectedSnapshot = restorePoints?.restore_points.find((s) => s.id === selectedSnapshotId);
 
     return (
       <div>

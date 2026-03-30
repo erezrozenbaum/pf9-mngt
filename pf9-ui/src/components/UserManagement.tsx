@@ -518,10 +518,14 @@ const SystemConfigPanel: React.FC<{ user?: AuthUser | null }> = ({ user: _user }
 };
 
 const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
-  const [users, setUsers] = useState([]);
-  const [roles, setRoles] = useState([]);
-  const [permissions, setPermissions] = useState([]);
-  const [auditLogs, setAuditLogs] = useState([]);
+  type UmUser = { id?: number; username: string; email?: string; role?: string; department_id?: number | null; status?: string; [key: string]: any };
+  type UmRole = { id: number; name: string; description: string; userCount: number; [key: string]: any };
+  type UmPermission = { id: number; resource: string; action: string; roles: string[]; [key: string]: any };
+  type UmAuditLog = { id: number; timestamp: string; username: string; action: string; ip_address?: string; user_agent?: string; success?: boolean; details?: any; [key: string]: any };
+  const [users, setUsers] = useState<UmUser[]>([]);
+  const [roles, setRoles] = useState<UmRole[]>([]);
+  const [permissions, setPermissions] = useState<UmPermission[]>([]);
+  const [auditLogs, setAuditLogs] = useState<UmAuditLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('audit');
 
@@ -542,9 +546,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [resetShowDetails, setResetShowDetails] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState('user');
-  const [editingItem, setEditingItem] = useState(null);
-  const [formData, setFormData] = useState({});
-  const [error, setError] = useState('');
+  const [editingItem, setEditingItem] = useState<UmUser | null>(null);
+  const [_formData, setFormData] = useState({});
+  const [_error, setError] = useState('');
   // MFA tab state
   const [mfaUsers, setMfaUsers] = useState<MFAUserEntry[]>([]);
   const [mfaLoading, setMfaLoading] = useState(false);
@@ -560,7 +564,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const [departments, setDepartments] = useState<any[]>([]);
   const [navGroups, setNavGroups] = useState<any[]>([]);
   const [navItems, setNavItems] = useState<any[]>([]);
-  const [visibilityMatrix, setVisibilityMatrix] = useState<any>(null);
+  const [_visibilityMatrix, setVisibilityMatrix] = useState<any>(null);
   const [deptForm, setDeptForm] = useState({ name: '', description: '', sort_order: 0, default_nav_item_key: '' });
   const [deptEditing, setDeptEditing] = useState<number | null>(null);
   const [deptEditFields, setDeptEditFields] = useState({ name: '', description: '', sort_order: 0 });
@@ -1060,7 +1064,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setNavMsg('✅ Item created');
-      setItemForm({ key: '', label: '', icon: '', route: '', resource_key: '', nav_group_id: 0, sort_order: 0 });
+      setItemForm({ key: '', label: '', icon: '', route: '', resource_key: '', nav_group_id: 0, sort_order: 0, is_active: true, is_action: false });
       setShowAddItem(null);
       loadDeptNavData();
       setTimeout(() => setNavMsg(''), 3000);
@@ -1177,10 +1181,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     try {
       // Get auth token from localStorage if available
       const token = localStorage.getItem('auth_token');
-      const headers = token ? { 
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      } : { 'Content-Type': 'application/json' };
+      const headers: Record<string, string> = token
+        ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+        : { 'Content-Type': 'application/json' };
       
       // Load real users from LDAP via API
       try {
@@ -1267,7 +1270,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     }
   };
 
-  const handleAddUser = async (userData) => {
+  const handleAddUser = async (userData: any) => {
     try {
       const token = localStorage.getItem('auth_token');
       const response = await fetch(`${API_BASE}/auth/users`, {
@@ -1305,7 +1308,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     }
   };
 
-  const handleUpdateUserRole = async (userData) => {
+  const handleUpdateUserRole = async (userData: any) => {
     try {
       const token = localStorage.getItem('auth_token');
 
@@ -1344,7 +1347,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     }
   };
 
-  const handleDeleteUser = async (userId) => {
+  const handleDeleteUser = async (userId: any) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
     
     try {
@@ -1430,7 +1433,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     }
   };
 
-  const UserForm = ({ user, onSave, onCancel }) => {
+  const UserForm = ({ user, onSave, onCancel }: { user: any; onSave: (data: any) => void; onCancel: () => void }) => {
     const [localFormData, setLocalFormData] = useState({
       username: user?.username || '',
       email: user?.email || '',
@@ -1441,7 +1444,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       department_id: user?.department_id || ''
     });
 
-    const handleSubmit = (e) => {
+    const handleSubmit = (e: React.FormEvent) => {
       e.preventDefault();
       if (localFormData.password !== localFormData.confirmPassword) {
         alert('Passwords do not match');
@@ -2157,7 +2160,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
               <tbody className="divide-y divide-gray-200">
                 {auditLogs.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                       No audit logs found
                     </td>
                   </tr>
@@ -3801,7 +3804,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
             {modalType === 'user' && (
               <UserForm
                 user={editingItem}
-                onSave={(data) => {
+                onSave={(data: any) => {
                   if (editingItem) {
                     handleUpdateUserRole(data);
                   } else {

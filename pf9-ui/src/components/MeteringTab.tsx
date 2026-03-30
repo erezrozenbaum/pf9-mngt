@@ -143,6 +143,7 @@ interface ResourceRow {
   network_tx_bytes: number | null;
   storage_read_bytes: number | null;
   storage_write_bytes: number | null;
+  project_id?: string | null;
 }
 
 interface SnapshotRow {

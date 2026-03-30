@@ -85,6 +85,7 @@ interface VmRow {
   osType: string;             // auto from image
   deleteOnTermination: boolean;
   sgDropdownOpen: boolean;
+  image?: { _detected_os?: string; name?: string } | null;
 }
 
 interface Batch {
@@ -235,9 +236,9 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
   // ── batch list ────────────────────────────────────────────────
   const [batches, setBatches] = useState<Batch[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
-  const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
-  const [dryRunRunning, setDryRunRunning] = useState(false);
-  const [execRunning, setExecRunning] = useState(false);
+  const [_selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
+  const [_dryRunRunning, setDryRunRunning] = useState(false);
+  const [_execRunning, setExecRunning] = useState(false);
   const [batchMsg, setBatchMsg] = useState<{ type: string; text: string } | null>(null);
   // per-batch action busy state & inline expand
   const [actionBusy, setActionBusy] = useState<Record<number, string>>({});
@@ -267,9 +268,6 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
   const [vmRows, setVmRows] = useState<VmRow[]>([newVmRow()]);
   const [formMsg, setFormMsg] = useState<{ type: string; text: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  // ── pagination / polling ──────────────────────────────────────
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Excel import ───────────────────────────────────────────────
   const [excelImportOpen, setExcelImportOpen] = useState(false);
@@ -650,7 +648,6 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
   // ──────────────────────────────────────────────────────────────
   // Step validation
   // ──────────────────────────────────────────────────────────────
-  function step1Valid() { return domain.trim().length > 0 && project.trim().length > 0 && resources !== null; }
   function step2Valid() {
     if (!vmRows.every((r) => r.vmNameSuffix && r.selectedImageId && r.selectedFlavorId && r.selectedNetworkId && r.volumeGb >= 1)) return false;
     const staticIps = vmRows.filter((r) => r.useStaticIp && r.fixedIp).map((r) => r.fixedIp);
@@ -666,7 +663,6 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
     const { used, limit } = quotaFree(entry);
     const afterUse = used + needed;
     const pct = limit === 9999 ? 0 : Math.min(100, Math.round((afterUse / limit) * 100));
-    const cls = pct > 90 ? "crit" : pct > 70 ? "warn" : "";
     return (
       <div className="vmp-quota-item">
         <div className="vmp-quota-label">{label}</div>
@@ -912,9 +908,6 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
     const flavors = resources?.flavors || [];
     const networks = resources?.networks || [];
     const sgs = resources?.security_groups || [];
-    const selImg = imgs.find((i) => i.id === row.selectedImageId);
-    const selFl  = flavors.find((f) => f.id === row.selectedFlavorId);
-    const selNet = networks.find((n) => n.id === row.selectedNetworkId);
     const previewName = row.vmNameSuffix
       ? vmNovaName(domain, row.vmNameSuffix, row.count > 1 ? 1 : undefined, row.count)
       : `${tenantSlug(domain)}_vm_…`;
@@ -1269,7 +1262,7 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
             <th>Name Pattern</th><th>Count</th><th>Image</th><th>Flavor</th><th>Vol GB</th><th>Network</th>
           </tr></thead>
           <tbody>
-            {vmRows.map((row, i) => {
+            {vmRows.map((row) => {
               const img = resources?.images.find((x) => x.id === row.selectedImageId);
               const fl  = resources?.flavors.find((x) => x.id === row.selectedFlavorId);
               const net = resources?.networks.find((x) => x.id === row.selectedNetworkId);

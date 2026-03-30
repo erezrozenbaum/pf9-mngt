@@ -37,6 +37,8 @@ interface Execution {
   result: Record<string, any>;
   triggered_by: string;
   triggered_at: string;
+  completed_at?: string | null;
+  error_message?: string | null;
   items_found: number;
   items_actioned: number;
 }
