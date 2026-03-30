@@ -3270,17 +3270,15 @@ async def get_system_config(
         logger.warning("system-config: pf9_regions query failed: %s", _re)
 
     # ── SMTP (host/port/flags only — password is never returned) ─────────
-    from smtp_helper import (  # noqa: PLC0415
-        SMTP_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS,
-        SMTP_FROM_ADDRESS, SMTP_USERNAME,
-    )
+    from smtp_helper import get_smtp_config  # noqa: PLC0415
+    _smtp_cfg = get_smtp_config()
     _smtp_section = {
-        "enabled": SMTP_ENABLED,
-        "host": SMTP_HOST,
-        "port": SMTP_PORT,
-        "use_tls": SMTP_USE_TLS,
-        "from_address": SMTP_FROM_ADDRESS,
-        "username_configured": bool(SMTP_USERNAME),
+        "enabled": _smtp_cfg["enabled"],
+        "host": _smtp_cfg["host"],
+        "port": _smtp_cfg["port"],
+        "use_tls": _smtp_cfg["use_tls"],
+        "from_address": _smtp_cfg["from_address"],
+        "username_configured": bool(_smtp_cfg["username"]),
     }
 
     # ── Inventory: last 3 runs + live table row counts ────────────────────

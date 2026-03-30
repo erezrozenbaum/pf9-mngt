@@ -706,10 +706,15 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                                    "volume_creating",
                                    f"{instance_name}: creating {effective_size_gb}GB boot volume from image {image_id}",
                                    batch.get("created_by", "system"))
-                    vol = project_client.create_boot_volume(
+                    # Use admin_client (not project_client) so Cinder's internal
+                    # Glance lookup uses the admin token — which can see all images
+                    # regardless of their project scope.  project_id overrides the
+                    # Cinder URL so the volume is still created in the tenant project.
+                    vol = admin_client.create_boot_volume(
                         name=f"{instance_name}-vol",
                         image_id=image_id,
                         size_gb=effective_size_gb,
+                        project_id=project_id,
                     )
                     volume_id = vol["id"]
                 except Exception as e:

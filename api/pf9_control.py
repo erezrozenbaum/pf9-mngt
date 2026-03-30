@@ -1545,17 +1545,31 @@ class Pf9Client:
         image_id: str,
         size_gb: int,
         volume_type: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a Cinder boot volume from a Glance image.
 
-        This must be called on a project-scoped client (i.e. one returned by
-        scoped_for_project).  The token's project scope determines where the
-        volume is created — no cross-project body injection needed.
+        When *project_id* is provided (admin calling on behalf of a tenant),
+        the Cinder URL is rewritten to target that project's API path so the
+        volume is created in the correct tenant project.  The caller's auth
+        token is kept as-is — an admin token can access all Glance images,
+        avoiding the 400 "Invalid image identifier" that occurs when a
+        project-scoped provisionsrv token is used and the image lives in the
+        admin/service project.
+
+        When *project_id* is omitted the existing behaviour is preserved:
+        the volume is created in the project the token is scoped to.
         """
         self.authenticate()
         if not self.cinder_endpoint:
             raise RuntimeError("Cinder endpoint not available")
-        url = f"{self.cinder_endpoint}/volumes"
+        if project_id:
+            # Cinder v3 URL: .../cinder/v3/{project_id}/volumes
+            # Strip existing project-id segment and replace with tenant's.
+            cinder_base = self.cinder_endpoint.rsplit("/", 1)[0]
+            url = f"{cinder_base}/{project_id}/volumes"
+        else:
+            url = f"{self.cinder_endpoint}/volumes"
         body: Dict[str, Any] = {
             "volume": {
                 "name": name,

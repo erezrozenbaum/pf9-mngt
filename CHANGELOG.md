@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.83.6] - 2026-03-30
+## [1.83.7] - 2026-03-30
+
+### Fixed
+- **Customer Provisioning — 403 on Neutron subnet/security-group creation**: Platform9 Neutron enforces `network_owner` policy: the admin client's token is scoped to the `service` project, so passing `tenant_id` in the request body is insufficient — authorization fails 403 when the token scope doesn't match the target project. After creating the new project, `_run_provisioning` now calls `ensure_provisioner_in_project` then `scoped_for_project` to obtain a `provisionsrv` client scoped to the new tenant project. Subnet creation, security-group creation, and security-group rule creation all use this project-scoped `neutron_client`; provider-network creation and all Keystone/quota operations continue to use the admin `client`.
+- **VM Provisioning — 400 "Invalid image identifier" on boot volume create**: `project_client.create_boot_volume()` used the provisionsrv token scoped to the tenant project. When Cinder internally called Glance to resolve the `imageRef`, the image was in the admin/service project and not visible to the tenant scope → `400 Bad Request`. Fixed by adding an optional `project_id` parameter to `create_boot_volume`: when supplied, the Cinder URL is rewritten to target the tenant project's API path while retaining the caller's (admin) auth token, which can access all Glance images. `_execute_batch_thread` now calls `admin_client.create_boot_volume(project_id=project_id)` instead of `project_client.create_boot_volume()`.
+
+- **Notification Settings — "Send Test Email" falsely reports SMTP disabled**: `send_test_email` endpoint checked the module-level `SMTP_ENABLED` constant (frozen at container start from the `SMTP_ENABLED` env var). On Kubernetes the env var is unset/false, but SMTP was configured at runtime via the Settings UI (stored in `system_settings` DB). Changed the guard to call `get_smtp_config()` — the same DB-first helper already used by `send_email()` and `get_smtp_settings()` — so the check reflects the live configuration.
+- **Admin Tools → System Config — SMTP card shows Disabled when configured at runtime**: `GET /admin/system-config` built the SMTP section from the same frozen env-var constants. Changed to `get_smtp_config()` so the card reflects DB-stored settings configured via the Notification Settings UI, matching the Notification Settings page.
+
 
 ### Fixed
 - **VM Provisioning — 500 on batch create**: `vm_provisioning_batches` table is created lazily on first API call by `_ensure_tables()`, which lacked the `region_id` column added in v1.83.3's multi-cluster migration. Added `ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id TEXT` to `_ensure_tables()` so the column is applied idempotently on every pod restart.

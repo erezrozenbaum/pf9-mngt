@@ -24,7 +24,7 @@ import os
 from smtp_helper import (
     SMTP_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS,
     SMTP_FROM_ADDRESS, SMTP_FROM_NAME, SMTP_USERNAME,
-    send_email as smtp_send_email,
+    send_email as smtp_send_email, get_smtp_config,
 )
 from webhook_helper import (
     SLACK_ENABLED, TEAMS_ENABLED,
@@ -361,8 +361,9 @@ async def get_notification_stats():
 @router.post("/test-email", dependencies=[Depends(require_permission("notifications", "write"))])
 async def send_test_email(body: TestEmailRequest, current_user=Depends(get_current_user)):
     """Send a test email to verify SMTP configuration."""
-    if not SMTP_ENABLED:
-        raise HTTPException(status_code=400, detail="SMTP is not enabled. Set SMTP_ENABLED=true in environment.")
+    cfg = get_smtp_config()
+    if not cfg["enabled"] or not cfg["host"]:
+        raise HTTPException(status_code=400, detail="SMTP is not enabled. Configure SMTP via the Settings tab or set SMTP_ENABLED=true in environment.")
 
     html = """
         <html><body style="font-family: sans-serif; padding: 20px;">
@@ -385,7 +386,7 @@ async def send_test_email(body: TestEmailRequest, current_user=Depends(get_curre
     except smtplib.SMTPAuthenticationError:
         raise HTTPException(status_code=400, detail="SMTP authentication failed. Check SMTP_USERNAME and SMTP_PASSWORD.")
     except smtplib.SMTPConnectError:
-        raise HTTPException(status_code=400, detail=f"Could not connect to SMTP server {SMTP_HOST}:{SMTP_PORT}")
+        raise HTTPException(status_code=400, detail=f"Could not connect to SMTP server {cfg['host']}:{cfg['port']}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send test email: {str(e)}")
 

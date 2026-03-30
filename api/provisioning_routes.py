@@ -601,6 +601,18 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
         project_id = project["id"]
         results["project_id"] = project_id
 
+        # Set up a project-scoped Neutron client for subnet and security-group
+        # creation.  Platform9 Neutron enforces network_owner policy: the admin
+        # token is scoped to the service project, so passing tenant_id in the
+        # body is not enough — authorization fails with 403.  Using provisionsrv
+        # scoped to the new project satisfies the policy.
+        from vm_provisioning_service_user import ensure_provisioner_in_project
+        ensure_provisioner_in_project(client, project_id)
+        neutron_client = client.scoped_for_project(
+            project_name=req.project_name,
+            domain_name=req.domain_name,
+        )
+
         # ── Step 3: Create User ────────────────────────────
         user = run_step(
             "create_user",
@@ -752,7 +764,7 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                 created_sub = run_step(
                     f"create_subnet{_step_sfx}",
                     f"Create subnet {nc.subnet_cidr} on {_net_name}",
-                    lambda nid=_net_id, _nc=nc, sn=_sub_name, ap=_alloc_pools: client.create_subnet(
+                    lambda nid=_net_id, _nc=nc, sn=_sub_name, ap=_alloc_pools: neutron_client.create_subnet(
                         network_id=nid,
                         cidr=_nc.subnet_cidr,
                         name=sn,
@@ -760,7 +772,7 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                         dns_nameservers=_nc.dns_nameservers,
                         enable_dhcp=_nc.enable_dhcp,
                         allocation_pools=ap,
-                        project_id=project_id,
+                        # project_id omitted — token is already scoped to the new project
                     ),
                 )
                 _sub_id = created_sub.get("id")
@@ -782,10 +794,10 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
             sg = run_step(
                 "create_security_group",
                 f"Create default security group: {req.security_group_name}",
-                lambda: client.create_security_group(
+                lambda: neutron_client.create_security_group(
                     name=req.security_group_name,
                     description=f"Default security group for {req.domain_name}",
-                    project_id=project_id,
+                    # project_id omitted — token is already scoped to the new project
                 ),
             )
             sg_data = sg.get("security_group", sg)
@@ -820,7 +832,7 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                 added = []
                 for rule in all_rules:
                     try:
-                        r = client.create_security_group_rule(
+                        r = neutron_client.create_security_group_rule(
                             security_group_id=sg_id,
                             direction=rule.direction,
                             protocol=rule.protocol,
