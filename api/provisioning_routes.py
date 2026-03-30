@@ -33,6 +33,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, field_validator, model_validator
 
 from pf9_control import get_client
+from cluster_registry import get_region_client
 from auth import require_permission, get_current_user, get_effective_region_filter
 from smtp_helper import send_email as smtp_send_email, SMTP_ENABLED
 
@@ -539,7 +540,7 @@ PF9_ROLE_LABELS = {
 
 def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str):
     """Execute the full provisioning workflow."""
-    client = get_client()
+    client = get_region_client(req.region_id)
     # Force re-auth to ensure fresh token
     client.token = None
     client.authenticate()

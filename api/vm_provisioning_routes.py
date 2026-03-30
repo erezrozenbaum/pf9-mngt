@@ -121,6 +121,11 @@ def _ensure_tables():
                     """ALTER TABLE vm_provisioning_vms
                        ADD COLUMN IF NOT EXISTS delete_on_termination BOOLEAN NOT NULL DEFAULT TRUE"""
                 )
+                # Migration: add region_id for multi-cluster support
+                cur.execute(
+                    """ALTER TABLE vm_provisioning_batches
+                       ADD COLUMN IF NOT EXISTS region_id TEXT"""
+                )
         _tables_initialized = True
     except Exception as e:
         logger.error(f"vm_provisioning _ensure_tables failed: {e}")

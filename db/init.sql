@@ -3558,8 +3558,16 @@ ALTER TABLE snapshot_assignments ADD COLUMN IF NOT EXISTS region_id TEXT REFEREN
 ALTER TABLE snapshot_records     ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 ALTER TABLE deletions_history    ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
 
--- vm_provisioning_batches is created dynamically by vm_provisioning_routes.py
-ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+-- vm_provisioning_batches is created dynamically by vm_provisioning_routes.py on first API call.
+-- Guard: skip if the table doesn't exist yet — _ensure_tables() in the API adds the column on creation.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_name = 'vm_provisioning_batches' AND table_schema = 'public'
+  ) THEN
+    ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id TEXT REFERENCES pf9_regions(id);
+  END IF;
+END $$;
 
 -- Per-cluster RBAC scoping (NULL = global; enforcement deferred to Phase 5)
 ALTER TABLE user_roles ADD COLUMN IF NOT EXISTS region_id        TEXT REFERENCES pf9_regions(id);

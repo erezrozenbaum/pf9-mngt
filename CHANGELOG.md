@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.6] - 2026-03-30
+
+### Fixed
+- **VM Provisioning — 500 on batch create**: `vm_provisioning_batches` table is created lazily on first API call by `_ensure_tables()`, which lacked the `region_id` column added in v1.83.3's multi-cluster migration. Added `ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id TEXT` to `_ensure_tables()` so the column is applied idempotently on every pod restart.
+- **VM Provisioning — DB schema for existing deployments**: `db/migrate_multicluster.sql`'s DO-block guard skipped the `region_id` ALTER on environments where the table was created *after* that migration ran. Created `db/migrate_v1_83_6.sql` so `run_migration.py` (Docker and Kubernetes) applies the column to those environments on next deploy.
+- **DB init.sql — unguarded ALTER**: `init.sql` contained a bare `ALTER TABLE vm_provisioning_batches ADD COLUMN IF NOT EXISTS region_id` without an existence check. On a fresh Docker install the table doesn't exist yet (created lazily), causing the PostgreSQL init script to fail. Wrapped in a `DO $$ IF EXISTS ... END $$` guard matching the pattern used in `migrate_multicluster.sql`.
+- **Customer Provisioning — 403 on subnet creation**: `_run_provisioning` called `get_client()` which always returns the default-region client. When `req.region_id` targets a non-default PF9 region, the default-region service token was used against that region's Neutron endpoint, causing `403 Forbidden`. Changed to `get_region_client(req.region_id)` which selects the correctly-scoped client for the target region (falls back to default when `region_id` is `None`).
+
 ## [1.83.5] - 2026-03-30
 
 ### Fixed
