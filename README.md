@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.7-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.8-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,6 +534,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.8](CHANGELOG.md)** — Fix VM provisioning 400 "Malformed request url" on boot volume create in Kubernetes; Cinder URL construction now handles catalog endpoints with or without project_id suffix.
 **[v1.83.7](CHANGELOG.md)** — Fix VM provisioning 400 (admin token for Cinder/Glance) and customer provisioning 403 (provisionsrv scoped client for Neutron subnet/SG creation).
 **[v1.83.6](CHANGELOG.md)** — Fix VM provisioning batch 500 (`region_id` column missing) and customer provisioning 403 (wrong region client for non-default regions).
 **[v1.83.5](CHANGELOG.md)** — 14 production bug fixes: metering compliant=0, snapshot monitor 0% bar, provisioning 500 on submit, dark mode nav, missing View Dependencies buttons, role assignment UI, SMTP runtime config, drift deletion detection, and more.
@@ -634,4 +635,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.7 | **Last Updated**: March 2026
+**Project Status**: Production Ready | **Version**: 1.83.8 | **Last Updated**: March 2026

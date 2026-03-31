@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -201,6 +202,30 @@ class Pf9Client:
             "X-Auth-Token": self.token or "",
             "Content-Type": "application/json",
         }
+
+    def _cinder_base(self) -> str:
+        """Return the Cinder v3 base URL without a trailing project_id segment.
+
+        Keystone catalog endpoints may or may not include the caller's
+        project_id as the final path segment:
+          - with suffix:    .../cinder/v3/{project_id}  (common in Docker / Platform9)
+          - without suffix: .../cinder/v3               (common in Kubernetes deployments)
+
+        Blindly using rsplit("/", 1)[0] strips "v3" when the suffix is absent,
+        producing a malformed URL such as .../cinder/{project_id}/volumes that
+        Cinder rejects with 400 Malformed request url.  This helper detects and
+        strips the UUID suffix only when it is present.
+        """
+        endpoint = self.cinder_endpoint or ""
+        # Strip a trailing UUID segment — Platform9 uses 32 hex chars (no dashes)
+        # standard OpenStack uses the dashed 36-char form; handle both.
+        base = re.sub(
+            r"/(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+            "",
+            endpoint,
+            flags=re.IGNORECASE,
+        )
+        return base or endpoint
 
     # ---------------------------
     # Flavors (Nova)
@@ -919,7 +944,7 @@ class Pf9Client:
         # ── 2. Volumes (Cinder) ────────────────────────────────────────────
         if self.cinder_endpoint:
             try:
-                cinder_base = self.cinder_endpoint.rsplit("/", 1)[0]
+                cinder_base = self._cinder_base()
                 vol_url = f"{cinder_base}/{project_id}/volumes/detail"
                 resp = self.session.get(vol_url, headers=h)
                 if resp.ok:
@@ -1154,10 +1179,12 @@ class Pf9Client:
                 pass
 
         # Build a properly project-scoped Cinder URL.
-        # cinder_endpoint = ".../cinder/v3/{service_project_id}"
-        # If the volume lives in a different project, strip and replace the project_id.
+        # cinder_endpoint may be ".../cinder/v3/{service_project_id}" (with suffix)
+        # or ".../cinder/v3" (without suffix, e.g. Kubernetes catalog).
+        # _cinder_base() strips the UUID suffix only when present so the URL is
+        # always correctly formed as .../cinder/v3/{target_project_id}/...
         if project_id:
-            cinder_base = self.cinder_endpoint.rsplit("/", 1)[0]
+            cinder_base = self._cinder_base()
             priv_token = self.get_privileged_token(project_id)
             h = {"X-Auth-Token": priv_token, "Content-Type": "application/json"} if priv_token else self._headers()
             if force:
@@ -1565,8 +1592,10 @@ class Pf9Client:
             raise RuntimeError("Cinder endpoint not available")
         if project_id:
             # Cinder v3 URL: .../cinder/v3/{project_id}/volumes
-            # Strip existing project-id segment and replace with tenant's.
-            cinder_base = self.cinder_endpoint.rsplit("/", 1)[0]
+            # _cinder_base() strips the existing project_id suffix only when present
+            # (catalog endpoints may or may not include it) so the URL is always
+            # correctly formed as .../cinder/v3/{project_id}/volumes.
+            cinder_base = self._cinder_base()
             url = f"{cinder_base}/{project_id}/volumes"
         else:
             url = f"{self.cinder_endpoint}/volumes"

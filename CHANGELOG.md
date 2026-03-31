@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.8] - 2026-03-31
+
+### Fixed
+- **VM Provisioning — 400 "Malformed request url" on boot volume create (Kubernetes)**: `create_boot_volume`, `delete_volume`, and `cleanup_project_resources` all used `self.cinder_endpoint.rsplit("/", 1)[0]` to obtain the Cinder v3 base URL, assuming the catalog endpoint always ends with `/{project_id}`. In Docker/Platform9 DU environments the catalog includes the project_id suffix so the strip is correct. In Kubernetes deployments the Cinder catalog endpoint is `…/cinder/v3` (no suffix), so `rsplit` stripped `v3` instead — producing a malformed URL (`…/cinder/{project_id}/volumes`) that Cinder rejected with `400 Bad Request — Malformed request url`. Added `_cinder_base()` helper to `Pf9Client` that uses a regex to strip a trailing UUID segment only when present, leaving the URL unchanged when no project_id suffix exists. All three call-sites updated to use `_cinder_base()`.
+
 ## [1.83.7] - 2026-03-30
 
 ### Fixed
