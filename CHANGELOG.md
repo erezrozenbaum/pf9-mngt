@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.10] - 2026-04-01
+
+### Fixed
+- **VM Provisioning — Linux console password not applied**: cloud-init's `users[].passwd` field only sets the password when creating a new user. For cloud images that already include a default user (e.g. `ubuntu` on Ubuntu images), the user already exists so the password was silently ignored — leaving the account with no usable console password. Fixed `_build_cloudinit_linux` to also include a `chpasswd.list` block with the hashed password; the `chpasswd` module runs unconditionally in cloud-init and resets the password for both new and existing users.
+- **VM Provisioning — Batches without approval requirement stuck as "pending_approval"**: When creating a batch with `require_approval: false`, the DB `INSERT` always set `approval_status = 'pending_approval'`, so the Execute button never appeared and the batch could not be run. Fixed to set `approval_status = 'approved'` immediately when `require_approval` is `False`.
+- **VM Provisioning — Windows VM gets APIPA address instead of provisioned fixed IP**: When a `fixed_ip` was specified, Neutron reserved the port but Windows still relied on DHCP to learn its address — falling back to APIPA (169.254.x.x) if the Neutron DHCP agent was unreachable. `_build_cloudinit_windows` now accepts an optional `static_ip_config` dict (computed by querying the Neutron subnet when `fixed_ip` is set) and injects a PowerShell block into the cloudbase-init userdata that waits for the vNIC to come up and then applies the static IP/prefix/gateway/DNS via `New-NetIPAddress`, bypassing DHCP entirely.
+- **VM Provisioning — Missing tooltips on batch action buttons**: Dry-run, Execute, Approve, Reject buttons in the batch actions bar lacked `title` attributes, so hovering showed nothing. Tooltips added to all action buttons (Dry-run, Execute, Approve, Reject, Re-run, Refresh, Delete, Expand/Collapse, Reset).
+
 ## [1.83.9] - 2026-03-31
 
 ### Fixed

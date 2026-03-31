@@ -11,6 +11,7 @@ cloud-init / cloudbase-init payload is auto-generated from OS username + passwor
 import base64
 import hashlib
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -172,6 +173,8 @@ users:
 ssh_pwauth: true
 chpasswd:
   expire: false
+  list: |
+    {os_username}:{salted}
 """
     if extra and extra.strip():
         yaml += f"\n# --- extra ---\n{extra.strip()}\n"
@@ -179,7 +182,8 @@ chpasswd:
 
 
 def _build_cloudinit_windows(os_username: str, os_password: str,
-                               extra: Optional[str] = None) -> str:
+                               extra: Optional[str] = None,
+                               static_ip_config: Optional[Dict[str, Any]] = None) -> str:
     """Build a cloudbase-init compatible #ps1_sysnative script.
 
     Requires cloudbase-init to be installed in the Windows image.
@@ -240,6 +244,34 @@ net user "{os_username}" "{os_password}" /add /y
 net localgroup Administrators "{os_username}" /add
 wmic useraccount where \"name='{os_username}'\" set PasswordExpires=False
 {oobe_suppression}"""
+    if static_ip_config and static_ip_config.get("fixed_ip") and static_ip_config.get("gateway_ip"):
+        fixed_ip = static_ip_config["fixed_ip"]
+        prefix   = int(static_ip_config.get("prefix_length", 24))
+        gateway  = static_ip_config["gateway_ip"]
+        dns_list = static_ip_config.get("dns_servers") or ["8.8.8.8", "8.8.4.4"]
+        dns_ps   = ", ".join(f'"{d}"' for d in dns_list[:4])
+        script += f"""
+# Configure static IP assigned at provision time
+$_retries = 0
+$_adapter = $null
+while (-not $_adapter -and $_retries -lt 20) {{
+    $_adapter = Get-NetAdapter | Where-Object {{ $_.HardwareInterface -eq $true -and $_.Status -ne 'NotPresent' }} | Select-Object -First 1
+    if (-not $_adapter) {{ Start-Sleep -Seconds 3; $_retries++ }}
+}}
+if ($_adapter) {{
+    try {{
+        Get-NetIPAddress  -InterfaceIndex $_adapter.InterfaceIndex -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+        Get-NetRoute      -InterfaceIndex $_adapter.InterfaceIndex -ErrorAction SilentlyContinue | Remove-NetRoute     -Confirm:$false -ErrorAction SilentlyContinue
+        New-NetIPAddress  -InterfaceIndex $_adapter.InterfaceIndex -IPAddress '{fixed_ip}' -PrefixLength {prefix} -DefaultGateway '{gateway}'
+        Set-DnsClientServerAddress -InterfaceIndex $_adapter.InterfaceIndex -ServerAddresses @({dns_ps})
+        Write-Host 'Static IP configured: {fixed_ip}/{prefix} via {gateway}'
+    }} catch {{
+        Write-Host "Warning: static IP config failed — $_"
+    }}
+}} else {{
+    Write-Host 'Warning: no network adapter found for static IP configuration'
+}}
+"""
     if extra and extra.strip():
         script += f"\n{extra.strip()}\n"
     return script
@@ -597,6 +629,9 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
         except Exception:
             pass  # if Neutron call fails, fall back to names
 
+        # Cache subnets per network_id for Windows static IP lookup
+        subnet_cache: Dict[str, List[Dict[str, Any]]] = {}
+
         all_failed = False
 
         for vm in vm_rows:
@@ -669,6 +704,29 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                 continue
             network_id = net_obj["id"]
 
+            # Resolve static IP config for Windows VMs with a fixed_ip (count==1 only)
+            static_ip_cfg: Optional[Dict[str, Any]] = None
+            if os_type == "windows" and vm.get("fixed_ip") and count == 1:
+                try:
+                    if network_id not in subnet_cache:
+                        subnet_cache[network_id] = admin_client.list_subnets(network_id=network_id)
+                    for sn in subnet_cache[network_id]:
+                        try:
+                            net_cidr = ipaddress.ip_network(sn.get("cidr", ""), strict=False)
+                            if ipaddress.ip_address(vm["fixed_ip"]) in net_cidr:
+                                dns = sn.get("dns_nameservers") or ["8.8.8.8", "8.8.4.4"]
+                                static_ip_cfg = {
+                                    "fixed_ip":      vm["fixed_ip"],
+                                    "prefix_length": net_cidr.prefixlen,
+                                    "gateway_ip":    sn.get("gateway_ip") or "",
+                                    "dns_servers":   dns,
+                                }
+                                break
+                        except Exception:
+                            pass
+                except Exception:
+                    pass  # subnet lookup failure is non-fatal; Windows will attempt DHCP
+
             server_ids: List[str] = []
             assigned_ips: List[str] = []
             vm_failed = False
@@ -683,7 +741,8 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                 try:
                     if os_type == "windows":
                         payload = _build_cloudinit_windows(
-                            vm["os_username"], vm["os_password"], vm.get("extra_cloudinit"))
+                            vm["os_username"], vm["os_password"], vm.get("extra_cloudinit"),
+                            static_ip_config=static_ip_cfg if count == 1 else None)
                     else:
                         payload = _build_cloudinit_linux(
                             vm["os_username"], vm["os_password"],
@@ -1187,14 +1246,17 @@ async def create_batch(
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # When approval is not required, mark the batch as already approved
+                # so the Execute button is immediately available after dry-run.
+                initial_approval = "approved" if not body.require_approval else "pending_approval"
                 cur.execute(
                     """INSERT INTO vm_provisioning_batches
                        (name, domain_name, project_name, require_approval, created_by,
                         status, approval_status, region_id)
-                       VALUES (%s,%s,%s,%s,%s,'validated','pending_approval',%s)
+                       VALUES (%s,%s,%s,%s,%s,'validated',%s,%s)
                        RETURNING id""",
                     (body.name, body.domain_name, body.project_name,
-                     body.require_approval, user.username, body.region_id),
+                     body.require_approval, user.username, initial_approval, body.region_id),
                 )
                 batch_id = cur.fetchone()["id"]
 

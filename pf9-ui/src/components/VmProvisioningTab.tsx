@@ -1408,6 +1408,7 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
           )}
           {canDryRun && (
             <button className="vmp-btn primary sm" disabled={!!busy}
+              title="Dry-run: validate quota headroom and resolve image/flavor/network names without creating any resources"
               onClick={() => dryRun(b.id)}>
               {busy === "dryrun" ? <><span className="vmp-spinner" /> …</> : "🧪 Dry-run"}
             </button>
@@ -1421,10 +1422,12 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
           {needsApproval && (
             <>
               <button className="vmp-btn success sm" disabled={!!busy}
+                title="Approve this batch so it can be executed"
                 onClick={() => decideBatch(b.id, "approve")}>
                 {busy === "approve" ? <><span className="vmp-spinner" /> …</> : "✅ Approve"}
               </button>
               <button className="vmp-btn danger sm" disabled={!!busy}
+                title="Reject this batch — it will not be executed"
                 onClick={() => decideBatch(b.id, "reject")}>
                 ❌ Reject
               </button>
@@ -1432,21 +1435,24 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
           )}
           {canExecute && (
             <button className="vmp-btn success sm" disabled={!!busy}
+              title="Execute: create boot volumes and provision all VMs in this batch"
               onClick={() => executeBatch(b.id)}>
               {busy === "execute" ? <><span className="vmp-spinner" /> …</> : "▶ Execute"}
             </button>
           )}
           {canReExecute && (
             <button className="vmp-btn warn sm" disabled={!!busy}
+              title="Re-run: retry failed VMs only — already-completed VMs are skipped"
               onClick={() => reExecuteBatch(b.id)}>
               {busy === "reexec" ? <><span className="vmp-spinner" /> …</> : "🔁 Re-run"}
             </button>
           )}
-          <button className="vmp-btn ghost sm" onClick={() => refreshBatch(b.id)}>🔄</button>
+          <button className="vmp-btn ghost sm" title="Refresh status" onClick={() => refreshBatch(b.id)}>🔄</button>
           {b.status !== "executing" && (
-            <button className="vmp-btn danger sm" onClick={() => deleteBatch(b.id)}>🗑</button>
+            <button className="vmp-btn danger sm" title="Delete this batch" onClick={() => deleteBatch(b.id)}>🗑</button>
           )}
           <button className="vmp-btn ghost sm"
+            title={expandedIds.has(b.id) ? "Collapse details" : "Expand details — view VM status, dry-run results, and execution logs"}
             onClick={() => toggleExpand(b.id)}
             style={{ minWidth: 32, fontWeight: 700 }}>
             {expandedIds.has(b.id) ? "▲" : "▼"}
