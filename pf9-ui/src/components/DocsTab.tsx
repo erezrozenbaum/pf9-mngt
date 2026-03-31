@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { marked } from "marked";
 import { API_BASE } from "../config";
 import "../styles/DocsTab.css";
@@ -149,7 +149,7 @@ function VisibilityEditModal({ item, departments, onSave, onClose }: VisibilityE
 // Main component
 // ---------------------------------------------------------------------------
 
-export default function DocsTab({ userRole, isAdmin }: DocsTabProps) {
+export default function DocsTab({ isAdmin }: DocsTabProps) {
   const [subTab, setSubTab] = useState<"browse" | "visibility">("browse");
 
   // ── Browse state ────────────────────────────────────────────────────────
