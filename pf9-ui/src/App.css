@@ -23,7 +23,6 @@
   flex-direction: column;
   position: sticky;
   top: 0;
-  box-shadow: 2px 0 8px rgba(0,0,0,0.06);
   scrollbar-width: thin;
 }
 

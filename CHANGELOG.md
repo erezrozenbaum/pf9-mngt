@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.16] - 2026-03-31
+
+### Fixed
+- **UI Layout**: Fixed sidebar alignment issue - removed problematic `box-shadow: 2px 0 8px rgba(0,0,0,0.06)` from `.pf9-sidebar` that was causing visual misalignment between sidebar border and main header content. Header and content now align perfectly with clean border edge.
+
 ## [1.83.15] - 2026-03-31
 
 ### Fixed
