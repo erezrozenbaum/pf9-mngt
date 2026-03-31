@@ -16,11 +16,12 @@ RUN apt-get update && apt-get install -y \
 COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy API sources, shared module, and DB migration scripts into the image
+# Copy API sources, shared module, DB migration scripts, and docs into the image
 COPY api/ ./
 COPY p9_common.py ./
 COPY run_migration.py ./
 COPY db/ ./db/
+COPY docs/ ./docs/
 
 # Ensure runtime-writable directories exist before ownership transfer.
 # Named volumes (app_logs → /app/logs) are initialised from the image layer;

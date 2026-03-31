@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.13-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.14-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,6 +534,8 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.14](CHANGELOG.md)** — Fix Docs Viewer showing no documents: bake `docs/*.md` into the API image via Dockerfile `COPY`, add `docs/` volume mount to docker-compose for live dev, and add `.dockerignore` to exclude `docs/images/` and other non-API assets from the build context.
+
 **[v1.83.13](CHANGELOG.md)** — Hotfix: remove unused `React` import and `userRole` destructuring in `DocsTab.tsx` to fix TS6133 TypeScript build errors caught by CI.
 
 **[v1.83.12](CHANGELOG.md)** — Config drive fix: Nova server create was missing `config_drive: true`; cloud-init never ran in K8s (metadata service unreachable). Adds **Reset VM Password** runbook (pick VM from live dropdown, reset via Nova changePassword, optional console URL). Adds **📚 Docs Viewer** tab: browse all `/docs/*.md` in-app with markdown rendering, category sidebar, search, and admin per-file dept visibility control.
@@ -641,4 +643,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.13 | **Last Updated**: March 2026
+**Project Status**: Production Ready | **Version**: 1.83.14 | **Last Updated**: March 2026

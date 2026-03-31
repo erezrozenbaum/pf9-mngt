@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.14] - 2026-03-31
+
+### Fixed
+- **Docs Viewer — docs not visible in container (missing `/app/docs`)**: The `docs/` directory was never present inside the API container. Fixed by:
+  1. Adding `COPY docs/ ./docs/` to `api/Dockerfile` so all `.md` files are baked into the image at build time (no NFS, no PVC, no ConfigMap required).
+  2. Adding `./docs:/app/docs:ro` volume mount in `docker-compose.yml` so local dev reflects file changes without a rebuild.
+  3. Creating `.dockerignore` to exclude `docs/images/` (PNG assets) and other non-API files from the build context, keeping the image lean.
+
 ## [1.83.13] - 2026-03-31
 
 ### Fixed

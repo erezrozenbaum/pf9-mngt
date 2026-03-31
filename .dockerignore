@@ -1,0 +1,52 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+pf9-ui/node_modules/
+pf9-ui/dist/
+pf9-ui/.vite/
+
+# ── Docs — exclude image assets (API only needs .md files) ───────────────────
+docs/images/
+
+# ── Git / IDE ─────────────────────────────────────────────────────────────────
+.git/
+.github/
+.gitignore
+.vscode/
+.idea/
+
+# ── Secrets / local env ───────────────────────────────────────────────────────
+.env
+secrets/
+
+# ── Logs / runtime state ─────────────────────────────────────────────────────
+logs/
+*.log
+*.log.err
+
+# ── Tests / plans / local tooling ────────────────────────────────────────────
+tests/
+_plans/
+*.ps1
+check_drift.py
+seed_demo_data.py
+
+# ── Kubernetes / Docker Compose (not needed inside API image) ────────────────
+k8s/
+docker-compose*.yml
+nginx/
