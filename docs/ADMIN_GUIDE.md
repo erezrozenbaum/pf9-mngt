@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.11  
+**Version**: 1.83.12  
 **Last Updated**: March 31, 2026  
 **Audience**: System administrators and platform operators
 
@@ -896,20 +896,67 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **Dark Mode**: Full dark theme support for panel, messages, chips, help view, welcome screen, and settings.
 - **DB Migration**: `db/migrate_copilot.sql` (3 tables: `copilot_history`, `copilot_feedback`, `copilot_config`)
 
-### Policy-as-Code Runbooks (v1.21 → v1.25 - NEW ✨)
-- **📋 Runbooks Tab**: Operator-facing catalogue of 14 built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Provisioning Tools nav group — accessible to all roles including tier 1 operators.
-- **14 Built-in Runbooks**:
-  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access
-  - **Security** — Security Group Audit, Security & Compliance Audit
-  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast
-  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning
-- **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout. High-risk runbooks (e.g. `password_reset_console`) default to `single_approval` for operator/admin triggers.
+### Policy-as-Code Runbooks (v1.21 → v1.83.12)
+- **📋 Runbooks Tab**: Operator-facing catalogue of 25+ built-in operational runbooks with schema-driven parameter forms and dry-run support. Located in the Technical Tools nav group — accessible to all roles including tier 1 operators.
+- **Built-in Runbooks**:
+  - **VM** — Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, **Reset VM Password** *(v1.83.12)*, Password Reset + Console Access, VM Rightsizing, DR Drill, Hypervisor Maintenance Evacuate
+  - **Security** — Security Group Audit, Security & Compliance Audit, Security Group Hardening, Network Isolation Audit, Image Lifecycle Audit
+  - **Quota** — Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast, Quota Adjustment
+  - **General** — Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning, Org Usage Report, Capacity Forecast
+  - **Provisioning** — Tenant Offboarding
+- **Flexible Approval Workflows**: Configurable `trigger_role → approver_role` mapping per runbook with three modes: `auto_approve`, `single_approval`, `multi_approval`. Rate-limited with configurable daily max and escalation timeout. High-risk runbooks (e.g. `password_reset_console`) default to `single_approval` for operator triggers; admin auto-approves.
 - **Admin Governance Sub-Tabs**: Three new sub-tabs in Admin → Auth Management: Runbook Executions (filterable history with detail panel), Runbook Approvals (pending queue with approve/reject/cancel), Runbook Policies (per-runbook approval policy editor)
 - **Notification Events**: `runbook_approval_requested`, `runbook_completed`, `runbook_failed`
 - **16 API Endpoints**: `/api/runbooks` (list/get/trigger), `/api/runbooks/executions/*` (history/detail/approve/cancel), `/api/runbooks/approvals/pending`, `/api/runbooks/policies/*` (CRUD), `/api/runbooks/stats/summary`
 - **RBAC**: viewer=`runbooks:read`, operator=`runbooks:read+write`, admin/superadmin=`runbooks:read+write+admin`
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
 - **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`). `db/migrate_new_runbooks.sql` for adding the 7 new runbooks (v1.25+).
+
+### Reset VM Password Runbook (v1.83.12 — NEW ✨)
+
+The `password_reset_console` runbook lets operators reset a Linux or Windows VM password directly from the UI without SSH access.
+
+**How it works:**
+1. Operator picks a VM from the live dropdown (shows `VM name [project] (status)`)
+2. Enters new password (blank = auto-generated 16-char random password)
+3. Submits — triggers Nova `changePassword` API call against the VM
+4. Console URL is returned if **Enable Console** is ticked (noVNC or SPICE link with configurable expiry)
+5. Full entry written to `runbook_executions` audit table
+
+**Why `config_drive` matters (Linux):**
+Without `config_drive: True` in the Nova server create request, cloud-init attempts to fetch user-data from the Nova metadata service (`169.254.169.254`). In Kubernetes deployments where the Neutron DHCP agent is absent or the VM is assigned a static IP, this endpoint may be unreachable at first boot. The result is that cloud-init runs with no user-data — passwords set during provisioning are silently discarded. The v1.83.12 fix ensures `config_drive` is always requested, delivering user-data as a local ISO that cloud-init can read without any network dependency.
+
+**Approval policy:**
+| Trigger role | Approver | Mode |
+|---|---|---|
+| `operator` | `admin` | `single_approval` |
+| `admin` | `admin` | `auto_approve` |
+| `superadmin` | `admin` | `auto_approve` |
+
+**Dept visibility:** Engineering, Tier1, Tier2, Tier3 by default (admin can change in Runbooks → Visibility Admin).
+
+### Docs Viewer Tab (v1.83.12 — NEW ✨)
+
+The **📚 Docs** tab (Technical Tools group) provides direct in-app access to all markdown files in the `/docs` directory.
+
+**Features:**
+- **Browse** — left sidebar shows docs grouped by category (Administration, Deployment, Architecture, etc.) with live search. Click any item to render it in the right panel with full markdown formatting (headings, tables, code blocks, blockquotes).
+- **Download** — save any rendered doc as a `.md` file via the toolbar button.
+- **Visibility Admin** (admin/superadmin only) — sub-tab showing a table of every doc file with current dept restrictions. Click **Edit** to open a modal and toggle which departments can see that file. Leaving all departments unselected makes the file visible to everyone.
+
+**Database table:** `doc_page_visibility(filename, dept_id)` — empty table = all docs globally visible. Admin/superadmin always see all docs regardless.
+
+**API Endpoints:**
+| Endpoint | Method | Auth | Description |
+|---|---|---|---|
+| `/api/docs/` | GET | any authenticated | List accessible doc files |
+| `/api/docs/content/{filename}` | GET | any authenticated | Return markdown content |
+| `/api/docs/admin/visibility` | GET | admin+ | Full visibility matrix |
+| `/api/docs/admin/visibility` | PUT | admin+ | Update dept list for a file |
+
+**Migration:** Run `db/migrate_docs.sql` on existing deployments to create the `doc_page_visibility` table and add the Docs nav item.
+
+
 
 ### Runbook Department Visibility (v1.52.0)
 - **Department-scoped filtering**: Non-admin users receive only the runbooks their department is permitted to see. Admin and superadmin bypass the filter entirely and always see all runbooks.

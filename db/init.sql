@@ -2487,10 +2487,10 @@ INSERT INTO runbooks (name, display_name, description, category, risk_level, sup
 ),
 (
     'password_reset_console',
-    'Password Reset + Console Access',
-    'Reset a VM password via metadata injection and enable temporary console access. Logs full audit trail.',
-    'vm', 'high', true,
-    '{"type":"object","properties":{"server_id":{"type":"string","x-lookup":"vms","description":"Select the VM"},"new_password":{"type":"string","default":"","description":"New password (auto-generated if blank)"},"enable_console":{"type":"boolean","default":true,"description":"Enable VNC/SPICE console"},"console_expiry_minutes":{"type":"integer","default":30,"description":"Console link expiry in minutes"}},"required":["server_id"]}'
+    'Reset VM Password',
+    'Reset a VM password via cloud-init metadata injection and optionally open a temporary console session. Full audit trail recorded.',
+    'vm', 'medium', true,
+    '{"type":"object","properties":{"vm_id":{"type":"string","x-lookup":"vms","description":"Select the VM"},"new_password":{"type":"string","default":"","description":"New password (auto-generated if blank)"},"enable_console":{"type":"boolean","default":true,"description":"Enable VNC/SPICE console"},"console_expiry_minutes":{"type":"integer","default":30,"description":"Console link expiry in minutes"}},"required":["vm_id"]}'
 ),
 (
     'security_compliance_audit',
@@ -2649,7 +2649,7 @@ INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role
     ('cost_leakage_report',         'admin',      'admin',  'auto_approve'),
     ('cost_leakage_report',         'superadmin', 'admin',  'auto_approve'),
     ('password_reset_console',      'operator',   'admin',  'single_approval'),
-    ('password_reset_console',      'admin',      'admin',  'single_approval'),
+    ('password_reset_console',      'admin',      'admin',  'auto_approve'),
     ('password_reset_console',      'superadmin', 'admin',  'auto_approve'),
     ('security_compliance_audit',   'operator',   'admin',  'single_approval'),
     ('security_compliance_audit',   'admin',      'admin',  'single_approval'),
@@ -2811,7 +2811,8 @@ ON CONFLICT (key) DO NOTHING;
 -- Technical Tools group
 INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order) VALUES
     ((SELECT id FROM nav_groups WHERE key='technical_tools'), 'backup',    'Backup',    '💾', '/backup',    'backup',   1),
-    ((SELECT id FROM nav_groups WHERE key='technical_tools'), 'runbooks',  'Runbooks',  '📋', '/runbooks',  'runbooks', 2)
+    ((SELECT id FROM nav_groups WHERE key='technical_tools'), 'runbooks',  'Runbooks',  '📋', '/runbooks',  'runbooks', 2),
+    ((SELECT id FROM nav_groups WHERE key='technical_tools'), 'docs',      'Docs',      '📚', '/docs',      'docs',     3)
 ON CONFLICT (key) DO NOTHING;
 
 -- Mark action/config items (displayed with accent color in nav)
@@ -3429,6 +3430,32 @@ BEGIN
     VALUES (d_mgmt,'change_request','high',    24,72)           ON CONFLICT (to_dept_id, ticket_type, priority) DO NOTHING;
     INSERT INTO ticket_sla_policies (to_dept_id, ticket_type, priority, response_sla_hours, resolution_sla_hours)
     VALUES (d_mgmt,'change_request','normal',  24,72)           ON CONFLICT (to_dept_id, ticket_type, priority) DO NOTHING;
+
+-- =====================================================================
+-- DOCS VIEWER  (v1.83.12)
+-- Controls which markdown files in /docs are visible to each department.
+-- Empty table means all docs are visible to everyone.
+-- admin/superadmin always see all docs.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS doc_page_visibility (
+    id          SERIAL PRIMARY KEY,
+    filename    TEXT NOT NULL,
+    dept_id     INTEGER NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(filename, dept_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dpv_filename ON doc_page_visibility(filename);
+CREATE INDEX IF NOT EXISTS idx_dpv_dept     ON doc_page_visibility(dept_id);
+
+-- Docs nav item under technical_tools group
+INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order)
+SELECT ng.id, 'docs', 'Docs', '📚', '/docs', 'docs', 3
+FROM   nav_groups ng WHERE ng.key = 'technical_tools'
+ON CONFLICT (key) DO NOTHING;
+
+-- Seed dept visibility for all departments (all docs visible by default — no rows needed).
+-- The table starts empty; admin can restrict visibility later through the UI.
     INSERT INTO ticket_sla_policies (to_dept_id, ticket_type, priority, response_sla_hours, resolution_sla_hours)
     VALUES (d_mgmt,'change_request','low',     24,72)           ON CONFLICT (to_dept_id, ticket_type, priority) DO NOTHING;
 END $$;

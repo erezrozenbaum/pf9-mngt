@@ -1,0 +1,434 @@
+/* ================================================================
+   DocsTab — Styles
+   ================================================================ */
+
+/* ─── Layout ─────────────────────────────────────────────────── */
+
+.docs-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.docs-header h2 {
+  margin: 0 0 4px 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.docs-subtitle {
+  color: var(--color-text-secondary, #666);
+  font-size: 14px;
+  margin: 0 0 20px 0;
+}
+
+/* ─── Sub-tab navigation (Viewer / Visibility Admin) ─────────── */
+
+.docs-subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--color-border, #e0e0e0);
+  padding-bottom: 0;
+}
+
+.docs-subtab {
+  padding: 10px 20px;
+  border: none;
+  background: none;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #666);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.2s ease;
+}
+
+.docs-subtab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-hover, rgba(0,0,0,0.03));
+  border-radius: 4px 4px 0 0;
+}
+
+.docs-subtab.active {
+  color: var(--color-primary, #1a73e8);
+  border-bottom-color: var(--color-primary, #1a73e8);
+  font-weight: 600;
+}
+
+/* ─── Two-column viewer layout ────────────────────────────────── */
+
+.docs-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 20px;
+  min-height: 600px;
+}
+
+/* ─── Sidebar ─────────────────────────────────────────────────── */
+
+.docs-sidebar {
+  border-right: 1px solid var(--color-border, #e0e0e0);
+  padding-right: 16px;
+}
+
+.docs-search-wrap {
+  margin-bottom: 12px;
+}
+
+.docs-search {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border, #d0d0d0);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text-primary);
+  box-sizing: border-box;
+}
+
+.docs-search:focus {
+  outline: none;
+  border-color: var(--color-primary, #1a73e8);
+}
+
+.docs-category {
+  margin-bottom: 12px;
+}
+
+.docs-category-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary, #888);
+  padding: 4px 4px 6px 4px;
+  display: block;
+}
+
+.docs-file-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docs-file-btn:hover {
+  background: var(--color-surface-hover, rgba(0,0,0,0.04));
+}
+
+.docs-file-btn.active {
+  background: var(--color-primary-light, rgba(26,115,232,0.1));
+  color: var(--color-primary, #1a73e8);
+  font-weight: 600;
+}
+
+/* ─── Content panel ───────────────────────────────────────────── */
+
+.docs-content-panel {
+  padding-left: 8px;
+  overflow: hidden;
+}
+
+.docs-content-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.docs-content-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  flex: 1;
+}
+
+.docs-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border, #d0d0d0);
+  border-radius: 6px;
+  background: var(--color-surface, #fff);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: background 0.15s;
+}
+
+.docs-btn:hover {
+  background: var(--color-surface-hover, #f5f5f5);
+}
+
+.docs-btn.primary {
+  background: var(--color-primary, #1a73e8);
+  border-color: var(--color-primary, #1a73e8);
+  color: #fff;
+}
+
+.docs-btn.primary:hover {
+  background: var(--color-primary-dark, #1557b0);
+}
+
+.docs-placeholder {
+  text-align: center;
+  color: var(--color-text-secondary, #888);
+  padding: 60px 20px;
+  font-size: 14px;
+}
+
+.docs-placeholder .docs-placeholder-icon {
+  font-size: 48px;
+  display: block;
+  margin-bottom: 12px;
+}
+
+/* ─── Markdown rendered content ───────────────────────────────── */
+
+.docs-markdown {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-text-primary);
+  overflow-wrap: break-word;
+}
+
+.docs-markdown h1,
+.docs-markdown h2,
+.docs-markdown h3,
+.docs-markdown h4 {
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.docs-markdown h1 { font-size: 1.7em; border-bottom: 2px solid var(--color-border, #e0e0e0); padding-bottom: 8px; }
+.docs-markdown h2 { font-size: 1.35em; border-bottom: 1px solid var(--color-border, #e0e0e0); padding-bottom: 6px; }
+.docs-markdown h3 { font-size: 1.15em; }
+
+.docs-markdown p {
+  margin-bottom: 1em;
+}
+
+.docs-markdown ul,
+.docs-markdown ol {
+  margin: 0 0 1em 1.5em;
+  padding: 0;
+}
+
+.docs-markdown li {
+  margin-bottom: 4px;
+}
+
+.docs-markdown code {
+  font-family: "Fira Code", "Courier New", monospace;
+  font-size: 12.5px;
+  background: var(--color-code-bg, rgba(0,0,0,0.05));
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: var(--color-code-text, #d14);
+}
+
+.docs-markdown pre {
+  background: var(--color-code-bg, #f6f8fa);
+  border: 1px solid var(--color-border, #e0e0e0);
+  border-radius: 6px;
+  padding: 16px;
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+
+.docs-markdown pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 13px;
+}
+
+.docs-markdown blockquote {
+  border-left: 4px solid var(--color-primary, #1a73e8);
+  margin: 0 0 1em 0;
+  padding: 8px 16px;
+  background: var(--color-primary-light, rgba(26,115,232,0.05));
+  color: var(--color-text-secondary, #555);
+}
+
+.docs-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1em;
+  font-size: 13px;
+}
+
+.docs-markdown th,
+.docs-markdown td {
+  padding: 8px 12px;
+  border: 1px solid var(--color-border, #e0e0e0);
+  text-align: left;
+}
+
+.docs-markdown th {
+  background: var(--color-surface-alt, #f5f5f5);
+  font-weight: 600;
+}
+
+.docs-markdown tr:nth-child(even) {
+  background: var(--color-surface-alt, #fafafa);
+}
+
+.docs-markdown a {
+  color: var(--color-primary, #1a73e8);
+  text-decoration: none;
+}
+
+.docs-markdown a:hover {
+  text-decoration: underline;
+}
+
+/* ─── Visibility Admin table ─────────────────────────────────── */
+
+.docs-vis-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.docs-vis-table th,
+.docs-vis-table td {
+  padding: 8px 12px;
+  border: 1px solid var(--color-border, #e0e0e0);
+  text-align: left;
+}
+
+.docs-vis-table th {
+  background: var(--color-surface-alt, #f5f5f5);
+  font-weight: 600;
+}
+
+.docs-vis-table tr:nth-child(even) {
+  background: var(--color-surface-alt, #fafafa);
+}
+
+.docs-vis-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--color-primary-light, rgba(26,115,232,0.12));
+  color: var(--color-primary, #1a73e8);
+  margin: 2px 3px 2px 0;
+}
+
+.docs-vis-tag.all {
+  background: rgba(22, 163, 74, 0.12);
+  color: #16a34a;
+}
+
+.docs-vis-edit-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border, #d0d0d0);
+  border-radius: 4px;
+  background: var(--color-surface, #fff);
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: background 0.15s;
+}
+
+.docs-vis-edit-btn:hover {
+  background: var(--color-surface-hover, #f5f5f5);
+}
+
+/* ─── Edit visibility modal ───────────────────────────────────── */
+
+.docs-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.docs-modal {
+  background: var(--color-surface, #fff);
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 480px;
+  width: 100%;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+}
+
+.docs-modal h3 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.docs-modal-help {
+  color: var(--color-text-secondary, #666);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.docs-modal-depts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.docs-modal-dept-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border, #d0d0d0);
+  border-radius: 16px;
+  background: none;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: all 0.15s;
+}
+
+.docs-modal-dept-btn.selected {
+  background: var(--color-primary, #1a73e8);
+  border-color: var(--color-primary, #1a73e8);
+  color: #fff;
+}
+
+.docs-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ─── Loading / error states ──────────────────────────────────── */
+
+.docs-loading {
+  text-align: center;
+  color: var(--color-text-secondary, #666);
+  padding: 40px 20px;
+  font-size: 14px;
+}
+
+.docs-error {
+  color: var(--color-danger, #dc2626);
+  font-size: 13px;
+  padding: 12px;
+  background: rgba(220,38,38,0.05);
+  border: 1px solid rgba(220,38,38,0.2);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}

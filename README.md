@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.11-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.12-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,6 +534,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.12](CHANGELOG.md)** — Config drive fix: Nova server create was missing `config_drive: true`; cloud-init never ran in K8s (metadata service unreachable). Adds **Reset VM Password** runbook (pick VM from live dropdown, reset via Nova changePassword, optional console URL). Adds **📚 Docs Viewer** tab: browse all `/docs/*.md` in-app with markdown rendering, category sidebar, search, and admin per-file dept visibility control.
 **[v1.83.11](CHANGELOG.md)** — Fix Linux password: chpasswd.list used pre-hashed value; reverted to plain-text (correct on all cloud-init versions). Fix Windows static IP: block was gated on gateway_ip being non-null; now fires on any fixed_ip, omitting -DefaultGateway only when absent.
 **[v1.83.10](CHANGELOG.md)** — Linux console password fix (chpasswd.list), no-approval batches auto-approved on create, Windows static IP injection via cloudbase-init PowerShell, button tooltips on all batch action buttons.
 **[v1.83.9](CHANGELOG.md)** — Root-cause fix for VM provisioning 400 on boot volume create: ensure Glance image is community-visible before volume creation, then use provisionsrv project-scoped token (not admin) so Cinder token scope matches URL project_id.
@@ -638,4 +639,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.11 | **Last Updated**: March 2026
+**Project Status**: Production Ready | **Version**: 1.83.12 | **Last Updated**: March 2026

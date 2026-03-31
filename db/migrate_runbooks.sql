@@ -125,6 +125,15 @@ INSERT INTO runbooks (name, display_name, description, category, risk_level, sup
     'low',
     true,
     '{"type":"object","properties":{"include_sections":{"type":"array","items":{"type":"string","enum":["hypervisors","services","agents","errors","resources","quotas"]},"default":["hypervisors","services","resources","quotas"],"description":"Sections to include in the bundle"}}}'
+),
+(
+    'password_reset_console',
+    'Reset VM Password',
+    'Resets the password of a provisioned VM using the Nova changePassword API and optionally retrieves a noVNC/SPICE console URL. Works on Linux VMs with cloud-init and Windows VMs with cloudbase-init.',
+    'vm',
+    'medium',
+    true,
+    '{"type":"object","required":["vm_id","new_password"],"properties":{"vm_id":{"type":"string","x-lookup":"vms","description":"VM to reset the password on"},"new_password":{"type":"string","default":"","description":"New password to set (leave blank to auto-generate a secure random password)"},"enable_console":{"type":"boolean","default":true,"description":"Also obtain a noVNC/SPICE console URL for immediate access"},"console_expiry_minutes":{"type":"integer","default":30,"description":"How long the console URL remains valid (minutes)"}}}'
 )
 ON CONFLICT (name) DO UPDATE SET
     display_name = EXCLUDED.display_name,
@@ -138,22 +147,28 @@ ON CONFLICT (name) DO UPDATE SET
 -- ── Seed default approval policies ──────────────────────────────
 -- Operators can trigger everything; approval varies by risk
 INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode) VALUES
-    ('stuck_vm_remediation',   'operator',   'admin',  'single_approval'),
-    ('stuck_vm_remediation',   'admin',      'admin',  'auto_approve'),
-    ('stuck_vm_remediation',   'superadmin', 'admin',  'auto_approve'),
-    ('orphan_resource_cleanup','operator',   'admin',  'single_approval'),
-    ('orphan_resource_cleanup','admin',      'admin',  'auto_approve'),
-    ('orphan_resource_cleanup','superadmin', 'admin',  'auto_approve'),
-    ('security_group_audit',   'operator',   'admin',  'auto_approve'),
-    ('security_group_audit',   'admin',      'admin',  'auto_approve'),
-    ('security_group_audit',   'superadmin', 'admin',  'auto_approve'),
-    ('quota_threshold_check',  'operator',   'admin',  'auto_approve'),
-    ('quota_threshold_check',  'admin',      'admin',  'auto_approve'),
-    ('quota_threshold_check',  'superadmin', 'admin',  'auto_approve'),
-    ('diagnostics_bundle',     'operator',   'admin',  'auto_approve'),
-    ('diagnostics_bundle',     'admin',      'admin',  'auto_approve'),
-    ('diagnostics_bundle',     'superadmin', 'admin',  'auto_approve')
-ON CONFLICT (runbook_name, trigger_role) DO NOTHING;
+    ('stuck_vm_remediation',    'operator',   'admin',  'single_approval'),
+    ('stuck_vm_remediation',    'admin',      'admin',  'auto_approve'),
+    ('stuck_vm_remediation',    'superadmin', 'admin',  'auto_approve'),
+    ('orphan_resource_cleanup', 'operator',   'admin',  'single_approval'),
+    ('orphan_resource_cleanup', 'admin',      'admin',  'auto_approve'),
+    ('orphan_resource_cleanup', 'superadmin', 'admin',  'auto_approve'),
+    ('security_group_audit',    'operator',   'admin',  'auto_approve'),
+    ('security_group_audit',    'admin',      'admin',  'auto_approve'),
+    ('security_group_audit',    'superadmin', 'admin',  'auto_approve'),
+    ('quota_threshold_check',   'operator',   'admin',  'auto_approve'),
+    ('quota_threshold_check',   'admin',      'admin',  'auto_approve'),
+    ('quota_threshold_check',   'superadmin', 'admin',  'auto_approve'),
+    ('diagnostics_bundle',      'operator',   'admin',  'auto_approve'),
+    ('diagnostics_bundle',      'admin',      'admin',  'auto_approve'),
+    ('diagnostics_bundle',      'superadmin', 'admin',  'auto_approve'),
+    ('password_reset_console',  'operator',   'admin',  'single_approval'),
+    ('password_reset_console',  'admin',      'admin',  'auto_approve'),
+    ('password_reset_console',  'superadmin', 'admin',  'auto_approve')
+ON CONFLICT (runbook_name, trigger_role) DO UPDATE SET
+    approver_role  = EXCLUDED.approver_role,
+    approval_mode  = EXCLUDED.approval_mode,
+    updated_at     = now();
 
 -- ── RBAC permissions ────────────────────────────────────────────
 INSERT INTO role_permissions (role, resource, action) VALUES

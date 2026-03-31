@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.12] - 2026-03-31
+
+### Fixed
+- **VM Provisioning — Linux password not applied in Kubernetes (cloud-init userdata never executed)**: Nova server creates did not include `config_drive: true`. In Kubernetes/Platform9 deployments the Nova metadata service (`169.254.169.254`) is proxied by the Neutron DHCP agent; when that agent is absent or the VM has a static IP and the network is not yet fully initialised, cloud-init times out waiting for the metadata endpoint and runs with **no userdata** — the provisioned password, hostname, and sudo rules are never applied and the VM falls back to the image's default locked account. Fixed by adding `"config_drive": True` to the Nova server create body so cloud-init reads userdata from a local ISO attached at boot, with zero network dependency. This matches the behaviour cloud-init used in the local Docker environment (NoCloud datasource, reads from local disk).
+
+### Added
+- **Runbooks — Reset VM Password**: New built-in runbook `password_reset_console` (category: VM, risk: medium). Lets operators pick a VM from a live dropdown (grouped by project/tenant), enter a new password, and reset it via the Nova `changePassword` API. Optionally retrieves a noVNC/SPICE console URL so the operator can log in immediately. Works on Linux VMs with cloud-init and Windows VMs with cloudbase-init. Operators require admin approval; admins and superadmins execute immediately. The runbook is seeded on container startup and into the SQL migration for fresh deploys.
+- **Docs Viewer tab**: New "📚 Docs" tab under the Technical Tools nav group. Left sidebar lists all `/docs/*.md` files grouped by category (Administration, Deployment, Architecture, etc.) with live search. Right panel renders full markdown (headings, tables, code blocks, blockquotes) and exposes a download button. Admin/superadmin sub-tab provides per-file department visibility control: select which departments can see each file, or leave unrestricted for everyone. Database: `doc_page_visibility(filename, dept_id)` — empty = globally visible. Migration: `db/migrate_docs.sql`. API: `GET /api/docs/`, `GET /api/docs/content/{filename}`, `GET/PUT /api/docs/admin/visibility`.
+
+### Changed
+- **`db/init.sql` — `password_reset_console` schema**: corrected parameter key from `server_id` to `vm_id` (matches `x-lookup` convention used by all VM runbooks); `risk_level` corrected from `high` to `medium`; `display_name` shortened to `Reset VM Password`. Approval policy for `admin` role corrected from `single_approval` to `auto_approve` (consistent with all other admin policies).
+- **`db/init.sql` — nav_items**: Docs nav item (key `docs`, sort_order 3) added to `technical_tools` group alongside Backup and Runbooks.
+
 ## [1.83.11] - 2026-03-31
 
 ### Fixed

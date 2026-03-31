@@ -1751,6 +1751,13 @@ class Pf9Client:
         if availability_zone:
             body["server"]["availability_zone"] = availability_zone
 
+        # Always request a config drive so cloud-init reads userdata from a local ISO
+        # rather than the Nova metadata service (169.254.169.254).  In Kubernetes/Platform9
+        # deployments the Neutron metadata proxy may be unreachable (static-IP networks,
+        # no DHCP agent), causing cloud-init to time out and run with no userdata — the
+        # provisioned password never gets applied.  Config drive bypasses this entirely.
+        body["server"]["config_drive"] = True
+
         # Use X-Project-Id header so admin token creates VM in the target project
         hdrs = {**self._headers(), "X-Project-Id": project_id} if project_id else self._headers()
         r = self.session.post(url, headers=hdrs, json=body)

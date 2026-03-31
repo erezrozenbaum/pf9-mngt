@@ -81,10 +81,10 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - Chargeback export with per-category cost breakdown (compute, storage, snapshot, restore, volume, network, TOTAL)
   - RBAC: `metering:read` (Admin/Superadmin), `metering:write` (Superadmin)
 - **Enhanced Capabilities**: Advanced filtering, sorting, pagination across all tabs with real-time data refresh
-- **Runbooks Tab** (v1.21 → v1.57):
+- **Runbooks Tab** (v1.21 → v1.83.12):
   - "📋 Runbooks" tab with policy-as-code catalogue and one-click execution
-  - 24 built-in engines across 5 categories:
-    - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*, **DR Drill** *(v1.56)*, **Hypervisor Maintenance Evacuate** *(v1.57)*
+  - 25 built-in engines across 5 categories:
+    - **VM**: Stuck VM Remediation, VM Health Quick Fix, Snapshot Before Escalation, **Reset VM Password** *(v1.83.12)*, Password Reset + Console Access, **VM Rightsizing** *(v1.55)*, **DR Drill** *(v1.56)*, **Hypervisor Maintenance Evacuate** *(v1.57)*
     - **Security**: Security Group Audit, Security & Compliance Audit, **Security Group Hardening** *(v1.57)*, **Network Isolation Audit** *(v1.57)*, **Image Lifecycle Audit** *(v1.57)*
     - **Quota**: Quota Threshold Check, Upgrade Opportunity Detector, Snapshot Quota Forecast, **Quota Adjustment** *(v1.53)*
     - **General**: Orphan Resource Cleanup, Diagnostics Bundle, Monthly Executive Snapshot, Cost Leakage Report, VM Provisioning, **Org Usage Report** *(v1.53)*, **Capacity Forecast** *(v1.55)*
@@ -94,6 +94,22 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
   - **Lookup endpoints**: `GET /api/runbooks/lookup/vms`, `/lookup/projects`, `/lookup/hypervisors` *(v1.57)*
+- **Reset VM Password Runbook** (v1.83.12 — NEW ✨):
+  - Engine name: `password_reset_console` · Category: vm · Risk: **medium** · Approval required for operators
+  - Pick a VM from live dropdown (grouped by project/tenant) — uses `x-lookup: "vms"` schema
+  - Enter new password or leave blank for auto-generated secure password
+  - Calls Nova `changePassword` API; on Linux VMs config_drive ensures cloud-init delivers the change reliably
+  - Optional: retrieve noVNC/SPICE console URL for immediate post-reset verification
+  - Full audit trail in `runbook_executions` table
+- **Docs Viewer Tab** (v1.83.12 — NEW ✨):
+  - "📚 Docs" tab under Technical Tools — browse all `/docs/*.md` files directly in the UI
+  - Left sidebar with category grouping and search; right panel renders full markdown with syntax highlighting
+  - Download button — save any doc as `.md` file
+  - **Admin: Visibility control** — restrict individual docs to specific departments; empty restriction = visible to all
+  - `GET /api/docs/` — list accessible docs
+  - `GET /api/docs/content/{filename}` — serve markdown content
+  - `GET /api/docs/admin/visibility` — admin: full visibility matrix
+  - `PUT /api/docs/admin/visibility` — admin: update dept restrictions for a file
 - **Runbook Dept Visibility** (v1.52.0):
   - Admin-only checkbox grid (runbooks × departments); absence of rows = visible to all
   - `GET /api/runbooks/visibility` — full matrix (admin+)

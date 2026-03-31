@@ -66,6 +66,33 @@ def _ensure_tables():
                     '{"type":"object","properties":{"resource_types":{"type":"array","items":{"type":"string","enum":["ports","volumes","floating_ips","networks"]},"default":["ports","volumes","floating_ips","networks"],"description":"Which resource types to scan (ports, volumes, floating_ips, networks)"},"age_threshold_days":{"type":"integer","default":7,"description":"Only target resources older than N days"},"target_project":{"type":"string","x-lookup":"projects_optional","default":"","description":"Filter to a specific project (empty = all)"},"target_domain":{"type":"string","default":"","description":"Limit to specific domain (empty = all)"}}}',
                     'Finds orphaned ports, volumes, floating IPs, and empty networks. Cleans up to free quota and reduce clutter.',
                 ))
+
+                # Seed password_reset_console runbook (added v1.83.12)
+                cur.execute("""
+                    INSERT INTO runbooks (name, display_name, description, category, risk_level, supports_dry_run, parameters_schema)
+                    VALUES (
+                        'password_reset_console',
+                        'Reset VM Password',
+                        'Resets the password of a provisioned VM using the Nova changePassword API and optionally retrieves a noVNC/SPICE console URL. Works on Linux VMs with cloud-init and Windows VMs with cloudbase-init.',
+                        'vm',
+                        'medium',
+                        true,
+                        '{"type":"object","required":["vm_id","new_password"],"properties":{"vm_id":{"type":"string","x-lookup":"vms","description":"VM to reset the password on"},"new_password":{"type":"string","default":"","description":"New password to set (leave blank to auto-generate a secure random password)"},"enable_console":{"type":"boolean","default":true,"description":"Also obtain a noVNC/SPICE console URL for immediate access"},"console_expiry_minutes":{"type":"integer","default":30,"description":"How long the console URL remains valid (minutes)"}}}'::jsonb
+                    )
+                    ON CONFLICT (name) DO UPDATE SET
+                        display_name       = EXCLUDED.display_name,
+                        description        = EXCLUDED.description,
+                        parameters_schema  = EXCLUDED.parameters_schema,
+                        updated_at         = now()
+                """)
+                cur.execute("""
+                    INSERT INTO runbook_approval_policies (runbook_name, trigger_role, approver_role, approval_mode)
+                    VALUES
+                        ('password_reset_console', 'operator',   'admin', 'single_approval'),
+                        ('password_reset_console', 'admin',      'admin', 'auto_approve'),
+                        ('password_reset_console', 'superadmin', 'admin', 'auto_approve')
+                    ON CONFLICT (runbook_name, trigger_role) DO NOTHING
+                """)
     except Exception as e:
         logger.warning(f"Could not ensure runbook tables on startup: {e}")
 
@@ -1744,9 +1771,10 @@ def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
     from pf9_control import get_client
     import secrets as _secrets
 
-    server_id = params.get("server_id", "")
+    # Accept vm_id (x-lookup convention) or legacy server_id
+    server_id = params.get("vm_id") or params.get("server_id", "")
     if not server_id:
-        return {"result": {"error": "server_id is required"}, "items_found": 0, "items_actioned": 0}
+        return {"result": {"error": "vm_id is required"}, "items_found": 0, "items_actioned": 0}
 
     new_password = params.get("new_password", "")
     enable_console = params.get("enable_console", True)

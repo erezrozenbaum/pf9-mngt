@@ -32,6 +32,7 @@ import { ClusterContextProvider } from "./components/ClusterContext";
 import { RegionSelector } from "./components/RegionSelector";
 import ClusterManagement from "./components/ClusterManagement";
 import RunbooksTab from "./components/RunbooksTab";
+import DocsTab from "./components/DocsTab";
 import TicketsTab from "./components/TicketsTab";
 import MigrationPlannerTab from "./components/MigrationPlannerTab";
 import CopilotPanel from "./components/CopilotPanel";
@@ -410,7 +411,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -462,6 +463,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "reports",              label: "📊 Reports",             adminOnly: true, actionStyle: true },
   { id: "resource_management",  label: "🔧 Resources",           adminOnly: true, actionStyle: true },
   { id: "runbooks",              label: "📋 Runbooks",            adminOnly: false, actionStyle: true },
+  { id: "docs",                  label: "📚 Docs",               adminOnly: false, actionStyle: false },
   { id: "keypairs",              label: "🔑 Keypairs" },
   { id: "aggregates",            label: "🏗️ Aggregates" },
   { id: "volume_types",          label: "💾 Volume Types" },
@@ -3326,6 +3328,8 @@ const App: React.FC = () => {
             ? "Ops Assistant · full-text search · similarity · smart report suggestions"
             : activeTab === "runbooks"
             ? "Policy-as-code operational runbooks · select and trigger with dry-run"
+            : activeTab === "docs"
+            ? "Operational documentation · guides · runbook references · quick reference"
             : activeTab === "tickets"
             ? "Support tickets · SLA tracking · escalation · approval workflows"
             : activeTab === "my_queue"
@@ -6270,6 +6274,14 @@ const App: React.FC = () => {
           {/* Runbooks */}
           {activeTab === "runbooks" && (
             <RunbooksTab userRole={authUser?.role || ""} />
+          )}
+
+          {/* Docs Viewer */}
+          {activeTab === "docs" && (
+            <DocsTab
+              userRole={authUser?.role || ""}
+              isAdmin={authUser?.role === "admin" || authUser?.role === "superadmin"}
+            />
           )}
 
           {/* Migration Planner */}
