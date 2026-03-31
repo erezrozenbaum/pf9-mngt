@@ -174,7 +174,7 @@ ssh_pwauth: true
 chpasswd:
   expire: false
   list: |
-    {os_username}:{salted}
+    {os_username}:{os_password}
 """
     if extra and extra.strip():
         yaml += f"\n# --- extra ---\n{extra.strip()}\n"
@@ -244,12 +244,13 @@ net user "{os_username}" "{os_password}" /add /y
 net localgroup Administrators "{os_username}" /add
 wmic useraccount where \"name='{os_username}'\" set PasswordExpires=False
 {oobe_suppression}"""
-    if static_ip_config and static_ip_config.get("fixed_ip") and static_ip_config.get("gateway_ip"):
+    if static_ip_config and static_ip_config.get("fixed_ip"):
         fixed_ip = static_ip_config["fixed_ip"]
         prefix   = int(static_ip_config.get("prefix_length", 24))
-        gateway  = static_ip_config["gateway_ip"]
+        gateway  = static_ip_config.get("gateway_ip") or ""
         dns_list = static_ip_config.get("dns_servers") or ["8.8.8.8", "8.8.4.4"]
         dns_ps   = ", ".join(f'"{d}"' for d in dns_list[:4])
+        gw_line  = f"-DefaultGateway '{gateway}'" if gateway else ""
         script += f"""
 # Configure static IP assigned at provision time
 $_retries = 0
@@ -262,7 +263,7 @@ if ($_adapter) {{
     try {{
         Get-NetIPAddress  -InterfaceIndex $_adapter.InterfaceIndex -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
         Get-NetRoute      -InterfaceIndex $_adapter.InterfaceIndex -ErrorAction SilentlyContinue | Remove-NetRoute     -Confirm:$false -ErrorAction SilentlyContinue
-        New-NetIPAddress  -InterfaceIndex $_adapter.InterfaceIndex -IPAddress '{fixed_ip}' -PrefixLength {prefix} -DefaultGateway '{gateway}'
+        New-NetIPAddress  -InterfaceIndex $_adapter.InterfaceIndex -IPAddress '{fixed_ip}' -PrefixLength {prefix} {gw_line}
         Set-DnsClientServerAddress -InterfaceIndex $_adapter.InterfaceIndex -ServerAddresses @({dns_ps})
         Write-Host 'Static IP configured: {fixed_ip}/{prefix} via {gateway}'
     }} catch {{

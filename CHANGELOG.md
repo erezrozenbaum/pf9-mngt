@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.11] - 2026-03-31
+
+### Fixed
+- **VM Provisioning — Linux password wrong on login (cloud-init chpasswd regression)**: `chpasswd.list` was passing the pre-hashed `$6$…` SHA-512 string as the list entry. `chpasswd` requires the `-e` flag to accept pre-hashed passwords; without it the hash string is set as the literal plaintext password. On cloud-init < 21.2 the `-e` flag is NOT added automatically even when a `$6$` prefix is detected. Fixed: `chpasswd.list` now uses the plain-text password (cloud-init hashes it internally); the `users[].passwd` field retains the SHA-512 hash for the initial user creation step, giving correct behaviour on all cloud-init versions.
+- **VM Provisioning — Windows static IP not applied after sysprep**: The PowerShell static-IP block was conditioned on `gateway_ip` being non-empty. When the Neutron subnet has `gateway_ip: null` (e.g. isolated networks), `gateway_ip` was stored as `""` which is falsy — the entire block was skipped and Windows fell back to DHCP. Fixed: the block now fires whenever `fixed_ip` is set; the `-DefaultGateway` parameter is omitted only when `gateway_ip` is empty instead of aborting the whole configuration.
+
 ## [1.83.10] - 2026-04-01
 
 ### Fixed
