@@ -706,15 +706,24 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
                                    "volume_creating",
                                    f"{instance_name}: creating {effective_size_gb}GB boot volume from image {image_id}",
                                    batch.get("created_by", "system"))
-                    # Use admin_client (not project_client) so Cinder's internal
-                    # Glance lookup uses the admin token — which can see all images
-                    # regardless of their project scope.  project_id overrides the
-                    # Cinder URL so the volume is still created in the tenant project.
-                    vol = admin_client.create_boot_volume(
+                    # Ensure the image is accessible to the provisionsrv project-scoped
+                    # token.  Platform9 Cinder resolves imageRef by calling back to
+                    # Glance with the caller's auth token; if the image is private
+                    # (owned by the service project) and the token is scoped to ORG1
+                    # the Glance lookup fails → 400 Invalid image identifier.
+                    # Setting visibility to 'community' makes it readable by any project
+                    # token without changing ownership or affecting other tenants.
+                    admin_client.ensure_image_accessible(image_id)
+                    # Create boot volume using the provisionsrv token already scoped to
+                    # the target project.  Platform9 Cinder strictly enforces that the
+                    # URL project_id matches the token's project scope; using the
+                    # admin_client's service-scoped token with an ORG1 project_id in the
+                    # URL produces "400 Malformed request url".  project_client's
+                    # cinder_endpoint already embeds the correct project_id.
+                    vol = project_client.create_boot_volume(
                         name=f"{instance_name}-vol",
                         image_id=image_id,
                         size_gb=effective_size_gb,
-                        project_id=project_id,
                     )
                     volume_id = vol["id"]
                 except Exception as e:

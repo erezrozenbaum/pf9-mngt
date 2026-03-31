@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.9] - 2026-03-31
+
+### Fixed
+- **VM Provisioning — 400 "Malformed request url" on boot volume create (root cause fix)**: v1.83.7 switched volume creation to use `admin_client` (service-project-scoped token) with an ORG1 project_id URL rewrite to avoid a Glance image-not-visible error. Platform9 Cinder strictly enforces that the auth token's project scope matches the URL project_id, so the cross-project URL rewrite produced `400 Malformed request url` regardless of URL construction. Root-cause fix: (1) before creating the boot volume, `admin_client.ensure_image_accessible(image_id)` promotes the image from `private` to `community` Glance visibility so any project-scoped token can reference it via `imageRef`; (2) boot volume creation is restored to `project_client.create_boot_volume()` (provisionsrv, ORG1-scoped token) — token scope now matches the Cinder URL's project_id, eliminating the 400.
+
 ## [1.83.8] - 2026-03-31
 
 ### Fixed

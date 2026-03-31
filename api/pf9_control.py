@@ -1491,6 +1491,55 @@ class Pf9Client:
         if not r.ok:
             raise RuntimeError(f"Glance PATCH {image_id} failed: {r.status_code} {r.text[:300]}")
 
+    def ensure_image_accessible(self, image_id: str) -> None:
+        """Ensure a Glance image is accessible to all projects.
+
+        Platform9 Cinder calls back to Glance using the caller's auth token when
+        resolving the ``imageRef`` in a volume-create request.  If the image
+        visibility is ``private`` (owned by the service/admin project) and the
+        caller's token is scoped to a tenant project (e.g. provisionsrv scoped
+        to ORG1), Cinder returns ``400 Invalid image identifier``.
+
+        This method sets the image visibility to ``community`` (readable by all
+        projects, not queryable by default) when it is currently ``private`` or
+        ``shared``.  ``public`` images are left unchanged.
+
+        Called by the VM provisioning execution thread before creating each boot
+        volume so that the provisionsrv project-scoped token can reference the
+        image.  Failures are logged as warnings and do not abort provisioning
+        (the volume create will surface any remaining access error itself).
+        """
+        self.authenticate()
+        if not self.glance_endpoint:
+            return
+        try:
+            r = self.session.get(
+                f"{self.glance_endpoint}/v2/images/{image_id}",
+                headers=self._headers(),
+            )
+            if not r.ok:
+                return
+            visibility = r.json().get("visibility", "private")
+            if visibility in ("public", "community"):
+                return  # already accessible to all projects
+            # Promote to community so any project-scoped token can reference it
+            patch = [{"op": "replace", "path": "/visibility", "value": "community"}]
+            hdrs = {**self._headers(), "Content-Type": "application/openstack-images-v2.1-json-patch"}
+            pr = self.session.patch(
+                f"{self.glance_endpoint}/v2/images/{image_id}",
+                headers=hdrs,
+                json=patch,
+            )
+            if pr.ok:
+                log.info("Image %s visibility set to community for cross-project access", image_id)
+            else:
+                log.warning(
+                    "ensure_image_accessible: could not set image %s to community: %s %s",
+                    image_id, pr.status_code, pr.text[:200],
+                )
+        except Exception as exc:
+            log.warning("ensure_image_accessible(%s): %s", image_id, exc)
+
     # ---------------------------
     # Nova – Diskless flavors
     # ---------------------------
