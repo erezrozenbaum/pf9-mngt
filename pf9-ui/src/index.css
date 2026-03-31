@@ -39,8 +39,8 @@
   --color-status-building: #2196F3;
   
   /* Sidebar: distinct tinted background separates it from the page body */
-  --color-sidebar-bg: #EBF2FB;
-  --color-nav-items-bg: #F4F8FE;
+  --color-sidebar-bg: #EEF1F5;
+  --color-nav-items-bg: #F4F6F9;
 
   /* Action tab accent (write-capable tabs) */
   --color-action-accent: #E65100;
@@ -109,7 +109,7 @@
   --color-primary-dark: #5C6BC0;
   --color-primary-light: #BBDEFB;
   --color-secondary: #B0B0B0;
-  --color-background: #0F1419;
+  --color-background: #0D1117;
   --color-surface: #1A1D23;
   --color-surface-elevated: #1F2937;
   --color-card: #252A31;
@@ -134,8 +134,8 @@
   --color-status-pending: #F59E0B;
   --color-status-building: #3B82F6;
   
-  /* Sidebar — keep dark surface */
-  --color-sidebar-bg: var(--color-surface);
+  /* Sidebar — explicit intermediate layer between background (#0D1117) and surface (#1A1D23) */
+  --color-sidebar-bg: #161B22;
   --color-nav-items-bg: rgba(255,255,255,0.03);
 
   /* Dark action tab accent */

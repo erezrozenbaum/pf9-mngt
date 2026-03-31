@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.15] - 2026-03-31
+
+### Fixed
+- **Docs Viewer — docs still empty in Kubernetes (wrong path resolution in `docs_routes.py`)**: `_DOCS_DIR` was computed as `Path(__file__).resolve().parent.parent / "docs"`. Inside the container, `docs_routes.py` lives at `/app/docs_routes.py` (placed there by `COPY api/ ./`), so `.parent.parent` resolves to `/` (the filesystem root) — making the code look for docs at `/docs` instead of `/app/docs`. The Dockerfile `COPY docs/ ./docs/` (added in v1.83.14) and the docker-compose volume mount both target `/app/docs`, so no docs were ever found in either environment. Fixed by removing the extra `.parent`: `_DOCS_DIR = Path(__file__).resolve().parent / "docs"` → `/app/docs` ✓.
+
+### Changed
+- **UI — layout structure fix (Pass 1)**: Removed the negative-margin hack on `.pf9-header` (`margin: 0 -20px`) that was causing a 1px misalignment between the sidebar border and the header. The `.pf9-page-body` no longer owns horizontal padding; instead a new `.pf9-page-content` wrapper (direct sibling of the sticky header) holds the `0 20px` padding for all page content. Header is now `position: sticky; top: 0; z-index: 10` — remains pinned as content scrolls.
+- **UI — palette calibration (Pass 2)**: Corrected sidebar background tokens in both themes. Light: `--color-sidebar-bg` changed from `#EBF2FB` (saturated blue, from a different palette lineage) to `#EEF1F5` (neutral cool-gray, same family as `--color-background: #F8F9FA`). Dark: `--color-background` deepened from `#0F1419` to `#0D1117`; `--color-sidebar-bg` set to explicit `#161B22` instead of `var(--color-surface)` — establishes a clear three-level elevation: page canvas (`#0D1117`) → sidebar (`#161B22`) → cards/surfaces (`#1A1D23`).
+
 ## [1.83.14] - 2026-03-31
 
 ### Fixed

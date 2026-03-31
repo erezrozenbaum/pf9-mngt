@@ -36,7 +36,7 @@ logger = logging.getLogger("pf9.docs")
 router = APIRouter(prefix="/api/docs", tags=["docs"])
 
 # Resolved path to the docs directory (one level above the api/ package)
-_DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
+_DOCS_DIR = Path(__file__).resolve().parent / "docs"
 
 # Regex for safe filename validation — prevents path traversal
 _SAFE_FILENAME_RE = re.compile(r"^[\w\-\.]+\.md$")

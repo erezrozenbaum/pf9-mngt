@@ -3254,6 +3254,7 @@ const App: React.FC = () => {
               <ThemeToggle />
             </div>
           </header>
+          <div className="pf9-page-content">
 
       <section className="pf9-subtitle">
         {activeTab === "dashboard"
@@ -6762,6 +6763,7 @@ const App: React.FC = () => {
         isAdmin={authUser?.role === 'admin' || authUser?.role === 'superadmin'}
       />
 
+          </div>{/* end pf9-page-content */}
         </div>{/* end pf9-page-body */}
       </div>{/* end pf9-app */}
 
