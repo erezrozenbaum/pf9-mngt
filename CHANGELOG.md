@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.18] - 2026-04-01
+
+### Fixed
+- **UI — Header / sidebar brand border misalignment**: The `border-bottom` of `.pf9-sidebar-brand` rendered ~12 px above the `border-bottom` of `.pf9-header` because the two boxes had different implicit heights — sidebar brand was `padding: 18px 16px 14px` + 13 px text ≈ 49 px total, while the header was `padding: 12px 20px` + browser-default h1 (32 px, line-height ~37 px) ≈ 61 px total. Fixed by locking both elements to an explicit `height: 64px; box-sizing: border-box` with `display: flex; align-items: center` on the sidebar brand. Both `border-bottom` lines now land on the same pixel row in every theme and browser.
+
 ## [1.83.17] - 2026-04-01
 
 ### Fixed

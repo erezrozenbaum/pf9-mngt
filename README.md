@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.17-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.18-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,6 +534,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.18](CHANGELOG.md)** — Header/sidebar border alignment fix: locked `.pf9-header` and `.pf9-sidebar-brand` to identical `height: 64px; box-sizing: border-box` so both `border-bottom` lines always land on the same pixel row.
 **[v1.83.17](CHANGELOG.md)** — UI dashboard padding fix: `LandingDashboard.css` had conflicting horizontal padding (`2rem 2.5rem`) stacking with the `pf9-page-content` wrapper, producing ~60 px gutter instead of 20 px. Added comprehensive Copilot/OpenAI API documentation to API Reference. New `docs/DB_SCHEMA.md` with full PostgreSQL schema reference (30+ tables, history pattern, indexes, views).
 **[v1.83.16](CHANGELOG.md)** — UI sidebar alignment fix: removed problematic sidebar box-shadow that caused visual misalignment between sidebar border and main header content.
 
@@ -648,4 +649,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.17 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.83.18 | **Last Updated**: April 2026
