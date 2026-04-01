@@ -1103,6 +1103,192 @@ Response:
 }
 ```
 
+---
+
+## Ops Copilot API
+
+The Ops Copilot provides AI-powered assistance for infrastructure management with support for multiple LLM backends (OpenAI, Anthropic, Ollama).
+
+### Ask Copilot
+**POST** `/api/copilot/ask`
+
+Submit a question to the AI copilot. The system automatically matches intents and provides contextual responses.
+
+Request:
+```json
+{
+  "question": "How many VMs are running in production?",
+  "scope": {
+    "tenant_id": "abc123",
+    "domain_id": "default"
+  }
+}
+```
+
+Response:
+```json
+{
+  "answer": "Based on current inventory, there are 45 VMs running in the production tenant.",
+  "intent": "vm_count",
+  "confidence": 0.95,
+  "backend": "openai",
+  "model": "gpt-4o-mini",
+  "tokens_used": 234,
+  "response_time_ms": 1250,
+  "sources": [
+    {
+      "type": "database",
+      "query": "SELECT COUNT(*) FROM servers WHERE status='ACTIVE'",
+      "result_count": 45
+    }
+  ],
+  "history_id": 12345
+}
+```
+
+### Get Suggestions
+**GET** `/api/copilot/suggestions`
+
+Retrieve quick-start suggestion chips based on current infrastructure state.
+
+Response:
+```json
+{
+  "suggestions": [
+    {
+      "text": "Show me VM resource utilization",
+      "category": "monitoring",
+      "icon": "chart-line"
+    },
+    {
+      "text": "Which volumes need snapshots?",
+      "category": "compliance",
+      "icon": "camera"
+    },
+    {
+      "text": "Find unused floating IPs",
+      "category": "optimization",
+      "icon": "network-wired"
+    }
+  ]
+}
+```
+
+### Conversation History
+**GET** `/api/copilot/history`
+Query Parameters:
+- `limit` (optional, default: 50) - Number of recent conversations
+- `offset` (optional, default: 0) - Pagination offset
+
+Response:
+```json
+{
+  "conversations": [
+    {
+      "id": 12345,
+      "question": "How many VMs are running?",
+      "answer": "There are 45 VMs currently running.",
+      "intent": "vm_count",
+      "confidence": 0.95,
+      "backend": "openai",
+      "timestamp": "2026-04-01T10:30:00Z",
+      "tokens_used": 234,
+      "feedback_rating": 5
+    }
+  ],
+  "total_count": 127,
+  "has_more": true
+}
+```
+
+### Submit Feedback  
+**POST** `/api/copilot/feedback`
+
+Provide feedback on copilot responses to improve accuracy.
+
+Request:
+```json
+{
+  "history_id": 12345,
+  "rating": 4,
+  "comment": "Good answer but could include more detail about VM distribution"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "message": "Feedback recorded"
+}
+```
+
+### Configuration Management
+**GET** `/api/copilot/config`  
+*(Admin only)*
+
+Retrieve current copilot configuration including LLM backend settings.
+
+Response:
+```json
+{
+  "backend": "openai",
+  "openai_model": "gpt-4o-mini",
+  "openai_api_key": "sk-***",
+  "anthropic_model": "claude-sonnet-4-20250514",
+  "anthropic_api_key": "***",
+  "ollama_url": "http://localhost:11434",
+  "ollama_model": "llama3",
+  "redact_sensitive": true,
+  "system_prompt": "You are Ops Copilot...",
+  "max_history_per_user": 200
+}
+```
+
+**PUT** `/api/copilot/config`
+*(Admin only)*
+
+Update copilot configuration.
+
+Request:
+```json
+{
+  "backend": "anthropic",
+  "anthropic_model": "claude-sonnet-4-20250514",
+  "anthropic_api_key": "your-api-key",
+  "redact_sensitive": true
+}
+```
+
+### Test Connections
+**POST** `/api/copilot/test-connection`
+*(Admin only)*
+
+Test connectivity to configured LLM backends.
+
+Request:
+```json
+{
+  "backend": "openai"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "backend": "openai",
+  "model": "gpt-4o-mini", 
+  "response_time_ms": 847,
+  "test_query": "Hello",
+  "test_response": "Hello! How can I help you today?"
+}
+```
+    }
+  ]
+}
+```
+
 ### Get Drift Event Detail
 **GET** `/drift/events/{id}` (Authenticated, `drift:read`)  
 Returns full detail for a single drift event including rule metadata.

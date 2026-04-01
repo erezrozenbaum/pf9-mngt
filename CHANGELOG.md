@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.17] - 2026-04-01
+
+### Fixed
+- **UI — Dashboard horizontal padding double-stack**: `LandingDashboard.css` previously set `padding: 2rem 2.5rem` on `.landing-dashboard`, which combined with the `0 20px` padding added by the new `.pf9-page-content` wrapper (introduced in v1.83.15) to produce ~60 px of left/right whitespace instead of the intended 20 px. Fixed by removing horizontal padding from `.landing-dashboard` (`padding: 2rem 0`) so the wrapper exclusively owns the horizontal gutter. The mobile breakpoint was corrected from `1rem` to `1rem 0` for the same reason. Background colour hardcodes replaced with `var(--color-background)` so light/dark themes apply correctly.
+
+### Added
+- **Docs — API Reference (Copilot / OpenAI section)**: Added comprehensive Copilot API documentation covering all seven endpoints: `POST /api/copilot/ask` (multi-backend: OpenAI, Anthropic, Ollama), `GET /api/copilot/suggestions`, `GET /api/copilot/history`, `POST /api/copilot/feedback`, `GET /api/copilot/config`, `PUT /api/copilot/config`, and `POST /api/copilot/test-connection`. Includes full request/response schemas and backend configuration notes.
+- **Docs — DB Schema reference (`docs/DB_SCHEMA.md`)**: New document providing a comprehensive reference for the PostgreSQL schema — all 30+ tables (core resources, history tables, operational features) with column definitions, indexes, and the history-table pattern. Covers: domains, projects, users, servers, volumes, snapshots, networks, ports, floating IPs, flavors, images, routers, subnets, snapshot policies, snapshot jobs, user sessions, copilot config/history, drift rules/events, and the `v_volumes_full` enriched view.
+
 ## [1.83.16] - 2026-03-31
 
 ### Fixed

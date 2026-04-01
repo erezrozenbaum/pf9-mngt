@@ -1,16 +1,16 @@
 /* Landing Dashboard Main Styles — Redesigned */
 
 .landing-dashboard {
-  padding: 2rem 2.5rem;
-  background: #f8fafc;
-  min-height: 100vh;
+  padding: 2rem 0;  /* Remove horizontal padding - now handled by pf9-page-content */
+  background: var(--color-background);  /* Use proper color tokens instead of hardcoded #f8fafc */
+  min-height: calc(100vh - 80px);  /* Account for header height instead of full viewport */
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
 }
 
 .landing-dashboard.dark {
-  background: #0d0f18;
+  background: var(--color-background);  /* Use token instead of hardcoded #0d0f18 */
 }
 
 /* Header */
@@ -1894,7 +1894,7 @@
 
 @media (max-width: 640px) {
   .landing-dashboard {
-    padding: 1rem;
+    padding: 1rem 0;  /* Remove horizontal padding for mobile too */
   }
 
   .dashboard-header .header-content h1 {
