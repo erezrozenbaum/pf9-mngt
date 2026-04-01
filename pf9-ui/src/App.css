@@ -298,10 +298,12 @@
   transform: scale(0.97);
 }
 
-/* Action / write-capable group pill accent */
+/* Action / write-capable group pill accent.
+   Background is intentionally transparent — the coloured left-border alone
+   communicates "write-capable" without tinting the entire sidebar panel. */
 .pf9-nav-group-action:not(.pf9-nav-group-active) {
   border-left-color: var(--color-action-accent-border);
-  background: var(--color-action-accent-bg);
+  background: transparent;
 }
 
 .pf9-nav-group-action:not(.pf9-nav-group-active):hover {
@@ -1366,6 +1368,18 @@ body,
 :root[data-theme="dark"] .pf9-grouped-nav .pf9-tab:hover {
   background: rgba(255, 255, 255, 0.05) !important;
   color: var(--color-primary) !important;
+}
+
+/* In dark mode the action-accent amber background looks olive against #161B22.
+   Rely on the border accent only, same as light mode. */
+:root[data-theme="dark"] .pf9-nav-group-action:not(.pf9-nav-group-active) {
+  background: transparent !important;
+}
+
+/* Flatten expanded sub-item panels — no white-overlay banding in dark sidebar */
+:root[data-theme="dark"] .pf9-nav-items {
+  background: transparent;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
 }
 
 /* Sidebar brand separator aligns with header bottom border */

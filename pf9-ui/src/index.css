@@ -38,9 +38,11 @@
   --color-status-pending: #FF9800;
   --color-status-building: #2196F3;
   
-  /* Sidebar: distinct tinted background separates it from the page body */
-  --color-sidebar-bg: #EEF1F5;
-  --color-nav-items-bg: #F4F6F9;
+  /* Sidebar light mode: same white as cards so sidebar and content read as one system.
+     Visual hierarchy is created by the border-right + the slightly recessed canvas
+     (--color-background: #F8F9FA) behind everything, not by a tinted sidebar. */
+  --color-sidebar-bg: var(--color-surface);    /* #FFFFFF — same as cards */
+  --color-nav-items-bg: var(--color-surface-elevated);  /* #F5F7FA — subtle hover/active bg */
 
   /* Action tab accent (write-capable tabs) */
   --color-action-accent: #E65100;
@@ -194,6 +196,16 @@
   --pf9-toggle-inactive: #546E7A;
   --pf9-accent-orange: #FFB74D;
   --pf9-tooltip-bg: #37474F;
+}
+
+/* Text selection — override browser default so selected text stays readable in dark mode */
+::selection {
+  background: rgba(25, 118, 210, 0.22);
+  color: inherit;
+}
+:root[data-theme="dark"] ::selection {
+  background: rgba(144, 202, 249, 0.35);
+  color: #FFFFFF;
 }
 
 /* Global theme application */

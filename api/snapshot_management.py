@@ -1243,6 +1243,21 @@ def setup_snapshot_routes(app):
             with get_connection() as conn:
                 cur = conn.cursor(cursor_factory=RealDictCursor)
 
+                # Auto-remediate orphaned runs: any run still marked 'running'
+                # or 'in_progress' that started more than 2 hours ago without a
+                # finished_at is an orphan (worker was killed / pod restarted).
+                # Mark it 'partial' so it no longer shows as the active run.
+                cur.execute("""
+                    UPDATE snapshot_runs
+                    SET status = 'partial',
+                        finished_at = NOW(),
+                        error_summary = COALESCE(error_summary || ' | ', '') ||
+                                        'Run interrupted unexpectedly (auto-remediated: no heartbeat for >2h)'
+                    WHERE status IN ('running', 'in_progress')
+                    AND finished_at IS NULL
+                    AND started_at < NOW() - INTERVAL '2 hours'
+                """)
+
                 cur.execute("""
                     SELECT id, run_type, status, total_volumes,
                            snapshots_created, snapshots_deleted,
@@ -1252,6 +1267,7 @@ def setup_snapshot_routes(app):
                            started_at
                     FROM snapshot_runs
                     WHERE status IN ('running', 'in_progress')
+                    AND finished_at IS NULL
                     ORDER BY started_at DESC
                     LIMIT 1
                 """)

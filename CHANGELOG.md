@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.19] - 2026-04-01
+
+### Fixed
+- **UI — Light mode sidebar/content color system mismatch**: `--color-sidebar-bg: #EEF1F5` (cool blue-gray family) next to `--color-background: #F8F9FA` (warm neutral) made the sidebar and content area look like two different products. Changed `--color-sidebar-bg` to `var(--color-surface)` (#FFFFFF) and `--color-nav-items-bg` to `var(--color-surface-elevated)` (#F5F7FA). Visual hierarchy is now established by the slightly recessed page canvas (#F8F9FA) sitting behind a white sidebar that matches the white cards in the content area. Dark mode tokens unchanged.
+- **UI — Dark mode sidebar amber/olive tint**: Non-active action-capable nav groups had `background: var(--color-action-accent-bg)` (`rgba(255, 183, 77, 0.08)`) applied. Since most nav groups contain at least one action item, the entire dark sidebar acquired a brownish/olive ambient cast. Removed the background fill from non-active action groups in both light and dark mode — the coloured left-border accent alone signals "write-capable".
+- **UI — Dark mode sidebar sub-item panel banding**: Expanded nav sub-item panels had `background: rgba(255,255,255,0.03)` in dark mode, creating visible white-overlay banding against the `#161B22` sidebar. Overridden to `transparent` for a flat, consistent dark sidebar.
+- **UI — Text selection unreadable in dark mode**: No `::selection` override existed. Browser default selection colour made white text on the dark selection background near-invisible. Added themed rules: light mode `rgba(25,118,210,0.22)` with inherited text colour; dark mode `rgba(144,202,249,0.35)` with forced `#FFFFFF` text.
+- **UI — Snapshot Run Monitor: filter row stacking vertically**: The filter controls were wrapping and stacking vertically instead of staying in a single left-to-right row. Changed `.filter-group` to `flex-direction: row; flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto`. Mobile keeps `flex-wrap: wrap`.
+- **UI — Snapshot Run Monitor: phantom active run bar never dismisses**: The `/api/snapshot/runs/active/progress` endpoint queried `WHERE status IN ('running', 'in_progress')` with no staleness guard. Orphaned runs (worker killed / pod restarted) showed the progress bar forever as "Starting…". The endpoint now (1) auto-remediates any run in `running/in_progress` with `finished_at IS NULL` and `started_at < NOW() - 2h` by marking it `partial` with a remediation note, and (2) adds `AND finished_at IS NULL` to the SELECT as a correctness guard.
+- **UI — Snapshot Run Monitor: batch indicator shows `?` cursor**: Batch number dots had `cursor: help`, which renders as a question-mark cursor in browsers. Changed to `cursor: default`.
+
 ## [1.83.18] - 2026-04-01
 
 ### Fixed

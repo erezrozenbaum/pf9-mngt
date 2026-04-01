@@ -46,9 +46,13 @@
 
 .filter-group {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   gap: 16px;
-  flex-wrap: wrap;
   align-items: flex-end;
+  justify-content: flex-start;
+  overflow-x: auto;
+  padding-bottom: 2px; /* prevent scrollbar clipping */
 }
 
 .filter-group label {
@@ -67,7 +71,8 @@
   border-radius: 4px;
   background: white;
   font-size: 14px;
-  min-width: 150px;
+  min-width: 130px;
+  max-width: 200px;
 }
 
 .btn-reset {
@@ -370,8 +375,8 @@
 
 @media (max-width: 768px) {
   .filter-group {
-    flex-direction: column;
-    align-items: stretch;
+    flex-wrap: wrap;
+    overflow-x: visible;
   }
 
   .filter-group label {
@@ -564,7 +569,7 @@
   font-size: 10px;
   font-weight: 600;
   color: white;
-  cursor: help;
+  cursor: default;
 }
 
 .batch-pending {
