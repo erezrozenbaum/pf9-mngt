@@ -88,6 +88,19 @@ spec:
                   name: {{ .Values.secrets.ldapSecrets }}
                   key: sync-key
                   optional: true
+            # --- Encryption keys for secrets at rest ---
+            - name: VM_PROVISION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.encryptionSecrets }}
+                  key: vm-provision-key
+                  optional: true
+            - name: SMTP_CONFIG_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.encryptionSecrets }}
+                  key: smtp-config-key
+                  optional: true
             # --- JWT ---
             - name: JWT_SECRET_KEY
               valueFrom:

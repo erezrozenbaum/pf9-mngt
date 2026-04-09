@@ -96,7 +96,13 @@ def get_smtp_config() -> dict:
     tls_val = db.get("smtp.use_tls")
     use_tls = (tls_val.lower() in ("true", "1", "yes")) if tls_val else SMTP_USE_TLS
     username = db.get("smtp.username") or SMTP_USERNAME
-    password = db.get("smtp.password") or SMTP_PASSWORD
+    _stored_pw = db.get("smtp.password") or ""
+    if _stored_pw.startswith("fernet:"):
+        from crypto_helper import fernet_decrypt as _fd
+        _stored_pw = _fd(_stored_pw, secret_name="smtp_config_key",
+                         env_var="SMTP_CONFIG_KEY",
+                         context="system_settings smtp.password")
+    password = _stored_pw or SMTP_PASSWORD
     from_address = db.get("smtp.from_address") or SMTP_FROM_ADDRESS
     from_name = db.get("smtp.from_name") or SMTP_FROM_NAME
     return {

@@ -44,6 +44,41 @@ router = APIRouter(prefix="/api/vm-provisioning", tags=["vm-provisioning"])
 # DB helpers
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Encryption constants — Fernet key for os_password at rest
+# ---------------------------------------------------------------------------
+_VM_PROVISION_KEY     = "vm_provision_key"
+_VM_PROVISION_KEY_ENV = "VM_PROVISION_KEY"
+
+
+def _decrypt_vm_password(stored: str) -> str:
+    """Decrypt a stored VM OS password.
+
+    New rows (v1.83.25+) carry a 'fernet:' prefix and are Fernet-encrypted.
+    Legacy plaintext rows (created before v1.83.25) are returned unchanged so
+    old batches that have not yet been executed continue to work.
+    """
+    if not stored:
+        return ""
+    if stored.startswith("fernet:"):
+        from crypto_helper import fernet_decrypt as _fd
+        return _fd(stored, secret_name=_VM_PROVISION_KEY,
+                   env_var=_VM_PROVISION_KEY_ENV,
+                   context="vm_provisioning_vms.os_password")
+    return stored  # backward-compat: pre-encryption plaintext row
+
+
+def _encrypt_vm_password(plaintext: str) -> str:
+    """Encrypt a plaintext VM OS password for storage.
+
+    Wraps fernet_encrypt and raises HTTPException(500) with a clear message
+    if VM_PROVISION_KEY is not configured, rather than propagating a bare
+    RuntimeError to the caller.
+    """
+    from crypto_helper import fernet_encrypt as _fe
+    return _fe(plaintext, secret_name=_VM_PROVISION_KEY, env_var=_VM_PROVISION_KEY_ENV)
+
+
 def _log_activity(conn, resource_type: str, resource_id: str, action: str,
                    details: str, user: str = "system"):
     try:
@@ -576,6 +611,12 @@ def _execute_batch_thread(batch_id: int, operator_email: Optional[str]):
             cur.execute("SELECT * FROM vm_provisioning_vms WHERE batch_id=%s ORDER BY id", (batch_id,))
             vm_rows = [dict(r) for r in cur.fetchall()]
         conn.commit()
+
+        # Decrypt os_password in all VM rows now (encrypted since v1.83.25;
+        # backward-compat: _decrypt_vm_password returns plaintext rows unchanged).
+        for _vm in vm_rows:
+            if _vm.get("os_password"):
+                _vm["os_password"] = _decrypt_vm_password(_vm["os_password"])
 
         admin_client = get_client()
         admin_client.authenticate()
@@ -1281,7 +1322,8 @@ async def create_batch(
                          vm.flavor_name, vm.flavor_id, vm.volume_gb,
                          vm.network_name, vm.network_id,
                          Json(sgs), vm.fixed_ip, vm.hostname,
-                         vm.os_username, vm.os_password,
+                         vm.os_username,
+                         _encrypt_vm_password(vm.os_password),
                          vm.extra_cloudinit, vm.os_type,
                          vm.delete_on_termination),
                     )
@@ -1327,6 +1369,11 @@ async def get_batch(batch_id: int, user=Depends(get_current_user)):
             cur.execute("SELECT * FROM vm_provisioning_vms WHERE batch_id=%s ORDER BY id", (batch_id,))
             vms = [dict(r) for r in cur.fetchall()]
     result = dict(batch)
+    # Strip os_password from API response — plaintext (or encrypted) passwords
+    # must not be returned to the browser. The field is only needed server-side
+    # during batch execution.
+    for vm in vms:
+        vm["os_password"] = "****" if vm.get("os_password") else ""
     result["vms"] = vms
     return result
 

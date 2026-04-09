@@ -1,0 +1,35 @@
+-- ============================================================
+-- v1.83.25: Fernet encryption for sensitive secrets at rest
+-- ============================================================
+--
+-- No schema changes are required for this release.
+-- The following columns continue to use their existing TEXT type;
+-- new values are now stored with a "fernet:" prefix:
+--
+--   vm_provisioning_vms.os_password
+--     Written by: api/vm_provisioning_routes.py create_batch()
+--     Read by:    api/vm_provisioning_routes.py _execute_batch_thread()
+--     Backward compat: plaintext rows (no "fernet:" prefix) are returned
+--     as-is by _decrypt_vm_password() so pre-upgrade batches still execute.
+--     Note: os_password is wiped to '' after successful provisioning; the
+--     encryption window is only between batch creation and execution.
+--
+--   system_settings.value  (where key = 'smtp.password')
+--     Written by: api/notification_routes.py update_smtp_config()
+--     Read by:    api/smtp_helper.py get_smtp_config()
+--     Backward compat: plain values in DB continue to work — the read path
+--     only decrypts when the value starts with "fernet:".
+--
+-- Required actions before/after deploying this release:
+--   1. Set VM_PROVISION_KEY env var OR create secrets/vm_provision_key file
+--      (Docker Compose: already added to docker-compose.yml)
+--      (Kubernetes: add vm-provision-key to pf9-encryption-secrets Sealed Secret)
+--   2. Set SMTP_CONFIG_KEY env var OR create secrets/smtp_config_key file
+--      (same pattern as above)
+--   3. Existing plaintext smtp.password in system_settings will continue to
+--      work read-transparently. To encrypt it, re-save the SMTP config via
+--      the UI → Admin → Notifications → SMTP.
+-- ============================================================
+
+-- Sentinel (no-op) so the migration runner marks this file as applied.
+DO $$ BEGIN END; $$;

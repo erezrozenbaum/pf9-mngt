@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.25] - 2026-04-09
+
+### Security
+- **VM provisioning — OS passwords encrypted at rest**: `vm_provisioning_vms.os_password` was stored in plaintext in PostgreSQL between batch creation and execution. All new batches now store the password Fernet-encrypted (`fernet:<ciphertext>`) using a dedicated `vm_provision_key` Docker secret / `VM_PROVISION_KEY` env var. The password is decrypted server-side immediately before cloud-init generation and wiped to `''` after the VM is successfully provisioned. Legacy batches created before this release are handled transparently (backward-compat: rows without the `fernet:` prefix are returned as-is). Additionally, `GET /api/vm-provisioning/batches/{id}` now returns `"****"` in place of the stored password so the plaintext is never exposed via the API.
+- **SMTP configuration — password encrypted at rest**: `system_settings.value` where `key = 'smtp.password'` was stored in plaintext, readable by any DB viewer with access to the `system_settings` table. The `POST /api/notifications/smtp-config` endpoint now Fernet-encrypts the password before persisting, using a dedicated `smtp_config_key` Docker secret / `SMTP_CONFIG_KEY` env var. Existing plaintext passwords in DB continue to work until the SMTP config is next saved via the UI (backward-compat: the read path in `smtp_helper.get_smtp_config()` decrypts only values with the `fernet:` prefix).
+- **SMTP config save — Redis cache invalidation**: Previously, updating SMTP configuration via the API left the old config (including the old password) in the 60-second Redis cache. `update_smtp_config()` now explicitly deletes the `pf9:smtp_config_override` cache key so the fresh values are picked up immediately.
+
+### Infrastructure
+- **New Docker secrets**: `secrets/vm_provision_key` and `secrets/smtp_config_key` added to the Docker Compose setup. Both secrets are mounted into the `pf9_api` container. Placeholder dev-only keys are provided; replace with `secrets.token_hex(32)` output for production use.
+- **Kubernetes — encryption secrets**: New `pf9-encryption-secrets` Kubernetes Secret (keys: `vm-provision-key`, `smtp-config-key`) added to the Helm chart via `values.yaml` and the API `deployment.yaml`. See `k8s/deploy-repo-init/sealed-secrets/HOW_TO_SEAL.md` step 10 for `kubeseal` instructions.
+
+### Migration
+- **`db/migrate_v1_83_25.sql`**: No schema changes. Migration file serves as a tracking record and documents the deployment requirements (secret provisioning steps) for operators performing the upgrade.
+
 ## [1.83.24] - 2026-04-10
 
 ### Security

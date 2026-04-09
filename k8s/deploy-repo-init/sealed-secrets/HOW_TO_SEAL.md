@@ -99,10 +99,22 @@
 #     --dry-run=client -o yaml \
 #   | kubeseal --namespace pf9-mngt --format yaml > copilot-secrets.yaml
 #
+#   # 10. Encryption keys for secrets at rest (v1.83.25+)
+#   #     vm-provision-key: Fernet key for encrypting VM OS passwords in vm_provisioning_vms
+#   #     smtp-config-key:  Fernet key for encrypting SMTP password in system_settings
+#   #     Generate each with: python3 -c "import secrets; print(secrets.token_hex(32))"
+#   #     Use DIFFERENT random values for each key — do not reuse keys across secrets.
+#   kubectl create secret generic pf9-encryption-secrets \
+#     --namespace pf9-mngt \
+#     --from-literal=vm-provision-key='REPLACE_WITH_RANDOM_HEX_64_CHARS' \
+#     --from-literal=smtp-config-key='REPLACE_WITH_DIFFERENT_RANDOM_HEX_64_CHARS' \
+#     --dry-run=client -o yaml \
+#   | kubeseal --namespace pf9-mngt --format yaml > encryption-secrets.yaml
+#
 # Step 3 — Apply all sealed secrets to the cluster:
 #   kubectl apply -f sealed-secrets/ -n pf9-mngt
 #
-# Step 4 — Verify (should show all 9 secrets as regular Secrets):
+# Step 4 — Verify (should show all 10 secrets as regular Secrets):
 #   kubectl get secrets -n pf9-mngt
 # ---------------------------------------------------------------------------
 #

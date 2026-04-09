@@ -167,11 +167,24 @@ async def update_smtp_config(payload: dict):
                 if key not in allowed:
                     continue
                 str_val = str(value) if value is not None else ""
+                # Encrypt SMTP password before persisting to DB
+                if key == "smtp.password" and str_val:
+                    from crypto_helper import fernet_encrypt as _fe
+                    str_val = _fe(str_val, secret_name="smtp_config_key",
+                                  env_var="SMTP_CONFIG_KEY")
                 cur.execute("""
                     INSERT INTO system_settings (key, value, description)
                     VALUES (%s, %s, 'SMTP runtime configuration')
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
                 """, (key, str_val))
+    # Invalidate Redis SMTP config cache so the next email send picks up new values
+    try:
+        from cache import _get_client as _redis_client
+        rc = _redis_client()
+        if rc is not None:
+            rc.delete("pf9:smtp_config_override")
+    except Exception:
+        pass
     return {"status": "saved"}
 
 

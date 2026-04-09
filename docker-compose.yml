@@ -162,6 +162,8 @@ services:
       - ldap_admin_password
       - pf9_password
       - jwt_secret
+      - vm_provision_key
+      - smtp_config_key
     healthcheck:   # C5
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -716,3 +718,7 @@ secrets:
     file: ./secrets/jwt_secret
   ldap_sync_key:
     file: ./secrets/ldap_sync_key
+  vm_provision_key:
+    file: ./secrets/vm_provision_key
+  smtp_config_key:
+    file: ./secrets/smtp_config_key
