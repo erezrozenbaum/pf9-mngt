@@ -175,6 +175,11 @@ chpasswd:
   expire: false
   list: |
     {os_username}:{os_password}
+packages:
+  - qemu-guest-agent
+runcmd:
+  - systemctl enable qemu-guest-agent
+  - systemctl start qemu-guest-agent
 """
     if extra and extra.strip():
         yaml += f"\n# --- extra ---\n{extra.strip()}\n"

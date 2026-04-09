@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.20] - 2026-04-09
+
+### Added
+- **VM Provisioning (Linux) — `qemu-guest-agent` auto-install**: The Linux cloud-init payload (`_build_cloudinit_linux` in `api/vm_provisioning_routes.py`) now includes `packages: [qemu-guest-agent]` and `runcmd` entries to `systemctl enable` and `start` the agent on first boot. This is required for the Nova `changePassword` API (used by the Reset VM Password runbook) to actually apply the new password inside the guest OS. Previously, the API returned HTTP 202 but the password was silently discarded because the hypervisor channel (`/dev/virtio-ports/org.qemu.guest_agent.0`) had no listener. All Linux VMs provisioned from this release onward will have the agent pre-installed.
+
+### Fixed
+- **Reset VM Password runbook — silent no-op for VMs without `qemu-guest-agent`**: The `password_reset_console` engine now returns a `guest_agent_warning` field in its result for all Linux VMs, explaining that VMs provisioned before v1.83.20 may not have `qemu-guest-agent` installed and that the password change will be silently discarded if the agent is absent. Operators are advised to verify with `systemctl status qemu-guest-agent` before relying on the runbook for older VMs.
+
 ## [1.83.19] - 2026-04-01
 
 ### Fixed

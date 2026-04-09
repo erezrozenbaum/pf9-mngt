@@ -94,11 +94,13 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
   - 3 Admin sub-tabs in User Management: Runbook Executions (audit trail), Runbook Approvals (pending queue), Runbook Policies (governance rules)
   - RBAC: `runbooks:read` (Viewer+), `runbooks:write` (Operator+), `runbooks:admin` (Admin/Superadmin)
   - **Lookup endpoints**: `GET /api/runbooks/lookup/vms`, `/lookup/projects`, `/lookup/hypervisors` *(v1.57)*
-- **Reset VM Password Runbook** (v1.83.12 — NEW ✨):
+- **Reset VM Password Runbook** (v1.83.12, updated v1.83.20):
   - Engine name: `password_reset_console` · Category: vm · Risk: **medium** · Approval required for operators
   - Pick a VM from live dropdown (grouped by project/tenant) — uses `x-lookup: "vms"` schema
   - Enter new password or leave blank for auto-generated secure password
   - Calls Nova `changePassword` API; on Linux VMs config_drive ensures cloud-init delivers the change reliably
+  - **Requires `qemu-guest-agent`** inside the Linux VM guest — without it Nova returns 202 but the password is silently never applied. VMs provisioned from v1.83.20 onward have the agent pre-installed via cloud-init. For older VMs verify with `systemctl status qemu-guest-agent`.
+  - Result includes `guest_agent_warning` field for all Linux VMs as a reminder
   - Optional: retrieve noVNC/SPICE console URL for immediate post-reset verification
   - Full audit trail in `runbook_executions` table
 - **Docs Viewer Tab** (v1.83.12 — NEW ✨):

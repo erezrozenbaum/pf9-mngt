@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.19  
+**Version**: 1.83.20  
 **Last Updated**: March 31, 2026  
 **Audience**: System administrators and platform operators
 
@@ -912,7 +912,7 @@ Network gaps in the PCD Readiness panel now auto-resolve when the source network
 - **Pluggable Engine Architecture**: `@register_engine` decorator pattern allows adding new runbooks with zero framework changes
 - **DB Migration**: `db/migrate_runbooks.sql` for existing databases (4 new tables: `runbooks`, `runbook_approval_policies`, `runbook_executions`, `runbook_approvals`). `db/migrate_new_runbooks.sql` for adding the 7 new runbooks (v1.25+).
 
-### Reset VM Password Runbook (v1.83.12 — NEW ✨)
+### Reset VM Password Runbook (v1.83.12, updated v1.83.20)
 
 The `password_reset_console` runbook lets operators reset a Linux or Windows VM password directly from the UI without SSH access.
 
@@ -922,6 +922,16 @@ The `password_reset_console` runbook lets operators reset a Linux or Windows VM 
 3. Submits — triggers Nova `changePassword` API call against the VM
 4. Console URL is returned if **Enable Console** is ticked (noVNC or SPICE link with configurable expiry)
 5. Full entry written to `runbook_executions` audit table
+
+**Linux requirement — `qemu-guest-agent` (v1.83.20):**
+Nova's `changePassword` API delivers the new password through the QEMU hypervisor channel (`/dev/virtio-ports/org.qemu.guest_agent.0`). The guest OS only receives and applies the change if `qemu-guest-agent` is installed and running inside the VM. Without it, Nova returns HTTP 202 (accepted) but the password is **silently never applied**.
+
+From v1.83.20, the Linux cloud-init provisioning payload automatically installs and enables the agent at first boot, so all VMs provisioned after this release are covered. For VMs provisioned earlier, operators should verify before using this runbook:
+```bash
+systemctl status qemu-guest-agent
+# If not present: apt install qemu-guest-agent && systemctl enable --now qemu-guest-agent
+```
+The runbook result always includes a `guest_agent_warning` field for Linux VMs as a reminder.
 
 **Why `config_drive` matters (Linux):**
 Without `config_drive: True` in the Nova server create request, cloud-init attempts to fetch user-data from the Nova metadata service (`169.254.169.254`). In Kubernetes deployments where the Neutron DHCP agent is absent or the VM is assigned a static IP, this endpoint may be unreachable at first boot. The result is that cloud-init runs with no user-data — passwords set during provisioning are silently discarded. The v1.83.12 fix ensures `config_drive` is always requested, delivering user-data as a local ISO that cloud-init can read without any network dependency.

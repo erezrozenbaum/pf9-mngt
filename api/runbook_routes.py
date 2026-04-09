@@ -1795,6 +1795,7 @@ def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
     # Check cloud-init support via image metadata
     cloud_init_supported = True
     cloud_init_note = ""
+    is_windows = False
     img_id = server.get("image", {}).get("id", "")
     if img_id:
         try:
@@ -1803,6 +1804,7 @@ def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
                 img_data = img_resp.json()
                 os_type = (img_data.get("os_type", "") or img_data.get("os", "") or "").lower()
                 if "windows" in os_type:
+                    is_windows = True
                     cloud_init_note = "Windows detected — cloudbase-init required"
                 elif not os_type:
                     cloud_init_note = "OS type unknown — cloud-init support uncertain"
@@ -1812,10 +1814,22 @@ def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
         cloud_init_note = "No image reference — booted from volume?"
         cloud_init_supported = True  # Assume supported
 
+    # Warn if the VM may not have qemu-guest-agent (required for Nova changePassword to
+    # take effect on Linux). VMs provisioned before v1.83.20 did not receive the agent
+    # via cloud-init; the Nova API call returns 202 but the password is silently discarded.
+    guest_agent_warning = None
+    if not is_windows:
+        guest_agent_warning = (
+            "qemu-guest-agent must be installed and running inside the VM for "
+            "Nova changePassword to take effect. VMs provisioned before v1.83.20 "
+            "may not have it — verify with: systemctl status qemu-guest-agent"
+        )
+
     result: Dict[str, Any] = {
         "server_id": server_id,
         "server_name": vm_name,
         "cloud_init_check": {"supported": cloud_init_supported, "note": cloud_init_note},
+        "guest_agent_warning": guest_agent_warning,
         "password_reset": {"attempted": False},
         "console_access": {"attempted": False},
         "audit": {
