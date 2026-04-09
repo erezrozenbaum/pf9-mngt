@@ -363,5 +363,7 @@ jobs:
 
       - name: TypeScript type-check (inside container)
         # tsc -b runs inside the same node:20-alpine image used in production.
+        # NODE_OPTIONS raises the V8 heap limit from the default ~1.5 GB to 4 GB —
+        # required for tsc to complete on this codebase without OOM (SIGABRT).
         # No Node.js installed on the CI runner host.
-        run: docker compose run --rm --no-deps pf9_ui sh -c "npm run typecheck"
+        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run typecheck"

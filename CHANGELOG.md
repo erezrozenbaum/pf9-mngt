@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.22] - 2026-04-09
+
+### Fixed
+- **CI — TypeScript check OOM (SIGABRT) inside container**: `tsc -b` ran out of V8 heap memory inside the `node:20-alpine` container (`FATAL ERROR: Ineffective mark compacts near heap limit`). The default Node.js heap ceiling (~1.5 GB) is too low for the codebase size. Fixed by passing `-e NODE_OPTIONS="--max-old-space-size=4096"` to `docker compose run`, raising the heap to 4 GB. Verified locally: `tsc -b` exits 0 with no errors.
+
 ## [1.83.21] - 2026-04-09
 
 ### Fixed
