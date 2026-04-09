@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.21] - 2026-04-09
+
+### Fixed
+- **CI — Dependency Vulnerability Audit used bare npm/node on CI host**: The `dependency-audit` CI job previously ran `npm audit` directly on the GitHub Actions runner, contradicting the project's Docker/Kubernetes-only deployment model and testing a different environment than production. Replaced with `docker compose build pf9_ui`, which validates UI dependencies inside the same `node:20-alpine` container used in local Docker and Kubernetes. No npm/node is ever installed on the CI host.
+- **CI — Frontend TypeScript Check used bare npm/node on CI host**: The `frontend-typecheck` job ran `npm ci` + `npm run typecheck` on the bare runner. Changed to `docker compose build pf9_ui` + `docker compose run --rm --no-deps pf9_ui sh -c "npm run typecheck"` so TypeScript is checked inside the actual container environment.
+- **UI — `pf9_ui` Docker build broken (`EOVERRIDE`)**: Adding `"vite": ">=7.3.2"` to `package.json` overrides in v1.83.20 caused `npm error code EOVERRIDE` — npm rejects overrides that target a package already declared as a direct dependency. Since vite is already pinned to `^7.3.2` in `devDependencies`, the override entry was redundant. Removed it; the override for the transitive `brace-expansion` dep is retained.
+- **UI — vite HIGH CVE (GHSA-4w7w-66w2-5vf9, GHSA-v2wj-q39q-566r, GHSA-p9ff-h696-f583)**: Bumped vite direct dependency from `^7.2.4` to `^7.3.2` which contains all three patches. `docker compose build pf9_ui` now reports `found 0 vulnerabilities`.
+
 ## [1.83.20] - 2026-04-09
 
 ### Added

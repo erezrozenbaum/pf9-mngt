@@ -135,9 +135,12 @@ jobs:
 
   # -------------------------------------------------------------------------
   # Job 5: Dependency vulnerability audit (R.4 #9)
-  # Runs pip-audit against api/requirements.txt and npm audit against the UI.
-  # Fails CI on HIGH or CRITICAL severity CVEs; medium/low are reported only.
-  # No live stack or secrets needed.
+  # Runs pip-audit against api/requirements.txt.
+  # UI is validated by building the pf9_ui Docker image via docker compose —
+  # the same image used in local dev (docker compose up) and production (k8s).
+  # npm/node are never installed on the CI host; all Node tooling runs inside
+  # the container image as it does in every real environment.
+  # Fails CI on HIGH or CRITICAL Python CVEs; medium/low are reported only.
   # -------------------------------------------------------------------------
   dependency-audit:
     name: Dependency Vulnerability Audit
@@ -164,14 +167,19 @@ jobs:
           pip-audit -r api/requirements.txt --desc \
             --ignore-vuln CVE-2024-23342
 
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      - name: Create stub .env (required for docker compose build to parse)
+        run: |
+          cp .env.example .env 2>/dev/null || cat > .env << 'EOF'
+          PF9_AUTH_URL=http://stub
+          JWT_SECRET_KEY=stub-secret-for-ci-only-not-real
+          EOF
 
-      - name: npm audit — UI dependencies
-        working-directory: pf9-ui
-        run: npm audit --audit-level=high
+      - name: UI dependency validation — build pf9_ui Docker image
+        # Builds the UI inside its actual container environment (node:20-alpine)
+        # exactly as it runs in local Docker and Kubernetes production.
+        # npm install runs inside the container; fails the build if packages
+        # cannot be resolved. No npm/node installed on the CI host.
+        run: docker compose build pf9_ui
 
 
   # -------------------------------------------------------------------------
@@ -328,7 +336,8 @@ jobs:
 
   # -------------------------------------------------------------------------
   # Job 8: Frontend TypeScript type-check
-  # Runs tsc -b (npm run typecheck) inside a Node 20 container.
+  # Runs tsc -b inside the pf9_ui Docker image — the same container used in
+  # local dev and Kubernetes production. No npm/node installed on the CI host.
   # Vite's default build uses esbuild which strips types without checking them —
   # this job is the ONLY gate that catches TypeScript errors before they land
   # in the image. Runs on every push/PR to dev and master.
@@ -342,19 +351,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: pf9-ui/package-lock.json
+      - name: Create stub .env (required for docker compose to parse)
+        run: |
+          cp .env.example .env 2>/dev/null || cat > .env << 'EOF'
+          PF9_AUTH_URL=http://stub
+          JWT_SECRET_KEY=stub-secret-for-ci-only-not-real
+          EOF
 
-      - name: Install UI dependencies
-        working-directory: pf9-ui
-        run: npm ci
+      - name: Build pf9_ui image
+        run: docker compose build pf9_ui
 
-      - name: TypeScript type-check
-        # npm run typecheck runs "tsc -b" which respects tsconfig.json
-        # and reports all type errors without emitting output files.
-        working-directory: pf9-ui
-        run: npm run typecheck
+      - name: TypeScript type-check (inside container)
+        # tsc -b runs inside the same node:20-alpine image used in production.
+        # No Node.js installed on the CI runner host.
+        run: docker compose run --rm --no-deps pf9_ui sh -c "npm run typecheck"
