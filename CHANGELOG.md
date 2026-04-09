@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.23] - 2026-04-09
+
+### Fixed
+- **Release build — `npm ci` fails: lock file out of sync with `package.json`**: `Dockerfile.prod` uses `npm ci --ignore-scripts` which requires the lockfile to exactly match `package.json`. Changing `vite` to `^7.3.2` and adding `brace-expansion >=5.0.5` in v1.83.21/22 updated `package.json` but not `package-lock.json`, causing `npm error Invalid: lock file's vite@7.3.1 does not satisfy vite@7.3.2`. Regenerated `package-lock.json` inside `node:20-alpine` (same image as the build); `npm ci` now resolves `vite@7.3.2` and `brace-expansion@5.0.5` cleanly.
+- **UI build context — missing `pf9-ui/.dockerignore`**: `pf9-ui/` had no `.dockerignore`. After running `npm install` locally the resulting `node_modules/` was sent to the Docker build context, causing `invalid file request node_modules/.bin/acorn`. Added `pf9-ui/.dockerignore` to exclude `node_modules`, `dist`, `.env`, and `*.local`.
+
 ## [1.83.22] - 2026-04-09
 
 ### Fixed
