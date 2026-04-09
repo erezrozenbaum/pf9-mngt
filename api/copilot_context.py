@@ -51,8 +51,8 @@ def build_infra_context(redact: bool = False) -> str:
     sections: list[str] = []
 
     try:
-        with get_connection() as conn:
-            cur = conn.cursor(cursor_factory=RealDictCursor)
+        with get_connection() as conn, \
+             conn.cursor(cursor_factory=RealDictCursor) as cur:
 
             # --- Counts ---------------------------------------------------
             cur.execute("""

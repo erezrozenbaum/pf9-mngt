@@ -1250,7 +1250,7 @@ async def get_users(current_user: dict = Depends(get_current_user)):
                             'department_name': row['department_name'],
                         }
         except Exception as e:
-            logger.warning(f"Could not load departments: {e}")
+            logger.warning("Could not load departments: %s", e)
         
         # Get roles from database for each user
         for user in users:
@@ -1264,7 +1264,7 @@ async def get_users(current_user: dict = Depends(get_current_user)):
         
         return users
     except Exception as e:
-        logger.error(f"Error retrieving users: {e}")
+        logger.error("Error retrieving users: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve users"
@@ -1282,11 +1282,11 @@ async def get_roles(current_user: dict = Depends(get_current_user)):
         
         # Count roles from actual user data
         role_counts = {"superadmin": 0, "admin": 0, "technical": 0, "operator": 0, "viewer": 0}
-        logger.info(f"[/auth/roles] Initialized role_counts: {role_counts}")
+        logger.info("[/auth/roles] Initialized role_counts: %s", role_counts)
         
         for user in users:
             username = user.get('username') or user.get('id')
-            logger.info(f"[/auth/roles] Processing user: {username}")
+            logger.info("[/auth/roles] Processing user: %s", username)
             # Get role from database for each user
             role = get_user_role(username)
             logger.info(f"[/auth/roles] User {username} has role: {role}")
@@ -1299,7 +1299,7 @@ async def get_roles(current_user: dict = Depends(get_current_user)):
                 role_counts[role] += 1
                 logger.info(f"[/auth/roles] Incremented {role} count to {role_counts[role]}")
         
-        logger.info(f"[/auth/roles] Final role_counts: {role_counts}")
+        logger.info("[/auth/roles] Final role_counts: %s", role_counts)
         return [
             {"id": 1, "name": "superadmin", "description": "Full system access", "userCount": role_counts["superadmin"]},
             {"id": 2, "name": "admin", "description": "Administrative access", "userCount": role_counts["admin"]},
@@ -1309,9 +1309,9 @@ async def get_roles(current_user: dict = Depends(get_current_user)):
         ]
         
     except Exception as e:
-        logger.error(f"[/auth/roles] EXCEPTION: {e}", exc_info=True)
+        logger.error("[/auth/roles] EXCEPTION: %s", e, exc_info=True)
         import traceback
-        logger.error(f"[/auth/roles] Traceback: {traceback.format_exc()}")
+        logger.error("[/auth/roles] Traceback: %s", traceback.format_exc())
         # Return default structure with 0 counts if LDAP fails
         return [
             {"id": 1, "name": "superadmin", "description": "Full system access", "userCount": 0},
@@ -1373,7 +1373,7 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
                 raise Exception("No permissions in database")
 
     except Exception as e:
-        logger.error(f"Error getting permissions: {e}")
+        logger.error("Error getting permissions: %s", e)
         import traceback
         traceback.print_exc()
         # Return comprehensive fallback permissions matching actual UI tabs
@@ -1464,7 +1464,7 @@ async def update_permission(
         )
         return {"ok": True, "role": body.role, "resource": body.resource, "action": body.action, "enabled": body.enabled}
     except Exception as e:
-        logger.error(f"Error updating permission: {e}")
+        logger.error("Error updating permission: %s", e)
         raise HTTPException(500, f"Failed to update permission: {str(e)}")
 
 @app.post("/auth/users")
@@ -1506,7 +1506,7 @@ async def create_user(request: Request, user_data: dict, current_user: User = De
                 detail="Failed to create user in LDAP"
             )
     except Exception as e:
-        logger.error(f"Error creating user: {e}")
+        logger.error("Error creating user: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
@@ -1549,7 +1549,7 @@ async def delete_user(request: Request, username: str, current_user: User = Depe
                 detail="Failed to delete user from LDAP"
             )
     except Exception as e:
-        logger.error(f"Error deleting user: {e}")
+        logger.error("Error deleting user: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
@@ -1649,7 +1649,7 @@ async def get_audit_logs(
                 
                 return logs
     except Exception as e:
-        logger.error(f"Error fetching audit logs: {e}")
+        logger.error("Error fetching audit logs: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch audit logs"
@@ -5753,7 +5753,7 @@ def get_branding():
                 settings.pop(_k, None)
             return settings
     except Exception as e:
-        logger.error(f"Failed to fetch branding settings: {e}")
+        logger.error("Failed to fetch branding settings: %s", e)
         return {
             "company_name": "PF9 Management System",
             "company_subtitle": "Platform9 Infrastructure Management",
@@ -5849,7 +5849,7 @@ async def upload_branding_logo(
                     (key, val),
                 )
     except Exception as e:
-        logger.error(f"Failed to save logo to DB: {e}")
+        logger.error("Failed to save logo to DB: %s", e)
     return {"status": "success", "logo_url": logo_url}
 
 
@@ -6039,7 +6039,7 @@ def get_drift_summary(
                 "trend_7d": [{"day": str(r["day"]), "count": r["count"]} for r in trend],
             }
     except Exception as e:
-        logger.error(f"Drift summary error: {e}")
+        logger.error("Drift summary error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -6151,7 +6151,7 @@ def list_drift_events(
                 "total_pages": max(1, -(-total // page_size)),
             }
     except Exception as e:
-        logger.error(f"Drift events list error: {e}")
+        logger.error("Drift events list error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -7362,7 +7362,7 @@ async def reset_environment_data(
                 cur.execute(f"TRUNCATE {tables_sql} RESTART IDENTITY CASCADE")
             except Exception as e:
                 conn.rollback()
-                logger.error(f"Data reset failed: {e}")
+                logger.error("Data reset failed: %s", e)
                 raise HTTPException(500, f"Data reset failed: {str(e)}")
 
     total_rows = sum(purged.values())

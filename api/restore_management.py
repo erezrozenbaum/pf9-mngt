@@ -76,7 +76,7 @@ def _resolve_service_user_password() -> str:
             f = Fernet(key.encode() if isinstance(key, str) else key)
             return f.decrypt(encrypted.encode() if isinstance(encrypted, str) else encrypted).decode()
         except Exception as e:
-            logger.error(f"Failed to decrypt service user password: {e}")
+            logger.error("Failed to decrypt service user password: %s", e)
     return ""
 
 
@@ -264,7 +264,7 @@ class RestoreOpenStackClient:
         r = admin_session.put(url, timeout=30)
         if r.status_code not in (200, 201, 204):
             raise RuntimeError(f"Failed to assign admin role: {r.status_code} {r.text}")
-        logger.info(f"Granted admin role to service user on project {project_id}")
+        logger.info("Granted admin role to service user on project %s", project_id)
 
     def _extract_endpoints(self, catalog: list):
         for svc in catalog:
@@ -665,7 +665,7 @@ class RestorePlanner:
                     nova_quota, cinder_quota, flavor_data, source_volume, req.mode
                 )
             except Exception as e:
-                logger.warning(f"Could not fetch quota: {e}")
+                logger.warning("Could not fetch quota: %s", e)
                 quota_check["reasons"].append(f"Could not verify quota: {str(e)}")
 
             # 12. Fetch original VM's user_data (cloud-init) so it can be re-applied
@@ -1388,7 +1388,7 @@ class RestoreExecutor:
             try:
                 self.os_client.delete_port(session, port_id)
                 cleaned.append(port_id)
-                logger.info(f"Cleaned up old port {port_id}")
+                logger.info("Cleaned up old port %s", port_id)
             except Exception as e:
                 # Port may already be gone (auto-deleted by Nova) — that's fine
                 skipped.append({"port_id": port_id, "reason": str(e)})
@@ -1487,7 +1487,7 @@ class RestoreExecutor:
                     else:
                         self.os_client.delete_volume(session, project_id, old_vol_id)
                         result["deleted_volumes"].append(old_vol_id)
-                        logger.info(f"Deleted orphaned original volume {old_vol_id}")
+                        logger.info("Deleted orphaned original volume %s", old_vol_id)
                 except Exception as e:
                     msg = f"Failed to delete old volume {old_vol_id}: {e}"
                     result["errors"].append(msg)
@@ -1509,7 +1509,7 @@ class RestoreExecutor:
                     else:
                         self.os_client.delete_snapshot(session, project_id, snap_id)
                         result["deleted_snapshots"].append(snap_id)
-                        logger.info(f"Deleted source snapshot {snap_id}")
+                        logger.info("Deleted source snapshot %s", snap_id)
                 except Exception as e:
                     msg = f"Failed to delete snapshot {snap_id}: {e}"
                     result["errors"].append(msg)
@@ -1659,7 +1659,7 @@ class RestoreExecutor:
         self, session: http_requests.Session, project_id: str, resources: dict
     ):
         """Best-effort cleanup of resources created during a failed restore."""
-        logger.info(f"Cleaning up resources: {resources}")
+        logger.info("Cleaning up resources: %s", resources)
 
         # Delete server first (if created)
         if resources.get("server_id") and not RESTORE_DRY_RUN:
@@ -1667,7 +1667,7 @@ class RestoreExecutor:
                 self.os_client.delete_server(session, resources["server_id"])
                 logger.info(f"Cleaned up server {resources['server_id']}")
             except Exception as e:
-                logger.warning(f"Failed to cleanup server: {e}")
+                logger.warning("Failed to cleanup server: %s", e)
 
         # Delete ports
         for port_id in resources.get("port_ids", []):
@@ -1675,7 +1675,7 @@ class RestoreExecutor:
                 continue
             try:
                 self.os_client.delete_port(session, port_id)
-                logger.info(f"Cleaned up port {port_id}")
+                logger.info("Cleaned up port %s", port_id)
             except Exception as e:
                 logger.warning(f"Failed to cleanup port {port_id}: {e}")
 
@@ -1798,7 +1798,7 @@ def setup_restore_routes(app):
             if count:
                 logger.warning(f"Marked {count} stale restore job(s) as INTERRUPTED on startup")
     except Exception as e:
-        logger.error(f"Failed to recover stale restore jobs on startup: {e}")
+        logger.error("Failed to recover stale restore jobs on startup: %s", e)
 
     # ------------------------------------------------------------------
     # GET /restore/quota/{project_id}  — free resources for a project
@@ -2043,7 +2043,7 @@ def setup_restore_routes(app):
                             for snap in r.json().get("snapshots", []):
                                 live_snapshots.append(snap)
                 except Exception as ex:
-                    logger.warning(f"Failed to query Cinder for live snapshots: {ex}")
+                    logger.warning("Failed to query Cinder for live snapshots: %s", ex)
 
                 # Merge: local DB snapshots + live Cinder snapshots (deduplicated)
                 seen_ids = set()
@@ -2117,7 +2117,7 @@ def setup_restore_routes(app):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to build restore plan: {e}")
+            logger.error("Failed to build restore plan: %s", e)
             raise HTTPException(500, f"Failed to build restore plan: {str(e)}")
 
     # ------------------------------------------------------------------

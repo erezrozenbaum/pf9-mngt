@@ -89,7 +89,7 @@ def ensure_tables():
                         with open(migration_path) as f:
                             cur.execute(f.read())
     except Exception as e:
-        logger.warning(f"Could not ensure notification tables: {e}")
+        logger.warning("Could not ensure notification tables: %s", e)
 
 
 # Run on import

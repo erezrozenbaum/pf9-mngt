@@ -210,17 +210,17 @@ def _ensure_phase4_tables():
 try:
     _ensure_tables()
 except Exception as e:
-    logger.warning(f"Could not ensure migration tables on startup: {e}")
+    logger.warning("Could not ensure migration tables on startup: %s", e)
 
 try:
     _ensure_activity_log_table()
 except Exception as e:
-    logger.warning(f"Could not ensure activity_log table: {e}")
+    logger.warning("Could not ensure activity_log table: %s", e)
 
 try:
     _ensure_phase4_tables()
 except Exception as e:
-    logger.warning(f"Could not ensure phase4 tables on startup: {e}")
+    logger.warning("Could not ensure phase4 tables on startup: %s", e)
 
 
 def _ensure_prep_approval_tables():
@@ -270,7 +270,7 @@ def _ensure_prep_approval_tables():
 try:
     _ensure_prep_approval_tables()
 except Exception as e:
-    logger.warning(f"Could not ensure prep approval tables on startup: {e}")
+    logger.warning("Could not ensure prep approval tables on startup: %s", e)
 
 
 def _ensure_narrative_columns():
@@ -292,7 +292,7 @@ def _ensure_narrative_columns():
 try:
     _ensure_narrative_columns()
 except Exception as e:
-    logger.warning(f"Could not ensure narrative columns on startup: {e}")
+    logger.warning("Could not ensure narrative columns on startup: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +315,7 @@ def _log_activity(
                 """, (actor, action, resource_type, resource_id, resource_name,
                       Json(details or {}), result, error_message))
     except Exception as e:
-        logger.error(f"Failed to write activity log: {e}")
+        logger.error("Failed to write activity log: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -4767,7 +4767,7 @@ async def run_pcd_gap_analysis(project_id: str, user=Depends(get_current_user)):
                 pcd_error = "PCD credentials not configured. Set PF9_AUTH_URL, PF9_USERNAME, PF9_PASSWORD in .env or project PCD settings."
     except Exception as e:
         pcd_error = str(e)
-        logger.warning(f"PCD gap analysis: could not connect to PCD: {e}")
+        logger.warning("PCD gap analysis: could not connect to PCD: %s", e)
 
     # ΓפאΓפא Run gap analysis ΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפאΓפא
     gaps = analyze_pcd_gaps(tenants, pcd_flavors, pcd_networks, pcd_images, vms)

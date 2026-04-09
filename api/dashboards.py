@@ -56,7 +56,7 @@ async def get_rvtools_last_run():
                     "run_id": row["id"],
                 }
     except Exception as e:
-        logger.warning(f"Could not query inventory_runs: {e}")
+        logger.warning("Could not query inventory_runs: %s", e)
 
     # Fallback: check for Excel files on disk
     report_dir = os.getenv("RVTOOLS_REPORT_DIR", "/mnt/reports")
@@ -465,7 +465,7 @@ def _safe_count_query(cursor: RealDictCursor, query: str, params: tuple) -> int:
         row = cursor.fetchone() or {}
         return int(list(row.values())[0]) if row else 0
     except Exception as e:
-        logger.warning(f"Safe count query failed: {e}")
+        logger.warning("Safe count query failed: %s", e)
         return 0
 
 
@@ -625,7 +625,7 @@ async def get_health_summary(
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
     except Exception as e:
-        logger.error(f"Error in get_health_summary: {e}")
+        logger.error("Error in get_health_summary: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -767,7 +767,7 @@ async def get_snapshot_sla_compliance():
             }
         
     except Exception as e:
-        logger.error(f"Error in get_snapshot_sla_compliance: {e}")
+        logger.error("Error in get_snapshot_sla_compliance: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -948,7 +948,7 @@ async def get_top_hosts_utilization(limit: int = Query(5, ge=1, le=20), sort: st
             }
         
     except Exception as e:
-        logger.error(f"Error in get_top_hosts_utilization: {e}")
+        logger.error("Error in get_top_hosts_utilization: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1087,7 +1087,7 @@ async def get_recent_changes(hours: int = Query(24, ge=1, le=720)):
             }
         
     except Exception as e:
-        logger.error(f"Error in get_recent_changes: {e}")
+        logger.error("Error in get_recent_changes: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1197,7 +1197,7 @@ async def get_coverage_risks():
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
     except Exception as e:
-        logger.error(f"Error in get_coverage_risks: {e}")
+        logger.error("Error in get_coverage_risks: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1264,7 +1264,7 @@ async def get_capacity_pressure():
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
     except Exception as e:
-        logger.error(f"Error in get_capacity_pressure: {e}")
+        logger.error("Error in get_capacity_pressure: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1353,7 +1353,7 @@ async def get_vm_hotspots(limit: int = Query(5, ge=1, le=20), sort: str = Query(
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
-        logger.error(f"Error in get_vm_hotspots: {e}")
+        logger.error("Error in get_vm_hotspots: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1399,7 +1399,7 @@ async def get_change_compliance(hours: int = Query(24, ge=1, le=720)):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
     except Exception as e:
-        logger.error(f"Error in get_change_compliance: {e}")
+        logger.error("Error in get_change_compliance: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1415,7 +1415,7 @@ async def get_tenant_risk_scores():
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
-        logger.error(f"Error in get_tenant_risk_scores: {e}")
+        logger.error("Error in get_tenant_risk_scores: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1432,7 +1432,7 @@ async def get_tenant_risk_heatmap():
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
-        logger.error(f"Error in get_tenant_risk_heatmap: {e}")
+        logger.error("Error in get_tenant_risk_heatmap: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1523,7 +1523,7 @@ async def get_trendlines(days: int = Query(14, ge=7, le=90)):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
     except Exception as e:
-        logger.error(f"Error in get_trendlines: {e}")
+        logger.error("Error in get_trendlines: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1581,7 +1581,7 @@ async def get_capacity_trends(days: int = Query(30, ge=7, le=180)):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
     except Exception as e:
-        logger.error(f"Error in get_capacity_trends: {e}")
+        logger.error("Error in get_capacity_trends: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1649,7 +1649,7 @@ async def get_compliance_drift():
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
     except Exception as e:
-        logger.error(f"Error in get_compliance_drift: {e}")
+        logger.error("Error in get_compliance_drift: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1699,7 +1699,7 @@ async def get_tenant_summary():
             }
         
     except Exception as e:
-        logger.error(f"Error in get_tenant_summary: {e}")
+        logger.error("Error in get_tenant_summary: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1758,5 +1758,5 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
         best = max(candidates, key=score_candidate)
         return best
     except Exception as e:
-        logger.warning(f"Could not load metrics cache: {e}")
+        logger.warning("Could not load metrics cache: %s", e)
         return None

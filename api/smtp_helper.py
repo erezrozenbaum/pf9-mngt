@@ -18,6 +18,7 @@ send_raw(msg, to_addrs)
     Used by callers that build their own MIMEMultipart (e.g. personalised emails).
 """
 import os
+import json
 import logging
 import smtplib
 import ssl
@@ -42,7 +43,26 @@ SMTP_FROM_NAME    = os.getenv("SMTP_FROM_NAME", "Platform9 Management")
 
 
 def _load_db_smtp_override() -> dict:
-    """Load SMTP overrides from system_settings table (DB-configured SMTP beats env vars)."""
+    """Load SMTP overrides from system_settings table (DB-configured SMTP beats env vars).
+
+    Result is cached in Redis for 60 seconds to avoid a DB hit on every email send.
+    Falls back to a direct DB query if Redis is unavailable.
+    """
+    _CACHE_KEY = "pf9:smtp_config_override"
+    _CACHE_TTL = 60
+
+    # Try Redis cache first
+    try:
+        from cache import _get_client as _redis_client
+        rc = _redis_client()
+        if rc is not None:
+            cached = rc.get(_CACHE_KEY)
+            if cached is not None:
+                return json.loads(cached)
+    except Exception:
+        pass  # Redis unavailable — fall through to DB
+
+    # DB query
     try:
         from db_pool import get_connection as _gc
         with _gc() as conn:
@@ -50,9 +70,20 @@ def _load_db_smtp_override() -> dict:
                 cur.execute(
                     "SELECT key, value FROM system_settings WHERE key LIKE 'smtp.%%'"
                 )
-                return {row[0]: row[1] for row in cur.fetchall()}
+                result = {row[0]: row[1] for row in cur.fetchall()}
     except Exception:
         return {}
+
+    # Store in Redis cache
+    try:
+        from cache import _get_client as _redis_client
+        rc = _redis_client()
+        if rc is not None:
+            rc.setex(_CACHE_KEY, _CACHE_TTL, json.dumps(result))
+    except Exception:
+        pass
+
+    return result
 
 
 def get_smtp_config() -> dict:

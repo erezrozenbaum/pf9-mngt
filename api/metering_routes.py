@@ -1901,7 +1901,7 @@ async def sync_flavors_to_pricing(
         client = get_registry().get_default_region()
         live_flavors = client.list_flavors()
     except Exception as e:
-        logger.error(f"Failed to fetch live flavors from OpenStack: {e}")
+        logger.error("Failed to fetch live flavors from OpenStack: %s", e)
         raise HTTPException(status_code=502, detail=f"Cannot reach OpenStack Nova to list flavors: {e}")
 
     live_names = {f["name"] for f in live_flavors}

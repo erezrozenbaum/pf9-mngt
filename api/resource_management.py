@@ -73,7 +73,7 @@ def _log_activity(
                       domain_id, domain_name, Json(details or {}),
                       ip_address, result, error_message))
     except Exception as e:
-        logger.error(f"Failed to write activity log: {e}")
+        logger.error("Failed to write activity log: %s", e)
 
 
 def _get_ip(request: Request) -> str:
@@ -329,7 +329,7 @@ async def add_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Add user failed: {e}")
+        logger.error("Add user failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -385,7 +385,7 @@ async def remove_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Remove user failed: {e}")
+        logger.error("Remove user failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -420,7 +420,7 @@ async def assign_role(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Assign role failed: {e}")
+        logger.error("Assign role failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -507,7 +507,7 @@ async def create_flavor(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create flavor failed: {e}")
+        logger.error("Create flavor failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -549,7 +549,7 @@ async def delete_flavor(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete flavor failed: {e}")
+        logger.error("Delete flavor failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -673,7 +673,7 @@ async def create_network(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create network failed: {e}")
+        logger.error("Create network failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -704,7 +704,7 @@ async def delete_network(
         raise
     except Exception as e:
         err_str = str(e)
-        logger.error(f"Delete network failed: {e}")
+        logger.error("Delete network failed: %s", e)
         # Neutron 403 on a network owned by a deleted project means we have no valid
         # owner-scoped token (project gone) and the service account lacks OpenStack
         # admin role.  Return a 403 with a clear human-readable explanation instead
@@ -791,7 +791,7 @@ async def create_router(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create router failed: {e}")
+        logger.error("Create router failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -821,7 +821,7 @@ async def delete_router(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete router failed: {e}")
+        logger.error("Delete router failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -855,7 +855,7 @@ async def add_router_interface(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Add router interface failed: {e}")
+        logger.error("Add router interface failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -889,7 +889,7 @@ async def remove_router_interface(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Remove router interface failed: {e}")
+        logger.error("Remove router interface failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -970,7 +970,7 @@ async def allocate_floating_ip(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Allocate floating IP failed: {e}")
+        logger.error("Allocate floating IP failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1000,7 +1000,7 @@ async def release_floating_ip(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Release floating IP failed: {e}")
+        logger.error("Release floating IP failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1088,7 +1088,7 @@ async def create_volume(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create volume failed: {e}")
+        logger.error("Create volume failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1136,7 +1136,7 @@ async def delete_volume(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete volume failed: {e}")
+        logger.error("Delete volume failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1208,7 +1208,7 @@ async def create_security_group(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create security group failed: {e}")
+        logger.error("Create security group failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1238,7 +1238,7 @@ async def delete_security_group(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete security group failed: {e}")
+        logger.error("Delete security group failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1280,7 +1280,7 @@ async def create_sg_rule(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Create SG rule failed: {e}")
+        logger.error("Create SG rule failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1310,7 +1310,7 @@ async def delete_sg_rule(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete SG rule failed: {e}")
+        logger.error("Delete SG rule failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1460,7 +1460,7 @@ async def update_quotas(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Update quotas failed: {e}")
+        logger.error("Update quotas failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

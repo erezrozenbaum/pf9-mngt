@@ -2,7 +2,7 @@
 
 ## 🛡️ Security Status Overview
 
-**Last Updated**: March 2026
+**Last Updated**: April 2026
 **Security Level**: � **HIGH** — Active hardening in place; production-ready with TLS, RBAC, injection mitigations, session revocation, and Docker secrets support.
 
 ### ✅ **Implemented Security Features**
@@ -18,7 +18,7 @@
 9. **SQL Injection Prevention**: Parameterized queries throughout codebase
 10. **LDAP Injection Prevention**: All LDAP filter values escaped with `ldap.filter.escape_filter_chars()` (Phase A3)
 11. **Command Injection Prevention**: All SSH commands use `shlex.quote()` + allowlist validation (Phase A4)
-12. **XSS Prevention**: DOMPurify applied to all user-generated HTML rendered in the UI (Phase B1)
+12. **XSS Prevention**: DOMPurify applied to all user-generated HTML rendered in the UI — `CopilotPanel`, `OpsSearch`, and `DocsTab` all sanitize markdown output with `DOMPurify.sanitize()` before injecting into the DOM (v1.83.24+)
 13. **Git Security**: Credentials excluded from version control via .gitignore; `secrets/` directory gitignored with exception for README
 14. **Type Safety**: TypeScript usage in UI prevents certain classes of vulnerabilities
 15. **Multi-Factor Authentication (MFA)**: TOTP-based 2FA with Google Authenticator, backup recovery codes, and two-step JWT challenge flow

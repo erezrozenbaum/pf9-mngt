@@ -8,27 +8,31 @@ when images are published, and how to work with the pipeline as a contributor or
 ## Overview
 
 ```
-git push / PR
+git push / PR  (dev or master branches only)
      │
      ▼
-┌──────────────────────────────────────┐
-│  .github/workflows/ci.yml  (CI)      │
-│                                      │
-│  1. lint                             │
-│  2. compose-validate                 │
-│  3. unit-tests       (no stack)      │
-│  4. integration-tests (full stack)   │
-└────────────────┬─────────────────────┘
-                 │  all jobs pass on master/main
-                 ▼
-┌──────────────────────────────────────┐
-│  .github/workflows/release.yml       │
-│                                      │
-│  5. release      (tag + GitHub Release)   │
-│  6. publish-images  → ghcr.io (Docker)   │
-│  7. helm-package    → ghcr.io (OCI Helm) │
-│  8. update-values   → commits values.prod.yaml │
-└──────────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│  .github/workflows/ci.yml  (CI)            │
+│                                            │
+│  1. lint              (Python syntax+flake8)│
+│  2. compose-validate  (YAML sanity check)  │
+│  3. unit-tests        (no stack required)  │
+│  4. dependency-audit  (pip-audit + npm)    │
+│  5. security-scan     (Bandit SAST)        │
+│  6. frontend-typecheck (tsc in Docker)     │
+│  7. frontend-lint     (ESLint in Docker)   │
+│  8. integration-tests (full live stack)    │
+└──────────────────┬─────────────────────────┘
+                   │  all jobs pass on master
+                   ▼
+┌────────────────────────────────────────────┐
+│  .github/workflows/release.yml             │
+│                                            │
+│   9. release       (tag + GitHub Release)  │
+│  10. publish-images → ghcr.io (Docker)     │
+│  11. helm-package   → ghcr.io (OCI Helm)   │
+│  12. update-values  → commits values.prod.yaml │
+└────────────────────────────────────────────┘
 ```
 
 **Key guarantee:** no release tag is created and no Docker image is published unless every
@@ -38,7 +42,7 @@ CI job — including the full integration test suite running against a live stac
 
 ## CI Workflow — `.github/workflows/ci.yml`
 
-Triggers on every `push` and `pull_request` to any branch.
+Triggers on every `push` and `pull_request` to the **`dev`** and **`master`** branches.
 
 ### Job 1 — Lint
 
@@ -46,7 +50,7 @@ Triggers on every `push` and `pull_request` to any branch.
 |------|-----|
 | Python syntax check | `python -m py_compile` across all `.py` files |
 | Critical flake8 errors | `flake8 --select=E9,F63,F7,F82` (undefined names, syntax errors, import failures) |
-| Runs on | `ubuntu-latest`, Python 3.11 |
+| Runs on | `ubuntu-latest`, Python 3.12 |
 
 ### Job 2 — Compose Validate
 
@@ -67,9 +71,49 @@ Runs two test classes that need no running containers:
 
 **Total: 14 unit tests.** All pass in ~1 second on any machine with Python 3.8+.
 
-### Job 4 — Integration Tests (full Docker stack)
+### Job 4 — Dependency Vulnerability Audit
 
-Only runs after Jobs 1–3 all pass. Spins up the complete stack on the GitHub Actions runner.
+| What | How |
+|------|-----|
+| Python packages | `pip-audit -r api/requirements.txt` — fails CI on any CVE (except CVE-2024-23342, ecdsa side-channel, no fix available) |
+| JavaScript/Node | `docker compose build pf9_ui` — validates `npm install` resolves cleanly inside `node:20-alpine` |
+| Runs on | `ubuntu-latest`, Python 3.12 |
+
+---
+
+### Job 5 — SAST Security Scan (Bandit)
+
+| What | How |
+|------|-----|
+| Python OWASP Top-10 scan | Bandit `-lll -iii` — fails CI on HIGH severity findings |
+| Medium findings | Reported as warnings (non-blocking) |
+| Runs on | `ubuntu-latest`, Python 3.12 |
+
+---
+
+### Job 6 — Frontend TypeScript Check
+
+| What | How |
+|------|-----|
+| Type errors | `npm run typecheck` (tsc -b) inside `node:20-alpine` container |
+| Heap | `NODE_OPTIONS=--max-old-space-size=4096` to avoid OOM on large codebase |
+| Runs on | `ubuntu-latest` (Docker host), Node via container |
+
+---
+
+### Job 7 — Frontend ESLint
+
+| What | How |
+|------|-----|
+| React hooks violations, unused vars, lint errors | `npm run lint` (ESLint 9) inside the `pf9_ui` container |
+| Runs on | `ubuntu-latest` (Docker host), Node via container |
+| Depends on | Job 6 (frontend-typecheck) |
+
+---
+
+### Job 8 — Integration Tests (full Docker stack)
+
+Only runs after Jobs 1–7 all pass. Spins up the complete stack on the GitHub Actions runner.
 
 **Step-by-step:**
 

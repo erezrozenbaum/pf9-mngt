@@ -59,7 +59,7 @@ def _ensure_tables():
                             cur.execute(f.read())
                         logger.info("External integrations tables created via auto-migration")
     except Exception as e:
-        logger.warning(f"Could not ensure integration tables on startup: {e}")
+        logger.warning("Could not ensure integration tables on startup: %s", e)
 
 
 try:

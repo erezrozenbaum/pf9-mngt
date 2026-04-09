@@ -1016,14 +1016,13 @@ export default function ProjectSetup({ project, onProjectUpdated, onNavigate }: 
                 
                 let displayTime: string;
                 let copyDisplay: string;
-                let cutoverDisplay: string;
+                const cutoverDisplay = `${Math.ceil(cutoverMinutes)}min cutover`;
                 
                 if (copyTimeMinutes < 60) {
                   copyDisplay = `${Math.ceil(copyTimeMinutes)}min copy`;
                 } else {
                   copyDisplay = `${(copyTimeMinutes/60).toFixed(1)}h copy`;
                 }
-                cutoverDisplay = `${Math.ceil(cutoverMinutes)}min cutover`;
                 
                 if (totalHours < 1) {
                   displayTime = `${Math.ceil(totalMinutes)} min total`;

@@ -52,15 +52,15 @@ class PF9LogCollector:
             known_hosts_path = os.getenv('SSH_KNOWN_HOSTS', os.path.expanduser('~/.ssh/known_hosts'))
             if os.path.isfile(known_hosts_path):
                 client.load_host_keys(known_hosts_path)
-                client.set_missing_host_key_policy(paramiko.WarningPolicy())
+                client.set_missing_host_key_policy(paramiko.RejectPolicy())
             else:
                 import warnings
                 warnings.warn(
                     f"SSH known_hosts file not found at {known_hosts_path}. "
-                    "Using WarningPolicy — set SSH_KNOWN_HOSTS env var for production.",
+                    "Rejecting unknown hosts. Set SSH_KNOWN_HOSTS env var for production.",
                     stacklevel=2,
                 )
-                client.set_missing_host_key_policy(paramiko.WarningPolicy())
+                client.set_missing_host_key_policy(paramiko.RejectPolicy())
             
             # Connect directly to SSH host (no mapping needed)
             if self.ssh_password:

@@ -1,7 +1,7 @@
 # Platform9 Management System - Deployment Guide
 
-**Version**: 2.7
-**Last Updated**: March 25, 2026  
+**Version**: 2.8
+**Last Updated**: April 9, 2026  
 **Status**: Production Ready  
 **Deployment Platform**: Docker Compose (Windows, Linux, macOS)  
 **Alternative (Production HA)**: See [KUBERNETES_GUIDE.md](KUBERNETES_GUIDE.md) for the Kubernetes deployment guide — Helm chart, ArgoCD GitOps, and Sealed Secrets (v1.82.0+)
@@ -50,13 +50,13 @@ PF9_PASSWORD=your-service-password
 EOF
 
 # 3. Start all services
-docker-compose up -d
+docker compose up -d
 
 # Windows automated deployment (includes validation, admin user/role/permission automation, and health checks)
 # .\deployment.ps1
 
 # 4. Wait for services to be ready
-docker-compose ps
+docker compose ps
 
 # 5. Access the system
 # UI: http://localhost:5173
@@ -82,10 +82,10 @@ cd pf9-mngt
 # Option B — Manual setup:
 cp .env.example .env
 # Set DEMO_MODE=true in .env, fill in database/LDAP/admin passwords
-docker-compose up -d --build
+docker compose up -d --build
 pip install psycopg2-binary
 python seed_demo_data.py --db-host localhost --db-port 5432 --db-name pf9_mgmt --db-user pf9 --db-pass <your-password>
-docker-compose restart pf9_api
+docker compose restart pf9_api
 ```
 
 Demo mode pre-populates: 3 domains, 7 projects, 5 hypervisors, 35 VMs, ~50 volumes, ~100 snapshots, networks, subnets, users with RBAC, snapshot policies, compliance reports, drift events, metering pricing, runbooks, and activity log entries. A static metrics cache provides host + VM metrics without real collection.
@@ -143,7 +143,7 @@ For teams that want the database on a separate, backed-up machine:
 
 1. Run PostgreSQL on the dedicated host
 2. Set `POSTGRES_HOST=<db-host-ip>` in `.env`
-3. Remove the `pf9_db` service from your compose run: `docker-compose up -d --scale pf9_db=0`
+3. Remove the `pf9_db` service from your compose run: `docker compose up -d --scale pf9_db=0`
 4. Ensure `pg_hba.conf` on the DB host allows the app host's IP
 
 **When to use:** When you already have a managed PostgreSQL instance or need data isolation.
@@ -180,7 +180,7 @@ cp your-cert.crt secrets/nginx-cert.crt
 cp your-cert.key secrets/nginx-cert.key
 ```
 
-The `docker-compose.yml` mounts `./secrets/` into the nginx container. The nginx configuration at `nginx/nginx.conf` expects:
+The `docker compose.yml` mounts `./secrets/` into the nginx container. The nginx configuration at `nginx/nginx.conf` expects:
 
 ```nginx
 ssl_certificate     /etc/nginx/certs/nginx-cert.crt;
@@ -260,7 +260,7 @@ netstat -ano | findstr ":5173 :8000 :8001 :5432 :8080 :389 :636 :8081"
 ### System Preparation
 
 - [ ] Verify Docker is installed: `docker --version`
-- [ ] Verify Docker Compose: `docker-compose --version`
+- [ ] Verify Docker Compose: `docker compose --version`
 - [ ] Check disk space: `df -h` (need 20+ GB free)
 - [ ] Check available RAM: `free -h` (recommend 8+ GB)
 - [ ] Verify all required ports are available
@@ -310,7 +310,7 @@ cd pf9-mngt
 # Verify structure
 ls -la
 # Expected output:
-# -rw-r--r-- docker-compose.yml
+# -rw-r--r-- docker compose.yml
 # -rw-r--r-- startup.ps1
 # drwxr-xr-x api/
 # drwxr-xr-x pf9-ui/
@@ -326,7 +326,7 @@ ls -la
 ```powershell
 # Check Docker installation
 docker --version
-docker-compose --version
+docker compose --version
 
 # If Docker is not installed, download from:
 # https://www.docker.com/products/docker-desktop
@@ -344,7 +344,7 @@ curl -fsSL https://get.docker.com -o get-docker.sh
 sh get-docker.sh
 
 # Install Docker Compose
-sudo apt-get install docker-compose-plugin
+sudo apt-get install docker compose-plugin
 
 # Add user to docker group (avoid sudo)
 sudo usermod -aG docker $USER
@@ -352,7 +352,7 @@ newgrp docker
 
 # Verify
 docker --version
-docker-compose --version
+docker compose --version
 ```
 
 #### macOS
@@ -363,11 +363,11 @@ docker-compose --version
 
 # Or use Homebrew
 brew install --cask docker
-brew install docker-compose
+brew install docker compose
 
 # Verify
 docker --version
-docker-compose --version
+docker compose --version
 ```
 
 ### Step 3: Create Environment File
@@ -386,10 +386,10 @@ See [Environment Configuration](#environment-configuration) for detailed explana
 
 ```bash
 # Build all images (takes 5-10 minutes first time)
-docker-compose build
+docker compose build
 
 # View build progress
-docker-compose build --progress=plain
+docker compose build --progress=plain
 
 # Expected output:
 # [+] Building 45.3s (XX/XX)
@@ -402,13 +402,13 @@ docker-compose build --progress=plain
 
 ```bash
 # Start all services in background
-docker-compose up -d
+docker compose up -d
 
 # Watch startup progress (Ctrl+C to exit)
-docker-compose logs -f
+docker compose logs -f
 
 # Check status
-docker-compose ps
+docker compose ps
 
 # Expected output (default profile — pgAdmin and phpLDAPadmin excluded):
 # NAME                      STATUS             PORTS
@@ -434,12 +434,12 @@ docker-compose ps
 
 ```bash
 # Check if database was initialized
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 
 # Expected: List of tables (domains, projects, servers, volumes, etc.)
 
 # If tables are empty, manually run init:
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/init.sql
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/init.sql
 ```
 
 ---
@@ -748,7 +748,7 @@ MAX_PARALLEL_REGIONS=3
 REGION_REQUEST_TIMEOUT_SEC=30
 ```
 
-> **Note**: `MAX_PARALLEL_REGIONS` and `REGION_REQUEST_TIMEOUT_SEC` are set automatically in `docker-compose.yml` for `scheduler_worker` and `snapshot_worker` services. Override them in `.env` if you need different values per environment (e.g., higher timeout for WAN-connected regions).
+> **Note**: `MAX_PARALLEL_REGIONS` and `REGION_REQUEST_TIMEOUT_SEC` are set automatically in `docker compose.yml` for `scheduler_worker` and `snapshot_worker` services. Override them in `.env` if you need different values per environment (e.g., higher timeout for WAN-connected regions).
 
 ```bash
 # CORS Origins (restrict cross-origin requests)
@@ -940,7 +940,7 @@ EOF
 
 ### Access the Applications
 
-After `docker-compose up -d` and services are healthy:
+After `docker compose up -d` and services are healthy:
 
 | Service | URL | Default Credentials | Purpose |
 |---------|-----|-------------------|---------|
@@ -973,10 +973,10 @@ curl http://localhost:8000/health
 # {"status":"healthy","version":"2026.02"}
 
 # 2. Test Database
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "SELECT version();"
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "SELECT version();"
 
 # 3. Test LDAP
-docker-compose exec ldap ldapwhoami -x -D "cn=admin,dc=company,dc=local" -w ${LDAP_ADMIN_PASSWORD}
+docker compose exec ldap ldapwhoami -x -D "cn=admin,dc=company,dc=local" -w ${LDAP_ADMIN_PASSWORD}
 
 # 4. Test UI (in browser)
 # Navigate to http://localhost:5173
@@ -985,7 +985,7 @@ docker-compose exec ldap ldapwhoami -x -D "cn=admin,dc=company,dc=local" -w ${LD
 # Will prompt for login with LDAP credentials
 
 # 5. Test Platform9 Connection
-docker-compose logs pf9_api | grep -i "platform9\|openstack\|auth"
+docker compose logs pf9_api | grep -i "platform9\|openstack\|auth"
 # Should show successful authentication attempts
 ```
 
@@ -995,7 +995,7 @@ The system will auto-connect to Platform9 on startup. To verify:
 
 ```bash
 # Check API logs for Platform9 connection
-docker-compose logs pf9_api | tail -50
+docker compose logs pf9_api | tail -50
 
 # Expected:
 # INFO: Successfully authenticated to Platform9 at https://pf9-...
@@ -1024,8 +1024,8 @@ echo "=== Platform9 Management System Health Check ==="
 
 # 1. Docker Services
 echo -e "\n1. Checking Docker Services..."
-docker-compose ps
-STATUS=$(docker-compose ps -q | wc -l)
+docker compose ps
+STATUS=$(docker compose ps -q | wc -l)
 echo "✓ $STATUS services running"
 
 # 2. API Endpoint
@@ -1039,7 +1039,7 @@ fi
 
 # 3. Database
 echo -e "\n3. Testing Database..."
-DB_TEST=$(docker-compose exec -T db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "SELECT COUNT(*) FROM information_schema.tables;" 2>/dev/null)
+DB_TEST=$(docker compose exec -T db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "SELECT COUNT(*) FROM information_schema.tables;" 2>/dev/null)
 if [ ! -z "$DB_TEST" ]; then
     echo "✓ Database is accessible"
 else
@@ -1075,7 +1075,7 @@ fi
 
 # 7. LDAP
 echo -e "\n7. Testing LDAP..."
-LDAP_TEST=$(docker-compose exec -T ldap ldapsearch -x -H ldap://localhost \
+LDAP_TEST=$(docker compose exec -T ldap ldapsearch -x -H ldap://localhost \
   -D "cn=admin,${LDAP_BASE_DN}" -w "${LDAP_ADMIN_PASSWORD}" \
   -b "${LDAP_BASE_DN}" -s base 2>/dev/null)
 if [ $? -eq 0 ]; then
@@ -1135,7 +1135,7 @@ curl "http://localhost:8000/api/logs?limit=50&log_file=all" \
 docker stats
 
 # 2. Database query performance
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "EXPLAIN ANALYZE SELECT * FROM servers LIMIT 100;"
 
 # 3. API response time
@@ -1144,7 +1144,7 @@ time curl http://localhost:8000/servers \
   > /dev/null
 
 # 4. Memory usage
-docker-compose exec pf9_api ps aux | grep python
+docker compose exec pf9_api ps aux | grep python
 ```
 
 ---
@@ -1157,13 +1157,13 @@ docker-compose exec pf9_api ps aux | grep python
 
 ```bash
 # Check service health
-docker-compose ps
+docker compose ps
 
 # View logs
-docker-compose logs --tail=50 -f
+docker compose logs --tail=50 -f
 
 # Check database size
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "SELECT pg_size_pretty(pg_database_size('${POSTGRES_DB}'));"
 ```
 
@@ -1171,16 +1171,16 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
 
 ```bash
 # Restart a service
-docker-compose restart pf9_api
+docker compose restart pf9_api
 
 # View specific service logs
-docker-compose logs pf9_api --tail=100
+docker compose logs pf9_api --tail=100
 
 # Update infrastructure data
-docker-compose exec pf9_api curl -X POST http://localhost:8000/sync
+docker compose exec pf9_api curl -X POST http://localhost:8000/sync
 
 # Check LDAP users
-docker-compose exec ldap ldapsearch -x -D "cn=admin,dc=company,dc=local" \
+docker compose exec ldap ldapsearch -x -D "cn=admin,dc=company,dc=local" \
   -w ${LDAP_ADMIN_PASSWORD} -b "ou=users,dc=company,dc=local"
 ```
 
@@ -1192,14 +1192,14 @@ docker system prune -f
 docker volume prune -f
 
 # Weekly: Database maintenance
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "VACUUM ANALYZE;"
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "VACUUM ANALYZE;"
 
 # Monthly: Update container images
 # For production (pulls pre-built images from ghcr.io; set PF9_IMAGE_TAG in .env first):
-docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker compose.yml -f docker compose.prod.yml pull
+docker compose -f docker compose.yml -f docker compose.prod.yml up -d
 # For dev/local builds:
-# docker-compose pull && docker-compose up -d
+# docker compose pull && docker compose up -d
 
 # Quarterly: Review and rotate credentials
 # See: Environment Configuration → Rotating Secrets
@@ -1209,16 +1209,16 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ```bash
 # Stop all services (preserves data)
-docker-compose down
+docker compose down
 
 # Stop and remove volumes (DELETE DATA!)
-docker-compose down -v
+docker compose down -v
 
 # Restart all services
-docker-compose up -d
+docker compose up -d
 
 # Graceful shutdown with time for cleanup
-docker-compose down --timeout 30
+docker compose down --timeout 30
 ```
 
 ---
@@ -1227,15 +1227,15 @@ docker-compose down --timeout 30
 
 ### Issue 1: Services Won't Start
 
-**Symptoms**: `docker-compose up -d` fails or services exit immediately
+**Symptoms**: `docker compose up -d` fails or services exit immediately
 
 **Diagnosis**:
 ```bash
 # Check service logs
-docker-compose logs
+docker compose logs
 
 # Check specific service
-docker-compose logs pf9_api
+docker compose logs pf9_api
 ```
 
 **Solutions**:
@@ -1243,8 +1243,8 @@ docker-compose logs pf9_api
 | Error | Cause | Fix |
 |-------|-------|-----|
 | `docker: command not found` | Docker not installed | Install Docker (see Prerequisites) |
-| `port already in use` | Port conflict | `docker-compose down` and check `netstat` |
-| `ERROR: Service ... failed to build` | Build error | `docker-compose build --progress=plain` for details |
+| `port already in use` | Port conflict | `docker compose down` and check `netstat` |
+| `ERROR: Service ... failed to build` | Build error | `docker compose build --progress=plain` for details |
 | `cannot connect to docker daemon` | Docker not running | Start Docker or check permissions |
 
 ### Issue 2: Database Connection Failed
@@ -1254,10 +1254,10 @@ docker-compose logs pf9_api
 **Diagnosis**:
 ```bash
 # Test database directly
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB}
 
 # Check database logs
-docker-compose logs db
+docker compose logs db
 ```
 
 **Solutions**:
@@ -1267,12 +1267,12 @@ docker-compose logs db
 grep POSTGRES_ .env
 
 # 2. Reinitialize database
-docker-compose down -v  # WARNING: Deletes data
-docker-compose up -d db
-docker-compose exec db psql -U ${POSTGRES_USER} < db/init.sql
+docker compose down -v  # WARNING: Deletes data
+docker compose up -d db
+docker compose exec db psql -U ${POSTGRES_USER} < db/init.sql
 
 # 3. Check database is healthy
-docker-compose exec db pg_isready
+docker compose exec db pg_isready
 ```
 
 ### Issue 3: LDAP Authentication Fails
@@ -1282,26 +1282,26 @@ docker-compose exec db pg_isready
 **Diagnosis**:
 ```bash
 # Test LDAP connection
-docker-compose exec ldap ldapwhoami -x -D "cn=admin,dc=company,dc=local" \
+docker compose exec ldap ldapwhoami -x -D "cn=admin,dc=company,dc=local" \
   -w ${LDAP_ADMIN_PASSWORD}
 
 # Check LDAP logs
-docker-compose logs ldap
+docker compose logs ldap
 ```
 
 **Solutions**:
 
 ```bash
 # 1. Verify LDAP is running
-docker-compose ps ldap
+docker compose ps ldap
 
 # 2. Check LDAP admin password
 # If forgotten, recreate container:
-docker-compose down ldap
-docker-compose up -d ldap
+docker compose down ldap
+docker compose up -d ldap
 
 # 3. Create test user
-docker-compose exec ldap ldapadd -x -D "cn=admin,dc=company,dc=local" \
+docker compose exec ldap ldapadd -x -D "cn=admin,dc=company,dc=local" \
   -w ${LDAP_ADMIN_PASSWORD} << 'EOF'
 dn: uid=testuser,ou=users,dc=company,dc=local
 objectClass: inetOrgPerson
@@ -1324,7 +1324,7 @@ curl -i ${PF9_AUTH_URL}/auth/tokens \
   -d '{"auth":{"identity":{"methods":["password"],"password":{"user":{"name":"'${PF9_USERNAME}'","domain":{"name":"'${PF9_USER_DOMAIN}'"},"password":"'${PF9_PASSWORD}'"}}}}}'
 
 # Check logs
-docker-compose logs pf9_api | grep -i "platform9\|keystone\|unauthorized"
+docker compose logs pf9_api | grep -i "platform9\|keystone\|unauthorized"
 ```
 
 **Solutions**:
@@ -1361,7 +1361,7 @@ df -h /
 docker system df
 
 # Check database size
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC;"
 ```
 
@@ -1369,11 +1369,11 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
 
 ```bash
 # 1. Clean up old data
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "DELETE FROM deletions_history WHERE timestamp < NOW() - INTERVAL '90 days';"
 
 # 2. Vacuum database
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "VACUUM FULL;"
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "VACUUM FULL;"
 
 # 3. Clean Docker images/containers
 docker system prune -a
@@ -1395,11 +1395,11 @@ docker volume prune
 docker stats
 
 # Check database connection count
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "SELECT count(*) FROM pg_stat_activity;"
 
 # Check slow queries
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "SELECT query, calls, total_time, mean_time FROM pg_stat_statements ORDER BY mean_time DESC LIMIT 10;"
 ```
 
@@ -1407,7 +1407,7 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
 
 ```bash
 # 1. Increase resource allocation
-# Edit docker-compose.yml:
+# Edit docker compose.yml:
 # services:
 #   pf9_api:
 #     deploy:
@@ -1417,7 +1417,7 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
 #           memory: 2G
 
 # 2. Add database indexes (if not present)
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\d servers"
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\d servers"
 
 # 3. Reduce monitoring collection frequency
 # In .env: METRICS_CACHE_TTL=300 (5 minutes instead of 60s)
@@ -1429,7 +1429,7 @@ docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\d servers
 ### Getting Help
 
 **Debugging steps**:
-1. Collect logs: `docker-compose logs > debug.log`
+1. Collect logs: `docker compose logs > debug.log`
 2. Run health check: `bash health-check.sh > health.txt`
 3. System info: `docker version > system.txt`
 4. Error from logs (last 50 lines)
@@ -1486,15 +1486,15 @@ cp .env .env.backup.$(date +%Y%m%d)
 
 ```bash
 # 1. Stop services
-docker-compose down
+docker compose down
 
 # 2. Restore database
-docker-compose up -d db
+docker compose up -d db
 Start-Sleep 15
 Get-Content pf9_mgmt_YYYYMMDD_HHMMSS.sql.gz | docker exec -i pf9_db sh -c "gunzip | psql -U ${POSTGRES_USER} ${POSTGRES_DB}"
 
 # 3. Restore LDAP (if needed)
-docker-compose up -d ldap
+docker compose up -d ldap
 Start-Sleep 10
 Get-Content pf9_ldap_YYYYMMDD_HHMMSS.ldif.gz | docker exec -i pf9_ldap sh -c "gunzip | slapadd -F /etc/ldap/slapd.d"
 
@@ -1521,24 +1521,24 @@ git pull origin main
 cat CHANGELOG.md
 
 # 4. Stop current services
-docker-compose down
+docker compose down
 
 # 5. Get the new images
 # Production — update PF9_IMAGE_TAG in .env to the new version, then pull:
-docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker compose.yml -f docker compose.prod.yml pull
 # Dev/local — rebuild from source:
-# docker-compose build
+# docker compose build
 
 # 6. Run migrations (if any)
 # Preferred: single automated runner (idempotent — safe to re-run)
 docker exec pf9_api python run_migration.py
 
 # 7. Start services
-docker-compose up -d
+docker compose up -d
 
 # 8. Verify
-docker-compose ps
-docker-compose logs --tail=50
+docker compose ps
+docker compose logs --tail=50
 ```
 
 ### Database Migrations
@@ -1679,7 +1679,7 @@ docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_su
 docker exec -i pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < db/migrate_v1_82_18.sql
 
 # Verify schema
-docker-compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
+docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\dt"
 > ```
 
 ---
@@ -1691,7 +1691,7 @@ Use this procedure if an upgrade causes issues and you need to revert to the pre
 #### Step 1 — Stop the broken services
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 #### Step 2 — Restore the database from backup
@@ -1701,15 +1701,15 @@ docker-compose down
 ls -lt ./backups/     # or check the Backup tab in the UI
 
 # Restore (replaces current database)
-docker-compose up -d pf9_db
+docker compose up -d pf9_db
 sleep 15
 # Drop and recreate the database
-docker-compose exec pf9_db psql -U ${POSTGRES_USER} -c "DROP DATABASE ${POSTGRES_DB};"
-docker-compose exec pf9_db psql -U ${POSTGRES_USER} -c "CREATE DATABASE ${POSTGRES_DB};"
+docker compose exec pf9_db psql -U ${POSTGRES_USER} -c "DROP DATABASE ${POSTGRES_DB};"
+docker compose exec pf9_db psql -U ${POSTGRES_USER} -c "CREATE DATABASE ${POSTGRES_DB};"
 # Restore from backup
-docker-compose exec -T pf9_db psql -U ${POSTGRES_USER} ${POSTGRES_DB} < ./backups/<backup-file>.sql
+docker compose exec -T pf9_db psql -U ${POSTGRES_USER} ${POSTGRES_DB} < ./backups/<backup-file>.sql
 # Or for .sql.gz:
-guzip -c ./backups/<backup-file>.sql.gz | docker-compose exec -T pf9_db psql -U ${POSTGRES_USER} ${POSTGRES_DB}
+guzip -c ./backups/<backup-file>.sql.gz | docker compose exec -T pf9_db psql -U ${POSTGRES_USER} ${POSTGRES_DB}
 ```
 
 #### Step 3 — Check out the previous code version
@@ -1725,15 +1725,15 @@ git checkout v1.44.1   # replace with your previous version tag
 #### Step 4 — Rebuild and restart
 
 ```bash
-docker-compose build
-docker-compose up -d
+docker compose build
+docker compose up -d
 ```
 
 #### Step 5 — Verify the rollback
 
 ```bash
 curl http://localhost:8000/health
-docker-compose ps
+docker compose ps
 ```
 
 > **Important:** After rollback, database migrations from the failed upgrade will be present in the schema. They are additive and idempotent, so this is safe — the old code will ignore unknown columns. If this causes issues, restore the database from the pre-upgrade backup (Step 2).
@@ -1771,7 +1771,7 @@ For free-form questions using a local LLM that keeps all data on your network:
    COPILOT_OLLAMA_URL=http://localhost:11434
    COPILOT_OLLAMA_MODEL=llama3
    ```
-   > **Note**: Inside Docker, use `http://host.docker.internal:11434` to reach the host machine's Ollama. The `docker-compose.yml` already defaults to this.
+   > **Note**: Inside Docker, use `http://host.docker.internal:11434` to reach the host machine's Ollama. The `docker compose.yml` already defaults to this.
 
 3. **Or switch at runtime** via the UI: Click the ⚙️ gear icon in the Copilot panel → select "Ollama" → enter the URL → Save.
 
@@ -1840,37 +1840,37 @@ The setting is stored in the database (`copilot_config` table) and takes effect 
 - [ ] Access control policies documented
 - [ ] Incident response plan created
 - [ ] Docker Secrets configured (or `.env` permissions locked to `600`)
-- [ ] Container log rotation verified (already set in `docker-compose.yml`)
+- [ ] Container log rotation verified (already set in `docker compose.yml`)
 - [ ] OpenLDAP image version pinned (already `osixia/openldap:1.5.0` in compose)
 
 ---
 
 ### Critical: Dev vs Production Docker Differences
 
-The default `docker-compose.yml` is optimized for developer convenience. Before running in production, the following changes **must** be made:
+The default `docker compose.yml` is optimized for developer convenience. Before running in production, the following changes **must** be made:
 
 #### 1. Disable dev-only services
 
 pgAdmin and phpLDAPadmin are development tools. They should not be exposed in production:
 
 ```yaml
-# In docker-compose.prod.yml (override file)
+# In docker compose.prod.yml (override file)
 services:
   pgadmin:
-    profiles: ["dev"]        # Only starts when: docker-compose --profile dev up
+    profiles: ["dev"]        # Only starts when: docker compose --profile dev up
 
   phpldapadmin:
     profiles: ["dev"]
 ```
 
-Or simply do not start them: `docker-compose up -d` without those services listed.
+Or simply do not start them: `docker compose up -d` without those services listed.
 
 #### 2. Remove exposed database and LDAP ports
 
 PostgreSQL and OpenLDAP ports are bound to the host in the default compose file. In production, these services are only needed by containers on the internal Docker network:
 
 ```yaml
-# docker-compose.prod.yml
+# docker compose.prod.yml
 services:
   db:
     ports: []               # Remove "5432:5432" — internal only
@@ -1919,7 +1919,7 @@ server {
 The current Gunicorn configuration uses 2 workers (reduced from 4 to resolve stuck-query issues at the time). For production with concurrent users, 4 workers is appropriate:
 
 ```yaml
-# docker-compose.prod.yml
+# docker compose.prod.yml
 services:
   pf9_api:
     command: >
@@ -1937,12 +1937,12 @@ services:
 
 #### 5. Healthchecks (already configured)
 
-`docker-compose.yml` already defines healthchecks for `pf9_api`, `pf9_ui`, `pf9_monitoring`, and `pf9_ldap`. No changes needed here.
+`docker compose.yml` already defines healthchecks for `pf9_api`, `pf9_ui`, `pf9_monitoring`, and `pf9_ldap`. No changes needed here.
 
 To verify they are passing:
 
 ```bash
-docker-compose ps
+docker compose ps
 # STATUS column should show "Up (healthy)" for pf9_api, pf9_ui, pf9_monitoring, pf9_ldap
 # If a service shows "Up (unhealthy)", inspect it:
 docker inspect pf9_api | jq '.[0].State.Health'
@@ -1953,7 +1953,7 @@ docker inspect pf9_api | jq '.[0].State.Health'
 Both the UI (port 5173) and API (port 8000) run over plain HTTP. In production, all traffic must go through HTTPS:
 
 ```yaml
-# docker-compose.prod.yml
+# docker compose.prod.yml
 services:
   nginx:
     image: nginx:1.27-alpine
@@ -1973,14 +1973,14 @@ See [SECURITY.md](SECURITY.md) for the nginx TLS configuration.
 
 #### 7. Use a production override file
 
-Combine all changes into a single `docker-compose.prod.yml` and deploy with:
+Combine all changes into a single `docker compose.prod.yml` and deploy with:
 
 ```bash
 # Pull pre-built service images from ghcr.io (set PF9_IMAGE_TAG=v1.70.0 in .env to pin a version)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker compose.yml -f docker compose.prod.yml pull
 
 # Start the stack
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker compose.yml -f docker compose.prod.yml up -d
 ```
 
 The production overlay sets `image:` overrides for all nine custom services pointing to `ghcr.io/erezrozenbaum/pf9-mngt-<service>:${PF9_IMAGE_TAG:-latest}`. Set `PF9_IMAGE_TAG` in `.env` to pin a specific release and avoid accidental upgrades. Leave it unset (or set to `latest`) to always pull the most recent published image.
@@ -2070,6 +2070,6 @@ See [SECURITY.md](SECURITY.md) and [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md
 
 ---
 
-**Last Updated**: March 21, 2026  
+**Last Updated**: April 9, 2026  
 **Maintained By**: Erez Rozenbaum & Community Contributors  
 **License**: MIT

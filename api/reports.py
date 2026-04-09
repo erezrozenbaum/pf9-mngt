@@ -437,7 +437,7 @@ async def report_tenant_quota_usage(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report tenant-quota-usage failed: {e}")
+        logger.error("Report tenant-quota-usage failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -633,7 +633,7 @@ async def report_domain_overview(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report domain-overview failed: {e}")
+        logger.error("Report domain-overview failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -754,7 +754,7 @@ async def report_snapshot_compliance(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report snapshot-compliance failed: {e}")
+        logger.error("Report snapshot-compliance failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -856,7 +856,7 @@ async def report_flavor_usage(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report flavor-usage failed: {e}")
+        logger.error("Report flavor-usage failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -950,7 +950,7 @@ async def report_metering_summary(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report metering-summary failed: {e}")
+        logger.error("Report metering-summary failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1020,7 +1020,7 @@ async def report_resource_inventory(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report resource-inventory failed: {e}")
+        logger.error("Report resource-inventory failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1108,7 +1108,7 @@ async def report_user_role_audit(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report user-role-audit failed: {e}")
+        logger.error("Report user-role-audit failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1194,7 +1194,7 @@ async def report_idle_resources(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report idle-resources failed: {e}")
+        logger.error("Report idle-resources failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1265,7 +1265,7 @@ async def report_security_group_audit(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report security-group-audit failed: {e}")
+        logger.error("Report security-group-audit failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1400,7 +1400,7 @@ async def report_capacity_planning(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report capacity-planning failed: {e}")
+        logger.error("Report capacity-planning failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1467,7 +1467,7 @@ async def report_backup_status(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report backup-status failed: {e}")
+        logger.error("Report backup-status failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1512,7 +1512,7 @@ async def report_activity_log(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report activity-log failed: {e}")
+        logger.error("Report activity-log failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1608,7 +1608,7 @@ async def report_network_topology(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report network-topology failed: {e}")
+        logger.error("Report network-topology failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1718,7 +1718,7 @@ async def report_cost_allocation(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report cost-allocation failed: {e}")
+        logger.error("Report cost-allocation failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1773,7 +1773,7 @@ async def report_drift_summary(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report drift-summary failed: {e}")
+        logger.error("Report drift-summary failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1982,7 +1982,7 @@ async def report_vm_report(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report vm-report failed: {e}")
+        logger.error("Report vm-report failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2089,7 +2089,7 @@ async def report_image_usage(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report image-usage failed: {e}")
+        logger.error("Report image-usage failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2201,7 +2201,7 @@ async def report_flavor_by_tenant(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Report flavor-by-tenant failed: {e}")
+        logger.error("Report flavor-by-tenant failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

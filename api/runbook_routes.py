@@ -94,7 +94,7 @@ def _ensure_tables():
                     ON CONFLICT (runbook_name, trigger_role) DO NOTHING
                 """)
     except Exception as e:
-        logger.warning(f"Could not ensure runbook tables on startup: {e}")
+        logger.warning("Could not ensure runbook tables on startup: %s", e)
 
 
 try:
@@ -154,7 +154,7 @@ def _call_billing_gate(
                 """)
                 integration = cur.fetchone()
     except Exception as e:
-        logger.warning(f"Could not query billing gate: {e}")
+        logger.warning("Could not query billing gate: %s", e)
         return {"skipped": True, "reason": "billing gate query failed"}
 
     if not integration:
@@ -221,7 +221,7 @@ def _call_billing_gate(
             "reason": str(rsn) if (rsn := _get_path(integration.get("response_reason_path", "reason"))) else "",
         }
     except Exception as e:
-        logger.error(f"Billing gate call failed: {e}")
+        logger.error("Billing gate call failed: %s", e)
         raise HTTPException(503, f"Billing gate integration error: {str(e)[:200]}")
 
 
@@ -234,7 +234,7 @@ def _notify(event_type: str, summary: str, severity: str = "info", **kw):
         from provisioning_routes import _fire_notification
         _fire_notification(event_type=event_type, summary=summary, severity=severity, **kw)
     except Exception as e:
-        logger.warning(f"Notification failed: {e}")
+        logger.warning("Notification failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +259,7 @@ def _resolve_project_names(client, headers) -> Dict[str, str]:
         resp.raise_for_status()
         return {p["id"]: p.get("name", p["id"]) for p in resp.json().get("projects", [])}
     except Exception as e:
-        logger.warning(f"Could not resolve project names: {e}")
+        logger.warning("Could not resolve project names: %s", e)
         return {}
 
 
@@ -376,7 +376,7 @@ def _load_metering_pricing() -> dict:
                         "cost_per_snapshot_gb_month": defaults["cost_per_snapshot_gb_month"],
                     }
     except Exception as e:
-        logger.warning(f"Could not load metering pricing: {e}")
+        logger.warning("Could not load metering pricing: %s", e)
     # 3) Hardcoded fallback
     return {
         "cost_currency": defaults["cost_currency"],
@@ -1917,7 +1917,7 @@ def _engine_password_console(params: dict, dry_run: bool, actor: str) -> dict:
                                   "password_reset": result["password_reset"].get("success", False),
                                   "console_access": result["console_access"].get("success", False)})))
     except Exception as e:
-        logger.warning(f"Audit log insert failed: {e}")
+        logger.warning("Audit log insert failed: %s", e)
 
     return {"result": result, "items_found": 1, "items_actioned": items_actioned}
 
@@ -2440,7 +2440,7 @@ def _engine_quota_adjustment(params: dict, dry_run: bool, actor: str) -> dict:
                 d = qs.get(key, {})
                 before["nova"][key] = d.get("limit", -1) if isinstance(d, dict) else int(d or -1)
     except Exception as e:
-        logger.warning(f"quota_adjustment: Nova read failed: {e}")
+        logger.warning("quota_adjustment: Nova read failed: %s", e)
 
     try:
         r = client.session.get(f"{client.neutron_endpoint}/v2.0/quotas/{project_id}", headers=headers)
@@ -2448,7 +2448,7 @@ def _engine_quota_adjustment(params: dict, dry_run: bool, actor: str) -> dict:
             qs = r.json().get("quota", {})
             before["neutron"]["network"] = qs.get("network", -1)
     except Exception as e:
-        logger.warning(f"quota_adjustment: Neutron read failed: {e}")
+        logger.warning("quota_adjustment: Neutron read failed: %s", e)
 
     try:
         r = client.session.get(f"{client.cinder_endpoint}/os-quota-sets/{project_id}?usage=true", headers=headers)
@@ -2458,7 +2458,7 @@ def _engine_quota_adjustment(params: dict, dry_run: bool, actor: str) -> dict:
                 d = qs.get(key, {})
                 before["cinder"][key] = d.get("limit", -1) if isinstance(d, dict) else int(d or -1)
     except Exception as e:
-        logger.warning(f"quota_adjustment: Cinder read failed: {e}")
+        logger.warning("quota_adjustment: Cinder read failed: %s", e)
 
     # ---- 2. Compute deltas (new − before) ----
     after = {"nova": desired_nova, "neutron": desired_neutron, "cinder": desired_cinder}
@@ -2578,7 +2578,7 @@ def _engine_quota_adjustment(params: dict, dry_run: bool, actor: str) -> dict:
                                   "charge_id": charge_id, "reason": reason,
                                   "project_name": project_name, "errors": errors})))
     except Exception as e:
-        logger.warning(f"Audit log insert failed: {e}")
+        logger.warning("Audit log insert failed: %s", e)
 
     return {
         "result": {
@@ -2643,7 +2643,7 @@ def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
                 else:
                     quota[f"nova.{key}"] = {"limit": int(d or -1), "in_use": 0}
     except Exception as e:
-        logger.warning(f"org_usage_report: Nova quota failed: {e}")
+        logger.warning("org_usage_report: Nova quota failed: %s", e)
 
     # Server list
     servers: list = []
@@ -2654,7 +2654,7 @@ def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
         if r.ok:
             servers = r.json().get("servers", [])
     except Exception as e:
-        logger.warning(f"org_usage_report: server list failed: {e}")
+        logger.warning("org_usage_report: server list failed: %s", e)
 
     usage["servers_total"]   = len(servers)
     usage["servers_active"]  = sum(1 for s in servers if s.get("status") == "ACTIVE")
@@ -2670,7 +2670,7 @@ def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
             for key in ("network", "floatingip", "router", "port", "security_group"):
                 quota[f"neutron.{key}"] = {"limit": qs.get(key, -1), "in_use": None}
     except Exception as e:
-        logger.warning(f"org_usage_report: Neutron quota failed: {e}")
+        logger.warning("org_usage_report: Neutron quota failed: %s", e)
 
     # Floating IPs
     floating_ips: list = []
@@ -2683,7 +2683,7 @@ def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
             if "neutron.floatingip" in quota:
                 quota["neutron.floatingip"]["in_use"] = len(floating_ips)
     except Exception as e:
-        logger.warning(f"org_usage_report: floating IP list failed: {e}")
+        logger.warning("org_usage_report: floating IP list failed: %s", e)
     usage["floating_ips"] = len(floating_ips)
 
     # ---- Cinder (block storage) quota ----
@@ -2700,7 +2700,7 @@ def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
                 else:
                     quota[f"cinder.{key}"] = {"limit": int(d or -1), "in_use": 0}
     except Exception as e:
-        logger.warning(f"org_usage_report: Cinder quota failed: {e}")
+        logger.warning("org_usage_report: Cinder quota failed: %s", e)
 
     # Volumes list
     volumes: list = []
@@ -2711,7 +2711,7 @@ def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
         if r.ok:
             volumes = r.json().get("volumes", [])
     except Exception as e:
-        logger.warning(f"org_usage_report: volume list failed: {e}")
+        logger.warning("org_usage_report: volume list failed: %s", e)
     usage["volumes"]   = len(volumes)
     usage["volume_gb"] = sum(v.get("size", 0) for v in volumes)
 
@@ -2725,7 +2725,7 @@ def _engine_org_usage_report(params: dict, dry_run: bool, actor: str) -> dict:
             if r.ok:
                 snapshots_list = r.json().get("snapshots", [])
         except Exception as e:
-            logger.warning(f"org_usage_report: snapshot list failed: {e}")
+            logger.warning("org_usage_report: snapshot list failed: %s", e)
     usage["snapshots"]    = len(snapshots_list)
     usage["snapshot_gb"]  = sum(s.get("size", 0) for s in snapshots_list)
 
@@ -2921,7 +2921,7 @@ def _engine_vm_rightsizing(params: dict, dry_run: bool, actor: str) -> dict:
                 for row in cur.fetchall():
                     usage_map[row["vm_id"]] = dict(row)
     except Exception as e:
-        logger.error(f"vm_rightsizing: metering query failed: {e}")
+        logger.error("vm_rightsizing: metering query failed: %s", e)
         raise HTTPException(500, f"Metering data query failed: {e}")
 
     # ── 2. Fetch Nova flavor catalog ────────────────────────────────────────
@@ -2937,7 +2937,7 @@ def _engine_vm_rightsizing(params: dict, dry_run: bool, actor: str) -> dict:
         fl_resp.raise_for_status()
         nova_flavors = fl_resp.json().get("flavors", [])
     except Exception as e:
-        logger.error(f"vm_rightsizing: flavor fetch failed: {e}")
+        logger.error("vm_rightsizing: flavor fetch failed: %s", e)
         raise HTTPException(500, f"Could not fetch flavor list: {e}")
 
     # Build flavor lookup: id→{vcpus, ram_mb, disk_gb, name}
@@ -2965,7 +2965,7 @@ def _engine_vm_rightsizing(params: dict, dry_run: bool, actor: str) -> dict:
                 for row in cur.fetchall():
                     flavor_cost[row["item_name"]] = float(row["cost_per_month"])
     except Exception as e:
-        logger.warning(f"vm_rightsizing: could not load flavor pricing: {e}")
+        logger.warning("vm_rightsizing: could not load flavor pricing: %s", e)
 
     def _flavor_cost(flv: dict) -> float:
         """Estimate monthly cost for a flavor, using metering_pricing or formula."""
@@ -3255,7 +3255,7 @@ def _engine_capacity_forecast(params: dict, dry_run: bool, actor: str) -> dict:
                 """)
                 rows = [dict(r) for r in cur.fetchall()]
     except Exception as e:
-        logger.error(f"capacity_forecast: DB query failed: {e}")
+        logger.error("capacity_forecast: DB query failed: %s", e)
         raise HTTPException(500, f"Capacity data query failed: {e}")
 
     if len(rows) < 2:
@@ -3444,7 +3444,7 @@ def _engine_dr_drill(params: dict, dry_run: bool, actor: str) -> dict:
             else:
                 quota_status = "quota data not structured"
     except Exception as e:
-        logger.warning(f"dr_drill: quota check failed: {e}")
+        logger.warning("dr_drill: quota check failed: %s", e)
         quota_status = f"check_failed: {e}"
 
     # ── 2. Find candidate VMs ──────────────────────────────────────────────
@@ -3496,7 +3496,7 @@ def _engine_dr_drill(params: dict, dry_run: bool, actor: str) -> dict:
                 if not existing or img.get("created_at", "") > existing.get("created_at", ""):
                     vm_snapshots[iid] = img
     except Exception as e:
-        logger.warning(f"dr_drill: snapshot fetch failed: {e}")
+        logger.warning("dr_drill: snapshot fetch failed: %s", e)
 
     if dry_run or not candidate_vms:
         return {
@@ -3668,7 +3668,7 @@ def _engine_dr_drill(params: dict, dry_run: bool, actor: str) -> dict:
                     f"{client.neutron_endpoint}/v2.0/subnets/{dr_subnet_id}", headers=headers
                 )
             except Exception as e:
-                logger.warning(f"dr_drill: subnet delete failed: {e}")
+                logger.warning("dr_drill: subnet delete failed: %s", e)
         if dr_network_id:
             try:
                 client.session.delete(
@@ -3704,7 +3704,7 @@ def _engine_dr_drill(params: dict, dry_run: bool, actor: str) -> dict:
                     actor,
                 ))
     except Exception as e:
-        logger.warning(f"dr_drill: activity_log write failed: {e}")
+        logger.warning("dr_drill: activity_log write failed: %s", e)
 
     return {
         "result": {
@@ -3792,7 +3792,7 @@ def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
             )
             usage_report = report_out.get("result", {})
     except Exception as e:
-        logger.warning(f"tenant_offboarding: usage report failed: {e}")
+        logger.warning("tenant_offboarding: usage report failed: %s", e)
         usage_report = {"error": str(e)}
 
     # Build step tracking
@@ -3870,7 +3870,7 @@ def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
                 if del_r.status_code < 300:
                     fips_released += 1
     except Exception as e:
-        logger.warning(f"tenant_offboarding: FIP release error: {e}")
+        logger.warning("tenant_offboarding: FIP release error: %s", e)
     _step("release_floating_ips", True, f"{fips_released} FIPs released")
 
     # ── 4. Stop all VMs ────────────────────────────────────────────────────
@@ -3889,7 +3889,7 @@ def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
                     if stop_r.status_code < 300:
                         vms_stopped += 1
     except Exception as e:
-        logger.warning(f"tenant_offboarding: VM stop error: {e}")
+        logger.warning("tenant_offboarding: VM stop error: %s", e)
     _step("stop_vms", True, f"{vms_stopped} VMs stopped")
 
     # ── 5. Delete unattached ports ─────────────────────────────────────────
@@ -3907,7 +3907,7 @@ def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
                     if del_r.status_code < 300:
                         ports_deleted += 1
     except Exception as e:
-        logger.warning(f"tenant_offboarding: port delete error: {e}")
+        logger.warning("tenant_offboarding: port delete error: %s", e)
     _step("delete_unattached_ports", True, f"{ports_deleted} ports deleted")
 
     # ── 6. Disable Keystone project ────────────────────────────────────────
@@ -3920,7 +3920,7 @@ def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
         )
         keystone_disabled = patch_r.status_code < 300
     except Exception as e:
-        logger.warning(f"tenant_offboarding: Keystone disable error: {e}")
+        logger.warning("tenant_offboarding: Keystone disable error: %s", e)
     _step("disable_keystone_project", keystone_disabled,
           "project disabled" if keystone_disabled else "disable failed — check manually")
 
@@ -3941,7 +3941,7 @@ def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
                     headers=headers, json={"metadata": tag_meta})
                 tagged_count += 1
     except Exception as e:
-        logger.warning(f"tenant_offboarding: metadata tagging error: {e}")
+        logger.warning("tenant_offboarding: metadata tagging error: %s", e)
     _step("tag_resources", True, f"{tagged_count} VMs tagged; retention_until={retention_until}")
 
     # ── 8. CRM integration call ────────────────────────────────────────────
@@ -4007,7 +4007,7 @@ def _engine_tenant_offboarding(params: dict, dry_run: bool, actor: str) -> dict:
                     actor,
                 ))
     except Exception as e:
-        logger.warning(f"tenant_offboarding: activity_log write failed: {e}")
+        logger.warning("tenant_offboarding: activity_log write failed: %s", e)
 
     items_actioned = sum([
         fips_released, vms_stopped, ports_deleted,
@@ -4193,7 +4193,7 @@ def _engine_security_group_hardening(params: dict, dry_run: bool, actor: str) ->
                     "target_project": target_project,
                 })))
     except Exception as e:
-        logger.warning(f"security_group_hardening: activity_log write failed: {e}")
+        logger.warning("security_group_hardening: activity_log write failed: %s", e)
 
     return {
         "result": {
@@ -4661,7 +4661,7 @@ def _engine_hypervisor_maintenance_evacuate(params: dict, dry_run: bool, actor: 
                         json={"status": "disabled", "disabled_reason": f"maintenance — evacuated by {actor}"})
                     host_disabled = dsr.status_code in (200, 204)
         except Exception as e:
-            logger.warning(f"hypervisor_evacuate: failed to disable host: {e}")
+            logger.warning("hypervisor_evacuate: failed to disable host: %s", e)
 
     # ── activity log ──
     try:
@@ -4678,7 +4678,7 @@ def _engine_hypervisor_maintenance_evacuate(params: dict, dry_run: bool, actor: 
                     "errors": errors,
                 })))
     except Exception as e:
-        logger.warning(f"hypervisor_evacuate: activity_log write failed: {e}")
+        logger.warning("hypervisor_evacuate: activity_log write failed: %s", e)
 
     return {
         "result": {
@@ -4922,7 +4922,7 @@ def _engine_cluster_capacity_planner(params: dict, dry_run: bool, actor: str) ->
                 """ % window_days)
                 rows = [dict(r) for r in cur.fetchall()]
     except Exception as e:
-        logger.warning(f"cluster_capacity_planner: history query failed: {e}")
+        logger.warning("cluster_capacity_planner: history query failed: %s", e)
         rows = []
 
     if len(rows) >= 2:
@@ -5009,7 +5009,7 @@ def _engine_cluster_capacity_planner(params: dict, dry_run: bool, actor: str) ->
                 # Sort: most slots first, then by vCPU ascending
                 flavor_slots.sort(key=lambda f: (-f["slots_remaining"], f["vcpus"]))
         except Exception as e:
-            logger.warning(f"cluster_capacity_planner: flavor query failed: {e}")
+            logger.warning("cluster_capacity_planner: flavor query failed: %s", e)
 
     # ── 8. Per-host breakdown ─────────────────────────────────────────────
     for h in host_stats:
@@ -5241,7 +5241,7 @@ async def lookup_vms(
         result.sort(key=lambda x: (x["project_name"], x["name"]))
         return result
     except Exception as e:
-        logger.warning(f"lookup_vms failed: {e}")
+        logger.warning("lookup_vms failed: %s", e)
         return []
 
 
@@ -5270,7 +5270,7 @@ async def lookup_projects(
         result.sort(key=lambda x: x["name"])
         return result
     except Exception as e:
-        logger.warning(f"lookup_projects failed: {e}")
+        logger.warning("lookup_projects failed: %s", e)
         return []
 
 
@@ -5303,7 +5303,7 @@ async def lookup_hypervisors(
         result.sort(key=lambda x: x["hostname"])
         return result
     except Exception as e:
-        logger.warning(f"lookup_hypervisors failed: {e}")
+        logger.warning("lookup_hypervisors failed: %s", e)
         return []
 
 

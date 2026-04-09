@@ -90,13 +90,15 @@ class UserRole(BaseModel):
     username: str
     role: str
 
-# Database connection helper
-def get_auth_db_conn():
-    """DEPRECATED: use `with get_connection() as conn:` from db_pool instead."""
-    raise RuntimeError(
-        "get_auth_db_conn() is deprecated. "
-        "Use 'with get_connection() as conn:' from db_pool instead."
-    )
+# SSRF guard — private/loopback ranges blocked for external LDAP connections
+_BLOCKED_RANGES = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
 
 # LDAP Authentication
 class LDAPAuthenticator:
@@ -211,14 +213,6 @@ class LDAPAuthenticator:
         # been modified directly.  RFC-1918 / loopback are blocked unless the
         # operator explicitly set allow_private_network = true on this config.)
         if not cfg.get("allow_private_network", False):
-            _BLOCKED_RANGES = [
-                ipaddress.ip_network("10.0.0.0/8"),
-                ipaddress.ip_network("172.16.0.0/12"),
-                ipaddress.ip_network("192.168.0.0/16"),
-                ipaddress.ip_network("127.0.0.0/8"),
-                ipaddress.ip_network("::1/128"),
-                ipaddress.ip_network("fc00::/7"),
-            ]
             try:
                 addr_str = socket.getaddrinfo(cfg["host"], None)[0][4][0]
                 addr = ipaddress.ip_address(addr_str)

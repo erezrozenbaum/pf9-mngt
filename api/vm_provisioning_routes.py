@@ -129,7 +129,7 @@ def _ensure_tables():
                 )
         _tables_initialized = True
     except Exception as e:
-        logger.error(f"vm_provisioning _ensure_tables failed: {e}")
+        logger.error("vm_provisioning _ensure_tables failed: %s", e)
 
 # ---------------------------------------------------------------------------
 # Naming helpers

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { API_BASE } from "../config";
 import "../styles/DocsTab.css";
 
@@ -365,7 +366,7 @@ export default function DocsTab({ isAdmin }: DocsTabProps) {
                 {!contentLoading && content !== null && (
                   <div
                     className="docs-markdown"
-                    dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderMarkdown(content)) }}
                   />
                 )}
               </>

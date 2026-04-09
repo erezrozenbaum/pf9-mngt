@@ -85,26 +85,29 @@ const SnapshotPolicyManager: FC = () => {
       const headers = { Authorization: `Bearer ${token}` };
 
       switch (activeTab) {
-        case 'policies':
+        case 'policies': {
           const policiesRes = await fetch('/api/snapshot/policy-sets', { headers });
           if (!policiesRes.ok) throw new Error('Failed to load policy sets');
           const policiesData = await policiesRes.json();
           setPolicySets(policiesData.policy_sets || []);
           break;
+        }
 
-        case 'assignments':
+        case 'assignments': {
           const assignmentsRes = await fetch('/api/snapshot/assignments', { headers });
           if (!assignmentsRes.ok) throw new Error('Failed to load assignments');
           const assignmentsData = await assignmentsRes.json();
           setAssignments(assignmentsData.assignments || []);
           break;
+        }
 
-        case 'runs':
+        case 'runs': {
           const runsRes = await fetch('/api/snapshot/runs', { headers });
           if (!runsRes.ok) throw new Error('Failed to load snapshot runs');
           const runsData = await runsRes.json();
           setRuns(runsData.runs || []);
           break;
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');

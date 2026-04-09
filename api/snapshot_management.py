@@ -1713,7 +1713,7 @@ def setup_snapshot_routes(app):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to queue on-demand snapshot run: {e}")
+            logger.error("Failed to queue on-demand snapshot run: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to queue on-demand snapshot run: {str(e)}"
@@ -1751,7 +1751,7 @@ def setup_snapshot_routes(app):
                 }
 
         except Exception as e:
-            logger.error(f"Failed to get on-demand status: {e}")
+            logger.error("Failed to get on-demand status: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to get on-demand status: {str(e)}"

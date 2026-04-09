@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.24] - 2026-04-10
+
+### Security
+- **Docs viewer — XSS via unsanitized markdown rendering**: `DocsTab.tsx` was rendering markdown via `marked` and injecting the result directly into `innerHTML` without sanitization, allowing arbitrary HTML/JavaScript execution from any document served through the docs route. Added `DOMPurify.sanitize()` wrapping around all `renderMarkdown()` output. `CopilotPanel` and `OpsSearch` already had this protection; `DocsTab` now matches.
+- **SSH host-key verification hardened in log collector**: `log_collector.py` had a `paramiko.WarningPolicy()` in the known-hosts branch and `RejectPolicy()` in the fallback. Both branches now use `RejectPolicy()`, refusing connections to hosts with unknown or mismatched host keys instead of silently accepting them.
+
+### Changed
+- **SMTP config — Redis TTL cache for per-tenant DB overrides**: `smtp_helper._load_db_smtp_override()` hit the database on every outbound email. Added a 60-second Redis cache keyed `pf9:smtp_config_override` with JSON serialization; DB is only queried on cache miss or Redis unavailability. Reduces DB load under heavy notification volume.
+
+### Fixed
+- **Logging — f-string log arguments across API layer**: 142 occurrences of `logger.X(f"…{e}…")` across 13 API modules were replaced with `logger.X("…%s…", e)`. f-strings force immediate string formatting even when the log level is suppressed; lazy `%s` formatting is evaluated only when the message will actually be emitted. Affected modules: `dashboards.py`, `integration_routes.py`, `main.py`, `metering_routes.py`, `migration_routes.py`, `notification_routes.py`, `provisioning_routes.py`, `reports.py`, `resource_management.py`, `restore_management.py`, `runbook_routes.py`, `snapshot_management.py`, `vm_provisioning_routes.py`.
+- **auth.py — removed unreachable dead-code stub**: `get_auth_db_conn()` raised `RuntimeError("use get_connection()")` unconditionally and had no callers. Removed.
+- **auth.py — `_BLOCKED_RANGES` rebuilt on every LDAP bind call**: The blocked IP range list was re-constructed inside `_bind_external_ldap()` on every invocation. Promoted to a module-level constant so it is built once at import time.
+- **copilot_context.py — DB cursor not closed on exception**: `cur = conn.cursor(cursor_factory=RealDictCursor)` was created outside a context manager; if the query raised an exception the cursor would leak until the connection was closed. Changed to `with get_connection() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:` so both are guaranteed to close.
+
+### Internal
+- **CI — ESLint gate added**: New `frontend-lint` CI job runs `npm run lint` inside the `pf9_ui` container after TypeScript typecheck passes (`react-hooks/rules-of-hooks` and `react-hooks/exhaustive-deps` remain as errors). `integration-tests` now depends on this job.
+- **ESLint — `eslint-plugin-react-hooks` v7 React-Compiler rules downgraded to warnings**: The v7 plugin ships 15 new rules designed for the React Compiler (`set-state-in-effect`, `immutability`, `purity`, etc.) set to "error" by default. This codebase does not use the React Compiler; these rules produce false positives on valid async patterns. Downgraded all v7-new rules to `warn` in `eslint.config.js`; the two classic rules remain errors.
+- **ESLint — AJV version constraint corrected**: `package.json` overrides entry for `ajv` changed from `>=6.14.0` to `^6.14.0`, preventing npm from resolving AJV 8.x for `@eslint/eslintrc` (which requires `ajv@^6.12.4`) and eliminating the `Cannot set properties of undefined (setting 'defaultMeta')` crash at ESLint startup.
+
+### Documentation
+- **CI/CD Guide updated**: Corrected pipeline diagram and job descriptions to reflect the current 9-job CI pipeline (lint, compose-validate, unit-tests, dependency-audit, security-scan, frontend-typecheck, frontend-lint, integration-tests) plus 4 release jobs; updated Python 3.11 → 3.12; updated branch trigger description.
+- **Security policy updated**: Corrected DOMPurify coverage statement to accurately reflect that `DocsTab` was unprotected prior to this release; updated Last Updated date.
+- **Deployment guide updated**: Replaced 112 occurrences of deprecated `docker-compose` CLI syntax with `docker compose` (Docker Compose V2) throughout.
+- **Quick Reference updated**: Updated Last Updated month.
+
 ## [1.83.23] - 2026-04-09
 
 ### Fixed

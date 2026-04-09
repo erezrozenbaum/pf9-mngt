@@ -113,12 +113,12 @@ def _ensure_activity_log_table():
 try:
     _ensure_tables()
 except Exception as e:
-    logger.warning(f"Could not ensure provisioning tables on startup: {e}")
+    logger.warning("Could not ensure provisioning tables on startup: %s", e)
 
 try:
     _ensure_activity_log_table()
 except Exception as e:
-    logger.warning(f"Could not ensure activity_log table on startup: {e}")
+    logger.warning("Could not ensure activity_log table on startup: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ def _log_activity(
                     ip_address, result, error_message,
                 ))
     except Exception as e:
-        logger.error(f"Failed to write activity log: {e}")
+        logger.error("Failed to write activity log: %s", e)
 
 
 def _fire_notification(
@@ -846,7 +846,7 @@ def _run_provisioning(conn, job_id: str, req: ProvisionRequest, created_by: str)
                     except Exception as e:
                         # Duplicate rule (409) is OK
                         if "409" not in str(e) and "already exists" not in str(e).lower():
-                            logger.warning(f"SG rule failed: {e}")
+                            logger.warning("SG rule failed: %s", e)
                 return {"rules_added": len(added)}
 
             run_step(
