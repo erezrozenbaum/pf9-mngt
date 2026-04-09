@@ -227,6 +227,9 @@ jobs:
           grep '^JWT_SECRET_KEY='      .env | cut -d'=' -f2- > secrets/jwt_secret
           # ldap_sync_key: generate a fresh random key for this CI run
           python3 -c "import os,base64; open('secrets/ldap_sync_key','w').write(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+          # vm_provision_key + smtp_config_key: fresh random keys for this CI run
+          python3 -c "import secrets; open('secrets/vm_provision_key','w').write(secrets.token_hex(32))"
+          python3 -c "import secrets; open('secrets/smtp_config_key','w').write(secrets.token_hex(32))"
 
       - name: Build and start stack
         run: docker compose up --build -d

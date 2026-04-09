@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.26] - 2026-04-09
+
+### Internal
+- **CI pipeline — missing stub secret files in integration-tests job**: The `Build and start stack` step failed on GitHub Actions because `docker compose up` tried to bind-mount `secrets/vm_provision_key` and `secrets/smtp_config_key` as Docker secrets, but those files were not created by the CI setup step. Added two `python3 -c "import secrets; ..."` lines to the "Create secret files for Docker Compose" step so that fresh random keys are generated for each CI run (identical pattern to the existing `ldap_sync_key` stub). No functional code changes.
+
 ## [1.83.25] - 2026-04-09
 
 ### Security
