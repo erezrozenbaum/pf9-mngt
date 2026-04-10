@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE } from "../config";
+import { apiFetch } from '../lib/api';
 import "../styles/VmProvisioningTab.css";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -169,23 +169,6 @@ function quotaFree(entry?: number | QuotaEntry): { used: number; limit: number }
 }
 
 // ── Auth helpers ─────────────────────────────────────────────
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    ...(opts?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
-  }
-  return res.json();
-}
 
 function newVmRow(): VmRow {
   return {

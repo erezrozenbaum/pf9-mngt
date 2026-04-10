@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { API_BASE } from "../config";
+import { authHeaders } from '../lib/api';
 
 /* ===================================================================
    CustomerProvisioningTab
@@ -224,13 +225,6 @@ const WIZARD_STEPS = [
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("auth_token");
-  return token
-    ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-    : { "Content-Type": "application/json" };
-}
-
 function statusBadge(status: string) {
   const colors: Record<string, string> = {
     completed: "#48bb78", running: "#4299e1", pending: "#a0aec0",
@@ -648,7 +642,7 @@ const CustomerProvisioningTab: React.FC<Props> = ({ isAdmin }) => {
         storage_quotas: form.storage_quotas,
       };
       const res = await fetch(`${API_BASE}/api/provisioning/provision`, {
-        method: "POST", headers: authHeaders(), body: JSON.stringify(payload),
+        method: "POST", headers: { ...authHeaders(), "Content-Type": "application/json" }, body: JSON.stringify(payload),
       });
       const data = await res.json();
       setProvisionResult(data);

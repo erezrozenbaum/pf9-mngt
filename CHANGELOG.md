@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.29] - 2026-04-10
+
+### Changed
+- **UI — complete lib/api.ts migration**: Eliminated all remaining direct `localStorage.getItem('auth_token')` reads in frontend components. 10 additional files (TenantHealthView, SnapshotRestoreWizard, DependencyGraph, MFASettings, ActivityLogTab, CustomerProvisioningTab, DomainManagementTab, useNavigation, ClusterContext, UserManagement) have their local `getToken`/`authHeaders`/`apiFetch` helpers removed; all now import from `lib/api.ts`. `App.tsx` had 3 residual raw localStorage calls replaced with `getToken()`. `lib/api.ts` is now the single source of truth for token access across the entire frontend (prerequisite for Phase 4.1 httpOnly cookie migration).
+
+### Fixed
+- **UI — MFASettings wrong API path**: `MFASettings.tsx` had its own local `const API_BASE = ".../api"` fallback, causing all MFA calls to hit `/api/auth/mfa/...` instead of the correct nginx-proxied root `/auth/mfa/...`. Migrating to `apiFetch('/auth/mfa/...')` silently fixes this latent routing bug.
+
 ## [1.83.28] - 2026-04-10
 
 ### Internal

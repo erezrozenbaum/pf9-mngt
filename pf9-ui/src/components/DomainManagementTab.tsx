@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../config";
+import { authHeaders } from '../lib/api';
 
 /* ===================================================================
    DomainManagementTab
@@ -133,13 +134,6 @@ type ResourceTab = "projects" | "users" | "servers" | "volumes" | "networks" | "
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("auth_token");
-  return token
-    ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-    : { "Content-Type": "application/json" };
-}
-
 function statusColor(status: string): string {
   const s = status.toLowerCase();
   if (s === "active" || s === "in-use" || s === "available") return "#48bb78";
@@ -270,7 +264,7 @@ const DomainManagementTab: React.FC<Props> = ({ isAdmin }) => {
     setToggleConfirmInput("");
     try {
       const res = await fetch(`${API_BASE}/api/provisioning/domains/${domain.id}/toggle`, {
-        method: "PUT", headers: authHeaders(), body: JSON.stringify({ enabled: !domain.enabled }),
+        method: "PUT", headers: { ...authHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ enabled: !domain.enabled }),
       });
       if (res.ok) {
         fetchDomains();

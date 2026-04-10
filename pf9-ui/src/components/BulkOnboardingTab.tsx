@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE } from "../config";
+import { apiFetch, authHeaders } from '../lib/api';
 import "../styles/BulkOnboardingTab.css";
 
 /* =========================================================================
@@ -77,9 +77,6 @@ interface ResourceRow {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
 
 function getCurrentUser(): { username: string; role: string } | null {
   try {
@@ -93,19 +90,6 @@ function isAdminUser(): boolean {
   return u?.role === "admin" || u?.role === "superadmin";
 }
 
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    ...(opts?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
-  }
-  return res.json();
-}
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -287,9 +271,8 @@ export default function BulkOnboardingTab({ onBack }: Props) {
 
   // ── Template download ──────────────────────────────────────────────────
   const downloadTemplate = async () => {
-    const token = getToken();
-    const res = await fetch(`${API_BASE}/api/onboarding/template`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    const res = await fetch(`/api/onboarding/template`, {
+      headers: authHeaders(),
     });
     if (!res.ok) { showToast("Failed to download template", "error"); return; }
     const blob = await res.blob();
@@ -307,20 +290,12 @@ export default function BulkOnboardingTab({ onBack }: Props) {
     if (!uploadFile) { showToast("Please select an Excel file", "error"); return; }
     setUploading(true);
     try {
-      const token = getToken();
       const form = new FormData();
       form.append("file", uploadFile);
-      const url = `${API_BASE}/api/onboarding/upload?batch_name=${encodeURIComponent(uploadName || uploadFile.name)}`;
-      const res = await fetch(url, {
+      const data = await apiFetch<any>(`/api/onboarding/upload?batch_name=${encodeURIComponent(uploadName || uploadFile.name)}`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: form,
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`${res.status}: ${txt}`);
-      }
-      const data = await res.json();
       showToast(
         data.validation_errors?.length
           ? `Batch created with ${data.validation_errors.length} validation error(s)`
@@ -401,9 +376,8 @@ export default function BulkOnboardingTab({ onBack }: Props) {
   const handleDelete = async (batchId: string, batchName: string) => {
     if (!window.confirm(`Delete batch '${batchName}'? This cannot be undone.`)) return;
     try {
-      await fetch(`${API_BASE}/api/onboarding/batches/${batchId}`, {
+      await apiFetch(`/api/onboarding/batches/${batchId}`, {
         method: "DELETE",
-        headers: getToken() ? { Authorization: `Bearer ${getToken()!}` } : {},
       });
       showToast("Batch deleted", "info");
       if (selected?.batch_id === batchId) { setSelected(null); setView("list"); }

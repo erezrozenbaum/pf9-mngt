@@ -2272,7 +2272,7 @@ const App: React.FC = () => {
     setUserModalSaving(true);
     setUserModalError(null);
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getToken();
       const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
       if (userModalMode === "create") {
         const { username, email, password, full_name, role } = userModalFields;
@@ -2309,7 +2309,7 @@ const App: React.FC = () => {
   const handleUserDelete = useCallback(async (username: string) => {
     if (!window.confirm(`Delete platform9 user "${username}"? This will remove them from LDAP.`)) return;
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getToken();
       const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(username)}`, {
         method: "DELETE", headers: { Authorization: `Bearer ${token}` },
       });
@@ -2328,7 +2328,7 @@ const App: React.FC = () => {
     setUserResetPwSaving(true);
     setUserResetPwMsg(null);
     try {
-      const token = localStorage.getItem("auth_token");
+      const token = getToken();
       const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(userResetPwTarget)}/password`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },

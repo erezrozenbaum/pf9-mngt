@@ -12,27 +12,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
-import { API_BASE } from "../config";
-
-/* ── API helper ─────────────────────────────────────────────── */
-
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `API error ${res.status}`);
-  }
-  return res.json();
-}
+import { apiFetch } from '../lib/api';
 
 /* ── Types ──────────────────────────────────────────────────── */
 

@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE } from "../config";
+import { apiFetch } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,22 +75,6 @@ interface JobsResponse {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
-  }
-  return res.json();
-}
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";

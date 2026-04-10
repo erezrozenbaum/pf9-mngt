@@ -27,7 +27,7 @@ import ReactFlow, {
 } from "reactflow";
 import dagre from "@dagrejs/dagre";
 import "reactflow/dist/style.css";
-import { API_BASE } from "../../config";
+import { apiFetch } from '../../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -407,10 +407,6 @@ function TenantHealthPanel({ summary, graphHealthScore, topIssues, orphanSummary
 // API fetch helper
 // ---------------------------------------------------------------------------
 
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
 async function fetchGraph(
   rootType: GraphRootType,
   rootId: string,
@@ -418,17 +414,9 @@ async function fetchGraph(
   mode: GraphMode,
   migrationProjectId?: number,
 ): Promise<GraphResponse> {
-  const token = getToken();
-  let url = `${API_BASE}/api/graph?root_type=${encodeURIComponent(rootType)}&root_id=${encodeURIComponent(rootId)}&depth=${depth}&mode=${mode}`;
+  let url = `/api/graph?root_type=${encodeURIComponent(rootType)}&root_id=${encodeURIComponent(rootId)}&depth=${depth}&mode=${mode}`;
   if (migrationProjectId != null) url += `&migration_project_id=${migrationProjectId}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as {detail?: string}).detail ?? `API error ${res.status}`);
-  }
-  return res.json();
+  return apiFetch<GraphResponse>(url);
 }
 
 // ---------------------------------------------------------------------------
@@ -592,15 +580,7 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
       let data: GraphResponse;
       if (graphUrl) {
         // VMware migration graph mode — fetch the pre-built URL directly
-        const token = getToken();
-        const res = await fetch(`${API_BASE}${graphUrl}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error((err as {detail?: string}).detail ?? `API error ${res.status}`);
-        }
-        data = await res.json();
+        data = await apiFetch<GraphResponse>(graphUrl);
       } else {
         data = await fetchGraph(currentRoot.type as GraphRootType, currentRoot.id, depth, mode, migrationProjectId);
       }
@@ -672,14 +652,10 @@ export default function DependencyGraph({ rootType, rootId, rootLabel, onClose, 
     setDeleteTicketLoading(true);
     setDeleteTicketResult(null);
     try {
-      const token = getToken();
-      const res = await fetch(`${API_BASE}/api/graph/request-delete`, {
+      const data = await apiFetch<{ ticket_ref: string; created: boolean }>(`/api/graph/request-delete`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ root_type: currentRoot.type, root_id: currentRoot.id }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail ?? `API error ${res.status}`);
       setDeleteTicketResult({ ticket_ref: data.ticket_ref, created: data.created });
     } catch (e: any) {
       alert("Could not create delete-request ticket: " + e.message);

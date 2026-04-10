@@ -8,7 +8,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE } from "../config";
+import { apiFetch } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -185,23 +185,6 @@ type WizardScreen = "select" | "configure" | "execute";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("auth_token");
-  return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
-}
-
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: { ...authHeaders(), ...(options?.headers || {}) },
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`HTTP ${res.status}: ${txt || res.statusText}`);
-  }
-  return (await res.json()) as T;
-}
 
 function formatDateShort(value: string | null | undefined): string {
   if (!value) return "—";

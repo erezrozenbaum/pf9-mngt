@@ -1055,7 +1055,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     if (!itemForm.key.trim() || !itemForm.label.trim() || !itemForm.nav_group_id) {
       setNavMsg('⚠️ Key, Label and Group required'); return;
     }
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setNavMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/nav/items`, {
@@ -1073,7 +1073,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleUpdateItem = async (itemId: number) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setNavMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/nav/items/${itemId}`, {
@@ -1092,7 +1092,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleDeleteItem = async (itemId: number) => {
     if (!confirm('Delete this navigation item?')) return;
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setNavMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/nav/items/${itemId}`, {
@@ -1107,7 +1107,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleMoveItem = async (itemId: number, newGroupId: number) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     const item = navItems.find((i: any) => i.id === itemId);
     if (!item) return;
     try {
@@ -1134,7 +1134,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   // Inline sort_order update for items (no need to enter full edit mode)
   const handleUpdateItemSortOrder = async (itemId: number, newOrder: number) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     try {
       await fetch(`${API_BASE}/api/nav/items/${itemId}`, {
         method: 'PUT',
@@ -1147,7 +1147,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   // Set a group as the default (auto-open on login)
   const handleSetDefaultGroup = async (groupId: number) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setNavMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/nav/groups/${groupId}`, {
@@ -1163,7 +1163,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleSetUserDepartment = async (username: string, departmentId: number | null) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     try {
       const res = await fetch(`${API_BASE}/api/auth/users/${username}/department`, {
         method: 'PUT',
@@ -1181,7 +1181,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     setError('');
     try {
       // Get auth token from localStorage if available
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const headers: Record<string, string> = token
         ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
         : { 'Content-Type': 'application/json' };
@@ -1273,7 +1273,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleAddUser = async (userData: any) => {
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const response = await fetch(`${API_BASE}/auth/users`, {
         method: 'POST',
         headers: {
@@ -1311,7 +1311,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleUpdateUserRole = async (userData: any) => {
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
 
       // 1. Update role
       const response = await fetch(`${API_BASE}/auth/users/${userData.username}/role`, {
@@ -1352,7 +1352,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
     
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const response = await fetch(`${API_BASE}/auth/users/${userId}`, {
         method: 'DELETE',
         headers: {
@@ -1380,7 +1380,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     setResetPwLoading(true);
     setResetPwMsg('');
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const response = await fetch(`${API_BASE}/auth/users/${username}/password`, {
         method: 'POST',
         headers: {
@@ -1407,7 +1407,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const loadAuditLogs = async () => {
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const params = new URLSearchParams();
       
       if (auditFilters.username) params.append('username', auditFilters.username);
@@ -1575,7 +1575,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     if (!assigningRole || !assignUser) return;
     setAssignSaving(true); setAssignMsg('');
     try {
-      const token = localStorage.getItem('auth_token') || '';
+      const token = getToken() || '';
       const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(assignUser)}/role`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -1594,7 +1594,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     const key = `${role}:${resource}:${action}`;
     setPermSaving(key);
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const res = await fetch(`${API_BASE}/auth/permissions`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -2369,7 +2369,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                     <select
                       value={d.default_nav_item_key || ''}
                       onChange={async e => {
-                        const token = localStorage.getItem('auth_token');
+                        const token = getToken();
                         await fetch(`${API_BASE}/api/departments/${d.id}`, {
                           method: 'PUT',
                           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -2746,7 +2746,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                         value={dept.default_nav_item_key || ''}
                         onChange={async e => {
                           const key = e.target.value;
-                          const token = localStorage.getItem('auth_token');
+                          const token = getToken();
                           try {
                             const res = await fetch(`${API_BASE}/api/departments/${dept.id}`, {
                               method: 'PUT',

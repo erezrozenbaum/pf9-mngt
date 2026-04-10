@@ -13,28 +13,8 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { API_BASE } from "../config";
+import { apiFetch, authHeaders } from '../lib/api';
 import { useClusterContext } from "./ClusterContext";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `API error ${res.status}`);
-  }
-  return res.json();
-}
 
 function fmtNum(v: number | null | undefined, decimals = 1): string {
   if (v == null) return "—";
@@ -599,7 +579,6 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
   // ─── Export handler ────────────────────────────────────────────────────
 
   const triggerExport = async (type: string) => {
-    const token = getToken();
     const params = new URLSearchParams();
     if (projectFilter) params.set("project", projectFilter);
     if (domainFilter) params.set("domain", domainFilter);
@@ -609,8 +588,8 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/api/metering/export/${type}?${params}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      const res = await fetch(`/api/metering/export/${type}?${params}`, {
+        headers: authHeaders(),
       });
       if (!res.ok) throw new Error(`Export failed: ${res.status}`);
       const blob = await res.blob();
@@ -1615,11 +1594,9 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                 onClick={async () => {
                   setEmailSending(true);
                   setEmailMsg(null);
-                  const token = localStorage.getItem("auth_token");
                   try {
-                    const res = await fetch(`${API_BASE}/api/metering/export/send-email`, {
+                    const data = await apiFetch<{ message: string }>(`/api/metering/export/send-email`, {
                       method: "POST",
-                      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
                       body: JSON.stringify({
                         to_email: emailTo,
                         format: emailFormat,
@@ -1629,12 +1606,7 @@ export default function MeteringTab({ isAdmin: _isAdmin }: MeteringTabProps) {
                         currency: exportCurrency || null,
                       }),
                     });
-                    const data = await res.json();
-                    if (res.ok) {
-                      setEmailMsg(`✅ ${data.message}`);
-                    } else {
-                      setEmailMsg(`⚠️ ${data.detail || "Failed to send"}`);
-                    }
+                    setEmailMsg(`✅ ${data.message}`);
                   } catch (e: any) {
                     setEmailMsg(`⚠️ ${e.message}`);
                   } finally {

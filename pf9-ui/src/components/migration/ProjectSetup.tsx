@@ -9,33 +9,12 @@
  */
 
 import React, { useState, useCallback, useMemo } from "react";
-import { API_BASE } from "../../config";
+import { apiFetch } from '../../lib/api';
 import type { MigrationProject } from "../MigrationPlannerTab";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
-
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    ...(opts?.headers as Record<string, string> || {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  if (!(opts?.body instanceof FormData)) {
-    headers["Content-Type"] = "application/json";
-  }
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `API error ${res.status}`);
-  }
-  return res.json();
-}
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { API_BASE } from "../config";
+import { apiFetch } from '../lib/api';
 import "../styles/TenantHealthView.css";
 
 /* ──────────────────────────────────────────────────────────── */
@@ -155,18 +155,6 @@ export interface TenantHealthViewProps {
 /*  Helpers                                                     */
 /* ──────────────────────────────────────────────────────────── */
 
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = localStorage.getItem("auth_token");
-  const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  if (opts?.body) headers["Content-Type"] = "application/json";
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers: { ...headers, ...((opts?.headers as Record<string, string>) || {}) },
-  });
-  if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
-  return res.json();
-}
 
 function scoreClass(score: number): string {
   if (score >= 80) return "healthy";

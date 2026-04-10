@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { API_BASE } from "../config";
+import { apiFetch } from '../lib/api';
 
 /* ===================================================================
    ActivityLogTab
@@ -25,13 +25,6 @@ interface ActivityEntry {
   ip_address: string | null;
   result: string;
   error_message: string | null;
-}
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("auth_token");
-  return token
-    ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
-    : { "Content-Type": "application/json" };
 }
 
 const ACTIONS = ["provision", "delete", "disable", "enable", "send_welcome_notifications", "execute_onboarding", "approve_onboarding", "reject_onboarding"];
@@ -69,14 +62,7 @@ const ActivityLogTab: React.FC = () => {
       if (actorFilter) params.set("actor", actorFilter);
       if (resultFilter) params.set("result", resultFilter);
 
-      const res = await fetch(`${API_BASE}/api/provisioning/activity-log?${params}`, {
-        headers: authHeaders(),
-      });
-      if (!res.ok) {
-        if (res.status === 403) throw new Error("Access denied. Admin permissions required.");
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = await res.json();
+      const data = await apiFetch<any>(`/api/provisioning/activity-log?${params}`);
       setLogs(data.logs || []);
       setTotal(data.total || 0);
     } catch (e: any) {

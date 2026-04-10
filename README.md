@@ -534,6 +534,8 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.29](CHANGELOG.md)** — Complete `lib/api.ts` migration: all remaining `localStorage.getItem('auth_token')` direct reads removed from frontend components. `lib/api.ts` is now the single source of truth for auth token access. Also fixes a latent MFASettings routing bug (`/api/auth/mfa/...` → `/auth/mfa/...`).
+**[v1.83.28](CHANGELOG.md)** — CI fix: removed stale unused imports (`API_BASE`, `getToken`) in `BackupManagement.tsx` and `LdapSyncSettings.tsx` left over from the Batch 3.1 lib/api refactor causing TS6133 errors.
 **[v1.83.21](CHANGELOG.md)** — CI fixed: dependency audit and TypeScript check now run entirely inside Docker containers (no npm/node on CI host), consistent with the Docker/Kubernetes deployment model. Fixes `pf9_ui` build breakage (`EOVERRIDE`) introduced in v1.83.20 and patches vite HIGH CVEs.
 **[v1.83.20](CHANGELOG.md)** — Linux VM provisioning now auto-installs `qemu-guest-agent` via cloud-init so the Reset VM Password runbook works reliably. Runbook result now surfaces a `guest_agent_warning` for Linux VMs provisioned before this release.
 **[v1.83.19](CHANGELOG.md)** — UI polish: light mode sidebar color family unification; dark mode sidebar amber tint removed; dark mode sub-item panel banding flattened; themed `::selection` for readable text highlight; Snapshot Run Monitor filter row fixed left-to-right; phantom active run bar auto-remediates orphaned runs; batch dot cursor fixed.

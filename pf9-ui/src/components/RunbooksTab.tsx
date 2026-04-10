@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { API_BASE } from "../config";
+import { apiFetch } from '../lib/api';
 import "../styles/RunbooksTab.css";
 import BulkOnboardingTab from "./BulkOnboardingTab";
 import VmProvisioningTab from "./VmProvisioningTab";
@@ -58,23 +58,6 @@ interface ExecutionStats {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
-  }
-  return res.json();
-}
 
 const CATEGORY_ICONS: Record<string, string> = {
   vm: "🖥️",

@@ -54,8 +54,9 @@ export function authHeaders(): Record<string, string> {
  * @param path   - Absolute path starting with '/', e.g. '/api/backup/status'.
  *                 `API_BASE` is prepended (empty string in production).
  * @param opts   - Standard `RequestInit` options.  `headers` values override
- *                 the defaults; set `Content-Type` to a different value for
- *                 multipart or plain-text requests.
+ *                 the defaults; when `opts.body` is a `FormData` instance the
+ *                 `Content-Type` header is intentionally omitted so the browser
+ *                 can add the correct `multipart/form-data; boundary=...` value.
  * @returns      Parsed JSON response body cast to T.
  * @throws       Error with the backend `detail` field or 'API error <status>'.
  */
@@ -63,7 +64,7 @@ export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> 
   const token = getToken();
   const callerHeaders = (opts?.headers ?? {}) as Record<string, string>;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(opts?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...callerHeaders,
   };

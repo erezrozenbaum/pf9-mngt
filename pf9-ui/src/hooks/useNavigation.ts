@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE } from "../config";
+import { getToken } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,7 +138,7 @@ export function useNavigation(isAuthenticated: boolean) {
   const persistOrder = useCallback((order: NavCustomOrder) => {
     localStorage.setItem(NAV_ORDER_KEY, JSON.stringify(order));
     // Also save to backend (fire-and-forget)
-    const token = localStorage.getItem("auth_token");
+    const token = getToken();
     if (token) {
       fetch(`${API_BASE}/user/preferences/nav_order`, {
         method: "PUT",
@@ -195,7 +196,7 @@ export function useNavigation(isAuthenticated: boolean) {
   const resetOrder = useCallback(() => {
     setCustomOrder(null);
     localStorage.removeItem(NAV_ORDER_KEY);
-    const token = localStorage.getItem("auth_token");
+    const token = getToken();
     if (token) {
       fetch(`${API_BASE}/user/preferences/nav_order`, {
         method: "PUT",
@@ -207,7 +208,7 @@ export function useNavigation(isAuthenticated: boolean) {
 
   // ── Fetch navigation from server ──
   const fetchNavigation = useCallback(async () => {
-    const token = localStorage.getItem("auth_token");
+    const token = getToken();
     if (!token) return;
     setNavLoading(true);
     setNavError(null);
@@ -248,7 +249,7 @@ export function useNavigation(isAuthenticated: boolean) {
   // ── Load custom order from backend on login ──
   useEffect(() => {
     if (!isAuthenticated) return;
-    const token = localStorage.getItem("auth_token");
+    const token = getToken();
     if (!token) return;
     fetch(`${API_BASE}/user/preferences`, {
       headers: { Authorization: `Bearer ${token}` },

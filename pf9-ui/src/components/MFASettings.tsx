@@ -10,8 +10,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from "react";
-
-const API_BASE = (window as any).__PF9_API_BASE__ || import.meta.env.VITE_API_BASE || "/api";
+import { apiFetch } from '../lib/api';
 
 interface MFAStatus {
   mfa_enabled: boolean;
@@ -56,20 +55,12 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
   const [resetTarget, setResetTarget] = useState<string | null>(null);
   const [resetReason, setResetReason] = useState("");
 
-  const token = localStorage.getItem("auth_token") || "";
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  };
-
   const clearMessages = () => { setError(""); setSuccess(""); };
 
   // ── Fetch current user MFA status ──
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/auth/mfa/status`, { headers });
-      if (!res.ok) throw new Error("Failed to fetch MFA status");
-      const data: MFAStatus = await res.json();
+      const data: MFAStatus = await apiFetch<MFAStatus>(`/auth/mfa/status`);
       setStatus(data);
     } catch (err: any) {
       setError(err.message);
@@ -79,9 +70,7 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
   // ── Fetch admin user list ──
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/auth/mfa/users`, { headers });
-      if (!res.ok) throw new Error("Failed to fetch MFA users");
-      const data: MFAUserEntry[] = await res.json();
+      const data: MFAUserEntry[] = await apiFetch<MFAUserEntry[]>(`/auth/mfa/users`);
       setUsers(data);
     } catch (err: any) {
       setError(err.message);
@@ -106,12 +95,7 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
   const handleBeginSetup = async () => {
     setLoading(true); clearMessages();
     try {
-      const res = await fetch(`${API_BASE}/auth/mfa/setup`, { method: "POST", headers });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || "Failed to start MFA setup");
-      }
-      const data: MFASetupResponse = await res.json();
+      const data: MFASetupResponse = await apiFetch<MFASetupResponse>(`/auth/mfa/setup`, { method: "POST" });
       setSetupData(data);
       setStep("verify");
     } catch (err: any) {
@@ -126,15 +110,10 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
     if (!verifyCode || verifyCode.length < 6) { setError("Enter a valid 6-digit code"); return; }
     setLoading(true); clearMessages();
     try {
-      const res = await fetch(`${API_BASE}/auth/mfa/verify-setup`, {
-        method: "POST", headers,
+      const data: MFAVerifySetupResponse = await apiFetch<MFAVerifySetupResponse>(`/auth/mfa/verify-setup`, {
+        method: "POST",
         body: JSON.stringify({ code: verifyCode }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || "Verification failed");
-      }
-      const data: MFAVerifySetupResponse = await res.json();
       setBackupCodes(data.backup_codes);
       setStep("backup_codes");
       setSuccess("MFA enabled successfully!");
@@ -151,14 +130,10 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
     if (!disableCode || disableCode.length < 6) { setError("Enter a valid code"); return; }
     setLoading(true); clearMessages();
     try {
-      const res = await fetch(`${API_BASE}/auth/mfa/disable`, {
-        method: "POST", headers,
+      await apiFetch(`/auth/mfa/disable`, {
+        method: "POST",
         body: JSON.stringify({ code: disableCode }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || "Failed to disable MFA");
-      }
       setSuccess("MFA has been disabled.");
       setStep("status");
       setDisableCode("");
@@ -175,13 +150,9 @@ const MFASettings: React.FC<Props> = ({ isOpen, onClose, isAdmin }) => {
     if (!confirm(`Are you sure you want to reset MFA for ${username}? They will need to re-enroll.`)) return;
     setLoading(true); clearMessages();
     try {
-      const res = await fetch(`${API_BASE}/auth/mfa/admin-reset/${encodeURIComponent(username)}?reason=${encodeURIComponent(resetReason || "Admin reset via UI")}`, {
-        method: "DELETE", headers,
+      await apiFetch(`/auth/mfa/admin-reset/${encodeURIComponent(username)}?reason=${encodeURIComponent(resetReason || "Admin reset via UI")}`, {
+        method: "DELETE",
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || "Failed to reset MFA");
-      }
       setSuccess(`MFA has been reset for ${username}. They can now re-enroll.`);
       setResetTarget(null);
       setResetReason("");

@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { API_BASE } from "../config";
+import { apiFetch } from '../lib/api';
 import "../styles/DriftDetection.css";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -75,23 +75,6 @@ interface DriftRule {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(opts?.body ? { "Content-Type": "application/json" } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers: { ...headers, ...(opts?.headers || {}) } });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
-  }
-  return res.json();
-}
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";

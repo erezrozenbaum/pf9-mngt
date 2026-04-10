@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { API_BASE } from "../config";
+import { apiFetch, authHeaders } from '../lib/api';
 import "../styles/TicketsTab.css";
 
 /* ===================================================================
@@ -102,23 +102,6 @@ interface TicketStats {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
-  }
-  return res.json();
-}
 
 function fmt(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -465,10 +448,9 @@ export default function TicketsTab({
     try {
       const ids = [...selectedIds];
       if (action === "export_csv") {
-        const token = localStorage.getItem("auth_token");
         const res = await fetch(`/api/tickets/bulk-action`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({ action, ticket_ids: ids.length > 0 ? ids : undefined }),
         });
         if (!res.ok) throw new Error(await res.text());

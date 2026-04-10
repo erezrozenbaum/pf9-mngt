@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { API_BASE } from "../config";
+import { apiFetch } from '../lib/api';
 import "../styles/DocsTab.css";
 
 /* =========================================================================
@@ -40,25 +40,6 @@ interface DocsTabProps {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const isJson = opts?.body && !(opts.body instanceof FormData);
-  const headers: Record<string, string> = {
-    ...(isJson ? { "Content-Type": "application/json" } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
-  }
-  return res.json();
-}
 
 function groupByCategory(entries: DocEntry[]): Map<string, DocEntry[]> {
   const map = new Map<string, DocEntry[]>();
