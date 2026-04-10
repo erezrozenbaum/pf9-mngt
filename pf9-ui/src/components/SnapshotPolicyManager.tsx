@@ -8,6 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import type { FC } from 'react';
 import SnapshotComplianceReport from './SnapshotComplianceReport';
+import { getToken } from '../lib/api';
 
 interface PolicySet {
   id: number;
@@ -71,7 +72,7 @@ const SnapshotPolicyManager: FC = () => {
   const [showCreatePolicy, setShowCreatePolicy] = useState(false);
   const [editingPolicy, setEditingPolicy] = useState<PolicySet | null>(null);
 
-  const token = localStorage.getItem('auth_token');
+  const token = getToken();
 
   useEffect(() => {
     loadData();

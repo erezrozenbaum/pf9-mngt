@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/APIMetricsTab.css';
 import { API_BASE } from '../config';
+import { getToken } from '../lib/api';
 
 interface Endpoint {
   endpoint: string;
@@ -63,7 +64,7 @@ export const APIMetricsTab: React.FC = () => {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        const token = localStorage.getItem('auth_token');
+        const token = getToken();
         const response = await fetch(`${API_BASE}/api/metrics`, {
           headers: {
             'Authorization': `Bearer ${token}`,

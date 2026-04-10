@@ -287,6 +287,7 @@ audit_handler = logging.StreamHandler()
 audit_handler.setFormatter(logging.Formatter('%(asctime)s - AUDIT - %(message)s'))
 audit_logger.addHandler(audit_handler)
 audit_logger.setLevel(logging.INFO)
+audit_logger.propagate = False  # prevent double-emit via root logger StreamHandler
 
 # ---------------------------------------------------------------------------
 # Security functions

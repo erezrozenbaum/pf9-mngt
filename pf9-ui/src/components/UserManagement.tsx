@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE } from '../config';
+import { getToken } from '../lib/api';
 import LdapSyncSettings from './LdapSyncSettings';
 
 type AuthUser = {
@@ -29,7 +30,7 @@ const ContainerAlertSettings: React.FC<{ user?: AuthUser | null }> = ({ user }) 
   }, []);
 
   const handleSave = async () => {
-    const token = localStorage.getItem('auth_token') || '';
+    const token = getToken() || '';
     if (!token) { setMsg('⚠️ Please log in first'); return; }
     setSaving(true); setMsg('');
     try {
@@ -135,7 +136,7 @@ const BrandingSettings: React.FC = () => {
 
   useEffect(() => { fetchBranding(); }, [fetchBranding]);
 
-  const authToken = localStorage.getItem('auth_token') || '';
+  const authToken = getToken() || '';
   const authHeader = authToken ? `Bearer ${authToken}` : '';
 
   const handleSave = async () => {
@@ -373,7 +374,7 @@ const SystemConfigPanel: React.FC<{ user?: AuthUser | null }> = ({ user: _user }
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const token = localStorage.getItem('auth_token') || '';
+    const token = getToken() || '';
     fetch(`${API_BASE}/admin/system-config`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -627,7 +628,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   }, []);
 
   const rbAuthHeaders = useCallback(() => {
-    const t = localStorage.getItem('auth_token');
+    const t = getToken();
     return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
   }, []);
 
@@ -830,7 +831,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const loadMfaUsers = async () => {
     setMfaLoading(true); setMfaMsg('');
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const res = await fetch(`${API_BASE}/auth/mfa/users`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -845,7 +846,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const loadDeptNavData = async () => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
     try {
       const [dRes, gRes, iRes] = await Promise.all([
@@ -860,7 +861,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const loadVisibilityMatrix = async () => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     try {
       const res = await fetch(`${API_BASE}/api/departments/visibility/matrix`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -886,7 +887,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleCreateDepartment = async () => {
     if (!deptForm.name.trim()) return;
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setDeptMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/departments`, {
@@ -904,7 +905,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleDeleteDepartment = async (id: number) => {
     if (!confirm('Delete this department?')) return;
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setDeptMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/departments/${id}`, {
@@ -919,7 +920,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleSaveDepartment = async (id: number) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setDeptMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/departments/${id}`, {
@@ -940,7 +941,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleSaveVisibility = async (deptId: number) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setVisMsg('');
     const edit = visEdits[deptId];
     if (!edit) return;
@@ -994,7 +995,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   // ── Navigation Group CRUD ──
   const handleCreateGroup = async () => {
     if (!groupForm.key.trim() || !groupForm.label.trim()) { setNavMsg('⚠️ Key and Label required'); return; }
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setNavMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/nav/groups`, {
@@ -1011,7 +1012,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleUpdateGroup = async (groupId: number) => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setNavMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/nav/groups/${groupId}`, {
@@ -1030,7 +1031,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleDeleteGroup = async (groupId: number) => {
     if (!confirm('Delete this navigation group and all its items?')) return;
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     setNavMsg('');
     try {
       const res = await fetch(`${API_BASE}/api/nav/groups/${groupId}`, {

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.27] - 2026-04-10
+
+### Changed
+- **UI — shared API fetch helper**: Extracted `getToken()`, `authHeaders()`, and `apiFetch<T>()` into `pf9-ui/src/lib/api.ts`. Removes 24 inline `localStorage.getItem('auth_token')` calls across App.tsx, APIMetricsTab, SystemLogsTab, SnapshotAuditTrail, SnapshotComplianceReport, SnapshotMonitor, SnapshotPolicyManager, LdapSyncSettings, LandingDashboard, UserManagement, and BackupManagement. Non-breaking refactor.
+
+### Fixed
+- **API — audit log double-emit**: `audit_logger` in `main.py` lacked `propagate = False`, causing each audit event to appear twice in the log output when the root logger also has a StreamHandler configured. Added `audit_logger.propagate = False` after handler attachment.
+- **Cache — Redis stale client reconnect**: `cache._get_client()` returned a cached Redis client without verifying the connection was still alive. After a Redis restart or network interruption, the API continued returning stale cached responses until the whole API process was restarted. Added a `ping()` health check before returning the cached client; a failed ping resets the client so the next call re-establishes the connection.
+- **VM Provisioning — cloud-init plaintext credential exposure**: `_build_cloudinit_linux()` included the VM OS password as plaintext in the `chpasswd.list` section of the cloud-config payload. Nova stores `user_data` which is accessible to the VM via the metadata service (`http://169.254.169.254`). The `chpasswd.list` entry now uses the already-computed SHA-512 hash so no plaintext password appears in Nova user_data. The `passwd:` field under `users:` was already hashed; only the list entry changed.
+
+### Tests
+- **Smoke tests migrated to `tests/`**: `test_vmp.py`, `test_vmp_approval.py`, `test_phase_b1.py`, and `test_ticket_system.py` moved from repo root to `tests/`. All four are refactored as pytest test functions with `pytestmark = pytest.mark.skipif(not TEST_PF9_LIVE, ...)` so they are collected and skipped (not erroring) in standard CI. Set `TEST_PF9_LIVE=1` with a live PF9 endpoint to run them. `tests/conftest.py` added to register the `live_pf9` marker.
+
 ## [1.83.26] - 2026-04-09
 
 ### Internal

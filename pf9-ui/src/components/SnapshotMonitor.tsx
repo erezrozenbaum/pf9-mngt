@@ -6,6 +6,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import '../styles/SnapshotMonitor.css';
+import { getToken } from '../lib/api';
 
 interface SnapshotRun {
   id: number;
@@ -75,7 +76,7 @@ const SnapshotMonitor: React.FC = () => {
   // Active run progress (v1.26.0)
   const [activeProgress, setActiveProgress] = useState<ActiveRunProgress | null>(null);
 
-  const token = localStorage.getItem('auth_token');
+  const token = getToken();
 
   const pollActiveProgress = useCallback(async () => {
     try {

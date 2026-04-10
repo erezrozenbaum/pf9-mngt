@@ -6,6 +6,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import '../styles/SnapshotComplianceReport.css';
+import { getToken } from '../lib/api';
 
 interface ComplianceRow {
   volume_id: string;
@@ -102,7 +103,7 @@ const SnapshotComplianceReport: React.FC = () => {
   // Per-policy sort state
   const [sortByPolicy, setSortByPolicy] = useState<Record<string, SortState>>({});
 
-  const token = localStorage.getItem('auth_token');
+  const token = getToken();
 
   const tenants = useMemo(
     () => {

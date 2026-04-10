@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE } from '../config';
+import { getToken, apiFetch } from '../lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,24 +76,6 @@ interface PreviewResult {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getToken(): string | null {
-  return localStorage.getItem('auth_token');
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { detail?: string }).detail || `API error ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '—';

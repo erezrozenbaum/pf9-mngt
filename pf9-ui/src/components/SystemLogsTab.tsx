@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/SystemLogsTab.css';
 import { API_BASE } from '../config';
+import { getToken } from '../lib/api';
 
 interface LogEntry {
   timestamp?: string;
@@ -38,7 +39,7 @@ export const SystemLogsTab: React.FC = () => {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const token = localStorage.getItem('auth_token');
+        const token = getToken();
         const params = new URLSearchParams();
         params.append('limit', limit.toString());
         if (filter.level) params.append('level', filter.level);

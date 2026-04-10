@@ -38,6 +38,7 @@ import MigrationPlannerTab from "./components/MigrationPlannerTab";
 import CopilotPanel from "./components/CopilotPanel";
 import DependencyGraph, { type GraphRootType } from "./components/graph/DependencyGraph";
 import { useNavigation } from "./hooks/useNavigation";
+import { getToken } from "./lib/api";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -480,7 +481,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
 // ---------------------------------------------------------------------------
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const token = localStorage.getItem('auth_token');
+  const token = getToken();
   const headers: Record<string, string> = {};
   if (token && url.startsWith(API_BASE)) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -1032,7 +1033,7 @@ const App: React.FC = () => {
 
   // Check for existing token on mount — restore session if valid
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     const user = localStorage.getItem('auth_user');
     const expiresAt = localStorage.getItem('token_expires_at');
     
@@ -1186,7 +1187,7 @@ const App: React.FC = () => {
   // Logout handler
   const handleLogout = async () => {
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       if (token) {
         await fetch(`${API_BASE}/auth/logout`, {
           method: 'POST',
@@ -1298,7 +1299,7 @@ const App: React.FC = () => {
   const persistTabOrder = useCallback((order: ActiveTab[]) => {
     localStorage.setItem('pf9_tab_order', JSON.stringify(order));
     // Also save to backend (fire-and-forget)
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     if (token) {
       fetch(`${API_BASE}/user/preferences/tab_order`, {
         method: 'PUT',
@@ -1311,7 +1312,7 @@ const App: React.FC = () => {
   // Load tab order from backend on login
   useEffect(() => {
     if (!isAuthenticated) return;
-    const token = localStorage.getItem('auth_token');
+    const token = getToken();
     if (!token) return;
     fetch(`${API_BASE}/user/preferences`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -1709,7 +1710,7 @@ const App: React.FC = () => {
     setIsRefreshingInventory(true);
     setError(null);
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${API_BASE}/admin/inventory/refresh`, {
@@ -2229,7 +2230,7 @@ const App: React.FC = () => {
     (async () => {
       setSystemMetadataLoading(true);
       try {
-        const token = localStorage.getItem('auth_token');
+        const token = getToken();
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
         const resp = await fetch(`${API_BASE}/system-metadata-summary`, { headers });
@@ -3410,7 +3411,7 @@ const App: React.FC = () => {
             style={{ marginLeft: 8, background: '#2563eb' }}
             onClick={async () => {
               try {
-                const token = localStorage.getItem('auth_token');
+                const token = getToken();
                 const headers: Record<string, string> = {};
                 if (token) headers['Authorization'] = `Bearer ${token}`;
                 const res = await fetch(`${API_BASE}/export/full-inventory`, { headers });
@@ -4613,7 +4614,7 @@ const App: React.FC = () => {
                         style={{ background: '#2563eb', fontSize: "1em", padding: "8px 20px" }}
                         onClick={async () => {
                           try {
-                            const token = localStorage.getItem('auth_token');
+                            const token = getToken();
                             const headers: Record<string, string> = {};
                             if (token) headers['Authorization'] = `Bearer ${token}`;
                             const res = await fetch(`${API_BASE}/export/full-inventory`, { headers });

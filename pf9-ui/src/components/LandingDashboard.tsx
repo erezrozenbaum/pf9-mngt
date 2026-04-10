@@ -13,6 +13,7 @@ import { TenantRiskScoreCard } from './TenantRiskScoreCard';
 import { TrendlinesCard } from './TrendlinesCard';
 import { TenantRiskHeatmapCard } from './TenantRiskHeatmapCard';
 import { CapacityTrendsCard } from './CapacityTrendsCard';
+import { getToken } from '../lib/api';
 import { ComplianceDriftCard } from './ComplianceDriftCard';
 import { API_BASE } from '../config';
 import { useClusterContext } from './ClusterContext';
@@ -166,7 +167,7 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
       setLoading(true);
       setError(null);
 
-      const token = localStorage.getItem('auth_token');
+      const token = getToken();
       const headers: HeadersInit = {
         'Content-Type': 'application/json',
       };

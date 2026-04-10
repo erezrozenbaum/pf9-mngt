@@ -36,7 +36,12 @@ def _get_client():
     if not CACHE_ENABLED:
         return None
     if _client is not None:
-        return _client
+        try:
+            _client.ping()
+            return _client
+        except Exception:
+            logger.warning("Redis connection dropped \u2014 reconnecting")
+            _client = None
     try:
         import redis  # imported lazily so missing package doesn't break startup
 

@@ -209,7 +209,7 @@ ssh_pwauth: true
 chpasswd:
   expire: false
   list: |
-    {os_username}:{os_password}
+    {os_username}:{salted}
 packages:
   - qemu-guest-agent
 runcmd:

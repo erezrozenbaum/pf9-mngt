@@ -7,6 +7,7 @@
 
 import React, { useState, useEffect } from 'react';
 import '../styles/SnapshotAuditTrail.css';
+import { getToken } from '../lib/api';
 
 interface SnapshotRecord {
   id: number;
@@ -45,7 +46,7 @@ export const SnapshotAuditTrail: React.FC = () => {
   const [tenants, setTenants] = useState<string[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
 
-  const token = localStorage.getItem('auth_token');
+  const token = getToken();
 
   useEffect(() => {
     loadRecords();

@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { API_BASE } from "../config";
+import { getToken, apiFetch } from '../lib/api';
 import "../styles/BackupManagement.css";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -72,24 +73,6 @@ interface BackupStatus {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getToken(): string | null {
-  return localStorage.getItem("auth_token");
-}
-
-async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `API error ${res.status}`);
-  }
-  return res.json();
-}
 
 function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || bytes === 0) return "0 B";
