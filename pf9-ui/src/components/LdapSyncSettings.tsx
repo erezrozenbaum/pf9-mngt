@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { API_BASE } from '../config';
-import { getToken, apiFetch } from '../lib/api';
+import { apiFetch } from '../lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
