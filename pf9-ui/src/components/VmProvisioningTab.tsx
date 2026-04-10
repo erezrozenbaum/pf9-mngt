@@ -11,7 +11,8 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { apiFetch } from '../lib/api';
+import { apiFetch, authHeaders } from '../lib/api';
+import { API_BASE } from '../config';
 import "../styles/VmProvisioningTab.css";
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1279,9 +1280,8 @@ const VmProvisioningTab: React.FC<Props> = ({ onBack }) => {
 
   // ── Excel helpers ──────────────────────────────────────────────
   async function downloadTemplate() {
-    const token = getToken();
     const res = await fetch(`${API_BASE}/api/vm-provisioning/template`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: authHeaders(),
     });
     if (!res.ok) return;
     const blob = await res.blob();

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.30] - 2026-04-10
+
+### Internal
+- **CI — TypeScript build fix**: `ReportsTab.tsx`, `VmProvisioningTab.tsx`, and `migration/SourceAnalysis.tsx` had blob-download functions that still used bare `getToken()` and `API_BASE` identifiers from their old local helpers, which were removed in v1.83.29 but not replaced in those specific functions. Added `import { authHeaders } from '../lib/api'` and `import { API_BASE } from '../config'` to each file and replaced all `getToken()`+manual-header patterns in the blob-download functions with `authHeaders()`. Resolves TS2304 errors in the Frontend TypeScript Check CI job.
+
 ## [1.83.29] - 2026-04-10
 
 ### Changed

@@ -5,7 +5,8 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { apiFetch } from '../../lib/api';
+import { apiFetch, authHeaders } from '../../lib/api';
+import { API_BASE } from '../../config';
 import type { MigrationProject } from "../MigrationPlannerTab";
 
 /* ------------------------------------------------------------------ */
@@ -2463,9 +2464,8 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
 
   const downloadNetworkTemplate = async () => {
     try {
-      const token = getToken();
       const res = await fetch(`${API_BASE}/api/migration/projects/${projectId}/network-mappings/export-template`, {
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: authHeaders(),
       });
       if (!res.ok) { setError(`Download failed: ${res.statusText}`); return; }
       const blob = await res.blob();
@@ -2482,11 +2482,10 @@ function NetworkMappingView({ projectId }: { projectId: number }) {
   const importNetworkTemplate = async (f: File) => {
     setImporting(true); setImportResult(null); setError("");
     try {
-      const token = getToken();
       const fd = new FormData(); fd.append("file", f);
       const res = await fetch(`${API_BASE}/api/migration/projects/${projectId}/network-mappings/import-template`, {
         method: "POST",
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: authHeaders(),
         body: fd,
       });
       const data = await res.json();
@@ -5400,9 +5399,8 @@ function MigrationPlanView({ projectId, projectName }: { projectId: number; proj
 
   const downloadAuthBlob = async (apiPath: string, filename: string) => {
     try {
-      const token = getToken();
       const res = await fetch(`${API_BASE}${apiPath}`, {
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: authHeaders(),
       });
       if (!res.ok) { alert(`Download failed: ${res.status} ${res.statusText}`); return; }
       const blob = await res.blob();
@@ -6776,10 +6774,9 @@ function PcdReadinessView({ projectId }: { projectId: number }) {
 
   const downloadGapReport = async (fmt: "xlsx" | "pdf") => {
     try {
-      const token = getToken();
       const res = await fetch(
         `${API_BASE}/api/migration/projects/${projectId}/export-gaps-report.${fmt}`,
-        { headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } }
+        { headers: authHeaders() }
       );
       if (!res.ok) { setError(`Download failed: ${res.status}`); return; }
       const blob = await res.blob();
@@ -7192,9 +7189,8 @@ function PreparePcdView({ projectId }: { projectId: number }) {
 
   const downloadExportBlob = async (apiPath: string, filename: string) => {
     try {
-      const token = getToken();
       const res = await fetch(`${API_BASE}${apiPath}`, {
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: authHeaders(),
       });
       if (!res.ok) {
         const err = await res.text().catch(() => res.statusText);
@@ -9603,9 +9599,8 @@ function MigrationSummaryView({ projectId }: { projectId: number }) {
   const downloadSummaryBlob = async (ext: "xlsx" | "pdf") => {
     const filename = `migration-summary-${projectId}.${ext}`;
     try {
-      const token = getToken();
       const res = await fetch(`${API_BASE}/api/migration/projects/${projectId}/export-summary.${ext}`, {
-        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: authHeaders(),
       });
       if (!res.ok) { alert(`Download failed: ${res.status} ${res.statusText}`); return; }
       const blob = await res.blob();

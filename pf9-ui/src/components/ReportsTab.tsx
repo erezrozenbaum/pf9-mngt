@@ -4,7 +4,8 @@
  */
 
 import React, { useState, useEffect, useCallback } from "react";
-import { apiFetch } from '../lib/api';
+import { apiFetch, authHeaders } from '../lib/api';
+import { API_BASE } from '../config';
 import { useClusterContext } from "./ClusterContext";
 
 interface ReportDef {
@@ -151,9 +152,8 @@ export default function ReportsTab({ isAdmin }: Props) {
   const downloadRVToolsFile = useCallback(async (filename: string) => {
     setDownloadingFile(filename);
     try {
-      const token = getToken();
       const res = await fetch(`${API_BASE}/api/reports/rvtools/files/${encodeURIComponent(filename)}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: authHeaders(),
       });
       if (!res.ok) throw new Error(`Download failed (${res.status})`);
       const blob = await res.blob();
@@ -246,10 +246,9 @@ export default function ReportsTab({ isAdmin }: Props) {
         params.set("resource_type", resourceType);
       }
 
-      const token = getToken();
       const res = await fetch(
         `${API_BASE}/api/reports/${selectedReport.id}?${params.toString()}`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+        { headers: authHeaders() }
       );
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
@@ -475,10 +474,9 @@ export default function ReportsTab({ isAdmin }: Props) {
                   setRvRetentionSaving(true);
                   setRvRetentionMsg("");
                   try {
-                    const token = getToken();
                     const res = await fetch(`${API_BASE}/api/reports/rvtools/retention`, {
                       method: "PUT",
-                      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                      headers: { "Content-Type": "application/json", ...authHeaders() },
                       body: JSON.stringify({ retention_days: d }),
                     });
                     if (!res.ok) throw new Error(`HTTP ${res.status}`);
