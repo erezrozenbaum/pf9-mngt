@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.34] - 2026-04-11
+
+### Fixed
+- **`rbac_middleware` cookie-blind 401 on K8s** (`api/main.py`): The HTTP middleware that gates all API requests checked only the `Authorization: Bearer` header and immediately returned 401 if absent — it never inspected the httpOnly cookie set by the login flow. Browser clients that authenticated via cookie (v1.83.32+) would log in successfully (the cookie was set) but every subsequent API call returned 401 because the middleware rejected them before the route handler's `get_current_user` dependency could read the cookie. Fixed by mirroring the cookie-first / Bearer-fallback strategy already present in `get_current_user`: the middleware now checks `request.cookies.get("access_token")` before returning 401, consistent with the v1.83.32 design intent. Bearer header path (CI tests, external consumers) is unchanged.
+
 ## [1.83.33] - 2026-04-11
 
 ### Security

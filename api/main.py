@@ -458,7 +458,14 @@ async def rbac_middleware(request: Request, call_next):
         return await call_next(request)
 
     auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
+    cookie_token = request.cookies.get("access_token")
+
+    # Cookie-first (browser path), Bearer header fallback (CI / external consumers)
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    elif cookie_token:
+        token = cookie_token
+    else:
         response = JSONResponse(status_code=401, content={"detail": "Not authenticated"})
         origin = request.headers.get("origin", "")
         if origin in ALLOWED_ORIGINS:
@@ -467,8 +474,6 @@ async def rbac_middleware(request: Request, call_next):
             response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
-
-    token = auth_header[7:]
     token_data = verify_token(token)
     if not token_data:
         response = JSONResponse(status_code=401, content={"detail": "Invalid token"})
