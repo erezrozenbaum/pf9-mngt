@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.37] - 2026-04-11
+
+### Fixed
+- **CI: TypeScript errors in ClusterContext and LandingDashboard** (`pf9-ui/src/components/ClusterContext.tsx`, `pf9-ui/src/components/LandingDashboard.tsx`): The v1.83.36 getToken removal left a stale `Bearer ${token}` reference in the inner regions fetch inside `loadRegions` (TS2304: Cannot find name 'token'); replaced with `credentials: 'include'`. `LandingDashboard.tsx` had an unused `apiFetch` import after the token/headers block was removed (TS6133); import removed.
+
 ## [1.83.36] - 2026-04-11
 
 ### Fixed

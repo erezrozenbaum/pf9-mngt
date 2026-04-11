@@ -98,7 +98,7 @@ export function ClusterContextProvider({ children, userRole }: ProviderProps) {
         if (!cp.is_enabled) continue;
         const rRes = await fetch(
           `${API_BASE}/admin/control-planes/${encodeURIComponent(cp.id)}/regions`,
-          { headers: { Authorization: `Bearer ${token}` } }
+          { credentials: 'include' }
         );
         if (!rRes.ok) continue;
         const rData: Region[] = await rRes.json();

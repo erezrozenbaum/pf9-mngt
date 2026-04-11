@@ -13,7 +13,6 @@ import { TenantRiskScoreCard } from './TenantRiskScoreCard';
 import { TrendlinesCard } from './TrendlinesCard';
 import { TenantRiskHeatmapCard } from './TenantRiskHeatmapCard';
 import { CapacityTrendsCard } from './CapacityTrendsCard';
-import { apiFetch } from '../lib/api';
 import { ComplianceDriftCard } from './ComplianceDriftCard';
 import { API_BASE } from '../config';
 import { useClusterContext } from './ClusterContext';
