@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.36] - 2026-04-11
+
+### Fixed
+- **Sidebar and tab visibility still broken after v1.83.35** (`pf9-ui/src/hooks/useNavigation.ts`, `APIMetricsTab.tsx`, `ClusterContext.tsx`, `LandingDashboard.tsx`, `SnapshotAuditTrail.tsx`): Even after `getToken()` was fixed to return the session indicator, `useNavigation.ts::fetchNavigation()` (and four other components) still used `const token = getToken(); if (!token) return;` as an early-return guard and passed the ISO timestamp as a fake Bearer header. Because these fetches also lacked `credentials: 'include'`, the backend cookie was not explicitly requested. The correct guard for triggering navigation fetches is the `isAuthenticated` React state set on login — `getToken()` is not the right signal here. Removed all `getToken()` guards and Bearer `Authorization` headers from these components; all affected fetches now use `credentials: 'include'` so the httpOnly cookie is sent explicitly for reliable same-origin authentication.
+
 ## [1.83.35] - 2026-04-11
 
 ### Fixed

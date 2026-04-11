@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE } from "../config";
-import { getToken } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,15 +136,13 @@ export function useNavigation(isAuthenticated: boolean) {
   // ── Persist custom order ──
   const persistOrder = useCallback((order: NavCustomOrder) => {
     localStorage.setItem(NAV_ORDER_KEY, JSON.stringify(order));
-    // Also save to backend (fire-and-forget)
-    const token = getToken();
-    if (token) {
-      fetch(`${API_BASE}/user/preferences/nav_order`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ value: order }),
-      }).catch(() => {});
-    }
+    // Also save to backend (fire-and-forget) — relies on httpOnly cookie
+    fetch(`${API_BASE}/user/preferences/nav_order`, {
+      method: "PUT",
+      credentials: 'include',
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: order }),
+    }).catch(() => {});
   }, []);
 
   // ── Reorder groups ──
@@ -196,25 +193,23 @@ export function useNavigation(isAuthenticated: boolean) {
   const resetOrder = useCallback(() => {
     setCustomOrder(null);
     localStorage.removeItem(NAV_ORDER_KEY);
-    const token = getToken();
-    if (token) {
-      fetch(`${API_BASE}/user/preferences/nav_order`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ value: null }),
-      }).catch(() => {});
-    }
+    fetch(`${API_BASE}/user/preferences/nav_order`, {
+      method: "PUT",
+      credentials: 'include',
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: null }),
+    }).catch(() => {});
   }, []);
 
   // ── Fetch navigation from server ──
   const fetchNavigation = useCallback(async () => {
-    const token = getToken();
-    if (!token) return;
+    // Auth is handled by the httpOnly cookie (same-origin request).
+    // isAuthenticated is checked by the calling effect — no token guard needed.
     setNavLoading(true);
     setNavError(null);
     try {
       const res = await fetch(`${API_BASE}/api/auth/me/navigation`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (!res.ok) {
         if (res.status === 404) {
@@ -249,10 +244,8 @@ export function useNavigation(isAuthenticated: boolean) {
   // ── Load custom order from backend on login ──
   useEffect(() => {
     if (!isAuthenticated) return;
-    const token = getToken();
-    if (!token) return;
     fetch(`${API_BASE}/user/preferences`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
     })
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((prefs: Record<string, any>) => {

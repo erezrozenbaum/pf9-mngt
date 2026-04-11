@@ -13,7 +13,7 @@ import { TenantRiskScoreCard } from './TenantRiskScoreCard';
 import { TrendlinesCard } from './TrendlinesCard';
 import { TenantRiskHeatmapCard } from './TenantRiskHeatmapCard';
 import { CapacityTrendsCard } from './CapacityTrendsCard';
-import { getToken } from '../lib/api';
+import { apiFetch } from '../lib/api';
 import { ComplianceDriftCard } from './ComplianceDriftCard';
 import { API_BASE } from '../config';
 import { useClusterContext } from './ClusterContext';
@@ -167,25 +167,14 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
       setLoading(true);
       setError(null);
 
-      const token = getToken();
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
+      // Auth is handled by the httpOnly cookie.
       // Helper: fetch + parse individually; returns null on any failure
       const safeFetch = async (url: string) => {
         try {
-          const res = await fetch(url, { headers });
+          const res = await fetch(url, { credentials: 'include' });
           if (res.status === 401) {
-            if (token) {
-              localStorage.removeItem('auth_token');
-              localStorage.removeItem('auth_user');
-              localStorage.removeItem('token_expires_at');
-            }
+            localStorage.removeItem('auth_user');
+            localStorage.removeItem('token_expires_at');
             throw new Error('AUTH_REQUIRED');
           }
           return res.ok ? await res.json() : null;

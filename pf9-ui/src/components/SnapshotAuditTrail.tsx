@@ -7,7 +7,6 @@
 
 import React, { useState, useEffect } from 'react';
 import '../styles/SnapshotAuditTrail.css';
-import { getToken } from '../lib/api';
 
 interface SnapshotRecord {
   id: number;
@@ -46,8 +45,6 @@ export const SnapshotAuditTrail: React.FC = () => {
   const [tenants, setTenants] = useState<string[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
 
-  const token = getToken();
-
   useEffect(() => {
     loadRecords();
   }, []);
@@ -62,7 +59,7 @@ export const SnapshotAuditTrail: React.FC = () => {
 
     try {
       const res = await fetch('/api/snapshot/records?limit=1000', {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
 
       if (!res.ok) throw new Error('Failed to load audit trail');

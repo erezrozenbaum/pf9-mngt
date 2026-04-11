@@ -17,7 +17,6 @@ import React, {
   useState,
 } from "react";
 import { API_BASE } from "../config";
-import { getToken } from '../lib/api';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,11 +85,9 @@ export function ClusterContextProvider({ children, userRole }: ProviderProps) {
 
   const loadRegions = useCallback(async () => {
     if (userRole !== "superadmin") return;
-    const token = getToken();
-    if (!token) return;
     try {
       const cpsRes = await fetch(`${API_BASE}/admin/control-planes`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       });
       if (!cpsRes.ok) return;
       const cps: ControlPlane[] = await cpsRes.json();
