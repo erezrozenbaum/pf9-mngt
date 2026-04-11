@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.31] - 2026-04-11
+
+### Security
+- **4.4 — Integration credentials key separation**: `integration_routes.py` previously derived its Fernet encryption key from `JWT_SECRET_KEY` (SHA-256 hash), coupling credential-at-rest security to the JWT signing secret. Rotating either secret would invalidate the other. Introduced a dedicated `integration_key` Docker secret / `INTEGRATION_KEY` environment variable consumed via `crypto_helper`. Legacy rows (no `fernet:` prefix) are decrypted transparently with the old JWT-derived key and re-encrypted on next write.
+
+### Performance
+- **4.3 — vm_provisioning_routes startup-only table ensure**: Removed 15 redundant `_ensure_tables()` calls scattered across individual request handlers, replacing them with a single module-level call at import time. Each provisioning API request previously opened a DB round-trip to verify schema existence on every invocation.
+
+### Reliability
+- **4.2 — Redis-backed performance metrics**: `PerformanceMetrics` now stores counters and lists in Redis (`pf9:metrics:*` keys) using atomic `HINCRBY`, `HINCRBYFLOAT`, and `LPUSH/LTRIM` operations. All Gunicorn workers contribute to shared totals instead of each maintaining independent ~1/N samples. Graceful in-memory fallback activates automatically when Redis is unreachable.
+
+### Ops
+- New `secrets/integration_key` Docker secret placeholder and matching K8s `pf9-encryption-secrets / integration-key` data key.
+- `k8s/sealed-secrets/README.md` updated with sealed-secret creation and live-cluster patch instructions for `pf9-encryption-secrets`.
+
 ## [1.83.30] - 2026-04-10
 
 ### Internal

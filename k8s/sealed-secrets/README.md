@@ -134,6 +134,44 @@ kubectl create secret generic pf9-provision-creds \
   > k8s/sealed-secrets/pf9-provision-creds.yaml
 ```
 
+### pf9-encryption-secrets (at-rest encryption keys)
+
+This secret holds all Fernet keys used to encrypt data persisted to the
+database.  Create it (or patch an existing secret) with the three keys below.
+
+```bash
+# Generate random keys
+VM_PROVISION_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+SMTP_CONFIG_KEY=$(python3  -c "import secrets; print(secrets.token_hex(32))")
+INTEGRATION_KEY=$(python3  -c "import secrets; print(secrets.token_hex(32))")
+
+# Create / seal the secret
+kubectl create secret generic pf9-encryption-secrets \
+  --namespace pf9-mngt \
+  --from-literal=vm-provision-key="$VM_PROVISION_KEY" \
+  --from-literal=smtp-config-key="$SMTP_CONFIG_KEY" \
+  --from-literal=integration-key="$INTEGRATION_KEY" \
+  --dry-run=client -o yaml \
+  | kubeseal --format yaml \
+  > k8s/sealed-secrets/pf9-encryption-secrets.yaml
+```
+
+**Patching an existing live cluster** (adds `integration-key` to an already
+deployed `pf9-encryption-secrets` without touching the other keys):
+
+```bash
+INTEGRATION_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+kubectl patch secret pf9-encryption-secrets -n pf9-mngt \
+  --type='json' \
+  -p="[{\"op\":\"add\",\"path\":\"/data/integration-key\",\"value\":\"$(printf '%s' "$INTEGRATION_KEY" | base64 | tr -d '\n')\"}]"
+
+# Restart the API deployment to pick up the new env var
+kubectl rollout restart deployment/pf9-api -n pf9-mngt
+
+# Store the key value securely (e.g. in your password manager / private repo)
+echo "integration-key: $INTEGRATION_KEY"
+```
+
 ---
 
 ## Applying Sealed Secrets

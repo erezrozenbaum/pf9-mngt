@@ -11,7 +11,10 @@ Provides:
 - POST /api/integrations/{name}/test — fire a test request and record status
 
 Security notes:
-- auth_credential is Fernet-encrypted at rest using a key derived from JWT_SECRET.
+- auth_credential is Fernet-encrypted at rest using the dedicated 'integration_key'
+  Docker secret / INTEGRATION_KEY env var (via crypto_helper).  Stored as "fernet:<ct>".
+- Backward-compat: rows encrypted before v1.83.31 (raw Fernet token, no "fernet:" prefix,
+  derived from JWT_SECRET) are transparently re-encrypted on the next PUT/write.
 - Credentials are NEVER returned in plaintext; only a masked suffix is shown.
 - SSL verification is on by default and can only be disabled explicitly.
 """
@@ -68,36 +71,50 @@ except Exception:
     pass
 
 
+
 # ---------------------------------------------------------------------------
-#  Credential encryption (Fernet / AES-128-CBC + HMAC-SHA256)
+#  Credential encryption — dedicated integration_key (v1.83.31+)
 # ---------------------------------------------------------------------------
-def _fernet():
-    """Return a Fernet instance keyed from JWT_SECRET, or None if unavailable."""
-    try:
-        from cryptography.fernet import Fernet
-        secret = os.environ.get("JWT_SECRET", "changeme-default-secret")
-        key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
-        return Fernet(key)
-    except ImportError:
-        return None
+_INTEGRATION_KEY        = "integration_key"
+_INTEGRATION_KEY_ENV    = "INTEGRATION_KEY"
 
 
 def _encrypt(plaintext: str) -> str:
-    f = _fernet()
-    if not f:
-        logger.warning("cryptography library unavailable — credential stored without encryption")
-        return plaintext
-    return f.encrypt(plaintext.encode()).decode()
+    """Encrypt a credential using the dedicated integration_key secret."""
+    from crypto_helper import fernet_encrypt
+    return fernet_encrypt(plaintext, secret_name=_INTEGRATION_KEY,
+                          env_var=_INTEGRATION_KEY_ENV)
 
 
-def _decrypt(ciphertext: str) -> str:
-    f = _fernet()
-    if not f:
-        return ciphertext
+def _decrypt(stored: str) -> str:
+    """Decrypt a stored credential.
+
+    New rows (v1.83.31+) carry the "fernet:" prefix written by crypto_helper.
+    Legacy rows (pre-v1.83.31) are raw Fernet tokens (start with "gAAAAA")
+    encrypted with a key derived from JWT_SECRET.  Those are decrypted with
+    the old algorithm so nothing breaks for existing installs.
+    """
+    if not stored:
+        return ""
+    if stored.startswith("fernet:"):
+        # New format — use dedicated integration_key
+        from crypto_helper import fernet_decrypt
+        return fernet_decrypt(stored, secret_name=_INTEGRATION_KEY,
+                              env_var=_INTEGRATION_KEY_ENV,
+                              context="external_integrations.auth_credential")
+    # Legacy format — raw Fernet token encrypted with JWT_SECRET-derived key.
+    # Decrypt transparently so existing credentials keep working after upgrade.
     try:
-        return f.decrypt(ciphertext.encode()).decode()
-    except Exception:
-        return ciphertext  # may already be plaintext
+        from cryptography.fernet import Fernet
+        jwt_secret = os.environ.get("JWT_SECRET_KEY", os.environ.get("JWT_SECRET", ""))
+        if not jwt_secret:
+            logger.warning("integration_routes: JWT_SECRET unavailable for legacy credential decrypt")
+            return stored
+        legacy_key = base64.urlsafe_b64encode(hashlib.sha256(jwt_secret.encode()).digest())
+        return Fernet(legacy_key).decrypt(stored.encode()).decode()
+    except Exception as exc:
+        logger.warning("integration_routes: legacy credential decrypt failed: %s", exc)
+        return stored
 
 
 def _mask(ciphertext: str) -> str:
@@ -105,6 +122,7 @@ def _mask(ciphertext: str) -> str:
     if not ciphertext:
         return ""
     return "••••••••" + ciphertext[-4:] if len(ciphertext) > 4 else "••••••••"
+
 
 
 # ---------------------------------------------------------------------------

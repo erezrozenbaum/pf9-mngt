@@ -164,6 +164,7 @@ services:
       - jwt_secret
       - vm_provision_key
       - smtp_config_key
+      - integration_key
     healthcheck:   # C5
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
@@ -722,3 +723,5 @@ secrets:
     file: ./secrets/vm_provision_key
   smtp_config_key:
     file: ./secrets/smtp_config_key
+  integration_key:
+    file: ./secrets/integration_key

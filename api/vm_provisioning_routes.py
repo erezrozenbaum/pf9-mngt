@@ -1104,7 +1104,6 @@ async def get_resources(
     user=Depends(get_current_user),
 ):
     """Return images (Glance), diskless flavors, networks, SGs scoped to domain+project."""
-    _ensure_tables()
     try:
         uname = user["username"] if isinstance(user, dict) else user.username
         effective_region = get_effective_region_filter(uname, region_id)
@@ -1144,7 +1143,6 @@ async def get_quota(
     user=Depends(get_current_user),
 ):
     """Return compute + storage quota with usage for a project."""
-    _ensure_tables()
     try:
         uname = user["username"] if isinstance(user, dict) else user.username
         effective_region = get_effective_region_filter(uname, region_id)
@@ -1165,7 +1163,6 @@ async def get_available_ips(
     user=Depends(get_current_user),
 ):
     """Return free IPs from the subnet allocation pool for a network."""
-    _ensure_tables()
     try:
         uname = user["username"] if isinstance(user, dict) else user.username
         effective_region = get_effective_region_filter(uname, region_id)
@@ -1194,7 +1191,6 @@ async def upload_excel(
     user=Depends(get_current_user),
 ):
     """Parse and validate an Excel bulk provisioning workbook."""
-    _ensure_tables()
     try:
         import openpyxl
     except ImportError:
@@ -1289,7 +1285,6 @@ async def create_batch(
     user=Depends(get_current_user),
 ):
     """Create a provisioning batch from form or Excel-validated data."""
-    _ensure_tables()
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1339,7 +1334,6 @@ async def list_batches(
     region_id: Optional[str] = Query(None, description="Filter by region ID"),
     user=Depends(get_current_user),
 ):
-    _ensure_tables()
     uname = user["username"] if isinstance(user, dict) else user.username
     effective_region = get_effective_region_filter(uname, region_id)
     with get_connection() as conn:
@@ -1359,7 +1353,6 @@ async def list_batches(
 
 @router.get("/batches/{batch_id}")
 async def get_batch(batch_id: int, user=Depends(get_current_user)):
-    _ensure_tables()
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM vm_provisioning_batches WHERE id=%s", (batch_id,))
@@ -1381,7 +1374,6 @@ async def get_batch(batch_id: int, user=Depends(get_current_user)):
 @router.get("/batches/{batch_id}/logs")
 async def get_batch_logs(batch_id: int, user=Depends(get_current_user)):
     """Return activity_log entries for this batch and its VMs (most recent first)."""
-    _ensure_tables()
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Collect VM ids for this batch
@@ -1414,7 +1406,6 @@ async def get_batch_logs(batch_id: int, user=Depends(get_current_user)):
 @router.post("/batches/{batch_id}/dry-run")
 async def dry_run(batch_id: int, user=Depends(get_current_user)):
     """Pre-flight: validate image/flavor/network/SG/quota/IP/name for each VM row."""
-    _ensure_tables()
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1652,7 +1643,6 @@ async def dry_run(batch_id: int, user=Depends(get_current_user)):
 @router.post("/batches/{batch_id}/submit")
 async def submit_batch(batch_id: int, user=Depends(get_current_user)):
     """Submit batch for admin approval."""
-    _ensure_tables()
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1680,7 +1670,6 @@ async def submit_batch(batch_id: int, user=Depends(get_current_user)):
 async def batch_decision(batch_id: int, body: DecisionRequest,
                           user=Depends(get_current_user)):
     """Admin: approve or reject a batch."""
-    _ensure_tables()
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1707,7 +1696,6 @@ async def batch_decision(batch_id: int, body: DecisionRequest,
 @router.post("/batches/{batch_id}/re-execute")
 async def re_execute_batch(batch_id: int, user=Depends(get_current_user)):
     """Re-execute a failed or partially-failed batch, retrying only the failed VMs."""
-    _ensure_tables()
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1759,7 +1747,6 @@ async def re_execute_batch(batch_id: int, user=Depends(get_current_user)):
 @router.post("/batches/{batch_id}/execute")
 async def execute_batch(batch_id: int, user=Depends(get_current_user)):
     """Execute batch: provision all VMs in a background thread."""
-    _ensure_tables()
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1804,7 +1791,6 @@ async def execute_batch(batch_id: int, user=Depends(get_current_user)):
 @router.post("/batches/{batch_id}/reset")
 async def reset_batch(batch_id: int, user=Depends(get_current_user)):
     """Force-reset a stuck/executing batch back to 'failed' so it can be re-run."""
-    _ensure_tables()
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1833,7 +1819,6 @@ async def reset_batch(batch_id: int, user=Depends(get_current_user)):
 
 @router.delete("/batches/{batch_id}")
 async def delete_batch(batch_id: int, user=Depends(get_current_user)):
-    _ensure_tables()
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1850,3 +1835,7 @@ async def delete_batch(batch_id: int, user=Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+# Ensure DB tables exist once at import time (startup), not on every request.
+_ensure_tables()

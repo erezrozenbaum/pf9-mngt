@@ -101,6 +101,12 @@ spec:
                   name: {{ .Values.secrets.encryptionSecrets }}
                   key: smtp-config-key
                   optional: true
+            - name: INTEGRATION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.encryptionSecrets }}
+                  key: integration-key
+                  optional: true
             # --- JWT ---
             - name: JWT_SECRET_KEY
               valueFrom:

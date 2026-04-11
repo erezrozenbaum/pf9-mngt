@@ -37,7 +37,7 @@ secrets:
   ldapSecrets: pf9-ldap-secrets          # keys: admin-password, config-password, readonly-password, sync-key
   adminCredentials: pf9-admin-credentials # key: admin-password
   smtpSecrets: pf9-smtp-secrets          # key: password
-  encryptionSecrets: pf9-encryption-secrets  # keys: vm-provision-key, smtp-config-key
+  encryptionSecrets: pf9-encryption-secrets  # keys: vm-provision-key, smtp-config-key, integration-key
   pf9Credentials: pf9-pf9-credentials    # key: password
   snapshotCreds: pf9-snapshot-creds      # keys: password-key, user-password-encrypted, service-user-password
   provisionCreds: pf9-provision-creds    # keys: password-key, user-password-encrypted

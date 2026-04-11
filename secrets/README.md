@@ -33,3 +33,4 @@ python -c "import secrets; print(secrets.token_urlsafe(48), end='')" > secrets/j
 | `ldap_sync_key`        | `LDAP_SYNC_KEY`       | `api/auth.py`, `ldap_sync_worker/` |
 | `vm_provision_key`     | `VM_PROVISION_KEY`    | `api/vm_provisioning_routes.py` — Fernet key for `os_password` at rest |
 | `smtp_config_key`      | `SMTP_CONFIG_KEY`     | `api/smtp_helper.py`, `api/notification_routes.py` — Fernet key for `smtp.password` at rest |
+| `integration_key`      | `INTEGRATION_KEY`     | `api/integration_routes.py` — Fernet key for `external_integrations.auth_credential` at rest |
