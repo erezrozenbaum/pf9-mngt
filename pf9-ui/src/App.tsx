@@ -38,7 +38,6 @@ import MigrationPlannerTab from "./components/MigrationPlannerTab";
 import CopilotPanel from "./components/CopilotPanel";
 import DependencyGraph, { type GraphRootType } from "./components/graph/DependencyGraph";
 import { useNavigation } from "./hooks/useNavigation";
-import { getToken } from "./lib/api";
 
 // ---------------------------------------------------------------------------
 // Authentication Types
@@ -481,23 +480,14 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
 // ---------------------------------------------------------------------------
 
 async function fetchJson<T>(url: string): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {};
-  if (token && url.startsWith(API_BASE)) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
+  const res = await fetch(url, { credentials: 'include' });
 
-  const res = await fetch(url, { headers });
-  
-  // If we get a 401 and we have a token (meaning it's invalid), clear it
-  // but don't reload - let the component handle showing the login screen
-  if (res.status === 401 && token) {
-    localStorage.removeItem('auth_token');
+  // On 401, clear session metadata so the login screen is shown
+  if (res.status === 401) {
     localStorage.removeItem('auth_user');
     localStorage.removeItem('token_expires_at');
-    // Don't reload - just throw error and let the component handle it
   }
-  
+
   if (!res.ok) {
     const txt = await res.text();
     throw new Error(`HTTP ${res.status}: ${txt || res.statusText}`);
@@ -1031,38 +1021,36 @@ const App: React.FC = () => {
       .catch(() => setIsDemo(false));
   }, []);
 
-  // Check for existing token on mount — restore session if valid
+  // Check for existing session metadata on mount — restore if not expired
+  // Auth token lives in the httpOnly cookie; only non-sensitive metadata is in localStorage.
   useEffect(() => {
-    const token = getToken();
     const user = localStorage.getItem('auth_user');
     const expiresAt = localStorage.getItem('token_expires_at');
     
-    if (token && user && user !== 'undefined' && user !== 'null') {
+    if (user && user !== 'undefined' && user !== 'null') {
       try {
-        // Check if token is expired
+        // Check if session is expired
         if (expiresAt) {
           const expirationTime = new Date(expiresAt).getTime();
           const now = new Date().getTime();
           
           if (now >= expirationTime) {
-            // Token expired, clear and force re-login
+            // Session expired, clear and force re-login
             console.log('Session expired, please login again');
-            localStorage.removeItem('auth_token');
             localStorage.removeItem('auth_user');
             localStorage.removeItem('token_expires_at');
             setLoginError('Your session has expired. Please login again.');
             return;
           }
         }
-        // Valid token found — restore session without requiring re-login
+        // Valid session found — restore without requiring re-login
+        // (auth token is in the httpOnly cookie; no localStorage read needed)
         const parsedUser = JSON.parse(user);
-        setAuthToken(token);
         setAuthUser(parsedUser);
         if (expiresAt) setTokenExpiresAt(expiresAt);
         setIsAuthenticated(true);
       } catch (e) {
         // Clear invalid data
-        localStorage.removeItem('auth_token');
         localStorage.removeItem('auth_user');
         localStorage.removeItem('token_expires_at');
       }
@@ -1127,7 +1115,6 @@ const App: React.FC = () => {
       }
       
       // Store auth data including expiration time
-      localStorage.setItem('auth_token', data.access_token);
       localStorage.setItem('auth_user', JSON.stringify(data.user));
       if (data.expires_at) {
         localStorage.setItem('token_expires_at', data.expires_at);
@@ -1166,7 +1153,6 @@ const App: React.FC = () => {
 
       const data: LoginResponse = await response.json();
 
-      localStorage.setItem('auth_token', data.access_token);
       localStorage.setItem('auth_user', JSON.stringify(data.user));
       if (data.expires_at) {
         localStorage.setItem('token_expires_at', data.expires_at);
@@ -1189,18 +1175,14 @@ const App: React.FC = () => {
   // Logout handler
   const handleLogout = async () => {
     try {
-      const token = getToken();
-      if (token) {
-        await fetch(`${API_BASE}/auth/logout`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
-          credentials: 'include',
-        });
-      }
+      // Always call logout — the httpOnly cookie is the credential
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
     } catch (error) {
       console.warn('Logout request failed:', error);
     } finally {
-      localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_user');
       localStorage.removeItem('token_expires_at');
       setAuthToken(null);
@@ -1300,23 +1282,21 @@ const App: React.FC = () => {
   const persistTabOrder = useCallback((order: ActiveTab[]) => {
     localStorage.setItem('pf9_tab_order', JSON.stringify(order));
     // Also save to backend (fire-and-forget)
-    const token = getToken();
-    if (token) {
+    if (isAuthenticated) {
       fetch(`${API_BASE}/user/preferences/tab_order`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ value: order }),
       }).catch(() => {});
     }
-  }, []);
+  }, [isAuthenticated]);
 
   // Load tab order from backend on login
   useEffect(() => {
     if (!isAuthenticated) return;
-    const token = getToken();
-    if (!token) return;
     fetch(`${API_BASE}/user/preferences`, {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
     })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then((prefs: Record<string, any>) => {
@@ -1711,12 +1691,9 @@ const App: React.FC = () => {
     setIsRefreshingInventory(true);
     setError(null);
     try {
-      const token = getToken();
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${API_BASE}/admin/inventory/refresh`, {
         method: 'POST',
-        headers,
+        credentials: 'include',
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -2231,10 +2208,10 @@ const App: React.FC = () => {
     (async () => {
       setSystemMetadataLoading(true);
       try {
-        const token = getToken();
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-        const resp = await fetch(`${API_BASE}/system-metadata-summary`, { headers });
+        const resp = await fetch(`${API_BASE}/system-metadata-summary`, {
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        });
         if (!resp.ok) throw new Error(`Failed: ${resp.status}`);
         const data = await resp.json();
         setSystemMetadata(data);
@@ -2273,8 +2250,7 @@ const App: React.FC = () => {
     setUserModalSaving(true);
     setUserModalError(null);
     try {
-      const token = getToken();
-      const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+      const headers = { "Content-Type": "application/json" };
       if (userModalMode === "create") {
         const { username, email, password, full_name, role } = userModalFields;
         if (!username.trim() || !email.trim() || !password) {
@@ -2284,6 +2260,7 @@ const App: React.FC = () => {
         if (password.length < 8) { setUserModalError("Password must be at least 8 characters."); return; }
         const res = await fetch(`${API_BASE}/auth/users`, {
           method: "POST", headers,
+          credentials: 'include',
           body: JSON.stringify({ username: username.trim(), email: email.trim(), password, full_name: full_name.trim() || username.trim(), role }),
         });
         if (!res.ok) { const d = await res.json(); setUserModalError(d.detail || "Failed to create user"); return; }
@@ -2291,6 +2268,7 @@ const App: React.FC = () => {
         // edit mode — only role change (password has its own inline form)
         const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(userModalTarget!.name)}/role`, {
           method: "POST", headers,
+          credentials: 'include',
           body: JSON.stringify({ username: userModalTarget!.name, role: userModalFields.role }),
         });
         if (!res.ok) { const d = await res.json(); setUserModalError(d.detail || "Failed to update role"); return; }
@@ -2310,9 +2288,9 @@ const App: React.FC = () => {
   const handleUserDelete = useCallback(async (username: string) => {
     if (!window.confirm(`Delete platform9 user "${username}"? This will remove them from LDAP.`)) return;
     try {
-      const token = getToken();
       const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(username)}`, {
-        method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+        method: "DELETE",
+        credentials: 'include',
       });
       if (!res.ok) { const d = await res.json(); setError(d.detail || "Delete failed"); return; }
       const params = new URLSearchParams({ page: userPage.toString(), page_size: userPageSize.toString(), sort_by: userSortBy, sort_dir: userSortDir });
@@ -2329,10 +2307,10 @@ const App: React.FC = () => {
     setUserResetPwSaving(true);
     setUserResetPwMsg(null);
     try {
-      const token = getToken();
       const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(userResetPwTarget)}/password`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
+        credentials: 'include',
         body: JSON.stringify({ new_password: userResetPwValue }),
       });
       const d = await res.json();
@@ -3412,10 +3390,7 @@ const App: React.FC = () => {
             style={{ marginLeft: 8, background: '#2563eb' }}
             onClick={async () => {
               try {
-                const token = getToken();
-                const headers: Record<string, string> = {};
-                if (token) headers['Authorization'] = `Bearer ${token}`;
-                const res = await fetch(`${API_BASE}/export/full-inventory`, { headers });
+                const res = await fetch(`${API_BASE}/export/full-inventory`, { credentials: 'include' });
                 if (!res.ok) throw new Error(`Export failed: ${res.status}`);
                 const blob = await res.blob();
                 const url = URL.createObjectURL(blob);
@@ -4615,10 +4590,7 @@ const App: React.FC = () => {
                         style={{ background: '#2563eb', fontSize: "1em", padding: "8px 20px" }}
                         onClick={async () => {
                           try {
-                            const token = getToken();
-                            const headers: Record<string, string> = {};
-                            if (token) headers['Authorization'] = `Bearer ${token}`;
-                            const res = await fetch(`${API_BASE}/export/full-inventory`, { headers });
+                            const res = await fetch(`${API_BASE}/export/full-inventory`, { credentials: 'include' });
                             if (!res.ok) throw new Error(`Export failed: ${res.status}`);
                             const blob = await res.blob();
                             const url = URL.createObjectURL(blob);

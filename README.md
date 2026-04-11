@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.32-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.33-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,6 +534,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.33](CHANGELOG.md)** — Security: complete httpOnly cookie migration — `localStorage.setItem('auth_token', ...)` removed entirely from `App.tsx`. JWT stored exclusively in the httpOnly cookie, never written to JS-readable storage. All inline `fetch()` calls migrated to `credentials: 'include'`; `getToken()` import removed.
 **[v1.83.32](CHANGELOG.md)** — Security: JWT sessions now delivered via httpOnly cookie (`SameSite=Lax`) eliminating XSS-readable tokens in `localStorage`. Cookie-first with Bearer header fallback — existing API consumers and CI tests are unaffected.
 **[v1.83.31](CHANGELOG.md)** — Security: dedicated `integration_key` Fernet secret for integration credentials; performance: 15 per-request `_ensure_tables()` calls removed from `vm_provisioning_routes`; reliability: Redis-backed atomic `PerformanceMetrics` with in-memory fallback.
 **[v1.83.30](CHANGELOG.md)** — CI fix: `ReportsTab`, `VmProvisioningTab`, and `SourceAnalysis` blob-download functions still referenced removed `getToken()`/`API_BASE` identifiers after the v1.83.29 lib/api migration. Added `authHeaders` import and replaced patterns. Resolves TS2304 in Frontend TypeScript Check.
@@ -656,4 +657,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.27 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.83.33 | **Last Updated**: April 2026

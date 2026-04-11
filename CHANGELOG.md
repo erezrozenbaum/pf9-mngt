@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.33] - 2026-04-11
+
+### Security
+- **Complete httpOnly cookie migration**: `localStorage.setItem('auth_token', ...)` removed from all login and MFA-verify handlers in `App.tsx`. The JWT is now stored exclusively in the httpOnly cookie — it is never written to `localStorage` and cannot be read by JavaScript. All inline `fetch()` calls in `App.tsx` that previously sent `Authorization: Bearer <token>` from localStorage now send `credentials: 'include'` and rely on the same-origin httpOnly cookie. Session restore on mount uses only non-sensitive metadata (`auth_user`, `token_expires_at`). `getToken()` import removed from `App.tsx`.
+
 ## [1.83.32] - 2026-04-11
 
 ### Security
