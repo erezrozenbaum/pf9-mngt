@@ -2004,6 +2004,7 @@ The application reads secrets via `api/secret_helper.py`: it checks `/run/secret
 | `secrets/ldap_sync_key` | `LDAP_SYNC_KEY` | LDAP sync Fernet encryption |
 | `secrets/vm_provision_key` | `VM_PROVISION_KEY` | VM OS password Fernet encryption (v1.83.25) |
 | `secrets/smtp_config_key` | `SMTP_CONFIG_KEY` | SMTP password Fernet encryption (v1.83.25) |
+| `secrets/integration_key` | `INTEGRATION_KEY` | Integration credentials Fernet encryption (v1.83.31) |
 
 **Production setup:**
 
@@ -2016,9 +2017,10 @@ echo -n "$(openssl rand -base64 64)" > secrets/jwt_secret
 python3 -c "import secrets; open('secrets/ldap_sync_key','w').write(secrets.token_hex(32))"
 python3 -c "import secrets; open('secrets/vm_provision_key','w').write(secrets.token_hex(32))"
 python3 -c "import secrets; open('secrets/smtp_config_key','w').write(secrets.token_hex(32))"
+python3 -c "import secrets; open('secrets/integration_key','w').write(secrets.token_hex(32))"
 
 # Lock permissions
-chmod 600 secrets/db_password secrets/ldap_admin_password secrets/pf9_password secrets/jwt_secret secrets/ldap_sync_key secrets/vm_provision_key secrets/smtp_config_key
+chmod 600 secrets/db_password secrets/ldap_admin_password secrets/pf9_password secrets/jwt_secret secrets/ldap_sync_key secrets/vm_provision_key secrets/smtp_config_key secrets/integration_key
 ```
 
 The `secrets/` directory ships with empty placeholder files. `.gitignore` excludes all secret files but tracks `secrets/README.md`. See [secrets/README.md](../secrets/README.md) for the full reference.

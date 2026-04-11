@@ -118,7 +118,7 @@ Only runs after Jobs 1–7 all pass. Spins up the complete stack on the GitHub A
 **Step-by-step:**
 
 1. Copies `.env.ci` → `.env` (stub credentials, safe to commit — see [`.env.ci`](../.env.ci))
-2. Creates stub secret files in `secrets/` (`db_password`, `ldap_admin_password`, `pf9_password`, `jwt_secret`, `ldap_sync_key`, `vm_provision_key`, `smtp_config_key`) required by Docker Compose's `secrets:` bind-mounts
+2. Creates stub secret files in `secrets/` (`db_password`, `ldap_admin_password`, `pf9_password`, `jwt_secret`, `ldap_sync_key`, `vm_provision_key`, `smtp_config_key`, `integration_key`) required by Docker Compose's `secrets:` bind-mounts
 3. `docker compose up --build -d`
 4. Polls `pf9_api` container health every 10 s, up to 180 s
 5. Polls `pf9_monitoring` container health, up to 90 s (non-fatal — monitoring may lag)

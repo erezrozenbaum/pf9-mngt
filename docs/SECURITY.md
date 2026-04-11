@@ -31,6 +31,7 @@
 22. **Password-in-DB Prevention**: Control-plane credentials in `pf9_control_planes.password_enc` are stored as `env:{sha256[:16]}` hash markers; the actual credential is always read from a Docker secret or env var at runtime — never persisted in plaintext.
 23. **VM OS Password Encrypted at Rest**: `vm_provisioning_vms.os_password` stored Fernet-encrypted (`fernet:<ciphertext>`) using the `vm_provision_key` Docker secret / `VM_PROVISION_KEY` env var; decrypted server-side only at cloud-init generation time and wiped after provisioning; `GET /api/vm-provisioning/batches/{id}` returns `"****"` — plaintext never exposed via API (v1.83.25)
 24. **SMTP Password Encrypted at Rest**: `system_settings` `smtp.password` stored Fernet-encrypted using the `smtp_config_key` Docker secret / `SMTP_CONFIG_KEY` env var; legacy plaintext values in DB handled transparently on the read path via `fernet:` prefix detection (v1.83.25)
+25. **Integration Credentials Encrypted at Rest**: `external_integrations.auth_credential` stored Fernet-encrypted using the dedicated `integration_key` Docker secret / `INTEGRATION_KEY` env var (v1.83.31). Previously derived from `JWT_SECRET` — decoupled to eliminate key-reuse and rotation hazard. Legacy rows (no `fernet:` prefix) decrypted transparently with the old JWT-derived key on the read path and re-encrypted with the new key on next write.
 
 ---
 
@@ -422,6 +423,7 @@ server {
    - [x] DB password, LDAP admin password, PF9 password, JWT key all use `read_secret()`
    - [x] VM-provisioning Fernet key (`secrets/vm_provision_key` / `VM_PROVISION_KEY`) provisioned (v1.83.25)
    - [x] SMTP Fernet key (`secrets/smtp_config_key` / `SMTP_CONFIG_KEY`) provisioned (v1.83.25)
+   - [x] Integration credentials Fernet key (`secrets/integration_key` / `INTEGRATION_KEY`) provisioned — decoupled from JWT_SECRET (v1.83.31)
    - [x] `secrets/` directory gitignored; placeholder files included so Docker starts without errors
 
 ### Priority 2: High (Recommended)
