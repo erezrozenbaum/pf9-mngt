@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.35] - 2026-04-11
+
+### Fixed
+- **Sidebar and tab visibility broken after httpOnly cookie migration** (`pf9-ui/src/lib/api.ts`, `api/main.py`): The v1.83.33 removal of `localStorage.setItem('auth_token', ...)` made `getToken()` always return `null`, causing `if (!token) return;` guards in `useNavigation.ts` and ~10 other components to bail out before any fetch ran. Navigation never loaded — sidebar rendered with empty `visibleTabKeys`, hiding all tabs and breaking visibility controls.
+  - `lib/api.ts`: `getToken()` now returns `localStorage.getItem('token_expires_at')` (the non-sensitive ISO expiry timestamp) as a session-active indicator. The value is `null` when not logged in, non-null when a session is active — all component guards now work correctly. The real credential is the httpOnly cookie sent automatically by the browser.
+  - `api/main.py` `rbac_middleware`: When a Bearer token is present but fails JWT verification (browser sends the non-JWT session indicator), the middleware now falls through to the httpOnly cookie before returning 401. Valid Bearer tokens (CI tests, external consumers) continue to take precedence and are unaffected.
+
 ## [1.83.34] - 2026-04-11
 
 ### Fixed

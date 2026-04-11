@@ -460,7 +460,10 @@ async def rbac_middleware(request: Request, call_next):
     auth_header = request.headers.get("authorization", "")
     cookie_token = request.cookies.get("access_token")
 
-    # Cookie-first (browser path), Bearer header fallback (CI / external consumers)
+    # Cookie-first (browser path), Bearer header fallback (CI / external consumers).
+    # If the Bearer payload fails JWT verification (e.g. browser sends the
+    # non-JWT session indicator from lib/api.ts), silently fall through to the
+    # httpOnly cookie so the request still authenticates correctly.
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
     elif cookie_token:
@@ -475,6 +478,9 @@ async def rbac_middleware(request: Request, call_next):
             response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
     token_data = verify_token(token)
+    # Bearer token present but invalid (non-JWT session indicator) — fall through to cookie
+    if not token_data and cookie_token and token != cookie_token:
+        token_data = verify_token(cookie_token)
     if not token_data:
         response = JSONResponse(status_code=401, content={"detail": "Invalid token"})
         origin = request.headers.get("origin", "")

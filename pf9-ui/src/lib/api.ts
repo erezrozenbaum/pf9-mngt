@@ -33,9 +33,21 @@
 
 import { API_BASE } from '../config';
 
-/** Read the current JWT from localStorage. */
+/**
+ * Returns a truthy value when the user has an active session, null otherwise.
+ * The JWT is now stored exclusively in the httpOnly cookie and cannot be read
+ * by JavaScript. We use the non-sensitive `token_expires_at` localStorage entry
+ * as a session-active indicator for component guards (`if (!getToken()) return`).
+ *
+ * NOTE: The value returned is NOT a real JWT. It is used only as a boolean-ish
+ * check. The actual credential sent to the server is the httpOnly cookie (via
+ * `credentials: 'include'`) or a valid Bearer token for CI / external consumers.
+ */
 export function getToken(): string | null {
-  return localStorage.getItem('auth_token');
+  const exp = localStorage.getItem('token_expires_at');
+  if (!exp) return null;
+  // Return null if session already expired so guards work correctly
+  return new Date(exp).getTime() >= Date.now() ? exp : null;
 }
 
 /**
