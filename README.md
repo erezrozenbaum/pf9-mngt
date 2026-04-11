@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.28-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.30-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -354,7 +354,7 @@ cd pf9-mngt
 # Or enable demo mode manually on an existing install:
 #   1. Set DEMO_MODE=true in .env
 #   2. python seed_demo_data.py          # populates DB + generates metrics cache
-#   3. docker-compose restart pf9_api    # API picks up DEMO_MODE env var
+#   3. docker compose restart pf9_api    # API picks up DEMO_MODE env var
 ```
 
 > In demo mode the UI shows an amber **DEMO** banner, the background metrics
@@ -386,9 +386,9 @@ PF9_IMAGE_TAG=latest    # Pin to a release tag (e.g. v1.70.0) to lock images fro
 
 ### 3. Manual Docker Setup
 ```bash
-docker-compose up -d
-docker-compose ps
-docker-compose logs pf9_api
+docker compose up -d
+docker compose ps
+docker compose logs pf9_api
 ```
 
 ### 4. Standalone Script Usage (No Docker Required)
@@ -510,7 +510,7 @@ Quick commands:
 - Container logs: `docker logs <container> --tail 50`
 - Monitoring issues: `.\fix_monitoring.ps1`
 - Force inventory sync: `docker exec pf9_scheduler_worker python pf9_rvtools.py`
-- Database reset: `docker-compose down -v && docker-compose up -d`
+- Database reset: `docker compose down -v && docker compose up -d`
 
 ---
 

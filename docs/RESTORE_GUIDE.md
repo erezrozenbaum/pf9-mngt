@@ -71,7 +71,7 @@ RESTORE_ENABLED=true
 
 Then restart the API container:
 ```bash
-docker-compose restart pf9_api
+docker compose restart pf9_api
 ```
 
 ### Full Configuration

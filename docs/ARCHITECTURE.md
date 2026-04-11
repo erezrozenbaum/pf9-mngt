@@ -1734,7 +1734,7 @@ SNAPSHOT_USER_PASSWORD_ENCRYPTED=<encrypted-pwd>
 **Health Endpoints**:
 - `GET /health` - Service health status
 - `GET /simple-test` - Basic functionality verification
-- `docker-compose ps` - Container status
+- `docker compose ps` - Container status
 
 **Performance Monitoring**:
 - Response time tracking via API logs
@@ -1759,9 +1759,9 @@ SNAPSHOT_USER_PASSWORD_ENCRYPTED=<encrypted-pwd>
 **Current Logging**:
 ```bash
 # Container logs
-docker-compose logs pf9_api
-docker-compose logs pf9_monitoring
-docker-compose logs pf9_ui
+docker compose logs pf9_api
+docker compose logs pf9_monitoring
+docker compose logs pf9_ui
 
 # Script execution logs  
 python pf9_rvtools.py > rvtools.log 2>&1

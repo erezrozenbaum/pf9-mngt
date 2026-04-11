@@ -319,7 +319,7 @@ docker run --rm -v pf9-mngt_nfs_backups:/mnt alpine sh -c "touch /mnt/test && ec
 
 ### Volume config mismatch prompt
 
-If you change NFS settings, `startup.ps1` automatically removes the stale `pf9-mngt_nfs_backups` volume before starting. If you run `docker-compose up -d` manually and see `Recreate (data will be lost)?`, type `y` — the NFS volume holds no local data.
+If you change NFS settings, `startup.ps1` automatically removes the stale `pf9-mngt_nfs_backups` volume before starting. If you run `docker compose up -d` manually and see `Recreate (data will be lost)?`, type `y` — the NFS volume holds no local data.
 
 ### NFS pre-flight check fails at startup
 

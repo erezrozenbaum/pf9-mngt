@@ -390,7 +390,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **Host Metrics**: CPU, Memory, Storage from PF9 compute nodes via node_exporter (port 9388) ✅
 - **VM Metrics**: Individual VM resource tracking via libvirt_exporter (port 9177) ❌ *[Requires PF9 Engineering]*
 - **Hostname Resolution**: Friendly host names via `PF9_HOST_MAP` env var (API/DNS fallback)
-- **Automated Collection**: Windows Task Scheduler every 30 minutes
+- **Automated Collection**: Docker container (`pf9_scheduler_worker`) runs `host_metrics_collector.py` every 60 seconds. No Windows Task Scheduler dependency.
 - **Cache-Based Storage**: Persistent directory-mounted cache (`monitoring/cache/`) with container restart survival
 - **Integrated Dashboard**: Real-time monitoring tab with auto-refresh in React UI
 
@@ -408,7 +408,7 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **RVTools Compatibility**: Excel/CSV exports with delta tracking and customer data masking
 - **Modern React UI**: TypeScript-based with Vite build system and theme support
 - **REST API**: FastAPI with OpenAPI docs + dedicated monitoring service
-- **Database Integration**: PostgreSQL 16 with 53+ tables for historical tracking + metering + departments/navigation + runbooks + onboarding
+- **Database Integration**: PostgreSQL 16 with 65+ tables for historical tracking + metering + departments/navigation + runbooks + onboarding
 - **Drift Detection**: Automated field-level change monitoring with 24 rules across 8 resource types
 - **Administrative Operations**: Create/delete flavors and networks directly from UI
 
@@ -449,7 +449,7 @@ cd pf9-mngt
 .\startup.ps1
 
 # Verify services are running
-docker-compose ps
+docker compose ps
 
 # Access services:
 # - Main UI: http://localhost:5173
@@ -526,7 +526,7 @@ RESTORE_DRY_RUN=false           # Set true to test without executing
 RESTORE_CLEANUP_VOLUMES=false   # Set true to auto-delete failed restore volumes
 
 # Restart API to pick up changes
-docker-compose restart pf9_api
+docker compose restart pf9_api
 
 # Check restore config
 curl -H "Authorization: Bearer <token>" http://localhost:8000/restore/config
@@ -692,7 +692,7 @@ cp .env.template .env
 ### Alternative: Manual Docker Setup
 ```powershell
 # Traditional Docker setup
-docker-compose up -d
+docker compose up -d
 
 # Note: Requires manual metrics collection:
 python host_metrics_collector.py --once
@@ -717,10 +717,10 @@ DB_POOL_MAX_CONN=10   # Max connections per worker (default: 10)
 **To restart and pick up new environment variables**:
 ```bash
 # Stop services
-docker-compose down
+docker compose down
 
 # Start with new environment (automatically reads .env)
-docker-compose up -d
+docker compose up -d
 
 # Verify environment variables are loaded
 docker exec pf9_api printenv | grep PF9_
@@ -741,23 +741,23 @@ docker exec pf9_api printenv | grep PF9_
 ### Service Management
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Stop all services  
-docker-compose down
+docker compose down
 
 # Restart specific service
-docker-compose restart pf9_api
+docker compose restart pf9_api
 
 # View real-time logs
-docker-compose logs -f pf9_api
+docker compose logs -f pf9_api
 
 # Check service status
-docker-compose ps
+docker compose ps
 
 # Rebuild services after code changes
-docker-compose build pf9_api pf9_ui
-docker-compose up -d
+docker compose build pf9_api pf9_ui
+docker compose up -d
 ```
 
 ### Health Checks & Monitoring
@@ -878,10 +878,10 @@ schtasks /query /tn "PF9 Metrics Collection"
 ### API Returns 500 Errors
 ```bash
 # Check API logs
-docker-compose logs pf9_api | tail -50
+docker compose logs pf9_api | tail -50
 
 # Restart API service
-docker-compose restart pf9_api
+docker compose restart pf9_api
 
 # Check database connectivity
 docker exec pf9_api psql -h db -U pf9 -d pf9_mgmt -c "SELECT 1;"
@@ -890,10 +890,10 @@ docker exec pf9_api psql -h db -U pf9 -d pf9_mgmt -c "SELECT 1;"
 ### UI Not Loading
 ```bash
 # Check UI container
-docker-compose logs pf9_ui
+docker compose logs pf9_ui
 
 # Restart UI service
-docker-compose restart pf9_ui
+docker compose restart pf9_ui
 
 # Check proxy configuration
 curl -I http://localhost:5173/api/health
@@ -902,10 +902,10 @@ curl -I http://localhost:5173/api/health
 ### Database Connection Issues
 ```bash
 # Restart database
-docker-compose restart pf9_db
+docker compose restart pf9_db
 
 # Check database logs
-docker-compose logs pf9_db
+docker compose logs pf9_db
 
 # Verify database is running
 docker exec pf9_db pg_isready
@@ -914,22 +914,22 @@ docker exec pf9_db pg_isready
 ### Platform9 Authentication Errors
 ```bash
 # Check API logs for auth errors
-docker-compose logs pf9_api | grep -i auth
+docker compose logs pf9_api | grep -i auth
 
 # Test Platform9 connectivity
 curl -k https://your-platform9-cluster.com/keystone/v3
 
 # Verify environment variables
-docker-compose config
+docker compose config
 ```
 
 ### Monitoring Service Issues
 ```bash
 # Check monitoring service logs
-docker-compose logs pf9_monitoring
+docker compose logs pf9_monitoring
 
 # Restart monitoring service
-docker-compose restart pf9_monitoring
+docker compose restart pf9_monitoring
 
 # Test monitoring API health
 curl http://localhost:8001/health
@@ -1117,8 +1117,8 @@ docker run --rm \
 ### Quick Recovery
 ```bash
 # Restore database (stop services first)
-docker-compose down
-docker-compose up -d pf9_db
+docker compose down
+docker compose up -d pf9_db
 sleep 10
 
 # Restore from backup
@@ -1126,7 +1126,7 @@ gunzip -c backup_YYYYMMDD_HHMMSS.sql.gz | \
   docker exec -i pf9_db psql -U pf9 -d pf9_mgmt
 
 # Start all services
-docker-compose up -d
+docker compose up -d
 ```
 
 ## Configuration Files
@@ -1194,22 +1194,22 @@ METERING_RETENTION_DAYS=90         # Data retention period
 ## Emergency Procedures
 
 ### Service Down Emergency
-1. Check all container status: `docker-compose ps`
+1. Check all container status: `docker compose ps`
 2. Check available resources: `docker stats`
-3. Check logs for errors: `docker-compose logs`
-4. Restart affected services: `docker-compose restart <service>`
-5. If issues persist: `docker-compose down && docker-compose up -d`
+3. Check logs for errors: `docker compose logs`
+4. Restart affected services: `docker compose restart <service>`
+5. If issues persist: `docker compose down && docker compose up -d`
 
 ### Data Loss Emergency
-1. Stop all services immediately: `docker-compose down`
+1. Stop all services immediately: `docker compose down`
 2. Assess damage scope
 3. Restore from latest backup
 4. Verify data integrity
-5. Restart services: `docker-compose up -d`
+5. Restart services: `docker compose up -d`
 
 ### Security Incident
-1. Isolate affected systems: `docker-compose down`
-2. Preserve logs: `docker-compose logs > incident_logs.txt`
+1. Isolate affected systems: `docker compose down`
+2. Preserve logs: `docker compose logs > incident_logs.txt`
 3. Change all credentials
 
 ---

@@ -1196,8 +1196,8 @@ docker compose exec db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "VACUUM ANA
 
 # Monthly: Update container images
 # For production (pulls pre-built images from ghcr.io; set PF9_IMAGE_TAG in .env first):
-docker compose -f docker compose.yml -f docker compose.prod.yml pull
-docker compose -f docker compose.yml -f docker compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 # For dev/local builds:
 # docker compose pull && docker compose up -d
 
@@ -1525,7 +1525,7 @@ docker compose down
 
 # 5. Get the new images
 # Production — update PF9_IMAGE_TAG in .env to the new version, then pull:
-docker compose -f docker compose.yml -f docker compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 # Dev/local — rebuild from source:
 # docker compose build
 
@@ -1977,10 +1977,10 @@ Combine all changes into a single `docker compose.prod.yml` and deploy with:
 
 ```bash
 # Pull pre-built service images from ghcr.io (set PF9_IMAGE_TAG=v1.70.0 in .env to pin a version)
-docker compose -f docker compose.yml -f docker compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 
 # Start the stack
-docker compose -f docker compose.yml -f docker compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 The production overlay sets `image:` overrides for all nine custom services pointing to `ghcr.io/erezrozenbaum/pf9-mngt-<service>:${PF9_IMAGE_TAG:-latest}`. Set `PF9_IMAGE_TAG` in `.env` to pin a specific release and avoid accidental upgrades. Leave it unset (or set to `latest`) to always pull the most recent published image.
@@ -2001,6 +2001,9 @@ The application reads secrets via `api/secret_helper.py`: it checks `/run/secret
 | `secrets/ldap_admin_password` | `LDAP_ADMIN_PASSWORD` | LDAP admin operations |
 | `secrets/pf9_password` | `PF9_PASSWORD` | Platform9 API authentication |
 | `secrets/jwt_secret` | `JWT_SECRET_KEY` | JWT token signing |
+| `secrets/ldap_sync_key` | `LDAP_SYNC_KEY` | LDAP sync Fernet encryption |
+| `secrets/vm_provision_key` | `VM_PROVISION_KEY` | VM OS password Fernet encryption (v1.83.25) |
+| `secrets/smtp_config_key` | `SMTP_CONFIG_KEY` | SMTP password Fernet encryption (v1.83.25) |
 
 **Production setup:**
 
@@ -2010,9 +2013,12 @@ echo -n "$(openssl rand -base64 32)" > secrets/db_password
 echo -n "your-ldap-admin-password"  > secrets/ldap_admin_password
 echo -n "your-pf9-service-password" > secrets/pf9_password
 echo -n "$(openssl rand -base64 64)" > secrets/jwt_secret
+python3 -c "import secrets; open('secrets/ldap_sync_key','w').write(secrets.token_hex(32))"
+python3 -c "import secrets; open('secrets/vm_provision_key','w').write(secrets.token_hex(32))"
+python3 -c "import secrets; open('secrets/smtp_config_key','w').write(secrets.token_hex(32))"
 
 # Lock permissions
-chmod 600 secrets/db_password secrets/ldap_admin_password secrets/pf9_password secrets/jwt_secret
+chmod 600 secrets/db_password secrets/ldap_admin_password secrets/pf9_password secrets/jwt_secret secrets/ldap_sync_key secrets/vm_provision_key secrets/smtp_config_key
 ```
 
 The `secrets/` directory ships with empty placeholder files. `.gitignore` excludes all secret files but tracks `secrets/README.md`. See [secrets/README.md](../secrets/README.md) for the full reference.

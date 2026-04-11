@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.28  
-**Last Updated**: March 31, 2026  
+**Version**: 1.83.30  
+**Last Updated**: April 11, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -385,6 +385,11 @@ SMTP_HOST=your-mail-server.com
 SMTP_PORT=587
 SMTP_USE_TLS=true
 SMTP_FROM_ADDRESS=pf9-mgmt@example.com
+
+# The SMTP password is configured via the UI (Admin → Notifications → Settings).
+# It is Fernet-encrypted at rest using the smtp_config_key Docker secret.
+# Ensure secrets/smtp_config_key (or SMTP_CONFIG_KEY env var) is provisioned
+# before saving SMTP credentials through the UI.
 
 # Restart worker
 docker compose restart pf9_notification_worker
@@ -1584,10 +1589,10 @@ Get-Content monitoring\cache\metrics_cache.json | ConvertFrom-Json
 3. **Monitoring service errors**:
    ```bash
    # Check monitoring container logs
-   docker-compose logs pf9_monitoring
+   docker compose logs pf9_monitoring
    
    # Verify cache file is mounted
-   docker-compose exec pf9_monitoring ls -la /tmp/cache/metrics_cache.json
+   docker compose exec pf9_monitoring ls -la /tmp/cache/metrics_cache.json
    ```
 
 **Performance Optimization**:
@@ -1812,11 +1817,11 @@ chmod 600 .env
 #### 3. Deploy Services
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Verify deployment
-docker-compose ps
-docker-compose logs -f pf9_api  # Check for errors
+docker compose ps
+docker compose logs -f pf9_api  # Check for errors
 ```
 
 #### 4. Initial Data Collection
@@ -2851,12 +2856,12 @@ curl -I http://localhost:5173
 #### Container Status
 ```bash
 # Check all containers
-docker-compose ps
+docker compose ps
 
 # View container logs
-docker-compose logs pf9_api
-docker-compose logs pf9_ui
-docker-compose logs pf9_db
+docker compose logs pf9_api
+docker compose logs pf9_ui
+docker compose logs pf9_db
 ```
 
 ### Common Issues
@@ -2871,7 +2876,7 @@ docker-compose logs pf9_db
 **Solutions**:
 ```bash
 # Verify credentials
-docker-compose logs pf9_api | grep -i auth
+docker compose logs pf9_api | grep -i auth
 
 # Test Platform9 connectivity
 curl -k https://your-platform9-cluster.com/keystone/v3
@@ -2882,10 +2887,10 @@ curl -k https://your-platform9-cluster.com/keystone/v3
 **Solutions**:
 ```bash
 # Restart database
-docker-compose restart pf9_db
+docker compose restart pf9_db
 
 # Check database logs
-docker-compose logs pf9_db
+docker compose logs pf9_db
 
 # Verify database connectivity
 docker exec pf9_api psql -h db -U pf9 -d pf9_mgmt -c "SELECT 1;"
@@ -2912,16 +2917,16 @@ services:
 #### API Logs
 ```bash
 # Real-time monitoring
-docker-compose logs -f pf9_api
+docker compose logs -f pf9_api
 
 # Error filtering
-docker-compose logs pf9_api | grep ERROR
+docker compose logs pf9_api | grep ERROR
 ```
 
 #### Database Logs
 ```bash
 # PostgreSQL logs
-docker-compose logs pf9_db
+docker compose logs pf9_db
 
 # Query performance
 docker exec pf9_db psql -U pf9 -d pf9_mgmt -c "SELECT * FROM pg_stat_activity;"
@@ -3063,11 +3068,11 @@ Smart Queries execute read-only SQL against live database tables — no indexing
 git pull origin main
 
 # Rebuild containers
-docker-compose build --no-cache
+docker compose build --no-cache
 
 # Restart services
-docker-compose down
-docker-compose up -d
+docker compose down
+docker compose up -d
 ```
 
 #### Database Updates

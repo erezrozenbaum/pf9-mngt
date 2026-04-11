@@ -14,7 +14,7 @@
 5. **Permission Enforcement**: Automatic resource-level permission checks on all endpoints
 6. **Audit Logging**: Complete authentication and authorization event tracking (90-day retention)
 7. **User Management**: LDAP user creation, role assignment, and permission management
-8. **Docker Secrets Support**: Critical credentials (DB password, LDAP password, PF9 password, JWT key) read from `/run/secrets/` files in production with env-var fallback for dev (Phase J5)
+8. **Docker Secrets Support**: Seven credentials read from `/run/secrets/` files in production with env-var fallback for dev: DB password, LDAP admin password, PF9 password, JWT key, LDAP-sync Fernet key, VM-provisioning Fernet key, and SMTP Fernet key (Phase J5 + v1.83.25)
 9. **SQL Injection Prevention**: Parameterized queries throughout codebase
 10. **LDAP Injection Prevention**: All LDAP filter values escaped with `ldap.filter.escape_filter_chars()` (Phase A3)
 11. **Command Injection Prevention**: All SSH commands use `shlex.quote()` + allowlist validation (Phase A4)
@@ -29,6 +29,8 @@
 20. **Multi-Cluster SSRF Protection**: `pf9_control_planes.allow_private_network` defaults to `FALSE`; all control-plane URLs validated against RFC-1918/loopback blocklists before any outbound connection. Only superadmin can override per record.
 21. **Region-Scoped Cache Isolation**: Redis cache keys include `region_id` segment (`pf9:{resource}:{region_id}:{hash}`) preventing cross-region data exposure in multi-cluster deployments.
 22. **Password-in-DB Prevention**: Control-plane credentials in `pf9_control_planes.password_enc` are stored as `env:{sha256[:16]}` hash markers; the actual credential is always read from a Docker secret or env var at runtime — never persisted in plaintext.
+23. **VM OS Password Encrypted at Rest**: `vm_provisioning_vms.os_password` stored Fernet-encrypted (`fernet:<ciphertext>`) using the `vm_provision_key` Docker secret / `VM_PROVISION_KEY` env var; decrypted server-side only at cloud-init generation time and wiped after provisioning; `GET /api/vm-provisioning/batches/{id}` returns `"****"` — plaintext never exposed via API (v1.83.25)
+24. **SMTP Password Encrypted at Rest**: `system_settings` `smtp.password` stored Fernet-encrypted using the `smtp_config_key` Docker secret / `SMTP_CONFIG_KEY` env var; legacy plaintext values in DB handled transparently on the read path via `fernet:` prefix detection (v1.83.25)
 
 ---
 
@@ -337,26 +339,9 @@ PGADMIN_EMAIL=admin@company.com
 PGADMIN_PASSWORD=<secure-admin-password>
 ```
 
-### CORS Policy Fix (Recommended)
+### CORS Policy ✅ *(Phase B3 — implemented)*
 
-**Current Issue**: Both [api/main.py](../api/main.py#L29) and [monitoring/main.py](../monitoring/main.py#L16) use `allow_origins=["*"]`
-
-**Recommended Fix**:
-
-```python
-# api/main.py and monitoring/main.py
-import os
-
-allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,  # Restricted origins
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"]
-)
-```
+The `allow_origins` wildcard `*` has been removed from both `api/main.py` and `monitoring/main.py`. Origins are now derived from the `CORS_ORIGINS` env var (comma-separated list). Set this variable in `.env` to match your deployment domain — for example `CORS_ORIGINS=http://localhost:5173,https://pf9-mgmt.company.com`.
 
 ### HTTPS Enforcement (Production Required)
 
@@ -432,9 +417,11 @@ server {
    - [x] All API/UI/monitoring ports closed in `docker-compose.prod.yml` — only nginx 80/443 exposed (Phase M2.2)
    - [ ] Replace `nginx/certs/server.crt` / `server.key` with a real CA-signed certificate for production
 
-4. **Docker Secrets** ✅ *(Phase J5)*
+4. **Docker Secrets** ✅ *(Phase J5 + v1.83.25)*
    - [x] `api/secret_helper.py` reads from `/run/secrets/` with env-var fallback
    - [x] DB password, LDAP admin password, PF9 password, JWT key all use `read_secret()`
+   - [x] VM-provisioning Fernet key (`secrets/vm_provision_key` / `VM_PROVISION_KEY`) provisioned (v1.83.25)
+   - [x] SMTP Fernet key (`secrets/smtp_config_key` / `SMTP_CONFIG_KEY`) provisioned (v1.83.25)
    - [x] `secrets/` directory gitignored; placeholder files included so Docker starts without errors
 
 ### Priority 2: High (Recommended)
@@ -763,7 +750,7 @@ Redis cache keys include a `region_id` segment: `pf9:{resource}:{region_id}:{md5
 
 3. **Update all configurations**
    - Update `.env` file
-   - Restart all services: `docker-compose down && .\startup.ps1`
+   - Restart all services: `docker compose down && .\startup.ps1`
 
 4. **Review audit logs**
    ```sql
