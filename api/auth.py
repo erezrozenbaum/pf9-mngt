@@ -773,19 +773,33 @@ def log_auth_event(username: str, action: str, success: bool = True, ip_address:
 # FastAPI Dependencies
 ldap_auth = LDAPAuthenticator()
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[User]:
-    """Get current authenticated user"""
+async def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> Optional[User]:
+    """Get current authenticated user.
+
+    Checks httpOnly cookie first (browser clients), then falls back to
+    Authorization: Bearer header (CI tests, external API consumers).
+    """
     if not ENABLE_AUTHENTICATION:
         # Return default admin user when authentication is disabled
         return User(username="admin", role="superadmin")
-        
-    if not credentials:
+
+    # 1. Try httpOnly cookie (browser path)
+    token = request.cookies.get("access_token")
+
+    # 2. Fall back to Bearer header (CI / external / legacy path)
+    if not token and credentials:
+        token = credentials.credentials
+
+    if not token:
         return None
-        
-    token_data = verify_token(credentials.credentials)
+
+    token_data = verify_token(token)
     if not token_data:
         return None
-        
+
     role = get_user_role(token_data.username)
     return User(username=token_data.username, role=role)
 

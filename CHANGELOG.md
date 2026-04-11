@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.32] - 2026-04-11
+
+### Security
+- **4.1 — JWT httpOnly cookie (cookie-first + Bearer fallback)**: `POST /auth/login` and `POST /auth/mfa/verify` now set an `access_token` httpOnly cookie (`SameSite=Lax`, `secure` flag set when `X-Forwarded-Proto: https`). `GET /auth/logout` deletes the cookie. `get_current_user` checks the cookie first, then falls back to the `Authorization: Bearer` header — existing CI tests and external consumers continue to work unchanged. All `apiFetch` calls in the UI add `credentials: 'include'`; login/logout/MFA-verify raw `fetch` calls do the same. Eliminates XSS-readable JWTs from `localStorage` for browser clients.
+
 ## [1.83.31] - 2026-04-11
 
 ### Security

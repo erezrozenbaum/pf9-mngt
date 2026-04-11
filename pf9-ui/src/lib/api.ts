@@ -68,7 +68,7 @@ export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> 
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...callerHeaders,
   };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers, credentials: 'include' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { detail?: string };
     throw new Error(err.detail ?? `API error ${res.status}`);

@@ -1107,7 +1107,8 @@ const App: React.FC = () => {
       const response = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password }),
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -1154,7 +1155,8 @@ const App: React.FC = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${mfaToken}`,
         },
-        body: JSON.stringify({ code })
+        body: JSON.stringify({ code }),
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -1191,9 +1193,8 @@ const App: React.FC = () => {
       if (token) {
         await fetch(`${API_BASE}/auth/logout`, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
+          headers: { 'Authorization': `Bearer ${token}` },
+          credentials: 'include',
         });
       }
     } catch (error) {

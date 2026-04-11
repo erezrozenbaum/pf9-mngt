@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.30-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.32-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,11 +534,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
-**[v1.83.31](CHANGELOG.md)** — Security: dedicated `integration_key` Fernet secret for integration credentials (4.4); performance: 15 per-request `_ensure_tables()` calls removed from `vm_provisioning_routes` (4.3); reliability: Redis-backed atomic `PerformanceMetrics` with in-memory fallback (4.2).
+**[v1.83.32](CHANGELOG.md)** — Security: JWT sessions now delivered via httpOnly cookie (`SameSite=Lax`) eliminating XSS-readable tokens in `localStorage`. Cookie-first with Bearer header fallback — existing API consumers and CI tests are unaffected.
+**[v1.83.31](CHANGELOG.md)** — Security: dedicated `integration_key` Fernet secret for integration credentials; performance: 15 per-request `_ensure_tables()` calls removed from `vm_provisioning_routes`; reliability: Redis-backed atomic `PerformanceMetrics` with in-memory fallback.
 **[v1.83.30](CHANGELOG.md)** — CI fix: `ReportsTab`, `VmProvisioningTab`, and `SourceAnalysis` blob-download functions still referenced removed `getToken()`/`API_BASE` identifiers after the v1.83.29 lib/api migration. Added `authHeaders` import and replaced patterns. Resolves TS2304 in Frontend TypeScript Check.
-**[v1.83.29](CHANGELOG.md)** — Complete `lib/api.ts` migration: all remaining `localStorage.getItem('auth_token')` direct reads removed from frontend components. `lib/api.ts` is now the single source of truth for auth token access. Also fixes a latent MFASettings routing bug (`/api/auth/mfa/...` → `/auth/mfa/...`).
-**[v1.83.28](CHANGELOG.md)** — CI fix: removed stale unused imports (`API_BASE`, `getToken`) in `BackupManagement.tsx` and `LdapSyncSettings.tsx` left over from the Batch 3.1 lib/api refactor causing TS6133 errors.
-**[v1.83.21](CHANGELOG.md)** — CI fixed: dependency audit and TypeScript check now run entirely inside Docker containers (no npm/node on CI host), consistent with the Docker/Kubernetes deployment model. Fixes `pf9_ui` build breakage (`EOVERRIDE`) introduced in v1.83.20 and patches vite HIGH CVEs.
+**[v1.83.29](CHANGELOG.md)** — Complete `lib/api.ts` migration: all remaining `localStorage.getItem('auth_token')` direct reads removed from frontend components. `lib/api.ts` is now the single source of truth for auth token access.
+**[v1.83.28](CHANGELOG.md)** — CI fix: removed stale unused imports (`API_BASE`, `getToken`) in `BackupManagement.tsx` and `LdapSyncSettings.tsx` left over from the lib/api refactor causing TS6133 errors.
 **[v1.83.20](CHANGELOG.md)** — Linux VM provisioning now auto-installs `qemu-guest-agent` via cloud-init so the Reset VM Password runbook works reliably. Runbook result now surfaces a `guest_agent_warning` for Linux VMs provisioned before this release.
 **[v1.83.19](CHANGELOG.md)** — UI polish: light mode sidebar color family unification; dark mode sidebar amber tint removed; dark mode sub-item panel banding flattened; themed `::selection` for readable text highlight; Snapshot Run Monitor filter row fixed left-to-right; phantom active run bar auto-remediates orphaned runs; batch dot cursor fixed.
 **[v1.83.18](CHANGELOG.md)** — Header/sidebar border alignment fix: locked `.pf9-header` and `.pf9-sidebar-brand` to identical `height: 64px; box-sizing: border-box` so both `border-bottom` lines always land on the same pixel row.

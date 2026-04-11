@@ -1140,8 +1140,8 @@ async def login(request: Request, login_data: LoginRequest):
     
     # Calculate expiration timestamp
     expires_at = datetime.now(timezone.utc) + access_token_expires
-    
-    return {
+
+    content = {
         "access_token": access_token,
         "token_type": "bearer",
         "expires_in": JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
@@ -1149,25 +1149,46 @@ async def login(request: Request, login_data: LoginRequest):
         "user": {
             "username": login_data.username,
             "role": role,
-            "is_active": True
-        }
+            "is_active": True,
+        },
     }
+    response = JSONResponse(content=content)
+    # Set httpOnly cookie — browser clients use this; Bearer header still accepted
+    # for CI tests and external consumers (cookie-first + Bearer fallback strategy).
+    _secure = request.headers.get("x-forwarded-proto", "http") == "https"
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=_secure,
+        samesite="lax",
+        max_age=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+    return response
 
 @app.post("/auth/logout")
 @limiter.limit("30/minute")
 async def logout(request: Request, current_user: User = Depends(require_authentication)):
     """Logout user and invalidate token"""
-    # Get token from Authorization header
-    auth_header = request.headers.get('authorization')
-    if auth_header and auth_header.startswith('Bearer '):
-        token = auth_header[7:]
+    # Invalidate whichever token was used (cookie path or Bearer path)
+    token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if token:
         invalidate_user_session(token)
-    
-    log_auth_event(current_user.username, "logout", True, 
+
+    log_auth_event(current_user.username, "logout", True,
                    request.client.host if request.client else None,
-                   request.headers.get('user-agent'))
-    
-    return {"message": "Successfully logged out"}
+                   request.headers.get("user-agent"))
+
+    response = JSONResponse(content={"message": "Successfully logged out"})
+    # Delete the httpOnly cookie regardless of how the user authenticated
+    _secure = request.headers.get("x-forwarded-proto", "http") == "https"
+    response.delete_cookie(key="access_token", path="/", secure=_secure, samesite="lax")
+    return response
 
 @app.get("/auth/me", response_model=User)
 @limiter.limit("60/minute")

@@ -31,7 +31,8 @@ from typing import Optional, List
 import pyotp
 import qrcode
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
 
@@ -209,7 +210,11 @@ async def mfa_verify_setup(
 # POST /auth/mfa/verify – Verify TOTP code during login (called with mfa_token)
 # ---------------------------------------------------------------------------
 @router.post("/verify")
-async def mfa_verify_login(body: MFAVerifyRequest, current_user: User = Depends(require_authentication)):
+async def mfa_verify_login(
+    request: Request,
+    body: MFAVerifyRequest,
+    current_user: User = Depends(require_authentication),
+):
     """Verify TOTP code during the login MFA challenge.
     This endpoint is called with the short-lived mfa_token.
     On success, returns the full access JWT."""
@@ -262,13 +267,25 @@ async def mfa_verify_login(body: MFAVerifyRequest, current_user: User = Depends(
     create_user_session(username, role, access_token)
     log_auth_event(username, "mfa_verified", True)
 
-    return {
+    content = {
         "access_token": access_token,
         "token_type": "bearer",
         "expires_in": JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "expires_at": expires_at.isoformat() + "Z",
         "user": {"username": username, "role": role, "is_active": True},
     }
+    response = JSONResponse(content=content)
+    _secure = request.headers.get("x-forwarded-proto", "http") == "https"
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=_secure,
+        samesite="lax",
+        max_age=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------
