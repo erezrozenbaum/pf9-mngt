@@ -97,6 +97,10 @@ pf9-ui/node_modules/
 RESUME_*.md
 MIGRATION_PLANNER_PHASES.md
 
+# Security scan scratch files
+bandit_results.json
+parse_bandit.py
+
 
 # Internal planning documents (not for public repo)
 improvements_plan.md
