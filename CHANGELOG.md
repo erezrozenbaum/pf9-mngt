@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.39] - 2026-04-13
+
+### Security
+- **JWT session expiry reduced to 90 minutes** (`api/auth.py`): Default `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` changed from 480 to 90, limiting the window of opportunity for stolen-token replay attacks.
+
+### Added
+- **`get_request_ip` helper extracted** (`api/request_helpers.py`): The IP-resolution logic (prefer `X-Real-IP`, fall back to `request.client.host`, then `127.0.0.1`) was duplicated between the rate-limiter key function and the audit-log path. Now lives in one place and both callers import from `request_helpers`.
+- **Test coverage — helpers and workers** (`tests/`): Added 7 new test modules covering `crypto_helper` (14 tests), `smtp_helper` (13 tests), `webhook_helper` (13 tests), `restore_management` (6 tests), `backup_worker` (12 tests), and `request_helpers` (6 tests) — 64 new tests in total.
+
 ## [1.83.38] - 2026-04-12
 
 ### Security

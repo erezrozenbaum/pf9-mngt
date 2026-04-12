@@ -273,16 +273,11 @@ logger = setup_logging(
     log_file=os.getenv("LOG_FILE", None)
 )
 
-# Rate limiting — prefer X-Real-IP set by nginx ($remote_addr), which is not
-# client-spoofable. Only fall back to the TCP peer address when the header is
-# absent (direct connections in development).
-def _real_ip(request: Request) -> str:
-    return (
-        request.headers.get("X-Real-IP")
-        or (request.client.host if request.client else "127.0.0.1")
-    )
+from request_helpers import get_request_ip
 
-limiter = Limiter(key_func=_real_ip)
+# Rate limiting — use get_request_ip which prefers X-Real-IP set by nginx
+# ($remote_addr, not client-spoofable).
+limiter = Limiter(key_func=get_request_ip)
 security = HTTPBasic()
 
 # Performance metrics
@@ -300,7 +295,7 @@ audit_logger.propagate = False  # prevent double-emit via root logger StreamHand
 # Security functions
 # ---------------------------------------------------------------------------
 def log_admin_operation(operation: str, resource_id: str, request: Request, authenticated: bool = False):
-    audit_logger.info(f"{operation} - Resource: {resource_id} - IP: {request.client.host if request.client else 'unknown'} - Auth: {authenticated}")
+    audit_logger.info(f"{operation} - Resource: {resource_id} - IP: {get_request_ip(request)} - Auth: {authenticated}")
 
 def verify_admin_credentials(credentials: HTTPBasicCredentials = Depends(security)) -> bool:
     if not ADMIN_PASSWORD:
