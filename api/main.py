@@ -20,7 +20,6 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from pf9_control import get_client
@@ -274,8 +273,16 @@ logger = setup_logging(
     log_file=os.getenv("LOG_FILE", None)
 )
 
-# Rate limiting
-limiter = Limiter(key_func=get_remote_address)
+# Rate limiting — prefer X-Real-IP set by nginx ($remote_addr), which is not
+# client-spoofable. Only fall back to the TCP peer address when the header is
+# absent (direct connections in development).
+def _real_ip(request: Request) -> str:
+    return (
+        request.headers.get("X-Real-IP")
+        or (request.client.host if request.client else "127.0.0.1")
+    )
+
+limiter = Limiter(key_func=_real_ip)
 security = HTTPBasic()
 
 # Performance metrics
@@ -324,9 +331,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=APP_NAME,
     lifespan=lifespan,
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url="/api/docs" if not _PROD_MODE else None,
+    redoc_url="/api/redoc" if not _PROD_MODE else None,
+    openapi_url="/api/openapi.json" if not _PROD_MODE else None,
 )
 
 _sla_task: asyncio.Task = None

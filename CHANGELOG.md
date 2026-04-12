@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.38] - 2026-04-12
+
+### Security
+- **Rate limiter IP spoofing hardened** (`api/main.py`): The slowapi rate limiter previously keyed on `X-Forwarded-For`, which clients can forge in an attempt to bypass per-IP rate limits. The key function now prefers `X-Real-IP` (set by nginx to `$remote_addr`, the genuine TCP peer address and not forwardable by clients), falling back to `request.client.host` for direct connections in development.
+- **API documentation disabled in production** (`api/main.py`): `/api/docs`, `/api/redoc`, and `/api/openapi.json` are now suppressed when `APP_ENV=production`, removing unauthenticated schema exposure from the production attack surface.
+- **Content-Security-Policy and Permissions-Policy headers added** (`nginx/nginx.prod.conf`): Added `Content-Security-Policy` (default-src 'self', script-src 'self', style-src 'self' 'unsafe-inline', img-src 'self' data: blob:, frame-ancestors 'self') and `Permissions-Policy` (geolocation, microphone, camera, and payment all denied) to the nginx security-headers block.
+- **OpenStack password read through secrets manager** (`api/restore_management.py`): `PF9_PASSWORD` was read via raw `os.getenv()`, bypassing the `read_secret()` helper that checks Docker secrets files first. Now uses `read_secret("pf9_password", env_var="PF9_PASSWORD")` consistently with every other credential in the codebase.
+- **LDAP admin password read through secrets manager** (`backup_worker/main.py`): `LDAP_ADMIN_PASSWORD` was read via raw `os.getenv()`. Now uses `_read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD")` matching the pattern already used for `DB_PASS` in the same worker.
+- **`_update_job` SQL column allowlist** (`backup_worker/main.py`): The internal helper that updates `backup_history` rows built a `SET` clause from caller-controlled keyword arguments with no validation. Added `_ALLOWED_JOB_FIELDS` allowlist; unknown field names now raise `ValueError` at call time, preventing accidental or malicious injection of arbitrary column names into the SQL statement.
+- **All remaining raw `fetch()` calls migrated to `apiFetch`** (`pf9-ui/src/components/UserManagement.tsx`): 49 raw `fetch()` invocations across `ContainerAlertSettings`, `BrandingSettings`, `SystemConfigPanel`, and the main `UserManagement` component (runbook governance, MFA, departments, navigation CRUD, user management, audit logs, data reset) were bypassing the shared `apiFetch` helper. All now use `apiFetch`, which adds `credentials: 'include'` (required for reliable cookie auth in cross-origin dev environments), centralises error handling, and removes the stale pattern of sending the non-JWT session indicator as a Bearer token. The `rbAuthHeaders` helper and all inline `const token = getToken()` setup blocks are removed.
+
 ## [1.83.37] - 2026-04-11
 
 ### Fixed

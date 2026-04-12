@@ -60,7 +60,7 @@ LDAP_HOST = os.getenv("LDAP_HOST", "pf9_ldap")
 LDAP_PORT = os.getenv("LDAP_PORT", "389")
 LDAP_BASE_DN = os.getenv("LDAP_BASE_DN", "dc=pf9mgmt,dc=local")
 LDAP_ADMIN_DN = os.getenv("LDAP_ADMIN_DN", f"cn=admin,{os.getenv('LDAP_BASE_DN', 'dc=pf9mgmt,dc=local')}")
-LDAP_ADMIN_PASSWORD = os.getenv("LDAP_ADMIN_PASSWORD", "")
+LDAP_ADMIN_PASSWORD = _read_secret("ldap_admin_password", env_var="LDAP_ADMIN_PASSWORD")
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -161,7 +161,15 @@ def _fetch_pending_ldap_jobs(conn):
         return cur.fetchall()
 
 
+_ALLOWED_JOB_FIELDS = frozenset({
+    "status", "started_at", "completed_at", "file_name", "file_path",
+    "file_size_bytes", "duration_seconds", "error_message", "notes",
+})
+
 def _update_job(conn, job_id, **fields):
+    unknown = set(fields) - _ALLOWED_JOB_FIELDS
+    if unknown:
+        raise ValueError(f"_update_job: unknown field(s): {unknown}")
     parts = []
     vals = []
     for k, v in fields.items():

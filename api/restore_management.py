@@ -34,6 +34,7 @@ import requests as http_requests
 
 from auth import require_permission, get_current_user, User
 from db_pool import get_connection
+from secret_helper import read_secret
 
 logger = logging.getLogger("pf9.restore")
 
@@ -46,7 +47,7 @@ RESTORE_DRY_RUN = os.getenv("RESTORE_DRY_RUN", "false").lower() in ("true", "1",
 # OpenStack connection (reuse same vars as snapshot system)
 PF9_AUTH_URL = os.getenv("PF9_AUTH_URL", "")
 PF9_USERNAME = os.getenv("PF9_USERNAME", "")
-PF9_PASSWORD = os.getenv("PF9_PASSWORD", "")
+PF9_PASSWORD = read_secret("pf9_password", env_var="PF9_PASSWORD")
 PF9_USER_DOMAIN = os.getenv("PF9_USER_DOMAIN", "Default")
 PF9_PROJECT_NAME = os.getenv("PF9_PROJECT_NAME", "service")
 PF9_PROJECT_DOMAIN = os.getenv("PF9_PROJECT_DOMAIN", "Default")

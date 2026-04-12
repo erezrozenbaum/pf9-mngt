@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.37-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.38-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,6 +534,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.38](CHANGELOG.md)** — Security hardening (Batch 5): rate-limiter now uses `X-Real-IP` to prevent spoofing; `_update_job()` field allowlist prevents mass-assignment; `PF9_PASSWORD` and `LDAP_ADMIN_PASSWORD` migrated to Docker Secrets; API docs disabled in production mode; CSP + Permissions-Policy headers added to nginx; all 49 raw `fetch()` calls in `UserManagement.tsx` migrated to `apiFetch`.
 **[v1.83.37](CHANGELOG.md)** — CI fix: stale `Bearer ${token}` reference in `ClusterContext.tsx` inner regions fetch (TS2304) and unused `apiFetch` import in `LandingDashboard.tsx` (TS6133) — both left over from v1.83.36 getToken removal.
 **[v1.83.36](CHANGELOG.md)** — Fix: removed `getToken()` guards and fake Bearer headers from `useNavigation.ts` (and `APIMetricsTab`, `ClusterContext`, `LandingDashboard`, `SnapshotAuditTrail`). Navigation fetches now use `credentials: 'include'` for reliable httpOnly-cookie auth; the `isAuthenticated` React state is the correct guard — sidebar and grouped nav render correctly after login.
 **[v1.83.35](CHANGELOG.md)** — Fix: `getToken()` now returns `token_expires_at` ISO expiry as session indicator (not the removed `auth_token`); `rbac_middleware` falls through to httpOnly cookie when Bearer token is present but fails JWT verification.
@@ -661,4 +662,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.37 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.83.38 | **Last Updated**: April 2026

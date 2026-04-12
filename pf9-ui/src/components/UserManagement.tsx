@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_BASE } from '../config';
-import { getToken } from '../lib/api';
+import { apiFetch } from '../lib/api';
 import LdapSyncSettings from './LdapSyncSettings';
 
 type AuthUser = {
@@ -23,23 +23,18 @@ const ContainerAlertSettings: React.FC<{ user?: AuthUser | null }> = ({ user }) 
   const isSuperadmin = user?.role === 'superadmin';
 
   useEffect(() => {
-    fetch(`${API_BASE}/settings/container-alert`)
-      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    apiFetch<{ value: string }>('/settings/container-alert')
       .then(d => setEmail(d.value ?? ''))
       .catch(() => {});
   }, []);
 
   const handleSave = async () => {
-    const token = getToken() || '';
-    if (!token) { setMsg('⚠️ Please log in first'); return; }
     setSaving(true); setMsg('');
     try {
-      const res = await fetch(`${API_BASE}/admin/settings/container-alert`, {
+      await apiFetch('/admin/settings/container-alert', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ value: email }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setMsg('✅ Alert email saved');
       setTimeout(() => setMsg(''), 4000);
     } catch (e: any) { setMsg(`⚠️ ${e.message}`); }
@@ -126,32 +121,23 @@ const BrandingSettings: React.FC = () => {
 
   const fetchBranding = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/settings/branding`);
-      if (res.ok) {
-        const data = await res.json();
-        setBrandData(prev => ({ ...prev, ...data }));
-      }
+      const data = await apiFetch<typeof brandData>('/settings/branding');
+      setBrandData(prev => ({ ...prev, ...data }));
     } catch {}
   }, []);
 
   useEffect(() => { fetchBranding(); }, [fetchBranding]);
 
-  const authToken = getToken() || '';
-  const authHeader = authToken ? `Bearer ${authToken}` : '';
-
   const handleSave = async () => {
-    if (!authHeader) { setMsg('⚠️ Please log in first'); return; }
     setSaving(true); setMsg('');
     try {
-      const res = await fetch(`${API_BASE}/admin/settings/branding`, {
+      await apiFetch('/admin/settings/branding', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
         body: JSON.stringify({
           ...brandData,
           login_hero_features: brandData.login_hero_features,
         }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setMsg('✅ Branding saved successfully');
       setTimeout(() => setMsg(''), 4000);
     } catch (e: any) { setMsg(`⚠️ ${e.message}`); }
@@ -161,17 +147,14 @@ const BrandingSettings: React.FC = () => {
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!authHeader) { setMsg('⚠️ Please log in first'); return; }
     if (file.size > 2 * 1024 * 1024) { setMsg('⚠️ Logo must be under 2 MB'); return; }
     setLogoUploading(true); setMsg('');
     try {
-      const res = await fetch(`${API_BASE}/admin/settings/branding/logo`, {
+      const data = await apiFetch<{ logo_url: string }>('/admin/settings/branding/logo', {
         method: 'POST',
-        headers: { 'Content-Type': file.type, Authorization: authHeader },
+        headers: { 'Content-Type': file.type },
         body: file,
       });
-      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || 'Upload failed'); }
-      const data = await res.json();
       setBrandData(prev => ({ ...prev, company_logo_url: data.logo_url }));
       setMsg('✅ Logo uploaded');
       setTimeout(() => setMsg(''), 4000);
@@ -374,11 +357,7 @@ const SystemConfigPanel: React.FC<{ user?: AuthUser | null }> = ({ user: _user }
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const token = getToken() || '';
-    fetch(`${API_BASE}/admin/system-config`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.detail || `HTTP ${r.status}`)))
+    apiFetch<any>('/admin/system-config')
       .then(d => { setData(d); setLoading(false); })
       .catch(e => { setError(String(e)); setLoading(false); });
   }, []);
@@ -627,17 +606,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     setTimeout(() => setRbToast(null), 4000);
   }, []);
 
-  const rbAuthHeaders = useCallback(() => {
-    const t = getToken();
-    return { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
-  }, []);
-
   const loadRbRunbooks = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/runbooks`, { headers: rbAuthHeaders() });
-      if (res.ok) { const d = await res.json(); setRbRunbooks(d); }
+      const d = await apiFetch<RbRunbook[]>('/api/runbooks');
+      setRbRunbooks(d);
     } catch {}
-  }, [rbAuthHeaders]);
+  }, []);
 
   const loadRbExecutions = useCallback(async () => {
     try {
@@ -645,46 +619,40 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       if (rbHistRunbook) p.set('runbook_name', rbHistRunbook);
       if (rbHistStatus) p.set('status', rbHistStatus);
       p.set('limit', '25'); p.set('offset', String(rbHistPage * 25));
-      const res = await fetch(`${API_BASE}/api/runbooks/executions/history?${p}`, { headers: rbAuthHeaders() });
-      if (res.ok) { const d = await res.json(); setRbExecutions(d.executions); setRbExecTotal(d.total); }
+      const d = await apiFetch<{ executions: RbExecution[]; total: number }>(`/api/runbooks/executions/history?${p}`);
+      setRbExecutions(d.executions); setRbExecTotal(d.total);
     } catch {}
-  }, [rbHistRunbook, rbHistStatus, rbHistPage, rbAuthHeaders]);
+  }, [rbHistRunbook, rbHistStatus, rbHistPage]);
 
   const loadRbPending = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/runbooks/approvals/pending`, { headers: rbAuthHeaders() });
-      if (res.ok) { const d = await res.json(); setRbPending(d); }
+      const d = await apiFetch<RbExecution[]>('/api/runbooks/approvals/pending');
+      setRbPending(d);
     } catch {}
-  }, [rbAuthHeaders]);
+  }, []);
 
   const loadObPending = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/onboarding/batches`, { headers: rbAuthHeaders() });
-      if (res.ok) {
-        const d = await res.json();
-        setObPending(d.filter((b: any) => b.approval_status === 'pending_approval'));
-      }
+      const d = await apiFetch<any[]>('/api/onboarding/batches');
+      setObPending(d.filter((b: any) => b.approval_status === 'pending_approval'));
     } catch {}
-  }, [rbAuthHeaders]);
+  }, []);
 
   const loadVmpPending = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/vm-provisioning/batches`, { headers: rbAuthHeaders() });
-      if (res.ok) {
-        const d = await res.json();
-        setVmpPending(d.filter((b: any) => b.require_approval && b.approval_status === 'pending_approval'
-          && !['executing','complete','failed','partially_failed'].includes(b.status)));
-      }
+      const d = await apiFetch<any[]>('/api/vm-provisioning/batches');
+      setVmpPending(d.filter((b: any) => b.require_approval && b.approval_status === 'pending_approval'
+        && !['executing','complete','failed','partially_failed'].includes(b.status)));
     } catch {}
-  }, [rbAuthHeaders]);
+  }, []);
 
   const loadVmpHistory = useCallback(async () => {
     setVmpHistLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/vm-provisioning/batches`, { headers: rbAuthHeaders() });
-      if (res.ok) { const d = await res.json(); setVmpHistory(d); }
+      const d = await apiFetch<any[]>('/api/vm-provisioning/batches');
+      setVmpHistory(d);
     } catch {} finally { setVmpHistLoading(false); }
-  }, [rbAuthHeaders]);
+  }, []);
 
   const toggleVmpDetail = useCallback(async (batchId: number) => {
     if (vmpHistDetail[batchId]) {
@@ -692,98 +660,93 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       return;
     }
     try {
-      const [detRes, logRes] = await Promise.all([
-        fetch(`${API_BASE}/api/vm-provisioning/batches/${batchId}`, { headers: rbAuthHeaders() }),
-        fetch(`${API_BASE}/api/vm-provisioning/batches/${batchId}/logs`, { headers: rbAuthHeaders() }),
+      const [det, logs] = await Promise.all([
+        apiFetch<any>(`/api/vm-provisioning/batches/${batchId}`),
+        apiFetch<any>(`/api/vm-provisioning/batches/${batchId}/logs`),
       ]);
-      if (detRes.ok) { const d = await detRes.json(); setVmpHistDetail(prev => ({ ...prev, [batchId]: d })); }
-      if (logRes.ok) { const d = await logRes.json(); setVmpHistLogs(prev => ({ ...prev, [batchId]: d })); }
+      setVmpHistDetail(prev => ({ ...prev, [batchId]: det }));
+      setVmpHistLogs(prev => ({ ...prev, [batchId]: logs }));
     } catch {}
-  }, [rbAuthHeaders, vmpHistDetail]);
+  }, [vmpHistDetail]);
 
   const vmpDecide = useCallback(async (batchId: number, decision: 'approve' | 'reject') => {
     try {
-      const res = await fetch(`${API_BASE}/api/vm-provisioning/batches/${batchId}/decision`, {
-        method: 'POST', headers: rbAuthHeaders(),
+      await apiFetch(`/api/vm-provisioning/batches/${batchId}/decision`, {
+        method: 'POST',
         body: JSON.stringify({ decision, comment: '' }),
       });
-      if (!res.ok) throw new Error('Failed');
       rbShowToast(decision === 'approve' ? '✅ VM batch approved' : '❌ VM batch rejected', decision === 'approve' ? 'success' : 'info');
       loadVmpPending();
     } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
-  }, [rbAuthHeaders, rbShowToast, loadVmpPending]);
+  }, [rbShowToast, loadVmpPending]);
 
   const obDecide = useCallback(async (batchId: string, decision: 'approve' | 'reject', comment = '') => {
     try {
-      const res = await fetch(`${API_BASE}/api/onboarding/batches/${batchId}/decision`, {
-        method: 'POST', headers: rbAuthHeaders(),
+      await apiFetch(`/api/onboarding/batches/${batchId}/decision`, {
+        method: 'POST',
         body: JSON.stringify({ decision, comment }),
       });
-      if (!res.ok) throw new Error('Failed');
       rbShowToast(decision === 'approve' ? '✅ Batch approved' : '❌ Batch rejected', decision === 'approve' ? 'success' : 'info');
       loadObPending();
     } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
-  }, [rbAuthHeaders, rbShowToast, loadObPending]);
+  }, [rbShowToast, loadObPending]);
 
   const loadRbPolicies = useCallback(async () => {
     try {
       const byRb: Record<string, RbApprovalPolicy[]> = {};
       for (const rb of rbRunbooks) {
-        const res = await fetch(`${API_BASE}/api/runbooks/policies/${rb.name}`, { headers: rbAuthHeaders() });
-        if (res.ok) byRb[rb.name] = await res.json();
+        try { byRb[rb.name] = await apiFetch<RbApprovalPolicy[]>(`/api/runbooks/policies/${rb.name}`); } catch {}
       }
       setRbPolicies(byRb);
     } catch {}
-  }, [rbRunbooks, rbAuthHeaders]);
+  }, [rbRunbooks]);
 
   const rbApproveReject = useCallback(async (execId: string, decision: 'approved' | 'rejected') => {
     try {
-      const res = await fetch(`${API_BASE}/api/runbooks/executions/${execId}/approve`, {
-        method: 'POST', headers: rbAuthHeaders(),
+      await apiFetch(`/api/runbooks/executions/${execId}/approve`, {
+        method: 'POST',
         body: JSON.stringify({ decision, comment: '' }),
       });
-      if (!res.ok) throw new Error('Failed');
       rbShowToast(decision === 'approved' ? '✅ Approved' : '❌ Rejected', decision === 'approved' ? 'success' : 'info');
       loadRbPending(); loadRbExecutions();
     } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
-  }, [rbAuthHeaders, rbShowToast, loadRbPending, loadRbExecutions]);
+  }, [rbShowToast, loadRbPending, loadRbExecutions]);
 
   const rbCancel = useCallback(async (execId: string) => {
     try {
-      await fetch(`${API_BASE}/api/runbooks/executions/${execId}/cancel`, { method: 'POST', headers: rbAuthHeaders() });
+      await apiFetch(`/api/runbooks/executions/${execId}/cancel`, { method: 'POST' });
       rbShowToast('Cancelled', 'info'); loadRbPending(); loadRbExecutions();
     } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
-  }, [rbAuthHeaders, rbShowToast, loadRbPending, loadRbExecutions]);
+  }, [rbShowToast, loadRbPending, loadRbExecutions]);
 
   const rbViewExecution = useCallback(async (execId: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/runbooks/executions/${execId}`, { headers: rbAuthHeaders() });
-      if (res.ok) setRbSelectedExec(await res.json());
+      const d = await apiFetch<RbExecution>(`/api/runbooks/executions/${execId}`);
+      setRbSelectedExec(d);
     } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
-  }, [rbAuthHeaders, rbShowToast]);
+  }, [rbShowToast]);
 
   const rbSavePolicy = useCallback(async () => {
     if (!rbEditPolicy) return;
     try {
-      const res = await fetch(`${API_BASE}/api/runbooks/policies/${rbEditPolicy.runbook_name}`, {
-        method: 'PUT', headers: rbAuthHeaders(), body: JSON.stringify(rbEditPolicy),
+      await apiFetch(`/api/runbooks/policies/${rbEditPolicy.runbook_name}`, {
+        method: 'PUT',
+        body: JSON.stringify(rbEditPolicy),
       });
-      if (!res.ok) throw new Error('Failed');
       rbShowToast('Policy saved', 'success'); setRbEditPolicy(null); loadRbPolicies();
     } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
-  }, [rbEditPolicy, rbAuthHeaders, rbShowToast, loadRbPolicies]);
+  }, [rbEditPolicy, rbShowToast, loadRbPolicies]);
 
   const rbDeletePolicy = useCallback(async (runbookName: string, triggerRole: string) => {
     if (!confirm(`Delete approval policy for "${runbookName}" / role "${triggerRole}"?`)) return;
     try {
-      const res = await fetch(
-        `${API_BASE}/api/runbooks/policies/${encodeURIComponent(runbookName)}/${encodeURIComponent(triggerRole)}`,
-        { method: 'DELETE', headers: rbAuthHeaders() },
+      await apiFetch(
+        `/api/runbooks/policies/${encodeURIComponent(runbookName)}/${encodeURIComponent(triggerRole)}`,
+        { method: 'DELETE' },
       );
-      if (!res.ok) throw new Error('Failed to delete policy');
       rbShowToast('Policy deleted', 'success'); loadRbPolicies();
     } catch (e: any) { rbShowToast(`Failed: ${e.message}`, 'error'); }
-  }, [rbAuthHeaders, rbShowToast, loadRbPolicies]);
+  }, [rbShowToast, loadRbPolicies]);
 
   useEffect(() => {
     loadData();
@@ -831,12 +794,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   const loadMfaUsers = async () => {
     setMfaLoading(true); setMfaMsg('');
     try {
-      const token = getToken();
-      const res = await fetch(`${API_BASE}/auth/mfa/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error('Failed to load MFA users');
-      const data: MFAUserEntry[] = await res.json();
+      const data = await apiFetch<MFAUserEntry[]>('/auth/mfa/users');
       setMfaUsers(data);
     } catch (e: any) {
       setMfaMsg(`⚠️ ${e.message}`);
@@ -846,56 +804,45 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const loadDeptNavData = async () => {
-    const token = getToken();
-    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
     try {
       const [dRes, gRes, iRes] = await Promise.all([
-        fetch(`${API_BASE}/api/departments`, { headers }),
-        fetch(`${API_BASE}/api/nav/groups`, { headers }),
-        fetch(`${API_BASE}/api/nav/items`, { headers }),
+        apiFetch<{ departments: any[] }>('/api/departments'),
+        apiFetch<any[]>('/api/nav/groups'),
+        apiFetch<any[]>('/api/nav/items'),
       ]);
-      if (dRes.ok) setDepartments((await dRes.json()).departments || []);
-      if (gRes.ok) setNavGroups(await gRes.json());
-      if (iRes.ok) setNavItems(await iRes.json());
+      setDepartments(dRes.departments || []);
+      setNavGroups(gRes);
+      setNavItems(iRes);
     } catch (e) { console.warn('Failed to load dept/nav data', e); }
   };
 
   const loadVisibilityMatrix = async () => {
-    const token = getToken();
     try {
-      const res = await fetch(`${API_BASE}/api/departments/visibility/matrix`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setVisibilityMatrix(data);
-        // Initialize visEdits from matrix
-        const edits: Record<number, { groups: Set<number>; items: Set<number> }> = {};
-        for (const d of data.departments) {
-          edits[d.id] = { groups: new Set<number>(), items: new Set<number>() };
-        }
-        for (const link of data.department_group_visibility) {
-          if (edits[link.department_id]) edits[link.department_id].groups.add(link.nav_group_id);
-        }
-        for (const link of data.department_item_visibility) {
-          if (edits[link.department_id]) edits[link.department_id].items.add(link.nav_item_id);
-        }
-        setVisEdits(edits);
+      const data = await apiFetch<any>('/api/departments/visibility/matrix');
+      setVisibilityMatrix(data);
+      // Initialize visEdits from matrix
+      const edits: Record<number, { groups: Set<number>; items: Set<number> }> = {};
+      for (const d of data.departments) {
+        edits[d.id] = { groups: new Set<number>(), items: new Set<number>() };
       }
+      for (const link of data.department_group_visibility) {
+        if (edits[link.department_id]) edits[link.department_id].groups.add(link.nav_group_id);
+      }
+      for (const link of data.department_item_visibility) {
+        if (edits[link.department_id]) edits[link.department_id].items.add(link.nav_item_id);
+      }
+      setVisEdits(edits);
     } catch (e) { console.warn('Failed to load visibility matrix', e); }
   };
 
   const handleCreateDepartment = async () => {
     if (!deptForm.name.trim()) return;
-    const token = getToken();
     setDeptMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/departments`, {
+      await apiFetch('/api/departments', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(deptForm),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setDeptMsg('✅ Department created');
       setDeptForm({ name: '', description: '', sort_order: 0, default_nav_item_key: '' });
       loadDeptNavData();
@@ -905,14 +852,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleDeleteDepartment = async (id: number) => {
     if (!confirm('Delete this department?')) return;
-    const token = getToken();
     setDeptMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/departments/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      await apiFetch(`/api/departments/${id}`, { method: 'DELETE' });
       setDeptMsg('✅ Department deleted');
       loadDeptNavData();
       setTimeout(() => setDeptMsg(''), 3000);
@@ -920,19 +862,16 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleSaveDepartment = async (id: number) => {
-    const token = getToken();
     setDeptMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/departments/${id}`, {
+      await apiFetch(`/api/departments/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           name: deptEditFields.name.trim(),
           description: deptEditFields.description.trim() || null,
           sort_order: deptEditFields.sort_order,
         }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setDeptMsg('✅ Department updated');
       setDeptEditing(null);
       loadDeptNavData();
@@ -941,20 +880,17 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleSaveVisibility = async (deptId: number) => {
-    const token = getToken();
     setVisMsg('');
     const edit = visEdits[deptId];
     if (!edit) return;
     try {
-      const res = await fetch(`${API_BASE}/api/departments/${deptId}/visibility`, {
+      await apiFetch(`/api/departments/${deptId}/visibility`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           nav_group_ids: Array.from(edit.groups),
           nav_item_ids: Array.from(edit.items),
         }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setVisMsg(`✅ Visibility saved for department`);
       setTimeout(() => setVisMsg(''), 3000);
     } catch (e: any) { setVisMsg(`⚠️ ${e.message}`); }
@@ -995,15 +931,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   // ── Navigation Group CRUD ──
   const handleCreateGroup = async () => {
     if (!groupForm.key.trim() || !groupForm.label.trim()) { setNavMsg('⚠️ Key and Label required'); return; }
-    const token = getToken();
     setNavMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/nav/groups`, {
+      await apiFetch('/api/nav/groups', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(groupForm),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setNavMsg('✅ Group created');
       setGroupForm({ key: '', label: '', icon: '', description: '', sort_order: 0, is_default: false });
       loadDeptNavData();
@@ -1012,15 +945,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleUpdateGroup = async (groupId: number) => {
-    const token = getToken();
     setNavMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/nav/groups/${groupId}`, {
+      await apiFetch(`/api/nav/groups/${groupId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(groupForm),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setNavMsg('✅ Group updated');
       setEditingGroupId(null);
       setGroupForm({ key: '', label: '', icon: '', description: '', sort_order: 0, is_default: false });
@@ -1031,14 +961,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleDeleteGroup = async (groupId: number) => {
     if (!confirm('Delete this navigation group and all its items?')) return;
-    const token = getToken();
     setNavMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/nav/groups/${groupId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      await apiFetch(`/api/nav/groups/${groupId}`, { method: 'DELETE' });
       setNavMsg('✅ Group deleted');
       loadDeptNavData();
       setTimeout(() => setNavMsg(''), 3000);
@@ -1055,15 +980,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     if (!itemForm.key.trim() || !itemForm.label.trim() || !itemForm.nav_group_id) {
       setNavMsg('⚠️ Key, Label and Group required'); return;
     }
-    const token = getToken();
     setNavMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/nav/items`, {
+      await apiFetch('/api/nav/items', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(itemForm),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setNavMsg('✅ Item created');
       setItemForm({ key: '', label: '', icon: '', route: '', resource_key: '', nav_group_id: 0, sort_order: 0, is_active: true, is_action: false });
       setShowAddItem(null);
@@ -1073,15 +995,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleUpdateItem = async (itemId: number) => {
-    const token = getToken();
     setNavMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/nav/items/${itemId}`, {
+      await apiFetch(`/api/nav/items/${itemId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(itemForm),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setNavMsg('✅ Item updated');
       setEditingItemId(null);
       setItemForm({ key: '', label: '', icon: '', route: '', resource_key: '', nav_group_id: 0, sort_order: 0, is_active: true, is_action: false });
@@ -1092,14 +1011,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleDeleteItem = async (itemId: number) => {
     if (!confirm('Delete this navigation item?')) return;
-    const token = getToken();
     setNavMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/nav/items/${itemId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
+      await apiFetch(`/api/nav/items/${itemId}`, { method: 'DELETE' });
       setNavMsg('✅ Item deleted');
       loadDeptNavData();
       setTimeout(() => setNavMsg(''), 3000);
@@ -1107,13 +1021,11 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleMoveItem = async (itemId: number, newGroupId: number) => {
-    const token = getToken();
     const item = navItems.find((i: any) => i.id === itemId);
     if (!item) return;
     try {
-      await fetch(`${API_BASE}/api/nav/items/${itemId}`, {
+      await apiFetch(`/api/nav/items/${itemId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ ...item, nav_group_id: newGroupId }),
       });
       setNavMsg('✅ Item moved');
@@ -1134,11 +1046,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   // Inline sort_order update for items (no need to enter full edit mode)
   const handleUpdateItemSortOrder = async (itemId: number, newOrder: number) => {
-    const token = getToken();
     try {
-      await fetch(`${API_BASE}/api/nav/items/${itemId}`, {
+      await apiFetch(`/api/nav/items/${itemId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ sort_order: newOrder }),
       });
       loadDeptNavData();
@@ -1147,15 +1057,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   // Set a group as the default (auto-open on login)
   const handleSetDefaultGroup = async (groupId: number) => {
-    const token = getToken();
     setNavMsg('');
     try {
-      const res = await fetch(`${API_BASE}/api/nav/groups/${groupId}`, {
+      await apiFetch(`/api/nav/groups/${groupId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ is_default: true }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setNavMsg('✅ Default group updated — this group will auto-open on login');
       loadDeptNavData();
       setTimeout(() => setNavMsg(''), 4000);
@@ -1163,16 +1070,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
   };
 
   const handleSetUserDepartment = async (username: string, departmentId: number | null) => {
-    const token = getToken();
     try {
-      const res = await fetch(`${API_BASE}/api/auth/users/${username}/department`, {
+      await apiFetch(`/api/auth/users/${username}/department`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ department_id: departmentId }),
       });
-      if (res.ok) {
-        loadData();
-      }
+      loadData();
     } catch (e) { console.warn('Failed to set department', e); }
   };
 
@@ -1180,22 +1083,10 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     setLoading(true);
     setError('');
     try {
-      // Get auth token from localStorage if available
-      const token = getToken();
-      const headers: Record<string, string> = token
-        ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-        : { 'Content-Type': 'application/json' };
-      
       // Load real users from LDAP via API
       try {
-        const usersResponse = await fetch(`${API_BASE}/auth/users`, { headers });
-        if (usersResponse.ok) {
-          const usersData = await usersResponse.json();
-          setUsers(usersData);
-        } else {
-          console.warn('Could not load users from API');
-          setUsers([]);
-        }
+        const usersData = await apiFetch<UmUser[]>('/auth/users');
+        setUsers(usersData);
       } catch (err) {
         console.warn('Users API not available:', err);
         setUsers([]);
@@ -1203,13 +1094,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       
       // Load role definitions
       try {
-        const rolesResponse = await fetch(`${API_BASE}/auth/roles`, { headers });
-        if (rolesResponse.ok) {
-          const rolesData = await rolesResponse.json();
-          setRoles(rolesData);
-        } else {
-          throw new Error('Roles API not available');
-        }
+        const rolesData = await apiFetch<UmRole[]>('/auth/roles');
+        setRoles(rolesData);
       } catch (err) {
         console.warn('Roles API not available:', err);
         // Fallback to basic roles
@@ -1224,13 +1110,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       
       // Load permissions
       try {
-        const permissionsResponse = await fetch(`${API_BASE}/auth/permissions`, { headers });
-        if (permissionsResponse.ok) {
-          const permissionsData = await permissionsResponse.json();
-          setPermissions(permissionsData);
-        } else {
-          throw new Error('Permissions API not available');
-        }
+        const permissionsData = await apiFetch<UmPermission[]>('/auth/permissions');
+        setPermissions(permissionsData);
       } catch (err) {
         console.warn('Permissions API not available:', err);
         // Fallback to basic permissions matching actual UI resources
@@ -1273,64 +1154,40 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const handleAddUser = async (userData: any) => {
     try {
-      const token = getToken();
-      const response = await fetch(`${API_BASE}/auth/users`, {
+      await apiFetch('/auth/users', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(userData)
+        body: JSON.stringify(userData),
       });
-      
-      if (response.ok) {
-        // If department was selected, assign it right after creation
-        if (userData.department_id) {
-          try {
-            await fetch(`${API_BASE}/api/auth/users/${userData.username}/department`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-              body: JSON.stringify({ department_id: Number(userData.department_id) })
-            });
-          } catch (deptErr) {
-            console.warn('User created but department assignment failed:', deptErr);
-          }
+      // If department was selected, assign it right after creation
+      if (userData.department_id) {
+        try {
+          await apiFetch(`/api/auth/users/${userData.username}/department`, {
+            method: 'PUT',
+            body: JSON.stringify({ department_id: Number(userData.department_id) }),
+          });
+        } catch (deptErr) {
+          console.warn('User created but department assignment failed:', deptErr);
         }
-        await loadData(); // Refresh data
-        setShowModal(false);
-        setFormData({});
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Failed to create user');
       }
-    } catch (err) {
+      await loadData();
+      setShowModal(false);
+      setFormData({});
+    } catch (err: any) {
       console.error('Error creating user:', err);
-      setError('Failed to create user');
+      setError(err.message || 'Failed to create user');
     }
   };
 
   const handleUpdateUserRole = async (userData: any) => {
     try {
-      const token = getToken();
-
       // 1. Update role
-      const response = await fetch(`${API_BASE}/auth/users/${userData.username}/role`, {
+      await apiFetch(`/auth/users/${userData.username}/role`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
         body: JSON.stringify({
           username: userData.username,
-          role: userData.role
-        })
+          role: userData.role,
+        }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Failed to update user role');
-        return;
-      }
 
       // 2. Update department if changed
       const currentDeptId = editingItem?.department_id ? String(editingItem.department_id) : '';
@@ -1342,33 +1199,20 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
       await loadData();
       setShowModal(false);
       setEditingItem(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error updating user:', err);
-      setError('Failed to update user');
+      setError(err.message || 'Failed to update user');
     }
   };
 
   const handleDeleteUser = async (userId: any) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
-    
     try {
-      const token = getToken();
-      const response = await fetch(`${API_BASE}/auth/users/${userId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (response.ok) {
-        await loadData(); // Refresh data
-      } else {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Failed to delete user');
-      }
-    } catch (err) {
+      await apiFetch(`/auth/users/${userId}`, { method: 'DELETE' });
+      await loadData();
+    } catch (err: any) {
       console.error('Error deleting user:', err);
-      setError('Failed to delete user');
+      setError(err.message || 'Failed to delete user');
     }
   };
 
@@ -1380,26 +1224,16 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     setResetPwLoading(true);
     setResetPwMsg('');
     try {
-      const token = getToken();
-      const response = await fetch(`${API_BASE}/auth/users/${username}/password`, {
+      await apiFetch(`/auth/users/${username}/password`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ new_password: resetPwValue }),
       });
-      if (response.ok) {
-        setResetPwMsg('Password reset successfully.');
-        setResetPwValue('');
-        setTimeout(() => { setResetPwUser(null); setResetPwMsg(''); }, 2000);
-      } else {
-        const errorData = await response.json();
-        setResetPwMsg(errorData.detail || 'Failed to reset password.');
-      }
-    } catch (err) {
+      setResetPwMsg('Password reset successfully.');
+      setResetPwValue('');
+      setTimeout(() => { setResetPwUser(null); setResetPwMsg(''); }, 2000);
+    } catch (err: any) {
       console.error('Error resetting password:', err);
-      setResetPwMsg('Network error – please try again.');
+      setResetPwMsg(err.message || 'Failed to reset password.');
     } finally {
       setResetPwLoading(false);
     }
@@ -1407,27 +1241,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
 
   const loadAuditLogs = async () => {
     try {
-      const token = getToken();
       const params = new URLSearchParams();
-      
       if (auditFilters.username) params.append('username', auditFilters.username);
       if (auditFilters.action) params.append('action', auditFilters.action);
       if (auditFilters.startDate) params.append('start_date', auditFilters.startDate);
       if (auditFilters.endDate) params.append('end_date', auditFilters.endDate);
-      
-      const response = await fetch(`${API_BASE}/auth/audit?${params.toString()}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setAuditLogs(data);
-      } else {
-        console.error('Failed to load audit logs');
-        setAuditLogs([]);
-      }
+      const data = await apiFetch<UmAuditLog[]>(`/auth/audit?${params.toString()}`);
+      setAuditLogs(data);
     } catch (err) {
       console.error('Error loading audit logs:', err);
       setAuditLogs([]);
@@ -1575,16 +1395,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     if (!assigningRole || !assignUser) return;
     setAssignSaving(true); setAssignMsg('');
     try {
-      const token = getToken() || '';
-      const res = await fetch(`${API_BASE}/auth/users/${encodeURIComponent(assignUser)}/role`, {
+      await apiFetch(`/auth/users/${encodeURIComponent(assignUser)}/role`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ role: assigningRole.name }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${res.status}`); }
       setAssignMsg(`✅ Role "${assigningRole.name}" assigned to ${assignUser}`);
       setTimeout(() => { setAssigningRole(null); setAssignUser(''); setAssignMsg(''); }, 2000);
-      // Refresh users list
       loadData();
     } catch (e: any) { setAssignMsg(`⚠️ ${e.message}`); }
     finally { setAssignSaving(false); }
@@ -1594,29 +1410,22 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
     const key = `${role}:${resource}:${action}`;
     setPermSaving(key);
     try {
-      const token = getToken();
-      const res = await fetch(`${API_BASE}/auth/permissions`, {
+      await apiFetch('/auth/permissions', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ role, resource, action, enabled: !currentlyEnabled }),
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
-        setError(err.detail || 'Failed to update permission');
-      } else {
-        // Optimistic update — flip the role in/out of the roles array
-        setPermissions(prev =>
-          prev.map(p => {
-            if (p.resource === resource && p.action === action) {
-              const newRoles = currentlyEnabled
-                ? p.roles.filter((r: string) => r !== role)
-                : [...p.roles, role];
-              return { ...p, roles: newRoles };
-            }
-            return p;
-          })
-        );
-      }
+      // Optimistic update — flip the role in/out of the roles array
+      setPermissions(prev =>
+        prev.map(p => {
+          if (p.resource === resource && p.action === action) {
+            const newRoles = currentlyEnabled
+              ? p.roles.filter((r: string) => r !== role)
+              : [...p.roles, role];
+            return { ...p, roles: newRoles };
+          }
+          return p;
+        })
+      );
     } catch (e) {
       setError('Network error toggling permission');
     } finally {
@@ -2369,10 +2178,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                     <select
                       value={d.default_nav_item_key || ''}
                       onChange={async e => {
-                        const token = getToken();
-                        await fetch(`${API_BASE}/api/departments/${d.id}`, {
+                        await apiFetch(`/api/departments/${d.id}`, {
                           method: 'PUT',
-                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                           body: JSON.stringify({ default_nav_item_key: e.target.value }),
                         });
                         loadDeptNavData();
@@ -2746,14 +2553,11 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                         value={dept.default_nav_item_key || ''}
                         onChange={async e => {
                           const key = e.target.value;
-                          const token = getToken();
                           try {
-                            const res = await fetch(`${API_BASE}/api/departments/${dept.id}`, {
+                            await apiFetch(`/api/departments/${dept.id}`, {
                               method: 'PUT',
-                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                               body: JSON.stringify({ default_nav_item_key: key }),
                             });
-                            if (!res.ok) throw new Error(`HTTP ${res.status}`);
                             setDepartments(prev => prev.map(d => d.id === dept.id ? { ...d, default_nav_item_key: key } : d));
                             setVisMsg('✅ Default landing tab updated');
                             setTimeout(() => setVisMsg(''), 3000);
@@ -3661,12 +3465,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
               onClick={async () => {
                 setResetLoading(true);
                 try {
-                  const token = localStorage.getItem('token');
-                  const res = await fetch(`${API_BASE}/admin/reset-data/categories`, {
-                    headers: { Authorization: `Bearer ${token}` },
-                  });
-                  if (!res.ok) throw new Error(await res.text());
-                  const data = await res.json();
+                  const data = await apiFetch<any[]>('/admin/reset-data/categories');
                   setResetCategories(data);
                 } catch (e: any) {
                   setResetResult({ status: 'error', message: e.message || 'Failed to load categories' });
@@ -3813,20 +3612,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ user }) => {
                         setResetLoading(true);
                         setResetResult(null);
                         try {
-                          const token = localStorage.getItem('token');
-                          const res = await fetch(`${API_BASE}/admin/reset-data`, {
+                          const data = await apiFetch<{ message: string }>('/admin/reset-data', {
                             method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                              Authorization: `Bearer ${token}`,
-                            },
                             body: JSON.stringify({
                               categories: Array.from(resetSelected),
                               confirmation: 'RESET',
                             }),
                           });
-                          const data = await res.json();
-                          if (!res.ok) throw new Error(data.detail || 'Reset failed');
                           setResetResult({ status: 'success', message: data.message });
                           setResetConfirmText('');
                           setResetSelected(new Set());
