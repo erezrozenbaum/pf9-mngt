@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.40  
+**Version**: 1.83.41  
 **Last Updated**: April 12, 2026  
 **Audience**: System administrators and platform operators
 
@@ -605,6 +605,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.41 — UI Polish: Branding, Theming, Typography, Consistency (✅ Complete)
+
+- **Branding**: Sidebar "PF9 Management Portal" text replaced with Triple C logo (`/logo.png`). Logo inverted in dark mode for legibility.
+- **Theming**: Dark-mode sidebar background aligned to `#1A1D23` (same as top-bar surface), eliminating the visual split between sidebar and header chrome.
+- **Typography**: Main page `<h1>` reduced to `1.15rem / font-weight: 600` — proportional to the card and nav text.
+- **Consistency**: `--radius-sm` (4px) / `--radius-md` (6px) / `--radius-lg` (8px) / `--radius-pill` (999px) CSS variables added to `:root`. All hard-coded `border-radius` values replaced throughout `App.css`, including toolbar controls, badge chips, export buttons, tab pills, and header action buttons.
 
 ### v1.82.1 — CI Pipeline Fix (✅ Complete)
 

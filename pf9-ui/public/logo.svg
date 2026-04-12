@@ -1,0 +1,19 @@
+<!-- 
+  PLACEHOLDER LOGO — replace with your company branding.
+  
+  Option 1 (recommended): Upload your logo via Admin Tools → Branding → Logo Upload.
+                           The sidebar will pick it up automatically.
+  Option 2:               Replace this file with your own SVG/PNG and update the
+                           <img src="/logo.svg"> reference in App.tsx if needed.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 44" fill="none" role="img" aria-label="Company Logo">
+  <!-- Abstract hexagon mark -->
+  <polygon points="20,4 34,12 34,28 20,36 6,28 6,12" fill="#1976D2" opacity="0.9"/>
+  <polygon points="20,10 28,15 28,25 20,30 12,25 12,15" fill="none" stroke="white" stroke-width="1.5"/>
+  <circle cx="20" cy="20" r="3" fill="white"/>
+
+  <!-- Wordmark -->
+  <text x="44" y="26" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#1976D2" letter-spacing="-0.5">
+    PF9 Management
+  </text>
+</svg>

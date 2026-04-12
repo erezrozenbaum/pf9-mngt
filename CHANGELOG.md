@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.41] - 2026-04-12
+
+### Changed
+- **UI branding** (`pf9-ui/public/logo.png`, `pf9-ui/src/App.tsx`): Sidebar text replaced with the Triple C logo image; dark-mode `filter: brightness(0) invert(1)` applied for legibility.
+- **UI theming** (`pf9-ui/src/index.css`): Dark-mode sidebar background aligned to `#1A1D23` (matches top-bar surface) unifying sidebar and header as a single chrome layer. `--radius-sm/md/lg/pill` CSS variables added to `:root` for consistent border-radius in all themes.
+- **UI typography** (`pf9-ui/src/App.css`): Main page `<h1>` capped at `1.15rem` / `font-weight: 600` — proportional to the rest of the layout.
+- **UI consistency** (`pf9-ui/src/App.css`): All key `border-radius` hard-coded values replaced with `--radius-*` variables (toolbar, controls, history/audit sections, badges, export buttons, tab pills, search inputs). Header MFA/Logout button radii moved to `var(--radius-md)`.
+
 ## [1.83.40] - 2026-04-12
 
 ### Security

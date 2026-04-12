@@ -982,6 +982,21 @@ const SystemLogsWithActivityLog: React.FC = () => {
 // ---------------------------------------------------------------------------
 
 const App: React.FC = () => {
+  // Branding — fetched from public endpoint, used in sidebar + passed to LoginPage
+  const [appBranding, setAppBranding] = useState<BrandingSettings>(DEFAULT_BRANDING);
+  useEffect(() => {
+    fetch(`${API_BASE}/settings/branding`)
+      .then(r => r.ok ? r.json() : DEFAULT_BRANDING)
+      .then(data => setAppBranding({ ...DEFAULT_BRANDING, ...data }))
+      .catch(() => {/* keep defaults */});
+  }, []);
+  // Resolve logo URL: API-set logo → placeholder SVG
+  const sidebarLogoUrl = appBranding.company_logo_url
+    ? (appBranding.company_logo_url.startsWith('http') || appBranding.company_logo_url.startsWith('data:')
+        ? appBranding.company_logo_url
+        : `${API_BASE}${appBranding.company_logo_url}`)
+    : '/logo.svg';
+
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -3135,7 +3150,15 @@ const App: React.FC = () => {
       <div className="pf9-app">
         {/* ── Sidebar ── */}
         <aside className="pf9-sidebar">
-          <div className="pf9-sidebar-brand">PF9 Management Portal</div>
+          <div className="pf9-sidebar-brand">
+            {/* Replace /logo.svg with your company logo via Admin Tools → Branding */}
+            <img
+              src={sidebarLogoUrl}
+              alt={appBranding.company_name || 'Company Logo'}
+              className="pf9-sidebar-logo"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/logo.svg'; }}
+            />
+          </div>
           {useGroupedNav ? (
             <GroupedNavBar
               groups={navData!.nav}
@@ -3193,7 +3216,7 @@ const App: React.FC = () => {
             </div>
           )}
           <header className="pf9-header">
-            <h1>PF9 Management Portal</h1>
+            <h1 className="pf9-header-title">PF9 Management Portal</h1>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               {authUser && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '8px' }}>
@@ -3209,7 +3232,7 @@ const App: React.FC = () => {
                       background: '#6366f1',
                       color: 'white',
                       border: 'none',
-                      borderRadius: '4px',
+                      borderRadius: 'var(--radius-md)',
                       cursor: 'pointer'
                     }}
                   >
@@ -3223,7 +3246,7 @@ const App: React.FC = () => {
                       background: '#f44336',
                       color: 'white',
                       border: 'none',
-                      borderRadius: '4px',
+                      borderRadius: 'var(--radius-md)',
                       cursor: 'pointer'
                     }}
                   >
