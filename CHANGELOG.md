@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.45] - 2026-04-13
+
+### Fixed
+- **Monitoring service now collects real libvirt and node-exporter metrics** (`monitoring/prometheus_client.py`): `_parse_vm_metrics` and `_parse_host_metrics` were looking for `pcd:vm_*` / `pcd:hyp_*` metric names that are never emitted by the KVM host exporters. Replaced with `_parse_vm_metrics_libvirt` (parses `libvirt_domain_*` families from port 9177) and `_parse_host_metrics_node` (parses `node_*` families from port 9388). Per-VM CPU is now delta-based using `_prev_cpu_totals`. Storage is derived from `libvirt_domain_block_stats_capacity_bytes` / `allocation` / `physicalsize_bytes` per device. Network bytes are summed from `libvirt_domain_interface_stats_*_bytes_total`. Host network excludes virtual, loopback, and tunnel NICs using the same exclusion-prefix list as `host_metrics_collector.py`. The background collection loop now skips the cache-file write when a cycle returns zero results, so an unreachable host no longer overwrites a previously good cache with empty arrays.
+- **VM storage column (DB fallback) now shows provisioned disk** (`api/main.py`): When live monitoring data is unavailable, the `/monitoring/vm-metrics` endpoint previously returned `storage_used_gb = null`, causing the UI to display "— / 20.0GB". It now sets `storage_used_gb` to the allocated disk size (same as `storage_total_gb`) so the column shows "20.0GB / 20.0GB", making it clear the VM has that much disk provisioned even though real utilisation requires live metrics.
+
 ## [1.83.44] - 2026-04-12
 
 ### Security
