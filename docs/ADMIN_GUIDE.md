@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.41  
+**Version**: 1.83.42  
 **Last Updated**: April 12, 2026  
 **Audience**: System administrators and platform operators
 
@@ -605,6 +605,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.42 — UI Fix: Dark-mode Logo & Sidebar Chrome (✅ Complete)
+
+- **Logo dark-mode fix**: White rounded pill wrapper replaces `filter: invert(1)` — any logo format (PNG, SVG, data URI) now renders correctly in both themes.
+- **Sidebar chrome fix**: Hard `border-right` replaced with `box-shadow: inset -1px 0 0` — sidebar and header read as a single unified surface in light mode.
 
 ### v1.83.41 — UI Polish: Branding, Theming, Typography, Consistency (✅ Complete)
 

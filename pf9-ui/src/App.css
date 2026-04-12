@@ -18,7 +18,9 @@
   height: 100vh;
   overflow-y: auto;
   background: var(--color-sidebar-bg);
-  border-right: 1px solid var(--color-border);
+  /* Inset shadow instead of a hard border — sidebar and header share the same
+     background so a hard line would look out of place */
+  box-shadow: inset -1px 0 0 var(--color-border);
   display: flex;
   flex-direction: column;
   position: sticky;
@@ -32,20 +34,26 @@
   display: flex;
   align-items: center;
   padding: 0 16px;
-  border-bottom: 1px solid var(--color-border);
+  box-shadow: inset 0 -1px 0 var(--color-border);
   flex-shrink: 0;
 }
 
-.pf9-sidebar-logo {
-  height: 36px;
-  width: auto;
-  display: block;
-  /* Invert logo in dark mode so it reads well on the dark surface */
-  filter: none;
+/* Logo wrapper — white pill ensures any logo (PNG with white bg, SVG, data URI)
+   renders correctly in both light and dark themes without CSS filter tricks */
+.pf9-sidebar-logo-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  line-height: 0;
 }
 
-[data-theme="dark"] .pf9-sidebar-logo {
-  filter: brightness(0) invert(1);
+.pf9-sidebar-logo {
+  height: 28px;
+  width: auto;
+  display: block;
 }
 
 .pf9-sidebar-footer {
@@ -63,8 +71,8 @@
   overflow-x: hidden;
   display: flex;
   flex-direction: column;
+  /* Match sidebar + header surface so the whole chrome reads as one layer */
   background: var(--color-background);
-  /* no horizontal padding here — owned by .pf9-header and .pf9-page-content */
 }
 
 .pf9-header {

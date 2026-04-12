@@ -3152,12 +3152,14 @@ const App: React.FC = () => {
         <aside className="pf9-sidebar">
           <div className="pf9-sidebar-brand">
             {/* Replace /logo.svg with your company logo via Admin Tools → Branding */}
-            <img
-              src={sidebarLogoUrl}
-              alt={appBranding.company_name || 'Company Logo'}
-              className="pf9-sidebar-logo"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/logo.svg'; }}
-            />
+            <div className="pf9-sidebar-logo-wrap">
+              <img
+                src={sidebarLogoUrl}
+                alt={appBranding.company_name || 'Company Logo'}
+                className="pf9-sidebar-logo"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/logo.svg'; }}
+              />
+            </div>
           </div>
           {useGroupedNav ? (
             <GroupedNavBar
