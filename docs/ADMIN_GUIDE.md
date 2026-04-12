@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.45  
+**Version**: 1.83.46  
 **Last Updated**: April 12, 2026  
 **Audience**: System administrators and platform operators
 
@@ -606,7 +606,7 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
-### v1.83.45 — Security & Monitoring Batch (B8.1–B8.5) (✅ Complete)
+### v1.83.46 — Security & Monitoring Batch (B8.1–B8.5) (✅ Complete)
 
 - **Self-service password reset** (`api/main.py`): New unauthenticated endpoints `POST /auth/password-reset` and `POST /auth/password-reset/confirm`. Tokens are `secrets.token_urlsafe(32)` stored as SHA-256 hashes with a 24-hour expiry. Previous unused tokens are invalidated on each new request. Response is always `202` to prevent username enumeration. Token is emailed (SMTP) or operator-logged (no SMTP).
 - **Rate limiting for security-sensitive endpoints** (`api/rate_limit.py`): `Limiter` extracted to a shared module. `POST /auth/password-reset`, `POST /auth/password-reset/confirm`, and `POST /auth/mfa/verify-setup` are now capped at 5 requests/minute per IP.

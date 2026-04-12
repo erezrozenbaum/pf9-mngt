@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.45-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.46-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,8 +534,8 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.46](CHANGELOG.md)** — Monitoring routing fixed: nginx dev config now proxies `/metrics/*` to `pf9_monitoring:8001` instead of accidentally routing it to `pf9_api` (404). CI fixed: frontend-typecheck and frontend-lint jobs now share a single Docker build, eliminating the double npm-install that caused ESLint to be SIGKILL'd (OOM) on the master branch runner.
 **[v1.83.45](CHANGELOG.md)** — Monitoring data collection fixed: `prometheus_client.py` now correctly parses `libvirt_domain_*` (port 9177) and `node_*` (port 9388) metrics instead of the non-existent `pcd:vm_*`/`pcd:hyp_*` families — so per-VM CPU, memory, storage, and network are now collected from live KVM hosts. Cache-file write is skipped on empty-result cycles to preserve previously good data. DB fallback now shows provisioned disk in the storage column ("20.0GB / 20.0GB") instead of "— / 20.0GB".
-**[v1.83.44](CHANGELOG.md)** — Security & monitoring batch (B8): self-service password reset flow with 24-hour token TTL; `POST /auth/password-reset` and `POST /auth/mfa/verify-setup` rate-limited at 5/min; MFA backup codes upgraded from SHA-256 to bcrypt; `SensitiveDataFilter` scrubs API keys and passwords from all log output. Monitoring fixes: host NIC filter now exclusion-based (NIC-naming-agnostic); VM storage null renders as `—`; VM/host network `> 0` guard removed; DB fallback returns explicit nulls for network fields.
 **[v1.83.41](CHANGELOG.md)** — UI: sidebar text replaced with Triple C logo; dark-mode theming unified (sidebar bg matches header surface); `<h1>` header capped at 1.15rem; all border-radii normalised to `--radius-*` CSS variables across the full layout.
 **[v1.83.40](CHANGELOG.md)** — Security: IP spoofing fixed in all audit log paths (`X-Forwarded-For` → `X-Real-IP` via shared helper across 23 call sites in 6 files); internal LDAP error strings no longer leaked in 500 responses; `config_validator` JWT default corrected to 90 min.
 **[v1.83.39](CHANGELOG.md)** — Security: JWT session expiry reduced from 8 h to 90 min; `get_request_ip` helper extracted to shared module (`request_helpers.py`); 64 new unit tests across crypto, SMTP, webhook, restore, backup-worker, and request-IP helpers.
@@ -667,4 +667,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.45 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.83.46 | **Last Updated**: April 2026

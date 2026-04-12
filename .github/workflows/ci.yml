@@ -347,12 +347,12 @@ jobs:
             -f txt || true
 
   # -------------------------------------------------------------------------
-  # Job 8: Frontend TypeScript type-check
-  # Runs tsc -b inside the pf9_ui Docker image — the same container used in
-  # local dev and Kubernetes production. No npm/node installed on the CI host.
-  # Vite's default build uses esbuild which strips types without checking them —
-  # this job is the ONLY gate that catches TypeScript errors before they land
-  # in the image. Runs on every push/PR to dev and master.
+  # Job 8+9: Frontend TypeScript type-check + ESLint (combined)
+  # Previously two separate jobs, each rebuilding the pf9_ui Docker image.
+  # The double npm-install drove peak memory above the runner limit, causing
+  # ESLint to be SIGKILL'd on the second job. Merged into one job: image is
+  # built once, tsc and eslint run back-to-back in the same runner so there
+  # is no second npm install and peak RSS stays well within limits.
   # -------------------------------------------------------------------------
   frontend-typecheck:
     name: Frontend TypeScript Check
@@ -371,6 +371,7 @@ jobs:
           EOF
 
       - name: Build pf9_ui image
+        # Build once — both tsc and ESLint steps below reuse this image.
         run: docker compose build pf9_ui
 
       - name: TypeScript type-check (inside container)
@@ -380,30 +381,19 @@ jobs:
         # No Node.js installed on the CI runner host.
         run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run typecheck"
 
-  # -------------------------------------------------------------------------
-  # Job 9: Frontend ESLint (static analysis for React/TypeScript)
-  # Runs eslint inside the pf9_ui Docker image — same container as typecheck.
-  # Catches React hooks violations, unused vars, and other lint errors that
-  # tsc does not cover. Runs on every push/PR to dev and master.
-  # -------------------------------------------------------------------------
+      - name: ESLint (inside container)
+        # Runs in the same job immediately after tsc — image is already present,
+        # no second npm install, and runner memory is not under pressure.
+        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run lint"
+
+  # Alias kept so the integration-tests job's `needs` list does not break.
+  # This job depends on frontend-typecheck (which now also runs ESLint) and
+  # completes instantly so the dependency graph is preserved.
   frontend-lint:
     name: Frontend ESLint
     runs-on: ubuntu-latest
     needs: [frontend-typecheck]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create stub .env (required for docker compose to parse)
-        run: |
-          cp .env.example .env 2>/dev/null || cat > .env << 'EOF'
-          PF9_AUTH_URL=http://stub
-          JWT_SECRET_KEY=stub-secret-for-ci-only-not-real
-          EOF
-
-      - name: Build pf9_ui image
-        run: docker compose build pf9_ui
-
-      - name: ESLint (inside container)
-        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run lint"
+      - name: ESLint ran in frontend-typecheck job
+        run: echo "ESLint is now part of the frontend-typecheck job above. Nothing to do here."

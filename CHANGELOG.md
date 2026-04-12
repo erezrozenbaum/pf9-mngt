@@ -5,13 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.83.45] - 2026-04-13
+## [1.83.46] - 2026-04-12
+
+### Fixed
+- **nginx routing: `/metrics/*` now proxied to monitoring service** (`nginx/nginx.conf`): The dev nginx config was missing the `pf9_monitoring` upstream and the `location ^~ /metrics/` block. All browser requests for `/metrics/vms`, `/metrics/hosts`, `/metrics/summary`, and `/metrics/alerts` were being matched by the catch-all regex and routed to `pf9_api` (which has no such routes), causing 404s and forcing the UI to always fall back to the DB endpoints. Added `upstream pf9_monitoring { server pf9_monitoring:8001; }` and `location ^~ /metrics/ { proxy_pass http://pf9_monitoring; }` before the regex block, mirroring what `nginx.prod.conf` already had correctly. The existing `location = /metrics` exact-match block is preserved so the `/metrics` Prometheus scrape endpoint on `pf9_api` continues to work.
+- **CI: Frontend ESLint SIGKILL (OOM) on master branch** (`.github/workflows/ci.yml`): The `frontend-typecheck` and `frontend-lint` jobs were separate, each running `docker compose build pf9_ui` (full npm install) before their container step. The double npm install drove peak RSS beyond the GitHub Actions runner limit, causing the ESLint process to be SIGKILL'd on the second job. Merged the two jobs: image is built once in `frontend-typecheck`, then `tsc` and `eslint` run back-to-back in the same runner with no second npm install. A lightweight `frontend-lint` stub job is kept so the `integration-tests` dependency graph is not broken.
+
+## [1.83.45] - 2026-04-12
 
 ### Fixed
 - **Monitoring service now collects real libvirt and node-exporter metrics** (`monitoring/prometheus_client.py`): `_parse_vm_metrics` and `_parse_host_metrics` were looking for `pcd:vm_*` / `pcd:hyp_*` metric names that are never emitted by the KVM host exporters. Replaced with `_parse_vm_metrics_libvirt` (parses `libvirt_domain_*` families from port 9177) and `_parse_host_metrics_node` (parses `node_*` families from port 9388). Per-VM CPU is now delta-based using `_prev_cpu_totals`. Storage is derived from `libvirt_domain_block_stats_capacity_bytes` / `allocation` / `physicalsize_bytes` per device. Network bytes are summed from `libvirt_domain_interface_stats_*_bytes_total`. Host network excludes virtual, loopback, and tunnel NICs using the same exclusion-prefix list as `host_metrics_collector.py`. The background collection loop now skips the cache-file write when a cycle returns zero results, so an unreachable host no longer overwrites a previously good cache with empty arrays.
 - **VM storage column (DB fallback) now shows provisioned disk** (`api/main.py`): When live monitoring data is unavailable, the `/monitoring/vm-metrics` endpoint previously returned `storage_used_gb = null`, causing the UI to display "— / 20.0GB". It now sets `storage_used_gb` to the allocated disk size (same as `storage_total_gb`) so the column shows "20.0GB / 20.0GB", making it clear the VM has that much disk provisioned even though real utilisation requires live metrics.
 
-## [1.83.44] - 2026-04-12
 
 ### Security
 - **Self-service password reset token TTL** (`api/main.py`, `db/migrate_B8_password_reset.sql`): Added `POST /auth/password-reset` and `POST /auth/password-reset/confirm` endpoints. Tokens are generated with `secrets.token_urlsafe(32)`, stored as SHA-256 hashes, and expire after 24 hours. Requesting a new reset invalidates any previous unused token for the same user. Response is always `202` regardless of whether the username exists (prevents enumeration). Token is emailed when SMTP is configured; otherwise logged at WARNING for operator relay in dev environments. Single-use: the token is marked `used_at = now()` on first confirmed use.
