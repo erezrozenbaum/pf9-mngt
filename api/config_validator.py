@@ -55,7 +55,7 @@ class ConfigValidator:
         "PF9_PROJECT_DOMAIN": ("Default", "OpenStack project domain"),
         "PF9_REGION_NAME": ("region-one", "OpenStack region name"),
         "JWT_ALGORITHM": ("HS256", "JWT signing algorithm"),
-        "JWT_ACCESS_TOKEN_EXPIRE_MINUTES": ("480", "JWT token expiration (minutes)"),
+        "JWT_ACCESS_TOKEN_EXPIRE_MINUTES": ("90", "JWT token expiration (minutes)"),
         "ENABLE_AUTHENTICATION": ("true", "Enable authentication"),
         "DEFAULT_ADMIN_USER": ("admin", "Default admin username"),
     }
@@ -112,7 +112,7 @@ class ConfigValidator:
             errors.append(f"LDAP_PORT must be a number: {ldap_port}")
         
         # Validate JWT token expiration
-        token_expire = os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "480")
+        token_expire = os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "90")
         try:
             expire_mins = int(token_expire)
             if expire_mins < 1:

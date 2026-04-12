@@ -36,6 +36,7 @@ from pf9_control import get_client
 from cluster_registry import get_region_client
 from auth import require_permission, get_current_user, get_effective_region_filter
 from smtp_helper import send_email as smtp_send_email, SMTP_ENABLED
+from request_helpers import get_request_ip
 
 logger = logging.getLogger("pf9_provisioning")
 
@@ -285,11 +286,8 @@ def _get_actor(user) -> str:
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP from the request."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """Extract client IP from the request (prefers X-Real-IP set by nginx)."""
+    return get_request_ip(request)
 
 
 # ---------------------------------------------------------------------------

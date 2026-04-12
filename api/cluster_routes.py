@@ -54,6 +54,7 @@ from auth import require_authentication, User, log_auth_event
 from cluster_registry import get_registry
 from db_pool import get_connection
 from pf9_control import Pf9Client
+from request_helpers import get_request_ip
 
 logger = logging.getLogger("pf9.cluster_routes")
 
@@ -371,7 +372,7 @@ async def create_control_plane(
 
     log_auth_event(
         current_user.username, "control_plane_created", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"control_plane:{body.id}",
         endpoint=str(request.url),
@@ -444,7 +445,7 @@ async def update_control_plane(
 
     log_auth_event(
         current_user.username, "control_plane_updated", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"control_plane:{cp_id}",
         endpoint=str(request.url),
@@ -481,7 +482,7 @@ async def delete_control_plane(
 
     log_auth_event(
         current_user.username, "control_plane_deleted", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"control_plane:{cp_id}",
         endpoint=str(request.url),
@@ -526,7 +527,7 @@ async def test_control_plane(
     except Exception as exc:
         log_auth_event(
             current_user.username, "control_plane_test_failed", False,
-            request.client.host if request.client else None,
+            get_request_ip(request),
             request.headers.get("user-agent"),
             resource=f"control_plane:{cp_id}",
             endpoint=str(request.url),
@@ -559,7 +560,7 @@ async def test_control_plane(
 
     log_auth_event(
         current_user.username, "control_plane_test_ok", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"control_plane:{cp_id}",
         endpoint=str(request.url),
@@ -722,7 +723,7 @@ async def create_region(
 
     log_auth_event(
         current_user.username, "region_created", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"region:{region_id}",
         endpoint=str(request.url),
@@ -773,7 +774,7 @@ async def update_region(
 
     log_auth_event(
         current_user.username, "region_updated", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"region:{region_id}",
         endpoint=str(request.url),
@@ -828,7 +829,7 @@ async def delete_region(
 
     log_auth_event(
         current_user.username, "region_deleted", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"region:{region_id}",
         endpoint=str(request.url),
@@ -862,7 +863,7 @@ async def set_default_region(
 
     log_auth_event(
         current_user.username, "region_set_default", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"region:{region_id}",
         endpoint=str(request.url),
@@ -901,7 +902,7 @@ async def trigger_region_sync(
 
     log_auth_event(
         current_user.username, "region_sync_triggered", True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"region:{region_id}",
         endpoint=str(request.url),
@@ -973,7 +974,7 @@ async def set_region_enabled(
     action = "region_enabled" if enabled else "region_disabled"
     log_auth_event(
         current_user.username, action, True,
-        request.client.host if request.client else None,
+        get_request_ip(request),
         request.headers.get("user-agent"),
         resource=f"region:{region_id}",
         endpoint=str(request.url),

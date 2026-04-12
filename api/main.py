@@ -557,7 +557,7 @@ async def rbac_middleware(request: Request, call_next):
             username=token_data.username,
             action="permission_denied",
             success=False,
-            ip_address=request.client.host if request.client else None,
+            ip_address=get_request_ip(request),
             user_agent=request.headers.get("user-agent"),
             resource=resource,
             endpoint=path,
@@ -600,7 +600,7 @@ async def access_log_middleware(request: Request, call_next):
         "status_code": response.status_code,
         "duration_ms": duration_ms,
         "user": user,
-        "ip_address": request.client.host if request.client else None,
+        "ip_address": get_request_ip(request),
     }
 
     message = (
@@ -1081,8 +1081,7 @@ async def startup_event():
 @limiter.limit("10/minute")
 async def login(request: Request, login_data: LoginRequest):
     """Authenticate user and return JWT token"""
-    client_ip = request.client.host if request.client else None
-    user_agent = request.headers.get('user-agent')
+    client_ip = get_request_ip(request)
     
     # Authenticate against LDAP
     if not ldap_auth.authenticate(login_data.username, login_data.password):
@@ -1194,7 +1193,7 @@ async def logout(request: Request, current_user: User = Depends(require_authenti
         invalidate_user_session(token)
 
     log_auth_event(current_user.username, "logout", True,
-                   request.client.host if request.client else None,
+                   get_request_ip(request),
                    request.headers.get("user-agent"))
 
     response = JSONResponse(content={"message": "Successfully logged out"})
@@ -1239,7 +1238,7 @@ async def set_user_role_endpoint(
             username=current_user.username,
             action="role_changed",
             success=True,
-            ip_address=request.client.host if request.client else None,
+            ip_address=get_request_ip(request),
             user_agent=request.headers.get('user-agent'),
             resource="users",
             details={"target_user": username, "new_role": role_data.role}
@@ -1408,9 +1407,7 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
                 raise Exception("No permissions in database")
 
     except Exception as e:
-        logger.error("Error getting permissions: %s", e)
-        import traceback
-        traceback.print_exc()
+        logger.error("Error getting permissions: %s", e, exc_info=True)
         # Return comprehensive fallback permissions matching actual UI tabs
         return [
             {"id": 1, "resource": "servers", "action": "read", "roles": ["viewer", "operator", "admin", "superadmin"]},
@@ -1492,7 +1489,7 @@ async def update_permission(
             username=current_user.username,
             action="permission_changed",
             success=True,
-            ip_address=request.client.host if request.client else None,
+            ip_address=get_request_ip(request),
             user_agent=request.headers.get("user-agent"),
             resource=body.resource,
             endpoint=f"/auth/permissions",
@@ -1528,7 +1525,7 @@ async def create_user(request: Request, user_data: dict, current_user: User = De
                 username=current_user.username,
                 action="user_created",
                 success=True,
-                ip_address=request.client.host if request.client else None,
+                ip_address=get_request_ip(request),
                 user_agent=request.headers.get('user-agent'),
                 resource="users",
                 details={"target_user": user_data["username"], "role": user_data.get("role", "viewer")}
@@ -1540,14 +1537,14 @@ async def create_user(request: Request, user_data: dict, current_user: User = De
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to create user in LDAP"
             )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error creating user: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to create user"
         )
-
-@app.delete("/auth/users/{username}")
 async def delete_user(request: Request, username: str, current_user: User = Depends(require_authentication)):
     """Delete a LDAP user (requires superadmin)"""
     if current_user.role != "superadmin":
@@ -1571,7 +1568,7 @@ async def delete_user(request: Request, username: str, current_user: User = Depe
                 username=current_user.username,
                 action="user_deleted",
                 success=True,
-                ip_address=request.client.host if request.client else None,
+                ip_address=get_request_ip(request),
                 user_agent=request.headers.get('user-agent'),
                 resource="users",
                 details={"target_user": username}
@@ -1583,11 +1580,13 @@ async def delete_user(request: Request, username: str, current_user: User = Depe
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to delete user from LDAP"
             )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error deleting user: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="Failed to delete user"
         )
 
 @app.post("/auth/users/{username}/password")

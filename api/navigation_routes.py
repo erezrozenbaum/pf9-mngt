@@ -24,6 +24,7 @@ from psycopg2.extras import RealDictCursor
 
 from auth import require_permission, require_authentication, get_current_user, User, has_permission, log_auth_event
 from db_pool import get_connection
+from request_helpers import get_request_ip
 
 logger = logging.getLogger("pf9.navigation")
 
@@ -148,7 +149,7 @@ async def create_department(
                 ON CONFLICT DO NOTHING
             """, (dept["id"],))
     log_auth_event(current_user.username, "department_created", True,
-                   request.client.host if request.client else None,
+                   get_request_ip(request),
                    details={"department": dept["name"]})
     return dept
 
@@ -459,7 +460,7 @@ async def set_department_visibility(
                     VALUES (%s, %s) ON CONFLICT DO NOTHING
                 """, (dept_id, iid))
     log_auth_event(current_user.username, "visibility_updated", True,
-                   request.client.host if request.client else None,
+                   get_request_ip(request),
                    details={"department_id": dept_id,
                             "group_count": len(body.nav_group_ids),
                             "item_count": len(body.nav_item_ids)})
@@ -556,7 +557,7 @@ async def set_user_department(
             if not row:
                 raise HTTPException(404, "User role record not found")
     log_auth_event(current_user.username, "department_assigned", True,
-                   request.client.host if request.client else None,
+                   get_request_ip(request),
                    details={"target_user": username, "department_id": body.department_id})
     return row
 

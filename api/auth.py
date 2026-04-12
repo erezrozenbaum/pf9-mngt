@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from secret_helper import read_secret
 
 from db_pool import get_connection
+from request_helpers import get_request_ip
 
 # Configuration from environment
 ENABLE_AUTHENTICATION = os.getenv("ENABLE_AUTHENTICATION", "true").lower() == "true"
@@ -830,7 +831,7 @@ def require_permission(resource: str, permission: str):
         if not has_permission(user.username, resource, permission):
             log_auth_event(
                 user.username, "permission_denied", False,
-                request.client.host if request and request.client else None,
+                get_request_ip(request) if request else None,
                 request.headers.get('user-agent') if request else None,
                 resource, request.url.path if request else None
             )

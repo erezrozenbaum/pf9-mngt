@@ -31,6 +31,7 @@ from auth import require_permission, get_current_user, User, get_effective_regio
 from cluster_registry import get_registry
 from db_pool import get_connection
 from pf9_control import get_client
+from request_helpers import get_request_ip
 
 logger = logging.getLogger("pf9.resources")
 
@@ -77,7 +78,7 @@ def _log_activity(
 
 
 def _get_ip(request: Request) -> str:
-    return request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+    return get_request_ip(request)
 
 
 def _notify(event_type: str, summary: str, severity: str = "info",

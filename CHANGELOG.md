@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.40] - 2026-04-12
+
+### Security
+- **IP spoofing fixed in audit logs** (`api/resource_management.py`, `api/provisioning_routes.py`, `api/cluster_routes.py`, `api/navigation_routes.py`, `api/auth.py`, `api/main.py`): `_get_ip()` in `resource_management` and `_get_client_ip()` in `provisioning_routes` read the spoofable `X-Forwarded-For` header. All IP-resolution calls in audit/auth log paths now use the shared `get_request_ip()` helper (prefers `X-Real-IP`, set by nginx to `$remote_addr`). 23 call sites updated across 6 files.
+- **Internal error details no longer leaked to clients** (`api/main.py`): `create_user` and `delete_user` 500 responses returned `detail=str(e)`, exposing LDAP error messages and stack traces to the browser. Both now return a generic `"Failed to create/delete user"` string while logging the real error server-side.
+- **`traceback.print_exc()` removed** (`api/main.py`): Duplicate raw traceback dump to stdout replaced with `logger.error(..., exc_info=True)` so structured logging captures it instead.
+
+### Fixed
+- **`config_validator.py` stale JWT default** (`api/config_validator.py`): `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` documented default was still `"480"` after the Batch 6 change. Updated to `"90"` so startup validation warnings and `.env.example` guidance are accurate.
+
 ## [1.83.39] - 2026-04-13
 
 ### Security
