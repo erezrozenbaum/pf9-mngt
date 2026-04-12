@@ -1082,6 +1082,7 @@ async def startup_event():
 async def login(request: Request, login_data: LoginRequest):
     """Authenticate user and return JWT token"""
     client_ip = get_request_ip(request)
+    user_agent = request.headers.get("User-Agent")
     
     # Authenticate against LDAP
     if not ldap_auth.authenticate(login_data.username, login_data.password):
