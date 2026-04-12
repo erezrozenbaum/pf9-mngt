@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.42  
+**Version**: 1.83.43  
 **Last Updated**: April 12, 2026  
 **Audience**: System administrators and platform operators
 
@@ -605,6 +605,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.43 — UI Fix: Header Title & Layout Alignment (✅ Complete)
+
+- **Dynamic section title**: The app-shell header `<h1>` now shows the active section name (e.g. "Dashboard", "Virtual Machines") instead of the static "PF9 Management Portal" string. Emoji prefixes are stripped automatically.
+- **Eliminated competing titles**: The redundant "Operations Dashboard" `<h1>` inside the dashboard widget area is removed. The app-shell header is the sole page title.
+- **Demo banner repositioned**: The demo-mode notification banner moved above the main flex layout so both the sidebar brand area and the content header maintain the same 64 px y-alignment in all modes.
 
 ### v1.83.42 — UI Fix: Dark-mode Logo & Sidebar Chrome (✅ Complete)
 

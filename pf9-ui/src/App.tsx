@@ -3147,6 +3147,14 @@ const App: React.FC = () => {
   return (
     <ThemeProvider>
       <ClusterContextProvider userRole={authUser?.role ?? ""}>
+      {/* Demo mode banner sits above the whole layout so the header aligns
+          with the sidebar brand at the same y-position in both modes */}
+      {isDemo && (
+        <div className="demo-banner">
+          <span className="demo-badge">DEMO</span>
+          You are viewing the portal with sample data — no live Platform9 environment is connected.
+        </div>
+      )}
       <div className="pf9-app">
         {/* ── Sidebar ── */}
         <aside className="pf9-sidebar">
@@ -3211,14 +3219,10 @@ const App: React.FC = () => {
 
         {/* ── Main page body ── */}
         <div className="pf9-page-body">
-          {isDemo && (
-            <div className="demo-banner">
-              <span className="demo-badge">DEMO</span>
-              You are viewing the portal with sample data — no live Platform9 environment is connected.
-            </div>
-          )}
           <header className="pf9-header">
-            <h1 className="pf9-header-title">PF9 Management Portal</h1>
+            <h1 className="pf9-header-title">
+              {tabDefMap.get(activeTab)?.label.replace(/[^\p{L}\p{N}\s]/gu, '').trim() ?? 'Dashboard'}
+            </h1>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
               {authUser && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '8px' }}>

@@ -278,10 +278,6 @@ export const LandingDashboard: React.FC<Props> = ({ onNavigate }) => {
   return (
     <div className={`landing-dashboard ${theme === 'dark' ? 'dark' : ''}`}>
       <div className="dashboard-header">
-        <div className="header-content">
-          <h1>Operations Dashboard</h1>
-          <p className="subtitle">Infrastructure health at a glance</p>
-        </div>
         <div className="header-actions">
           <div className="widget-chooser-wrapper" ref={chooserRef}>
             <button

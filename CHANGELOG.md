@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.43] - 2026-04-12
+
+### Fixed
+- **UI competing page titles** (`pf9-ui/src/App.tsx`, `pf9-ui/src/components/LandingDashboard.tsx`): The app-shell header showed the static "PF9 Management Portal" `<h1>` while the dashboard page independently rendered its own "Operations Dashboard" `<h1>`. The header title is now dynamic — it shows the active section name (emoji stripped). The redundant dashboard-level `<h1>` is removed.
+- **UI header/sidebar height misalignment** (`pf9-ui/src/App.tsx`): The demo-mode banner was inside `.pf9-page-body`, making the header appear 32 px lower than the sidebar brand area. Banner moved above `.pf9-app` so both sidebar brand and header start at the same y-position in both normal and demo mode.
+- **UI dashboard header layout** (`pf9-ui/src/styles/LandingDashboard.css`): `.dashboard-header` now right-aligns its action buttons (Customize / Refresh) now that the title block is removed.
+
 ## [1.83.42] - 2026-04-12
 
 ### Fixed
