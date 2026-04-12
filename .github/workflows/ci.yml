@@ -132,7 +132,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: pip install pytest python-jose requests
+        run: pip install pytest python-jose requests cryptography
 
       - name: Run JWT unit tests
         run: python -m pytest tests/test_auth.py::TestJWTHelpers -v
@@ -211,7 +211,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: pip install pytest python-jose requests
+        run: pip install pytest python-jose requests cryptography
 
       - name: Copy CI environment file
         run: cp .env.ci .env
