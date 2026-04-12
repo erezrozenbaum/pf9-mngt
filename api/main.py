@@ -1,10 +1,12 @@
 import os
 import sys
 import asyncio
+import hashlib
 import hmac
 import re
 import logging
 import json
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -19,8 +21,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, field_validator
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from rate_limit import limiter
 
 from pf9_control import get_client
 from cluster_registry import get_registry
@@ -275,9 +278,7 @@ logger = setup_logging(
 
 from request_helpers import get_request_ip
 
-# Rate limiting — use get_request_ip which prefers X-Real-IP set by nginx
-# ($remote_addr, not client-spoofable).
-limiter = Limiter(key_func=get_request_ip)
+# Rate limiting — limiter instance shared with router modules via rate_limit.py
 security = HTTPBasic()
 
 # Performance metrics
@@ -1624,6 +1625,150 @@ async def reset_user_password(
         pass
 
     return {"message": f"Password for '{username}' has been reset successfully"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B8.1 — Self-service password reset (unauthenticated)
+# POST /auth/password-reset         → request a reset token (rate-limited)
+# POST /auth/password-reset/confirm → consume token + set new password
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PasswordResetRequest(BaseModel):
+    username: str
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@app.post("/auth/password-reset", status_code=202)
+@limiter.limit("5/minute")
+async def request_password_reset(request: Request, body: PasswordResetRequest):
+    """Request a self-service password reset token.
+
+    Always returns 202 (same response for valid and unknown usernames) to
+    prevent username enumeration.  The token is emailed when SMTP is
+    configured; otherwise it is written to the server log for operator
+    dry-run environments.
+    """
+    username = body.username.strip()
+    # Do nothing (but still return 202) for an empty username
+    if not username:
+        return {"detail": "If that username exists, a reset email has been sent."}
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Invalidate any existing unused tokens for this user
+                cur.execute(
+                    """UPDATE password_reset_tokens
+                       SET used_at = now()
+                       WHERE username = %s AND used_at IS NULL""",
+                    (username,),
+                )
+                cur.execute(
+                    """INSERT INTO password_reset_tokens (username, token_hash, expires_at)
+                       VALUES (%s, %s, now() + INTERVAL '24 hours')""",
+                    (username, token_hash),
+                )
+    except Exception as e:
+        logger.error("Failed to store password reset token for %s: %s", username, e)
+        return {"detail": "If that username exists, a reset email has been sent."}
+
+    # Attempt email delivery when SMTP is configured
+    from smtp_helper import send_email, SMTP_ENABLED
+    if SMTP_ENABLED:
+        try:
+            user_info = ldap_auth.get_user_info(username)
+            user_email = user_info.get("email", "")
+            if user_email:
+                app_url = os.getenv("APP_BASE_URL", "http://localhost")
+                send_email(
+                    to_addrs=[user_email],
+                    subject="PF9 Management — Password Reset Request",
+                    html_body=(
+                        "<p>A password reset was requested for your account.</p>"
+                        "<p>Enter the following token in the PF9 Management portal "
+                        "to set a new password:</p>"
+                        f"<code>{token}</code>"
+                        "<p>This token expires in <strong>24 hours</strong>. "
+                        "If you did not request a reset, ignore this email.</p>"
+                    ),
+                )
+        except Exception as e:
+            logger.error("Failed to send password reset email for %s: %s", username, e)
+    else:
+        # SMTP not configured — log token so operators can relay it manually
+        logger.warning(
+            "SMTP disabled; password reset token for '%s': %s", username, token
+        )
+
+    log_auth_event(username, "password_reset_requested", True)
+    return {"detail": "If that username exists, a reset email has been sent."}
+
+
+@app.post("/auth/password-reset/confirm")
+@limiter.limit("5/minute")
+async def confirm_password_reset(request: Request, body: PasswordResetConfirmRequest):
+    """Consume a password reset token and set a new password.
+
+    Returns 400 for any invalid / expired / already-used token (same message
+    in all cases to avoid leaking token state).
+    """
+    token = body.token.strip()
+    new_password = body.new_password
+
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """SELECT username, expires_at, used_at
+                       FROM password_reset_tokens
+                       WHERE token_hash = %s""",
+                    (token_hash,),
+                )
+                row = cur.fetchone()
+    except Exception as e:
+        logger.error("Failed to look up password reset token: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    if (
+        not row
+        or row["used_at"] is not None
+        or row["expires_at"] < datetime.now(timezone.utc)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    username = row["username"]
+
+    if not ldap_auth.change_password(username, new_password):
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to reset password. Check server logs.",
+        )
+
+    # Mark token consumed (single-use)
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE password_reset_tokens SET used_at = now() WHERE token_hash = %s",
+                    (token_hash,),
+                )
+    except Exception as e:
+        logger.error("Failed to mark reset token as used for %s: %s", username, e)
+
+    log_auth_event(username, "password_reset_confirmed", True)
+    return {"detail": "Password has been reset successfully. Please log in with your new password."}
+
 
 @app.get("/auth/audit")
 async def get_audit_logs(
@@ -4281,7 +4426,11 @@ def monitoring_host_metrics():
                 END / local_gb * 100, 1)
             ELSE 0
         END AS storage_usage_percent,
-        COALESCE((raw_json->>'running_vms')::integer, 0) AS running_vms
+        COALESCE((raw_json->>'running_vms')::integer, 0) AS running_vms,
+        -- Network throughput not available from DB inventory; explicit nulls let the
+        -- UI distinguish "no live data" from "live data reporting 0".
+        NULL::numeric AS network_rx_mb,
+        NULL::numeric AS network_tx_mb
     FROM hypervisors
     WHERE state = 'up' OR state IS NULL
     ORDER BY hostname;

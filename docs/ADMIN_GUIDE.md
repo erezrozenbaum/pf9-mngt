@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.43  
+**Version**: 1.83.44  
 **Last Updated**: April 12, 2026  
 **Audience**: System administrators and platform operators
 
@@ -605,6 +605,16 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.44 — Security & Monitoring Batch (B8.1–B8.5) (✅ Complete)
+
+- **Self-service password reset** (`api/main.py`): New unauthenticated endpoints `POST /auth/password-reset` and `POST /auth/password-reset/confirm`. Tokens are `secrets.token_urlsafe(32)` stored as SHA-256 hashes with a 24-hour expiry. Previous unused tokens are invalidated on each new request. Response is always `202` to prevent username enumeration. Token is emailed (SMTP) or operator-logged (no SMTP).
+- **Rate limiting for security-sensitive endpoints** (`api/rate_limit.py`): `Limiter` extracted to a shared module. `POST /auth/password-reset`, `POST /auth/password-reset/confirm`, and `POST /auth/mfa/verify-setup` are now capped at 5 requests/minute per IP.
+- **MFA backup codes upgraded to bcrypt** (`api/mfa_routes.py`): Backup codes hashed with bcrypt instead of SHA-256. Existing SHA-256-hashed codes remain valid via a fallback path, so no user is locked out.
+- **Secrets redaction in logs** (`api/structured_logging.py`): `SensitiveDataFilter` scrubs `sk-*` API keys, `Bearer …` tokens, and `key=`/`password=`/`secret=`/`token=` assignments from all log output and exception traces.
+- **Host network throughput NIC filter**: `parse_host_metrics()` now skips virtual/loopback interfaces by exclusion (`lo`, `virbr*`, `tap*`, `vnet*`, `veth*`, `br-*`, `docker*`, overlay NICs) instead of a hardcoded whitelist; fixes N/A on hosts with non-standard NIC names.
+- **VM storage null display**: Storage cell shows `—` when `storage_used_gb` is null (DB fallback) rather than `0.0GB`.
+- **VM/host network N/A vs 0MB distinction**: Removed `> 0` guards; cells now show `0.0MB` for live zero readings and N/A only when the field is absent.
 
 ### v1.83.43 — UI Fix: Header Title & Layout Alignment (✅ Complete)
 

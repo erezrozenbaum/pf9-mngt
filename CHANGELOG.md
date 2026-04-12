@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.44] - 2026-04-12
+
+### Security
+- **Self-service password reset token TTL** (`api/main.py`, `db/migrate_B8_password_reset.sql`): Added `POST /auth/password-reset` and `POST /auth/password-reset/confirm` endpoints. Tokens are generated with `secrets.token_urlsafe(32)`, stored as SHA-256 hashes, and expire after 24 hours. Requesting a new reset invalidates any previous unused token for the same user. Response is always `202` regardless of whether the username exists (prevents enumeration). Token is emailed when SMTP is configured; otherwise logged at WARNING for operator relay in dev environments. Single-use: the token is marked `used_at = now()` on first confirmed use.
+- **Rate-limit password-reset and MFA-enable endpoints** (`api/main.py`, `api/mfa_routes.py`, `api/rate_limit.py`): Extracted `Limiter` to a shared `api/rate_limit.py` module so router files can import it without circular dependencies. Added `@limiter.limit("5/minute")` to `POST /auth/password-reset`, `POST /auth/password-reset/confirm`, and `POST /auth/mfa/verify-setup`.
+- **MFA backup codes upgraded to bcrypt** (`api/mfa_routes.py`): Backup codes were hashed with SHA-256, which is fast and weak for offline brute-force. Replaced with bcrypt via `passlib.CryptContext`. `_verify_backup_code()` falls back to SHA-256 for codes enrolled before the upgrade, ensuring existing users are not locked out.
+- **Secrets redaction in structured log output** (`api/structured_logging.py`): Added `SensitiveDataFilter` class with regex patterns for `sk-*` API keys, `Bearer …` tokens, and `key=`/`password=`/`secret=`/`token=` assignments. The filter is attached to all root-logger handlers in `setup_logging()` and scrubs `record.msg`, pre-formatted `exc_text`, and live exception `args` so that secrets passed through `logger.error(..., exc_info=True)` do not appear in log output or structured log streams.
+
+### Fixed
+- **Monitoring — Host Network Throughput always N/A** (`host_metrics_collector.py`): `parse_host_metrics()` used a hardcoded NIC whitelist (`bond0/eno1/eth0/ens*/enp*/em1`) that ignored NIC names used by many PF9 KVM hosts. Changed to an exclusion-based filter that skips known virtual/loopback interfaces (`lo`, `virbr*`, `tap*`, `vnet*`, `veth*`, `br-*`, `docker*`, `ovs*`, `dummy*`, `tun*`, `sit*`, `gre*`, container overlay NIC prefixes). All remaining interfaces are summed, making collection NIC-naming-agnostic.
+- **Monitoring — VM Storage showing '0.0GB / 20.0GB'** (`pf9-ui/src/App.tsx`): When VMs fall back to the DB source (libvirt exporter unavailable), `storage_used_gb` is correctly `null` in the API response, but the UI rendered `null ?? 0 = 0.0GB`. Fixed to show `—` when null, clearly indicating actual usage is unavailable while only allocated capacity is shown.
+- **Monitoring — Network RX/TX showing N/A when data is present** (`pf9-ui/src/App.tsx`): VM and host network cells suppressed any zero reading via a `> 0` guard, causing N/A even when the monitoring service provided a valid 0-byte reading. Changed to a null-only check — `!= null` shows the value (even 0MB), `null`/`undefined` shows N/A.
+- **Monitoring — DB fallback host-metrics missing network fields** (`api/main.py`): `GET /monitoring/host-metrics` DB fallback now returns explicit `NULL` for `network_rx_mb` and `network_tx_mb` (previously fields were absent). UI can now reliably distinguish 'no live data available' (null → N/A) from 'live monitoring reports 0 traffic' (0 → 0MB).
+
 ## [1.83.43] - 2026-04-12
 
 ### Fixed

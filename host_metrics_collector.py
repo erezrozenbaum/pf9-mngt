@@ -327,7 +327,16 @@ class HostMetricsCollector:
             storage_avail = None
             network_rx_bytes = 0
             network_tx_bytes = 0
-            
+
+            # Exclusion-based NIC filter: skip loopback, virtual bridges, tap/veth devices,
+            # Docker/OVS internals.  Everything else (physical NICs, bonds, team interfaces,
+            # SR-IOV VFs, etc.) is summed so the filter works regardless of naming convention.
+            _EXCL_NIC_PREFIXES = (
+                'lo', 'virbr', 'tap', 'vnet', 'veth', 'br-', 'docker',
+                'ovs', 'dummy', 'tunl', 'tun', 'sit', 'gre', 'flannel',
+                'cali', 'cilium', 'weave',
+            )
+
             for line in lines:
                 if 'node_filesystem_size_bytes' in line and 'mountpoint="/"' in line:
                     parts = line.split(' ')
@@ -345,20 +354,28 @@ class HostMetricsCollector:
                             print(f"  Found available: {storage_avail / (1024**3):.1f}GB")
                         except:
                             continue
-                elif 'node_network_receive_bytes_total' in line and ('device="bond0"' in line or 'device="eno1"' in line or 'device="eth0"' in line or 'device="ens' in line or 'device="enp' in line or 'device="em1"' in line):
-                    parts = line.split(' ')
-                    if len(parts) >= 2:
-                        try:
-                            network_rx_bytes += float(parts[-1])
-                        except:
-                            continue
-                elif 'node_network_transmit_bytes_total' in line and ('device="bond0"' in line or 'device="eno1"' in line or 'device="eth0"' in line or 'device="ens' in line or 'device="enp' in line or 'device="em1"' in line):
-                    parts = line.split(' ')
-                    if len(parts) >= 2:
-                        try:
-                            network_tx_bytes += float(parts[-1])
-                        except:
-                            continue
+                elif 'node_network_receive_bytes_total' in line and 'device="' in line:
+                    dev_start = line.find('device="') + 8
+                    dev_end = line.find('"', dev_start)
+                    dev = line[dev_start:dev_end] if dev_start > 7 else ''
+                    if dev and not any(dev.startswith(p) for p in _EXCL_NIC_PREFIXES):
+                        parts = line.split(' ')
+                        if len(parts) >= 2:
+                            try:
+                                network_rx_bytes += float(parts[-1])
+                            except:
+                                continue
+                elif 'node_network_transmit_bytes_total' in line and 'device="' in line:
+                    dev_start = line.find('device="') + 8
+                    dev_end = line.find('"', dev_start)
+                    dev = line[dev_start:dev_end] if dev_start > 7 else ''
+                    if dev and not any(dev.startswith(p) for p in _EXCL_NIC_PREFIXES):
+                        parts = line.split(' ')
+                        if len(parts) >= 2:
+                            try:
+                                network_tx_bytes += float(parts[-1])
+                            except:
+                                continue
             
             if storage_total is not None and storage_avail is not None:
                 total_gb = storage_total / (1024 * 1024 * 1024)

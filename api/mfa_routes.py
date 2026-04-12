@@ -30,6 +30,7 @@ from typing import Optional, List
 
 import pyotp
 import qrcode
+from passlib.context import CryptContext
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -45,6 +46,7 @@ from auth import (
     JWT_ALGORITHM,
 )
 from db_pool import get_connection
+from rate_limit import limiter
 
 logger = logging.getLogger("pf9.mfa")
 
@@ -53,6 +55,9 @@ router = APIRouter(prefix="/auth/mfa", tags=["mfa"])
 MFA_ISSUER = "PF9 Management"
 MFA_TOKEN_EXPIRE_MINUTES = 5  # Short-lived token for MFA challenge step
 BACKUP_CODE_COUNT = 8
+
+# bcrypt context for backup-code hashing (replaces previous SHA-256 approach)
+_backup_code_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ---------------------------------------------------------------------------
@@ -92,18 +97,27 @@ class MFABackupCodesResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _generate_backup_codes(count: int = BACKUP_CODE_COUNT) -> tuple[list[str], list[str]]:
-    """Generate plaintext + hashed backup codes."""
+    """Generate plaintext + bcrypt-hashed backup codes."""
     plain = [secrets.token_hex(4).upper() for _ in range(count)]  # e.g. "A1B2C3D4"
-    hashed = [hashlib.sha256(c.encode()).hexdigest() for c in plain]
+    hashed = [_backup_code_ctx.hash(c) for c in plain]
     return plain, hashed
 
 
 def _verify_backup_code(code: str, stored_hashes: list[str]) -> int:
-    """Return index of matching backup code or -1."""
-    h = hashlib.sha256(code.strip().upper().encode()).hexdigest()
+    """Return index of matching backup code or -1.
+
+    Supports both bcrypt (new) and legacy SHA-256 hashes so that existing
+    users' codes continue to work after the upgrade.
+    """
+    normalized = code.strip().upper()
     for i, stored in enumerate(stored_hashes):
-        if h == stored:
-            return i
+        try:
+            if _backup_code_ctx.verify(normalized, stored):
+                return i
+        except Exception:
+            # Fall back to SHA-256 for codes hashed before the bcrypt migration
+            if hashlib.sha256(normalized.encode()).hexdigest() == stored:
+                return i
     return -1
 
 
@@ -170,7 +184,9 @@ async def mfa_setup(current_user: User = Depends(require_authentication)):
 # POST /auth/mfa/verify-setup – Confirm enrollment with first TOTP code
 # ---------------------------------------------------------------------------
 @router.post("/verify-setup", response_model=MFABackupCodesResponse)
+@limiter.limit("5/minute")
 async def mfa_verify_setup(
+    request: Request,
     body: MFAVerifyRequest,
     current_user: User = Depends(require_authentication),
 ):

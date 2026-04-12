@@ -6059,13 +6059,13 @@ const App: React.FC = () => {
                                     {vm.storage_usage_percent != null ? `${vm.storage_usage_percent.toFixed(1)}%` : '—'}
                                   </span>
                                   <div className="pf9-cell-subtle">
-                                    {(vm.storage_used_gb ?? 0).toFixed(1)}GB / {(vm.storage_total_gb ?? vm.storage_allocated_gb ?? 0).toFixed(1)}GB
+                                    {vm.storage_used_gb != null ? `${vm.storage_used_gb.toFixed(1)}GB` : '—'} / {(vm.storage_total_gb ?? vm.storage_allocated_gb ?? 0).toFixed(1)}GB
                                   </div>
                                 </>
                               ) : 'N/A'}
                             </td>
                             <td>
-                              {vm.network_rx_bytes != null && vm.network_tx_bytes != null && (vm.network_rx_bytes > 0 || vm.network_tx_bytes > 0) ? (
+                              {vm.network_rx_bytes != null && vm.network_tx_bytes != null ? (
                                 <div>
                                   <div>↓ {(vm.network_rx_bytes / 1024 / 1024).toFixed(1)}MB</div>
                                   <div>↑ {(vm.network_tx_bytes / 1024 / 1024).toFixed(1)}MB</div>
@@ -6146,7 +6146,7 @@ const App: React.FC = () => {
                               ) : 'N/A'}
                             </td>
                             <td>
-                              {host.network_rx_mb != null && host.network_tx_mb != null && (host.network_rx_mb > 0 || host.network_tx_mb > 0) ? (
+                              {host.network_rx_mb != null && host.network_tx_mb != null ? (
                                 <div>
                                   <div>↓ {host.network_rx_mb.toFixed(0)}MB</div>
                                   <div>↑ {host.network_tx_mb.toFixed(0)}MB</div>

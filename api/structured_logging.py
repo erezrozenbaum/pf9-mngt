@@ -4,9 +4,65 @@ Provides JSON-formatted logs with context and levels
 """
 import logging
 import json
+import re
 import sys
 from datetime import datetime
 from typing import Any, Dict
+
+# ---------------------------------------------------------------------------
+# B8.4 — Secrets / sensitive-data redaction
+# ---------------------------------------------------------------------------
+
+_REDACT_PATTERNS = [
+    # OpenAI / Anthropic / generic sk-* API keys
+    re.compile(r'sk-[A-Za-z0-9_-]{20,}', re.ASCII),
+    # Bearer tokens (JWT, OAuth, etc.)
+    re.compile(r'(?i)Bearer\s+[A-Za-z0-9._~+/=-]{20,}'),
+    # key= / password= / secret= / token= / api_key= assignments (URL-params or log lines)
+    re.compile(r'(?i)\b(api_key|apikey|password|passwd|secret|token|access_key|private_key)\s*[=:]\s*\S+'),
+]
+_REDACTED = "[REDACTED]"
+
+
+def _redact(text: str) -> str:
+    """Apply all sensitive-data patterns to *text* and return the sanitised string."""
+    for pat in _REDACT_PATTERNS:
+        text = pat.sub(_REDACTED, text)
+    return text
+
+
+class SensitiveDataFilter(logging.Filter):
+    """Scrub secrets from log records before they are emitted.
+
+    Applies pattern-based redaction to the formatted message and any captured
+    exception text so that API keys, passwords, and tokens do not appear in
+    log files or structured log streams.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Redact the primary message
+        try:
+            record.msg = _redact(str(record.msg))
+        except Exception:
+            pass
+
+        # Redact pre-formatted exception text (set by Formatter.formatException)
+        if record.exc_text:
+            try:
+                record.exc_text = _redact(record.exc_text)
+            except Exception:
+                pass
+
+        # Redact live exception args before the formatter has seen them
+        if record.exc_info and record.exc_info[1] is not None:
+            exc = record.exc_info[1]
+            try:
+                cleaned = _redact(str(exc))
+                exc.args = (cleaned,) + exc.args[1:]
+            except Exception:
+                pass
+
+        return True
 
 class JSONFormatter(logging.Formatter):
     """JSON log formatter for structured logging"""
@@ -107,7 +163,13 @@ def setup_logging(
     # Set levels for noisy libraries
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
-    
+
+    # Attach secrets-redaction filter to every handler so that API keys,
+    # passwords, and tokens are scrubbed from all log output (B8.4).
+    sensitive_filter = SensitiveDataFilter()
+    for handler in root_logger.handlers:
+        handler.addFilter(sensitive_filter)
+
     # Log startup
     logger = logging.getLogger("pf9_api")
     logger.info("Logging initialized", extra={

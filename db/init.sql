@@ -2232,6 +2232,22 @@ CREATE TABLE IF NOT EXISTS user_mfa (
 CREATE INDEX IF NOT EXISTS idx_user_mfa_username ON user_mfa(username);
 
 -- =====================================================================
+-- PASSWORD RESET TOKENS (B8.1)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          BIGSERIAL    PRIMARY KEY,
+    username    TEXT         NOT NULL,
+    token_hash  TEXT         NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ  NOT NULL DEFAULT (now() + INTERVAL '24 hours'),
+    used_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_prt_username   ON password_reset_tokens(username);
+CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash);
+
+-- =====================================================================
 -- CUSTOMER PROVISIONING TABLES
 -- =====================================================================
 
