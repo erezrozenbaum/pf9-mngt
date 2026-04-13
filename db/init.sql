@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS servers (
 );
 CREATE INDEX IF NOT EXISTS idx_servers_os_distro ON servers(os_distro);
 CREATE INDEX IF NOT EXISTS idx_servers_image_id ON servers(image_id);
+-- B9.1: compound and lookups
+CREATE INDEX IF NOT EXISTS idx_servers_project_status ON servers(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_servers_hypervisor ON servers(hypervisor_hostname);
+CREATE INDEX IF NOT EXISTS idx_servers_last_seen ON servers(last_seen_at DESC);
 
 -- Example: volumes
 CREATE TABLE IF NOT EXISTS volumes (
@@ -70,6 +74,8 @@ CREATE TABLE IF NOT EXISTS volumes (
     last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_volumes_server_id ON volumes(server_id);
+-- B9.1: compound
+CREATE INDEX IF NOT EXISTS idx_volumes_project_status ON volumes(project_id, status);
 
 -- Example: networks / subnets / ports / routers / fips
 CREATE TABLE IF NOT EXISTS networks (
@@ -185,6 +191,9 @@ CREATE TABLE IF NOT EXISTS snapshots (
     raw_json      JSONB,
     last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- B9.1: project-scoped listing and volume lookup
+CREATE INDEX IF NOT EXISTS idx_snapshots_project_created ON snapshots(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_snapshots_volume_id ON snapshots(volume_id);
 
 -- Track inventory runs (for history/compliance later)
 CREATE TABLE IF NOT EXISTS inventory_runs (
@@ -853,6 +862,8 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_records_volume ON snapshot_records(volum
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_tenant ON snapshot_records(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_project ON snapshot_records(project_id);
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_vm ON snapshot_records(vm_id);
+-- B9.1: compound (time-range queries per VM)
+CREATE INDEX IF NOT EXISTS idx_snapshot_records_vm_created ON snapshot_records(vm_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_snapshot ON snapshot_records(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_action ON snapshot_records(action);
 CREATE INDEX IF NOT EXISTS idx_snapshot_records_policy ON snapshot_records(policy_name);
@@ -1377,6 +1388,8 @@ CREATE INDEX IF NOT EXISTS idx_restore_jobs_project ON restore_jobs(project_id);
 CREATE INDEX IF NOT EXISTS idx_restore_jobs_vm ON restore_jobs(vm_id);
 CREATE INDEX IF NOT EXISTS idx_restore_jobs_status ON restore_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_restore_jobs_created_at ON restore_jobs(created_at);
+-- B9.1: compound for active-jobs dashboard query
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_status_created ON restore_jobs(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_restore_jobs_created_by ON restore_jobs(created_by);
 -- Prevent concurrent restores for the same VM
 CREATE UNIQUE INDEX IF NOT EXISTS idx_restore_jobs_vm_running
@@ -1953,6 +1966,42 @@ CREATE INDEX IF NOT EXISTS idx_drift_events_resource ON drift_events(resource_ty
 CREATE INDEX IF NOT EXISTS idx_drift_events_severity ON drift_events(severity);
 CREATE INDEX IF NOT EXISTS idx_drift_events_acknowledged ON drift_events(acknowledged);
 CREATE INDEX IF NOT EXISTS idx_drift_events_project ON drift_events(project_id);
+-- B9.1: domain-scoped drift queries
+CREATE INDEX IF NOT EXISTS idx_drift_events_domain ON drift_events(domain_id);
+CREATE INDEX IF NOT EXISTS idx_drift_events_domain_ack ON drift_events(domain_id, acknowledged);
+
+-- B9.4: referential integrity FK constraints (NOT VALID — existing data not scanned)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_type='FOREIGN KEY'
+          AND table_name='restore_jobs'
+          AND constraint_name='fk_restore_jobs_project'
+    ) THEN
+        ALTER TABLE restore_jobs
+            ADD CONSTRAINT fk_restore_jobs_project
+            FOREIGN KEY (project_id) REFERENCES projects(id)
+            ON DELETE RESTRICT
+            NOT VALID;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_type='FOREIGN KEY'
+          AND table_name='snapshot_records'
+          AND constraint_name='fk_snapshot_records_server'
+    ) THEN
+        ALTER TABLE snapshot_records
+            ADD CONSTRAINT fk_snapshot_records_server
+            FOREIGN KEY (vm_id) REFERENCES servers(id)
+            ON DELETE SET NULL
+            NOT VALID;
+    END IF;
+END $$;
 
 -- Seed default drift rules
 INSERT INTO drift_rules (resource_type, field_name, severity, description) VALUES

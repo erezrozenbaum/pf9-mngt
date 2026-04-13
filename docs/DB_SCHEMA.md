@@ -587,6 +587,53 @@ Key indexes for query performance:
 - Composite indexes for common filter combinations
 - JSONB GIN indexes where appropriate for flexible queries
 
+### Hot-Path Compound Indexes (added v1.83.50)
+High-frequency query paths identified from dashboard and API profiling:
+
+```sql
+-- Project-scoped VM listing with status filter (most common dashboard query)
+CREATE INDEX idx_servers_project_status      ON servers(project_id, status);
+-- Hypervisor drill-down
+CREATE INDEX idx_servers_hypervisor          ON servers(hypervisor_hostname);
+-- Staleness detection by collector
+CREATE INDEX idx_servers_last_seen           ON servers(last_seen_at DESC);
+-- Project-scoped volume listing
+CREATE INDEX idx_volumes_project_status      ON volumes(project_id, status);
+-- Project-scoped snapshot listing
+CREATE INDEX idx_snapshots_project_created   ON snapshots(project_id, created_at DESC);
+-- Volume → snapshot reverse lookup
+CREATE INDEX idx_snapshots_volume_id         ON snapshots(volume_id);
+-- Active restore jobs dashboard (status + time order)
+CREATE INDEX idx_restore_jobs_status_created ON restore_jobs(status, created_at DESC);
+-- Domain-scoped drift summary
+CREATE INDEX idx_drift_events_domain         ON drift_events(domain_id);
+CREATE INDEX idx_drift_events_domain_ack     ON drift_events(domain_id, acknowledged);
+-- Per-VM snapshot history
+CREATE INDEX idx_snapshot_records_vm_created ON snapshot_records(vm_id, created_at DESC);
+```
+
+---
+
+## Referential Integrity Constraints (added v1.83.50)
+
+FK constraints added to enforce data integrity without scanning existing rows (`NOT VALID`):
+
+```sql
+-- Prevent restore jobs for non-existent projects
+ALTER TABLE restore_jobs
+    ADD CONSTRAINT fk_restore_jobs_project
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+    ON DELETE RESTRICT NOT VALID;
+
+-- Preserve snapshot history when a VM is deleted (null vm_id rather than block delete)
+ALTER TABLE snapshot_records
+    ADD CONSTRAINT fk_snapshot_records_server
+    FOREIGN KEY (vm_id) REFERENCES servers(id)
+    ON DELETE SET NULL NOT VALID;
+```
+
+`NOT VALID` means existing rows are not scanned during the migration — only new inserts and updates are validated. Run `VALIDATE CONSTRAINT` off-hours if you need full historical enforcement.
+
 ---
 
 ## Migration Strategy
@@ -598,4 +645,4 @@ Database schema changes are managed through versioned migration files in `/db/mi
 - `inventory_runs` table tracks schema version progression
 - Rollback scripts provided for critical changes
 
-Current schema version: **v1.83.x** (March 2026)
+Current schema version: **v1.83.50** (April 2026)

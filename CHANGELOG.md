@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.50] - 2026-04-13
+
+### Performance
+- **Database query performance: compound indexes on hot query paths** (`db/init.sql`, `db/migrate_B9_indexes.sql`): Added 10 compound and single-column indexes covering the most frequently queried paths — `servers(project_id, status)`, `volumes(project_id, status)`, `snapshots(project_id, created_at DESC)`, `snapshots(volume_id)`, `servers(hypervisor_hostname)`, `servers(last_seen_at DESC)`, `restore_jobs(status, created_at DESC)`, `drift_events(domain_id)`, `drift_events(domain_id, acknowledged)`, and `snapshot_records(vm_id, created_at DESC)`. All use `IF NOT EXISTS` and are idempotent.
+
+### Changed
+- **Referential integrity: FK constraints added with deferred validation** (`db/init.sql`, `db/migrate_B9_integrity.sql`): Added `fk_restore_jobs_project` (`restore_jobs.project_id → projects.id ON DELETE RESTRICT`) and `fk_snapshot_records_server` (`snapshot_records.vm_id → servers.id ON DELETE SET NULL`). Both use `NOT VALID` so existing data is not scanned during the migration — enforcement applies to new rows only. Constraints are applied at container startup via advisory-lock-guarded migration blocks in `api/main.py`.
+
+## [1.83.49] - 2026-04-13
+
+### Security
+- **Exception details no longer exposed in error responses** (`api/main.py`): Approximately 36 endpoints were returning raw Python exception strings (DB errors, query text, internal IPs) in the HTTP `detail` field of 500/502 responses. All exception messages are now logged server-side at `ERROR` level and replaced with a generic message in the response. Affected endpoint groups: admin OpenStack flavors/networks/security-groups (502), history/audit (500), user and role management (500), branding/settings/preferences (500), drift detection and rules (500).
+- **`POST /auth/users` request body validated** (`api/main.py`): The create-user endpoint previously accepted `user_data: dict`, causing an unhandled `KeyError` (→ 500) when required fields were missing from the request body. Replaced with a `CreateUserRequest` Pydantic model enforcing `username` (alphanumeric/`.`/`_`/`-`, max 64 chars), `email` (email format), `password` (min 8 chars), and an allow-listed `role` field.
+
+### Fixed
+- **`traceback.print_exc()` removed from `GET /users` exception handler** (`api/main.py`): The users endpoint was printing raw stack traces to stdout on every DB error. Replaced with `logger.error(..., exc_info=True)` which routes through the structured logging filter (secrets redaction) and respects log level configuration.
+- **Pydantic v2 deprecation warnings eliminated** (`api/snapshot_management.py`): `Field(..., min_items=1)` is deprecated in Pydantic v2 and was emitting warnings on every test run. Updated 4 occurrences to `Field(..., min_length=1)` (`SnapshotPolicySetCreate.policies`, `SnapshotPolicySetCreate.retention_map`, `SnapshotAssignmentCreate.policies`, `SnapshotAssignmentCreate.retention_map`).
+
 ## [1.83.48] - 2026-04-13
 
 ### Fixed

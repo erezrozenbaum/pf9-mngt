@@ -30,8 +30,8 @@ class SnapshotPolicySetCreate(BaseModel):
     is_global: bool = False
     tenant_id: Optional[str] = None
     tenant_name: Optional[str] = None
-    policies: List[str] = Field(..., min_items=1)  # ["daily_5", "weekly_4"]
-    retention_map: Dict[str, int] = Field(..., min_items=1)  # {"daily_5": 5}
+    policies: List[str] = Field(..., min_length=1)  # ["daily_5", "weekly_4"]
+    retention_map: Dict[str, int] = Field(..., min_length=1)  # {"daily_5": 5}
     priority: int = Field(default=0, ge=0, le=1000)
     
     @field_validator('policies')
@@ -71,8 +71,8 @@ class SnapshotAssignmentCreate(BaseModel):
     vm_name: Optional[str] = None
     policy_set_id: Optional[int] = None
     auto_snapshot: bool = True
-    policies: List[str] = Field(..., min_items=1)
-    retention_map: Dict[str, int] = Field(..., min_items=1)
+    policies: List[str] = Field(..., min_length=1)
+    retention_map: Dict[str, int] = Field(..., min_length=1)
     assignment_source: str = Field(default="manual")
     matched_rules: Optional[Dict] = None
 

@@ -884,7 +884,7 @@ docker compose logs pf9_api | tail -50
 docker compose restart pf9_api
 
 # Check database connectivity
-docker exec pf9_api psql -h db -U pf9 -d pf9_mgmt -c "SELECT 1;"
+docker compose exec db psql -U pf9 -d pf9_mgmt -c "SELECT 1;"
 ```
 
 ### UI Not Loading
@@ -973,6 +973,19 @@ curl -H "Origin: http://malicious-site.com" -X OPTIONS http://localhost:8000/ser
 
 # Check for SQL injection vulnerabilities
 grep -r "SELECT.*%" api/ --include="*.py"
+```
+
+### Exception Hardening (v1.83.49+)
+All 500 and 502 error responses return a generic message — exception details are never
+exposed to clients. Internal error details are written to the server log only.
+
+```bash
+# Verify no stack traces leak to HTTP clients
+curl -s http://localhost:8000/nonexistent | python -m json.tool
+# Expected: {"detail": "Not Found"} — no traceback, no internal path, no DB error
+
+# Confirm server-side logging is active
+docker compose logs pf9_api | grep -i "internal server error"
 ```
 
 ## API Quick Reference

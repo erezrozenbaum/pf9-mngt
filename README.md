@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.48-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.83.50-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -534,8 +534,9 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.83.50](CHANGELOG.md)** — Database performance: 10 compound indexes on hot query paths (servers, volumes, snapshots, drift events, restore jobs); FK constraints added for restore_jobs and snapshot_records with NOT VALID deferred validation.
+**[v1.83.49](CHANGELOG.md)** — Security: exception details no longer exposed in 500/502 responses (36 endpoints); `POST /auth/users` request body now validated with Pydantic model; removed raw `traceback.print_exc()` from stdout; Pydantic v2 `min_items` deprecation warnings eliminated.
 **[v1.83.48](CHANGELOG.md)** — CI fix: install fastapi/pydantic/passlib in integration-tests job; lower coverage gate to verified floor.
-**[v1.83.45](CHANGELOG.md)** — Monitoring data collection fixed: `prometheus_client.py` now correctly parses `libvirt_domain_*` (port 9177) and `node_*` (port 9388) metrics instead of the non-existent `pcd:vm_*`/`pcd:hyp_*` families — so per-VM CPU, memory, storage, and network are now collected from live KVM hosts. Cache-file write is skipped on empty-result cycles to preserve previously good data. DB fallback now shows provisioned disk in the storage column ("20.0GB / 20.0GB") instead of "— / 20.0GB".
 **[v1.83.41](CHANGELOG.md)** — UI: sidebar text replaced with Triple C logo; dark-mode theming unified (sidebar bg matches header surface); `<h1>` header capped at 1.15rem; all border-radii normalised to `--radius-*` CSS variables across the full layout.
 **[v1.83.40](CHANGELOG.md)** — Security: IP spoofing fixed in all audit log paths (`X-Forwarded-For` → `X-Real-IP` via shared helper across 23 call sites in 6 files); internal LDAP error strings no longer leaked in 500 responses; `config_validator` JWT default corrected to 90 min.
 **[v1.83.39](CHANGELOG.md)** — Security: JWT session expiry reduced from 8 h to 90 min; `get_request_ip` helper extracted to shared module (`request_helpers.py`); 64 new unit tests across crypto, SMTP, webhook, restore, backup-worker, and request-IP helpers.
@@ -667,4 +668,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.48 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.83.50 | **Last Updated**: April 2026

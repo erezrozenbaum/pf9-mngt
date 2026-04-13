@@ -296,7 +296,7 @@ audit_logger.propagate = False  # prevent double-emit via root logger StreamHand
 # Security functions
 # ---------------------------------------------------------------------------
 def log_admin_operation(operation: str, resource_id: str, request: Request, authenticated: bool = False):
-    audit_logger.info(f"{operation} - Resource: {resource_id} - IP: {get_request_ip(request)} - Auth: {authenticated}")
+    audit_logger.info("%s - Resource: %s - IP: %s - Auth: %s", operation, resource_id, get_request_ip(request), authenticated)
 
 def verify_admin_credentials(credentials: HTTPBasicCredentials = Depends(security)) -> bool:
     if not ADMIN_PASSWORD:
@@ -309,7 +309,7 @@ def verify_admin_credentials(credentials: HTTPBasicCredentials = Depends(securit
     username_ok = hmac.compare_digest(credentials.username, ADMIN_USERNAME)
     password_ok = hmac.compare_digest(credentials.password, ADMIN_PASSWORD)
     if not username_ok or not password_ok:
-        audit_logger.warning(f"Admin operation attempted with invalid credentials for user: {credentials.username}")
+        audit_logger.warning("Admin operation attempted with invalid credentials for user: %s", credentials.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -1044,6 +1044,32 @@ async def startup_event():
       except Exception as _exc:
         logger.warning("Nav inventory domains/projects migration skipped: %s", _exc)
 
+      # ── B9.1: Performance indexes ─────────────────────────────────────────
+      try:
+        _b9idx_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_B9_indexes.sql")
+        if os.path.exists(_b9idx_sql):
+            with open(_b9idx_sql, encoding="utf-8") as _f:
+                _sql = _f.read()
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(_sql)
+            logger.info("B9.1 performance indexes migration applied")
+      except Exception as _exc:
+        logger.warning("B9.1 performance indexes migration skipped: %s", _exc)
+
+      # ── B9.4: Referential integrity FK constraints (NOT VALID — instant) ──
+      try:
+        _b9fk_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_B9_integrity.sql")
+        if os.path.exists(_b9fk_sql):
+            with open(_b9fk_sql, encoding="utf-8") as _f:
+                _sql = _f.read()
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(_sql)
+            logger.info("B9.4 integrity FK constraints migration applied")
+      except Exception as _exc:
+        logger.warning("B9.4 integrity FK constraints migration skipped: %s", _exc)
+
     # Phase 3: warm the ClusterRegistry now that the DB is seeded.
     # reload() discards any premature lazy-init that may have run before seeding
     # and rebuilds fresh from the now-populated pf9_regions / pf9_control_planes.
@@ -1311,31 +1337,20 @@ async def get_roles(current_user: dict = Depends(get_current_user)):
     """Get all available roles with actual user counts from LDAP users"""
     logger.info("[/auth/roles] Endpoint called")
     try:
-        logger.info("[/auth/roles] Calling ldap_auth.get_all_users()")
-        # Get all LDAP users with their roles
         users = ldap_auth.get_all_users()
-        logger.info(f"[/auth/roles] Got {len(users)} users from LDAP: {[u.get('id') or u.get('username') for u in users]}")
         
         # Count roles from actual user data
         role_counts = {"superadmin": 0, "admin": 0, "technical": 0, "operator": 0, "viewer": 0}
-        logger.info("[/auth/roles] Initialized role_counts: %s", role_counts)
         
         for user in users:
             username = user.get('username') or user.get('id')
-            logger.info("[/auth/roles] Processing user: %s", username)
-            # Get role from database for each user
             role = get_user_role(username)
-            logger.info(f"[/auth/roles] User {username} has role: {role}")
-            
             if not role:
                 role = 'viewer'  # Default role
-                logger.info(f"[/auth/roles] No role found, defaulting to viewer")
-            
             if role in role_counts:
                 role_counts[role] += 1
-                logger.info(f"[/auth/roles] Incremented {role} count to {role_counts[role]}")
         
-        logger.info("[/auth/roles] Final role_counts: %s", role_counts)
+        logger.debug("[/auth/roles] Final role_counts: %s", role_counts)
         return [
             {"id": 1, "name": "superadmin", "description": "Full system access", "userCount": role_counts["superadmin"]},
             {"id": 2, "name": "admin", "description": "Administrative access", "userCount": role_counts["admin"]},
@@ -1443,6 +1458,44 @@ async def get_permissions(current_user: dict = Depends(get_current_user)):
             {"id": 29, "resource": "restore", "action": "admin", "roles": ["superadmin"]}
         ]
 
+import traceback
+
+class CreateUserRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+    full_name: Optional[str] = None
+    role: Optional[str] = "viewer"
+
+    @field_validator('username')
+    def validate_username(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Username cannot be empty')
+        if not re.match(r'^[a-zA-Z0-9._-]+$', v):
+            raise ValueError('Username can only contain alphanumeric characters, dots, underscores, and hyphens')
+        if len(v) > 64:
+            raise ValueError('Username must be 64 characters or less')
+        return v.strip()
+
+    @field_validator('email')
+    def validate_email(cls, v):
+        if not v or '@' not in v:
+            raise ValueError('A valid email address is required')
+        return v.strip().lower()
+
+    @field_validator('password')
+    def validate_password(cls, v):
+        if not v or len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        return v
+
+    @field_validator('role')
+    def validate_role(cls, v):
+        valid = ['viewer', 'operator', 'technical', 'admin', 'superadmin']
+        if v and v not in valid:
+            raise ValueError(f'Role must be one of: {', '.join(valid)}')
+        return v or 'viewer'
+
 class PermissionToggle(BaseModel):
     role: str
     resource: str
@@ -1502,7 +1555,7 @@ async def update_permission(
         raise HTTPException(500, f"Failed to update permission: {str(e)}")
 
 @app.post("/auth/users")
-async def create_user(request: Request, user_data: dict, current_user: User = Depends(require_authentication)):
+async def create_user(request: Request, user_data: CreateUserRequest, current_user: User = Depends(require_authentication)):
     """Create a new LDAP user (requires superadmin)"""
     if current_user.role != "superadmin":
         raise HTTPException(
@@ -1513,15 +1566,15 @@ async def create_user(request: Request, user_data: dict, current_user: User = De
     try:
         # Create user in LDAP
         success = ldap_auth.create_user(
-            username=user_data["username"],
-            email=user_data["email"],
-            password=user_data["password"],
-            full_name=user_data.get("full_name", user_data["username"])
+            username=user_data.username,
+            email=user_data.email,
+            password=user_data.password,
+            full_name=user_data.full_name or user_data.username,
         )
         
         if success:
             # Set role in database
-            set_user_role(user_data["username"], user_data.get("role", "viewer"))
+            set_user_role(user_data.username, user_data.role or "viewer")
             
             log_auth_event(
                 username=current_user.username,
@@ -2040,12 +2093,12 @@ def run_query_raw(sql: str, params: Any = ()) -> List[Dict[str, Any]]:
 
 
 def run_query(sql: str, params: Any = ()) -> List[Dict[str, Any]]:
-    """Execute SQL and raise a clean HTTP 500 with DB error text on failure."""
+    """Execute SQL and raise a clean HTTP 500 on failure."""
     try:
         return run_query_raw(sql, params)
     except Exception as e:
-        # Surface DB errors to the UI (so "Failed to fetch" becomes actionable)
-        raise HTTPException(status_code=500, detail=f"DB query failed: {e}")
+        logger.error("DB query failed: %s", e)
+        raise HTTPException(status_code=500, detail="Database query failed — check server logs")
 
 
 # ---------------------------------------------------------------------------
@@ -2313,10 +2366,10 @@ def servers(
     try:
         rows = run_query_raw(sql, params_tuple)
     except Exception as e:
-        # This is what you see as detail in Swagger when it fails
+        logger.error("Servers query failed: %s", e)
         raise HTTPException(
             status_code=500,
-            detail=f"Servers query failed: {e}",
+            detail="Internal server error",
         )
 
     total = 0
@@ -3788,9 +3841,10 @@ def admin_create_flavor(request: Request, payload: CreateFlavorRequest, authenti
         )
         return result
     except Exception as e:
+        logger.error("Failed to create flavor: %s", e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to create flavor: {e}",
+            detail="Failed to create flavor — check server logs",
         )
 
 
@@ -3805,9 +3859,10 @@ def admin_delete_flavor(request: Request, flavor_id: str, authenticated: bool = 
         client.delete_flavor(flavor_id)
         return
     except Exception as e:
+        logger.error("Failed to delete flavor %s: %s", flavor_id, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to delete flavor {flavor_id}: {e}",
+            detail="Failed to delete flavor — check server logs",
         )
 
 
@@ -3830,9 +3885,10 @@ def admin_create_network(request: Request, payload: CreateNetworkRequest, authen
         )
         return result
     except Exception as e:
+        logger.error("Failed to create network: %s", e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to create network: {e}",
+            detail="Failed to create network — check server logs",
         )
 
 
@@ -3852,9 +3908,10 @@ def admin_delete_network(
         client.delete_network(network_id)
         return
     except Exception as e:
+        logger.error("Failed to delete network %s: %s", network_id, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to delete network {network_id}: {e}",
+            detail="Failed to delete network — check server logs",
         )
 
 
@@ -4203,9 +4260,10 @@ def admin_create_security_group(
         )
         return result
     except Exception as e:
+        logger.error("Failed to create security group: %s", e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to create security group: {e}",
+            detail="Failed to create security group — check server logs",
         )
 
 
@@ -4225,9 +4283,10 @@ def admin_delete_security_group(
         client.delete_security_group(sg_id)
         return
     except Exception as e:
+        logger.error("Failed to delete security group %s: %s", sg_id, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to delete security group {sg_id}: {e}",
+            detail="Failed to delete security group — check server logs",
         )
 
 
@@ -4256,9 +4315,10 @@ def admin_create_security_group_rule(
         )
         return result
     except Exception as e:
+        logger.error("Failed to create security group rule: %s", e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to create security group rule: {e}",
+            detail="Failed to create security group rule — check server logs",
         )
 
 
@@ -4278,9 +4338,10 @@ def admin_delete_security_group_rule(
         client.delete_security_group_rule(rule_id)
         return
     except Exception as e:
+        logger.error("Failed to delete security group rule %s: %s", rule_id, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to delete security group rule {rule_id}: {e}",
+            detail="Failed to delete security group rule — check server logs",
         )
 
 
@@ -4593,7 +4654,8 @@ def get_recent_changes(
                     "count": len(changes)
                 }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error retrieving recent changes: {str(e)}")
+            logger.error("Error retrieving recent changes: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/history/most-changed")
@@ -4657,7 +4719,8 @@ def get_most_changed_resources(
                     "count": len(resources)
                 }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error retrieving most changed resources: {str(e)}")
+            logger.error("Error retrieving most changed resources: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/history/by-timeframe")
@@ -4694,7 +4757,8 @@ def get_changes_by_timeframe(
                     "timeframe": {"start": start_date, "end": end_date}
                 }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error retrieving timeframe changes: {str(e)}")
+            logger.error("Error retrieving timeframe changes: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/history/daily-summary")
@@ -4719,7 +4783,8 @@ def get_daily_summary(days: int = Query(default=30, ge=1, le=365)):
                 results = [dict(row) for row in cur.fetchall()]
                 return {"status": "success", "data": results}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to get daily summary: {str(e)}")
+            logger.error("Failed to get daily summary: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/history/change-velocity")
 def get_change_velocity():
@@ -4750,7 +4815,8 @@ def get_change_velocity():
                 results = [dict(row) for row in cur.fetchall()]
                 return {"velocity_stats": results}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to get velocity stats: {str(e)}")
+            logger.error("Failed to get velocity stats: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/history/resource/{resource_type}/{resource_id}")
@@ -5061,7 +5127,8 @@ def get_resource_history(
                     "resource": {"type": resource_type, "id": resource_id}
                 }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error retrieving resource history: {str(e)}")
+            logger.error("Error retrieving resource history: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/history/compare/{resource_type}/{resource_id}")
@@ -5188,7 +5255,8 @@ def compare_history_entries(
                     }
                 }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error comparing history entries: {str(e)}")
+            logger.error("Error comparing history entries: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/history/details/{resource_type}/{resource_id}")
@@ -5369,7 +5437,8 @@ def get_change_details(resource_type: str, resource_id: str):
                 }
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error retrieving change details: {str(e)}")
+            logger.error("Error retrieving change details: %s", e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/audit/compliance-report")
@@ -5425,7 +5494,8 @@ def get_compliance_report():
                     }
                 }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating compliance report: {str(e)}")
+        logger.error("Error generating compliance report: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/audit/change-patterns")
@@ -5453,7 +5523,8 @@ def get_change_patterns(days: int = Query(default=30, ge=1, le=365)):
                     "count": len(patterns)
                 }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error analyzing change patterns: {str(e)}")
+        logger.error("Error analyzing change patterns: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/audit/resource-timeline/{resource_type}")
@@ -5482,7 +5553,8 @@ def get_resource_type_timeline(
                     "count": len(timeline)
                 }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving resource timeline: {str(e)}")
+        logger.error("Error retrieving resource timeline: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ======================================================================================
@@ -5583,9 +5655,8 @@ async def get_users(
                 "pages": pages
             }
     except Exception as e:
-        import traceback
-        traceback.print_exc()  # This will show in docker logs
-        raise HTTPException(status_code=500, detail=f"Error retrieving users: {str(e)}")
+        logger.error("Error retrieving users: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/users/{user_id}")
@@ -5643,7 +5714,8 @@ async def get_user_details(request: Request, user_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving user details: {str(e)}")
+        logger.error("Error retrieving user details: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/roles")
@@ -5705,7 +5777,8 @@ async def get_all_roles(
                 }
             }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving roles: {str(e)}")
+        logger.error("Error retrieving roles: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/roles/{role_id}")
@@ -5749,7 +5822,8 @@ async def get_role_details(request: Request, role_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving role details: {str(e)}")
+        logger.error("Error retrieving role details: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/user-activity-summary")
@@ -5771,7 +5845,8 @@ async def get_user_activity_summary(request: Request):
                 "count": len(summary)
             }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving user activity summary: {str(e)}")
+        logger.error("Error retrieving user activity summary: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/role-assignments")
@@ -5852,7 +5927,8 @@ async def get_role_assignments(
                 }
             }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving role assignments: {str(e)}")
+        logger.error("Error retrieving role assignments: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/admin/user-access-log")
@@ -5897,7 +5973,8 @@ async def log_user_access_activity(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error logging user access: {str(e)}")
+        logger.error("Error logging user access: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -5982,7 +6059,8 @@ def update_branding(
                 )
             return {"status": "success", "updated_keys": list(updates.keys())}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update branding: {e}")
+        logger.error("Failed to update branding: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to update branding — check server logs")
 
 
 @app.post("/admin/settings/branding/logo")
@@ -6083,7 +6161,8 @@ def update_container_alert(
             )
         return {"status": "success", "value": email}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update setting: {e}")
+        logger.error("Failed to update container alert setting: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to update setting — check server logs")
 
 
 # Serve static files (uploaded logos)
@@ -6113,7 +6192,7 @@ def get_user_preferences(current_user: User = Depends(require_authentication)):
                     prefs[r["pref_key"]] = r["pref_value"]
             return prefs
     except Exception as e:
-        logger.error(f"Failed to fetch preferences for {current_user.username}: {e}")
+        logger.error("Failed to fetch preferences for %s: %s", current_user.username, e)
         return {}
 
 
@@ -6134,7 +6213,8 @@ def set_user_preference(pref_key: str, payload: dict, current_user: User = Depen
             )
             return {"status": "success", "pref_key": pref_key}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save preference: {e}")
+        logger.error("Failed to save preference %s for %s: %s", pref_key, current_user.username, e)
+        raise HTTPException(status_code=500, detail="Failed to save preference — check server logs")
 
 
 # ---------------------------------------------------------------------------
@@ -6224,7 +6304,7 @@ def get_drift_summary(
             }
     except Exception as e:
         logger.error("Drift summary error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/drift/events")
@@ -6336,7 +6416,7 @@ def list_drift_events(
             }
     except Exception as e:
         logger.error("Drift events list error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/drift/events/{event_id}")
@@ -6392,7 +6472,8 @@ def get_drift_event(event_id: int, current_user: User = Depends(require_authenti
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error retrieving drift event %s: %s", event_id, e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.put("/drift/events/{event_id}/acknowledge")
@@ -6421,7 +6502,8 @@ def acknowledge_drift_event(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error acknowledging drift event %s: %s", event_id, e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.put("/drift/events/bulk-acknowledge")
@@ -6448,7 +6530,8 @@ def bulk_acknowledge_drift(
             updated = cur.rowcount
             return {"status": "success", "acknowledged_count": updated}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error bulk-acknowledging drift events: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------
@@ -6475,7 +6558,8 @@ def list_drift_rules(current_user: User = Depends(require_authentication)):
             rows = cur.fetchall()
             return {"rules": rows, "total": len(rows)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error listing drift rules: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.put("/drift/rules/{rule_id}")
@@ -6508,7 +6592,8 @@ def update_drift_rule(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Error updating drift rule %s: %s", rule_id, e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------------------------------------------------------------------------

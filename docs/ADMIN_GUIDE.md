@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.48  
+**Version**: 1.83.50  
 **Last Updated**: April 12, 2026  
 **Audience**: System administrators and platform operators
 
@@ -605,6 +605,18 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.50 — Database Performance Indexes + Referential Integrity (✅ Complete)
+
+- **Compound performance indexes** (`db/init.sql`, `db/migrate_B9_indexes.sql`): 10 new `CREATE INDEX IF NOT EXISTS` statements on high-frequency query paths: `servers(project_id, status)`, `volumes(project_id, status)`, `snapshots(project_id, created_at DESC)`, `snapshots(volume_id)`, `servers(hypervisor_hostname)`, `servers(last_seen_at DESC)`, `restore_jobs(status, created_at DESC)`, `drift_events(domain_id)`, `drift_events(domain_id, acknowledged)`, and `snapshot_records(vm_id, created_at DESC)`. Applied at container startup via advisory-lock migration.
+- **Foreign key constraints with deferred validation** (`db/init.sql`, `db/migrate_B9_integrity.sql`): Added `fk_restore_jobs_project` (`restore_jobs.project_id → projects.id ON DELETE RESTRICT NOT VALID`) and `fk_snapshot_records_server` (`snapshot_records.vm_id → servers.id ON DELETE SET NULL NOT VALID`). `NOT VALID` means existing rows are not scanned during migration — only new rows are validated. Applied at container startup.
+
+### v1.83.49 — Security Quality Fixes (✅ Complete)
+
+- **Exception details removed from error responses** (`api/main.py`): 36 endpoints were returning raw Python exception text (DB error messages, query fragments, internal IPs) in the HTTP `detail` field of 500/502 responses. All have been updated to log at `ERROR` level and return a generic message. Affected groups: admin OpenStack flavors/networks/security-groups (502), history/audit/compare/timeline (500), user and role management (500), branding/settings/preferences (500), and drift detection/rules (500).
+- **Typed request model for user creation** (`api/main.py`): `POST /auth/users` previously accepted `user_data: dict`, causing a `KeyError` → 500 on missing fields. Replaced with a `CreateUserRequest` Pydantic model with field validation: username (alphanumeric/`.`/`_`/`-`, ≤64 chars), email (email format), password (≥8 chars), role (allowlisted values).
+- **Raw stack trace removed from user listing** (`api/main.py`): `traceback.print_exc()` in the `GET /users` error handler was printing raw stack traces to container stdout. Replaced with `logger.error(..., exc_info=True)` which routes through the structured log filter.
+- **Pydantic v2 deprecation warnings eliminated** (`api/snapshot_management.py`): `Field(..., min_items=1)` → `Field(..., min_length=1)` in 4 places (`SnapshotPolicySetCreate` and `SnapshotAssignmentCreate`). Removes 4 deprecation warnings per test run.
 
 ### v1.83.48 — CI Fix (✅ Complete)
 
