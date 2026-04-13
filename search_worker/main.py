@@ -68,6 +68,8 @@ def _report_worker_metrics(duration_s: float, had_error: bool, frequency_s: int)
             "frequency_s":         frequency_s,
             "label":               _WORKER_NAME,
         })
+    except Exception:
+        pass
 
 logging.basicConfig(
     level=logging.INFO,
