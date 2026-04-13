@@ -62,19 +62,27 @@ if "fastapi" not in sys.modules:
 # Always reference the registered class so assertions match what cluster_routes.py raises
 _HTTPException = sys.modules["fastapi"].HTTPException
 
-# Stub pydantic
-pydantic_stub = types.ModuleType("pydantic")
-class _BaseModel:
-    def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-    @classmethod
-    def model_dump(cls):
-        return {}
-pydantic_stub.BaseModel = _BaseModel
-pydantic_stub.Field = lambda *a, **kw: None
-pydantic_stub.field_validator = lambda *a, **kw: (lambda fn: fn)
-sys.modules.setdefault("pydantic", pydantic_stub)
+# Stub pydantic only if real pydantic v2 is not already available
+if "pydantic" not in sys.modules:
+    try:
+        import pydantic as _rpyd
+        if not hasattr(_rpyd, "ValidationInfo"):
+            raise ImportError("old pydantic")
+        # Real pydantic v2 is available — no stub needed
+    except ImportError:
+        pydantic_stub = types.ModuleType("pydantic")
+        class _BaseModel:
+            def __init__(self, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
+            @classmethod
+            def model_dump(cls):
+                return {}
+        pydantic_stub.BaseModel = _BaseModel
+        pydantic_stub.Field = lambda *a, **kw: None
+        pydantic_stub.field_validator = lambda *a, **kw: (lambda fn: fn)
+        pydantic_stub.ValidationInfo = MagicMock()
+        sys.modules["pydantic"] = pydantic_stub
 
 # Stub psycopg2.extras
 psycopg2_stub = sys.modules.get("psycopg2", types.ModuleType("psycopg2"))

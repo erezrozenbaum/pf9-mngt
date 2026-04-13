@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.46  
+**Version**: 1.83.47  
 **Last Updated**: April 12, 2026  
 **Audience**: System administrators and platform operators
 
@@ -605,6 +605,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.47 — Test Coverage + WAN/QoS + LDAP Department Mapping (✅ Complete)
+
+- **Test coverage expansion** (`tests/`): 4 new test files covering migration engine, snapshot scheduler, RBAC middleware, and runbook execution. CI coverage gate (`--cov-fail-under=40`) added to the integration-tests pipeline.
+- **WAN bandwidth estimation** (`api/migration_engine.py`): `compute_wan_estimation()` computes per-VM and total estimated transfer hours at a configured WAN link rate. Defaults to 100 Mbps when no bandwidth is set.
+- **QoS / throttle model** (`api/migration_engine.py`, `api/migration_routes.py`): `apply_qos_constraints()` enforces per-project throttle and concurrency caps. `PATCH /api/migration/projects/{id}` accepts three new optional fields: `wan_bandwidth_mbps`, `throttle_mbps`, `max_concurrent_migrations`.
+- **LDAP group → department mapping** (`api/ldap_sync_routes.py`, `ldap_sync_worker/main.py`): Each LDAP sync config may now declare mappings from LDAP group DNs to internal department names. Three new REST endpoints manage the mapping table (`GET/POST /admin/ldap-sync/configs/{id}/dept-mappings`, `DELETE .../dept-mappings/{id}`). The sync worker auto-assigns `user_roles.department_id` from each user's `memberOf` groups on every sync cycle. DB migration: `db/migrate_v1_83_47.sql`.
 
 ### v1.83.46 — Security & Monitoring Batch (B8.1–B8.5) (✅ Complete)
 

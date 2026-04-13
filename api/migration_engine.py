@@ -2840,3 +2840,105 @@ def next_window_start(windows: List[dict], after_date) -> Optional[dict]:
                 continue
 
     return None
+
+
+# =====================================================================
+# B13.1 — WAN Throughput Estimation
+# =====================================================================
+
+def compute_wan_estimation(
+    vms: List[Dict[str, Any]],
+    wan_bandwidth_mbps: float,
+) -> Dict[str, Any]:
+    """
+    Compute per-VM estimated migration hours using a simple WAN bandwidth model.
+
+    Args:
+        vms: List of VM dicts (must contain vm_name and in_use_gb or total_disk_gb).
+        wan_bandwidth_mbps: Total usable WAN link speed in Megabits/second.
+
+    Returns a dict with per_vm hours, aggregate stats, and the effective GB/hour rate.
+    """
+    if wan_bandwidth_mbps is None or wan_bandwidth_mbps <= 0:
+        wan_bandwidth_mbps = 100.0  # fallback: 100 Mbps
+
+    # GB transferred per hour at this bandwidth
+    gb_per_hour = (wan_bandwidth_mbps / 8.0) * 3600.0 / 1024.0
+
+    per_vm: Dict[str, float] = {}
+    total_hours = 0.0
+
+    for vm in vms:
+        in_use_gb = float(vm.get("in_use_gb") or 0)
+        if in_use_gb <= 0:
+            in_use_gb = float(vm.get("total_disk_gb") or 0)
+        estimated_hours = round(in_use_gb / gb_per_hour, 2) if gb_per_hour > 0 else 0.0
+        per_vm[vm.get("vm_name", "")] = estimated_hours
+        total_hours += estimated_hours
+
+    return {
+        "per_vm": per_vm,
+        "total_estimated_hours": round(total_hours, 2),
+        "wan_bandwidth_mbps": wan_bandwidth_mbps,
+        "effective_gb_per_hour": round(gb_per_hour, 2),
+    }
+
+
+# =====================================================================
+# B13.2 — QoS / Throttle Constraint Model
+# =====================================================================
+
+def apply_qos_constraints(
+    project_settings: Dict[str, Any],
+    proposed_bottleneck_mbps: float,
+) -> Tuple[float, int, List[str]]:
+    """
+    Apply QoS/throttle constraints to the proposed effective bandwidth.
+
+    Args:
+        project_settings: dict with optional keys:
+            throttle_mbps            — hard cap on effective bandwidth
+            max_concurrent_migrations — override for concurrent slot count
+            wan_bandwidth_mbps       — WAN link capacity for budget validation
+            utilization_target_pct   — fraction of WAN link to use (default 80)
+            agent_count              — used to auto-derive max_concurrent
+            agent_concurrent_vms     — used to auto-derive max_concurrent
+        proposed_bottleneck_mbps: the bandwidth figure from compute_bandwidth_model.
+
+    Returns:
+        (effective_mbps, max_concurrent, warnings)
+    """
+    throttle_mbps = float(project_settings.get("throttle_mbps") or 0)
+    max_concurrent = int(project_settings.get("max_concurrent_migrations") or 0)
+    wan_bandwidth_mbps = float(project_settings.get("wan_bandwidth_mbps") or 0)
+    utilization_target = float(project_settings.get("utilization_target_pct") or 80) / 100.0
+
+    warnings: List[str] = []
+
+    # Apply throttle cap
+    effective_mbps = proposed_bottleneck_mbps
+    if throttle_mbps > 0 and throttle_mbps < proposed_bottleneck_mbps:
+        effective_mbps = throttle_mbps
+        warnings.append(
+            f"Throttle cap applied: {throttle_mbps:.0f} Mbps < "
+            f"bottleneck {proposed_bottleneck_mbps:.0f} Mbps"
+        )
+
+    # Validate max_concurrent vs WAN budget
+    if wan_bandwidth_mbps > 0 and max_concurrent > 0:
+        budget_mbps = wan_bandwidth_mbps * utilization_target
+        total_alloc = effective_mbps  # the full pipe shared across concurrent VMs
+        if total_alloc > budget_mbps:
+            warnings.append(
+                f"Concurrent allocation {total_alloc:.0f} Mbps exceeds "
+                f"WAN budget {budget_mbps:.0f} Mbps "
+                f"({wan_bandwidth_mbps:.0f} x {utilization_target * 100:.0f}%)"
+            )
+
+    # Auto-derive max_concurrent when not explicitly set
+    if max_concurrent <= 0:
+        agent_count = int(project_settings.get("agent_count") or 2)
+        concurrent_per_agent = int(project_settings.get("agent_concurrent_vms") or 5)
+        max_concurrent = agent_count * concurrent_per_agent
+
+    return (effective_mbps, max_concurrent, warnings)

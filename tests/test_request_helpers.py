@@ -15,6 +15,10 @@ _API_DIR = os.path.join(os.path.dirname(__file__), "..", "api")
 if _API_DIR not in sys.path:
     sys.path.insert(0, _API_DIR)
 
+# Evict any stub registered by an earlier test file (e.g. test_rbac_middleware.py
+# registers a minimal request_helpers stub so auth.py can be imported).
+sys.modules.pop("request_helpers", None)
+
 from request_helpers import get_request_ip  # noqa: E402
 
 

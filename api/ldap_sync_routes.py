@@ -199,6 +199,12 @@ class GroupMappingIn(BaseModel):
         return v
 
 
+class DeptMappingIn(BaseModel):
+    """Maps an LDAP/AD group DN to a pf9-mngt department name."""
+    external_group_dn: str = Field(..., min_length=1, max_length=512)
+    department_name: str = Field(..., min_length=1, max_length=255)
+
+
 class LdapSyncConfigCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     host: str = Field(..., min_length=1, max_length=255)
@@ -219,6 +225,7 @@ class LdapSyncConfigCreate(BaseModel):
     is_enabled: bool = True
     sync_interval_minutes: int = Field(default=60, ge=1, le=10080)
     group_mappings: List[GroupMappingIn] = []
+    dept_mappings: List[DeptMappingIn] = []
 
 
 class LdapSyncConfigUpdate(BaseModel):
@@ -242,6 +249,7 @@ class LdapSyncConfigUpdate(BaseModel):
     is_enabled: Optional[bool] = None
     sync_interval_minutes: Optional[int] = Field(default=None, ge=1, le=10080)
     group_mappings: Optional[List[GroupMappingIn]] = None
+    dept_mappings: Optional[List[DeptMappingIn]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +291,28 @@ def _upsert_group_mappings(conn, config_id: int, mappings: List[GroupMappingIn])
                 "INSERT INTO ldap_sync_group_mappings (config_id, external_group_dn, pf9_role) "
                 "VALUES (%s, %s, %s)",
                 (config_id, m.external_group_dn, m.pf9_role),
+            )
+
+
+def _fetch_dept_mappings(conn, config_id: int) -> List[dict]:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            "SELECT id, external_group_dn, department_name "
+            "FROM ldap_sync_dept_mappings "
+            "WHERE config_id = %s ORDER BY id",
+            (config_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def _upsert_dept_mappings(conn, config_id: int, mappings: List[DeptMappingIn]) -> None:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM ldap_sync_dept_mappings WHERE config_id = %s", (config_id,))
+        for m in mappings:
+            cur.execute(
+                "INSERT INTO ldap_sync_dept_mappings (config_id, external_group_dn, department_name) "
+                "VALUES (%s, %s, %s)",
+                (config_id, m.external_group_dn, m.department_name),
             )
 
 
@@ -417,6 +447,8 @@ async def create_config(
             )
             new_row = dict(cur.fetchone())
         _upsert_group_mappings(conn, new_row["id"], body.group_mappings)
+        if body.dept_mappings:
+            _upsert_dept_mappings(conn, new_row["id"], body.dept_mappings)
         conn.commit()
 
     log_auth_event(
@@ -530,6 +562,9 @@ async def update_config(
 
         if body.group_mappings is not None:
             _upsert_group_mappings(conn, config_id, body.group_mappings)
+
+        if body.dept_mappings is not None:
+            _upsert_dept_mappings(conn, config_id, body.dept_mappings)
 
         conn.commit()
 
@@ -864,3 +899,72 @@ def _attr(attrs: dict, key: str) -> str:
         v = vals[0]
         return v.decode("utf-8", errors="replace") if isinstance(v, bytes) else str(v)
     return ""
+
+
+# ---------------------------------------------------------------------------
+# B13.3 — Department Mapping Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/configs/{config_id}/dept-mappings")
+async def list_dept_mappings(
+    config_id: int,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return all LDAP group → department mappings for a config."""
+    _require_superadmin(current_user)
+    with get_connection() as conn:
+        _fetch_config(conn, config_id)  # 404-check
+        mappings = _fetch_dept_mappings(conn, config_id)
+    return {"config_id": config_id, "dept_mappings": mappings}
+
+
+@router.post("/configs/{config_id}/dept-mappings", status_code=status.HTTP_201_CREATED)
+async def set_dept_mappings(
+    config_id: int,
+    mappings: List[DeptMappingIn],
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Replace (full replace) all dept mappings for a config."""
+    _require_superadmin(current_user)
+    with get_connection() as conn:
+        _fetch_config(conn, config_id)  # 404-check
+        _upsert_dept_mappings(conn, config_id, mappings)
+        conn.commit()
+        saved = _fetch_dept_mappings(conn, config_id)
+    log_auth_event(
+        "ldap_sync_dept_mappings_updated",
+        current_user.username,
+        f"Set {len(mappings)} dept mapping(s) for config {config_id}",
+    )
+    return {"config_id": config_id, "dept_mappings": saved}
+
+
+@router.delete(
+    "/configs/{config_id}/dept-mappings/{mapping_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_dept_mapping(
+    config_id: int,
+    mapping_id: int,
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a single dept mapping by its ID."""
+    _require_superadmin(current_user)
+    with get_connection() as conn:
+        _fetch_config(conn, config_id)  # 404-check
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM ldap_sync_dept_mappings WHERE id = %s AND config_id = %s",
+                (mapping_id, config_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND,
+                    f"Dept mapping {mapping_id} not found for config {config_id}",
+                )
+        conn.commit()
+    log_auth_event(
+        "ldap_sync_dept_mapping_deleted",
+        current_user.username,
+        f"Deleted dept mapping {mapping_id} from config {config_id}",
+    )

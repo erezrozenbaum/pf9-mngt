@@ -396,6 +396,10 @@ class UpdateProjectRequest(BaseModel):
     executive_summary: Optional[str] = None
     technical_notes: Optional[str] = None
     use_maintenance_windows: Optional[bool] = None
+    # B13.2 — WAN / QoS fields
+    wan_bandwidth_mbps: Optional[float] = None
+    throttle_mbps: Optional[float] = None
+    max_concurrent_migrations: Optional[int] = None
 
 
 class UpdateVMRequest(BaseModel):

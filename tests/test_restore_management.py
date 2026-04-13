@@ -52,13 +52,21 @@ _fastapi_stub.Request = MagicMock
 _fastapi_stub.status = types.SimpleNamespace(HTTP_404_NOT_FOUND=404, HTTP_400_BAD_REQUEST=400)
 sys.modules.setdefault("fastapi", _fastapi_stub)
 
-# Stub pydantic
-_pydantic_stub = types.ModuleType("pydantic")
-class _BaseModel:
-    pass
-_pydantic_stub.BaseModel = _BaseModel
-_pydantic_stub.Field = lambda *a, **kw: None
-sys.modules.setdefault("pydantic", _pydantic_stub)
+# Stub pydantic only if real pydantic v2 is not already available
+if "pydantic" not in sys.modules:
+    try:
+        import pydantic as _rpyd
+        if not hasattr(_rpyd, "ValidationInfo"):
+            raise ImportError("old pydantic")
+        # Real pydantic v2 available — no stub needed
+    except ImportError:
+        _pydantic_stub = types.ModuleType("pydantic")
+        class _BaseModel:
+            pass
+        _pydantic_stub.BaseModel = _BaseModel
+        _pydantic_stub.Field = lambda *a, **kw: None
+        _pydantic_stub.ValidationInfo = MagicMock()
+        sys.modules["pydantic"] = _pydantic_stub
 
 # Stub auth — force-set to override any stub installed by an earlier test module
 # (test_cluster_routes.py registers an incomplete auth stub via setdefault)

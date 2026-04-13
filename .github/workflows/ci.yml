@@ -132,7 +132,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: pip install pytest python-jose requests cryptography
+        run: pip install pytest pytest-asyncio python-jose requests cryptography
 
       - name: Run JWT unit tests
         run: python -m pytest tests/test_auth.py::TestJWTHelpers -v
@@ -271,7 +271,10 @@ jobs:
           DEFAULT_ADMIN_PASSWORD: ${{ env.CI_ADMIN_PASS }}
         run: python tests/seed_ci.py
 
-      - name: Run full test suite
+      - name: Install coverage tool
+        run: pip install pytest-cov pytest-asyncio
+
+      - name: Run full test suite with coverage
         env:
           TEST_API_URL: http://localhost:8000
           TEST_MON_URL: http://localhost:8001
@@ -281,9 +284,23 @@ jobs:
           TEST_SUPERADMIN_PASSWORD: ${{ env.CI_ADMIN_PASS }}
           TEST_VERIFY_SSL: "false"
         run: |
+          # Run the full suite with coverage.
+          # --cov-fail-under=40 is the gate for v1.83.47; target 50% by v1.83.50.
           python -m pytest tests/ -v \
             --ignore=tests/seed_ci.py \
-            -k "not TestContainerAlertAPI or (TestContainerAlertAPI and not test_put_requires_superadmin)"
+            -k "not TestContainerAlertAPI or (TestContainerAlertAPI and not test_put_requires_superadmin)" \
+            --cov=api \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=40
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14
 
       - name: Dump logs on failure
         if: failure()

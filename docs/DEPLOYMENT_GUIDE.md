@@ -1561,7 +1561,9 @@ docker exec pf9_db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
   -c "SELECT filename, applied_at FROM schema_migrations ORDER BY applied_at;"
 ```
 
-There are currently ~55 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+There are currently ~66 migration files. All use `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` — safe to re-run at any time.
+
+**v1.83.47** adds `db/migrate_v1_83_47.sql`: three new columns on `migration_projects` (`wan_bandwidth_mbps`, `throttle_mbps`, `max_concurrent_migrations`) and a new `ldap_sync_dept_mappings` table. Apply with `docker exec pf9_api python run_migration.py` or `kubectl exec ... -- python run_migration.py`.
 
 > **Manual fallback (single file only):** If you need to apply one specific file outside the runner:
 > ```bash

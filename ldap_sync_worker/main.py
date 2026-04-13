@@ -201,6 +201,58 @@ def _fetch_group_mappings(conn, config_id: int) -> Dict[str, str]:
         return {r["external_group_dn"]: r["pf9_role"] for r in cur.fetchall()}
 
 
+def _fetch_dept_mappings_worker(conn, config_id: int) -> Dict[str, str]:
+    """Return {external_group_dn: department_name} for this config."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT external_group_dn, department_name FROM ldap_sync_dept_mappings "
+            "WHERE config_id = %s",
+            (config_id,),
+        )
+        return {r["external_group_dn"]: r["department_name"] for r in cur.fetchall()}
+
+
+def _determine_departments(attrs: dict, dept_mappings: Dict[str, str]) -> List[str]:
+    """Return a list of department names matching the user's group memberships."""
+    if not dept_mappings:
+        return []
+    member_of_raw = attrs.get("memberOf", [])
+    member_of = [
+        g.decode("utf-8", errors="replace") if isinstance(g, bytes) else g
+        for g in member_of_raw
+    ]
+    dept_names: List[str] = []
+    for group_dn in member_of:
+        dept = dept_mappings.get(group_dn)
+        if dept and dept not in dept_names:
+            dept_names.append(dept)
+    return dept_names
+
+
+def _sync_user_departments(db_conn, username: str, dept_names: List[str]) -> None:
+    """
+    Assign the first matching department (by sort_order) to user_roles.department_id.
+    No-op if dept_names is empty or no matching department found.
+    """
+    if not dept_names:
+        return
+    with db_conn.cursor() as cur:
+        # Fetch matching departments ordered by sort_order (lowest = highest priority)
+        cur.execute(
+            "SELECT id FROM departments WHERE name = ANY(%s) ORDER BY sort_order ASC LIMIT 1",
+            (dept_names,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return
+    dept_id = row["id"]
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE user_roles SET department_id = %s WHERE username = %s",
+            (dept_id, username),
+        )
+
+
 def _invalidate_sessions(conn, username: str) -> None:
     """Mark all active sessions for *username* as expired."""
     now = datetime.now(timezone.utc)
@@ -386,6 +438,7 @@ def _run_sync_inner(db_conn, config_id: int, started_at: datetime) -> None:
             raise RuntimeError("Cannot decrypt external LDAP bind password")
 
         group_mappings = _fetch_group_mappings(db_conn, config_id)
+        dept_mappings = _fetch_dept_mappings_worker(db_conn, config_id)
 
         # Open external LDAP connection
         ext_conn = _open_external_conn(cfg)
@@ -416,6 +469,7 @@ def _run_sync_inner(db_conn, config_id: int, started_at: datetime) -> None:
             seen_uids.add(uid)
 
             role = _determine_role(attrs, group_mappings)
+            dept_names = _determine_departments(attrs, dept_mappings)
 
             entry_result = {"uid": uid, "action": None, "error": None}
             try:
@@ -452,6 +506,8 @@ def _run_sync_inner(db_conn, config_id: int, started_at: datetime) -> None:
                         )
                     entry_result["action"] = "created"
                     users_created += 1
+                # Sync department assignment after create/update
+                _sync_user_departments(db_conn, uid, dept_names)
             except Exception as exc:
                 entry_result["error"] = str(exc)
                 log.warning("[config=%d] Error processing user '%s': %s", config_id, uid, exc)

@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.83.46] - 2026-04-12
+## [1.83.47] - 2026-04-13
+
+### Added
+- **Test coverage expansion** (`tests/`): Added 4 new test files covering previously untested API modules (migration engine, snapshot scheduler, RBAC middleware, runbook execution) and a CI coverage gate (`--cov-fail-under=40`) in the integration-tests pipeline. All tests are CI-isolated with no live DB or LDAP dependencies.
+- **WAN bandwidth estimation for migration projects** (`api/migration_engine.py`): New `compute_wan_estimation(vms, wan_bandwidth_mbps)` function calculates per-VM and total estimated transfer hours for a given WAN link budget, defaulting to 100 Mbps when no bandwidth is configured.
+- **QoS / throttle model for migration projects** (`api/migration_engine.py`, `api/migration_routes.py`): New `apply_qos_constraints()` enforces per-project throttle and concurrency limits, returning effective bandwidth, max concurrent migrations, and warnings when limits are binding. `PATCH /api/migration/projects/{id}` now accepts `wan_bandwidth_mbps`, `throttle_mbps`, and `max_concurrent_migrations` fields.
+- **LDAP group → department mapping** (`api/ldap_sync_routes.py`, `ldap_sync_worker/main.py`, `db/migrate_v1_83_47.sql`): LDAP sync configs now support a `dept_mappings` list mapping external LDAP group DNs to internal department names. New endpoints: `GET/POST /admin/ldap-sync/configs/{id}/dept-mappings` and `DELETE /admin/ldap-sync/configs/{id}/dept-mappings/{mapping_id}`. On each sync cycle the worker resolves each user's `memberOf` groups and automatically updates `user_roles.department_id`. DB schema: new `ldap_sync_dept_mappings` table with cascade-delete from `ldap_sync_config`.
+
+
 
 ### Fixed
 - **nginx routing: `/metrics/*` now proxied to monitoring service** (`nginx/nginx.conf`): The dev nginx config was missing the `pf9_monitoring` upstream and the `location ^~ /metrics/` block. All browser requests for `/metrics/vms`, `/metrics/hosts`, `/metrics/summary`, and `/metrics/alerts` were being matched by the catch-all regex and routed to `pf9_api` (which has no such routes), causing 404s and forcing the UI to always fall back to the DB endpoints. Added `upstream pf9_monitoring { server pf9_monitoring:8001; }` and `location ^~ /metrics/ { proxy_pass http://pf9_monitoring; }` before the regex block, mirroring what `nginx.prod.conf` already had correctly. The existing `location = /metrics` exact-match block is preserved so the `/metrics` Prometheus scrape endpoint on `pf9_api` continues to work.
