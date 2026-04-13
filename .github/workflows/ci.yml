@@ -243,12 +243,37 @@ jobs:
       - name: Build and start stack
         run: docker compose up --build -d
 
-      - name: Wait for pf9_api to be healthy (up to 3 minutes)
+      - name: Wait for db schema to be ready
+        # The db healthcheck checks for the 'servers' table (see docker-compose.yml).
+        # pf9_api has condition: service_healthy on db, so it won't start until this
+        # passes. We poll here too so the next step only waits for pf9_api itself.
+        run: |
+          echo "Waiting for db schema (servers table) to be present..."
+          timeout 300 bash -c \
+            "until docker inspect --format='{{.State.Health.Status}}' pf9_db 2>/dev/null | grep -q '^healthy$'; do
+               echo '  db still initialising...'; sleep 5
+             done"
+          echo "Database schema ready."
+
+      - name: Show early container state
+        # Always show container state + api startup log immediately after db is ready.
+        # This output is visible even when the pf9_api health wait times out, giving
+        # enough context to diagnose startup failures without a separate run.
+        if: always()
+        run: |
+          echo "=== Container states ==="
+          docker compose ps
+          echo ""
+          echo "=== pf9_api boot log (first 60 lines) ==="
+          docker compose logs --tail=60 pf9_api || true
+
+      - name: Wait for pf9_api to be healthy (up to 5 minutes)
         run: |
           echo "Waiting for pf9_api healthcheck..."
-          timeout 180 bash -c \
+          timeout 300 bash -c \
             "until docker inspect --format='{{.State.Health.Status}}' pf9_api 2>/dev/null | grep -q '^healthy$'; do
-               echo '  still waiting...'; sleep 8
+               status=\$(docker inspect --format='{{.State.Health.Status}}' pf9_api 2>/dev/null)
+               echo \"  still waiting... (status: \${status:-not_started})\"; sleep 8
              done"
           echo "pf9_api is healthy."
 
@@ -311,12 +336,14 @@ jobs:
       - name: Dump logs on failure
         if: failure()
         run: |
-          echo "=== pf9_api logs (last 100 lines) ==="
-          docker compose logs --tail=100 pf9_api
-          echo "=== pf9_monitoring logs (last 50 lines) ==="
-          docker compose logs --tail=50 pf9_monitoring
+          echo "=== pf9_api logs (last 150 lines) ==="
+          docker compose logs --tail=150 pf9_api
           echo "=== pf9_db logs (last 50 lines) ==="
           docker compose logs --tail=50 db
+          echo "=== pf9_monitoring logs (last 50 lines) ==="
+          docker compose logs --tail=50 pf9_monitoring
+          echo "=== Container final states ==="
+          docker compose ps
 
       - name: Tear down stack
         if: always()
