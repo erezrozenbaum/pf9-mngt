@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.52  
-**Last Updated**: April 14, 2026  
+**Version**: 1.83.53  
+**Last Updated**: April 13, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -605,6 +605,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.53 — Code Quality Fixes (✅ Complete)
+
+- **search_worker duplicate metrics block removed** (`search_worker/main.py`): A duplicate definition of `_REDIS_HOST`, `_REDIS_PORT`, `_WORKER_NAME`, `_worker_runs_total`, `_worker_errors_total` globals and `_report_worker_metrics()` caused run/error counters to reset to zero on every module import (Python silently replaced the first definition with the second). Stacked `@retry` on `get_conn()` (two identical decorators) produced 9 reconnect attempts instead of 3, with double the maximum wait time. Removed second duplicate block and excess decorator.
+- **scheduler_worker graceful shutdown** (`scheduler_worker/main.py`): `executor.shutdown(wait=False)` abandoned `ThreadPoolExecutor` threads running `run_in_executor` jobs on SIGTERM before they could finish. Changed to `executor.shutdown(wait=True)` so the scheduler joins all in-flight threads before the process exits.
 
 ### v1.83.52 — Worker Observability, LDAP Conflict Strategy, Frontend Resilience (✅ Complete)
 

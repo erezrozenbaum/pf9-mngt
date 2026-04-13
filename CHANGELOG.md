@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.53] - 2026-04-13
+
+### Fixed
+- **search_worker duplicate metrics block** (`search_worker/main.py`): Duplicate definitions of `_REDIS_HOST`, `_REDIS_PORT`, `_WORKER_NAME`, `_worker_runs_total`, `_worker_errors_total` globals and `_report_worker_metrics()` caused run/error counters to reset to zero on every module import (Python silently replaces the first definition). Stacked `@retry` decorator on `get_conn()` (two identical decorators applied) produced 9 reconnect attempts instead of 3 and doubled maximum wait time. Removed second duplicate block and excess decorator.
+- **scheduler_worker thread orphaning on shutdown** (`scheduler_worker/main.py`): `executor.shutdown(wait=False)` allowed `ThreadPoolExecutor` threads running `run_in_executor` jobs to be abandoned on SIGTERM before completing. Changed to `executor.shutdown(wait=True)` so the scheduler joins all in-flight threads before the process exits.
+
 ## [1.83.52] - 2026-04-14
 
 ### Added

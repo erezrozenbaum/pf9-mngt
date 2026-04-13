@@ -562,7 +562,7 @@ async def async_main() -> None:
             t.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        executor.shutdown(wait=False)
+        executor.shutdown(wait=True)
         log.info("PF9 Scheduler Worker stopped.")
 
 
