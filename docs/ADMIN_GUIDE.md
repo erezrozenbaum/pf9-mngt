@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.50  
+**Version**: 1.83.51  
 **Last Updated**: April 12, 2026  
 **Audience**: System administrators and platform operators
 
@@ -605,6 +605,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.51 — Deployment Reliability + CI Fixes (✅ Complete)
+
+- **API startup race condition fixed** (`docker-compose.yml`): Added a schema-presence healthcheck to the `db` service and set `pf9_api` to `condition: service_healthy` in `depends_on`. Previously the API started while `init.sql` was still running on fresh volumes, causing `startup_event()` to fail and the container healthcheck to time out. Now the API only starts after the full schema (tables + indexes) is confirmed present.
+- **ESLint OOM SIGKILL in CI fixed** (`.github/workflows/ci.yml`): Merged TypeScript type-check and ESLint into a single container invocation (`npm run typecheck && npm run lint`). The second separate container startup was being killed by the runner OOM killer while residual page-cache from the tsc run was still allocated.
 
 ### v1.83.50 — Database Performance Indexes + Referential Integrity (✅ Complete)
 

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.51] - 2026-04-13
+
+### Fixed
+- **API startup race condition eliminated** (`docker-compose.yml`): `pf9_api` previously started as soon as the `db` container process was up — before `init.sql` had finished creating tables and indexes. On a fresh volume (CI, new deployments) this caused `startup_event()` to run against an incomplete schema, blocking gunicorn workers and causing the healthcheck to time out. Added a `pg_isready`+schema-presence healthcheck to the `db` service (`interval: 5s`, `retries: 60`) and upgraded `pf9_api`'s `depends_on` to `condition: service_healthy`, so the API only starts after the schema is fully initialized.
+
+### CI
+- **ESLint OOM SIGKILL resolved** (`.github/workflows/ci.yml`): `typescript-eslint` was being killed by the runner OOM killer on the second `docker compose run` call while residual page-cache from the tsc container was still mapped. Merged tsc and eslint into a single `sh -c "npm run typecheck && npm run lint"` in one container invocation — tsc's memory is fully reclaimed before eslint starts, keeping peak RSS within the runner's 7 GB limit.
+
 ## [1.83.50] - 2026-04-13
 
 ### Performance

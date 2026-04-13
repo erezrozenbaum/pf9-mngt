@@ -15,6 +15,15 @@ services:
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
+    # Healthcheck waits until init.sql has completed by checking that the
+    # 'servers' table exists (created by init.sql).  pf9_api uses
+    # condition: service_healthy so it never starts before the schema is ready.
+    healthcheck:
+      test: ["CMD-SHELL", "psql -U $$POSTGRES_USER -d $$POSTGRES_DB -tc \"SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='servers'\" 2>/dev/null | grep -q 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 60
+      start_period: 5s
     deploy:
       resources:
         limits:
@@ -146,9 +155,12 @@ services:
       - ./notifications/templates:/app/notification_templates:ro
       - ./docs:/app/docs:ro
     depends_on:
-      - db
-      - ldap
-      - redis
+      db:
+        condition: service_healthy   # wait for init.sql to finish
+      ldap:
+        condition: service_started   # non-fatal if not yet ready — startup_event handles it gracefully
+      redis:
+        condition: service_started
     restart: unless-stopped
     logging:
       driver: "json-file"
