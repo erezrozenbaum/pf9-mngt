@@ -309,7 +309,9 @@ jobs:
         # import the real auth module (test_rbac_middleware.py) and the real
         # snapshot_management module (test_snapshot_scheduler.py).  Without them
         # the test runner raises ModuleNotFoundError / AttributeError.
-        run: pip install pytest-cov pytest-asyncio fastapi pydantic passlib python-jose
+        # tenacity + redis are imported by backup_worker/main.py at module level
+        # (added in v1.83.52 for worker resilience / observability).
+        run: pip install pytest-cov pytest-asyncio fastapi pydantic passlib python-jose tenacity redis
 
       - name: Run full test suite with coverage
         env:
