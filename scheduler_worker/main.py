@@ -30,8 +30,39 @@ import os
 import signal
 import subprocess
 import sys
+import time as _time_module
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import requests as _requests_mod
+
+# ---------------------------------------------------------------------------
+# Worker observability — Redis metrics (B10.1)
+# ---------------------------------------------------------------------------
+_REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+_REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+_WORKER_NAME = "scheduler_worker"
+_worker_runs_total   = 0
+_worker_errors_total = 0
+
+def _report_worker_metrics(duration_s: float, had_error: bool, frequency_s: int) -> None:
+    global _worker_runs_total, _worker_errors_total
+    _worker_runs_total += 1
+    if had_error:
+        _worker_errors_total += 1
+    try:
+        import redis as _redis
+        r = _redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
+        r.hset(f"pf9:worker:{_WORKER_NAME}", mapping={
+            "runs_total":          _worker_runs_total,
+            "errors_total":        _worker_errors_total,
+            "last_run_ts":         _time_module.time(),
+            "last_run_duration_s": round(duration_s, 2),
+            "frequency_s":         frequency_s,
+            "label":               _WORKER_NAME,
+        })
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # Configuration from environment
@@ -123,6 +154,11 @@ def _decrypt_password(password_enc: str) -> str:
     return password_enc  # plaintext fallback (legacy)
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, min=1, max=10),
+    reraise=True,
+)
 def _get_db_conn():
     import psycopg2  # local import – psycopg2 may not be installed in all envs
     return psycopg2.connect(
@@ -466,6 +502,18 @@ async def async_main() -> None:
     global _shutdown_event
     _shutdown_event = asyncio.Event()
 
+    async def _heartbeat_loop() -> None:
+        """Report scheduler worker liveness to Redis once per METRICS_INTERVAL."""
+        _hb_runs = 0
+        while _running:
+            _t0 = _time_module.time()
+            _hb_runs += 1
+            _report_worker_metrics(0.0, False, METRICS_INTERVAL)
+            for _ in range(METRICS_INTERVAL):
+                if not _running:
+                    break
+                await asyncio.sleep(1)
+
     if RVTOOLS_INTERVAL_MINUTES > 0:
         rvtools_mode = f"every {RVTOOLS_INTERVAL_MINUTES} minute(s)"
     else:
@@ -495,6 +543,7 @@ async def async_main() -> None:
             tasks.append(asyncio.create_task(metrics_loop(), name="metrics"))
         if RVTOOLS_ENABLED:
             tasks.append(asyncio.create_task(rvtools_loop(executor), name="rvtools"))
+        tasks.append(asyncio.create_task(_heartbeat_loop(), name="heartbeat"))
 
         if not tasks:
             log.warning(

@@ -31,6 +31,35 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 import psycopg2.extras
 import requests
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# ---------------------------------------------------------------------------
+# Worker observability — Redis metrics (B10.1)
+# ---------------------------------------------------------------------------
+_REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+_REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+_WORKER_NAME = "metering_worker"
+_worker_runs_total   = 0
+_worker_errors_total = 0
+
+def _report_worker_metrics(duration_s: float, had_error: bool, frequency_s: int) -> None:
+    global _worker_runs_total, _worker_errors_total
+    _worker_runs_total += 1
+    if had_error:
+        _worker_errors_total += 1
+    try:
+        import redis as _redis
+        r = _redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
+        r.hset(f"pf9:worker:{_WORKER_NAME}", mapping={
+            "runs_total":          _worker_runs_total,
+            "errors_total":        _worker_errors_total,
+            "last_run_ts":         time.time(),
+            "last_run_duration_s": round(duration_s, 2),
+            "frequency_s":         frequency_s,
+            "label":               _WORKER_NAME,
+        })
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # Secret helper — same pattern as ldap_sync_worker
@@ -87,6 +116,12 @@ signal.signal(signal.SIGTERM, _handle_signal)
 # ---------------------------------------------------------------------------
 # Database helpers
 # ---------------------------------------------------------------------------
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, min=1, max=10),
+    retry=retry_if_exception_type(psycopg2.OperationalError),
+    reraise=True,
+)
 def get_conn():
     return psycopg2.connect(
         host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
@@ -987,7 +1022,13 @@ def main():
     while not _shutdown:
         now = time.time()
         if now - last_run >= effective_interval:
-            run_collection_cycle()
+            _cycle_start = time.time()
+            _cycle_error = False
+            try:
+                run_collection_cycle()
+            except Exception:
+                _cycle_error = True
+            _report_worker_metrics(time.time() - _cycle_start, _cycle_error, effective_interval)
             last_run = time.time()
         _touch_alive()  # heartbeat — liveness probe checks /tmp/alive mtime
         time.sleep(min(30, effective_interval))  # wake up every 30s to check shutdown

@@ -546,7 +546,7 @@ export default function TicketsTab({
                 <span className="tt-stat tt-stat-breach">SLA Breach: <strong>{stats.sla_breached}</strong></span>
               )}
               {(stats as any).resolved_today > 0 && (
-                <span className="tt-stat" style={{color:"#10b981"}}>Resolved today: <strong>{(stats as any).resolved_today}</strong></span>
+                <span className="tt-stat" style={{color:"var(--color-success)"}}>Resolved today: <strong>{(stats as any).resolved_today}</strong></span>
               )}
               {(stats as any).opened_today > 0 && (
                 <span className="tt-stat" style={{color:"#f59e0b"}}>Opened today: <strong>{(stats as any).opened_today}</strong></span>
@@ -1117,7 +1117,7 @@ function AdminPanel({
                   <div key={row.dept_name} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                     <span style={{minWidth:120,fontSize:"0.88em",fontWeight:500}}>{row.dept_name}</span>
                     <div style={{flex:1,height:14,background:"rgba(128,128,128,0.1)",borderRadius:4,overflow:"hidden"}}>
-                      <div style={{width:`${Math.min((row.avg_resolution_hours/48)*100,100)}%`,height:"100%",background:"#10b981",borderRadius:4}} />
+                      <div style={{width:`${Math.min((row.avg_resolution_hours/48)*100,100)}%`,height:"100%",background:"var(--color-success)",borderRadius:4}} />
                     </div>
                     <span style={{minWidth:60,fontSize:"0.82em",textAlign:"right"}}>{row.avg_resolution_hours}h</span>
                   </div>

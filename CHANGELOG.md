@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.83.52] - 2026-04-14
+
+### Added
+- **Worker observability: Prometheus-format metrics endpoint** (`api/main.py`): New `GET /worker-metrics` endpoint returns per-worker Prometheus text metrics — `worker_runs_total`, `worker_errors_total`, `worker_up` (stale-detection: 0 when last run > 2× frequency ago), and `worker_last_run_duration_seconds`. Reads live data from Redis hashes `pf9:worker:<name>` written by each worker on every loop iteration.
+- **Worker resilience: Redis metrics sink + tenacity DB retry** (all workers): All five background workers (`backup_worker`, `scheduler_worker`, `metering_worker`, `search_worker`, `ldap_sync_worker`) now report heartbeat metrics to Redis after every loop cycle. PostgreSQL connection functions are decorated with `@retry(stop_after_attempt(3), wait_exponential(...))` — transient network blips no longer crash the worker process. `REDIS_HOST`/`REDIS_PORT` env vars added to all worker services in `docker-compose.yml`.
+- **LDAP sync conflict strategy** (`ldap_sync_config` table, `api/ldap_sync_routes.py`, `ldap_sync_worker`): New `conflict_strategy` column (`ldap_wins` default | `local_wins`) controls whether LDAP attribute updates override locally-modified user records. API create/update endpoints expose the setting; the sync worker honours it per-config.
+- **Frontend request timeouts and retry with offline banner** (`pf9-ui/src/lib/api.ts`, `App.tsx`): `apiFetch` now wraps every request in an `AbortController` (30 s default, 120 s for export/backup/reports paths). GET requests retry up to 3× with exponential backoff (1 s → 2 s → 4 s). After all retries fail a `pf9:connection:offline` custom event is dispatched; `App.tsx` shows a dismissable red banner. Recovery dispatches `pf9:connection:online` and auto-hides the banner.
+- **Real dashboard alert counts** (`api/dashboards.py`): `GET /api/dashboard/health-summary` now returns actual `critical_count` (failed `runbook_executions` in last 24 h), `warnings_count` (failed `snapshot_runs` in last 24 h), and `alerts_count = critical + warnings` instead of hardcoded zeros. Tenant summary endpoint returns real `snapshot_sla_status` (`compliant` / `at_risk`) based on recent snapshot failures per tenant.
+
+### Changed
+- **CSS design-token consistency** (`RunbooksTab.tsx`, `MigrationPlannerTab.tsx`, `TicketsTab.tsx`, `index.css`): Replaced hardcoded hex colours (`#22c55e`, `#ef4444`, `#ffc107`, `#10b981`, `#6b7280`, `#dc2626`, `#fef2f2`) with CSS variables (`--color-success`, `--color-error`, `--color-warning`, `--color-text-secondary`). Added `--color-error-bg: #fef2f2` to the palette.
+
+### DB schema
+- `ALTER TABLE ldap_sync_config ADD COLUMN IF NOT EXISTS conflict_strategy VARCHAR(20) NOT NULL DEFAULT 'ldap_wins'` (`db/migrate_B10_B11.sql`). Applied to local Docker and Kubernetes production databases.
+
 ## [1.83.51] - 2026-04-13
 
 ### Fixed

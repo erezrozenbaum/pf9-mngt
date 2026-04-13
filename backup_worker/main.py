@@ -23,6 +23,37 @@ import time
 
 import psycopg2
 import psycopg2.extras
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# ---------------------------------------------------------------------------
+# Worker observability — Redis metrics (B10.1)
+# ---------------------------------------------------------------------------
+_REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+_REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+_WORKER_NAME = "backup_worker"
+_worker_runs_total   = 0
+_worker_errors_total = 0
+
+def _report_worker_metrics(duration_s: float, had_error: bool, frequency_s: int) -> None:
+    """Write run counters to Redis so /worker-metrics can aggregate them.
+    Silently no-ops when Redis is unreachable — metrics are best-effort."""
+    global _worker_runs_total, _worker_errors_total
+    _worker_runs_total += 1
+    if had_error:
+        _worker_errors_total += 1
+    try:
+        import redis as _redis
+        r = _redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
+        r.hset(f"pf9:worker:{_WORKER_NAME}", mapping={
+            "runs_total":        _worker_runs_total,
+            "errors_total":      _worker_errors_total,
+            "last_run_ts":       time.time(),
+            "last_run_duration_s": round(duration_s, 2),
+            "frequency_s":       frequency_s,
+            "label":             _WORKER_NAME,
+        })
+    except Exception:
+        pass  # Redis unavailable — continue without metrics
 
 # ---------------------------------------------------------------------------
 # Secret helper — same pattern as ldap_sync_worker
@@ -129,6 +160,12 @@ def _check_storage_health() -> bool:
 # Database helpers
 # ---------------------------------------------------------------------------
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, min=1, max=10),
+    retry=retry_if_exception_type(psycopg2.OperationalError),
+    reraise=True,
+)
 def _get_conn():
     return psycopg2.connect(
         host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
@@ -700,6 +737,8 @@ def main():
 
     while _running:
         conn = None
+        _loop_start = time.time()
+        _loop_error = False
         try:
             # Re-verify storage before processing any jobs this cycle
             if not _check_storage_health():
@@ -767,8 +806,11 @@ def main():
                 else:
                     log.debug("Another worker holds the schedule lock; skipping this cycle.")
 
+            _report_worker_metrics(time.time() - _loop_start, _loop_error, JOB_POLL_INTERVAL)
+
         except Exception as exc:
             log.error("Worker loop error: %s", exc)
+            _report_worker_metrics(0.0, True, JOB_POLL_INTERVAL)
         finally:
             if conn:
                 try:

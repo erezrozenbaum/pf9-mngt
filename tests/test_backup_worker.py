@@ -21,6 +21,7 @@ if _BW_DIR not in sys.path:
 # Stub psycopg2 before importing the module
 _psycopg2_stub = types.ModuleType("psycopg2")
 _psycopg2_stub.connect = MagicMock(side_effect=RuntimeError("no DB in tests"))
+_psycopg2_stub.OperationalError = type("OperationalError", (Exception,), {})
 _psycopg2_extras_stub = types.ModuleType("psycopg2.extras")
 _psycopg2_extras_stub.RealDictCursor = MagicMock
 sys.modules.setdefault("psycopg2", _psycopg2_stub)

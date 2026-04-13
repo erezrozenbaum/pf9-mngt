@@ -825,7 +825,7 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
               <div key={i} style={{background:"var(--color-surface-elevated,#f5f5f5)",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
                 <div style={{fontSize:"0.75em",opacity:0.7}}>{kpi.label}</div>
                 <div style={{fontSize:"1.3em",fontWeight:700}}>{kpi.value ?? "—"}</div>
-                {kpi.delta !== undefined && <div style={{fontSize:"0.75em",color:kpi.delta >= 0 ? "#22c55e" : "#ef4444"}}>{kpi.delta >= 0 ? "+" : ""}{kpi.delta}</div>}
+                {kpi.delta !== undefined && <div style={{fontSize:"0.75em",color:kpi.delta >= 0 ? "var(--color-success)" : "var(--color-error)"}}>{kpi.delta >= 0 ? "+" : ""}{kpi.delta}</div>}
               </div>
             ))}
           </div>
@@ -868,7 +868,7 @@ export default function RunbooksTab({ userRole = "" }: { userRole?: string }) {
       ];
       return (
         <div className="rb-result-friendly">
-          <div style={{background:"var(--color-surface-elevated,#fff3cd)",borderRadius:"8px",padding:"12px",marginBottom:"12px",textAlign:"center",border:"1px solid #ffc107"}}>
+          <div style={{background:"var(--color-surface-elevated,#fff3cd)",borderRadius:"8px",padding:"12px",marginBottom:"12px",textAlign:"center",border:"1px solid var(--color-warning)"}}>
             <div style={{fontSize:"0.85em",opacity:0.8}}>Total Estimated Monthly Waste</div>
             <div style={{fontSize:"1.8em",fontWeight:700,color:"#dc3545"}}>${(r.total_monthly_waste || 0).toLocaleString()}/mo</div>
             <div style={{fontSize:"0.8em",opacity:0.7}}>{r.total_items || 0} resources flagged</div>

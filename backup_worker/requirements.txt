@@ -1,3 +1,5 @@
 psycopg2-binary>=2.9
 schedule>=1.2
 requests>=2.31
+redis>=4.6
+tenacity>=8.2

@@ -73,16 +73,16 @@ interface Props {
 /*  Status badge colors                                                */
 /* ------------------------------------------------------------------ */
 const STATUS_COLORS: Record<string, string> = {
-  draft: "#6b7280",
+  draft: "var(--color-text-secondary)",
   assessment: "#3b82f6",
   planned: "#8b5cf6",
   approved: "#10b981",
   preparing: "#f59e0b",
-  ready: "#22c55e",
-  executing: "#ef4444",
+  ready: "var(--color-success)",
+  executing: "var(--color-error)",
   completed: "#16a34a",
   cancelled: "#9ca3af",
-  archived: "#6b7280",
+  archived: "var(--color-text-secondary)",
 };
 
 /* ------------------------------------------------------------------ */
@@ -227,7 +227,7 @@ export default function MigrationPlannerTab({ isAdmin: _isAdmin, onViewTenantGra
       </div>
 
       {error && (
-        <div style={{ background: "#fef2f2", color: "#dc2626", padding: "8px 12px", borderRadius: 6, marginBottom: 12, border: "1px solid #fecaca" }}>
+        <div style={{ background: "var(--color-error-bg, #fef2f2)", color: "var(--color-error)", padding: "8px 12px", borderRadius: 6, marginBottom: 12, border: "1px solid var(--color-error)" }}>
           {error}
         </div>
       )}

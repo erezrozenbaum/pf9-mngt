@@ -72,6 +72,17 @@ export function authHeaders(): Record<string, string> {
  * @returns      Parsed JSON response body cast to T.
  * @throws       Error with the backend `detail` field or 'API error <status>'.
  */
+/** Long-running paths get a 120 s timeout; everything else gets 30 s. */
+function _timeoutMs(path: string): number {
+  return /\/export|\/backup|\/reports/i.test(path) ? 120_000 : 30_000;
+}
+
+/** True when we know connectivity was lost (set by retry logic below). */
+let _wasOffline = false;
+
+/** Retry delays in milliseconds for GET requests. */
+const _RETRY_DELAYS = [1_000, 2_000, 4_000];
+
 export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
   const token = getToken();
   const callerHeaders = (opts?.headers ?? {}) as Record<string, string>;
@@ -80,10 +91,56 @@ export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> 
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...callerHeaders,
   };
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers, credentials: 'include' });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { detail?: string };
-    throw new Error(err.detail ?? `API error ${res.status}`);
+
+  const isGet = !opts?.method || opts.method.toUpperCase() === 'GET';
+  const maxAttempts = isGet ? _RETRY_DELAYS.length + 1 : 1;
+
+  let lastError: Error = new Error('Unknown error');
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>(resolve => setTimeout(resolve, _RETRY_DELAYS[attempt - 1]));
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), _timeoutMs(path));
+
+    try {
+      const res = await fetch(`${API_BASE}${path}`, {
+        ...opts,
+        headers,
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { detail?: string };
+        throw new Error(err.detail ?? `API error ${res.status}`);
+      }
+
+      // Successful response — notify if we recovered from an offline state
+      if (_wasOffline) {
+        _wasOffline = false;
+        window.dispatchEvent(new CustomEvent('pf9:connection:online'));
+      }
+
+      return res.json() as Promise<T>;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      // Don't retry on HTTP errors (4xx / 5xx) — only on network/timeout failures
+      if (lastError.message.startsWith('API error ')) {
+        throw lastError;
+      }
+    }
   }
-  return res.json() as Promise<T>;
+
+  // All retries exhausted — signal offline state
+  if (!_wasOffline) {
+    _wasOffline = true;
+    window.dispatchEvent(new CustomEvent('pf9:connection:offline'));
+  }
+  throw lastError;
 }

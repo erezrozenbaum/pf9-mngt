@@ -69,6 +69,29 @@ async def get_rvtools_last_run():
     return {"last_run": last_run}
 
 
+def _get_alert_counts(conn) -> Dict[str, int]:
+    """Return real critical/warnings/alerts counts from the DB for the last 24 hours."""
+    try:
+        with conn.cursor() as _ac:
+            _ac.execute(
+                "SELECT COUNT(*) FROM runbook_executions "
+                "WHERE status = 'failed' AND created_at > NOW() - INTERVAL '24 hours'"
+            )
+            critical_count = (_ac.fetchone() or [0])[0]
+            _ac.execute(
+                "SELECT COUNT(*) FROM snapshot_runs "
+                "WHERE status = 'failed' AND started_at > NOW() - INTERVAL '24 hours'"
+            )
+            warnings_count = (_ac.fetchone() or [0])[0]
+        return {
+            "critical_count": int(critical_count),
+            "warnings_count": int(warnings_count),
+            "alerts_count": int(critical_count) + int(warnings_count),
+        }
+    except Exception:
+        return {"critical_count": 0, "warnings_count": 0, "alerts_count": 0}
+
+
 def _calculate_metrics_summary(metrics_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Normalize metrics cache and calculate summary stats."""
     avg_cpu: float = 0
@@ -603,6 +626,7 @@ async def get_health_summary(
             # Try to load metrics from cache for utilization data
             metrics_data = _load_metrics_cache()
             metrics_summary = _calculate_metrics_summary(metrics_data)
+            _alert_counts = _get_alert_counts(conn)
         
             return {
                 "total_tenants": counts.get("total_tenants", 0),
@@ -618,9 +642,9 @@ async def get_health_summary(
                 "volumes_without_snapshots": volumes_without_snapshots.get("volumes_without_snapshots", 0),
                 "metrics_host_count": metrics_summary["metrics_host_count"],
                 "metrics_last_update": metrics_summary["metrics_last_update"],
-                "alerts_count": 0,  # Placeholder - can be enhanced
-                "critical_count": 0,  # Placeholder - can be enhanced
-                "warnings_count": 0,  # Placeholder - can be enhanced
+                "alerts_count": _alert_counts["alerts_count"],
+                "critical_count": _alert_counts["critical_count"],
+                "warnings_count": _alert_counts["warnings_count"],
                 "region_id": region_id,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
@@ -1689,9 +1713,24 @@ async def get_tenant_summary():
         
             # Enrich with compliance status (simplified)
             for tenant in tenants:
-                # This could be cached/optimized, but for now a simple check
-                tenant["snapshot_sla_status"] = "compliant"  # Placeholder
-                tenant["recent_errors"] = 0  # Placeholder
+                # Check for recent snapshot failures for this tenant
+                try:
+                    with conn.cursor() as _ts_cur:
+                        _ts_cur.execute(
+                            "SELECT COUNT(*) FROM snapshot_runs sr "
+                            "JOIN snapshots sn ON sn.id = sr.snapshot_id "
+                            "JOIN volumes v ON v.id = sn.volume_id "
+                            "WHERE sr.status = 'failed' "
+                            "AND sr.started_at > NOW() - INTERVAL '48 hours' "
+                            "AND v.project_id = %s",
+                            (tenant["tenant_id"],),
+                        )
+                        _fail_count = (_ts_cur.fetchone() or [0])[0]
+                    tenant["snapshot_sla_status"] = "at_risk" if _fail_count > 0 else "compliant"
+                    tenant["recent_errors"] = int(_fail_count)
+                except Exception:
+                    tenant["snapshot_sla_status"] = "unknown"
+                    tenant["recent_errors"] = 0
         
             return {
                 "tenants": tenants,

@@ -40,6 +40,35 @@ import ldap.filter
 import ldap.modlist
 import psycopg2
 import psycopg2.extras
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# ---------------------------------------------------------------------------
+# Worker observability — Redis metrics (B10.1)
+# ---------------------------------------------------------------------------
+_REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+_REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+_WORKER_NAME = "ldap_sync_worker"
+_worker_runs_total   = 0
+_worker_errors_total = 0
+
+def _report_worker_metrics(duration_s: float, had_error: bool, frequency_s: int) -> None:
+    global _worker_runs_total, _worker_errors_total
+    _worker_runs_total += 1
+    if had_error:
+        _worker_errors_total += 1
+    try:
+        import redis as _redis
+        r = _redis.Redis(host=_REDIS_HOST, port=_REDIS_PORT, socket_connect_timeout=2)
+        r.hset(f"pf9:worker:{_WORKER_NAME}", mapping={
+            "runs_total":          _worker_runs_total,
+            "errors_total":        _worker_errors_total,
+            "last_run_ts":         time.time(),
+            "last_run_duration_s": round(duration_s, 2),
+            "frequency_s":         frequency_s,
+            "label":               _WORKER_NAME,
+        })
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # Configuration from environment / Docker secrets
@@ -155,6 +184,12 @@ def _host_allowed(host: str, allow_private_network: bool) -> bool:
 # Database helpers
 # ---------------------------------------------------------------------------
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.5, min=1, max=10),
+    retry=retry_if_exception_type(psycopg2.OperationalError),
+    reraise=True,
+)
 def _get_db() -> psycopg2.extensions.connection:
     return psycopg2.connect(
         host=DB_HOST, port=DB_PORT, dbname=DB_NAME,
@@ -474,7 +509,20 @@ def _run_sync_inner(db_conn, config_id: int, started_at: datetime) -> None:
             entry_result = {"uid": uid, "action": None, "error": None}
             try:
                 if _user_exists_internal(int_conn, uid):
-                    _update_user_internal(int_conn, uid, mail, cn)
+                    conflict_strategy = cfg.get("conflict_strategy", "ldap_wins")
+                    # If local_wins and user is locally overridden, skip LDAP attribute update
+                    _skip_update = False
+                    if conflict_strategy == "local_wins":
+                        with db_conn.cursor() as _chk:
+                            _chk.execute(
+                                "SELECT locally_overridden FROM user_roles "
+                                "WHERE username = %s AND sync_config_id = %s",
+                                (uid, config_id),
+                            )
+                            _row = _chk.fetchone()
+                            _skip_update = bool(_row and _row[0])
+                    if not _skip_update:
+                        _update_user_internal(int_conn, uid, mail, cn)
                     entry_result["action"] = "updated"
                     # Only update DB role if not locally overridden
                     if role:
@@ -641,6 +689,8 @@ def main() -> None:
 
     # ── Schedule loop ──────────────────────────────────────────────────────
     while _running:
+        _loop_start = time.time()
+        _loop_error = False
         try:
             conn = _get_db()
             configs = _fetch_enabled_configs(conn)
@@ -653,9 +703,12 @@ def main() -> None:
                         _run_sync(conn, cfg["id"])
                     except Exception as exc:
                         log.error("[config=%d] Sync error: %s", cfg["id"], exc)
+                        _loop_error = True
             conn.close()
+            _report_worker_metrics(time.time() - _loop_start, _loop_error, POLL_INTERVAL)
         except Exception as exc:
             log.error("Sync loop iteration error: %s", exc)
+            _report_worker_metrics(time.time() - _loop_start, True, POLL_INTERVAL)
 
         # Sleep in small increments so SIGTERM is handled promptly
         for _ in range(POLL_INTERVAL):

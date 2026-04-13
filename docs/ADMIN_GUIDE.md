@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.51  
-**Last Updated**: April 12, 2026  
+**Version**: 1.83.52  
+**Last Updated**: April 14, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -605,6 +605,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.83.52 — Worker Observability, LDAP Conflict Strategy, Frontend Resilience (✅ Complete)
+
+- **Worker Prometheus metrics** (`GET /worker-metrics`): New Prometheus-format endpoint exposing `worker_runs_total`, `worker_errors_total`, `worker_up`, and `worker_last_run_duration_seconds` for all five background workers. Workers report heartbeat data to Redis after every loop cycle; the endpoint marks a worker stale (`worker_up=0`) if it hasn’t run within 2× its configured frequency.
+- **Worker DB retry resilience** (all workers): `@retry(stop_after_attempt(3), wait_exponential)` on PostgreSQL connection functions prevents transient connectivity blips from crashing worker processes. `REDIS_HOST`/`REDIS_PORT` added to all worker service definitions in `docker-compose.yml`.
+- **LDAP sync conflict strategy** (`ldap_sync_config.conflict_strategy`): Per-config `ldap_wins` (default) or `local_wins` setting controls whether LDAP attribute sync overrides locally-modified user accounts. Configurable via the Admin → LDAP Sync page.
+- **Frontend request reliability** (`apiFetch`): 30-second timeout on all API calls (120 s for exports/backups/reports). GET requests retry up to 3× with exponential backoff. Persistent failures display a dismissable offline banner at the top of the page.
+- **Real dashboard alert counts**: Health summary now queries actual failed runbook executions (critical) and failed snapshot runs (warnings) from the last 24 hours instead of returning zeros.
+- **CSS design-token cleanup**: Hardcoded hex colours replaced with `--color-success`, `--color-error`, `--color-warning`, `--color-text-secondary` CSS variables in RunbooksTab, MigrationPlannerTab, and TicketsTab.
 
 ### v1.83.51 — Deployment Reliability + CI Fixes (✅ Complete)
 

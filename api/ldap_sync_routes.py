@@ -226,6 +226,7 @@ class LdapSyncConfigCreate(BaseModel):
     sync_interval_minutes: int = Field(default=60, ge=1, le=10080)
     group_mappings: List[GroupMappingIn] = []
     dept_mappings: List[DeptMappingIn] = []
+    conflict_strategy: str = Field(default="ldap_wins", pattern="^(ldap_wins|local_wins)$")
 
 
 class LdapSyncConfigUpdate(BaseModel):
@@ -250,6 +251,7 @@ class LdapSyncConfigUpdate(BaseModel):
     sync_interval_minutes: Optional[int] = Field(default=None, ge=1, le=10080)
     group_mappings: Optional[List[GroupMappingIn]] = None
     dept_mappings: Optional[List[DeptMappingIn]] = None
+    conflict_strategy: Optional[str] = Field(default=None, pattern="^(ldap_wins|local_wins)$")
 
 
 # ---------------------------------------------------------------------------
@@ -423,13 +425,13 @@ async def create_config(
                     user_search_filter, user_attr_uid, user_attr_mail, user_attr_fullname,
                     use_tls, use_starttls, verify_tls_cert, ca_cert_pem,
                     mfa_delegated, allow_private_network,
-                    is_enabled, sync_interval_minutes, created_by
+                    is_enabled, sync_interval_minutes, conflict_strategy, created_by
                 ) VALUES (
                     %(name)s, %(host)s, %(port)s, %(bind_dn)s, %(enc)s, %(base_dn)s,
                     %(filter)s, %(uid)s, %(mail)s, %(fullname)s,
                     %(tls)s, %(starttls)s, %(verify)s, %(ca)s,
                     %(mfa)s, %(private)s,
-                    %(enabled)s, %(interval)s, %(creator)s
+                    %(enabled)s, %(interval)s, %(conflict_strategy)s, %(creator)s
                 ) RETURNING *
                 """,
                 {
@@ -442,6 +444,7 @@ async def create_config(
                     "verify": body.verify_tls_cert, "ca": body.ca_cert_pem,
                     "mfa": body.mfa_delegated, "private": body.allow_private_network,
                     "enabled": body.is_enabled, "interval": body.sync_interval_minutes,
+                    "conflict_strategy": body.conflict_strategy,
                     "creator": current_user.username,
                 },
             )
@@ -534,6 +537,7 @@ async def update_config(
             "allow_private_network":eff_priv,
             "is_enabled":           body.is_enabled           if body.is_enabled is not None else existing["is_enabled"],
             "sync_interval_minutes":body.sync_interval_minutes if body.sync_interval_minutes is not None else existing["sync_interval_minutes"],
+            "conflict_strategy":    body.conflict_strategy    if body.conflict_strategy is not None else existing.get("conflict_strategy", "ldap_wins"),
             "updated_at":           datetime.now(timezone.utc),
             "config_id":            config_id,
         }
@@ -553,6 +557,7 @@ async def update_config(
                     allow_private_network=%(allow_private_network)s,
                     is_enabled=%(is_enabled)s,
                     sync_interval_minutes=%(sync_interval_minutes)s,
+                    conflict_strategy=%(conflict_strategy)s,
                     updated_at=%(updated_at)s
                 WHERE id=%(config_id)s RETURNING *
                 """,

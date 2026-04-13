@@ -1014,6 +1014,19 @@ const App: React.FC = () => {
   // Demo mode state
   const [isDemo, setIsDemo] = useState(false);
 
+  // Offline connection banner state (driven by apiFetch retry exhaustion)
+  const [offlineBanner, setOfflineBanner] = useState(false);
+  useEffect(() => {
+    const onOffline = () => setOfflineBanner(true);
+    const onOnline = () => setOfflineBanner(false);
+    window.addEventListener('pf9:connection:offline', onOffline);
+    window.addEventListener('pf9:connection:online', onOnline);
+    return () => {
+      window.removeEventListener('pf9:connection:offline', onOffline);
+      window.removeEventListener('pf9:connection:online', onOnline);
+    };
+  }, []);
+
   // Navigation (3-layer visibility model)
   const {
     navData,
@@ -3153,6 +3166,21 @@ const App: React.FC = () => {
         <div className="demo-banner">
           <span className="demo-badge">DEMO</span>
           You are viewing the portal with sample data — no live Platform9 environment is connected.
+        </div>
+      )}
+      {offlineBanner && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999,
+          background: "var(--color-error, #F44336)", color: "#fff",
+          padding: "8px 16px", display: "flex", alignItems: "center", gap: "12px",
+          fontSize: "0.875rem", fontWeight: 500,
+        }}>
+          <span>⚠ Connection lost — retrying in the background…</span>
+          <button
+            onClick={() => setOfflineBanner(false)}
+            aria-label="Dismiss connection warning"
+            style={{ marginLeft: "auto", background: "none", border: "none", color: "#fff", cursor: "pointer", fontSize: "1rem" }}
+          >✕</button>
         </div>
       )}
       <div className="pf9-app">

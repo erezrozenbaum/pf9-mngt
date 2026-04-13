@@ -1070,6 +1070,19 @@ async def startup_event():
       except Exception as _exc:
         logger.warning("B9.4 integrity FK constraints migration skipped: %s", _exc)
 
+      # ── B10/B11: ldap_sync_config.conflict_strategy column ────────────────
+      try:
+        _b10_sql = os.path.join(os.path.dirname(__file__), "db", "migrate_B10_B11.sql")
+        if os.path.exists(_b10_sql):
+            with open(_b10_sql, encoding="utf-8") as _f:
+                _sql = _f.read()
+            with get_connection() as _conn:
+                with _conn.cursor() as _cur:
+                    _cur.execute(_sql)
+            logger.info("B10/B11 schema migration applied (conflict_strategy)")
+      except Exception as _exc:
+        logger.warning("B10/B11 schema migration skipped: %s", _exc)
+
     # Phase 3: warm the ClusterRegistry now that the DB is seeded.
     # reload() discards any premature lazy-init that may have run before seeding
     # and rebuilds fresh from the now-populated pf9_regions / pf9_control_planes.
@@ -1900,6 +1913,69 @@ def health(request: Request):
 def get_metrics(request: Request):
     """Get API performance metrics (public endpoint for monitoring tools)"""
     return performance_metrics.get_stats()
+
+
+@app.get("/worker-metrics")
+@limiter.limit("60/minute")
+def get_worker_metrics(request: Request):
+    """Prometheus-format worker health metrics. Reads pf9:worker:* hashes from Redis."""
+    import time as _t
+    try:
+        import redis as _redis
+        _redis_host = os.getenv("REDIS_HOST", "redis")
+        _redis_port = int(os.getenv("REDIS_PORT", "6379"))
+        _rc = _redis.Redis(host=_redis_host, port=_redis_port, db=0,
+                           socket_connect_timeout=2, socket_timeout=2,
+                           decode_responses=True)
+        _keys = _rc.keys("pf9:worker:*")
+    except Exception:
+        _keys = []
+        _rc = None
+
+    _now = _t.time()
+    lines = [
+        "# HELP worker_runs_total Total number of completed worker loop iterations",
+        "# TYPE worker_runs_total counter",
+    ]
+    runs_lines, errs_lines, up_lines, dur_lines = [], [], [], []
+
+    for _key in sorted(_keys):
+        if _rc is None:
+            break
+        try:
+            h = _rc.hgetall(_key)
+        except Exception:
+            continue
+        name = h.get("label") or _key.split(":")[-1]
+        runs = int(h.get("runs_total") or 0)
+        errs = int(h.get("errors_total") or 0)
+        last_ts = float(h.get("last_run_ts") or 0)
+        dur = float(h.get("last_run_duration_s") or 0)
+        freq = float(h.get("frequency_s") or 60)
+        up = 0 if (last_ts > 0 and (_now - last_ts) > 2 * freq) else (1 if last_ts > 0 else 0)
+        lbl = f'worker="{name}"'
+        runs_lines.append(f"worker_runs_total{{{lbl}}} {runs}")
+        errs_lines.append(f"worker_errors_total{{{lbl}}} {errs}")
+        up_lines.append(f"worker_up{{{lbl}}} {up}")
+        dur_lines.append(f"worker_last_run_duration_seconds{{{lbl}}} {dur:.3f}")
+
+    lines.extend(runs_lines)
+    lines.append("# HELP worker_errors_total Total number of worker loop iterations with errors")
+    lines.append("# TYPE worker_errors_total counter")
+    lines.extend(errs_lines)
+    lines.append("# HELP worker_up 1 if worker ran recently, 0 if stale or never run")
+    lines.append("# TYPE worker_up gauge")
+    lines.extend(up_lines)
+    lines.append("# HELP worker_last_run_duration_seconds Duration of last worker loop iteration")
+    lines.append("# TYPE worker_last_run_duration_seconds gauge")
+    lines.extend(dur_lines)
+    lines.append("")
+
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(
+        content="\n".join(lines),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/api/metrics")

@@ -450,6 +450,9 @@ services:
       MAX_PARALLEL_REGIONS: ${MAX_PARALLEL_REGIONS:-3}
       REGION_REQUEST_TIMEOUT_SEC: ${REGION_REQUEST_TIMEOUT_SEC:-30}
       JWT_SECRET_KEY: "${JWT_SECRET_KEY:?ERROR: JWT_SECRET_KEY must be set in .env}"
+      # --- Worker observability: Redis metrics sink ---
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     secrets:
       - pf9_password
       - jwt_secret
@@ -460,6 +463,7 @@ services:
       - app_logs:/app/logs
     depends_on:
       - db
+      - redis
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -500,11 +504,15 @@ services:
       LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}
       LDAP_ADMIN_DN: "cn=admin,${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}"
       LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      # --- Worker observability: Redis metrics sink ---
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     volumes:
       - nfs_backups:/backups
     depends_on:
       - db
       - ldap
+      - redis
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -555,10 +563,14 @@ services:
       MONITORING_URL: http://pf9_monitoring:8001
       API_URL: http://pf9_api:8000
       METERING_POLL_INTERVAL: ${METERING_POLL_INTERVAL:-60}
+      # --- Worker observability: Redis metrics sink ---
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     depends_on:
       - db
       - pf9_monitoring
       - pf9_api
+      - redis
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -589,8 +601,12 @@ services:
       DB_USER: ${POSTGRES_USER}
       DB_PASS: ${POSTGRES_PASSWORD}
       SEARCH_INDEX_INTERVAL: ${SEARCH_INDEX_INTERVAL:-300}
+      # --- Worker observability: Redis metrics sink ---
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     depends_on:
       - db
+      - redis
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -673,6 +689,9 @@ services:
       LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=pf9mgmt,dc=local}
       LDAP_USER_DN: ${LDAP_USER_DN:-ou=users,dc=pf9mgmt,dc=local}
       LDAP_SYNC_POLL_INTERVAL: ${LDAP_SYNC_POLL_INTERVAL:-30}
+      # --- Worker observability: Redis metrics sink ---
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
       # db_password, ldap_admin_password, and ldap_sync_key are read from /run/secrets/
       # env vars above are used in dev when secret files are empty
     secrets:
@@ -682,6 +701,7 @@ services:
     depends_on:
       - db
       - ldap
+      - redis
     logging:
       driver: "json-file"
       options:
