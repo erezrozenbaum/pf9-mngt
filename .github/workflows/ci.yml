@@ -397,19 +397,17 @@ jobs:
         # Build once — both tsc and ESLint steps below reuse this image.
         run: docker compose build pf9_ui
 
-      - name: TypeScript type-check (inside container)
-        # tsc -b runs inside the same node:20-alpine image used in production.
-        # NODE_OPTIONS raises the V8 heap limit from the default ~1.5 GB to 4 GB —
-        # required for tsc to complete on this codebase without OOM (SIGABRT).
-        # No Node.js installed on the CI runner host.
-        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run typecheck"
-
-      - name: ESLint (inside container)
-        # Runs in the same job immediately after tsc. typescript-eslint uses the
-        # TS compiler API internally, so it also has a large heap. We run it at a
-        # lower limit (2 GB) — tsc's 4 GB heap has already been freed, so there
-        # is ample headroom and GC will kick in earlier to keep RSS in bounds.
-        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=2048" pf9_ui sh -c "npm run lint"
+      - name: TypeScript type-check + ESLint (inside container)
+        # Both commands run sequentially inside ONE container invocation.
+        # This is critical: each command (tsc, eslint) is a child process of sh.
+        # When `npm run typecheck` exits its child process, the OS reclaims all
+        # of tsc's memory before `npm run lint` starts — so peak RSS is
+        # max(tsc_peak, eslint_peak) rather than their sum.
+        # Two separate `docker compose run` calls produced a second container
+        # startup while residual kernel page-cache from the first run still
+        # occupied RAM, pushing total RSS past the runner's 7 GB limit.
+        # NODE_OPTIONS is inherited by every Node.js subprocess (npm, tsc, eslint).
+        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run typecheck && npm run lint"
 
   # Alias kept so the integration-tests job's `needs` list does not break.
   # This job depends on frontend-typecheck (which now also runs ESLint) and
