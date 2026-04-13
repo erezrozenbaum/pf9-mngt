@@ -405,9 +405,11 @@ jobs:
         run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run typecheck"
 
       - name: ESLint (inside container)
-        # Runs in the same job immediately after tsc — image is already present,
-        # no second npm install, and runner memory is not under pressure.
-        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run lint"
+        # Runs in the same job immediately after tsc. typescript-eslint uses the
+        # TS compiler API internally, so it also has a large heap. We run it at a
+        # lower limit (2 GB) — tsc's 4 GB heap has already been freed, so there
+        # is ample headroom and GC will kick in earlier to keep RSS in bounds.
+        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=2048" pf9_ui sh -c "npm run lint"
 
   # Alias kept so the integration-tests job's `needs` list does not break.
   # This job depends on frontend-typecheck (which now also runs ESLint) and
