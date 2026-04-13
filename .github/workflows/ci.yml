@@ -405,12 +405,13 @@ jobs:
             -f txt || true
 
   # -------------------------------------------------------------------------
-  # Job 8+9: Frontend TypeScript type-check + ESLint (combined)
-  # Previously two separate jobs, each rebuilding the pf9_ui Docker image.
-  # The double npm-install drove peak memory above the runner limit, causing
-  # ESLint to be SIGKILL'd on the second job. Merged into one job: image is
-  # built once, tsc and eslint run back-to-back in the same runner so there
-  # is no second npm install and peak RSS stays well within limits.
+  # Job 8+9: Frontend TypeScript type-check + ESLint
+  # Runs natively on the runner using actions/setup-node — no Docker container.
+  # Running tsc and eslint inside a container caused repeated OOM SIGKILL:
+  # even in a single container invocation, the kernel could not reclaim tsc's
+  # page-cache before eslint started because the container cgroup memory limit
+  # was shared. Running on the host OS lets the kernel manage memory freely and
+  # avoids all container startup overhead.
   # -------------------------------------------------------------------------
   frontend-typecheck:
     name: Frontend TypeScript Check
@@ -421,32 +422,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create stub .env (required for docker compose to parse)
-        run: |
-          cp .env.example .env 2>/dev/null || cat > .env << 'EOF'
-          PF9_AUTH_URL=http://stub
-          JWT_SECRET_KEY=stub-secret-for-ci-only-not-real
-          EOF
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: pf9-ui/package-lock.json
 
-      - name: Build pf9_ui image
-        # Build once — both tsc and ESLint steps below reuse this image.
-        run: docker compose build pf9_ui
+      - name: Install frontend dependencies
+        working-directory: pf9-ui
+        run: npm ci
 
-      - name: TypeScript type-check + ESLint (inside container)
-        # Both commands run sequentially inside ONE container invocation.
-        # This is critical: each command (tsc, eslint) is a child process of sh.
-        # When `npm run typecheck` exits its child process, the OS reclaims all
-        # of tsc's memory before `npm run lint` starts — so peak RSS is
-        # max(tsc_peak, eslint_peak) rather than their sum.
-        # Two separate `docker compose run` calls produced a second container
-        # startup while residual kernel page-cache from the first run still
-        # occupied RAM, pushing total RSS past the runner's 7 GB limit.
-        # NODE_OPTIONS is inherited by every Node.js subprocess (npm, tsc, eslint).
-        run: docker compose run --rm --no-deps -e NODE_OPTIONS="--max-old-space-size=4096" pf9_ui sh -c "npm run typecheck && npm run lint"
+      - name: TypeScript type-check
+        working-directory: pf9-ui
+        run: npm run typecheck
+
+      - name: ESLint
+        working-directory: pf9-ui
+        run: npm run lint
 
   # Alias kept so the integration-tests job's `needs` list does not break.
-  # This job depends on frontend-typecheck (which now also runs ESLint) and
-  # completes instantly so the dependency graph is preserved.
   frontend-lint:
     name: Frontend ESLint
     runs-on: ubuntu-latest
