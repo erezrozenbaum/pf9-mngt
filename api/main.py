@@ -1493,7 +1493,7 @@ class CreateUserRequest(BaseModel):
     def validate_role(cls, v):
         valid = ['viewer', 'operator', 'technical', 'admin', 'superadmin']
         if v and v not in valid:
-            raise ValueError(f'Role must be one of: {', '.join(valid)}')
+            raise ValueError("Role must be one of: " + ", ".join(valid))
         return v or 'viewer'
 
 class PermissionToggle(BaseModel):
