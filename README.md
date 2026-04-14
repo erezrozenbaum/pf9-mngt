@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.1-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -536,6 +536,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.84.1](CHANGELOG.md)** — Bug fixes: tenant portal container no longer crashes when `TENANT_DB_PASSWORD` is absent (degraded-mode startup); `tenant-portal` Docker image now published to ghcr.io via release workflow.
 **[v1.84.0](CHANGELOG.md)** — Tenant Self-Service Portal foundation: DB role + RLS hardening (`tenant_portal_role`, 5 RLS policies on inventory tables), 5 schema tables (`tenant_portal_access`, `tenant_portal_mfa`, `tenant_portal_branding`, `tenant_action_log`, `runbook_project_tags`) + safe `tenant_cp_view`, isolated FastAPI service on port 8010 (JWT `role=tenant`, Redis session binding, IP binding, MFA preauth, per-user rate limiting), 6 admin API endpoints in `api/tenant_portal_routes.py`, Helm templates + NetworkPolicy, updated docker-compose.
 **[v1.83.53](CHANGELOG.md)** — Bug fixes: `search_worker` duplicate metrics block removed (run/error counters were reset to zero on every module import; stacked `@retry` caused 9 DB reconnect attempts instead of 3); `scheduler_worker` executor changed to `wait=True` on shutdown to prevent thread orphaning on SIGTERM.
 **[v1.83.52](CHANGELOG.md)** — Worker observability (Prometheus `/worker-metrics`, Redis heartbeats, tenacity DB retry for all 5 workers), LDAP conflict strategy (`ldap_wins`/`local_wins`), frontend resilience (30 s timeout, 3× GET retry, offline banner), real dashboard alert counts, CSS design-token cleanup.
@@ -674,4 +675,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.84.0 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.84.1 | **Last Updated**: April 2026

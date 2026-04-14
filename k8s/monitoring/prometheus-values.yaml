@@ -4,6 +4,17 @@
 # Cluster:  3 nodes × 4 CPU / 8 GB RAM
 # Storage:  nfs-pf9 (NFS dynamic provisioner, cluster default)
 #
+# !! DOMAIN PLACEHOLDER !!
+#   All occurrences of  pf9-mngt.example.com  are placeholders for the real
+#   cluster domain.  Before running helm install / upgrade, replace every
+#   instance with your actual domain, e.g.:
+#
+#     (Get-Content k8s/monitoring/prometheus-values.yaml -Raw) `
+#       -replace 'pf9-mngt\.example\.com','pf9-mngt.YOUR-DOMAIN.com' `
+#       | Set-Content k8s/monitoring/prometheus-values.yaml
+#
+#   Do NOT commit the real domain back to the public repository.
+#
 # Install:
 #   helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
 #     -n monitoring -f k8s/monitoring/prometheus-values.yaml
@@ -26,7 +37,7 @@ prometheus:
       nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/use-regex: "true"
     hosts:
-      - pf9-mngt.ccc.co.il
+      - pf9-mngt.example.com
     paths:
       - /prometheus(/|$)(.*)
     pathType: ImplementationSpecific
@@ -35,7 +46,7 @@ prometheus:
     # Tell Prometheus its external URL so redirects (e.g. / → /graph) use the
     # /prometheus prefix rather than an absolute root path that bypasses nginx.
     # routePrefix stays "/" because nginx strips /prometheus before forwarding.
-    externalUrl: "https://pf9-mngt.ccc.co.il/prometheus"
+    externalUrl: "https://pf9-mngt.example.com/prometheus"
     routePrefix: "/"
 
     # 15-day retention, capped at 9 GiB to stay under the 10 GiB PVC
@@ -87,13 +98,13 @@ alertmanager:
       nginx.ingress.kubernetes.io/rewrite-target: /$2
       nginx.ingress.kubernetes.io/use-regex: "true"
     hosts:
-      - pf9-mngt.ccc.co.il
+      - pf9-mngt.example.com
     paths:
       - /alertmanager(/|$)(.*)
     pathType: ImplementationSpecific
 
   alertmanagerSpec:
-    externalUrl: "https://pf9-mngt.ccc.co.il/alertmanager"
+    externalUrl: "https://pf9-mngt.example.com/alertmanager"
     routePrefix: "/"
 
     storage:
@@ -158,16 +169,16 @@ grafana:
   # Expose Grafana at http://<your-domain>/grafana via the existing nginx-ingress.
   # No new DNS record needed — same host as the main app.
   # Override at deploy time:
-  #   helm upgrade ... --set grafana.env.GF_SERVER_ROOT_URL=http://pf9-mngt.ccc.co.il/grafana
+  #   helm upgrade ... --set grafana.env.GF_SERVER_ROOT_URL=http://pf9-mngt.example.com/grafana
   env:
-    GF_SERVER_ROOT_URL: "http://pf9-mngt.ccc.co.il/grafana"
+    GF_SERVER_ROOT_URL: "http://pf9-mngt.example.com/grafana"
     GF_SERVER_SERVE_FROM_SUB_PATH: "true"
 
   ingress:
     enabled: true
     ingressClassName: nginx
     hosts:
-      - pf9-mngt.ccc.co.il
+      - pf9-mngt.example.com
     path: /grafana
     pathType: Prefix
 
