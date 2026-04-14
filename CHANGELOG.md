@@ -5,56 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.4] - 2026-04-14
+
+### Added
+- **Tenant self-service portal web application** (`tenant-ui/`) — React + TypeScript SPA served via nginx, with seven screens accessible after login:
+  - **Dashboard** — infrastructure health overview: VM count, snapshot coverage %, active restores, and failures in the last 24 hours; per-region coverage cards with progress bars and a 24-hour event timeline
+  - **Infrastructure** — VM inventory table with status badges; click any row to open a live resource metrics side panel (CPU, RAM, storage, IOPS); Volumes tab with size and attachment details
+  - **Snapshot Coverage** — per-VM compliance table with snapshot streak counter, 30-day calendar grid (colour-coded per day), and a full snapshot history list
+  - **Monitoring** — uptime availability table (7-day and 30-day windows, colour-coded by tier: ≥99% / 90-99% / <90%) and current resource usage cards
+  - **Restore Center** — 3-step guided wizard (select VM → pick restore point → confirm new VM name); active jobs panel with progress bars and cancel button for pending jobs; recent completed jobs list
+  - **Runbooks** — read-only runbook catalogue with category filter and full step-by-step detail side panel; note banner redirects execution requests to the support team
+  - **Activity Log** — complete audit table of all portal actions, filterable by date range and action type
+- **MFA login screen** — TOTP code entry and one-click email OTP trigger for accounts with MFA required
+- **Per-customer branding** — logo, accent colour, page title, and favicon loaded from the server at login and applied via CSS variables throughout the session
+- **Session persistence** — stored token silently re-validates on page reload; expired or revoked tokens return the user to the login screen
+- **`tenant_ui` Docker service** — multi-stage build (`node:22-alpine` build stage → `nginx:1.27-alpine` production stage); production service depends on `tenant_portal` being healthy; dev override runs the Vite dev server on host port 8082
+
 ## [1.84.3] - 2026-04-14
 
 ### Added
-- **Tenant Portal P4 — Self-service Restore Center** (6 new routes in `tenant_portal/restore_routes.py`):
-  - `GET /tenant/vms/{vm_id}/restore-points` — lists available snapshots for a tenant's own VM
-  - `POST /tenant/restore/plan` — generates a restore plan via the admin engine (mode=NEW enforced, no IP reuse)
-  - `POST /tenant/restore/execute` — submits a PLANNED job for execution; HTTP 202
-  - `GET /tenant/restore/jobs` — lists this tenant's restore jobs with optional `?status=` filter
-  - `GET /tenant/restore/jobs/{job_id}` — job detail with step-level progress %
-  - `POST /tenant/restore/jobs/{job_id}/cancel` — cancels PLANNED/PENDING/RUNNING jobs
-  - All tenant-initiated restore jobs are tagged `created_by = "tenant:<keystone_user_id>"`.
-  - Admin API extended with two new `include_in_schema=False` internal endpoints (`/internal/tenant-restore/plan`, `/internal/tenant-restore/execute`) gated by `X-Internal-Secret` header (`secrets.compare_digest`).
-- **Tenant Portal P4b — Audit logging** (`tenant_portal/audit_helper.py`):
-  - New `log_action(cur, ctx, action, ...)` helper — inserts atomically with the data query (same cursor/commit); silently swallows errors so log failures never break user flows.
-  - New `log_action_bare(ctx, action, ...)` helper — opens its own connection for call sites with no active cursor (e.g. metrics proxy endpoints).
-  - `log_action` wired into all 14 tenant endpoints: 11 environment routes, 3 metrics routes.
-  - All 6 restore routes also emit audit events (`tenant_view_restore_points`, `tenant_restore_plan`, `tenant_restore_execute`, `tenant_view_restore_jobs`, `tenant_view_restore_job_detail`, `tenant_restore_cancel`).
-- **Tenant Portal P4c — Notifications**:
-  - Ops Slack/Teams alert on `POST /tenant/restore/execute` — notifies ops channel with username, VM name, region, and job ID (`SLACK_WEBHOOK_URL` / `TEAMS_WEBHOOK_URL` env vars; best-effort, never blocks execution).
-  - Tenant email on restore job complete/fail — `RestoreExecutor._notify_tenant_result()` looks up the tenant's email from `users.email` and sends a styled HTML email via `smtp_helper.send_email()`.
-- **Tenant Portal P4d — MFA flows** (4 new routes in `tenant_portal/auth_routes.py`):
-  - `POST /tenant/auth/mfa/email-send` — generates a 6-digit OTP, SHA-256-hashes it to Redis (600s TTL), delivers via SMTP; rate-limited to 3 sends per 10 min.
-  - `POST /tenant/auth/mfa/verify` — unified MFA verifier supporting TOTP, email OTP, and backup codes; 5-failure Redis lockout (1hr); issues full JWT on success.
-  - `GET /tenant/auth/mfa/setup` — generates a `pyotp` TOTP secret and `otpauth://` URI for QR display; stores pending secret in Redis (5min TTL).
-  - `POST /tenant/auth/mfa/verify-setup` — validates first TOTP code, generates 8 bcrypt-hashed backup codes, upserts `tenant_portal_mfa`, issues full JWT; backup codes returned ONCE in response.
-- `bcrypt>=4.1.0` added to `tenant_portal/requirements.txt`.
+- **Self-service restore center** in the tenant portal — six new API endpoints: list available restore points for a VM, generate a restore plan, execute a restore, list restore jobs with optional status filter, retrieve per-step job progress, and cancel a pending or running job
+  - All restores create a new VM from the chosen snapshot — in-place replacement is not permitted
+  - All tenant-initiated restore jobs carry the requesting user's identity for auditability
+  - Admin API extended with two internal restore endpoints gated by `X-Internal-Secret` using constant-time comparison
+- **Tenant portal audit logging** — every API call writes an immutable entry to `tenant_action_log` atomically within the same database transaction; a separate helper is available for endpoints without an active cursor; all 20 tenant endpoints are instrumented
+- **Ops notifications on restore** — Slack and Microsoft Teams webhook alerts fired on every restore execution (`SLACK_WEBHOOK_URL` / `TEAMS_WEBHOOK_URL` env vars); restore result email (success or failure) sent to the tenant's registered address on job completion; both are best-effort and never block the primary flow
+- **Email OTP** — 6-digit OTP delivered by SMTP, stored as a SHA-256 hash in Redis (10-minute TTL), rate-limited to three sends per 10 minutes per user
+- **Unified MFA verifier** (`POST /tenant/auth/mfa/verify`) — accepts TOTP codes, email OTP codes, and backup codes in a single endpoint; five-failure Redis lockout (one hour); issues a full JWT on success
+- **TOTP enrolment** — setup endpoint generates a TOTP secret and `otpauth://` URI for QR display; verify-setup endpoint validates the first code, generates 8 bcrypt-hashed backup codes (returned once), and saves the MFA record
+- `bcrypt>=4.1.0` added to `tenant_portal/requirements.txt`
+- **Tenant portal data endpoints** — nine read-only API routes: VM list, VM detail (with snapshot stats and active restore job), volume list, snapshot list and detail, snapshot history for calendar view, per-VM compliance percentages with overall summary, dashboard summary, and a unified event feed merging audit log entries, snapshot records, and restore jobs
+- **Metrics proxy** — three endpoints exposing `metrics_cache.json` data scoped to the tenant's VMs; single-VM live metrics with ownership check (403 on mismatch); availability percentages calculated from snapshot records over 7-day and 30-day windows
+- **Runbook read-only access** — two endpoints listing and retrieving runbooks that have been marked visible to tenants, filtered to the tenant's assigned projects
 
 ### Changed
-- `tenant_portal/main.py`: `restore_router` registered; version bumped to `1.84.3`.
-
-
-
-### Added
-- **Tenant Portal P3a — Environment endpoints** (9 new `GET` routes in `tenant_portal/environment_routes.py`):
-  - `GET /tenant/vms` — list VMs scoped to tenant projects + regions (double-scoped: explicit SQL + RLS)
-  - `GET /tenant/vms/{vm_id}` — VM detail with snapshot stats and active restore job
-  - `GET /tenant/volumes` — list volumes with size totals
-  - `GET /tenant/snapshots` — snapshot list with optional filters (`vm_id`, `status`, `region`, `from_date`, `to_date`, `limit`)
-  - `GET /tenant/snapshots/{snapshot_id}` — single snapshot with ownership check (403 on mismatch, never 404)
-  - `GET /tenant/snapshot-history` — `snapshot_records` for calendar view, filterable by `vm_id` and date range
-  - `GET /tenant/compliance` — per-VM 7-day snapshot-coverage percentage with overall summary
-  - `GET /tenant/dashboard` — VM status counts, volume totals, 7-day coverage %, active restore count
-  - `GET /tenant/events` — unified audit feed merging `tenant_action_log`, `snapshot_records`, `restore_jobs`
-- **Tenant Portal P3b — Metrics proxy** (3 new `GET` routes in `tenant_portal/metrics_routes.py`):
-  - `GET /tenant/metrics/vms` — filters `metrics_cache.json` to tenant-owned VM IDs
-  - `GET /tenant/metrics/vms/{vm_id}` — single-VM live metrics (403 on ownership mismatch)
-  - `GET /tenant/metrics/availability` — per-VM 7-day and 30-day availability % from snapshot records
-- **Tenant Portal P3c — Runbooks read-only** (2 new `GET` routes in `tenant_portal/environment_routes.py`):
-  - `GET /tenant/runbooks` — lists `is_tenant_visible=true` runbooks, filtered to tenant project scope
-  - `GET /tenant/runbooks/{name}` — single runbook detail with same access rules
+- `tenant_portal/main.py`: restore router registered; service version bumped to `1.84.3`
 
 ## [1.84.1] - 2026-04-14
 

@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.83.53  
-**Last Updated**: April 13, 2026  
+**Version**: 1.84.4  
+**Last Updated**: April 14, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -48,11 +48,12 @@ For deployment and first-time setup, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.
 9. [Notifications](#9-notifications)
 10. [Backup and Recovery](#10-backup-and-recovery)
 11. [Audit Review](#11-audit-review)
-12. [Troubleshooting](#12-troubleshooting)
-13. [Reference: Authentication & Authorization](#authentication--authorization)
-14. [Reference: Monitoring System](#real-time-monitoring-system)
-15. [Appendix: Feature History by Version](#appendix-feature-history-by-version)
-16. [External LDAP Sync Guide](LDAP_SYNC_GUIDE.md) ↗
+12. [Tenant Portal Management](#12-tenant-portal-management)
+13. [Troubleshooting](#13-troubleshooting)
+14. [Reference: Authentication & Authorization](#authentication--authorization)
+15. [Reference: Monitoring System](#real-time-monitoring-system)
+16. [Appendix: Feature History by Version](#appendix-feature-history-by-version)
+17. [External LDAP Sync Guide](LDAP_SYNC_GUIDE.md) ↗
 
 ---
 
@@ -84,6 +85,8 @@ All service ports are exposed directly on the host for easy debugging.
 | UI (Vite dev server) | http://localhost:5173 |
 | API / Swagger Docs | http://localhost:8000/docs |
 | Monitoring | http://localhost:8001/health |
+| Tenant Portal UI (Vite dev) | http://localhost:8082 |
+| Tenant Portal API | http://localhost:8010/tenant/health |
 | pgAdmin | http://localhost:8080 |
 | LDAP Admin (phpLDAPadmin) | http://localhost:8081 |
 | PostgreSQL | localhost:5432 |
@@ -466,7 +469,59 @@ docker compose exec pf9_db psql -U $POSTGRES_USER -d $POSTGRES_DB \
 
 ---
 
-## 12. Troubleshooting
+## 12. Tenant Portal Management
+
+The tenant portal (`tenant_portal`) gives Platform9 end-tenants a self-service web interface for their own VMs, snapshots, and restore operations. Access is opt-in and controlled per Keystone user.
+
+### Granting / revoking access
+
+Use the admin API or the **Admin → Tenant Portal** section of the management UI.
+
+```bash
+# Grant access — sets tenant_portal_access.enabled = true
+curl -X PUT https://<host>/api/admin/tenant-portal/access \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"control_plane_id": "<cp_id>", "keystone_user_id": "<uid>", "enabled": true}'
+
+# Revoke access
+curl -X PUT ... -d '{"... "enabled": false}'
+```
+
+### Force-terminating a session
+
+```bash
+# Terminates all active portal sessions for a specific user
+curl -X DELETE https://<host>/api/admin/tenant-portal/sessions/<cp_id>/<user_id> \
+  -H "Authorization: Bearer <admin_token>"
+```
+
+### Viewing active sessions and audit log
+
+```bash
+# List active sessions for a control plane
+GET /api/admin/tenant-portal/sessions/<cp_id>
+
+# Paginated audit log (all tenant actions for a CP)
+GET /api/admin/tenant-portal/audit/<cp_id>?limit=100&offset=0
+```
+
+### Making a runbook visible to tenants
+
+Tenant-visible runbooks are opt-in per runbook. Set `is_tenant_visible = true` in the `runbooks` table, then use `runbook_project_tags` to scope which project's tenants can see it.
+
+### Checking service health
+
+| Check | Command |
+|-------|---------|
+| Tenant portal API | `curl http://localhost:8010/tenant/health` |
+| Tenant portal UI | `curl http://localhost:8082/` (dev) |
+| Container logs | `docker compose logs pf9_tenant_portal --tail=50` |
+| UI container logs | `docker compose logs pf9_tenant_ui --tail=50` |
+
+---
+
+## 13. Troubleshooting
 
 **API not responding:**
 ```bash
@@ -606,7 +661,34 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
-### v1.83.53 — Code Quality Fixes (✅ Complete)
+### v1.84.4 — Tenant Self-Service Portal Web Interface (✅ Complete)
+
+- **Tenant self-service portal web application** (`tenant-ui/`): React + TypeScript SPA served via nginx with seven screens — Dashboard, Infrastructure (VMs + volumes), Snapshot Coverage (30-day calendar), Monitoring (availability + resource usage), Restore Center (3-step wizard + job panel), Runbooks (read-only catalogue), and Activity Log (filterable audit table).
+- **MFA login screen**: TOTP code entry and one-click email OTP trigger. Per-customer branding (logo, accent colour, page title, favicon) applied from the server. Session token silently re-validates on page reload.
+- **`tenant_ui` Docker service**: multi-stage build (`node:22-alpine` → `nginx:1.27-alpine`); depends on `tenant_portal` healthy; dev override runs Vite on port 8082.
+
+### v1.84.3 — Tenant Portal: Restore, Audit, Notifications, MFA (✅ Complete)
+
+- **Self-service restore center**: six API endpoints — list restore points, plan restore, execute (always creates a new VM), list jobs, per-step progress, and cancel.
+- **Audit logging**: every tenant API call writes an immutable `tenant_action_log` entry atomically with the data query; all 20 tenant endpoints are instrumented.
+- **Ops notifications**: Slack/Teams webhook alert on every restore execution; restore result email sent to the tenant on job completion or failure.
+- **MFA**: email OTP (SHA-256 hash in Redis, 10-minute TTL, rate-limited); unified verifier for TOTP code, email OTP, and backup codes with 5-failure lockout; TOTP enrolment with 8 bcrypt-hashed backup codes.
+- **Data endpoints** (9 read-only routes): VM list and detail, volume list, snapshot list/detail/history, per-VM compliance %, dashboard summary, unified event feed.
+- **Metrics proxy** (3 routes): scoped to tenant VMs, 7-day and 30-day availability %.
+- **Runbook access** (2 routes): tenant-visible runbooks filtered to the tenant's projects.
+
+### v1.84.1 — Bug Fixes (✅ Complete)
+
+- Tenant portal container startup crash fixed: `init_pool()` failure is now non-fatal when `TENANT_DB_PASSWORD` is not configured (runs in degraded mode).
+- `tenant-portal` Docker image added to the release workflow `publish-images` matrix.
+
+### v1.84.0 — Tenant Portal Foundation (✅ Complete)
+
+- New DB role `tenant_portal_role` with Row-Level Security on 5 inventory tables; `tenant_cp_view` safe read-only view.
+- Schema tables: `tenant_portal_access`, `tenant_portal_branding`, `tenant_action_log`, `tenant_portal_mfa`, `runbook_project_tags`.
+- Isolated FastAPI service on port 8010: Keystone passthrough login, JWT `role=tenant`, Redis session binding, IP binding, MFA preauth flow, per-user rate limiting.
+- 6 admin API endpoints in `api/tenant_portal_routes.py` for access management, session control, and audit review. Requires `admin` or `superadmin` role.
+- Helm templates + NetworkPolicy and updated `docker-compose.yml`.
 
 - **search_worker duplicate metrics block removed** (`search_worker/main.py`): A duplicate definition of `_REDIS_HOST`, `_REDIS_PORT`, `_WORKER_NAME`, `_worker_runs_total`, `_worker_errors_total` globals and `_report_worker_metrics()` caused run/error counters to reset to zero on every module import (Python silently replaced the first definition with the second). Stacked `@retry` on `get_conn()` (two identical decorators) produced 9 reconnect attempts instead of 3, with double the maximum wait time. Removed second duplicate block and excess decorator.
 - **scheduler_worker graceful shutdown** (`scheduler_worker/main.py`): `executor.shutdown(wait=False)` abandoned `ThreadPoolExecutor` threads running `run_in_executor` jobs on SIGTERM before they could finish. Changed to `executor.shutdown(wait=True)` so the scheduler joins all in-flight threads before the process exits.

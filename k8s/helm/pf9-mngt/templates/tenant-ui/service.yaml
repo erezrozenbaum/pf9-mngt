@@ -1,0 +1,20 @@
+{{- if .Values.tenantUi.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: pf9-tenant-ui
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-ui
+spec:
+  type: {{ .Values.tenantUi.service.type }}
+  selector:
+    {{- include "pf9mngt.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-ui
+  ports:
+    - port: {{ .Values.tenantUi.service.port }}
+      targetPort: 8080
+      protocol: TCP
+      name: http
+{{- end }}

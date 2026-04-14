@@ -17,6 +17,7 @@ htmlcov/
 
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 pf9-ui/node_modules/
+tenant-ui/node_modules/
 pf9-ui/dist/
 pf9-ui/.vite/
 

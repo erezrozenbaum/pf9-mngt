@@ -1,0 +1,53 @@
+{{- if and .Values.tenantUi.enabled .Values.tenantUi.ingress.enabled }}
+# Separate Ingress for the tenant self-service portal.
+# Routes under the tenant subdomain: / → tenant-ui (nginx), /tenant/* → tenant-portal API.
+# Production topology: this ingress is bound to a separate IP / hostname from the admin ingress
+# so that the admin panel can be restricted to VPN/office CIDR without affecting tenant access.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pf9-tenant-ui
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-ui
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- if and .Values.tenantUi.ingress.tls.enabled .Values.tenantUi.ingress.host }}
+    cert-manager.io/cluster-issuer: {{ .Values.tenantUi.ingress.tls.clusterIssuer | quote }}
+    {{- end }}
+    {{- range $key, $val := .Values.tenantUi.ingress.annotations }}
+    {{ $key }}: {{ $val | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.tenantUi.ingress.className | quote }}
+  {{- if and .Values.tenantUi.ingress.tls.enabled .Values.tenantUi.ingress.host }}
+  tls:
+    - hosts:
+        - {{ .Values.tenantUi.ingress.host | quote }}
+      secretName: {{ .Values.tenantUi.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - {{- if .Values.tenantUi.ingress.host }}
+      host: {{ .Values.tenantUi.ingress.host | quote }}
+      {{- end }}
+      http:
+        paths:
+          # /tenant/* → tenant portal FastAPI (JWT, RLS-enforced)
+          - path: /tenant(/.*)?
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: pf9-tenant-portal
+                port:
+                  number: {{ .Values.tenantPortal.service.port }}
+
+          # Everything else → tenant React SPA (nginx serves built static files)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pf9-tenant-ui
+                port:
+                  number: {{ .Values.tenantUi.service.port }}
+{{- end }}

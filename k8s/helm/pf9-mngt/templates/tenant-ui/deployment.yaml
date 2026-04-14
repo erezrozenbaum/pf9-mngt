@@ -1,0 +1,46 @@
+{{- if .Values.tenantUi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pf9-tenant-ui
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-ui
+spec:
+  replicas: {{ .Values.tenantUi.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: tenant-ui
+  template:
+    metadata:
+      labels:
+        {{- include "pf9mngt.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: tenant-ui
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101   # nginx default user
+      containers:
+        - name: tenant-ui
+          image: {{ include "pf9mngt.appImage" (dict "repo" .Values.tenantUi.image.repository "svcTag" .Values.tenantUi.image.tag "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.tenantUi.resources | nindent 12 }}
+{{- end }}

@@ -50,3 +50,13 @@ workers:
   snapshotWorker:
     image:
       tag: ""
+
+tenantPortal:
+  image:
+    tag: ""
+
+tenantUi:
+  image:
+    tag: ""
+  ingress:
+    host: ""    # e.g. portal.pf9-mngt.example.com

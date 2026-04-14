@@ -141,6 +141,10 @@ jobs:
             context: .
             dockerfile: tenant_portal/Dockerfile
             platforms: linux/amd64,linux/arm64
+          - service: tenant-ui
+            context: ./tenant-ui
+            dockerfile: tenant-ui/Dockerfile
+            platforms: linux/amd64,linux/arm64
 
     steps:
       - name: Checkout code
