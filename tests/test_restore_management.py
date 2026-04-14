@@ -47,6 +47,7 @@ class _FakeHTTPException(Exception):
         self.detail = detail
 _fastapi_stub.HTTPException = _FakeHTTPException
 _fastapi_stub.Depends = lambda fn: fn
+_fastapi_stub.Header = MagicMock(return_value=None)
 _fastapi_stub.APIRouter = MagicMock(return_value=MagicMock())
 _fastapi_stub.Request = MagicMock
 _fastapi_stub.status = types.SimpleNamespace(HTTP_404_NOT_FOUND=404, HTTP_400_BAD_REQUEST=400)

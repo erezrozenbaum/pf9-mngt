@@ -22,13 +22,14 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from psycopg2.extras import RealDictCursor, Json
-from fastapi import HTTPException, Depends
+from fastapi import Header, HTTPException, Depends
 from pydantic import BaseModel, Field
 import requests as http_requests
 
@@ -43,6 +44,10 @@ logger = logging.getLogger("pf9.restore")
 # ---------------------------------------------------------------------------
 RESTORE_ENABLED = os.getenv("RESTORE_ENABLED", "false").lower() in ("true", "1", "yes")
 RESTORE_DRY_RUN = os.getenv("RESTORE_DRY_RUN", "false").lower() in ("true", "1", "yes")
+
+# Pre-shared secret for internal service-to-service calls (tenant portal → admin API).
+# Must be the same in both services.  Empty string disables the internal endpoints.
+INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
 # OpenStack connection (reuse same vars as snapshot system)
 PF9_AUTH_URL = os.getenv("PF9_AUTH_URL", "")
@@ -1217,10 +1222,60 @@ class RestoreExecutor:
                 # Attempt cleanup
                 await self._cleanup_resources(session, project_id, created_resources)
                 self._with_conn(lambda c: self._fail_job(c, job_id, f"Step {step_name} failed: {_err}"))
+                # Notify tenant by email on failure (P4c)
+                if job.get("created_by", "").startswith("tenant:"):
+                    self._notify_tenant_result(job, "failed", _err)
                 return
 
         # All steps succeeded
         self._with_conn(lambda c: self._complete_job(c, job_id, created_resources))
+        # Notify tenant by email if this was a tenant-initiated restore (P4c)
+        if job.get("created_by", "").startswith("tenant:"):
+            self._notify_tenant_result(job, "succeeded")
+
+    def _notify_tenant_result(self, job: dict, outcome: str, reason: str = "") -> None:
+        """Send a result email to the tenant user whose restore just completed/failed.
+        Best-effort: silently swallows all errors so a notification failure never
+        blocks the restore state machine.  Uses smtp_helper which is already
+        configured for the admin API process.
+        """
+        try:
+            from smtp_helper import send_email
+
+            # created_by = "tenant:<keystone_user_id>" → extract the UUID
+            kb_user_id = job.get("created_by", "").removeprefix("tenant:")
+            if not kb_user_id:
+                return
+
+            # Look up the tenant's email from the users table
+            with get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute("SELECT email FROM users WHERE id = %s", (kb_user_id,))
+                    row = cur.fetchone()
+            if not row or not row.get("email"):
+                logger.debug("No email for tenant user %s — skipping result notification", kb_user_id)
+                return
+
+            vm_name = job.get("vm_name", "unknown")
+            if outcome == "succeeded":
+                subject = f"Restore completed: {vm_name}"
+                body = (
+                    f"<p>Your restore of <strong>{vm_name}</strong> has completed successfully.</p>"
+                    f"<p>Job ID: {job.get('id')}</p>"
+                    f"<p>Completed at: {datetime.now(timezone.utc).isoformat()}</p>"
+                )
+            else:
+                subject = f"Restore failed: {vm_name}"
+                body = (
+                    f"<p>Your restore of <strong>{vm_name}</strong> has failed.</p>"
+                    f"<p>Job ID: {job.get('id')}</p>"
+                    f"<p>Reason: {reason or 'unknown error'}</p>"
+                    f"<p>Please contact your administrator for assistance.</p>"
+                )
+
+            send_email(row["email"], subject, body)
+        except Exception as exc:
+            logger.warning("Failed to send tenant restore result email: %s", exc)
 
     def _with_conn(self, fn):
         """Execute a function with a fresh DB connection that is closed after use."""
@@ -2755,4 +2810,103 @@ def setup_restore_routes(app):
             "enabled": RESTORE_ENABLED,
             "dry_run": RESTORE_DRY_RUN,
             "service_user_configured": bool(SNAPSHOT_SERVICE_USER_EMAIL),
+        }
+
+    # ------------------------------------------------------------------
+    # POST /internal/tenant-restore/plan  — tenant portal internal call
+    # Auth: X-Internal-Secret header (pre-shared, never exposed to tenants)
+    # ------------------------------------------------------------------
+    class _InternalTenantPlanBody(BaseModel):
+        vm_id: str
+        snapshot_id: str
+        project_id: str
+        region_id: str
+        created_by: str          # must start with "tenant:"
+        new_vm_name: Optional[str] = None
+
+    @app.post("/internal/tenant-restore/plan", include_in_schema=False)
+    async def _internal_tenant_plan(
+        req: _InternalTenantPlanBody,
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        """Build a tenant restore plan (mode=NEW, ip_strategy=NEW_IPS).
+        Called exclusively by the tenant portal service — not a user-facing route."""
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(
+            x_internal_secret, INTERNAL_SERVICE_SECRET
+        ):
+            raise HTTPException(403, "Forbidden")
+        if not req.created_by.startswith("tenant:"):
+            raise HTTPException(400, "invalid_created_by")
+
+        plan_req = RestorePlanRequest(
+            project_id=req.project_id,
+            vm_id=req.vm_id,
+            restore_point_id=req.snapshot_id,
+            mode="NEW",                  # FORCED — tenants cannot use REPLACE
+            new_vm_name=req.new_vm_name,
+            ip_strategy="NEW_IPS",      # safe default for self-service
+        )
+        if not RESTORE_ENABLED:
+            raise HTTPException(503, "Restore feature is not enabled")
+        try:
+            plan = planner.build_plan(plan_req, req.created_by)
+            return plan
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("Internal tenant plan failed: %s", exc)
+            raise HTTPException(500, f"Plan failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # POST /internal/tenant-restore/execute  — tenant portal internal call
+    # ------------------------------------------------------------------
+    class _InternalTenantExecuteBody(BaseModel):
+        plan_id: str
+        created_by: str          # must start with "tenant:" and match job row
+
+    @app.post("/internal/tenant-restore/execute", include_in_schema=False)
+    async def _internal_tenant_execute(
+        req: _InternalTenantExecuteBody,
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        """Transition a PLANNED tenant restore job to PENDING and launch execution."""
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(
+            x_internal_secret, INTERNAL_SERVICE_SECRET
+        ):
+            raise HTTPException(403, "Forbidden")
+        if not req.created_by.startswith("tenant:"):
+            raise HTTPException(400, "invalid_created_by")
+
+        if not RESTORE_ENABLED:
+            raise HTTPException(503, "Restore feature is not enabled")
+
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM restore_jobs WHERE id = %s", (req.plan_id,))
+                job = cur.fetchone()
+
+        if not job:
+            raise HTTPException(404, f"Plan {req.plan_id} not found")
+        if not (job.get("created_by") or "").startswith("tenant:"):
+            raise HTTPException(403, "Not a tenant job")
+        if job["created_by"] != req.created_by:
+            raise HTTPException(403, "Job creator mismatch")
+        if job["status"] != "PLANNED":
+            raise HTTPException(
+                400,
+                f"Plan {req.plan_id} is in status '{job['status']}' — only PLANNED jobs can be executed",
+            )
+
+        with get_connection() as conn2:
+            with conn2.cursor() as cur:
+                cur.execute(
+                    "UPDATE restore_jobs SET status='PENDING', executed_by=%s WHERE id=%s",
+                    (req.created_by, req.plan_id),
+                )
+
+        asyncio.create_task(executor.execute_job(req.plan_id))
+        return {
+            "job_id": req.plan_id,
+            "status": "PENDING",
+            "message": "Restore execution started.",
         }

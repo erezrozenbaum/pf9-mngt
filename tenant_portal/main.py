@@ -22,6 +22,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from auth_routes import router as auth_router
 from environment_routes import router as environment_router
 from metrics_routes import router as metrics_router
+from restore_routes import router as restore_router
 from db_pool import init_pool
 from rate_limiter import limiter
 from redis_client import get_redis
@@ -44,7 +45,7 @@ app = FastAPI(
         "Self-service portal for Platform9 customers. "
         "All endpoints are scoped to the authenticated tenant's projects and regions."
     ),
-    version="1.84.0",
+    version="1.84.3",
     docs_url="/tenant/docs" if os.getenv("ENABLE_DOCS", "false").lower() == "true" else None,
     redoc_url=None,
     openapi_url="/tenant/openapi.json" if os.getenv("ENABLE_DOCS", "false").lower() == "true" else None,
@@ -155,3 +156,4 @@ async def health():
 app.include_router(auth_router)
 app.include_router(environment_router)
 app.include_router(metrics_router)
+app.include_router(restore_router)

@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.84.2] - 2026-04-14
+## [1.84.3] - 2026-04-14
+
+### Added
+- **Tenant Portal P4 — Self-service Restore Center** (6 new routes in `tenant_portal/restore_routes.py`):
+  - `GET /tenant/vms/{vm_id}/restore-points` — lists available snapshots for a tenant's own VM
+  - `POST /tenant/restore/plan` — generates a restore plan via the admin engine (mode=NEW enforced, no IP reuse)
+  - `POST /tenant/restore/execute` — submits a PLANNED job for execution; HTTP 202
+  - `GET /tenant/restore/jobs` — lists this tenant's restore jobs with optional `?status=` filter
+  - `GET /tenant/restore/jobs/{job_id}` — job detail with step-level progress %
+  - `POST /tenant/restore/jobs/{job_id}/cancel` — cancels PLANNED/PENDING/RUNNING jobs
+  - All tenant-initiated restore jobs are tagged `created_by = "tenant:<keystone_user_id>"`.
+  - Admin API extended with two new `include_in_schema=False` internal endpoints (`/internal/tenant-restore/plan`, `/internal/tenant-restore/execute`) gated by `X-Internal-Secret` header (`secrets.compare_digest`).
+- **Tenant Portal P4b — Audit logging** (`tenant_portal/audit_helper.py`):
+  - New `log_action(cur, ctx, action, ...)` helper — inserts atomically with the data query (same cursor/commit); silently swallows errors so log failures never break user flows.
+  - New `log_action_bare(ctx, action, ...)` helper — opens its own connection for call sites with no active cursor (e.g. metrics proxy endpoints).
+  - `log_action` wired into all 14 tenant endpoints: 11 environment routes, 3 metrics routes.
+  - All 6 restore routes also emit audit events (`tenant_view_restore_points`, `tenant_restore_plan`, `tenant_restore_execute`, `tenant_view_restore_jobs`, `tenant_view_restore_job_detail`, `tenant_restore_cancel`).
+- **Tenant Portal P4c — Notifications**:
+  - Ops Slack/Teams alert on `POST /tenant/restore/execute` — notifies ops channel with username, VM name, region, and job ID (`SLACK_WEBHOOK_URL` / `TEAMS_WEBHOOK_URL` env vars; best-effort, never blocks execution).
+  - Tenant email on restore job complete/fail — `RestoreExecutor._notify_tenant_result()` looks up the tenant's email from `users.email` and sends a styled HTML email via `smtp_helper.send_email()`.
+- **Tenant Portal P4d — MFA flows** (4 new routes in `tenant_portal/auth_routes.py`):
+  - `POST /tenant/auth/mfa/email-send` — generates a 6-digit OTP, SHA-256-hashes it to Redis (600s TTL), delivers via SMTP; rate-limited to 3 sends per 10 min.
+  - `POST /tenant/auth/mfa/verify` — unified MFA verifier supporting TOTP, email OTP, and backup codes; 5-failure Redis lockout (1hr); issues full JWT on success.
+  - `GET /tenant/auth/mfa/setup` — generates a `pyotp` TOTP secret and `otpauth://` URI for QR display; stores pending secret in Redis (5min TTL).
+  - `POST /tenant/auth/mfa/verify-setup` — validates first TOTP code, generates 8 bcrypt-hashed backup codes, upserts `tenant_portal_mfa`, issues full JWT; backup codes returned ONCE in response.
+- `bcrypt>=4.1.0` added to `tenant_portal/requirements.txt`.
+
+### Changed
+- `tenant_portal/main.py`: `restore_router` registered; version bumped to `1.84.3`.
+
+
 
 ### Added
 - **Tenant Portal P3a — Environment endpoints** (9 new `GET` routes in `tenant_portal/environment_routes.py`):

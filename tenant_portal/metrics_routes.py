@@ -26,6 +26,7 @@ from psycopg2.extras import RealDictCursor
 from db_pool import get_tenant_connection
 from middleware import get_tenant_context, inject_rls_vars
 from tenant_context import TenantContext
+from audit_helper import log_action, log_action_bare
 
 logger = logging.getLogger("tenant_portal.metrics")
 
@@ -117,6 +118,7 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
 
     metrics = _load_metrics_cache()
     if metrics is None:
+        log_action_bare(ctx, "tenant_view_metrics")
         return {"vms": [], "total": 0, "cache_available": False}
 
     raw_vms = metrics.get("vms") or []
@@ -126,6 +128,7 @@ async def metrics_all_vms(ctx: TenantContext = Depends(get_tenant_context)):
         if vm_id in owned_ids:
             result.append(_normalize_vm_entry(vm))
 
+    log_action_bare(ctx, "tenant_view_metrics")
     return {
         "vms": result,
         "total": len(result),
@@ -143,6 +146,7 @@ async def metrics_single_vm(vm_id: str, ctx: TenantContext = Depends(get_tenant_
 
     metrics = _load_metrics_cache()
     if metrics is None:
+        log_action_bare(ctx, "tenant_view_metrics", resource_type="vm", resource_id=vm_id)
         return {"vm_id": vm_id, "cache_available": False}
 
     raw_vms = metrics.get("vms") or []
@@ -152,9 +156,11 @@ async def metrics_single_vm(vm_id: str, ctx: TenantContext = Depends(get_tenant_
             entry = _normalize_vm_entry(vm)
             entry["cache_available"] = True
             entry["cache_timestamp"] = metrics.get("timestamp")
+            log_action_bare(ctx, "tenant_view_metrics", resource_type="vm", resource_id=vm_id)
             return entry
 
     # VM is in DB scope but not yet in metrics cache (e.g. newly created)
+    log_action_bare(ctx, "tenant_view_metrics", resource_type="vm", resource_id=vm_id)
     return {"vm_id": vm_id, "cache_available": True, "metrics_available": False}
 
 
@@ -208,6 +214,7 @@ async def metrics_availability(ctx: TenantContext = Depends(get_tenant_context))
                 (ctx.region_ids,),
             )
             region_map = {r["id"]: r["display_name"] for r in cur.fetchall()}
+            log_action(cur, ctx, "tenant_view_availability")
             conn.commit()
 
     # Build per-VM daily success index
