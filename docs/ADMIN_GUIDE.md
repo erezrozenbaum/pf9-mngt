@@ -1383,11 +1383,21 @@ The **📚 Docs** tab (Technical Tools group) provides direct in-app access to a
 - **metering_quotas**: Per-project resource quota tracking (allocated vs. used for vCPUs, RAM, storage)
 - **metering_efficiency**: Per-VM efficiency scores with classification (excellent/good/fair/poor/idle)
 
-#### Runbooks (4 tables)
-- **runbooks**: Runbook definitions (name, category, risk level, dry-run support, JSON Schema parameters)
+#### Runbooks (5 tables)
+- **runbooks**: Runbook definitions (name, category, risk level, dry-run support, JSON Schema parameters). Column `is_tenant_visible` (bool, default false) controls which runbooks appear in the tenant portal.
 - **runbook_approval_policies**: Per-runbook trigger→approver role mappings with approval mode and escalation timeout
 - **runbook_executions**: Full execution audit trail (status, parameters, results, timestamps, items found/actioned)
 - **runbook_approvals**: Individual approval records for multi-approval workflows
+- **runbook_project_tags**: Maps runbooks to specific project UUIDs for project-scoped tenant visibility
+
+#### Tenant Portal Foundation (5 tables — v1.84.0)
+- **tenant_portal_access**: Per-user allowlist (default-deny). Columns: `keystone_user_id`, `control_plane_id`, `enabled` (default false), `mfa_required`, `notes`, `granted_by`/`granted_at`, `revoked_by`/`revoked_at`. Admin must explicitly enable each user before they can log in.
+- **tenant_portal_branding**: Per-CP branding overrides (logo URL, primary colour, welcome text)
+- **tenant_action_log**: Immutable audit log of all tenant portal actions. Columns: `keystone_user_id`, `control_plane_id`, `action`, `resource_type`, `resource_id`, `project_id`, `region_id`, `ip_address`, `success`, `detail`.
+- **tenant_portal_mfa**: Per-user TOTP secrets and backup codes. Protected by Row-Level Security — each session can only read/write its own row keyed on `(app.tenant_keystone_user_id, app.tenant_cp_id)`.
+- **tenant_cp_view** (View): Safe read-only projection of `pf9_control_planes` exposing only `id, name, auth_url, is_enabled, display_color, tags`. `tenant_portal_role` never has direct access to `pf9_control_planes` (which holds `password_enc`).
+
+**Row-Level Security (RLS)** is enabled on `servers`, `volumes`, `snapshots`, `snapshot_records`, and `restore_jobs`. All five tables require `app.tenant_project_ids` / `app.tenant_region_ids` session variables to return any rows when queried as `tenant_portal_role`. The admin service connects as the `pf9` superuser which bypasses RLS automatically — no existing admin queries are affected.
 
 #### Performance Optimizations & Advanced Features
 - **RBAC Middleware**: HTTP middleware enforces permissions before request processing
@@ -1706,7 +1716,7 @@ Get-Content monitoring\cache\metrics_cache.json | ConvertFrom-Json
 
 ## Core Components Deep Dive
 
-### Database Schema (90+ Tables)
+### Database Schema (95+ Tables)
 ```sql
 -- Core Identity
 domains, projects, hypervisors
@@ -1729,8 +1739,13 @@ networks, subnets, ports, routers, floating_ips
 -- Operational Tables
 inventory_runs  -- Audit trail for data collection
 
--- Runbooks (4 tables)
-runbooks, runbook_approval_policies, runbook_executions, runbook_approvals
+-- Runbooks (5 tables)
+runbooks, runbook_approval_policies, runbook_executions, runbook_approvals, runbook_project_tags
+
+-- Tenant Portal (5 tables — v1.84.0)
+tenant_portal_access, tenant_portal_branding, tenant_action_log, tenant_portal_mfa, runbook_project_tags
+-- Plus: tenant_cp_view (safe read-only view over pf9_control_planes)
+-- Plus: RLS policies on servers, volumes, snapshots, snapshot_records, restore_jobs
 ```
 
 ### API Endpoints (40+ Routes)

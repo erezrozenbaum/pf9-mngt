@@ -77,6 +77,13 @@ if ($missingVars.Count -gt 0) {
     exit 1
 }
 
+# Warn (do not fail) if TENANT_DB_PASSWORD is absent — the tenant_portal
+# service will still start but its DB auth will fail at login time.
+$tenantDbPwd = $envCheckMap['TENANT_DB_PASSWORD']
+if (-not $tenantDbPwd -or $tenantDbPwd -match '^<.*>$') {
+    Write-Host "  ⚠ TENANT_DB_PASSWORD not set in .env (tenant portal DB connections will fail unless secrets/tenant_portal_db_password is populated)" -ForegroundColor Yellow
+}
+
 # Ensure reports directory exists for volume mount
 if (-not (Test-Path ".\reports")) {
     New-Item -ItemType Directory -Force -Path ".\reports" | Out-Null

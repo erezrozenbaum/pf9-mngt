@@ -1,0 +1,65 @@
+# NetworkPolicy for pf9-tenant-portal
+# Ingress: only from nginx-ingress controller pods (path /tenant/*)
+# Egress:  only to pf9-db (5432) + pf9-redis (6379); all other egress blocked.
+# Rationale: tenant_portal_role must never reach the admin API, LDAP, or SMTP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pf9-tenant-portal
+  namespace: {{ include "pf9mngt.namespace" . }}
+  labels:
+    {{- include "pf9mngt.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-portal
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "pf9mngt.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: tenant-portal
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow HTTP from nginx-ingress controller only
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8010
+          protocol: TCP
+
+  egress:
+    # PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: db
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+
+    # DNS resolution (CoreDNS)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

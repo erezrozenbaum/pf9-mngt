@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.0] - 2026-04-14
+
+### Added
+- **Tenant portal DB foundation — P0 security hardening + P1 schema** (`db/migrate_tenant_portal.sql`, `db/init.sql`):
+  - New dedicated DB role `tenant_portal_role` — limited to SELECT/INSERT/UPDATE on permitted tables only; automatically bypassed by the admin `pf9` superuser so all existing admin-portal queries are unchanged.
+  - **Row-Level Security** enabled on five existing tables: `servers`, `volumes`, `snapshots`, `snapshot_records`, `restore_jobs`. Eight RLS policies enforce project/tenant isolation — a session without `app.tenant_project_ids` / `app.tenant_keystone_user_id` session variables sees zero rows (default-deny).
+  - `tenant_cp_view` — safe read-only view over `pf9_control_planes` exposing only `id, name, auth_url, is_enabled, display_color, tags`; never exposes `username` or `password_enc` to the tenant role.
+  - New tables: `tenant_portal_access` (per-tenant feature flags, branding, domain slug), `tenant_portal_branding` (logo, primary colour, welcome text), `tenant_action_log` (immutable audit log), `tenant_portal_mfa` (per-user TOTP secrets with RLS isolation), `runbook_project_tags` (runbook→project mapping for tenant visibility).
+  - `ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS is_tenant_visible BOOLEAN NOT NULL DEFAULT FALSE`.
+  - `role_permissions` seeded with four `tenant` role entries (runbook view/execute, snapshot read, restore read).
+  - Migration applied to both Docker dev (`pf9_db`) and Kubernetes production (`pf9-db-0`). Fresh-install parity via `db/init.sql`. Migration is fully idempotent.
+- **Tenant portal FastAPI service skeleton — P2** (`tenant_portal/`):
+  - New standalone service: `tenant_portal/main.py`, `Dockerfile`, `requirements.txt`.
+  - `POST /tenant/auth/login` — Keystone passthrough auth. Credentials never written to DB/Redis/logs. On success issues a `role=tenant` JWT with `project_ids`, `region_ids`, `control_plane_id`, `keystone_user_id` claims. Enforces default-deny allowlist (`tenant_portal_access.enabled`). MFA flow: if `TENANT_MFA_MODE != "none"` or `mfa_required = true`, issues a 5-minute `preauth_token` instead of a full JWT.
+  - `POST /tenant/auth/logout` — deletes Redis session key (immediate invalidation).
+  - `GET /tenant/auth/me` — returns username, projects (with display names), regions (display names only — never raw `region_id`).
+  - Security middleware (`middleware.py`): JWT signature + role check → Redis session existence check → configurable IP binding (`TENANT_IP_BINDING`: strict/warn/off) → per-user rate limit (60 read req/min, 5 auth req/min).
+  - `inject_rls_vars()` helper: sets `app.tenant_project_ids`, `app.tenant_region_ids`, `app.tenant_keystone_user_id`, `app.tenant_cp_id` via `SET LOCAL` before every DB transaction.
+  - CORS restricted to `TENANT_CORS_ORIGIN_PATTERN` (default: `^https://[a-z0-9-]+\.pf9-mngt\.ccc\.co\.il$`).
+  - Security headers middleware (X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Cache-Control: no-store).
+  - Generic error handler: no stack traces in tenant-facing error responses (returns `{detail, request_id}` only).
+- **Admin portal: Tenant portal management — P2b** (`api/tenant_portal_routes.py`):
+  - `GET /api/admin/tenant-portal/users/{cp_id}` — list Keystone users for a CP with current access status.
+  - `GET /api/admin/tenant-portal/access/{cp_id}` — list all `tenant_portal_access` rows.
+  - `PUT /api/admin/tenant-portal/access` — grant or revoke access; atomically updates Redis `tenant:allowed:` / `tenant:blocked:` keys.
+  - `DELETE /api/admin/tenant-portal/sessions/{cp_id}/{user_id}` — force-terminate all active sessions; scans Redis and deletes matching session keys.
+  - `GET /api/admin/tenant-portal/sessions/{cp_id}` — list active sessions (from Redis, no DB read).
+  - `GET /api/admin/tenant-portal/audit/{cp_id}` — paginated `tenant_action_log` query with optional user filter.
+  - Requires `admin` or `superadmin` role.
+
+### Fixed / Security
+- Security test #19 verified: `tenant_portal_role` returns `permission denied` on `pf9_control_planes`, `user_roles`, `user_sessions`, `snapshot_policy_sets`.
+- RLS default-deny verified on both dev and K8s: `tenant_portal_role` without session vars → 0 rows on all RLS-protected tables.
+- Migration idempotency verified: safe to re-run without errors or data changes.
+
+## [1.83.53] - 2026-04-13
+
+### Added
+- **Tenant portal DB foundation — P0 security hardening + P1 schema** (`db/migrate_tenant_portal.sql`, `db/init.sql`):
+  - New dedicated DB role `tenant_portal_role` — limited to SELECT/INSERT/UPDATE on permitted tables only; automatically bypassed by the admin `pf9` superuser so all existing admin-portal queries are unchanged.
+  - **Row-Level Security** enabled on five existing tables: `servers`, `volumes`, `snapshots`, `snapshot_records`, `restore_jobs`. Eight RLS policies enforce project/tenant isolation — a session without `app.tenant_project_id` / `app.tenant_keystone_user_id` session variables sees zero rows (default-deny).
+  - `tenant_cp_view` — safe read-only view over `pf9_control_planes` exposing only `id, name, auth_url, is_enabled, display_color, tags`; never exposes `username` or `password_enc` to the tenant role.
+  - New tables: `tenant_portal_access` (per-tenant feature flags, branding, domain slug), `tenant_portal_branding` (logo, primary colour, welcome text), `tenant_action_log` (immutable audit log), `tenant_portal_mfa` (per-user TOTP secrets with RLS isolation), `runbook_project_tags` (runbook→project mapping for tenant visibility).
+  - `ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS is_tenant_visible BOOLEAN NOT NULL DEFAULT FALSE`.
+  - `role_permissions` seeded with four `tenant` role entries (runbook view/execute, snapshot read, restore read).
+  - Migration applied to both Docker dev (`pf9_db`) and Kubernetes production (`pf9-db-0`). Fresh-install parity via `db/init.sql`.
+
 ## [1.83.53] - 2026-04-13
 
 ### Fixed

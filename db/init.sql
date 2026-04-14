@@ -3758,3 +3758,204 @@ CREATE TABLE IF NOT EXISTS system_settings (
 INSERT INTO system_settings (key, value, description)
 VALUES ('rvtools_retention_days', '30', 'Number of days to keep RVTools Excel exports on disk')
 ON CONFLICT (key) DO NOTHING;
+
+-- =========================================================================
+-- TENANT PORTAL — v1.84.0 (Phase P0 + P1)
+-- Added by migrate_tenant_portal.sql; mirrored here for fresh installs.
+-- =========================================================================
+
+-- Tenant action log (permanent audit trail; ephemeral Redis not sufficient)
+CREATE TABLE IF NOT EXISTS tenant_action_log (
+    id               BIGSERIAL    PRIMARY KEY,
+    keystone_user_id TEXT         NOT NULL,
+    username         VARCHAR(255) NOT NULL,
+    control_plane_id TEXT         NOT NULL,
+    action           VARCHAR(100) NOT NULL,
+    resource_type    VARCHAR(50),
+    resource_id      TEXT,
+    project_id       TEXT,
+    region_id        TEXT,
+    ip_address       INET,
+    user_agent       TEXT,
+    timestamp        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    success          BOOLEAN      NOT NULL DEFAULT true,
+    details          JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_action_log_user_ts ON tenant_action_log (keystone_user_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_tenant_action_log_cp_ts   ON tenant_action_log (control_plane_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_tenant_action_log_action  ON tenant_action_log (action, timestamp DESC);
+
+-- Per-user, per-CP access allowlist (default-deny model)
+CREATE TABLE IF NOT EXISTS tenant_portal_access (
+    id               BIGSERIAL    PRIMARY KEY,
+    keystone_user_id TEXT         NOT NULL,
+    control_plane_id TEXT         NOT NULL REFERENCES pf9_control_planes(id),
+    enabled          BOOLEAN      NOT NULL DEFAULT false,
+    mfa_required     BOOLEAN      NOT NULL DEFAULT false,
+    notes            TEXT,
+    granted_by       TEXT,
+    granted_at       TIMESTAMPTZ,
+    revoked_by       TEXT,
+    revoked_at       TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (keystone_user_id, control_plane_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_portal_access_cp_enabled
+    ON tenant_portal_access (control_plane_id, enabled);
+
+-- Per-CP branding (served unauthenticated; runtime-configurable)
+CREATE TABLE IF NOT EXISTS tenant_portal_branding (
+    control_plane_id TEXT         PRIMARY KEY REFERENCES pf9_control_planes(id),
+    company_name     VARCHAR(255) NOT NULL DEFAULT 'Cloud Portal',
+    logo_url         TEXT,
+    favicon_url      TEXT,
+    primary_color    CHAR(7)      NOT NULL DEFAULT '#1A73E8',
+    accent_color     CHAR(7)      NOT NULL DEFAULT '#F29900',
+    support_email    TEXT,
+    support_url      TEXT,
+    welcome_message  TEXT,
+    footer_text      TEXT,
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+-- Tenant TOTP MFA secrets (separate from staff user_mfa; RLS-protected)
+CREATE TABLE IF NOT EXISTS tenant_portal_mfa (
+    id               BIGSERIAL    PRIMARY KEY,
+    keystone_user_id TEXT         NOT NULL,
+    control_plane_id TEXT         NOT NULL REFERENCES pf9_control_planes(id),
+    totp_secret      TEXT         NOT NULL,
+    backup_codes     TEXT[]       NOT NULL,
+    enrolled_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    last_used_at     TIMESTAMPTZ,
+    used_backup_codes INT[]       NOT NULL DEFAULT '{}',
+    UNIQUE (keystone_user_id, control_plane_id)
+);
+
+-- Opt-in column on runbooks (default false — safe for existing data)
+ALTER TABLE runbooks
+    ADD COLUMN IF NOT EXISTS is_tenant_visible BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_runbooks_tenant_visible
+    ON runbooks (is_tenant_visible) WHERE is_tenant_visible = true;
+
+-- Project-scoped runbook tags (NULL project_id = visible to all CP tenants)
+CREATE TABLE IF NOT EXISTS runbook_project_tags (
+    runbook_name TEXT NOT NULL REFERENCES runbooks(name) ON DELETE CASCADE,
+    project_id   TEXT NOT NULL,
+    PRIMARY KEY (runbook_name, project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_runbook_project_tags_project
+    ON runbook_project_tags (project_id);
+
+-- Safe view over pf9_control_planes (hides username + password_enc)
+CREATE OR REPLACE VIEW tenant_cp_view AS
+    SELECT id, name, auth_url, is_enabled, display_color, tags
+    FROM   pf9_control_planes
+    WHERE  is_enabled = TRUE;
+
+-- RLS: inventory tables (project_id + region_id double-scoped)
+ALTER TABLE servers          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE volumes          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE snapshots        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE snapshot_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE restore_jobs     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_portal_mfa ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_portal_isolation ON servers;
+CREATE POLICY tenant_portal_isolation ON servers
+    AS PERMISSIVE FOR SELECT TO tenant_portal_role
+    USING (
+        project_id = ANY(string_to_array(current_setting('app.tenant_project_ids', true), ','))
+        AND region_id = ANY(string_to_array(current_setting('app.tenant_region_ids',  true), ','))
+    );
+
+DROP POLICY IF EXISTS tenant_portal_isolation ON volumes;
+CREATE POLICY tenant_portal_isolation ON volumes
+    AS PERMISSIVE FOR SELECT TO tenant_portal_role
+    USING (
+        project_id = ANY(string_to_array(current_setting('app.tenant_project_ids', true), ','))
+        AND region_id = ANY(string_to_array(current_setting('app.tenant_region_ids',  true), ','))
+    );
+
+DROP POLICY IF EXISTS tenant_portal_isolation ON snapshots;
+CREATE POLICY tenant_portal_isolation ON snapshots
+    AS PERMISSIVE FOR SELECT TO tenant_portal_role
+    USING (
+        project_id = ANY(string_to_array(current_setting('app.tenant_project_ids', true), ','))
+        AND region_id = ANY(string_to_array(current_setting('app.tenant_region_ids',  true), ','))
+    );
+
+DROP POLICY IF EXISTS tenant_portal_isolation ON snapshot_records;
+CREATE POLICY tenant_portal_isolation ON snapshot_records
+    AS PERMISSIVE FOR SELECT TO tenant_portal_role
+    USING (
+        project_id = ANY(string_to_array(current_setting('app.tenant_project_ids', true), ','))
+        AND region_id = ANY(string_to_array(current_setting('app.tenant_region_ids',  true), ','))
+    );
+
+DROP POLICY IF EXISTS tenant_portal_isolation_select ON restore_jobs;
+CREATE POLICY tenant_portal_isolation_select ON restore_jobs
+    AS PERMISSIVE FOR SELECT TO tenant_portal_role
+    USING (project_id = ANY(string_to_array(current_setting('app.tenant_project_ids', true), ',')));
+
+DROP POLICY IF EXISTS tenant_portal_isolation_insert ON restore_jobs;
+CREATE POLICY tenant_portal_isolation_insert ON restore_jobs
+    AS PERMISSIVE FOR INSERT TO tenant_portal_role
+    WITH CHECK (project_id = ANY(string_to_array(current_setting('app.tenant_project_ids', true), ',')));
+
+DROP POLICY IF EXISTS tenant_portal_isolation_update ON restore_jobs;
+CREATE POLICY tenant_portal_isolation_update ON restore_jobs
+    AS PERMISSIVE FOR UPDATE TO tenant_portal_role
+    USING (project_id = ANY(string_to_array(current_setting('app.tenant_project_ids', true), ',')));
+
+DROP POLICY IF EXISTS tenant_mfa_isolation ON tenant_portal_mfa;
+CREATE POLICY tenant_mfa_isolation ON tenant_portal_mfa
+    AS PERMISSIVE FOR ALL TO tenant_portal_role
+    USING (
+        keystone_user_id = current_setting('app.tenant_keystone_user_id', true)
+        AND control_plane_id = current_setting('app.tenant_cp_id', true)
+    )
+    WITH CHECK (
+        keystone_user_id = current_setting('app.tenant_keystone_user_id', true)
+        AND control_plane_id = current_setting('app.tenant_cp_id', true)
+    );
+
+-- Role + grants for fresh installs
+-- (Password set post-deploy from secret; see migrate_tenant_portal.sql header)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'tenant_portal_role') THEN
+        CREATE ROLE tenant_portal_role LOGIN;
+    END IF;
+END $$;
+
+DO $$
+DECLARE v_dbname TEXT := current_database();
+BEGIN
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO tenant_portal_role', v_dbname);
+END $$;
+
+GRANT USAGE ON SCHEMA public TO tenant_portal_role;
+
+GRANT SELECT ON servers, volumes, snapshots, snapshot_records TO tenant_portal_role;
+GRANT SELECT, INSERT, UPDATE ON restore_jobs TO tenant_portal_role;
+GRANT SELECT ON pf9_regions TO tenant_portal_role;
+GRANT SELECT ON users TO tenant_portal_role;
+GRANT SELECT ON runbooks, runbook_project_tags TO tenant_portal_role;
+GRANT SELECT ON tenant_cp_view TO tenant_portal_role;
+GRANT SELECT ON tenant_portal_access TO tenant_portal_role;
+GRANT SELECT ON tenant_portal_branding TO tenant_portal_role;
+GRANT INSERT ON tenant_action_log TO tenant_portal_role;
+GRANT USAGE, SELECT ON SEQUENCE tenant_action_log_id_seq TO tenant_portal_role;
+GRANT INSERT ON auth_audit_log TO tenant_portal_role;
+GRANT INSERT ON notification_log TO tenant_portal_role;
+GRANT SELECT, INSERT, UPDATE ON tenant_portal_mfa TO tenant_portal_role;
+GRANT USAGE, SELECT ON SEQUENCE tenant_portal_mfa_id_seq TO tenant_portal_role;
+
+-- Tenant role permissions
+INSERT INTO role_permissions (role, resource, action) VALUES
+    ('tenant', 'snapshots', 'read'),
+    ('tenant', 'restore',   'write'),
+    ('tenant', 'servers',   'read'),
+    ('tenant', 'volumes',   'read')
+ON CONFLICT DO NOTHING;

@@ -37,3 +37,7 @@ services:
   phpldapadmin:
     ports:
       - "${LDAP_ADMIN_PORT:-8081}:80"
+
+  tenant_portal:
+    ports:
+      - "8010:8010"

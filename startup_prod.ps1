@@ -79,6 +79,13 @@ if ($missingVars.Count -gt 0) {
 }
 Write-Host "✓ Environment validated" -ForegroundColor Green
 
+# Warn (do not fail) if TENANT_DB_PASSWORD is absent — Docker secret file
+# (secrets/tenant_portal_db_password) takes priority in prod.
+$tenantDbPwd = $envCheckMap['TENANT_DB_PASSWORD']
+if (-not $tenantDbPwd -or $tenantDbPwd -match '^<.*>$') {
+    Write-Host "  ⚠ TENANT_DB_PASSWORD not set in .env — ensure secrets/tenant_portal_db_password is populated" -ForegroundColor Yellow
+}
+
 # ── Step 0b: Warn if secrets/ files are still empty ────────────────────────
 Write-Host "0b. Checking secrets/ files..." -ForegroundColor Yellow
 $secretFiles = @("secrets/db_password", "secrets/ldap_admin_password", "secrets/pf9_password", "secrets/jwt_secret", "secrets/ldap_sync_key")

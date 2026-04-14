@@ -529,6 +529,124 @@ CREATE INDEX idx_drift_events_acknowledged ON drift_events(acknowledged);
 
 ---
 
+## Tenant Portal Foundation (v1.84.0)
+
+Five tables + one view added for the tenant self-service portal. The portal connects to PostgreSQL as `tenant_portal_role` (minimal grants, subject to RLS) — not the admin `pf9` user.
+
+### Row-Level Security Policy
+
+RLS is enabled on five inventory tables. Every tenant portal DB transaction must first call:
+```sql
+SET LOCAL app.tenant_project_ids   = '<csv>';   -- e.g. 'proj-1,proj-2'
+SET LOCAL app.tenant_region_ids    = '<csv>';
+SET LOCAL app.tenant_keystone_user_id = '<uid>';
+SET LOCAL app.tenant_cp_id         = '<cp>';
+```
+The RLS policies enforce `project_id = ANY(string_to_array(...))` — so a misconfigured session sees zero rows rather than too many.
+
+Tables with RLS enabled: `servers`, `volumes`, `snapshots`, `snapshot_records`, `restore_jobs`.
+
+### tenant_portal_access
+Per-user, per-CP access allowlist (default-deny). No entry = no login.
+```sql
+CREATE TABLE tenant_portal_access (
+    id               BIGSERIAL    PRIMARY KEY,
+    keystone_user_id TEXT         NOT NULL,
+    control_plane_id TEXT         NOT NULL REFERENCES pf9_control_planes(id),
+    enabled          BOOLEAN      NOT NULL DEFAULT false,
+    mfa_required     BOOLEAN      NOT NULL DEFAULT false,
+    notes            TEXT,
+    granted_by       TEXT,
+    granted_at       TIMESTAMPTZ,
+    revoked_by       TEXT,
+    revoked_at       TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    UNIQUE (keystone_user_id, control_plane_id)
+);
+```
+Redis mirrors: `tenant:allowed:<cp>:<uid>` (TTL 300 s), `tenant:blocked:<cp>:<uid>`.
+
+### tenant_portal_mfa
+TOTP / email-OTP state per user per CP. RLS enabled.
+```sql
+CREATE TABLE tenant_portal_mfa (
+    keystone_user_id TEXT         NOT NULL,
+    control_plane_id TEXT         NOT NULL REFERENCES pf9_control_planes(id),
+    mfa_type         TEXT         NOT NULL DEFAULT 'email_otp',
+    totp_secret_enc  TEXT,        -- Fernet-encrypted TOTP seed
+    email            TEXT,
+    last_used_at     TIMESTAMPTZ,
+    failed_attempts  INT          NOT NULL DEFAULT 0,
+    locked_until     TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (keystone_user_id, control_plane_id)
+);
+```
+
+### tenant_portal_branding
+Per-CP runtime-configurable branding. Updated via `PUT /api/admin/tenant-portal/branding/{cp_id}` without pod restart.
+```sql
+CREATE TABLE tenant_portal_branding (
+    control_plane_id TEXT         PRIMARY KEY REFERENCES pf9_control_planes(id),
+    company_name     VARCHAR(255) NOT NULL DEFAULT 'Cloud Portal',
+    logo_url         TEXT,
+    favicon_url      TEXT,
+    primary_color    CHAR(7)      DEFAULT '#1A73E8',
+    accent_color     CHAR(7)      DEFAULT '#F29900',
+    support_email    TEXT,
+    support_url      TEXT,
+    welcome_message  TEXT,
+    footer_text      TEXT,
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+```
+
+### tenant_action_log
+Permanent, tamper-evident audit trail for all tenant portal activity.
+```sql
+CREATE TABLE tenant_action_log (
+    id               BIGSERIAL    PRIMARY KEY,
+    keystone_user_id TEXT         NOT NULL,
+    username         VARCHAR(255) NOT NULL,
+    control_plane_id TEXT         NOT NULL,
+    action           VARCHAR(100) NOT NULL,
+    resource_type    VARCHAR(50),
+    resource_id      TEXT,
+    project_id       TEXT,
+    region_id        TEXT,
+    ip_address       INET,
+    user_agent       TEXT,
+    timestamp        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    success          BOOLEAN      NOT NULL DEFAULT true,
+    details          JSONB
+);
+CREATE INDEX idx_tenant_action_log_user_ts ON tenant_action_log (keystone_user_id, timestamp DESC);
+CREATE INDEX idx_tenant_action_log_cp_ts   ON tenant_action_log (control_plane_id, timestamp DESC);
+```
+
+### runbook_project_tags
+Maps runbooks to Keystone project IDs so tenant users only see runbooks relevant to their projects.
+```sql
+CREATE TABLE runbook_project_tags (
+    runbook_name TEXT NOT NULL REFERENCES runbooks(name) ON DELETE CASCADE,
+    project_id   TEXT NOT NULL,
+    PRIMARY KEY (runbook_name, project_id)
+);
+```
+
+### tenant_cp_view
+Safe projection of `pf9_control_planes` — hides `username`, `password_enc`, and internal credentials. Grants `SELECT` to `tenant_portal_role`.
+```sql
+CREATE OR REPLACE VIEW tenant_cp_view AS
+    SELECT id, name, auth_url, is_enabled, display_color, tags
+    FROM   pf9_control_planes
+    WHERE  is_enabled = TRUE;
+```
+
+---
+
 ## Enriched Views
 
 ### Volume Attachments

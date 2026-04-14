@@ -692,6 +692,54 @@ When not set, `POST /api/migration/projects/{id}/waves/{wave_id}/execute` return
 
 
 
+#### Tenant Self-Service Portal (v1.84.0)
+
+The tenant portal runs as a **separate container** (`pf9_tenant_portal`) on port 8010. It connects to PostgreSQL as `tenant_portal_role` (not the admin `pf9` user) and enforces Row Level Security so each tenant sees only their own resources.
+
+```bash
+# Password for the tenant_portal_role DB user.
+# The preferred method is Docker Secrets — populate secrets/tenant_portal_db_password.
+# The env var below is used as a dev-only fallback when the secret file is empty.
+TENANT_DB_PASSWORD=<secure-pwd>
+
+# The Keystone control_plane_id this portal instance serves.
+# Must match a row in pf9_control_planes.id (or leave "default" for single-tenant installs).
+TENANT_PORTAL_CONTROL_PLANE_ID=default
+
+# MFA mode for tenant logins. Options: email_otp | totp | none
+TENANT_MFA_MODE=email_otp
+
+# IP binding enforcement for tenant sessions.
+# strict = 401 on IP change, warn = log + allow, off = disabled
+TENANT_IP_BINDING=warn
+
+# Session lifetime in minutes (default: 60)
+TENANT_TOKEN_EXPIRE_MINUTES=60
+
+# Regex matching allowed CORS origins for the tenant portal.
+# Example: ^https://[a-z0-9-]+\.pf9-mngt\.ccc\.co\.il$
+# If unset, CORS is disabled (suitable for same-origin reverse-proxy setups).
+TENANT_CORS_ORIGIN_PATTERN=
+```
+
+**Creating the `tenant_portal_role` user** (required once per installation):
+
+```bash
+# Run on the database host or via docker exec
+docker exec -it pf9_db psql -U pf9 -d pf9_mgmt -c \
+  "CREATE ROLE tenant_portal_role LOGIN PASSWORD 'your-password';"
+# Then run the migration (already applied in v1.84.0 upgrade):
+docker exec -it pf9_db psql -U pf9 -d pf9_mgmt -f /docker-entrypoint-initdb.d/migrate_tenant_portal.sql
+```
+
+**Docker Secrets (production)**: Populate `secrets/tenant_portal_db_password` with the tenant_portal_role password. The container reads `/run/secrets/tenant_portal_db_password` automatically at startup.
+
+```bash
+printf 'your-tenant-portal-db-password' > secrets/tenant_portal_db_password
+```
+
+> The tenant portal shares the **same JWT signing key** as the admin API (`JWT_SECRET_KEY`). Auth tokens issued to tenants carry `"role": "tenant"` — admin tokens carry `"role": "admin"`. The tenant portal middleware explicitly rejects admin-role tokens.
+
 #### Database Backup Configuration
 
 Backup is opt-in via Docker Compose profiles. Set `COMPOSE_PROFILES=backup` to start

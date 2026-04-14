@@ -1259,7 +1259,7 @@ async def collect_vm_metrics(self, session, host):
 - Historical tracking
 - Performance optimization
 
-#### Database Schema (90+ Tables with History Tracking)
+#### Database Schema (95+ Tables with History Tracking)
 
 **Core Infrastructure Tables**:
 ```sql
@@ -1295,6 +1295,12 @@ notification_log, notification_digests
 metering_config, metering_resources, metering_snapshots,
 metering_restores, metering_api_usage, metering_quotas,
 metering_efficiency
+
+-- Tenant Portal Foundation (5 tables + 1 view — v1.84.0)
+tenant_portal_access, tenant_portal_branding,
+tenant_action_log, tenant_portal_mfa, runbook_project_tags
+-- tenant_cp_view: safe projection of pf9_control_planes (no password_enc)
+-- RLS enabled on: servers, volumes, snapshots, snapshot_records, restore_jobs
 ```
 
 **Enhanced Schema Features**:
