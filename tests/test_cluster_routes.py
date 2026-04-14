@@ -54,6 +54,7 @@ if "fastapi" not in sys.modules:
     fastapi_stub.APIRouter = MagicMock(return_value=MagicMock())
     fastapi_stub.Depends = lambda fn: fn
     fastapi_stub.Query = lambda *a, **kw: None
+    fastapi_stub.Header = lambda *a, **kw: None
     fastapi_stub.Request = MagicMock
     fastapi_stub.status = MagicMock()
     fastapi_stub.status.HTTP_403_FORBIDDEN = 403

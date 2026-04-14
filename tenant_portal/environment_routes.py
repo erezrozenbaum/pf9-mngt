@@ -31,6 +31,7 @@ from psycopg2.extras import RealDictCursor
 from db_pool import get_tenant_connection
 from middleware import get_tenant_context, inject_rls_vars
 from tenant_context import TenantContext
+from audit_helper import log_action
 
 logger = logging.getLogger("tenant_portal.environment")
 
@@ -105,6 +106,7 @@ async def list_vms(ctx: TenantContext = Depends(get_tenant_context)):
                 (ctx.project_ids, ctx.region_ids),
             )
             rows = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_vms")
             conn.commit()
 
     result = []
@@ -153,6 +155,7 @@ async def get_vm(vm_id: str, ctx: TenantContext = Depends(get_tenant_context)):
                 (vm_id, ctx.project_ids, ctx.region_ids),
             )
             active_restore = cur.fetchone()
+            log_action(cur, ctx, "tenant_view_vm_detail", resource_type="vm", resource_id=vm_id)
             conn.commit()
 
     vm.pop("raw_json", None)
@@ -185,6 +188,7 @@ async def list_volumes(ctx: TenantContext = Depends(get_tenant_context)):
                 (ctx.project_ids, ctx.region_ids),
             )
             rows = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_volumes")
             conn.commit()
 
     result = []
@@ -252,6 +256,7 @@ async def list_snapshots(
                 params,
             )
             rows = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_snapshots")
             conn.commit()
 
     result = []
@@ -279,6 +284,7 @@ async def get_snapshot(snapshot_id: str, ctx: TenantContext = Depends(get_tenant
                 (snapshot_id, ctx.project_ids, ctx.region_ids),
             )
             row = cur.fetchone()
+            log_action(cur, ctx, "tenant_view_snapshot_detail", resource_type="snapshot", resource_id=snapshot_id)
             conn.commit()
 
     if row is None:
@@ -331,6 +337,7 @@ async def snapshot_history(
                 params,
             )
             rows = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_snapshot_history")
             conn.commit()
 
     return {"records": [dict(r) for r in rows], "total": len(rows)}
@@ -371,6 +378,7 @@ async def compliance(ctx: TenantContext = Depends(get_tenant_context)):
                 (ctx.project_ids, ctx.project_ids, ctx.region_ids),
             )
             rows = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_compliance")
             conn.commit()
 
     result = []
@@ -460,7 +468,7 @@ async def dashboard(ctx: TenantContext = Depends(get_tenant_context)):
                 (ctx.project_ids, ctx.region_ids),
             )
             active_restores = cur.fetchone()["cnt"]
-
+            log_action(cur, ctx, "tenant_view_dashboard")
             conn.commit()
 
     total_vms = cov_row["total_vms"] or 0
@@ -580,6 +588,7 @@ async def events(
                 (ctx.project_ids, ctx.keystone_user_id, limit),
             )
             restore_events = [dict(r) for r in cur.fetchall()]
+            log_action(cur, ctx, "tenant_view_events")
             conn.commit()
 
     # Merge, sort by occurred_at desc, cap at limit
@@ -622,6 +631,7 @@ async def list_runbooks(ctx: TenantContext = Depends(get_tenant_context)):
                 (ctx.project_ids,),
             )
             rows = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_runbooks")
             conn.commit()
 
     return {"runbooks": [dict(r) for r in rows], "total": len(rows)}
@@ -656,6 +666,7 @@ async def get_runbook(name: str, ctx: TenantContext = Depends(get_tenant_context
                 (name, ctx.project_ids),
             )
             row = cur.fetchone()
+            log_action(cur, ctx, "tenant_view_runbook_detail", resource_type="runbook", resource_id=name)
             conn.commit()
 
     if row is None:

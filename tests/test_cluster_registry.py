@@ -45,6 +45,7 @@ class _HTTPException(Exception):
         self.detail = detail
 fastapi_stub.HTTPException = _HTTPException
 fastapi_stub.Query = lambda *a, **kw: None
+fastapi_stub.Header = lambda *a, **kw: None
 fastapi_stub.Depends = lambda fn: None
 fastapi_stub.APIRouter = MagicMock(return_value=MagicMock())
 fastapi_stub.Request = MagicMock

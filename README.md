@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.3-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -536,6 +536,8 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.84.3](CHANGELOG.md)** — Tenant Portal P4/P4b/P4c/P4d: self-service restore center (6 endpoints) + full audit logging on all 20 tenant endpoints + ops Slack/Teams and tenant email notifications + TOTP/email OTP/backup-codes MFA flows.
+
 **[v1.84.2](CHANGELOG.md)** — Tenant Portal P3a/P3b/P3c: 14 read-only endpoints — VM/volume/snapshot/compliance/dashboard/events environment views (P3a), metrics proxy filtering `metrics_cache.json` to tenant scope with 7d/30d availability (P3b), tenant-visible runbooks read-only (P3c).
 **[v1.84.1](CHANGELOG.md)** — Bug fixes: tenant portal container no longer crashes when `TENANT_DB_PASSWORD` is absent (degraded-mode startup); `tenant-portal` Docker image now published to ghcr.io via release workflow.
 **[v1.84.0](CHANGELOG.md)** — Tenant Self-Service Portal foundation: DB role + RLS hardening (`tenant_portal_role`, 5 RLS policies on inventory tables), 5 schema tables (`tenant_portal_access`, `tenant_portal_mfa`, `tenant_portal_branding`, `tenant_action_log`, `runbook_project_tags`) + safe `tenant_cp_view`, isolated FastAPI service on port 8010 (JWT `role=tenant`, Redis session binding, IP binding, MFA preauth, per-user rate limiting), 6 admin API endpoints in `api/tenant_portal_routes.py`, Helm templates + NetworkPolicy, updated docker-compose.
@@ -676,4 +678,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.84.2 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.84.3 | **Last Updated**: April 2026
