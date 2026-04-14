@@ -137,6 +137,10 @@ jobs:
             context: ./ldap_sync_worker
             dockerfile: ldap_sync_worker/Dockerfile
             platforms: linux/amd64,linux/arm64
+          - service: tenant-portal
+            context: .
+            dockerfile: tenant_portal/Dockerfile
+            platforms: linux/amd64,linux/arm64
 
     steps:
       - name: Checkout code

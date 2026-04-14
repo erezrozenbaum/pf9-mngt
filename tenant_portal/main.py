@@ -114,7 +114,15 @@ async def generic_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 async def startup_event():
     logger.info("Tenant portal starting up — initialising DB pool and Redis")
-    init_pool()
+    try:
+        init_pool()
+        logger.info("DB pool ready")
+    except Exception as exc:
+        logger.warning(
+            "DB pool failed to initialise at startup (%s). "
+            "Configure TENANT_DB_PASSWORD to enable DB features.",
+            exc,
+        )
     # Verify Redis connectivity
     try:
         get_redis().ping()

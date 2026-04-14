@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.1] - 2026-04-14
+
+### Fixed
+- **Tenant portal crash loop on startup**: `init_pool()` in `startup_event` is now non-fatal — if `TENANT_DB_PASSWORD` is not configured the container starts in degraded mode and logs a warning instead of restarting indefinitely.
+- **K8s ImagePullBackOff**: `tenant-portal` was missing from the `release.yml` publish-images matrix; image `ghcr.io/erezrozenbaum/pf9-mngt-tenant-portal` is now built and pushed on every release.
+
 ## [1.84.0] - 2026-04-14
 
 ### Added
@@ -632,7 +638,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Prometheus UI redirects to SPA `/query` instead of opening Prometheus** (`k8s/monitoring/prometheus-values.yaml`)
   — `externalUrl` and `routePrefix` were absent from `prometheusSpec`; Prometheus generated an
   absolute redirect to `/graph` which bypassed nginx and landed on the React SPA. Added
-  `externalUrl: "https://pf9-mngt.ccc.co.il/prometheus"` and `routePrefix: "/"` to both
+  `externalUrl: "https://pf9-mngt.example.com/prometheus"` and `routePrefix: "/"` to both
   `prometheusSpec` and `alertmanagerSpec`. **Requires** `helm upgrade kube-prometheus-stack
   prometheus-community/kube-prometheus-stack -n monitoring -f k8s/monitoring/prometheus-values.yaml`
   on the cluster.

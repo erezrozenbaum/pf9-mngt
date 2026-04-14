@@ -134,6 +134,21 @@ kubectl create secret generic pf9-provision-creds \
   > k8s/sealed-secrets/pf9-provision-creds.yaml
 ```
 
+### pf9-tenant-portal-db-credentials (tenant portal DB role password — v1.84.0+)
+
+```bash
+kubectl create secret generic pf9-tenant-portal-db-credentials \
+  --namespace pf9-mngt \
+  --from-literal=password=<CHANGE_ME> \
+  --dry-run=client -o yaml \
+  | kubeseal --format yaml \
+  > k8s/sealed-secrets/pf9-tenant-portal-db-credentials.yaml
+```
+
+> **Important:** The `<CHANGE_ME>` value must match the password set on the
+> `tenant_portal_role` Postgres role via:
+> `ALTER ROLE tenant_portal_role WITH PASSWORD '<CHANGE_ME>'`
+
 ### pf9-encryption-secrets (at-rest encryption keys)
 
 This secret holds all Fernet keys used to encrypt data persisted to the
