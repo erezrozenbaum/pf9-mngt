@@ -239,6 +239,8 @@ jobs:
           python3 -c "import secrets; open('secrets/vm_provision_key','w').write(secrets.token_hex(32))"
           python3 -c "import secrets; open('secrets/smtp_config_key','w').write(secrets.token_hex(32))"
           python3 -c "import secrets; open('secrets/integration_key','w').write(secrets.token_hex(32))"
+          # tenant_portal_db_password: fresh random password for tenant_portal_role in CI
+          python3 -c "import secrets; open('secrets/tenant_portal_db_password','w').write(secrets.token_urlsafe(32))"
 
       - name: Build and start stack
         run: docker compose up --build -d
