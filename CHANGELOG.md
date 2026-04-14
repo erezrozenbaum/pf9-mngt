@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.2] - 2026-04-14
+
+### Added
+- **Tenant Portal P3a — Environment endpoints** (9 new `GET` routes in `tenant_portal/environment_routes.py`):
+  - `GET /tenant/vms` — list VMs scoped to tenant projects + regions (double-scoped: explicit SQL + RLS)
+  - `GET /tenant/vms/{vm_id}` — VM detail with snapshot stats and active restore job
+  - `GET /tenant/volumes` — list volumes with size totals
+  - `GET /tenant/snapshots` — snapshot list with optional filters (`vm_id`, `status`, `region`, `from_date`, `to_date`, `limit`)
+  - `GET /tenant/snapshots/{snapshot_id}` — single snapshot with ownership check (403 on mismatch, never 404)
+  - `GET /tenant/snapshot-history` — `snapshot_records` for calendar view, filterable by `vm_id` and date range
+  - `GET /tenant/compliance` — per-VM 7-day snapshot-coverage percentage with overall summary
+  - `GET /tenant/dashboard` — VM status counts, volume totals, 7-day coverage %, active restore count
+  - `GET /tenant/events` — unified audit feed merging `tenant_action_log`, `snapshot_records`, `restore_jobs`
+- **Tenant Portal P3b — Metrics proxy** (3 new `GET` routes in `tenant_portal/metrics_routes.py`):
+  - `GET /tenant/metrics/vms` — filters `metrics_cache.json` to tenant-owned VM IDs
+  - `GET /tenant/metrics/vms/{vm_id}` — single-VM live metrics (403 on ownership mismatch)
+  - `GET /tenant/metrics/availability` — per-VM 7-day and 30-day availability % from snapshot records
+- **Tenant Portal P3c — Runbooks read-only** (2 new `GET` routes in `tenant_portal/environment_routes.py`):
+  - `GET /tenant/runbooks` — lists `is_tenant_visible=true` runbooks, filtered to tenant project scope
+  - `GET /tenant/runbooks/{name}` — single runbook detail with same access rules
+
 ## [1.84.1] - 2026-04-14
 
 ### Fixed

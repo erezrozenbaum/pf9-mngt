@@ -20,6 +20,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from auth_routes import router as auth_router
+from environment_routes import router as environment_router
+from metrics_routes import router as metrics_router
 from db_pool import init_pool
 from rate_limiter import limiter
 from redis_client import get_redis
@@ -151,3 +153,5 @@ async def health():
 # Routers
 # ---------------------------------------------------------------------------
 app.include_router(auth_router)
+app.include_router(environment_router)
+app.include_router(metrics_router)
