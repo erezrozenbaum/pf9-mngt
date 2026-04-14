@@ -1830,6 +1830,22 @@ class RestoreExecutor:
 # Route setup — called from main.py
 # ============================================================================
 
+class _InternalTenantPlanBody(BaseModel):
+    """Request body for internal /internal/tenant-restore/plan endpoint."""
+    vm_id: str
+    snapshot_id: str
+    project_id: str
+    region_id: str
+    created_by: str          # must start with "tenant:"
+    new_vm_name: Optional[str] = None
+
+
+class _InternalTenantExecuteBody(BaseModel):
+    """Request body for internal /internal/tenant-restore/execute endpoint."""
+    plan_id: str
+    created_by: str          # must start with "tenant:" and match job row
+
+
 def setup_restore_routes(app):
     """Register all restore API routes on the FastAPI app."""
 
@@ -2816,14 +2832,6 @@ def setup_restore_routes(app):
     # POST /internal/tenant-restore/plan  — tenant portal internal call
     # Auth: X-Internal-Secret header (pre-shared, never exposed to tenants)
     # ------------------------------------------------------------------
-    class _InternalTenantPlanBody(BaseModel):
-        vm_id: str
-        snapshot_id: str
-        project_id: str
-        region_id: str
-        created_by: str          # must start with "tenant:"
-        new_vm_name: Optional[str] = None
-
     @app.post("/internal/tenant-restore/plan", include_in_schema=False)
     async def _internal_tenant_plan(
         req: _InternalTenantPlanBody,
@@ -2860,10 +2868,6 @@ def setup_restore_routes(app):
     # ------------------------------------------------------------------
     # POST /internal/tenant-restore/execute  — tenant portal internal call
     # ------------------------------------------------------------------
-    class _InternalTenantExecuteBody(BaseModel):
-        plan_id: str
-        created_by: str          # must start with "tenant:" and match job row
-
     @app.post("/internal/tenant-restore/execute", include_in_schema=False)
     async def _internal_tenant_execute(
         req: _InternalTenantExecuteBody,
