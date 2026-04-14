@@ -43,6 +43,7 @@ secrets:
   provisionCreds: pf9-provision-creds    # keys: password-key, user-password-encrypted
   sshCredentials: pf9-ssh-credentials    # key: password (optional)
   copilotSecrets: pf9-copilot-secrets    # keys: openai-api-key, anthropic-api-key (optional)
+  tenantPortalDbCredentials: pf9-tenant-portal-db-credentials  # key: password (tenant_portal_role DB user)
 
 # ---------------------------------------------------------------------------
 # Shared configuration (used by multiple services)
@@ -200,7 +201,33 @@ monitoring:
     port: 8001
 
 # ---------------------------------------------------------------------------
-# PostgreSQL (StatefulSet)
+# Tenant Portal API (v1.84.0) — isolated FastAPI service for tenant self-service
+# Connects as tenant_portal_role (read-only, RLS-enforced DB user).
+# ---------------------------------------------------------------------------
+tenantPortal:
+  image:
+    repository: pf9-mngt-tenant-portal
+    tag: ""   # "" → falls back to global.imageTag
+  replicaCount: 1
+  config:
+    controlPlaneId: ""       # Override: TENANT_PORTAL_CONTROL_PLANE_ID (empty = "default")
+    mfaMode: email_otp       # TENANT_MFA_MODE: email_otp | totp | none
+    ipBinding: warn          # TENANT_IP_BINDING: strict | warn | off
+    tokenExpireMinutes: "60" # TENANT_TOKEN_EXPIRE_MINUTES
+    corsOriginPattern: ""    # TENANT_CORS_ORIGIN_PATTERN (defaults to ingress host pattern)
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+  service:
+    type: ClusterIP
+    port: 8010
+
+# ---------------------------------------------------------------------------
+# Monitoring service
 # ---------------------------------------------------------------------------
 postgresql:
   image:

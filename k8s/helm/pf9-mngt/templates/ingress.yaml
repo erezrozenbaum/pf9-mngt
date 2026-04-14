@@ -53,6 +53,15 @@ spec:
                 port:
                   number: {{ .Values.api.service.port }}
 
+          # /tenant/.* → tenant portal service (JWT-protected, RLS-enforced)
+          - path: /tenant(/.*)?
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: pf9-tenant-portal
+                port:
+                  number: {{ .Values.tenantPortal.service.port }}
+
           # Everything else → React SPA
           - path: /
             pathType: Prefix

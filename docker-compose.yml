@@ -713,6 +713,59 @@ services:
           cpus: "0.25"
           memory: 128m
 
+  # ---------------------------------------------------------------------------
+  # Tenant Portal API — isolated FastAPI service for tenant self-service (v1.84.0)
+  # Connects as tenant_portal_role (NOT the admin pf9 user).
+  # RLS session vars are set per-request before any DB query.
+  # ---------------------------------------------------------------------------
+  tenant_portal:
+    build:
+      context: .
+      dockerfile: tenant_portal/Dockerfile
+    container_name: pf9_tenant_portal
+    restart: unless-stopped
+    environment:
+      PF9_DB_HOST: db
+      PF9_DB_PORT: "5432"
+      PF9_DB_NAME: ${POSTGRES_DB}
+      TENANT_DB_USER: tenant_portal_role
+      TENANT_DB_PASSWORD: ${TENANT_DB_PASSWORD:-}
+      TENANT_PORTAL_CONTROL_PLANE_ID: ${TENANT_PORTAL_CONTROL_PLANE_ID:-default}
+      TENANT_MFA_MODE: ${TENANT_MFA_MODE:-email_otp}
+      TENANT_IP_BINDING: ${TENANT_IP_BINDING:-warn}
+      TENANT_TOKEN_EXPIRE_MINUTES: ${TENANT_TOKEN_EXPIRE_MINUTES:-60}
+      TENANT_CORS_ORIGIN_PATTERN: ${TENANT_CORS_ORIGIN_PATTERN:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # tenant_portal_db_password and jwt_secret are read from /run/secrets/ when files exist;
+      # env vars above are used as fallback in dev with empty secret files.
+    secrets:
+      - tenant_portal_db_password
+      - jwt_secret
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/tenant/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
 volumes:
   pgdata:
   pgadmin_data:
@@ -757,3 +810,5 @@ secrets:
     file: ./secrets/smtp_config_key
   integration_key:
     file: ./secrets/integration_key
+  tenant_portal_db_password:
+    file: ./secrets/tenant_portal_db_password

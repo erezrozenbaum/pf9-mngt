@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.83.53-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -127,7 +127,7 @@ After running Demo Mode you'll find:
 
 ## 🏗️ Architecture
 
-**16-container microservices platform:**
+**17-container microservices platform:**
 
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
@@ -138,7 +138,7 @@ After running Demo Mode you'll find:
 | **LDAP Server** | OpenLDAP | internal | Enterprise authentication directory (not exposed to host) |
 | **LDAP Admin** | phpLDAPadmin | 8081 *(dev profile)* | Web-based LDAP management (`--profile dev`) |
 | **Monitoring Service** | FastAPI / Python | 8001 | Real-time metrics via Prometheus |
-| **Database** | PostgreSQL 16 | internal | 65+ tables, audit, metering, migration planner (not exposed to host) |
+| **Database** | PostgreSQL 16 | internal | 95+ tables, audit, metering, migration planner, tenant portal RLS (not exposed to host) |
 | **Database Admin** | pgAdmin4 | 8080 *(dev profile)* | Web-based PostgreSQL management (`--profile dev`) |
 | **Snapshot Worker** | Python | — | Automated snapshot management |
 | **Notification Worker** | Python / SMTP | — | Email alerts for drift, snapshots, compliance |
@@ -147,6 +147,7 @@ After running Demo Mode you'll find:
 | **Metering Worker** | Python / PostgreSQL | — | Resource metering every 15 minutes |
 | **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
 | **LDAP Sync Worker** | Python / PostgreSQL / OpenLDAP | — | Bi-directional DB ↔ LDAP sync, polls every 30 s |
+| **Tenant Portal API** | FastAPI / Gunicorn / Python | 8010 | Tenant self-service portal — JWT + RLS, MFA, per-user access allowlist |
 
 ![Architecture](docs/images/Architecture.png)
 
@@ -179,7 +180,7 @@ After running Demo Mode you'll find:
 | Multi-Region & Multi-Cluster Support | ✅ Production |
 | External LDAP / AD Identity Federation | ✅ Production |
 | Kubernetes Deployment (Helm + ArgoCD + Sealed Secrets) | ✅ Production |
-| Tenant Self-Service Portal | ⬜ Planned |
+| Tenant Self-Service Portal | 🔄 In Progress (v1.84.x) |
 
 ---
 
@@ -188,7 +189,7 @@ After running Demo Mode you'll find:
 
 Built during a serious Platform9 evaluation — stress-testing real operational workflows revealed four gaps no native tooling covered: **metadata ownership** (no RVTools-equivalent for OpenStack), **VM restore** (no native workflow exists), **snapshot automation** (no native scheduler), and **VMware migration planning** (no native RVTools → PCD workflow).
 
-Rather than pause the evaluation, we solved them. The result is pf9-mngt — 409+ commits, 121 releases, built using AI as a genuine engineering partner alongside regular responsibilities.
+Rather than pause the evaluation, we solved them. The result is pf9-mngt — 410+ commits, 122 releases, built using AI as a genuine engineering partner alongside regular responsibilities.
 
 > Full engineering story and gap analysis: [docs/ENGINEERING_STORY.md](docs/ENGINEERING_STORY.md)
 
@@ -447,7 +448,8 @@ docker exec pf9_scheduler_worker python pf9_rvtools.py
 
 ```
 pf9-mngt/
-├── api/                          # FastAPI backend (155+ endpoints)
+├── api/                          # FastAPI backend (170+ endpoints)
+├── tenant_portal/                # Tenant self-service portal service (port 8010)
 ├── pf9-ui/                       # React 19 + TypeScript frontend
 ├── monitoring/                   # Prometheus metrics service
 ├── snapshots/                    # Snapshot automation engine
@@ -534,6 +536,7 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
+**[v1.84.0](CHANGELOG.md)** — Tenant Self-Service Portal foundation: DB role + RLS hardening (`tenant_portal_role`, 5 RLS policies on inventory tables), 5 schema tables (`tenant_portal_access`, `tenant_portal_mfa`, `tenant_portal_branding`, `tenant_action_log`, `runbook_project_tags`) + safe `tenant_cp_view`, isolated FastAPI service on port 8010 (JWT `role=tenant`, Redis session binding, IP binding, MFA preauth, per-user rate limiting), 6 admin API endpoints in `api/tenant_portal_routes.py`, Helm templates + NetworkPolicy, updated docker-compose.
 **[v1.83.53](CHANGELOG.md)** — Bug fixes: `search_worker` duplicate metrics block removed (run/error counters were reset to zero on every module import; stacked `@retry` caused 9 DB reconnect attempts instead of 3); `scheduler_worker` executor changed to `wait=True` on shutdown to prevent thread orphaning on SIGTERM.
 **[v1.83.52](CHANGELOG.md)** — Worker observability (Prometheus `/worker-metrics`, Redis heartbeats, tenacity DB retry for all 5 workers), LDAP conflict strategy (`ldap_wins`/`local_wins`), frontend resilience (30 s timeout, 3× GET retry, offline banner), real dashboard alert counts, CSS design-token cleanup.
 **[v1.83.51](CHANGELOG.md)** — Deployment reliability: `pf9_api` now waits for the database schema to be fully initialized before starting (eliminates startup race condition on fresh volumes); ESLint OOM SIGKILL in CI resolved by running tsc and eslint in a single container invocation.
@@ -671,4 +674,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.83.53 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.84.0 | **Last Updated**: April 2026
