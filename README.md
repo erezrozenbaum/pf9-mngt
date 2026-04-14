@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.4-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -127,7 +127,7 @@ After running Demo Mode you'll find:
 
 ## 🏗️ Architecture
 
-**17-container microservices platform:**
+**18-container microservices platform:**
 
 | Service | Stack | Port | Purpose |
 |---------|-------|------|---------|
@@ -148,6 +148,7 @@ After running Demo Mode you'll find:
 | **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
 | **LDAP Sync Worker** | Python / PostgreSQL / OpenLDAP | — | Bi-directional DB ↔ LDAP sync, polls every 30 s |
 | **Tenant Portal API** | FastAPI / Gunicorn / Python | 8010 | Tenant self-service portal — JWT + RLS, MFA, per-user access allowlist |
+| **Tenant Portal UI** | React 19.2+ / TypeScript / nginx | 8083 *(dev: 8082)* | Tenant self-service web interface — 7 screens, MFA login, per-customer branding |
 
 ![Architecture](docs/images/Architecture.png)
 
@@ -180,7 +181,7 @@ After running Demo Mode you'll find:
 | Multi-Region & Multi-Cluster Support | ✅ Production |
 | External LDAP / AD Identity Federation | ✅ Production |
 | Kubernetes Deployment (Helm + ArgoCD + Sealed Secrets) | ✅ Production |
-| Tenant Self-Service Portal | 🔄 In Progress (v1.84.x) |
+| Tenant Self-Service Portal | ✅ Production |
 
 ---
 
@@ -536,9 +537,11 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Latest Release
 
-**[v1.84.3](CHANGELOG.md)** — Tenant Portal P4/P4b/P4c/P4d: self-service restore center (6 endpoints) + full audit logging on all 20 tenant endpoints + ops Slack/Teams and tenant email notifications + TOTP/email OTP/backup-codes MFA flows.
+**[v1.84.4](CHANGELOG.md)** — Tenant self-service portal web interface: React + TypeScript SPA (`tenant-ui/`) with 7 screens — Dashboard, Infrastructure (VMs + volumes), Snapshot Coverage, Monitoring, Restore Center, Runbooks, and Activity Log. Includes MFA login screen, per-customer branding, session persistence, and `tenant_ui` Docker service (nginx production stage + Vite dev override on port 8082).
 
-**[v1.84.2](CHANGELOG.md)** — Tenant Portal P3a/P3b/P3c: 14 read-only endpoints — VM/volume/snapshot/compliance/dashboard/events environment views (P3a), metrics proxy filtering `metrics_cache.json` to tenant scope with 7d/30d availability (P3b), tenant-visible runbooks read-only (P3c).
+**[v1.84.3](CHANGELOG.md)** — Tenant portal: self-service restore center (6 API endpoints — list restore points, plan, execute, list jobs, progress, cancel); all-tenant-endpoint audit logging; ops Slack/Teams and tenant email notifications on restore; TOTP enrolment and verification, email OTP, and backup codes for MFA; 14 read-only data endpoints (VMs, volumes, snapshots, compliance, dashboard, events, metrics, availability, runbooks).
+
+**[v1.84.2](CHANGELOG.md)** — Tenant portal: 14 read-only API endpoints covering VM and volume inventory, snapshot list and history, per-VM compliance percentages, dashboard summary, unified event feed, metrics proxy scoped to tenant VMs with 7-day and 30-day availability, and tenant-visible runbooks.
 **[v1.84.1](CHANGELOG.md)** — Bug fixes: tenant portal container no longer crashes when `TENANT_DB_PASSWORD` is absent (degraded-mode startup); `tenant-portal` Docker image now published to ghcr.io via release workflow.
 **[v1.84.0](CHANGELOG.md)** — Tenant Self-Service Portal foundation: DB role + RLS hardening (`tenant_portal_role`, 5 RLS policies on inventory tables), 5 schema tables (`tenant_portal_access`, `tenant_portal_mfa`, `tenant_portal_branding`, `tenant_action_log`, `runbook_project_tags`) + safe `tenant_cp_view`, isolated FastAPI service on port 8010 (JWT `role=tenant`, Redis session binding, IP binding, MFA preauth, per-user rate limiting), 6 admin API endpoints in `api/tenant_portal_routes.py`, Helm templates + NetworkPolicy, updated docker-compose.
 **[v1.83.53](CHANGELOG.md)** — Bug fixes: `search_worker` duplicate metrics block removed (run/error counters were reset to zero on every module import; stacked `@retry` caused 9 DB reconnect attempts instead of 3); `scheduler_worker` executor changed to `wait=True` on shutdown to prevent thread orphaning on SIGTERM.

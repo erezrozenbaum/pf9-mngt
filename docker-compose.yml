@@ -766,6 +766,38 @@ services:
           cpus: "0.5"
           memory: 256m
 
+  # ---------------------------------------------------------------------------
+  # Tenant UI — React SPA served by nginx (prod) or Vite dev server (dev via override)
+  # In production the multi-stage Dockerfile produces a static nginx image.
+  # docker-compose.override.yml overrides CMD to run Vite for local dev.
+  # ---------------------------------------------------------------------------
+  tenant_ui:
+    build:
+      context: ./tenant-ui
+      dockerfile: Dockerfile
+      target: prod
+    container_name: pf9_tenant_ui
+    restart: unless-stopped
+    depends_on:
+      tenant_portal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64m
+
 volumes:
   pgdata:
   pgadmin_data:
