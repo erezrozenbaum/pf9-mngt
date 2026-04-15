@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.5] - 2026-04-15
+
+### Fixed
+- **CI: tenant-ui Docker build** — removed `linux/arm64` from the tenant-ui build matrix; Node.js 22 on QEMU ARM64 emulation triggers a `SIGILL` (illegal instruction) crash during `npm ci`, causing the build to time out after 40 minutes. The Kubernetes cluster is AMD64-only, so `linux/amd64` is the only required platform.
+
 ## [1.84.4] - 2026-04-14
 
 ### Added

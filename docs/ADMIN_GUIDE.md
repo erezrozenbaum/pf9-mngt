@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.4  
-**Last Updated**: April 14, 2026  
+**Version**: 1.84.5  
+**Last Updated**: April 15, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.5 — CI Fix: tenant-ui ARM64 Build (✅ Complete)
+
+- **CI workflow fix**: removed `linux/arm64` from the tenant-ui Docker build matrix. Node.js 22 on QEMU ARM64 emulation (GitHub Actions) triggers an `SIGILL` (illegal instruction) core dump during `npm ci`, causing the release to time out after 40 minutes. The Kubernetes cluster is AMD64-only; `linux/amd64` is the only required platform.
 
 ### v1.84.4 — Tenant Self-Service Portal Web Interface (✅ Complete)
 
