@@ -5,10 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.7] - 2026-04-15
+
+### Fixed
+- **tenant-ui crash on Kubernetes (second attempt)** — the previous fix used `sed` to redirect nginx temp paths from `/var/cache/nginx` to `/tmp` in `nginx.conf`, but these temp directory paths are **compiled-in defaults in the nginx binary** and cannot be overridden by editing the config file. The pod continued crashing with `mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)`. Correct fix: pre-create all five nginx temp directories under their expected path `/var/cache/nginx/`, `chown -R nginx:nginx` them at build time, pre-create and own `/run/nginx.pid`, own `/var/log/nginx` and `/etc/nginx/conf.d`, and add `USER nginx` to the Dockerfile so the container always starts as uid 101 without relying on the Kubernetes `securityContext`.
+
 ## [1.84.6] - 2026-04-15
 
 ### Fixed
-- **tenant-ui crash on Kubernetes** — nginx:1.27-alpine master process needs to write `/var/run/nginx.pid` and create temp directories under `/var/cache/nginx`, both of which are root-owned. Running as uid 101 (`runAsNonRoot: true` + `runAsUser: 101` in the Helm deployment) caused an immediate crash loop. Fixed by updating the Dockerfile production stage to: remove the `user nginx;` directive, redirect the PID file to `/tmp/nginx.pid`, redirect all cache temp paths to `/tmp/nginx-cache`, and pre-create those directories with nginx ownership during the build.
+- **tenant-ui crash on Kubernetes** — initial attempt to fix nginx non-root crash by redirecting paths via `sed`. Superseded by v1.84.7.
 
 ## [1.84.5] - 2026-04-15
 
