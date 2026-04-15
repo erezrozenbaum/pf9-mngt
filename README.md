@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.7-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.8-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -536,6 +536,8 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Latest Release
+
+**[v1.84.8](CHANGELOG.md)** — Separate nginx ingress controller for tenant portal (`nginx-tenant`) on its own dedicated IP, independent from the admin panel controller. New MetalLB IP pool + `nginx-ingress-tenant` Helm release. Tenant-ui ingress now uses `ingressClassName: nginx-tenant`.
 
 **[v1.84.7](CHANGELOG.md)** — Runtime fix (second attempt): tenant-ui nginx temp directories are compiled-in binary defaults, not config-file paths. Fixed by pre-creating `/var/cache/nginx/*_temp` dirs and chowning them to nginx uid 101 at build time. Added `USER nginx` to Dockerfile.
 

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.8] - 2026-04-15
+
+### Added
+- **Second nginx ingress controller for tenant traffic (`nginx-tenant`)** — added `k8s/nginx-ingress-tenant/values.yaml` (Helm values template) and `k8s/nginx-ingress-tenant/metallb-pool.yaml` (MetalLB IPAddressPool + L2Advertisement template) to deploy a dedicated nginx-ingress-controller bound exclusively to the tenant ingress IP. The actual IP values are set in the private deploy repo. This separates tenant portal traffic from the admin panel, allowing independent TLS certificates, rate limiting, and network policies per audience.
+
+### Fixed
+- **tenant-ui ingress on wrong controller** — the `pf9-tenant-ui` Ingress was using `ingressClassName: nginx` which routed traffic through the admin ingress controller. Changed `tenantUi.ingress.className` in `values.yaml` to `nginx-tenant` so tenant portal traffic is routed through the dedicated tenant controller.
+
 ## [1.84.7] - 2026-04-15
 
 ### Fixed

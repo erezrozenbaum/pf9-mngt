@@ -225,7 +225,7 @@ tenantUi:
     port: 8080
   ingress:
     enabled: true
-    className: nginx
+    className: nginx-tenant   # Second ingress controller for tenant traffic (set in private deploy repo)
     host: ""    # e.g. portal.pf9-mngt.example.com — set in values.prod.yaml
     tls:
       enabled: true
