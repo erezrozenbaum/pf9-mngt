@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.5  
+**Version**: 1.84.6  
 **Last Updated**: April 15, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.6 — Runtime Fix: tenant-ui nginx Non-Root Crash (✅ Complete)
+
+- **Kubernetes crash fix**: tenant-ui pod entered a crash loop because `nginx:1.27-alpine` was running under `runAsNonRoot: true` / `runAsUser: 101` but needed root-owned paths (`/var/run/nginx.pid`, `/var/cache/nginx/*`) to start. Dockerfile updated to remove the `user nginx;` directive, redirect the PID file to `/tmp/nginx.pid`, redirect all cache temp dirs to `/tmp/nginx-cache`, and pre-create those directories with `chown nginx:nginx` during the image build.
 
 ### v1.84.5 — CI Fix: tenant-ui ARM64 Build (✅ Complete)
 

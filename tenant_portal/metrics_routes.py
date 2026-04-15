@@ -38,7 +38,7 @@ router = APIRouter(tags=["metrics"])
 
 _METRICS_CACHE_PATHS = [
     "/app/monitoring/cache/metrics_cache.json",
-    "/tmp/metrics_cache.json",
+    "/tmp/metrics_cache.json",  # nosec B108 — read-only fallback path, never written by user input
     "metrics_cache.json",
     "/app/metrics_cache.json",
 ]
