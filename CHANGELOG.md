@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.12] - 2026-04-15
+
+### Added
+- **Grant Access — 3-step wizard (friendly tenant + user picker)** — completely replaced the raw "Keystone User ID" text input with a guided flow: (1) admin picks a **tenant / project** from pill buttons (each shows how many users already have portal access), (2) checks one or more **users** from that project by name + email, (3) sets MFA + notes. Behind the scenes the system resolves all Keystone UUIDs automatically.
+- **Multi-user (batch) grant** — selecting multiple users triggers a single `PUT /api/admin/tenant-portal/access/batch` backend call that upserts every checked user in one round-trip and returns per-user success/failure.
+- **Control-plane dropdown** — the CP selector in Admin Tools › Tenant Portal is now a `<select>` populated from `GET /api/admin/tenant-portal/control-planes`; auto-selects when only one CP is configured.
+- **New API — `GET /api/admin/tenant-portal/control-planes`** — returns all enabled CPs as `[{id, name}]` for the dropdown.
+- **New API — `GET /api/admin/tenant-portal/projects/{cp_id}`** — returns all projects on that CP with `member_count` and `portal_enabled_count` for the tenant picker.
+- **Updated API — `GET /api/admin/tenant-portal/users/{cp_id}`** — now accepts optional `?project_id=` query parameter to scope the list to members of a specific project.
+- **New API — `PUT /api/admin/tenant-portal/access/batch`** — batch upsert endpoint; processes each user individually so one failure does not abort the rest; returns `{succeeded, total, results[]}` summary.
+
+### Fixed
+- **Grant Access button invisible in UI** — the button used `style={{ background: "var(--pf9-accent)" }}` but `--pf9-accent` was never defined in the CSS design tokens, so it resolved to transparent with forced white text — completely invisible against the white background. Replaced with a concrete colour (`#2563eb`) and changed from `disabled` attribute to `opacity`/`cursor` style so the button is always visible (just dimmed when no CP is selected).
+
 ## [1.84.11] - 2026-04-15
 
 ### Added

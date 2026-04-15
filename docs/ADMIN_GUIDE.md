@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.11  
+**Version**: 1.84.12  
 **Last Updated**: April 15, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.12 — Tenant Portal: Friendly Grant Access Wizard & Batch Grant (✅ Complete)
+
+- **Grant Access wizard** — 3-step flow replaces raw Keystone User ID input: (1) pick tenant/project from pill buttons, (2) select one or more users by name + email (checkboxes, "Select all" toggle), (3) set MFA + notes. System resolves all Keystone UUIDs automatically.
+- **Batch grant** — `PUT /api/admin/tenant-portal/access/batch` upserts all selected users in one call; per-user results returned so partial failures are surfaced without blocking the rest.
+- **Control-plane dropdown** — CP selector is now a `<select>` auto-populated from `GET /api/admin/tenant-portal/control-planes`; auto-selects single CP.
+- **New endpoints**: `GET /control-planes`, `GET /projects/{cp_id}`, `PUT /access/batch`; `GET /users/{cp_id}` gains `?project_id=` filter.
+- **Fixed**: Grant Access button was invisible (undefined `--pf9-accent` CSS variable replaced with `#2563eb`).
 
 ### v1.84.11 — Tenant Portal: Friendly User/Tenant Names (✅ Complete)
 

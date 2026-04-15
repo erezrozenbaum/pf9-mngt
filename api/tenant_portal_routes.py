@@ -121,18 +121,78 @@ def _require_admin(current_user: User = Depends(require_authentication)):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.get("/users/{cp_id}", summary="List Keystone users for a CP with portal access status")
-async def list_users_with_access(
+@router.get("/control-planes", summary="List all enabled control planes")
+async def list_control_planes(
+    current_user: User = Depends(_require_admin),
+):
+    """Returns [{id, name}] for every enabled control plane — used to populate the CP dropdown."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, name FROM pf9_control_planes WHERE is_enabled = TRUE ORDER BY name",
+            )
+            rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/projects/{cp_id}", summary="List projects (tenants/orgs) for a CP with member counts")
+async def list_projects(
     cp_id: str,
     current_user: User = Depends(_require_admin),
 ):
     """
-    Returns all Keystone users known for this CP (from the users + role_assignments
-    tables) with their current tenant_portal_access status.
+    Returns all projects linked to this CP via user role_assignments,
+    including member count and how many already have portal access.
     """
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Verify the CP exists
+            cur.execute(
+                "SELECT id FROM pf9_control_planes WHERE id = %s AND is_enabled = TRUE",
+                (cp_id,),
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="control_plane_not_found")
+
+            cur.execute(
+                """
+                SELECT p.id,
+                       p.name,
+                       COUNT(DISTINCT ra.user_id)                                         AS member_count,
+                       COUNT(DISTINCT tpa.keystone_user_id)
+                           FILTER (WHERE tpa.enabled = TRUE)                              AS portal_enabled_count
+                FROM projects p
+                JOIN role_assignments ra ON ra.project_id = p.id
+                JOIN users u            ON u.id = ra.user_id AND u.enabled = TRUE
+                LEFT JOIN tenant_portal_access tpa
+                       ON tpa.keystone_user_id = u.id
+                      AND tpa.control_plane_id = %s
+                WHERE p.id IN (
+                    SELECT DISTINCT ra2.project_id
+                    FROM role_assignments ra2
+                    JOIN pf9_regions pr ON pr.control_plane_id = %s
+                    WHERE ra2.project_id IS NOT NULL
+                )
+                GROUP BY p.id, p.name
+                ORDER BY p.name
+                """,
+                (cp_id, cp_id),
+            )
+            rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/users/{cp_id}", summary="List Keystone users for a CP with portal access status")
+async def list_users_with_access(
+    cp_id: str,
+    project_id: Optional[str] = Query(None, description="Filter to users in a specific project"),
+    current_user: User = Depends(_require_admin),
+):
+    """
+    Returns Keystone users for this CP with their current portal access status.
+    Pass ?project_id=<id> to restrict to members of a specific project (tenant).
+    """
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 "SELECT id, name FROM pf9_control_planes WHERE id = %s",
                 (cp_id,),
@@ -140,28 +200,48 @@ async def list_users_with_access(
             if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="control_plane_not_found")
 
-            # Users who have project memberships in this CP's Keystone domains
-            cur.execute(
-                """
-                SELECT DISTINCT u.id AS keystone_user_id,
-                       u.email,
-                       u.name,
-                       tpa.enabled,
-                       tpa.mfa_required,
-                       tpa.granted_at,
-                       tpa.revoked_at
-                FROM users u
-                JOIN role_assignments ra ON ra.user_id = u.id
-                JOIN projects p ON p.id = ra.project_id
-                JOIN pf9_regions pr ON pr.control_plane_id = %s
-                LEFT JOIN tenant_portal_access tpa
-                    ON tpa.keystone_user_id = u.id
-                    AND tpa.control_plane_id = %s
-                WHERE pr.is_enabled = TRUE
-                ORDER BY u.email
-                """,
-                (cp_id, cp_id),
-            )
+            if project_id:
+                cur.execute(
+                    """
+                    SELECT DISTINCT u.id AS keystone_user_id,
+                           u.email,
+                           u.name,
+                           tpa.enabled,
+                           tpa.mfa_required,
+                           tpa.granted_at,
+                           tpa.revoked_at
+                    FROM users u
+                    JOIN role_assignments ra ON ra.user_id = u.id AND ra.project_id = %s
+                    LEFT JOIN tenant_portal_access tpa
+                        ON tpa.keystone_user_id = u.id
+                        AND tpa.control_plane_id = %s
+                    WHERE u.enabled = TRUE
+                    ORDER BY u.name, u.email
+                    """,
+                    (project_id, cp_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT DISTINCT u.id AS keystone_user_id,
+                           u.email,
+                           u.name,
+                           tpa.enabled,
+                           tpa.mfa_required,
+                           tpa.granted_at,
+                           tpa.revoked_at
+                    FROM users u
+                    JOIN role_assignments ra ON ra.user_id = u.id
+                    JOIN projects p ON p.id = ra.project_id
+                    JOIN pf9_regions pr ON pr.control_plane_id = %s
+                    LEFT JOIN tenant_portal_access tpa
+                        ON tpa.keystone_user_id = u.id
+                        AND tpa.control_plane_id = %s
+                    WHERE pr.is_enabled = TRUE AND u.enabled = TRUE
+                    ORDER BY u.name, u.email
+                    """,
+                    (cp_id, cp_id),
+                )
             rows = cur.fetchall()
 
     return [dict(r) for r in rows]
@@ -275,6 +355,125 @@ async def upsert_access(
         )
 
     return {"status": "ok", "enabled": body.enabled}
+
+
+class BatchAccessItem(BaseModel):
+    keystone_user_id: str
+    user_name: Optional[str] = None
+
+    @field_validator("keystone_user_id")
+    @classmethod
+    def no_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+
+class BatchAccessRequest(BaseModel):
+    control_plane_id: str
+    tenant_name: Optional[str] = None   # project/org name applied to all rows
+    users: List[BatchAccessItem]
+    enabled: bool
+    mfa_required: Optional[bool] = False
+    notes: Optional[str] = None
+
+    @field_validator("control_plane_id")
+    @classmethod
+    def cp_no_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+
+@router.put("/access/batch", summary="Grant or revoke portal access for multiple users at once")
+async def batch_upsert_access(
+    body: BatchAccessRequest,
+    request: Request,
+    current_user: User = Depends(_require_admin),
+):
+    """
+    Grants or revokes portal access for a list of users in one call.
+    Returns a summary of how many succeeded and any per-user errors.
+    """
+    ip = get_request_ip(request)
+    now = datetime.now(timezone.utc)
+    granted_by = revoked_by = None
+    granted_at = revoked_at = None
+    if body.enabled:
+        granted_by = current_user.username
+        granted_at = now
+    else:
+        revoked_by = current_user.username
+        revoked_at = now
+
+    results = []
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            for item in body.users:
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO tenant_portal_access
+                            (keystone_user_id, user_name, control_plane_id, tenant_name,
+                             enabled, mfa_required, notes,
+                             granted_by, granted_at, revoked_by, revoked_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (keystone_user_id, control_plane_id) DO UPDATE SET
+                            enabled      = EXCLUDED.enabled,
+                            mfa_required = EXCLUDED.mfa_required,
+                            user_name    = COALESCE(EXCLUDED.user_name, tenant_portal_access.user_name),
+                            tenant_name  = COALESCE(EXCLUDED.tenant_name, tenant_portal_access.tenant_name),
+                            notes        = COALESCE(EXCLUDED.notes, tenant_portal_access.notes),
+                            granted_by   = CASE WHEN EXCLUDED.enabled THEN EXCLUDED.granted_by
+                                                ELSE tenant_portal_access.granted_by END,
+                            granted_at   = CASE WHEN EXCLUDED.enabled THEN EXCLUDED.granted_at
+                                                ELSE tenant_portal_access.granted_at END,
+                            revoked_by   = CASE WHEN NOT EXCLUDED.enabled THEN EXCLUDED.revoked_by
+                                                ELSE tenant_portal_access.revoked_by END,
+                            revoked_at   = CASE WHEN NOT EXCLUDED.enabled THEN EXCLUDED.revoked_at
+                                                ELSE tenant_portal_access.revoked_at END,
+                            updated_at   = EXCLUDED.updated_at
+                        """,
+                        (
+                            item.keystone_user_id,
+                            item.user_name,
+                            body.control_plane_id,
+                            body.tenant_name,
+                            body.enabled,
+                            body.mfa_required,
+                            body.notes,
+                            granted_by, granted_at,
+                            revoked_by, revoked_at,
+                            now,
+                        ),
+                    )
+                    try:
+                        r = _get_redis()
+                        allowed_key = f"tenant:allowed:{body.control_plane_id}:{item.keystone_user_id}"
+                        if body.enabled:
+                            r.setex(allowed_key, 300, "1")
+                            r.delete(f"tenant:blocked:{body.control_plane_id}:{item.keystone_user_id}")
+                        else:
+                            r.delete(allowed_key)
+                            r.set(f"tenant:blocked:{body.control_plane_id}:{item.keystone_user_id}", "1")
+                    except Exception as exc:
+                        logger.error("Redis key update failed for %s: %s", item.keystone_user_id, exc)
+                    results.append({"keystone_user_id": item.keystone_user_id, "ok": True})
+                except Exception as exc:
+                    logger.error("Batch access upsert failed for %s: %s", item.keystone_user_id, exc)
+                    results.append({"keystone_user_id": item.keystone_user_id, "ok": False, "error": str(exc)})
+
+        log_auth_event(
+            conn,
+            username=current_user.username,
+            action="tenant_portal_batch_access_update",
+            success=True,
+            ip_address=ip,
+            details=f"cp={body.control_plane_id} count={len(body.users)} enabled={body.enabled}",
+        )
+
+    succeeded = sum(1 for r in results if r["ok"])
+    return {"status": "ok", "succeeded": succeeded, "total": len(body.users), "results": results}
 
 
 @router.delete(

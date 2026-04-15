@@ -17,6 +17,26 @@ import { apiFetch } from "../lib/api";
 // Types
 // ---------------------------------------------------------------------------
 
+interface ControlPlane {
+  id: string;
+  name: string;
+}
+
+interface Project {
+  id: string;
+  name: string;
+  member_count: number;
+  portal_enabled_count: number;
+}
+
+interface KsUser {
+  keystone_user_id: string;
+  name: string | null;
+  email: string | null;
+  enabled: boolean | null;
+  mfa_required: boolean | null;
+}
+
 interface AccessRow {
   id: number;
   keystone_user_id: string;
@@ -119,6 +139,7 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
 
   // ── Shared state ──
   const [cpId, setCpId] = useState<string>("");
+  const [controlPlanes, setControlPlanes] = useState<ControlPlane[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
@@ -127,10 +148,15 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
 
   // ── Access tab ──
   const [accessRows, setAccessRows] = useState<AccessRow[]>([]);
+
+  // Grant-access wizard state
   const [showGrantForm, setShowGrantForm] = useState(false);
-  const [grantUserId, setGrantUserId] = useState("");
-  const [grantUserName, setGrantUserName] = useState("");
-  const [grantTenantName, setGrantTenantName] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [projectUsers, setProjectUsers] = useState<KsUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
   const [grantMfa, setGrantMfa] = useState(false);
   const [grantNotes, setGrantNotes] = useState("");
   const [grantLoading, setGrantLoading] = useState(false);
@@ -155,6 +181,16 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
   // Data fetchers
   // ---------------------------------------------------------------------------
 
+  // Load control planes on mount
+  useEffect(() => {
+    apiFetch<ControlPlane[]>("/api/admin/tenant-portal/control-planes")
+      .then((data) => {
+        setControlPlanes(data);
+        if (data.length === 1) setCpId(data[0].id);   // auto-select when only one exists
+      })
+      .catch(() => {/* silent — CP list is best-effort */});
+  }, []);
+
   const fetchAccess = useCallback(async () => {
     if (!cpId.trim()) return;
     setLoading(true); clearMessages();
@@ -167,6 +203,43 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
       setLoading(false);
     }
   }, [cpId]);
+
+  const openGrantForm = async () => {
+    if (!cpId.trim()) return;
+    clearMessages();
+    setShowGrantForm(true);
+    setSelectedProject(null);
+    setProjectUsers([]);
+    setSelectedUserIds(new Set());
+    setGrantMfa(false);
+    setGrantNotes("");
+    setProjectsLoading(true);
+    try {
+      const data = await apiFetch<Project[]>(`/api/admin/tenant-portal/projects/${encodeURIComponent(cpId)}`);
+      setProjects(data);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setProjectsLoading(false);
+    }
+  };
+
+  const selectProject = async (project: Project) => {
+    setSelectedProject(project);
+    setSelectedUserIds(new Set());
+    setProjectUsers([]);
+    setUsersLoading(true);
+    try {
+      const data = await apiFetch<KsUser[]>(
+        `/api/admin/tenant-portal/users/${encodeURIComponent(cpId)}?project_id=${encodeURIComponent(project.id)}`
+      );
+      setProjectUsers(data);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
 
   const fetchBranding = useCallback(async () => {
     if (!cpId.trim()) return;
@@ -285,30 +358,28 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
   };
 
   const handleGrantAccess = async () => {
-    if (!cpId.trim())        { setError("Enter a Control Plane ID first"); return; }
-    if (!grantUserId.trim()) { setError("Keystone User ID is required"); return; }
+    if (!cpId.trim())                  { setError("Select a Control Plane first"); return; }
+    if (!selectedProject)              { setError("Select a tenant first"); return; }
+    if (selectedUserIds.size === 0)    { setError("Select at least one user"); return; }
     clearMessages();
     setGrantLoading(true);
     try {
-      await apiFetch(`/api/admin/tenant-portal/access`, {
+      const users = projectUsers
+        .filter((u) => selectedUserIds.has(u.keystone_user_id))
+        .map((u) => ({ keystone_user_id: u.keystone_user_id, user_name: u.name || u.email || null }));
+
+      const result = await apiFetch<{ succeeded: number; total: number }>(`/api/admin/tenant-portal/access/batch`, {
         method: "PUT",
         body: JSON.stringify({
-          keystone_user_id: grantUserId.trim(),
-          user_name:        grantUserName.trim() || null,
           control_plane_id: cpId.trim(),
-          tenant_name:      grantTenantName.trim() || null,
+          tenant_name: selectedProject.name,
+          users,
           enabled: true,
           mfa_required: grantMfa,
           notes: grantNotes.trim() || null,
         }),
       });
-      const label = grantUserName.trim() || grantUserId.trim();
-      setSuccess(`Access granted for ${label}`);
-      setGrantUserId("");
-      setGrantUserName("");
-      setGrantTenantName("");
-      setGrantNotes("");
-      setGrantMfa(false);
+      setSuccess(`Access granted for ${result.succeeded} of ${result.total} user(s) in ${selectedProject.name}`);
       setShowGrantForm(false);
       await fetchAccess();
     } catch (e: any) {
@@ -378,16 +449,29 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
     <div className="pf9-tab-content" style={{ padding: "1rem" }}>
       <h2 style={{ marginBottom: "0.75rem" }}>Tenant Portal Management</h2>
 
-      {/* CP ID input */}
+      {/* CP selector */}
       <div style={{ marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-        <label style={{ fontWeight: 600, whiteSpace: "nowrap" }}>Control Plane ID:</label>
-        <input
-          type="text"
-          placeholder="e.g. pf9-prod"
-          value={cpId}
-          onChange={(e) => setCpId(e.target.value)}
-          style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)", minWidth: 220 }}
-        />
+        <label style={{ fontWeight: 600, whiteSpace: "nowrap" }}>Control Plane:</label>
+        {controlPlanes.length > 0 ? (
+          <select
+            value={cpId}
+            onChange={(e) => setCpId(e.target.value)}
+            style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)", minWidth: 220 }}
+          >
+            {controlPlanes.length > 1 && <option value="">— select —</option>}
+            {controlPlanes.map((cp) => (
+              <option key={cp.id} value={cp.id}>{cp.name} ({cp.id})</option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="text"
+            placeholder="e.g. default"
+            value={cpId}
+            onChange={(e) => setCpId(e.target.value)}
+            style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)", minWidth: 220 }}
+          />
+        )}
       </div>
 
       {/* Sub-tab bar */}
@@ -417,71 +501,163 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
             </button>
             <button
               className="pf9-btn"
-              style={{ background: "var(--pf9-accent)", color: "#fff" }}
-              onClick={() => { clearMessages(); setShowGrantForm((v) => !v); }}
-              disabled={!cpId.trim()}
+              style={{ background: "#2563eb", color: "#fff", opacity: cpId.trim() ? 1 : 0.45, cursor: cpId.trim() ? "pointer" : "not-allowed" }}
+              onClick={() => { if (!cpId.trim()) return; showGrantForm ? setShowGrantForm(false) : openGrantForm(); }}
             >
               {showGrantForm ? "✕ Cancel" : "+ Grant Access"}
             </button>
           </div>
 
-          {/* Grant access inline form */}
+          {/* ── Grant-access wizard ── */}
           {showGrantForm && (
-            <div style={{
-              background: "var(--pf9-surface-2, #f9fafb)",
-              border: "1px solid var(--pf9-border)",
-              borderRadius: 8,
-              padding: "1rem",
-              marginBottom: "1rem",
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "0.75rem",
-              maxWidth: 640,
-            }}>
-              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem", gridColumn: "1 / -1" }}>
-                <span style={{ fontWeight: 600 }}>Keystone User ID <span style={{ color: "#ef4444" }}>*</span></span>
-                <input
-                  type="text"
-                  placeholder="e.g. abc123def456"
-                  value={grantUserId}
-                  onChange={(e) => setGrantUserId(e.target.value)}
-                  style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)", fontFamily: "monospace" }}
-                  autoFocus
-                />
-              </label>
-              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem" }}>
-                <span style={{ fontWeight: 600 }}>Notes (optional)</span>
-                <input
-                  type="text"
-                  placeholder="e.g. Customer: Acme Ltd"
-                  value={grantNotes}
-                  onChange={(e) => setGrantNotes(e.target.value)}
-                  style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)" }}
-                />
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={grantMfa}
-                  onChange={(e) => setGrantMfa(e.target.checked)}
-                />
-                <span style={{ fontWeight: 600 }}>Require MFA</span>
-              </label>
-              <div style={{ gridColumn: "1 / -1", display: "flex", gap: "0.5rem" }}>
+            <div style={{ border: "1px solid var(--pf9-border)", borderRadius: 8, padding: "1.25rem", marginBottom: "1.25rem", maxWidth: 720, background: "var(--pf9-surface-2, #f9fafb)" }}>
+              <h4 style={{ margin: "0 0 1rem" }}>Grant Portal Access</h4>
+
+              {/* Step 1: Pick tenant */}
+              <div style={{ marginBottom: "1rem" }}>
+                <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: "0.4rem" }}>
+                  Step 1 — Select a tenant / organisation
+                </div>
+                {projectsLoading ? (
+                  <p style={{ color: "var(--pf9-text-muted)", fontSize: "0.85rem" }}>Loading tenants…</p>
+                ) : projects.length === 0 ? (
+                  <p style={{ color: "var(--pf9-text-muted)", fontSize: "0.85rem" }}>No tenants found for this control plane.</p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
+                    {projects.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => selectProject(p)}
+                        style={{
+                          padding: "0.35rem 0.75rem",
+                          borderRadius: 20,
+                          border: `2px solid ${selectedProject?.id === p.id ? "#2563eb" : "var(--pf9-border)"}`,
+                          background: selectedProject?.id === p.id ? "#2563eb" : "transparent",
+                          color: selectedProject?.id === p.id ? "#fff" : "inherit",
+                          cursor: "pointer",
+                          fontSize: "0.85rem",
+                          fontWeight: 500,
+                        }}
+                      >
+                        {p.name}
+                        <span style={{ marginLeft: "0.4rem", opacity: 0.7, fontSize: "0.75rem" }}>
+                          {p.portal_enabled_count}/{p.member_count} enabled
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Step 2: Pick users */}
+              {selectedProject && (
+                <div style={{ marginBottom: "1rem" }}>
+                  <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: "0.4rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>Step 2 — Select users from <em>{selectedProject.name}</em></span>
+                    {projectUsers.length > 0 && (
+                      <button
+                        style={{ fontSize: "0.75rem", padding: "0.2rem 0.5rem", cursor: "pointer", borderRadius: 4, border: "1px solid var(--pf9-border)" }}
+                        onClick={() => {
+                          if (selectedUserIds.size === projectUsers.length) {
+                            setSelectedUserIds(new Set());
+                          } else {
+                            setSelectedUserIds(new Set(projectUsers.map((u) => u.keystone_user_id)));
+                          }
+                        }}
+                      >
+                        {selectedUserIds.size === projectUsers.length ? "Deselect all" : "Select all"}
+                      </button>
+                    )}
+                  </div>
+                  {usersLoading ? (
+                    <p style={{ color: "var(--pf9-text-muted)", fontSize: "0.85rem" }}>Loading users…</p>
+                  ) : projectUsers.length === 0 ? (
+                    <p style={{ color: "var(--pf9-text-muted)", fontSize: "0.85rem" }}>No users found in this tenant.</p>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem" }}>
+                      {projectUsers.map((u) => {
+                        const checked = selectedUserIds.has(u.keystone_user_id);
+                        return (
+                          <label
+                            key={u.keystone_user_id}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.5rem",
+                              padding: "0.4rem 0.6rem",
+                              borderRadius: 6,
+                              border: `1px solid ${checked ? "#2563eb" : "var(--pf9-border)"}`,
+                              background: checked ? "#2563eb11" : "transparent",
+                              cursor: "pointer",
+                              fontSize: "0.85rem",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setSelectedUserIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) next.delete(u.keystone_user_id);
+                                  else next.add(u.keystone_user_id);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span>
+                              <div style={{ fontWeight: 600 }}>{u.name || u.email || "Unknown"}</div>
+                              {u.email && u.name && <div style={{ fontSize: "0.75rem", opacity: 0.65 }}>{u.email}</div>}
+                              {u.enabled !== null && u.enabled === false && (
+                                <span style={{ fontSize: "0.7rem", color: "#ef4444" }}>portal access revoked</span>
+                              )}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 3: Options */}
+              {selectedProject && projectUsers.length > 0 && (
+                <div style={{ marginBottom: "1rem", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <div style={{ fontWeight: 600, fontSize: "0.85rem", width: "100%", marginBottom: "0.2rem" }}>Step 3 — Options</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", cursor: "pointer" }}>
+                    <input type="checkbox" checked={grantMfa} onChange={(e) => setGrantMfa(e.target.checked)} />
+                    <span>Require MFA for selected users</span>
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem", flexGrow: 1, maxWidth: 300 }}>
+                    <span>Internal note (optional)</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. Requested by ticket #123"
+                      value={grantNotes}
+                      onChange={(e) => setGrantNotes(e.target.value)}
+                      style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)" }}
+                    />
+                  </label>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div style={{ display: "flex", gap: "0.5rem" }}>
                 <button
                   className="pf9-btn"
+                  style={{ background: "#2563eb", color: "#fff", opacity: (!selectedProject || selectedUserIds.size === 0 || grantLoading) ? 0.45 : 1 }}
                   onClick={handleGrantAccess}
-                  disabled={grantLoading || !grantUserId.trim()}
+                  disabled={!selectedProject || selectedUserIds.size === 0 || grantLoading}
                 >
-                  {grantLoading ? "Granting…" : "Grant Access"}
+                  {grantLoading ? "Granting…" : `Grant Access${selectedUserIds.size > 0 ? ` (${selectedUserIds.size} user${selectedUserIds.size > 1 ? "s" : ""})` : ""}`}
                 </button>
                 <button className="pf9-btn" onClick={() => setShowGrantForm(false)}>Cancel</button>
               </div>
             </div>
           )}
+
           {accessRows.length === 0 && !loading && (
             <p style={{ color: "var(--pf9-text-muted)" }}>
-              {cpId.trim() ? "No access rows found." : "Enter a Control Plane ID and click Load."}
+              {cpId.trim() ? "No access rows found." : "Select a Control Plane above and click Load."}
             </p>
           )}
           {accessRows.length > 0 && (
@@ -622,7 +798,7 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
           </div>
           {sessions.length === 0 && !loading && (
             <p style={{ color: "var(--pf9-text-muted)" }}>
-              {cpId.trim() ? "No active sessions." : "Enter a Control Plane ID and click Refresh."}
+              {cpId.trim() ? "No active sessions." : "Select a Control Plane above and click Refresh."}
             </p>
           )}
           {sessions.length > 0 && (
@@ -672,7 +848,7 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
           </div>
           {auditRows.length === 0 && !loading && (
             <p style={{ color: "var(--pf9-text-muted)" }}>
-              {cpId.trim() ? "No audit entries found." : "Enter a Control Plane ID and click Refresh."}
+              {cpId.trim() ? "No audit entries found." : "Select a Control Plane above and click Refresh."}
             </p>
           )}
           {auditRows.length > 0 && (
