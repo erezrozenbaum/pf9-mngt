@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.10  
+**Version**: 1.84.11  
 **Last Updated**: April 15, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.11 — Tenant Portal: Friendly User/Tenant Names (✅ Complete)
+
+- `tenant_portal_access` table gains `user_name` and `tenant_name` nullable columns (migration `db/migrate_v1_84_11_access_names.sql`, applied to Docker + K8s)
+- Grant Access form in Admin UI now accepts User Name and Tenant / Org Name fields
+- Access table displays friendly name (bold) + Keystone ID (monospace below) and a Tenant / Org column
 
 ### v1.84.10 — Tenant Portal: Nav Registration Fix & Guide Corrections (✅ Complete)
 

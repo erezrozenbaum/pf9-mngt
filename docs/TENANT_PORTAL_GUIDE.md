@@ -1,6 +1,6 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.84.10  
+**Version**: 1.84.11  
 **Last Updated**: April 15, 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
@@ -94,20 +94,32 @@ GET /api/users?domain=<customer_domain>
 # Response includes keystone_user_id for each user
 ```
 
-### Step 2 — Grant portal access via the API
+### Step 2 — Grant portal access via the Admin UI
 
-Use `PUT /api/admin/tenant-portal/access` to create the initial access row (see Step 3 below). The Admin UI **Access Management** sub-tab shows and manages *existing* rows — it does not have a form for adding a brand-new user. You must call the API the first time.
+Open **Admin Tools → 🏢 Tenant Portal → Access Management**, enter the Control Plane ID, then click **+ Grant Access**. Fill in:
+
+| Field | Required | Description |
+|---|---|---|
+| Keystone User ID | ✅ Yes | The Keystone UUID for the user |
+| User Name | No | Friendly display name shown in the table (e.g. "John Smith") |
+| Tenant / Org Name | No | Customer or org label (e.g. "Acme Ltd") |
+| Notes | No | Free-text admin note |
+| Require MFA | No | Checkbox — enforces TOTP on next login |
+
+Alternatively, use the API directly (see Step 3).
 
 ### Step 3 — Grant access via API
 
 ```bash
-curl -X PUT https://<admin-host>/api/admin/tenant-portal/access/<cp_id> \
+curl -X PUT https://<admin-host>/api/admin/tenant-portal/access \
   -H "Authorization: Bearer <admin_token>" \
   -H "Content-Type: application/json" \
   -d '{
     "keystone_user_id": "<uid>",
+    "user_name": "John Smith",
+    "control_plane_id": "<cp_id>",
+    "tenant_name": "Acme Ltd",
     "enabled": true,
-    "allowed_project_ids": ["<project_id_1>", "<project_id_2>"],
     "mfa_required": true
   }'
 ```

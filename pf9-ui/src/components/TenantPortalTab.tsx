@@ -20,7 +20,9 @@ import { apiFetch } from "../lib/api";
 interface AccessRow {
   id: number;
   keystone_user_id: string;
+  user_name: string | null;
   control_plane_id: string;
+  tenant_name: string | null;
   enabled: boolean;
   mfa_required: boolean;
   notes: string | null;
@@ -125,6 +127,13 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
 
   // ── Access tab ──
   const [accessRows, setAccessRows] = useState<AccessRow[]>([]);
+  const [showGrantForm, setShowGrantForm] = useState(false);
+  const [grantUserId, setGrantUserId] = useState("");
+  const [grantUserName, setGrantUserName] = useState("");
+  const [grantTenantName, setGrantTenantName] = useState("");
+  const [grantMfa, setGrantMfa] = useState(false);
+  const [grantNotes, setGrantNotes] = useState("");
+  const [grantLoading, setGrantLoading] = useState(false);
 
   // ── Branding tab ──
   const [branding, setBranding] = useState<Partial<BrandingRow>>({
@@ -275,6 +284,40 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
     }
   };
 
+  const handleGrantAccess = async () => {
+    if (!cpId.trim())        { setError("Enter a Control Plane ID first"); return; }
+    if (!grantUserId.trim()) { setError("Keystone User ID is required"); return; }
+    clearMessages();
+    setGrantLoading(true);
+    try {
+      await apiFetch(`/api/admin/tenant-portal/access`, {
+        method: "PUT",
+        body: JSON.stringify({
+          keystone_user_id: grantUserId.trim(),
+          user_name:        grantUserName.trim() || null,
+          control_plane_id: cpId.trim(),
+          tenant_name:      grantTenantName.trim() || null,
+          enabled: true,
+          mfa_required: grantMfa,
+          notes: grantNotes.trim() || null,
+        }),
+      });
+      const label = grantUserName.trim() || grantUserId.trim();
+      setSuccess(`Access granted for ${label}`);
+      setGrantUserId("");
+      setGrantUserName("");
+      setGrantTenantName("");
+      setGrantNotes("");
+      setGrantMfa(false);
+      setShowGrantForm(false);
+      await fetchAccess();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setGrantLoading(false);
+    }
+  };
+
   const handleUpsertBranding = async () => {
     if (!cpId.trim()) { setError("Enter a Control Plane ID first"); return; }
     clearMessages();
@@ -368,11 +411,74 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
       {/* ── ACCESS TAB ── */}
       {subTab === "access" && (
         <div>
-          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
+          <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap", alignItems: "center" }}>
             <button className="pf9-btn" onClick={fetchAccess} disabled={loading || !cpId.trim()}>
               {loading ? "Loading…" : "Load Access List"}
             </button>
+            <button
+              className="pf9-btn"
+              style={{ background: "var(--pf9-accent)", color: "#fff" }}
+              onClick={() => { clearMessages(); setShowGrantForm((v) => !v); }}
+              disabled={!cpId.trim()}
+            >
+              {showGrantForm ? "✕ Cancel" : "+ Grant Access"}
+            </button>
           </div>
+
+          {/* Grant access inline form */}
+          {showGrantForm && (
+            <div style={{
+              background: "var(--pf9-surface-2, #f9fafb)",
+              border: "1px solid var(--pf9-border)",
+              borderRadius: 8,
+              padding: "1rem",
+              marginBottom: "1rem",
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "0.75rem",
+              maxWidth: 640,
+            }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem", gridColumn: "1 / -1" }}>
+                <span style={{ fontWeight: 600 }}>Keystone User ID <span style={{ color: "#ef4444" }}>*</span></span>
+                <input
+                  type="text"
+                  placeholder="e.g. abc123def456"
+                  value={grantUserId}
+                  onChange={(e) => setGrantUserId(e.target.value)}
+                  style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)", fontFamily: "monospace" }}
+                  autoFocus
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "0.85rem" }}>
+                <span style={{ fontWeight: 600 }}>Notes (optional)</span>
+                <input
+                  type="text"
+                  placeholder="e.g. Customer: Acme Ltd"
+                  value={grantNotes}
+                  onChange={(e) => setGrantNotes(e.target.value)}
+                  style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)" }}
+                />
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={grantMfa}
+                  onChange={(e) => setGrantMfa(e.target.checked)}
+                />
+                <span style={{ fontWeight: 600 }}>Require MFA</span>
+              </label>
+              <div style={{ gridColumn: "1 / -1", display: "flex", gap: "0.5rem" }}>
+                <button
+                  className="pf9-btn"
+                  onClick={handleGrantAccess}
+                  disabled={grantLoading || !grantUserId.trim()}
+                >
+                  {grantLoading ? "Granting…" : "Grant Access"}
+                </button>
+                <button className="pf9-btn" onClick={() => setShowGrantForm(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
           {accessRows.length === 0 && !loading && (
             <p style={{ color: "var(--pf9-text-muted)" }}>
               {cpId.trim() ? "No access rows found." : "Enter a Control Plane ID and click Load."}
@@ -383,7 +489,8 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
               <table className="pf9-table">
                 <thead>
                   <tr>
-                    <th>Keystone User ID</th>
+                    <th>User</th>
+                    <th>Tenant / Org</th>
                     <th>Status</th>
                     <th>MFA Required</th>
                     <th>Granted By</th>
@@ -394,7 +501,15 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
                 <tbody>
                   {accessRows.map((row) => (
                     <tr key={row.id}>
-                      <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{row.keystone_user_id}</td>
+                      <td>
+                        {row.user_name && (
+                          <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>{row.user_name}</div>
+                        )}
+                        <div style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "var(--pf9-text-muted)" }}>
+                          {row.keystone_user_id}
+                        </div>
+                      </td>
+                      <td>{row.tenant_name ?? <span style={{ color: "var(--pf9-text-muted)" }}>{row.control_plane_id}</span>}</td>
                       <td><StatusBadge ok={row.enabled} /></td>
                       <td>{row.mfa_required ? "✅ Yes" : "—"}</td>
                       <td>{row.granted_by ?? "—"}</td>

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.11] - 2026-04-15
+
+### Added
+- **Friendly User Name & Tenant Name on access rows** — `tenant_portal_access` table gains two nullable `TEXT` columns: `user_name` (friendly display name for the Keystone user, e.g. "John Smith") and `tenant_name` (friendly org label, e.g. "Acme Ltd"). Added migration `db/migrate_v1_84_11_access_names.sql`; applied to local Docker and Kubernetes.
+- **Grant Access form — new User Name & Tenant / Org Name fields** — the inline Grant Access form in Admin Tools → 🏢 Tenant Portal → Access Management now has optional **User Name** and **Tenant / Org Name** inputs so admins can label each row without memorising Keystone UUIDs.
+- **Access table — User column & Tenant / Org column** — the table now shows friendly name (bold) above the Keystone ID (monospace, muted), and a Tenant / Org column (falls back to CP ID when no tenant name set). Success toast after granting access uses the User Name when provided.
+
+### Changed
+- `api/tenant_portal_routes.py` — `AccessUpsertRequest` and `AccessRow` Pydantic models extended with `user_name` and `tenant_name` optional fields; INSERT and SELECT statements updated (COALESCE: supplied value wins, existing value preserved when null).
+- `db/init.sql` — `tenant_portal_access` CREATE TABLE now includes `user_name` and `tenant_name` columns (safe for fresh installs).
+
 ## [1.84.10] - 2026-04-15
 
 ### Fixed

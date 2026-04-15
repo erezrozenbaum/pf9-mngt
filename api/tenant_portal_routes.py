@@ -72,7 +72,9 @@ def _get_redis():
 
 class AccessUpsertRequest(BaseModel):
     keystone_user_id: str
+    user_name: Optional[str] = None        # friendly display name for the Keystone user
     control_plane_id: str
+    tenant_name: Optional[str] = None      # friendly display name for the tenant / org
     enabled: bool
     mfa_required: Optional[bool] = False
     notes: Optional[str] = None
@@ -88,7 +90,9 @@ class AccessUpsertRequest(BaseModel):
 class AccessRow(BaseModel):
     id: int
     keystone_user_id: str
+    user_name: Optional[str]
     control_plane_id: str
+    tenant_name: Optional[str]
     enabled: bool
     mfa_required: bool
     notes: Optional[str]
@@ -173,8 +177,8 @@ async def list_access(
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, keystone_user_id, control_plane_id, enabled,
-                       mfa_required, notes, granted_by, granted_at,
+                SELECT id, keystone_user_id, user_name, control_plane_id, tenant_name,
+                       enabled, mfa_required, notes, granted_by, granted_at,
                        revoked_by, revoked_at, created_at, updated_at
                 FROM tenant_portal_access
                 WHERE control_plane_id = %s
@@ -213,12 +217,15 @@ async def upsert_access(
             cur.execute(
                 """
                 INSERT INTO tenant_portal_access
-                    (keystone_user_id, control_plane_id, enabled, mfa_required,
-                     notes, granted_by, granted_at, revoked_by, revoked_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (keystone_user_id, user_name, control_plane_id, tenant_name,
+                     enabled, mfa_required, notes,
+                     granted_by, granted_at, revoked_by, revoked_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (keystone_user_id, control_plane_id) DO UPDATE SET
                     enabled      = EXCLUDED.enabled,
                     mfa_required = EXCLUDED.mfa_required,
+                    user_name    = COALESCE(EXCLUDED.user_name, tenant_portal_access.user_name),
+                    tenant_name  = COALESCE(EXCLUDED.tenant_name, tenant_portal_access.tenant_name),
                     notes        = COALESCE(EXCLUDED.notes, tenant_portal_access.notes),
                     granted_by   = CASE WHEN EXCLUDED.enabled THEN EXCLUDED.granted_by
                                         ELSE tenant_portal_access.granted_by END,
@@ -233,7 +240,9 @@ async def upsert_access(
                 """,
                 (
                     body.keystone_user_id,
+                    body.user_name,
                     body.control_plane_id,
+                    body.tenant_name,
                     body.enabled,
                     body.mfa_required,
                     body.notes,

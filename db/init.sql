@@ -3790,7 +3790,9 @@ CREATE INDEX IF NOT EXISTS idx_tenant_action_log_action  ON tenant_action_log (a
 CREATE TABLE IF NOT EXISTS tenant_portal_access (
     id               BIGSERIAL    PRIMARY KEY,
     keystone_user_id TEXT         NOT NULL,
+    user_name        TEXT,                                    -- friendly display name for the user
     control_plane_id TEXT         NOT NULL REFERENCES pf9_control_planes(id),
+    tenant_name      TEXT,                                    -- friendly name for the tenant / org
     enabled          BOOLEAN      NOT NULL DEFAULT false,
     mfa_required     BOOLEAN      NOT NULL DEFAULT false,
     notes            TEXT,
