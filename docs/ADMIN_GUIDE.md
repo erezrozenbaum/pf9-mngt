@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.6  
+**Version**: 1.84.7  
 **Last Updated**: April 15, 2026  
 **Audience**: System administrators and platform operators
 
@@ -661,9 +661,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 
 ## Appendix: Feature History by Version
 
-### v1.84.6 — Runtime Fix: tenant-ui nginx Non-Root Crash (✅ Complete)
+### v1.84.7 — Runtime Fix: tenant-ui nginx Temp Dir Crash (✅ Complete)
 
-- **Kubernetes crash fix**: tenant-ui pod entered a crash loop because `nginx:1.27-alpine` was running under `runAsNonRoot: true` / `runAsUser: 101` but needed root-owned paths (`/var/run/nginx.pid`, `/var/cache/nginx/*`) to start. Dockerfile updated to remove the `user nginx;` directive, redirect the PID file to `/tmp/nginx.pid`, redirect all cache temp dirs to `/tmp/nginx-cache`, and pre-create those directories with `chown nginx:nginx` during the image build.
+- **Kubernetes crash fix (root cause)**: the previous fix (v1.84.6) attempted to redirect nginx temp paths via `sed` on `nginx.conf`, but these paths (`/var/cache/nginx/client_temp` etc.) are **compiled-in defaults in the nginx binary** and are not present in the config file. Pod continued crashing with `Permission denied` on mkdir. Correct fix: pre-create all five nginx temp directories at their expected paths, `chown -R nginx:nginx` them at build time, pre-create and own `/run/nginx.pid`, and add `USER nginx` to the Dockerfile so the container image itself declares uid 101 as its default user.
+
+### v1.84.6 — Security + CI Fix (✅ Complete)
+
+- **SQL security**: replaced dynamic f-string SQL in three query functions with static parameterized SQL using PostgreSQL `IS NULL OR` optional-filter pattern. Eliminates bandit B608 false positives; `bandit -ll` now exits 0.
+- **CI workflow fix**: removed `linux/arm64` from the tenant-ui Docker build matrix (Node.js 22 QEMU SIGILL). Initial nginx non-root fix attempt via `sed` (superseded by v1.84.7).
 
 ### v1.84.5 — CI Fix: tenant-ui ARM64 Build (✅ Complete)
 
