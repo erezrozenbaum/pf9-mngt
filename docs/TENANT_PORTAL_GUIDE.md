@@ -1,6 +1,6 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.84.9  
+**Version**: 1.84.10  
 **Last Updated**: April 15, 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
@@ -94,15 +94,11 @@ GET /api/users?domain=<customer_domain>
 # Response includes keystone_user_id for each user
 ```
 
-### Step 2 — Grant portal access via the Admin UI
+### Step 2 — Grant portal access via the API
 
-Navigate to **Admin → 🏢 Tenant Portal → Access Management** and click **Grant Access**. Provide:
-- The customer's Keystone user ID
-- The control plane ID (default: `default`)
-- The list of OpenStack project IDs the customer may see
-- (Optional) An access expiry date
+Use `PUT /api/admin/tenant-portal/access` to create the initial access row (see Step 3 below). The Admin UI **Access Management** sub-tab shows and manages *existing* rows — it does not have a form for adding a brand-new user. You must call the API the first time.
 
-### Step 3 — Grant access via API (alternative)
+### Step 3 — Grant access via API
 
 ```bash
 curl -X PUT https://<admin-host>/api/admin/tenant-portal/access/<cp_id> \
@@ -123,14 +119,17 @@ curl -X PUT https://<admin-host>/api/admin/tenant-portal/branding/<cp_id> \
   -H "Authorization: Bearer <admin_token>" \
   -H "Content-Type: application/json" \
   -d '{
+    "company_name": "Customer Infrastructure Portal",
     "logo_url": "https://cdn.customer.com/logo.png",
+    "favicon_url": "https://cdn.customer.com/favicon.ico",
+    "primary_color": "#1A73E8",
     "accent_color": "#2563eb",
-    "portal_title": "Customer Infrastructure Portal",
-    "favicon_url": "https://cdn.customer.com/favicon.ico"
+    "support_email": "support@customer.com",
+    "welcome_message": "Welcome to your infrastructure portal"
   }'
 ```
 
-Branding is fetched by the tenant-ui on load from `GET /tenant/branding` (unauthenticated, 60 s cache). If no branding row exists, safe defaults are returned (`accent_color: #3b82f6`, `portal_title: "Customer Portal"`).
+Branding is fetched by the tenant-ui on load from `GET /tenant/branding` (unauthenticated, 60 s cache). If no branding row exists, safe defaults are returned (`company_name: "Cloud Portal"`, `primary_color: #1A73E8`, `accent_color: #F29900`).
 
 ### Step 5 — Send the portal URL to the customer
 
@@ -180,13 +179,16 @@ GET /api/admin/tenant-portal/sessions/<cp_id>
 # Returns: session list — user, IP, created_at, last_seen, session_id
 ```
 
-### Revoke all sessions for a control plane
+### Revoke all sessions for a specific user
 
 ```bash
-DELETE /api/admin/tenant-portal/sessions/<cp_id> \
+curl -X DELETE https://<admin-host>/api/admin/tenant-portal/sessions/<cp_id>/<keystone_user_id> \
   -H "Authorization: Bearer <admin_token>"
-# Use this when rotating credentials, after a security incident, or to force re-auth
+# Terminates all active Redis sessions for the user immediately
+# Their next request returns 401
 ```
+
+To force re-auth across all users, repeat per user or restart the tenant portal service.
 
 Sessions are automatically invalidated when:
 - The user's IP address changes mid-session (IP binding, configurable)
@@ -200,14 +202,19 @@ Sessions are automatically invalidated when:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `logo_url` | URL string | HTTPS recommended; displayed top-left in tenant-ui |
-| `accent_color` | `#rrggbb` or `#rgb` | Must be a valid hex colour; used for primary buttons and highlights |
-| `portal_title` | string | Shown in browser title bar and login screen |
+| `company_name` | string | Displayed in the portal title bar and login screen |
+| `logo_url` | URL string or null | HTTPS recommended; displayed top-left in tenant-ui |
 | `favicon_url` | URL string or null | Optional; falls back to pf9-mngt default favicon |
+| `primary_color` | `#rrggbb` | Primary UI colour (default `#1A73E8`) |
+| `accent_color` | `#rrggbb` | Accent colour for highlights and buttons (default `#F29900`); validated as hex |
+| `support_email` | email or null | Optional support contact shown in the portal |
+| `support_url` | URL or null | Optional support link |
+| `welcome_message` | string or null | Shown on the portal login/dashboard screen |
+| `footer_text` | string or null | Displayed in the tenant-ui footer |
 
 The branding endpoint (`GET /tenant/branding`) is **unauthenticated** — it must be accessible before login so the login page can display customer branding. The 60-second Redis cache prevents DB pressure during high traffic.
 
-The admin UI's **Branding** sub-tab provides a form with a live colour picker and preview.
+The admin UI's **Branding** sub-tab provides a form with fields for all branding properties. Save with the **Save Branding** button.
 
 ---
 
@@ -236,7 +243,7 @@ DELETE /api/admin/tenant-portal/mfa/<cp_id>/<keystone_user_id> \
 # The user will be prompted to re-enrol TOTP on next login
 ```
 
-This action is also available in the Admin UI → Tenant Portal → **Branding** sub-tab. It creates a full audit log entry.
+This action is also available in the Admin UI → Tenant Portal → **Access Management** sub-tab — click the **Reset MFA** button in the Actions column for the user row. It creates a full audit log entry.
 
 ---
 
@@ -245,18 +252,21 @@ This action is also available in the Admin UI → Tenant Portal → **Branding**
 Every tenant API call writes an immutable entry to `tenant_action_log` — atomically with the data query.
 
 ```bash
-GET /api/admin/tenant-portal/audit/<cp_id>?limit=100&offset=0&user_id=<uid>&action=<action>&from=2026-04-01&to=2026-04-15
+GET /api/admin/tenant-portal/audit/<cp_id>?limit=100&offset=0&keystone_user_id=<uid>
 ```
 
-Captured fields per entry:
-- `user_id` (Keystone user ID)
-- `action` (e.g. `list_vms`, `restore_execute`, `view_snapshot`)
-- `resource_id` (if applicable)
-- `ip_address`
-- `timestamp`
-- `response_status`
+Supported query params: `limit` (1–500, default 50), `offset`, `keystone_user_id` (optional filter). Response includes `total`, `offset`, `limit`, and `items`.
 
-The audit log is available in the Admin UI → Tenant Portal → **Audit Log** sub-tab with user, action, and date range filters.
+Captured fields per entry:
+- `keystone_user_id` (Keystone user ID)
+- `action` (e.g. `list_vms`, `restore_execute`, `view_snapshot`)
+- `resource_type` / `resource_id` (if applicable)
+- `project_id` / `region_id` (if applicable)
+- `ip_address`
+- `created_at`
+- `success` (boolean)
+
+The audit log is available in the Admin UI → Tenant Portal → **Audit Log** sub-tab with pagination (50 entries per page).
 
 ---
 

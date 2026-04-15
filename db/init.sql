@@ -2870,7 +2870,8 @@ ON CONFLICT (key) DO NOTHING;
 INSERT INTO nav_items (nav_group_id, key, label, icon, route, resource_key, sort_order) VALUES
     ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'admin',              'Auth Management',  '⚙️', '/admin',              'users',              1),
     ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'notifications',      'Notifications',    '🔔', '/notifications',      'notifications',      2),
-    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'cluster_management', 'Cluster Management','🌐', '/cluster_management', 'cluster_management', 3)
+    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'cluster_management', 'Cluster Management','🌐', '/cluster_management', 'cluster_management', 3),
+    ((SELECT id FROM nav_groups WHERE key='admin_tools'), 'tenant_portal',      'Tenant Portal',    '🏢', '/tenant_portal',      'tenant_portal',      4)
 ON CONFLICT (key) DO NOTHING;
 
 -- Technical Tools group
@@ -2887,7 +2888,7 @@ WHERE key IN (
     'snapshot_monitor', 'snapshot_compliance', 'restore', 'restore_audit',
     'snapshot-policies', 'backup', 'metering', 'provisioning',
     'domain_management', 'reports', 'resource_management',
-    'notifications'
+    'notifications', 'cluster_management', 'tenant_portal'
 );
 
 -- =====================================================================

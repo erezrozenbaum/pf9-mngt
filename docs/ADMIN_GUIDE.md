@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.9  
+**Version**: 1.84.10  
 **Last Updated**: April 15, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.10 — Tenant Portal: Nav Registration Fix & Guide Corrections (✅ Complete)
+
+- **Tenant Portal tab now visible in Admin Tools** — missing DB nav seed fixed; `db/migrate_v1_84_9_nav.sql` applied.
+- **Guide corrections** — branding fields, MFA Reset location, session revoke endpoint, audit query params all corrected.
 
 ### v1.84.9 — Tenant Portal: Branding Endpoint, Admin APIs & Security Tests (✅ Complete)
 

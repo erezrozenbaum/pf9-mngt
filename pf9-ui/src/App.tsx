@@ -3130,6 +3130,7 @@ const App: React.FC = () => {
     "my_queue",
     "migration_planner",
     "cluster_management",
+    "tenant_portal",
   ].includes(activeTab);
 
   // -----------------------------------------------------------------------

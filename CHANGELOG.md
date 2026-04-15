@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.84.9] - 2026-04-16
+## [1.84.10] - 2026-04-15
+
+### Fixed
+- **Tenant Portal tab missing from Admin Tools navigation** — `tenant_portal` nav item was not seeded into the `nav_items` database table, so the tab never appeared in the Admin UI grouped navigation. Added `tenant_portal` ('🏢 Tenant Portal') to the `admin_tools` nav group (sort position 4, `is_action=true`) in `db/init.sql`. Added migration `db/migrate_v1_84_9_nav.sql` to register the tab in all existing live environments without requiring a DB reset. Applied migration to local Docker and Kubernetes environments.
+- **`tenant_portal` missing from `hideDetailsPanel`** — the details panel would render underneath the Tenant Portal tab; added `tenant_portal` to the `hideDetailsPanel` list in `App.tsx`.
+- **Guide inaccuracies in `docs/TENANT_PORTAL_GUIDE.md`** — six corrections: (1) Step 2 no longer claims a "Grant Access" UI button (API-only for new users); (2) branding field table now lists all 9 real fields; (3) removed false "live colour picker" claim; (4) MFA Reset location corrected to Access Management sub-tab; (5) session revoke endpoint corrected to per-user `DELETE /sessions/<cp_id>/<user_id>`; (6) audit query params corrected (removed non-existent `action`, `from`, `to` filters).
+
+## [1.84.9] - 2026-04-15
 
 ### Added
 - **`GET /tenant/branding` (Gap 1)** — new unauthenticated endpoint in the tenant portal FastAPI (`tenant_portal/branding_routes.py`). Returns `tenant_portal_branding` row for the control plane this pod serves (or safe defaults if no row exists / DB unavailable). Results are in-process cached for 60 s to avoid a DB round-trip on every login-page load.

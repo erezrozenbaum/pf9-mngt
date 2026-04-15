@@ -62,6 +62,10 @@ TEAMS_ENABLED: bool = bool(TEAMS_WEBHOOK_URL)
 # ---------------------------------------------------------------------------
 def _post_json(url: str, payload: dict, timeout: int = 15) -> None:
     """POST *payload* as JSON to *url*.  Raises on non-2xx or network error."""
+    # Restrict to http/https only — reject file:// and other schemes (SSRF prevention)
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Webhook URL scheme '{parsed.scheme}' is not allowed; use http or https")
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -69,7 +73,7 @@ def _post_json(url: str, payload: dict, timeout: int = 15) -> None:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 — scheme validated above
         status = resp.getcode()
     if status < 200 or status >= 300:
         raise RuntimeError(f"Webhook returned HTTP {status}")
