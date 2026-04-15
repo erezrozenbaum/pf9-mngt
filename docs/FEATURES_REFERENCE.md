@@ -212,6 +212,23 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
+### 🏢 Tenant Self-Service Portal *(v1.84.0+)*
+
+**For MSPs and operators who want to give customers limited, secure, read-only + restore access to their own infrastructure — without exposing the admin panel.**
+
+A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolated, MFA-protected API and accompanying React SPA (`tenant-ui/`) per customer. Tenants can monitor their VMs, browse snapshots, initiate side-by-side restores, and view operational runbooks — all scoped to their own projects only.
+
+- **Security isolation**: `tenant_portal_role` PostgreSQL role with Row-Level Security on 5 inventory tables. `role=tenant` JWT namespace (admin tokens explicitly rejected). IP binding + Redis session binding. TOTP + email OTP MFA with 8 bcrypt-hashed backup codes.
+- **Data endpoints (read-only)**: VM inventory, volume list, snapshot list/detail/history, per-VM compliance %, dashboard summary, event feed, Prometheus metrics proxy (scoped to tenant VMs), runbooks catalogue — 14 routes, all with double `project_id + region_id` scoping and RLS.
+- **Restore center**: 6 endpoints (list restore points, dry-run plan, execute, list jobs, progress, cancel). Side-by-side restore always creates a new VM — non-destructive. Ops Slack/Teams alert on execute; tenant email on completion/failure.
+- **Audit logging**: every tenant API call writes an immutable `tenant_action_log` entry atomically with the data query.
+- **Branding** *(v1.84.9)*: `GET /tenant/branding` unauthenticated endpoint returns per-CP logo URL, accent colour, portal title, and favicon. 60 s Redis cache; fail-safe defaults when unconfigured.
+- **Web SPA** (`tenant-ui/`): React + TypeScript + nginx — 7 screens: Dashboard, Infrastructure (VMs + volumes), Snapshot Coverage (30-day calendar), Monitoring, Restore Center (3-step wizard + job panel), Runbooks (read-only catalogue), Activity Log. Per-customer branding applied from server. Session token silently re-validates on page reload.
+- **Admin API** (`api/tenant_portal_routes.py`): 9 admin endpoints — user listing, access management (grant/revoke projects), session management (list/revoke), audit log review, branding upsert *(v1.84.9)*, MFA reset *(v1.84.9)*. Requires `admin` or `superadmin`.
+- **Admin UI** *(v1.84.9)*: `TenantPortalTab.tsx` — 4 sub-tabs: Access Management, Branding (logo + accent colour editor), Active Sessions, Audit Log.
+- **Kubernetes**: dedicated `nginx-ingress-tenant` Helm release on separate MetalLB IP *(v1.84.8)*; `NetworkPolicy` blocks tenant portal from reaching admin API, LDAP, and SMTP.
+- **Security test suite** *(v1.84.9, P8)*: 27 tests (S01–S27) covering unauthenticated access control, token segregation, CSRF resistance, rate limiting, input validation, session invalidation, MFA bypass resistance, and cross-tenant data isolation.
+
 ### 📈 30+ Tab Management Dashboard
 A single engineering console covering every operational surface:
 

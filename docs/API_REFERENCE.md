@@ -4989,3 +4989,113 @@ Response:
 }
 ```
 
+
+---
+
+## Tenant Portal API — Port 8010 (v1.84.0+)
+
+The tenant portal is an **isolated FastAPI service** on port 8010 (`tenant_portal/`). It uses a separate JWT namespace (`role=tenant`) — admin tokens are explicitly rejected. All responses include `X-Request-ID` and `X-Content-Type-Options: nosniff` headers.
+
+**Base URL (Kubernetes):** `https://<tenant-portal-domain>/` (served via `nginx-ingress-tenant`)
+**Base URL (Docker Compose):** `http://localhost:8010/`
+
+### Authentication
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/tenant/auth/login` | None | Keystone passthrough login. Returns JWT + `Set-Cookie: session` (httpOnly). |
+| `POST` | `/tenant/auth/mfa/email-otp` | JWT (preauth) | Send email OTP to the user's registered address. |
+| `POST` | `/tenant/auth/mfa/verify-otp` | JWT (preauth) | Verify email OTP code; promotes token to full `role=tenant`. |
+| `POST` | `/tenant/auth/mfa/totp-setup` | JWT (preauth) | Initiate TOTP enrolment; returns `otpauth://` URI + 8 backup codes. |
+| `POST` | `/tenant/auth/mfa/verify-setup` | JWT (preauth) | Confirm TOTP setup with first code; activates TOTP for the user. |
+| `POST` | `/tenant/auth/logout` | JWT | Revoke Redis session. |
+
+### Branding (unauthenticated — v1.84.9)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/tenant/branding` | None | Returns branding for the requesting control plane (`logo_url`, `accent_color`, `portal_title`, `favicon_url`). 60 s Redis cache. Returns safe defaults if no branding row exists or DB is unavailable. |
+
+**Response:**
+```json
+{
+  "logo_url": "https://example.com/logo.png",
+  "accent_color": "#2563eb",
+  "portal_title": "Customer Portal",
+  "favicon_url": null
+}
+```
+
+### Data Endpoints (tenant-scoped, read-only)
+
+All endpoints require a full `role=tenant` JWT (MFA verified). Every call writes an immutable audit entry to `tenant_action_log`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/tenant/dashboard` | Summary stats: VM count, running, volumes, snapshots, compliance %, restore jobs. |
+| `GET` | `/tenant/vms` | VM inventory scoped to tenant projects + region. |
+| `GET` | `/tenant/vms/{vm_id}` | Single VM detail with volumes, network, metadata. |
+| `GET` | `/tenant/volumes` | Volume inventory with attachment status. |
+| `GET` | `/tenant/snapshots` | Snapshot list with policy and compliance columns. |
+| `GET` | `/tenant/snapshots/{snapshot_id}` | Single snapshot detail. |
+| `GET` | `/tenant/snapshot-history` | 30-day snapshot run history for coverage calendar. |
+| `GET` | `/tenant/compliance` | Per-VM SLA compliance % (last 30 days). |
+| `GET` | `/tenant/events` | Unified event feed: snapshot runs, restores, drift events. |
+| `GET` | `/tenant/metrics/vms` | Tenant-scoped Prometheus metrics (latest CPU/RAM per VM). |
+| `GET` | `/tenant/metrics/vms/{vm_id}` | Per-VM metrics time series. |
+| `GET` | `/tenant/metrics/availability` | 7-day and 30-day availability % per VM. |
+| `GET` | `/tenant/runbooks` | Runbooks visible to tenant (filtered by `runbook_project_tags`). |
+| `GET` | `/tenant/runbooks/{name}` | Single runbook detail and last execution summary. |
+
+### Restore Center
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/tenant/restore/points` | Available restore points (snapshots eligible for side-by-side restore). |
+| `POST` | `/tenant/restore/plan` | Dry-run restore plan — returns resource requirements and quota check. |
+| `POST` | `/tenant/restore/execute` | Execute side-by-side restore (always creates a new VM, non-destructive). Triggers ops Slack/Teams alert and tenant email notification on completion/failure. |
+| `GET` | `/tenant/jobs` | List restore jobs for the tenant. |
+| `GET` | `/tenant/jobs/{job_id}` | Per-step progress for a restore job. |
+| `POST` | `/tenant/jobs/{job_id}/cancel` | Cancel a pending or in-progress job. |
+
+---
+
+## Admin: Tenant Portal Management (v1.84.0+)
+
+These endpoints are part of the **main API** (`api/tenant_portal_routes.py`) on port 8000. They require `admin` or `superadmin` role.
+
+**Base path:** `/api/admin/tenant-portal/`
+
+### Access Management
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/admin/tenant-portal/users/{cp_id}` | List all tenant portal users for a control plane with access status. |
+| `GET` | `/api/admin/tenant-portal/access/{cp_id}` | Get access configuration (allowed projects, expiry, MFA policy) for a CP. |
+| `PUT` | `/api/admin/tenant-portal/access/{cp_id}` | Update access rules; atomically syncs Redis allow/block keys. |
+| `DELETE` | `/api/admin/tenant-portal/sessions/{cp_id}` | Revoke all active sessions for a control plane. |
+| `GET` | `/api/admin/tenant-portal/sessions/{cp_id}` | List active sessions (user, IP, created_at, last_seen). |
+| `GET` | `/api/admin/tenant-portal/audit/{cp_id}` | Audit log — all tenant API calls for the CP (paginated, filterable by user/action/date). |
+
+### Branding Management (v1.84.9)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/admin/tenant-portal/branding/{cp_id}` | Returns current branding row (`logo_url`, `accent_color`, `portal_title`, `favicon_url`, `updated_at`). Returns 404 if not yet configured. |
+| `PUT` | `/api/admin/tenant-portal/branding/{cp_id}` | Upsert branding. Body: `BrandingUpsertRequest` — all fields optional; `accent_color` must be a valid 3- or 6-digit hex colour (e.g. `#2563eb`). |
+
+**PUT body example:**
+```json
+{
+  "logo_url": "https://cdn.example.com/logo.png",
+  "accent_color": "#2563eb",
+  "portal_title": "Acme Customer Portal",
+  "favicon_url": "https://cdn.example.com/favicon.ico"
+}
+```
+
+### MFA Administration (v1.84.9)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `DELETE` | `/api/admin/tenant-portal/mfa/{cp_id}/{keystone_user_id}` | Reset MFA for a specific user — deletes TOTP secret and all backup codes from `tenant_portal_mfa`. Writes audit entry. Returns `{"cleared": true}`. |

@@ -389,3 +389,147 @@ async def get_audit_log(
             total = cur.fetchone()["count"]
 
     return {"total": total, "offset": offset, "limit": limit, "items": [dict(r) for r in rows]}
+
+
+# ---------------------------------------------------------------------------
+# Branding management  (admin read + upsert)
+# ---------------------------------------------------------------------------
+
+class BrandingUpsertRequest(BaseModel):
+    company_name: str = "Cloud Portal"
+    logo_url: Optional[str] = None
+    favicon_url: Optional[str] = None
+    primary_color: str = "#1A73E8"
+    accent_color: str = "#F29900"
+    support_email: Optional[str] = None
+    support_url: Optional[str] = None
+    welcome_message: Optional[str] = None
+    footer_text: Optional[str] = None
+
+    @field_validator("primary_color", "accent_color")
+    @classmethod
+    def valid_hex_color(cls, v: str) -> str:
+        import re
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
+            raise ValueError("must be a 6-digit hex colour e.g. #1A73E8")
+        return v.upper()
+
+
+@router.get("/branding/{cp_id}", summary="Get branding config for a CP")
+async def get_branding_admin(
+    cp_id: str,
+    current_user: User = Depends(_require_admin),
+):
+    """Return the tenant_portal_branding row for a control plane, or 404."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT control_plane_id, company_name, logo_url, favicon_url, "
+                "primary_color, accent_color, support_email, support_url, "
+                "welcome_message, footer_text, updated_at "
+                "FROM tenant_portal_branding WHERE control_plane_id = %s",
+                [cp_id],
+            )
+            row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="branding_not_found")
+    return dict(row)
+
+
+@router.put("/branding/{cp_id}", summary="Upsert branding config for a CP")
+async def upsert_branding(
+    cp_id: str,
+    body: BrandingUpsertRequest,
+    request: Request,
+    current_user: User = Depends(_require_admin),
+):
+    """Create or replace the tenant_portal_branding row for a control plane."""
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO tenant_portal_branding (
+                    control_plane_id, company_name, logo_url, favicon_url,
+                    primary_color, accent_color, support_email, support_url,
+                    welcome_message, footer_text, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (control_plane_id) DO UPDATE SET
+                    company_name    = EXCLUDED.company_name,
+                    logo_url        = EXCLUDED.logo_url,
+                    favicon_url     = EXCLUDED.favicon_url,
+                    primary_color   = EXCLUDED.primary_color,
+                    accent_color    = EXCLUDED.accent_color,
+                    support_email   = EXCLUDED.support_email,
+                    support_url     = EXCLUDED.support_url,
+                    welcome_message = EXCLUDED.welcome_message,
+                    footer_text     = EXCLUDED.footer_text,
+                    updated_at      = now()
+                RETURNING control_plane_id, updated_at
+                """,
+                [
+                    cp_id,
+                    body.company_name,
+                    body.logo_url,
+                    body.favicon_url,
+                    body.primary_color,
+                    body.accent_color,
+                    body.support_email,
+                    body.support_url,
+                    body.welcome_message,
+                    body.footer_text,
+                ],
+            )
+            result = cur.fetchone()
+    logger.info(
+        "Branding upserted for CP %s by %s from %s",
+        cp_id,
+        current_user.username,
+        get_request_ip(request),
+    )
+    return {"status": "ok", "control_plane_id": result["control_plane_id"], "updated_at": result["updated_at"]}
+
+
+# ---------------------------------------------------------------------------
+# MFA management — admin reset for a specific user
+# ---------------------------------------------------------------------------
+
+@router.delete(
+    "/mfa/{cp_id}/{keystone_user_id}",
+    summary="Admin: reset (delete) MFA enrollment for a specific user",
+)
+async def admin_reset_mfa(
+    cp_id: str,
+    keystone_user_id: str,
+    request: Request,
+    current_user: User = Depends(_require_admin),
+):
+    """
+    Delete the tenant_portal_mfa row for a given user + control plane.
+
+    This forces the user to re-enroll next time they log in (if MFA is
+    required on their access row). The operation is logged for audit.
+    """
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                DELETE FROM tenant_portal_mfa
+                WHERE keystone_user_id = %s AND control_plane_id = %s
+                RETURNING keystone_user_id
+                """,
+                [keystone_user_id, cp_id],
+            )
+            deleted = cur.fetchone()
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="mfa_enrollment_not_found")
+
+    logger.info(
+        "MFA reset for user %s / CP %s by admin %s from %s",
+        keystone_user_id,
+        cp_id,
+        current_user.username,
+        get_request_ip(request),
+    )
+    return {"status": "ok", "keystone_user_id": keystone_user_id, "control_plane_id": cp_id}
+

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.7  
+**Version**: 1.84.9  
 **Last Updated**: April 15, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,19 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.9 — Tenant Portal: Branding Endpoint, Admin APIs & Security Tests (✅ Complete)
+
+- **Unauthenticated branding endpoint** (`GET /tenant/branding`): reads `tenant_portal_branding` for the requesting control plane and returns logo URL, accent colour, portal title, and favicon. 60-second Redis cache; fail-safe defaults when no row exists or DB is unavailable. Implemented in `tenant_portal/branding_routes.py`.
+- **Admin branding management**: `GET /api/admin/tenant-portal/branding/{cp_id}` — returns current branding config (requires `admin` or `superadmin`). `PUT /api/admin/tenant-portal/branding/{cp_id}` — upserts branding with `BrandingUpsertRequest` Pydantic model validating hex colour codes.
+- **Admin MFA reset**: `DELETE /api/admin/tenant-portal/mfa/{cp_id}/{keystone_user_id}` — invalidates TOTP secret and deletes backup codes for a specific tenant user; returns `{cleared: true}` with full audit log entry.
+- **TenantPortalTab.tsx**: New admin UI component (`pf9-ui/src/components/TenantPortalTab.tsx`) with 4 sub-tabs — Access Management (grant/revoke), Branding (logo + accent colour editor), Active Sessions (view/revoke), Audit Log (filterable table).
+- **P8 security test suite**: 27 tests (S01–S27) in `tests/test_tenant_portal_security.py` covering unauthenticated access, tenant/admin token segregation, CSRF, rate limiting, input validation, session invalidation, MFA bypass resistance, and data isolation.
+
+### v1.84.8 — Separate Nginx Ingress Controller for Tenant Traffic (✅ Complete)
+
+- **Kubernetes crash fix (root cause)**: the previous fix (v1.84.6) attempted to redirect nginx temp paths via `sed` on `nginx.conf`, but these paths (`/var/cache/nginx/client_temp` etc.) are **compiled-in defaults in the nginx binary** and are not present in the config file. Pod continued crashing with `Permission denied` on mkdir. Correct fix: pre-create all five nginx temp directories at their expected paths, `chown -R nginx:nginx` them at build time, pre-create and own `/run/nginx.pid`, and add `USER nginx` to the Dockerfile so the container image itself declares uid 101 as its default user.
+- **Dedicated nginx-tenant ingress controller**: new `nginx-ingress-tenant` Helm release (`k8s/nginx-ingress-tenant/`) on a dedicated MetalLB IP pool, independent from the admin panel's `nginx-admin` controller. Tenant-ui ingress now uses `ingressClassName: nginx-tenant`, ensuring tenant and admin TLS certificates, rate limits, and WAF rules are fully isolated.
 
 ### v1.84.7 — Runtime Fix: tenant-ui nginx Temp Dir Crash (✅ Complete)
 

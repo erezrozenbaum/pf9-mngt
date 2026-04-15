@@ -31,6 +31,7 @@ import OpsSearch from "./components/OpsSearch";
 import { ClusterContextProvider } from "./components/ClusterContext";
 import { RegionSelector } from "./components/RegionSelector";
 import ClusterManagement from "./components/ClusterManagement";
+import TenantPortalTab from "./components/TenantPortalTab";
 import RunbooksTab from "./components/RunbooksTab";
 import DocsTab from "./components/DocsTab";
 import TicketsTab from "./components/TicketsTab";
@@ -411,7 +412,7 @@ type ComplianceReport = {
   change_velocity_trends?: VelocityStats[];
 };
 
-type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management";
+type ActiveTab = "dashboard" | "servers" | "snapshots" | "networks" | "subnets" | "volumes" | "domains" | "projects" | "flavors" | "images" | "hypervisors" | "users" | "admin" | "history" | "audit" | "monitoring" | "api_metrics" | "system_logs" | "snapshot_monitor" | "snapshot_compliance" | "snapshot-policies" | "snapshot-audit" | "restore" | "restore_audit" | "security_groups" | "ports" | "floatingips" | "drift" | "tenant_health" | "notifications" | "backup" | "metering" | "provisioning" | "domain_management" | "reports" | "resource_management" | "search" | "runbooks" | "docs" | "keypairs" | "aggregates" | "volume_types" | "server_groups" | "quotas" | "system_metadata" | "migration_planner" | "tickets" | "my_queue" | "cluster_management" | "tenant_portal";
 
 // ---------------------------------------------------------------------------
 // Tab definitions – single source of truth for all navigation tabs.
@@ -473,6 +474,7 @@ const DEFAULT_TAB_ORDER: TabDef[] = [
   { id: "tickets",               label: "🎫 Support Tickets",    adminOnly: false, actionStyle: true },
   { id: "my_queue",              label: "📥 My Queue",           adminOnly: false, actionStyle: true },
   { id: "cluster_management",   label: "🌐 Cluster Mgmt",       adminOnly: true,  actionStyle: true },
+  { id: "tenant_portal",        label: "🏢 Tenant Portal",      adminOnly: true,  actionStyle: true },
 ];
 
 // ---------------------------------------------------------------------------
@@ -3376,6 +3378,8 @@ const App: React.FC = () => {
             ? "Unified system inventory · resource counts · compute & storage · quota hotspots · full Excel export"
             : activeTab === "cluster_management"
             ? "Platform9 control planes · region registry · sync status · health monitoring"
+            : activeTab === "tenant_portal"
+            ? "Tenant portal management · access control · branding · active sessions · audit log"
             : "Platform9 management"}
       </section>
 
@@ -6337,6 +6341,11 @@ const App: React.FC = () => {
           {/* Cluster Management */}
           {activeTab === "cluster_management" && (
             <ClusterManagement userRole={authUser?.role} />
+          )}
+
+          {/* Tenant Portal Management */}
+          {activeTab === "tenant_portal" && (
+            <TenantPortalTab userRole={authUser?.role} />
           )}
 
         </div>

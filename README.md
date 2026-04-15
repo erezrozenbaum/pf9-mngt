@@ -2,13 +2,13 @@
 
 <p align="center">
   <strong>Operational Control Plane for Platform9 / OpenStack</strong><br>
-  Visibility &nbsp;·&nbsp; Automation &nbsp;·&nbsp; Recovery &nbsp;·&nbsp; Governance &nbsp;·&nbsp; Multi-Region Control
+  Visibility &nbsp;·&nbsp; Automation &nbsp;·&nbsp; Recovery &nbsp;·&nbsp; Governance &nbsp;·&nbsp; Multi-Region Control &nbsp;·&nbsp; Tenant Self-Service
 </p>
 
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.8-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.9-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -29,6 +29,7 @@
 | No snapshot scheduler → custom cron per tenant, no SLA tracking | Policy-driven snapshot automation, cross-tenant, quota-aware, SLA-compliant |
 | Migration planning in spreadsheets → guesswork | End-to-end planner: RVTools → risk scoring → wave planning → PCD provisioning |
 | Separate ticketing tool + separate runbook wiki + separate billing exports | Built-in: tickets, 25 runbooks, metering, chargeback — one system |
+| Tenants call you for every status check → your team is the bottleneck | Tenant self-service portal: customers view their own VMs, snapshots, and restores — scoped, isolated, MFA-protected |
 
 One system. No duct tape.
 
@@ -61,6 +62,7 @@ What actually breaks in real Platform9 / OpenStack environments:
 - **Cross-tenant visibility** at scale — the native UI is per-tenant, not operational-aggregate
 - **Multi-region complexity** — managing multiple clusters with no unified console
 - **Coordination gaps** — between support, engineering, and management teams
+- **Customer self-service** — tenants need to see their own infrastructure status without you being a human API; the native Platform9 UI is admin-only
 
 These are **Day-2 operations problems**. pf9-mngt solves them.
 
@@ -75,6 +77,7 @@ A self-hosted operational platform that **extends** Platform9 / OpenStack — no
 - A **VM restore system** — full automation of flavor, network, IPs, credentials, and volumes; two modes (side-by-side and replace); no native equivalent exists in OpenStack
 - A **migration planning workbench** — from RVTools ingestion through cohort design, wave planning, and PCD auto-provisioning
 - A **unified engineering console** — 30+ management tabs, RBAC, metering, chargeback, runbooks, tickets, and AI Ops Copilot
+- A **tenant self-service portal** — a completely isolated, MFA-protected web interface that gives customers read + restore access to their own infrastructure without touching your admin panel; access is opt-in per Keystone user, controlled by you
 
 ✔ Works alongside Platform9 via its APIs &nbsp;·&nbsp; ❌ Not a UI replacement &nbsp;·&nbsp; ❌ Not an official Platform9 product
 
@@ -91,6 +94,7 @@ A self-hosted operational platform that **extends** Platform9 / OpenStack — no
 | Multi-region ops | Operationally complex | Unified console, one-click context switch |
 | Day-2 workflows | External tools | Built-in tickets, runbooks, metering |
 | VMware migration | No native tooling | End-to-end planner: RVTools → PCD |
+| Tenant visibility | You are the human API | Self-service portal: MFA-protected, RLS-isolated, scoped to their projects |
 
 ---
 
@@ -260,6 +264,17 @@ Per-VM resource tracking, snapshot / restore metering, API usage metrics, effici
 ### 🤖 AI Ops Copilot — Query Layer for the Entire Platform
 Not just an LLM integration — a purpose-built operator assistant that queries your live infrastructure in plain language. Ask *"which tenants are over quota?"*, *"show drift events from last week"*, or *"how many VMs are powered off on host X?"* and get live SQL-backed answers instantly. 40+ built-in intents with tenant / project / host scoping. Ollama backend keeps all data on your network; OpenAI / Anthropic available with automatic sensitive-data redaction.
 
+### 🏢 Tenant Self-Service Portal *(v1.84.0+)*
+A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
+
+- **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
+- **7 self-service screens**: Dashboard, Infrastructure (VMs + volumes), Snapshot Coverage (30-day calendar), Monitoring, Restore Center (side-by-side restore wizard — non-destructive), Runbooks (operator-published catalogue), Activity Log.
+- **Controlled access**: opt-in per Keystone user; you define which OpenStack projects are visible; set expiry, MFA policy, and runbook visibility per customer.
+- **Admin controls**: grant/revoke access, view active sessions, force-revoke, reset MFA, configure per-customer branding (logo, accent colour, portal title), review full audit log — all from the Admin → 🏢 Tenant Portal UI or REST API.
+- **Kubernetes-native**: dedicated `nginx-ingress-tenant` Helm controller on its own MetalLB IP — TLS, WAF rules, and rate limits are isolated from the admin ingress.
+
+> 📖 See the dedicated **[Tenant Portal Operator Guide](docs/TENANT_PORTAL_GUIDE.md)** for step-by-step setup, branding, MFA, and Kubernetes configuration.
+
 ---
 
 ## 🧪 Real Scenario — What a Day-2 Operator Actually Does
@@ -340,9 +355,30 @@ cp .env.template .env
 # Database:      http://localhost:8080
 ```
 
-### 1b. Demo Mode (No Platform9 Required)
+### 1b. Kubernetes Deployment
 
-Want to try the portal without a Platform9 environment? Demo mode populates the
+For production environments, pf9-mngt ships a full Helm chart with ArgoCD GitOps support:
+
+```powershell
+# Add the Helm chart
+helm repo add pf9-mngt https://erezrozenbaum.github.io/pf9-mngt
+helm repo update
+
+# Install with your values
+helm install pf9-mngt pf9-mngt/pf9-mngt \
+  --namespace pf9-mngt --create-namespace \
+  -f k8s/helm/pf9-mngt/values.yaml \
+  -f k8s/helm/pf9-mngt/values.prod.yaml
+
+# Or use the supplied kustomize entrypoint
+kubectl apply -k k8s/
+```
+
+> Full Kubernetes guide including Sealed Secrets, ArgoCD GitOps pipeline, MetalLB IP pools, and day-2 operations: **[docs/KUBERNETES_GUIDE.md](docs/KUBERNETES_GUIDE.md)**
+
+### 1c. Demo Mode (No Platform9 Required)
+
+Want to try the full system without a Platform9 environment? Demo mode populates the
 database with realistic sample data (3 tenants, 35 VMs, 50+ volumes, snapshots,
 drift events, compliance reports, etc.) and generates a static metrics cache.
 
@@ -497,6 +533,7 @@ pf9-mngt/
 | [Linux Deployment](docs/LINUX_DEPLOYMENT_GUIDE.md) | Running pf9-mngt on Linux instead of Windows |
 | [Multi-Region & Multi-Cluster Guide](docs/MULTICLUSTER_GUIDE.md) | MSP operator guide: onboarding clusters, Region Selector UI, per-region filtering, workers, migration planning |
 | [Support Ticket System Guide](docs/TICKET_GUIDE.md) | Full reference for the ticket lifecycle, API, SLA, email templates, and auto-tickets |
+| [Tenant Portal Guide](docs/TENANT_PORTAL_GUIDE.md) | Tenant self-service portal: setup, branding, MFA, access management, Kubernetes deployment |
 | [CI/CD Guide](docs/CI_CD_GUIDE.md) | CI pipeline, release process, and Docker image publishing |
 | [Engineering Story](docs/ENGINEERING_STORY.md) | Platform9 evaluation background and the four operational gaps pf9-mngt solves |
 | [Features Reference](docs/FEATURES_REFERENCE.md) | Complete technical deep-dive: auth, inventory, snapshots, restore, runbooks, tickets, copilot, migration planner |
@@ -535,70 +572,41 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 ---
 
 
-## 🕐 Latest Release
+## 🕐 Recent Major Releases
 
-**[v1.84.8](CHANGELOG.md)** — Separate nginx ingress controller for tenant portal (`nginx-tenant`) on its own dedicated IP, independent from the admin panel controller. New MetalLB IP pool + `nginx-ingress-tenant` Helm release. Tenant-ui ingress now uses `ingressClassName: nginx-tenant`.
+### 🏢 Tenant Self-Service Portal — v1.84.0 → v1.84.9 *(Complete)*
 
-**[v1.84.7](CHANGELOG.md)** — Runtime fix (second attempt): tenant-ui nginx temp directories are compiled-in binary defaults, not config-file paths. Fixed by pre-creating `/var/cache/nginx/*_temp` dirs and chowning them to nginx uid 101 at build time. Added `USER nginx` to Dockerfile.
+**[v1.84.9](CHANGELOG.md)** — Tenant Portal complete: `GET /tenant/branding` unauthenticated branding endpoint (60 s cache); admin `GET/PUT /branding/{cp_id}` and `DELETE /mfa/{cp_id}/{user_id}` endpoints; Admin UI "🏢 Tenant Portal" tab with 4 sub-tabs; 27 P8 security tests (S01–S27 across 8 categories). → [Tenant Portal Guide](docs/TENANT_PORTAL_GUIDE.md)
 
-**[v1.84.6](CHANGELOG.md)** — Runtime fix: tenant-ui nginx pod crash-looped on Kubernetes due to nginx running as uid 101 (`runAsNonRoot`) being unable to write the PID file or cache temp dirs. Dockerfile updated to redirect all writable paths to `/tmp` and pre-create them with nginx ownership.
+**[v1.84.4](CHANGELOG.md)** — Tenant-ui SPA: React + TypeScript, 7 screens (Dashboard, Infrastructure, Snapshot Coverage, Monitoring, Restore Center, Runbooks, Activity Log), MFA login, per-customer branding. Kubernetes stability fixes in v1.84.5–v1.84.8 (dedicated `nginx-ingress-tenant` on separate MetalLB IP).
 
-**[v1.84.5](CHANGELOG.md)** — CI fix: removed `linux/arm64` from the tenant-ui Docker build matrix to resolve a Node.js 22 QEMU SIGILL crash that caused the build to time out after 40 minutes.
+**[v1.84.3](CHANGELOG.md)** — Full restore center (6 endpoints), TOTP + email OTP + backup-code MFA, audit logging on all tenant endpoints, ops Slack/Teams + tenant email notifications.
 
-**[v1.84.4](CHANGELOG.md)** — Tenant self-service portal web interface: React + TypeScript SPA (`tenant-ui/`) with 7 screens — Dashboard, Infrastructure (VMs + volumes), Snapshot Coverage, Monitoring, Restore Center, Runbooks, and Activity Log. Includes MFA login screen, per-customer branding, session persistence, and `tenant_ui` Docker service (nginx production stage + Vite dev override on port 8082).
+**[v1.84.0](CHANGELOG.md)** — Tenant Self-Service Portal foundation: `tenant_portal_role` with RLS on 5 inventory tables; 5 schema tables; isolated FastAPI on port 8010 (JWT `role=tenant`, Redis sessions, IP binding, per-user rate limiting); 6 admin API endpoints; Helm NetworkPolicy.
 
-**[v1.84.3](CHANGELOG.md)** — Tenant portal: self-service restore center (6 API endpoints — list restore points, plan, execute, list jobs, progress, cancel); all-tenant-endpoint audit logging; ops Slack/Teams and tenant email notifications on restore; TOTP enrolment and verification, email OTP, and backup codes for MFA; 14 read-only data endpoints (VMs, volumes, snapshots, compliance, dashboard, events, metrics, availability, runbooks).
+---
 
-**[v1.84.2](CHANGELOG.md)** — Tenant portal: 14 read-only API endpoints covering VM and volume inventory, snapshot list and history, per-VM compliance percentages, dashboard summary, unified event feed, metrics proxy scoped to tenant VMs with 7-day and 30-day availability, and tenant-visible runbooks.
-**[v1.84.1](CHANGELOG.md)** — Bug fixes: tenant portal container no longer crashes when `TENANT_DB_PASSWORD` is absent (degraded-mode startup); `tenant-portal` Docker image now published to ghcr.io via release workflow.
-**[v1.84.0](CHANGELOG.md)** — Tenant Self-Service Portal foundation: DB role + RLS hardening (`tenant_portal_role`, 5 RLS policies on inventory tables), 5 schema tables (`tenant_portal_access`, `tenant_portal_mfa`, `tenant_portal_branding`, `tenant_action_log`, `runbook_project_tags`) + safe `tenant_cp_view`, isolated FastAPI service on port 8010 (JWT `role=tenant`, Redis session binding, IP binding, MFA preauth, per-user rate limiting), 6 admin API endpoints in `api/tenant_portal_routes.py`, Helm templates + NetworkPolicy, updated docker-compose.
-**[v1.83.53](CHANGELOG.md)** — Bug fixes: `search_worker` duplicate metrics block removed (run/error counters were reset to zero on every module import; stacked `@retry` caused 9 DB reconnect attempts instead of 3); `scheduler_worker` executor changed to `wait=True` on shutdown to prevent thread orphaning on SIGTERM.
-**[v1.83.52](CHANGELOG.md)** — Worker observability (Prometheus `/worker-metrics`, Redis heartbeats, tenacity DB retry for all 5 workers), LDAP conflict strategy (`ldap_wins`/`local_wins`), frontend resilience (30 s timeout, 3× GET retry, offline banner), real dashboard alert counts, CSS design-token cleanup.
-**[v1.83.51](CHANGELOG.md)** — Deployment reliability: `pf9_api` now waits for the database schema to be fully initialized before starting (eliminates startup race condition on fresh volumes); ESLint OOM SIGKILL in CI resolved by running tsc and eslint in a single container invocation.
-**[v1.83.50](CHANGELOG.md)** — Database performance: 10 compound indexes on hot query paths (servers, volumes, snapshots, drift events, restore jobs); FK constraints added for restore_jobs and snapshot_records with NOT VALID deferred validation.
-**[v1.83.49](CHANGELOG.md)** — Security: exception details no longer exposed in 500/502 responses (36 endpoints); `POST /auth/users` request body now validated with Pydantic model; removed raw `traceback.print_exc()` from stdout; Pydantic v2 `min_items` deprecation warnings eliminated.
-**[v1.83.48](CHANGELOG.md)** — CI fix: install fastapi/pydantic/passlib in integration-tests job; lower coverage gate to verified floor.
-**[v1.83.41](CHANGELOG.md)** — UI: sidebar text replaced with Triple C logo; dark-mode theming unified (sidebar bg matches header surface); `<h1>` header capped at 1.15rem; all border-radii normalised to `--radius-*` CSS variables across the full layout.
-**[v1.83.40](CHANGELOG.md)** — Security: IP spoofing fixed in all audit log paths (`X-Forwarded-For` → `X-Real-IP` via shared helper across 23 call sites in 6 files); internal LDAP error strings no longer leaked in 500 responses; `config_validator` JWT default corrected to 90 min.
-**[v1.83.39](CHANGELOG.md)** — Security: JWT session expiry reduced from 8 h to 90 min; `get_request_ip` helper extracted to shared module (`request_helpers.py`); 64 new unit tests across crypto, SMTP, webhook, restore, backup-worker, and request-IP helpers.
-**[v1.83.38](CHANGELOG.md)** — Security hardening (Batch 5): rate-limiter now uses `X-Real-IP` to prevent spoofing; `_update_job()` field allowlist prevents mass-assignment; `PF9_PASSWORD` and `LDAP_ADMIN_PASSWORD` migrated to Docker Secrets; API docs disabled in production mode; CSP + Permissions-Policy headers added to nginx; all 49 raw `fetch()` calls in `UserManagement.tsx` migrated to `apiFetch`.
-**[v1.83.37](CHANGELOG.md)** — CI fix: stale `Bearer ${token}` reference in `ClusterContext.tsx` inner regions fetch (TS2304) and unused `apiFetch` import in `LandingDashboard.tsx` (TS6133) — both left over from v1.83.36 getToken removal.
-**[v1.83.36](CHANGELOG.md)** — Fix: removed `getToken()` guards and fake Bearer headers from `useNavigation.ts` (and `APIMetricsTab`, `ClusterContext`, `LandingDashboard`, `SnapshotAuditTrail`). Navigation fetches now use `credentials: 'include'` for reliable httpOnly-cookie auth; the `isAuthenticated` React state is the correct guard — sidebar and grouped nav render correctly after login.
-**[v1.83.35](CHANGELOG.md)** — Fix: `getToken()` now returns `token_expires_at` ISO expiry as session indicator (not the removed `auth_token`); `rbac_middleware` falls through to httpOnly cookie when Bearer token is present but fails JWT verification.
-**[v1.83.34](CHANGELOG.md)** — Fix: `rbac_middleware` now checks the httpOnly cookie before returning 401, so browser sessions authenticated via cookie (v1.83.32+) are no longer rejected on every post-login API call. Bearer header path unchanged.
-**[v1.83.33](CHANGELOG.md)** — Security: complete httpOnly cookie migration — `localStorage.setItem('auth_token', ...)` removed entirely from `App.tsx`. JWT stored exclusively in the httpOnly cookie, never written to JS-readable storage. All inline `fetch()` calls migrated to `credentials: 'include'`; `getToken()` import removed.
-**[v1.83.32](CHANGELOG.md)** — Security: JWT sessions now delivered via httpOnly cookie (`SameSite=Lax`) eliminating XSS-readable tokens in `localStorage`. Cookie-first with Bearer header fallback — existing API consumers and CI tests are unaffected.
-**[v1.83.31](CHANGELOG.md)** — Security: dedicated `integration_key` Fernet secret for integration credentials; performance: 15 per-request `_ensure_tables()` calls removed from `vm_provisioning_routes`; reliability: Redis-backed atomic `PerformanceMetrics` with in-memory fallback.
-**[v1.83.30](CHANGELOG.md)** — CI fix: `ReportsTab`, `VmProvisioningTab`, and `SourceAnalysis` blob-download functions still referenced removed `getToken()`/`API_BASE` identifiers after the v1.83.29 lib/api migration. Added `authHeaders` import and replaced patterns. Resolves TS2304 in Frontend TypeScript Check.
-**[v1.83.29](CHANGELOG.md)** — Complete `lib/api.ts` migration: all remaining `localStorage.getItem('auth_token')` direct reads removed from frontend components. `lib/api.ts` is now the single source of truth for auth token access.
-**[v1.83.28](CHANGELOG.md)** — CI fix: removed stale unused imports (`API_BASE`, `getToken`) in `BackupManagement.tsx` and `LdapSyncSettings.tsx` left over from the lib/api refactor causing TS6133 errors.
-**[v1.83.20](CHANGELOG.md)** — Linux VM provisioning now auto-installs `qemu-guest-agent` via cloud-init so the Reset VM Password runbook works reliably. Runbook result now surfaces a `guest_agent_warning` for Linux VMs provisioned before this release.
-**[v1.83.19](CHANGELOG.md)** — UI polish: light mode sidebar color family unification; dark mode sidebar amber tint removed; dark mode sub-item panel banding flattened; themed `::selection` for readable text highlight; Snapshot Run Monitor filter row fixed left-to-right; phantom active run bar auto-remediates orphaned runs; batch dot cursor fixed.
-**[v1.83.18](CHANGELOG.md)** — Header/sidebar border alignment fix: locked `.pf9-header` and `.pf9-sidebar-brand` to identical `height: 64px; box-sizing: border-box` so both `border-bottom` lines always land on the same pixel row.
-**[v1.83.17](CHANGELOG.md)** — UI dashboard padding fix: `LandingDashboard.css` had conflicting horizontal padding (`2rem 2.5rem`) stacking with the `pf9-page-content` wrapper, producing ~60 px gutter instead of 20 px. Added comprehensive Copilot/OpenAI API documentation to API Reference. New `docs/DB_SCHEMA.md` with full PostgreSQL schema reference (30+ tables, history pattern, indexes, views).
-**[v1.83.16](CHANGELOG.md)** — UI sidebar alignment fix: removed problematic sidebar box-shadow that caused visual misalignment between sidebar border and main header content.
+### 🌍 Multi-Region & Multi-Cluster Support — v1.73.0 → v1.79.0
 
-**[v1.83.15](CHANGELOG.md)** — UI layout fix: remove `.pf9-header` negative-margin hack, add `.pf9-page-content` wrapper, make header sticky. Palette calibration: align sidebar background tokens in light and dark themes.
+**[v1.79.0](CHANGELOG.md)** — External LDAP / AD identity federation with group-to-role mapping, credential passthrough, and sync worker.
 
-**[v1.83.14](CHANGELOG.md)** — Fix Docs Viewer showing no documents: bake `docs/*.md` into the API image via Dockerfile `COPY`, add `docs/` volume mount to docker-compose for live dev, and add `.dockerignore` to exclude `docs/images/` and other non-API assets from the build context.
+**[v1.76.0](CHANGELOG.md)** — Multi-region management UI: `RegionSelector` nav dropdown, `ClusterManagement` admin panel (add/delete/test/discover CPs and regions), per-region filtering across all views.
 
-**[v1.83.13](CHANGELOG.md)** — Hotfix: remove unused `React` import and `userRole` destructuring in `DocsTab.tsx` to fix TS6133 TypeScript build errors caught by CI.
+**[v1.73.0](CHANGELOG.md)** — Full multi-cluster infrastructure: ClusterRegistry, per-region worker loops, cross-region migration planning, SSRF protection, health tracking.
 
-**[v1.83.12](CHANGELOG.md)** — Config drive fix: Nova server create was missing `config_drive: true`; cloud-init never ran in K8s (metadata service unreachable). Adds **Reset VM Password** runbook (pick VM from live dropdown, reset via Nova changePassword, optional console URL). Adds **📚 Docs Viewer** tab: browse all `/docs/*.md` in-app with markdown rendering, category sidebar, search, and admin per-file dept visibility control.
-**[v1.83.11](CHANGELOG.md)** — Fix Linux password: chpasswd.list used pre-hashed value; reverted to plain-text (correct on all cloud-init versions). Fix Windows static IP: block was gated on gateway_ip being non-null; now fires on any fixed_ip, omitting -DefaultGateway only when absent.
-**[v1.83.10](CHANGELOG.md)** — Linux console password fix (chpasswd.list), no-approval batches auto-approved on create, Windows static IP injection via cloudbase-init PowerShell, button tooltips on all batch action buttons.
-**[v1.83.9](CHANGELOG.md)** — Root-cause fix for VM provisioning 400 on boot volume create: ensure Glance image is community-visible before volume creation, then use provisionsrv project-scoped token (not admin) so Cinder token scope matches URL project_id.
-**[v1.83.8](CHANGELOG.md)** — Fix VM provisioning 400 "Malformed request url" on boot volume create in Kubernetes; Cinder URL construction now handles catalog endpoints with or without project_id suffix.
-**[v1.83.7](CHANGELOG.md)** — Fix VM provisioning 400 (admin token for Cinder/Glance) and customer provisioning 403 (provisionsrv scoped client for Neutron subnet/SG creation).
-**[v1.83.6](CHANGELOG.md)** — Fix VM provisioning batch 500 (`region_id` column missing) and customer provisioning 403 (wrong region client for non-default regions).
-**[v1.83.5](CHANGELOG.md)** — 14 production bug fixes: metering compliant=0, snapshot monitor 0% bar, provisioning 500 on submit, dark mode nav, missing View Dependencies buttons, role assignment UI, SMTP runtime config, drift deletion detection, and more.
-**[v1.83.4](CHANGELOG.md)** — Fix all 200+ TypeScript CI errors (`frontend-typecheck` job) across 14 frontend source files; clean `tsc -b` with zero errors.
-**[v1.83.3](CHANGELOG.md)** — Fix Swagger UI returning 401 at `/api/docs` in K8s; moved FastAPI `docs_url`, `redoc_url`, and `openapi_url` to `/api/docs`, `/api/redoc`, `/api/openapi.json` and updated auth middleware bypass list.
-**[v1.83.2](CHANGELOG.md)** — Fix resource history bleeding into Migration Planner; fix dashboard CPU/Memory 0% and Top Hosts N/A via DB fallback; fix VM storage showing 0% instead of N/A; fix drift auto-ticket failing on fresh K8s installs; fix metering showing 0 VMs via direct DB fallback in worker.
-**[v1.83.1](CHANGELOG.md)** — Fix Copilot FAB and Dependency Graph viewport positioning; fix `/system-metadata-summary` 403 by adding missing `inventory` permissions.
-**[v1.83.0](CHANGELOG.md)** — UI redesign: navigation migrated from horizontal two-row bar to collapsible vertical sidebar. All RBAC, visibility, and department controls are fully preserved.
+---
 
-> Full version history for all 123 releases: [CHANGELOG.md](CHANGELOG.md)
+### 🎫 Support Ticket System — v1.58 → v1.60
+
+**[v1.60](CHANGELOG.md)** — Ticket analytics, bulk actions, LandingDashboard KPI widget, metering and runbook ticket integration.
+
+**[v1.58](CHANGELOG.md)** — Full ticket lifecycle: 5 types, SLA daemon, 35+ endpoints, auto-ticket triggers (health score, drift, graph deletes, runbook failures), approval workflows, email templates.
+
+---
+
+*Security hardening, performance, CI fixes, and UI polish are documented in the full changelog.*
+
+> Complete version history for all releases: [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -689,4 +697,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.84.3 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.84.9 | **Last Updated**: April 2026

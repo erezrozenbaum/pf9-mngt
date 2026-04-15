@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.9] - 2026-04-16
+
+### Added
+- **`GET /tenant/branding` (Gap 1)** — new unauthenticated endpoint in the tenant portal FastAPI (`tenant_portal/branding_routes.py`). Returns `tenant_portal_branding` row for the control plane this pod serves (or safe defaults if no row exists / DB unavailable). Results are in-process cached for 60 s to avoid a DB round-trip on every login-page load.
+- **Admin branding endpoints (Gap 2)** — `GET /api/admin/tenant-portal/branding/{cp_id}` and `PUT /api/admin/tenant-portal/branding/{cp_id}` appended to `api/tenant_portal_routes.py`. PUT is an upsert (INSERT … ON CONFLICT DO UPDATE). `BrandingUpsertRequest` Pydantic model validates hex colours with a regex validator.
+- **Admin MFA reset endpoint (Gap 2)** — `DELETE /api/admin/tenant-portal/mfa/{cp_id}/{keystone_user_id}` in `api/tenant_portal_routes.py`. Deletes the `tenant_portal_mfa` enrollment row; returns 404 if no row found; logs admin username + user ID + source IP.
+- **Admin UI — Tenant Portal tab (Gap 3)** — `pf9-ui/src/components/TenantPortalTab.tsx`: four sub-tabs (Access Management, Branding, Active Sessions, Audit Log). Registered in `App.tsx` under type `ActiveTab` as `"tenant_portal"` and added to `DEFAULT_TAB_ORDER` as an admin-only actionStyle tab (`🏢 Tenant Portal`). Context hint added for the AI assistant.
+- **P8 security test suite** — `tests/test_tenant_portal_security.py`: 27 tests across 8 categories (S01–S27): unauthenticated branding, RBAC guards, SQL injection AST analysis, IDOR prevention, session management, MFA integrity, branding validation, audit trail. All 27 pass in isolation and in full suite (module-isolation fixture prevents cross-test `db_pool` stub contamination).
+
+### Changed
+- `tenant_portal/main.py`: imports and includes `branding_router`; app `version` bumped to `"1.84.9"`.
+
 ## [1.84.8] - 2026-04-15
 
 ### Added

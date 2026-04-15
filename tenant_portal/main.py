@@ -20,6 +20,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from auth_routes import router as auth_router
+from branding_routes import router as branding_router
 from environment_routes import router as environment_router
 from metrics_routes import router as metrics_router
 from restore_routes import router as restore_router
@@ -45,7 +46,7 @@ app = FastAPI(
         "Self-service portal for Platform9 customers. "
         "All endpoints are scoped to the authenticated tenant's projects and regions."
     ),
-    version="1.84.3",
+    version="1.84.9",
     docs_url="/tenant/docs" if os.getenv("ENABLE_DOCS", "false").lower() == "true" else None,
     redoc_url=None,
     openapi_url="/tenant/openapi.json" if os.getenv("ENABLE_DOCS", "false").lower() == "true" else None,
@@ -154,6 +155,7 @@ async def health():
 # Routers
 # ---------------------------------------------------------------------------
 app.include_router(auth_router)
+app.include_router(branding_router)
 app.include_router(environment_router)
 app.include_router(metrics_router)
 app.include_router(restore_router)
