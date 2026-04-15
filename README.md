@@ -8,7 +8,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.5-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.6-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -536,6 +536,8 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 
 ## 🕐 Latest Release
+
+**[v1.84.6](CHANGELOG.md)** — Runtime fix: tenant-ui nginx pod crash-looped on Kubernetes due to nginx running as uid 101 (`runAsNonRoot`) being unable to write the PID file or cache temp dirs. Dockerfile updated to redirect all writable paths to `/tmp` and pre-create them with nginx ownership.
 
 **[v1.84.5](CHANGELOG.md)** — CI fix: removed `linux/arm64` from the tenant-ui Docker build matrix to resolve a Node.js 22 QEMU SIGILL crash that caused the build to time out after 40 minutes.
 

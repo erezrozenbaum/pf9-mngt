@@ -359,31 +359,32 @@ async def get_audit_log(
     current_user: User = Depends(_require_admin),
 ):
     """Return tenant_action_log entries for a control plane, newest first."""
+    # Static parameterized SQL: IS NULL OR pattern makes keystone_user_id filter optional
+    # without any string formatting — eliminates SQL injection surface entirely.
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            params: list = [cp_id]
-            user_filter = ""
-            if keystone_user_id:
-                user_filter = "AND keystone_user_id = %s"
-                params.append(keystone_user_id)
-
             cur.execute(
-                f"""
+                """
                 SELECT id, keystone_user_id, control_plane_id, action,
                        resource_type, resource_id, project_id, region_id,
                        ip_address, success, detail, created_at
                 FROM tenant_action_log
-                WHERE control_plane_id = %s {user_filter}
+                WHERE control_plane_id = %s
+                  AND (%s::text IS NULL OR keystone_user_id = %s)
                 ORDER BY created_at DESC
                 LIMIT %s OFFSET %s
                 """,
-                params + [limit, offset],
+                [cp_id, keystone_user_id, keystone_user_id, limit, offset],
             )
             rows = cur.fetchall()
 
             cur.execute(
-                f"SELECT count(*) FROM tenant_action_log WHERE control_plane_id = %s {user_filter}",
-                params[: len(params)],
+                """
+                SELECT count(*) FROM tenant_action_log
+                WHERE control_plane_id = %s
+                  AND (%s::text IS NULL OR keystone_user_id = %s)
+                """,
+                [cp_id, keystone_user_id, keystone_user_id],
             )
             total = cur.fetchone()["count"]
 

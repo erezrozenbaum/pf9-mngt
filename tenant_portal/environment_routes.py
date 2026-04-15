@@ -213,47 +213,38 @@ async def list_snapshots(
     limit:     int = Query(200, ge=1, le=1000),
     ctx: TenantContext = Depends(get_tenant_context),
 ):
-    conditions = [
-        "s.project_id = ANY(%s)",
-        "s.region_id  = ANY(%s)",
-    ]
-    params: list = [ctx.project_ids, ctx.region_ids]
-
-    if vm_id:
-        conditions.append(
-            "EXISTS (SELECT 1 FROM volumes v WHERE v.id = s.volume_id AND v.server_id = %s)"
-        )
-        params.append(vm_id)
-    if region:
-        conditions.append("s.region_id = %s")
-        params.append(region)
-    if snap_status:
-        conditions.append("s.status = %s")
-        params.append(snap_status)
-    if from_date:
-        conditions.append("s.created_at >= %s")
-        params.append(from_date)
-    if to_date:
-        conditions.append("s.created_at <= %s")
-        params.append(to_date)
-
-    where_clause = " AND ".join(conditions)
-    params.append(limit)
-
+    # Static parameterized SQL with IS NULL OR optional filters.
+    # All filtering is done via %s placeholders — no string formatting.
     with get_tenant_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             inject_rls_vars(cur, ctx)
             region_map = _region_display(cur, ctx.region_ids)
             cur.execute(
-                f"""
+                """
                 SELECT s.id, s.name, s.description, s.project_id, s.project_name,
                        s.volume_id, s.size_gb, s.status, s.created_at, s.region_id
                 FROM snapshots s
-                WHERE {where_clause}
+                WHERE s.project_id = ANY(%s)
+                  AND s.region_id  = ANY(%s)
+                  AND (%s::text IS NULL OR EXISTS (
+                          SELECT 1 FROM volumes v
+                          WHERE v.id = s.volume_id AND v.server_id = %s))
+                  AND (%s::text IS NULL OR s.region_id = %s)
+                  AND (%s::text IS NULL OR s.status = %s)
+                  AND (%s::timestamptz IS NULL OR s.created_at >= %s)
+                  AND (%s::timestamptz IS NULL OR s.created_at <= %s)
                 ORDER BY s.created_at DESC
                 LIMIT %s
                 """,
-                params,
+                [
+                    ctx.project_ids, ctx.region_ids,
+                    vm_id, vm_id,
+                    region, region,
+                    snap_status, snap_status,
+                    from_date, from_date,
+                    to_date, to_date,
+                    limit,
+                ],
             )
             rows = cur.fetchall()
             log_action(cur, ctx, "tenant_view_snapshots")
@@ -304,37 +295,33 @@ async def snapshot_history(
     limit:     int = Query(500, ge=1, le=2000),
     ctx: TenantContext = Depends(get_tenant_context),
 ):
-    conditions = ["project_id = ANY(%s)", "region_id = ANY(%s)"]
-    params: list = [ctx.project_ids, ctx.region_ids]
-
-    if vm_id:
-        conditions.append("vm_id = %s")
-        params.append(vm_id)
-    if from_date:
-        conditions.append("created_at >= %s")
-        params.append(from_date)
-    if to_date:
-        conditions.append("created_at <= %s")
-        params.append(to_date)
-
-    params.append(limit)
-    where_clause = " AND ".join(conditions)
-
+    # Static parameterized SQL with IS NULL OR optional filters.
+    # All filtering is done via %s placeholders — no string formatting.
     with get_tenant_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             inject_rls_vars(cur, ctx)
             cur.execute(
-                f"""
+                """
                 SELECT id, vm_id, vm_name, volume_id, volume_name,
                        project_id, project_name, policy_name,
                        size_gb, status, action, error_message,
                        created_at, deleted_at, retention_days, region_id
                 FROM snapshot_records
-                WHERE {where_clause}
+                WHERE project_id = ANY(%s)
+                  AND region_id  = ANY(%s)
+                  AND (%s::text IS NULL OR vm_id = %s)
+                  AND (%s::timestamptz IS NULL OR created_at >= %s)
+                  AND (%s::timestamptz IS NULL OR created_at <= %s)
                 ORDER BY created_at DESC
                 LIMIT %s
                 """,
-                params,
+                [
+                    ctx.project_ids, ctx.region_ids,
+                    vm_id, vm_id,
+                    from_date, from_date,
+                    to_date, to_date,
+                    limit,
+                ],
             )
             rows = cur.fetchall()
             log_action(cur, ctx, "tenant_view_snapshot_history")
