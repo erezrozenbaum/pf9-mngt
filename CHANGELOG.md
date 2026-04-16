@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.17] - 2026-04-16
+
+### Fixed
+- **CI — `httpx` missing from integration test job** — `tests/test_tenant_portal_login_integration.py` imports `httpx` for live HTTP calls; the `pip install` step in the `Integration Tests (live stack)` CI job did not include it. Test collection failed immediately with `ModuleNotFoundError: No module named 'httpx'`, aborting the entire job. Added `httpx` to the install command in `.github/workflows/ci.yml`.
+
 ## [1.84.16] - 2026-04-16
 
 ### Fixed

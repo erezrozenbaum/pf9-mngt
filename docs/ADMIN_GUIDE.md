@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.16  
+**Version**: 1.84.17  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.17 — CI: Add `httpx` to Integration Test Dependencies (✅ Complete)
+
+- **`ModuleNotFoundError: No module named 'httpx'` in CI** — `tests/test_tenant_portal_login_integration.py` imports `httpx` for live HTTP calls against the running stack. The `pip install` step in `.github/workflows/ci.yml` for the `Integration Tests (live stack)` job was missing it. Pytest aborted at collection time with exit code 2 before any test ran. Added `httpx` to the install command.
 
 ### v1.84.16 — Tenant Portal: Fix K8s NetworkPolicy + Keystone Auth + MFA Logic (✅ Complete)
 
