@@ -363,14 +363,23 @@ export interface SnapshotRecord {
 export async function apiSnapshotHistory(): Promise<SnapshotRecord[]> {
   const raw = await tenantFetch<Record<string, unknown>>("/tenant/snapshot-history");
   const list = (Array.isArray(raw) ? raw : ((raw.records ?? []) as unknown[])) as Record<string, unknown>[];
-  return list.map((r) => ({
-    record_id:           String(r.id ?? r.record_id ?? ""),
-    vm_id:               String(r.vm_id ?? ""),
-    vm_name:             String(r.vm_name ?? ""),
-    run_date:            String(r.run_date ?? r.created_at ?? ""),
-    status:              String(r.status ?? ""),
-    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
-  }));
+  return list.map((r) => {
+    const rawStatus = String(r.status ?? "").toUpperCase();
+    // Normalise backend status values (OK/ERROR/SKIPPED/DRY_RUN) to the
+    // canonical values expected by the calendar component ("success"/"failed")
+    let status: string;
+    if (rawStatus === "OK") status = "success";
+    else if (rawStatus === "ERROR") status = "failed";
+    else status = rawStatus.toLowerCase();
+    return {
+      record_id:           String(r.id ?? r.record_id ?? ""),
+      vm_id:               String(r.vm_id ?? ""),
+      vm_name:             String(r.vm_name ?? ""),
+      run_date:            String(r.run_date ?? r.created_at ?? ""),
+      status,
+      region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +499,8 @@ export interface RestorePlan {
   snapshot_id: string;
   region_id: string;
   new_vm_name: string;
+  mode: string;
+  safety_snapshot: boolean;
   status: string;
 }
 
@@ -499,12 +510,14 @@ export interface RestoreJob {
   vm_name: string;
   snapshot_id: string;
   new_vm_name: string;
+  mode: string;
   status: string;
   progress_pct: number;
   created_at: string;
   updated_at: string;
   region_display_name: string;
   error_message: string | null;
+  failure_reason: string | null;
 }
 
 function _normaliseJob(r: Record<string, unknown>): RestoreJob {
@@ -514,12 +527,14 @@ function _normaliseJob(r: Record<string, unknown>): RestoreJob {
     vm_name:             String(r.vm_name ?? ""),
     snapshot_id:         String(r.snapshot_id ?? ""),
     new_vm_name:         String(r.new_vm_name ?? r.requested_name ?? ""),
+    mode:                String(r.mode ?? "NEW"),
     status:              String(r.status ?? ""),
     progress_pct:        typeof r.progress_pct === "number" ? r.progress_pct : 0,
     created_at:          String(r.created_at ?? ""),
     updated_at:          String(r.updated_at ?? r.finished_at ?? r.started_at ?? r.created_at ?? ""),
     region_display_name: String(r.region_display_name ?? ""),
     error_message:       (r.error_message ?? r.failure_reason ?? null) as string | null,
+    failure_reason:      (r.failure_reason ?? null) as string | null,
   };
 }
 
@@ -542,6 +557,7 @@ export async function apiRestorePlan(body: {
   snapshot_id: string;
   region_id: string;
   new_vm_name?: string;
+  mode?: "NEW" | "REPLACE";
 }): Promise<RestorePlan> {
   return tenantFetch<RestorePlan>("/tenant/restore/plan", {
     method: "POST",

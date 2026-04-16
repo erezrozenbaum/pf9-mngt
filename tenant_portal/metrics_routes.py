@@ -197,7 +197,7 @@ async def metrics_availability(ctx: TenantContext = Depends(get_tenant_context))
                 SELECT
                     vm_id,
                     DATE_TRUNC('day', created_at AT TIME ZONE 'UTC') AS day,
-                    COUNT(*) FILTER (WHERE status = 'success') AS daily_success
+                    COUNT(*) FILTER (WHERE status = 'OK') AS daily_success
                 FROM snapshot_records
                 WHERE project_id = ANY(%s)
                   AND region_id  = ANY(%s)

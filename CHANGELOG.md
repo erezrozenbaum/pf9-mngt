@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.22] - 2026-04-16
+
+### Fixed
+- **Tenant portal — all screens showing zero/empty data** — six root causes identified and fixed:
+  1. **`snapshot_records.status` mismatch** — all backend queries used `'success'`/`'failed'` but actual DB values are `OK`/`ERROR`/`SKIPPED`/`DRY_RUN`. Fixed 8 SQL comparisons across `environment_routes.py` and `metrics_routes.py`. Snapshot coverage, compliance percentages, and uptime now compute correctly.
+  2. **vCPUs and RAM always 0** — `servers` table has no `vcpus`/`ram_mb` columns; data lives in `flavors` table. Added `LEFT JOIN flavors f ON f.id = s.flavor_id` to all VM queries in `environment_routes.py`.
+  3. **IP addresses never shown** — IPs are in `raw_json['addresses']` (Nova JSONB). Added `_extract_ips()` helper and called it in `list_vms` and `get_vm`.
+  4. **Snapshot history calendar always grey** — `api.ts` `apiSnapshotHistory` passed the raw `OK`/`ERROR` status values to the calendar component which checked for `"success"`. Added normalisation in the adapter (`OK` → `"success"`, `ERROR` → `"failed"`).
+  5. **No restore points** — `list_restore_points` only queried JSONB `raw_json->'attachments'` for volume attachment; most volumes use the direct `server_id` column. Added `v.server_id = %s OR (jsonb path)` compound condition.
+  6. **No runbooks visible** — all 27 runbooks had `is_tenant_visible = false`. Applied `UPDATE runbooks SET is_tenant_visible = true WHERE enabled = true` (25 rows).
+
+### Added
+- **Tenant portal Restore Center — REPLACE mode (in-place restore)** — previously, tenants could only restore to a new VM side-by-side. Now the wizard offers both modes, matching the admin UI:
+  - **New VM (safe copy)** — non-destructive side-by-side restore as before.
+  - **Replace In-Place** — deletes the existing VM and recreates it from the selected snapshot. Available to tenants with the following security controls:
+    - A **safety snapshot is mandatory** (forced `safety_snapshot_before_replace=True` on the admin API internal call) — cannot be disabled by the tenant.
+    - The tenant must **type the exact VM name** to confirm the destructive operation.
+    - `cleanup_old_storage` is permanently disabled for tenant-initiated restores.
+    - The operation is audited via `tenant_action_log` with `mode` recorded.
+  - Admin API `_InternalTenantPlanBody` extended with `mode` field; backend enforces safety constraints regardless of what the frontend sends.
+
 ## [1.84.21] - 2026-04-16
 
 ### Fixed
