@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.21] - 2026-04-16
+
+### Fixed
+- **`tenant-ui` — `api.ts` still corrupted after v1.84.20** — the previous replacement only appended clean content after the old corrupted content, leaving 1341 lines (vs ~661 expected). The file had two copies: lines 1–661 clean, lines 662–1341 corrupted duplicate. Docker `npm run build` failed again with `TS1005`/`TS1160` errors. Fixed by truncating the file to the first 661 lines (the complete clean copy). Verified with `docker compose build tenant_ui` passing locally.
+
 ## [1.84.20] - 2026-04-16
 
 ### Fixed
