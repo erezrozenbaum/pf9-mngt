@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.18  
+**Version**: 1.84.19  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.19 — Tenant Portal: `restore_jobs` region_id + api.ts Adapter Layer (✅ Complete)
+
+- **`restore_jobs` missing `region_id` column** — 4 queries in `environment_routes.py` and `restore_routes.py` included `AND region_id = ANY(%s)` against `restore_jobs`, which has no such column. `/tenant/dashboard` and `/tenant/restore/jobs` returned 500 `UndefinedColumn`. Removed the erroneous filter from all 4 queries; table is already scoped by `project_id`.
+- **`api.ts` adapter layer** — all backend endpoints return `{key:[...],total:N}` envelopes with different field names than the TypeScript interfaces. All 16 `api.ts` functions rewritten as adapters: unwrap envelopes, remap field names (`id→vm_id`, `occurred_at→timestamp`, etc.), and provide safe defaults. Fixes `vms.filter is not a function` and all other screen crashes.
 
 ### v1.84.18 — DB Grants + K8s Password Fix (✅ Complete)
 

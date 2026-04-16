@@ -175,11 +175,46 @@ export interface DashboardData {
 }
 
 export async function apiDashboard(): Promise<DashboardData> {
-  return tenantFetch<DashboardData>("/tenant/dashboard");
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/dashboard");
+  const byStatus = ((raw.vms as Record<string, unknown>)?.by_status ?? {}) as Record<string, number>;
+  const snap = (raw.snapshot_coverage ?? {}) as Record<string, number>;
+  return {
+    total_vms:               Number((raw.vms as Record<string, unknown>)?.total ?? 0),
+    vms_running:             byStatus["ACTIVE"]  ?? byStatus["active"]  ?? 0,
+    vms_stopped:             byStatus["SHUTOFF"] ?? byStatus["stopped"] ?? 0,
+    vms_error:               byStatus["ERROR"]   ?? byStatus["error"]   ?? 0,
+    compliance_pct:          snap.coverage_pct_7d ?? 0,
+    last_snapshot_hours_ago: null,
+    active_restores:         Number(raw.active_restore_jobs ?? 0),
+    failed_snapshots_24h:    0,
+    regions:                 [],
+  }("/tenant/dashboard");
+  const byStatus = ((raw.vms as Record<string, unknown>)?.by_status ?? {}) as Record<string, number>;
+  const snap = (raw.snapshot_coverage ?? {}) as Record<string, number>;
+  return {
+    total_vms:               Number((raw.vms as Record<string, unknown>)?.total ?? 0),
+    vms_running:             byStatus["ACTIVE"]  ?? byStatus["active"]  ?? 0,
+    vms_stopped:             byStatus["SHUTOFF"] ?? byStatus["stopped"] ?? 0,
+    vms_error:               byStatus["ERROR"]   ?? byStatus["error"]   ?? 0,
+    compliance_pct:          snap.coverage_pct_7d ?? 0,
+    last_snapshot_hours_ago: null,
+    active_restores:         Number(raw.active_restore_jobs ?? 0),
+    failed_snapshots_24h:    0,
+    regions:                 [],
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Events
+//const raw = await tenantFetch<Record<string, unknown>>("/tenant/events");
+  const list = (Array.isArray(raw) ? raw : ((raw.events ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((e) => ({
+    timestamp:     String(e.timestamp     ?? e.occurred_at ?? ""),
+    action:        String(e.action        ?? e.event_type  ?? ""),
+    resource_type: (e.resource_type ?? null) as string | null,
+    resource_id:   (e.resource_id   ?? null) as string | null,
+    success:       Boolean(e.success ?? true),
+    details:       (e.details ?? null) as Record<string, unknown> | null,
+  })
 // ---------------------------------------------------------------------------
 
 export interface TenantEvent {
@@ -192,12 +227,48 @@ export interface TenantEvent {
 }
 
 export async function apiEvents(): Promise<TenantEvent[]> {
-  return tenantFetch<TenantEvent[]>("/tenant/events");
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/events");
+  const list = (Array.isArray(raw) ? raw : ((raw.events ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((e) => ({
+    timestamp:     String(e.timestamp     ?? e.occurred_at ?? ""),
+    action:        String(e.action        ?? e.event_type  ?? ""),
+    resource_type: (e.resource_type ?? null) as string | null,
+    resource_id:   (e.resource_id   ?? null) as string | null,
+    success:       Boolean(e.success ?? true),
+    details:       (e.details ?? null) as Record<string, unknown> | null,
+  }));
+}const raw = await tenantFetch<Record<string, unknown>>(`/tenant/vms${q}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.vms ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    vm_id:               String(r.id ?? r.vm_id ?? ""),
+    vm_name:             String(r.name ?? r.vm_name ?? ""),
+    status:              String(r.status ?? ""),
+    vcpus:               Number(r.vcpus ?? 0),
+    ram_mb:              Number(r.ram_mb ?? 0),
+    project_id:          String(r.project_id ?? ""),
+    region_id:           String(r.region_id ?? ""),
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    last_snapshot_ts:    (r.last_snapshot_ts ?? r.last_snapshot_at ?? null) as string | null,
+    compliance_pct:      typeof r.compliance_pct === "number" ? r.compliance_pct : null,
+    ip_addresses:        Array.isArray(r.ip_addresses) ? r.ip_addresses as string[] : [],
+  }));
 }
 
-// ---------------------------------------------------------------------------
-// VMs
-// ---------------------------------------------------------------------------
+export async function apiVm(vmId: string): Promise<Vm> {
+  const r = await tenantFetch<Record<string, unknown>>(`/tenant/vms/${encodeURIComponent(vmId)}`);
+  return {
+    vm_id:               String(r.id ?? r.vm_id ?? ""),
+    vm_name:             String(r.name ?? r.vm_name ?? ""),
+    status:              String(r.status ?? ""),
+    vcpus:               Number(r.vcpus ?? 0),
+    ram_mb:              Number(r.ram_mb ?? 0),
+    project_id:          String(r.project_id ?? ""),
+    region_id:           String(r.region_id ?? ""),
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    last_snapshot_ts:    (r.last_snapshot_ts ?? r.last_snapshot_at ?? null) as string | null,
+    compliance_pct:      typeof r.compliance_pct === "number" ? r.compliance_pct : null,
+    ip_addresses:        Array.isArray(r.ip_addresses) ? r.ip_addresses as string[] : [],
+  }-----------
 
 export interface Vm {
   vm_id: string;
@@ -215,15 +286,65 @@ export interface Vm {
 
 export async function apiVms(regionId?: string): Promise<Vm[]> {
   const q = regionId ? `?region_id=${encodeURIComponent(regionId)}` : "";
-  return tenantFetch<Vm[]>(`/tenant/vms${q}`);
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/vms${q}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.vms ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/volumes${q}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.volumes ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    volume_id:           String(r.id ?? r.volume_id ?? ""),
+    volume_name:         String(r.name ?? r.volume_name ?? ""),
+    size_gb:             Number(r.size_gb ?? 0),
+    status:              String(r.status ?? ""),
+    volume_type:         (r.volume_type ?? null) as string | null,
+    attached_vm_id:      (r.server_id ?? r.attached_vm_id ?? null) as string | null,
+    attached_vm_name:    (r.attached_vm_name ?? null) as string | null,
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    last_snapshot_ts:    (r.last_snapshot_ts ?? null) as string | null,
+  })"),
+    vm_name:             String(r.name ?? r.vm_name ?? ""),
+    status:              String(r.status ?? ""),
+    vcpus:               Number(r.vcpus ?? 0),
+    ram_mb:              Number(r.ram_mb ?? 0),
+    project_id:          String(r.project_id ?? ""),
+    region_id:           String(r.region_id ?? ""),
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    last_snapshot_ts:    (r.last_snapshot_ts ?? r.last_snapshot_at ?? null) as string | null,
+    compliance_pct:      typeof r.compliance_pct === "number" ? r.compliance_pct : null,
+    ip_addresses:        Array.isArray(r.ip_addresses) ? r.ip_addresses as string[] : [],
+  }));
 }
 
 export async function apiVm(vmId: string): Promise<Vm> {
-  return tenantFetch<Vm>(`/tenant/vms/${encodeURIComponent(vmId)}`);
+  const r = await tenantFetch<Record<string, unknown>>(`/tenant/vms/${encodeURIComponent(vmId)}`);
+  return {
+    vm_id:               String(r.id ?? r.vm_id ?? ""),
+    vm_name:             String(r.name ?? r.vm_name ?? ""),
+    status:              String(r.status ?? ""),
+    vcpus:               Number(r.vcpus ?? 0),
+    ram_mb:              Number(r.ram_mb ?? 0),
+    project_id:          String(r.project_id ?? ""),
+    region_id:           String(r.region_id ?? ""),
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    last_snapshot_ts:    (r.last_snapshot_ts ?? r.last_snapshot_at ?? null) as string | null,
+    compliance_pct:      typeof r.compliance_pct === "number" ? r.compliance_pct : null,
+    ip_addresses:        Array.isArray(r.ip_addresses) ? r.ip_addresses as string[] : [],
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Volumes
+//const raw = await tenantFetch<Record<string, unknown>>(`/tenant/snapshots${qs}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.snapshots ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    snapshot_id:         String(r.id ?? r.snapshot_id ?? ""),
+    snapshot_name:       String(r.name ?? r.snapshot_name ?? ""),
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    status:              String(r.status ?? ""),
+    created_at:          String(r.created_at ?? ""),
+    size_gb:             typeof r.size_gb === "number" ? r.size_gb : null,
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+  })
 // ---------------------------------------------------------------------------
 
 export interface Volume {
@@ -240,13 +361,44 @@ export interface Volume {
 
 export async function apiVolumes(regionId?: string): Promise<Volume[]> {
   const q = regionId ? `?region_id=${encodeURIComponent(regionId)}` : "";
-  return tenantFetch<Volume[]>(`/tenant/volumes${q}`);
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/snapshot-history");
+  const list = (Array.isArray(raw) ? raw : ((raw.records ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    record_id:           String(r.id ?? r.record_id ?? ""),
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    run_date:            String(r.run_date ?? r.created_at ?? ""),
+    status:              String(r.status ?? ""),
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+  })/volumes${q}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.volumes ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    volume_id:           String(r.id ?? r.volume_id ?? ""),
+    volume_name:         String(r.name ?? r.volume_name ?? ""),
+    size_gb:             Number(r.size_gb ?? 0),
+    status:              String(r.status ?? ""),
+    volume_type:         (r.volume_type ?? null) as string | null,
+    attached_vm_id:      (r.server_id ?? r.attached_vm_id ?? null) as string | null,
+    attached_vm_name:    (r.attached_vm_name ?? null) as string | null,
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    last_snapshot_ts:    (r.last_snapshot_ts ?? null) as string | null,
+  }));
 }
 
 // ---------------------------------------------------------------------------
 // Snapshots
 // ---------------------------------------------------------------------------
-
+const raw = await tenantFetch<Record<string, unknown>>("/tenant/compliance");
+  const list = (Array.isArray(raw) ? raw : ((raw.vms ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    coverage_pct:        typeof r.coverage_pct === "number" ? r.coverage_pct : 0,
+    current_streak:      typeof r.current_streak === "number" ? r.current_streak : 0,
+    last_snapshot_ts:    (r.last_snapshot_ts ?? r.last_success_at ?? null) as string | null,
+    status:              r.is_compliant ? "compliant" : "non_compliant",
+  })
 export interface Snapshot {
   snapshot_id: string;
   snapshot_name: string;
@@ -272,11 +424,52 @@ export async function apiSnapshots(params?: {
   if (params?.from_date) q.set("from_date", params.from_date);
   if (params?.to_date) q.set("to_date", params.to_date);
   const qs = q.toString() ? `?${q.toString()}` : "";
-  return tenantFetch<Snapshot[]>(`/tenant/snapshots${qs}`);
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/snapshots${qs}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.snapshots ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    snapshot_id:         String(r.id ?? r.snapshot_id ?? ""),
+    snapshot_name:       String(r.name ?? r.snapshot_name ?? ""),
+    vm_id:               String(r.vm_id ?? ""),
+function _normaliseMetrics(r: Record<string, unknown>): VmMetrics {
+  return {
+    vm_id:            String(r.vm_id ?? ""),
+    vm_name:          String(r.vm_name ?? ""),
+    cpu_pct:          (r.cpu_pct         ?? r.cpu_usage_percent         ?? null) as number | null,
+    ram_pct:          (r.ram_pct         ?? r.memory_usage_percent       ?? null) as number | null,
+    storage_pct:      (r.storage_pct     ?? r.storage_usage_percent      ?? null) as number | null,
+    storage_used_gb:  (r.storage_used_gb  ?? null) as number | null,
+    storage_total_gb: (r.storage_total_gb ?? null) as number | null,
+    iops_read:        (r.iops_read   ?? null) as number | null,
+    iops_write:       (r.iops_write  ?? null) as number | null,
+    network_rx_mb:    (r.network_rx_mb  ?? r.network_rx_mbps  ?? null) as number | null,
+    network_tx_mb:    (r.network_tx_mb  ?? r.network_tx_mbps  ?? null) as number | null,
+    last_updated:     (r.last_updated ?? null) as string | null,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Snapshot history
+export async function apiMetricsVms(): Promise<VmMetrics[]> {
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/metrics/vms");
+  const list = (Array.isArray(raw) ? raw : ((raw.vms ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map(_normaliseMetrics);
+}
+
+export async function apiMetricsVm(vmId: string): Promise<VmMetrics> {
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/metrics/vms/${encodeURIComponent(vmId)}`);
+  return _normaliseMetrics(raw);
+}
+
+export async function apiAvailability(): Promise<AvailabilityRow[]> {
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/metrics/availability");
+  const list = (Array.isArray(raw) ? raw : ((raw.availability ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    region_display_name: String(r.region_display_name ?? ""),
+    uptime_7d_pct:       typeof r.uptime_7d_pct  === "number" ? r.uptime_7d_pct  : null,
+    uptime_30d_pct:      typeof r.uptime_30d_pct === "number" ? r.uptime_30d_pct : null,
+    last_seen:           (r.last_seen ?? null) as string | null,
+    status:              String(r.status ?? "ACTIVE"),
+  })
 // ---------------------------------------------------------------------------
 
 export interface SnapshotRecord {
@@ -289,7 +482,16 @@ export interface SnapshotRecord {
 }
 
 export async function apiSnapshotHistory(): Promise<SnapshotRecord[]> {
-  return tenantFetch<SnapshotRecord[]>("/tenant/snapshot-history");
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/snapshot-history");
+  const list = (Array.isArray(raw) ? raw : ((raw.records ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    record_id:           String(r.id ?? r.record_id ?? ""),
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    run_date:            String(r.run_date ?? r.created_at ?? ""),
+    status:              String(r.status ?? ""),
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -305,9 +507,43 @@ export interface ComplianceRow {
   last_snapshot_ts: string | null;
   status: string;
 }
+function _normaliseJob(r: Record<string, unknown>): RestoreJob {
+  return {
+    job_id:              String(r.job_id ?? r.id ?? ""),
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    snapshot_id:         String(r.snapshot_id ?? ""),
+    new_vm_name:         String(r.new_vm_name ?? r.requested_name ?? ""),
+    status:              String(r.status ?? ""),
+    progress_pct:        typeof r.progress_pct === "number" ? r.progress_pct : 0,
+    created_at:          String(r.created_at ?? ""),
+    updated_at:          String(r.updated_at ?? r.finished_at ?? r.started_at ?? r.created_at ?? ""),
+    region_display_name: String(r.region_display_name ?? ""),
+    error_message:       (r.error_message ?? r.failure_reason ?? null) as string | null,
+  };
+}
 
-export async function apiCompliance(): Promise<ComplianceRow[]> {
-  return tenantFetch<ComplianceRow[]>("/tenant/compliance");
+export async function apiRestorePoints(vmId: string): Promise<RestorePoint[]> {
+  const raw = await tenantFetch<Record<string, unknown>>(
+    `/tenant/vms/${encodeURIComponent(vmId)}/restore-points`,
+  );
+  const list = (Array.isArray(raw) ? raw : ((raw.restore_points ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    snapshot_id:   String(r.id ?? r.snapshot_id ?? ""),
+    snapshot_name: String(r.name ?? r.snapshot_name ?? ""),
+    created_at:    String(r.created_at ?? ""),
+    status:        String(r.status ?? ""),
+    size_gb:       typeof r.size_gb === "number" ? r.size_gb : null,
+  })const list = (Array.isArray(raw) ? raw : ((raw.vms ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+    coverage_pct:        typeof r.coverage_pct === "number" ? r.coverage_pct : 0,
+    current_streak:      typeof r.current_streak === "number" ? r.current_streak : 0,
+    last_snapshot_ts:    (r.last_snapshot_ts ?? r.last_success_at ?? null) as string | null,
+    status:              r.is_compliant ? "compliant" : "non_compliant",
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -322,13 +558,16 @@ export interface VmMetrics {
   storage_pct: number | null;
   storage_used_gb: number | null;
   storage_total_gb: number | null;
-  iops_read: number | null;
-  iops_write: number | null;
-  network_rx_mb: number | null;
-  network_tx_mb: number | null;
-  last_updated: string | null;
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/restore/jobs${q}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.jobs ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map(_normaliseJob);
 }
 
+export async function apiRestoreJob(jobId: string): Promise<RestoreJob> {
+  const raw = await tenantFetch<Record<string, unknown>>(
+    `/tenant/restore/jobs/${encodeURIComponent(jobId)}`,
+  );
+  return _normaliseJob(raw
 export interface AvailabilityRow {
   vm_id: string;
   vm_name: string;
@@ -339,16 +578,63 @@ export interface AvailabilityRow {
   status: string;
 }
 
-export async function apiMetricsVms(): Promise<VmMetrics[]> {
-  return tenantFetch<VmMetrics[]>("/tenant/metrics/vms");
+function _normaliseMetrics(r: Record<string, unknown>): VmMetrics {
+  return {
+    vm_id:            String(r.vm_id ?? ""),
+    vm_name:          String(r.vm_name ?? ""),
+    cpu_pct:          (r.cpu_pct         ?? r.cpu_usage_percent         ?? null) as number | null,
+    ram_pct:          (r.ram_pct         ?? r.memory_usage_percent       ?? null) as number | null,
+    storage_pct:      (r.storage_pct     ?? r.storage_usage_percent      ?? null) as number | null,
+    storage_used_gb:  (r.storage_used_gb  ?? null) as number | null,
+    storage_total_gb: (r.storage_total_gb ?? null) as number | null,
+    iops_read:        (r.iops_read   ?? null) as number | null,
+    iops_write:       (r.iops_write  ?? null) as number | null,
+    network_rx_mb:    (r.network_rx_mb  ?? r.network_rx_mbps  ?? null) as number | null,
+    network_tx_mb:    (r.network_tx_mb  ?? r.network_tx_mbps  ?? null) as number | null,
+    last_updated:     (r.last_updated ?? null) as string | null,
+function _normaliseRunbook(r: Record<string, unknown>): Runbook {
+  return {
+    name:             String(r.name ?? ""),
+    display_name:     String(r.display_name ?? r.name ?? ""),
+    description:      String(r.description ?? ""),
+    category:         String(r.category ?? "general"),
+    risk_level:       String(r.risk_level ?? "low"),
+    steps:            Array.isArray(r.steps) ? r.steps as string[] : [],
+    prerequisites:    (r.prerequisites    ?? null) as string | null,
+    expected_outcome: (r.expected_outcome ?? null) as string | null,
+    updated_at:       String(r.updated_at ?? ""),
+  };
+}
+
+export async function apiRunbooks(): Promise<Runbook[]> {
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/runbooks");
+  const list = (Array.isArray(raw) ? raw : ((raw.runbooks ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map(_normaliseRunbook);
+}
+
+export async function apiRunbook(name: string): Promise<Runbook> {
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/runbooks/${encodeURIComponent(name)}`);
+  return _normaliseRunbook(raws Record<string, unknown>[];
+  return list.map(_normaliseMetrics);
 }
 
 export async function apiMetricsVm(vmId: string): Promise<VmMetrics> {
-  return tenantFetch<VmMetrics>(`/tenant/metrics/vms/${encodeURIComponent(vmId)}`);
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/metrics/vms/${encodeURIComponent(vmId)}`);
+  return _normaliseMetrics(raw);
 }
 
 export async function apiAvailability(): Promise<AvailabilityRow[]> {
-  return tenantFetch<AvailabilityRow[]>("/tenant/metrics/availability");
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/metrics/availability");
+  const list = (Array.isArray(raw) ? raw : ((raw.availability ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    region_display_name: String(r.region_display_name ?? ""),
+    uptime_7d_pct:       typeof r.uptime_7d_pct  === "number" ? r.uptime_7d_pct  : null,
+    uptime_30d_pct:      typeof r.uptime_30d_pct === "number" ? r.uptime_30d_pct : null,
+    last_seen:           (r.last_seen ?? null) as string | null,
+    status:              String(r.status ?? "ACTIVE"),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +644,20 @@ export async function apiAvailability(): Promise<AvailabilityRow[]> {
 export interface RestorePoint {
   snapshot_id: string;
   snapshot_name: string;
-  created_at: string;
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/events${qs}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.events ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((e) => ({
+    id:            Number(e.id ?? e.event_id ?? 0),
+    action:        String(e.action     ?? e.event_type  ?? ""),
+    resource_type: (e.resource_type ?? null) as string | null,
+    resource_id:   (e.resource_id   ?? null) as string | null,
+    project_id:    (e.project_id    ?? null) as string | null,
+    region_id:     (e.region_id     ?? null) as string | null,
+    ip_address:    (e.ip_address    ?? null) as string | null,
+    timestamp:     String(e.timestamp ?? e.occurred_at ?? ""),
+    success:       Boolean(e.success ?? true),
+    details:       (e.details ?? null) as Record<string, unknown> | null,
+  })
   status: string;
   size_gb: number | null;
 }
@@ -386,10 +685,34 @@ export interface RestoreJob {
   error_message: string | null;
 }
 
+function _normaliseJob(r: Record<string, unknown>): RestoreJob {
+  return {
+    job_id:              String(r.job_id ?? r.id ?? ""),
+    vm_id:               String(r.vm_id ?? ""),
+    vm_name:             String(r.vm_name ?? ""),
+    snapshot_id:         String(r.snapshot_id ?? ""),
+    new_vm_name:         String(r.new_vm_name ?? r.requested_name ?? ""),
+    status:              String(r.status ?? ""),
+    progress_pct:        typeof r.progress_pct === "number" ? r.progress_pct : 0,
+    created_at:          String(r.created_at ?? ""),
+    updated_at:          String(r.updated_at ?? r.finished_at ?? r.started_at ?? r.created_at ?? ""),
+    region_display_name: String(r.region_display_name ?? ""),
+    error_message:       (r.error_message ?? r.failure_reason ?? null) as string | null,
+  };
+}
+
 export async function apiRestorePoints(vmId: string): Promise<RestorePoint[]> {
-  return tenantFetch<RestorePoint[]>(
+  const raw = await tenantFetch<Record<string, unknown>>(
     `/tenant/vms/${encodeURIComponent(vmId)}/restore-points`,
   );
+  const list = (Array.isArray(raw) ? raw : ((raw.restore_points ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    snapshot_id:   String(r.id ?? r.snapshot_id ?? ""),
+    snapshot_name: String(r.name ?? r.snapshot_name ?? ""),
+    created_at:    String(r.created_at ?? ""),
+    status:        String(r.status ?? ""),
+    size_gb:       typeof r.size_gb === "number" ? r.size_gb : null,
+  }));
 }
 
 export async function apiRestorePlan(body: {
@@ -413,13 +736,16 @@ export async function apiRestoreExecute(planId: string): Promise<RestoreJob> {
 
 export async function apiRestoreJobs(status?: string): Promise<RestoreJob[]> {
   const q = status ? `?status=${encodeURIComponent(status)}` : "";
-  return tenantFetch<RestoreJob[]>(`/tenant/restore/jobs${q}`);
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/restore/jobs${q}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.jobs ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map(_normaliseJob);
 }
 
 export async function apiRestoreJob(jobId: string): Promise<RestoreJob> {
-  return tenantFetch<RestoreJob>(
+  const raw = await tenantFetch<Record<string, unknown>>(
     `/tenant/restore/jobs/${encodeURIComponent(jobId)}`,
   );
+  return _normaliseJob(raw);
 }
 
 export async function apiRestoreCancel(jobId: string): Promise<{ message: string }> {
@@ -444,12 +770,29 @@ export interface Runbook {
   updated_at: string;
 }
 
+function _normaliseRunbook(r: Record<string, unknown>): Runbook {
+  return {
+    name:             String(r.name ?? ""),
+    display_name:     String(r.display_name ?? r.name ?? ""),
+    description:      String(r.description ?? ""),
+    category:         String(r.category ?? "general"),
+    risk_level:       String(r.risk_level ?? "low"),
+    steps:            Array.isArray(r.steps) ? r.steps as string[] : [],
+    prerequisites:    (r.prerequisites    ?? null) as string | null,
+    expected_outcome: (r.expected_outcome ?? null) as string | null,
+    updated_at:       String(r.updated_at ?? ""),
+  };
+}
+
 export async function apiRunbooks(): Promise<Runbook[]> {
-  return tenantFetch<Runbook[]>("/tenant/runbooks");
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/runbooks");
+  const list = (Array.isArray(raw) ? raw : ((raw.runbooks ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map(_normaliseRunbook);
 }
 
 export async function apiRunbook(name: string): Promise<Runbook> {
-  return tenantFetch<Runbook>(`/tenant/runbooks/${encodeURIComponent(name)}`);
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/runbooks/${encodeURIComponent(name)}`);
+  return _normaliseRunbook(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -479,5 +822,18 @@ export async function apiActivity(params?: {
   if (params?.to_date) q.set("to_date", params.to_date);
   if (params?.action) q.set("action", params.action);
   const qs = q.toString() ? `?${q.toString()}` : "";
-  return tenantFetch<ActivityRow[]>(`/tenant/events${qs}`);
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/events${qs}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.events ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((e) => ({
+    id:            Number(e.id ?? e.event_id ?? 0),
+    action:        String(e.action     ?? e.event_type  ?? ""),
+    resource_type: (e.resource_type ?? null) as string | null,
+    resource_id:   (e.resource_id   ?? null) as string | null,
+    project_id:    (e.project_id    ?? null) as string | null,
+    region_id:     (e.region_id     ?? null) as string | null,
+    ip_address:    (e.ip_address    ?? null) as string | null,
+    timestamp:     String(e.timestamp ?? e.occurred_at ?? ""),
+    success:       Boolean(e.success ?? true),
+    details:       (e.details ?? null) as Record<string, unknown> | null,
+  }));
 }
