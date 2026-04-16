@@ -15,6 +15,7 @@ P3a endpoints:
   GET /tenant/compliance
   GET /tenant/dashboard
   GET /tenant/events
+  GET /tenant/inventory-status
 
 P3c endpoints:
   GET /tenant/runbooks
@@ -162,13 +163,13 @@ async def get_vm(vm_id: str, ctx: TenantContext = Depends(get_tenant_context)):
             )
             snap_stats = dict(cur.fetchone() or {})
 
-            # Active restore job (if any)
+            # Active restore job (if any) — PLANNED = awaiting user confirmation, not active
             cur.execute(
                 """
                 SELECT id, status, created_at, mode
                 FROM restore_jobs
                 WHERE vm_id = %s
-                  AND status IN ('PLANNED', 'PENDING', 'RUNNING')
+                  AND status IN ('PENDING', 'RUNNING')
                   AND project_id = ANY(%s)
                 ORDER BY created_at DESC
                 LIMIT 1
@@ -465,13 +466,13 @@ async def dashboard(ctx: TenantContext = Depends(get_tenant_context)):
             )
             cov_row = dict(cur.fetchone())
 
-            # Active restore jobs
+            # Active restore jobs (PLANNED = awaiting user action, not running)
             cur.execute(
                 """
                 SELECT COUNT(*) AS cnt
                 FROM restore_jobs
                 WHERE project_id = ANY(%s)
-                  AND status IN ('PLANNED', 'PENDING', 'RUNNING')
+                  AND status IN ('PENDING', 'RUNNING')
                 """,
                 (ctx.project_ids,),
             )
@@ -498,6 +499,47 @@ async def dashboard(ctx: TenantContext = Depends(get_tenant_context)):
             "coverage_pct_7d": coverage_pct,
         },
         "active_restore_jobs": active_restores,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Inventory sync status (global — not tenant-scoped)
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/inventory-status", summary="Last inventory sync timestamp")
+async def inventory_status(
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Return the timestamp of the last successful inventory run.
+
+    This tells the tenant UI when data was last synced from the platform so
+    users know how stale the displayed VMs/snapshots/volumes may be.
+    No RLS needed — inventory_runs contains no tenant-specific data.
+    """
+    try:
+        with get_tenant_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT finished_at, started_at, duration_seconds
+                    FROM inventory_runs
+                    WHERE status = 'success'
+                    ORDER BY finished_at DESC
+                    LIMIT 1
+                """)
+                row = cur.fetchone()
+    except Exception as exc:
+        logger.warning("inventory-status query failed: %s", exc)
+        return {"last_sync_at": None, "minutes_ago": None, "duration_seconds": None}
+
+    if not row or not row.get("finished_at"):
+        return {"last_sync_at": None, "minutes_ago": None, "duration_seconds": None}
+
+    finished_at = row["finished_at"]
+    minutes_ago = max(0, int((datetime.now(timezone.utc) - finished_at).total_seconds() / 60))
+    return {
+        "last_sync_at": finished_at.isoformat(),
+        "minutes_ago": minutes_ago,
+        "duration_seconds": row["duration_seconds"],
     }
 
 

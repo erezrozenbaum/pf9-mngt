@@ -3841,6 +3841,9 @@ ALTER TABLE runbooks
 CREATE INDEX IF NOT EXISTS idx_runbooks_tenant_visible
     ON runbooks (is_tenant_visible) WHERE is_tenant_visible = true;
 
+-- All enabled runbooks should be visible to tenant portal by default
+UPDATE runbooks SET is_tenant_visible = true WHERE enabled = true AND is_tenant_visible = false;
+
 -- Project-scoped runbook tags (NULL project_id = visible to all CP tenants)
 CREATE TABLE IF NOT EXISTS runbook_project_tags (
     runbook_name TEXT NOT NULL REFERENCES runbooks(name) ON DELETE CASCADE,
@@ -3941,6 +3944,7 @@ END $$;
 GRANT USAGE ON SCHEMA public TO tenant_portal_role;
 
 GRANT SELECT ON servers, volumes, snapshots, snapshot_records TO tenant_portal_role;
+GRANT SELECT ON flavors, inventory_runs TO tenant_portal_role;
 GRANT SELECT, INSERT, UPDATE ON restore_jobs TO tenant_portal_role;
 GRANT SELECT ON pf9_regions TO tenant_portal_role;
 GRANT SELECT ON role_assignments TO tenant_portal_role;

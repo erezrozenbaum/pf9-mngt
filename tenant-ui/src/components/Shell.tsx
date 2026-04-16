@@ -1,5 +1,6 @@
-import { useState } from "react";
-import type { Branding, MeResponse } from "../lib/api";
+import { useState, useEffect } from "react";
+import type { Branding, MeResponse, InventoryStatus } from "../lib/api";
+import { apiInventoryStatus } from "../lib/api";
 import type { Screen } from "../App";
 import { Dashboard } from "../screens/Dashboard";
 import { Infrastructure } from "../screens/Infrastructure";
@@ -39,16 +40,29 @@ const SCREEN_TITLES: Record<Screen, string> = {
 
 export function Shell({ branding, me, screen, onNavigate, onLogout }: Props) {
   const [regionFilter, setRegionFilter] = useState<string>("");
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [inventoryStatus, setInventoryStatus] = useState<InventoryStatus | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+
+  const fetchInventoryStatus = () => {
+    setSyncLoading(true);
+    apiInventoryStatus()
+      .then(setInventoryStatus)
+      .catch(() => { /* non-critical */ })
+      .finally(() => setSyncLoading(false));
+  };
+
+  useEffect(() => { fetchInventoryStatus(); }, []);
 
   const renderScreen = () => {
     switch (screen) {
-      case "dashboard":      return <Dashboard regionFilter={regionFilter} />;
-      case "infrastructure": return <Infrastructure regionFilter={regionFilter} />;
-      case "snapshots":      return <SnapshotCoverage regionFilter={regionFilter} />;
-      case "monitoring":     return <Monitoring regionFilter={regionFilter} />;
-      case "restore":        return <RestoreCenter />;
-      case "runbooks":       return <Runbooks />;
-      case "activity":       return <ActivityLog />;
+      case "dashboard":      return <Dashboard      key={refreshTick} regionFilter={regionFilter} />;
+      case "infrastructure": return <Infrastructure key={refreshTick} regionFilter={regionFilter} />;
+      case "snapshots":      return <SnapshotCoverage key={refreshTick} regionFilter={regionFilter} />;
+      case "monitoring":     return <Monitoring     key={refreshTick} regionFilter={regionFilter} />;
+      case "restore":        return <RestoreCenter  key={refreshTick} />;
+      case "runbooks":       return <Runbooks       key={refreshTick} />;
+      case "activity":       return <ActivityLog    key={refreshTick} />;
     }
   };
 
@@ -141,12 +155,37 @@ export function Shell({ branding, me, screen, onNavigate, onLogout }: Props) {
       <div className="main-area">
         <header className="page-header">
           <h1 className="page-title">{SCREEN_TITLES[screen]}</h1>
-          {projectCount > 0 && (
-            <span style={{ fontSize: ".8125rem", color: "var(--color-text-secondary)" }}>
-              {projectCount} project{projectCount > 1 ? "s" : ""}
-              {regionFilter && ` · ${regionFilter}`}
-            </span>
-          )}
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+            {inventoryStatus?.last_sync_at && (
+              <span style={{ fontSize: ".75rem", color: "var(--color-text-secondary)" }}>
+                Inventory synced{" "}
+                {inventoryStatus.minutes_ago === 0
+                  ? "just now"
+                  : `${inventoryStatus.minutes_ago} min ago`}
+              </span>
+            )}
+            {!inventoryStatus?.last_sync_at && !syncLoading && (
+              <span style={{ fontSize: ".75rem", color: "var(--color-text-secondary)" }}>Inventory sync unknown</span>
+            )}
+            <button
+              className="btn btn-secondary"
+              style={{ padding: ".25rem .65rem", fontSize: ".75rem" }}
+              disabled={syncLoading}
+              onClick={() => {
+                setRefreshTick((t) => t + 1);
+                fetchInventoryStatus();
+              }}
+              title="Reload current screen data"
+            >
+              {syncLoading ? <span className="loading-spinner" style={{ width: "10px", height: "10px" }} /> : "⟳ Refresh"}
+            </button>
+            {projectCount > 0 && (
+              <span style={{ fontSize: ".8125rem", color: "var(--color-text-secondary)" }}>
+                {projectCount} project{projectCount > 1 ? "s" : ""}
+                {regionFilter && ` · ${regionFilter}`}
+              </span>
+            )}
+          </div>
         </header>
         <div className="page-body">
           {renderScreen()}

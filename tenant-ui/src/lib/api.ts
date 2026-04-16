@@ -558,6 +558,7 @@ export async function apiRestorePlan(body: {
   region_id: string;
   new_vm_name?: string;
   mode?: "NEW" | "REPLACE";
+  pre_restore_snapshot?: boolean;
 }): Promise<RestorePlan> {
   return tenantFetch<RestorePlan>("/tenant/restore/plan", {
     method: "POST",
@@ -590,6 +591,25 @@ export async function apiRestoreCancel(jobId: string): Promise<{ message: string
   return tenantFetch(`/tenant/restore/jobs/${encodeURIComponent(jobId)}/cancel`, {
     method: "POST",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Inventory status
+// ---------------------------------------------------------------------------
+
+export interface InventoryStatus {
+  last_sync_at: string | null;
+  minutes_ago: number | null;
+  duration_seconds: number | null;
+}
+
+export async function apiInventoryStatus(): Promise<InventoryStatus> {
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/inventory-status");
+  return {
+    last_sync_at:      (raw.last_sync_at      ?? null) as string | null,
+    minutes_ago:       typeof raw.minutes_ago       === "number" ? raw.minutes_ago       : null,
+    duration_seconds:  typeof raw.duration_seconds  === "number" ? raw.duration_seconds  : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

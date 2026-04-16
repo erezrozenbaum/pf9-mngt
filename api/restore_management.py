@@ -1839,6 +1839,7 @@ class _InternalTenantPlanBody(BaseModel):
     created_by: str          # must start with "tenant:"
     new_vm_name: Optional[str] = None
     mode: str = "NEW"        # "NEW" (side-by-side) or "REPLACE" (in-place)
+    pre_restore_snapshot: bool = True  # NEW mode: optional pre-restore safety snapshot
 
 
 class _InternalTenantExecuteBody(BaseModel):
@@ -2859,8 +2860,8 @@ def setup_restore_routes(app):
             new_vm_name=req.new_vm_name,
             # For NEW: assign fresh IPs; for REPLACE: try to keep same IPs
             ip_strategy="NEW_IPS" if mode == "NEW" else "TRY_SAME_IPS",
-            # SAFETY: safety snapshot is MANDATORY for tenant REPLACE — not optional
-            safety_snapshot_before_replace=(mode == "REPLACE"),
+            # SAFETY: safety snapshot — mandatory for REPLACE, opt-in for NEW
+            safety_snapshot_before_replace=(mode == "REPLACE") or req.pre_restore_snapshot,
             # SAFETY: tenants cannot auto-delete old volumes
             cleanup_old_storage=False,
         )
