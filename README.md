@@ -1,14 +1,19 @@
 ﻿# pf9-mngt
 
+> Provisioning infrastructure is solved.  
+> Operating it at scale is not.
+
+**pf9-mngt** is a self-hosted operational control plane for Platform9 / OpenStack. It adds the persistent inventory, automated recovery workflows, and governance layer that Platform9 itself does not provide — built for the teams responsible for what happens *after* Day-0.
+
 <p align="center">
   <strong>Operational Control Plane for Platform9 / OpenStack</strong><br>
-  Visibility &nbsp;·&nbsp; Automation &nbsp;·&nbsp; Recovery &nbsp;·&nbsp; Governance &nbsp;·&nbsp; Multi-Region Control &nbsp;·&nbsp; Tenant Self-Service
+  Visibility &nbsp;·&nbsp; Recovery &nbsp;·&nbsp; Operations &nbsp;·&nbsp; Intelligence
 </p>
 
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.12-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.13-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -35,16 +40,16 @@ One system. No duct tape.
 
 ---
 
-## 🧭 In One Sentence
+## 🧭 What It Gives You
 
-pf9-mngt is an operational control plane for Platform9/OpenStack that gives you:
+pf9-mngt adds a persistent operational layer on top of Platform9 / OpenStack, combining inventory, automation, recovery workflows, and governance into a single self-hosted system:
 
-- **Full infrastructure visibility** across all tenants and regions — all metadata owned by you, not the platform
-- **Automated snapshot & restore workflows** — no native equivalent exists in Platform9 or OpenStack
+- **Full infrastructure visibility** — all metadata in your own PostgreSQL, independent of platform uptime, 29 resource types, cross-tenant
+- **Automated snapshot & restore workflows** — no native equivalent exists in Platform9 or OpenStack; fully automated, SLA-tracked, audited
 - **VMware → OpenStack migration planning** — end-to-end from RVTools ingestion to PCD auto-provisioning
-- **Governance, audit, and Day-2 tooling** — runbooks, tickets, metering, and chargeback
+- **Governance, audit, and Day-2 tooling** — runbooks, tickets, metering, chargeback, tenant self-service
 
-All in one self-hosted engineering console that works alongside Platform9 via its APIs.
+Works alongside Platform9 via its APIs. Not a replacement — an operational layer on top.
 
 ---
 
@@ -83,6 +88,21 @@ A self-hosted operational platform that **extends** Platform9 / OpenStack — no
 
 ---
 
+## 🔑 Four Pillars
+
+Everything in pf9-mngt is built around four operational concerns:
+
+| Pillar | What it covers |
+|--------|---------------|
+| 🔭 **Visibility** | Cross-tenant, multi-region inventory with drift detection, dependency graph, and historical tracking — metadata owned by you, not the platform |
+| ♻️ **Recovery** | Snapshot automation and full VM restore orchestration — two modes, dry-run validation, SLA compliance, no native equivalent in OpenStack |
+| 🎫 **Operations** | Ticketing, 25 built-in runbooks, metering, chargeback, standardized governance workflows, and tenant self-service portal |
+| 🤖 **Intelligence** | AI Ops Copilot (plain-language queries against live infrastructure), capacity and risk scoring, VMware migration planning end-to-end |
+
+> Everything else in the system — LDAP, multi-region, Kubernetes, export reports — supports one of these four pillars.
+
+---
+
 ## 🧠 Why This Matters
 
 | Challenge | Native Platform9 | pf9-mngt |
@@ -95,6 +115,18 @@ A self-hosted operational platform that **extends** Platform9 / OpenStack — no
 | Day-2 workflows | External tools | Built-in tickets, runbooks, metering |
 | VMware migration | No native tooling | End-to-end planner: RVTools → PCD |
 | Tenant visibility | You are the human API | Self-service portal: MFA-protected, RLS-isolated, scoped to their projects |
+
+---
+
+## 🔥 What Makes It Different
+
+Most platforms solve provisioning.
+
+pf9-mngt solves **what happens after deployment** — the snapshot SLAs that must hold, the 3am restore that must succeed, the compliance report due tomorrow, the capacity forecast before the cluster fills up, the VMware migration that has to go right.
+
+Built from real-world operations. 410+ commits, 122 releases, 18 containerized services.
+
+Not theory — from what actually breaks in production.
 
 ---
 
@@ -574,9 +606,9 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🏢 Tenant Self-Service Portal — v1.84.0 → v1.84.12 *(Complete)*
+### 🏢 Tenant Self-Service Portal — v1.84.0 → v1.84.13 *(Complete)*
 
-**[v1.84.12](CHANGELOG.md)** — Grant Access wizard (3-step: tenant picker → user checkboxes → MFA/notes); batch grant API; CP dropdown. **[v1.84.11](CHANGELOG.md)** — Grant Access form gains User Name + Tenant/Org Name fields; access table shows friendly labels; `user_name`/`tenant_name` DB + API. **[v1.84.10](CHANGELOG.md)** — Nav fix: `tenant_portal` tab now appears in Admin Tools; DB migration for live environments; guide corrections. **[v1.84.9](CHANGELOG.md)** — Tenant Portal complete: `GET /tenant/branding` unauthenticated branding endpoint (60 s cache); admin `GET/PUT /branding/{cp_id}` and `DELETE /mfa/{cp_id}/{user_id}` endpoints; Admin UI "🏢 Tenant Portal" tab with 4 sub-tabs; 27 P8 security tests (S01–S27 across 8 categories). → [Tenant Portal Guide](docs/TENANT_PORTAL_GUIDE.md)
+**[v1.84.13](CHANGELOG.md)** — Bug-fix & security hardening: `log_auth_event` TypeError crash on every access grant/revoke fixed; Audit Log sub-tab 500 (wrong column names) fixed; batch grant transaction-poisoning fixed (savepoints); stored-XSS via `javascript:` / `data:` URIs in branding URLs blocked; field length limits added; security test suite extended to S30. **[v1.84.12](CHANGELOG.md)** — Grant Access wizard (3-step: tenant picker → user checkboxes → MFA/notes); batch grant API; CP dropdown. **[v1.84.11](CHANGELOG.md)** — Grant Access form gains User Name + Tenant/Org Name fields; access table shows friendly labels; `user_name`/`tenant_name` DB + API. **[v1.84.10](CHANGELOG.md)** — Nav fix: `tenant_portal` tab now appears in Admin Tools; DB migration for live environments; guide corrections. **[v1.84.9](CHANGELOG.md)** — Tenant Portal complete: `GET /tenant/branding` unauthenticated branding endpoint (60 s cache); admin `GET/PUT /branding/{cp_id}` and `DELETE /mfa/{cp_id}/{user_id}` endpoints; Admin UI "🏢 Tenant Portal" tab with 4 sub-tabs; 27 P8 security tests (S01–S27 across 8 categories). → [Tenant Portal Guide](docs/TENANT_PORTAL_GUIDE.md)
 
 **[v1.84.4](CHANGELOG.md)** — Tenant-ui SPA: React + TypeScript, 7 screens (Dashboard, Infrastructure, Snapshot Coverage, Monitoring, Restore Center, Runbooks, Activity Log), MFA login, per-customer branding. Kubernetes stability fixes in v1.84.5–v1.84.8 (dedicated `nginx-ingress-tenant` on separate MetalLB IP).
 
@@ -640,18 +672,6 @@ pf9-mngt is:
 
 ---
 
-## 🔥 What Makes It Different
-
-Most platforms solve provisioning.
-
-pf9-mngt solves **what happens after deployment** — the snapshot SLAs that must hold, the 3am restore that must succeed, the compliance report due tomorrow, the capacity forecast before the cluster fills up, the VMware migration that has to go right.
-
-Built from real-world operations. 409+ commits, 121 releases, 16 containerized services.
-
-Not theory — from what actually breaks in production.
-
----
-
 ## 🤝 Contributing
 
 Contributions are welcome — code, documentation, bug reports, feature suggestions, or feedback.
@@ -697,4 +717,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.84.12 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.84.13 | **Last Updated**: April 2026

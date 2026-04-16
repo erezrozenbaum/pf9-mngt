@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.12  
-**Last Updated**: April 15, 2026  
+**Version**: 1.84.13  
+**Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.13 — Tenant Portal: Bug-Fix & Security Hardening (✅ Complete)
+
+- **`log_auth_event` TypeError crash** — all three admin endpoints (`PUT /access`, `PUT /access/batch`, `DELETE /sessions`) were passing the open DB connection as the first positional argument, causing every grant/revoke/force-logout call to return an Internal Server Error. Fixed.
+- **Audit Log sub-tab 500** — `GET /audit/{cp_id}` queried non-existent columns `detail` and `created_at`; the actual DB columns are `details` (JSONB) and `timestamp`. Fixed with SQL aliases: `details::text AS detail`, `timestamp AS created_at`.
+- **Batch grant transaction poisoning** — if any item in a `PUT /access/batch` payload hit a DB error, the entire PostgreSQL connection entered an aborted state, silently failing all subsequent items in the batch. Each item is now wrapped in `SAVEPOINT`/`RELEASE`/`ROLLBACK TO SAVEPOINT` for full isolation.
+- **Stored XSS via branding URL fields** — `logo_url`, `favicon_url`, `support_url` now reject non-`http(s)://` schemes (e.g. `javascript:`, `data:`) via a Pydantic validator.
+- **Field length limits** — `notes`, `user_name`, `tenant_name`, branding text fields now have `max_length` constraints in the Pydantic models.
+- **Security test suite extended** — 30 tests (S01–S30); three new tests cover URL injection rejection and valid URL acceptance.
 
 ### v1.84.12 — Tenant Portal: Friendly Grant Access Wizard & Batch Grant (✅ Complete)
 

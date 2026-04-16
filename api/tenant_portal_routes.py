@@ -33,7 +33,7 @@ from typing import List, Optional
 import redis as redis_lib
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from auth import require_authentication, User, log_auth_event
 from db_pool import get_connection
@@ -72,12 +72,12 @@ def _get_redis():
 
 class AccessUpsertRequest(BaseModel):
     keystone_user_id: str
-    user_name: Optional[str] = None        # friendly display name for the Keystone user
+    user_name: Optional[str] = Field(None, max_length=255)  # friendly display name for the Keystone user
     control_plane_id: str
-    tenant_name: Optional[str] = None      # friendly display name for the tenant / org
+    tenant_name: Optional[str] = Field(None, max_length=255)  # friendly display name for the tenant / org
     enabled: bool
     mfa_required: Optional[bool] = False
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=500)
 
     @field_validator("keystone_user_id", "control_plane_id")
     @classmethod
@@ -346,7 +346,6 @@ async def upsert_access(
             logger.error("Redis key update failed for access change: %s", exc)
 
         log_auth_event(
-            conn,
             username=current_user.username,
             action="tenant_portal_access_update",
             success=True,
@@ -359,7 +358,7 @@ async def upsert_access(
 
 class BatchAccessItem(BaseModel):
     keystone_user_id: str
-    user_name: Optional[str] = None
+    user_name: Optional[str] = Field(None, max_length=255)
 
     @field_validator("keystone_user_id")
     @classmethod
@@ -371,11 +370,11 @@ class BatchAccessItem(BaseModel):
 
 class BatchAccessRequest(BaseModel):
     control_plane_id: str
-    tenant_name: Optional[str] = None   # project/org name applied to all rows
+    tenant_name: Optional[str] = Field(None, max_length=255)  # project/org name applied to all rows
     users: List[BatchAccessItem]
     enabled: bool
     mfa_required: Optional[bool] = False
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(None, max_length=500)
 
     @field_validator("control_plane_id")
     @classmethod
@@ -410,6 +409,9 @@ async def batch_upsert_access(
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             for item in body.users:
+                # Use a savepoint so a per-item DB failure doesn't abort the
+                # entire transaction — subsequent items can still be processed.
+                cur.execute("SAVEPOINT sp_batch_item")
                 try:
                     cur.execute(
                         """
@@ -447,6 +449,7 @@ async def batch_upsert_access(
                             now,
                         ),
                     )
+                    cur.execute("RELEASE SAVEPOINT sp_batch_item")
                     try:
                         r = _get_redis()
                         allowed_key = f"tenant:allowed:{body.control_plane_id}:{item.keystone_user_id}"
@@ -460,11 +463,11 @@ async def batch_upsert_access(
                         logger.error("Redis key update failed for %s: %s", item.keystone_user_id, exc)
                     results.append({"keystone_user_id": item.keystone_user_id, "ok": True})
                 except Exception as exc:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_batch_item")
                     logger.error("Batch access upsert failed for %s: %s", item.keystone_user_id, exc)
                     results.append({"keystone_user_id": item.keystone_user_id, "ok": False, "error": str(exc)})
 
         log_auth_event(
-            conn,
             username=current_user.username,
             action="tenant_portal_batch_access_update",
             success=True,
@@ -508,15 +511,13 @@ async def force_logout(
         if cursor == 0:
             break
 
-    with get_connection() as conn:
-        log_auth_event(
-            conn,
-            username=current_user.username,
-            action="tenant_force_logout",
-            success=True,
-            ip_address=ip,
-            details=f"user={keystone_user_id} cp={cp_id} sessions_deleted={deleted}",
-        )
+    log_auth_event(
+        username=current_user.username,
+        action="tenant_force_logout",
+        success=True,
+        ip_address=ip,
+        details=f"user={keystone_user_id} cp={cp_id} sessions_deleted={deleted}",
+    )
 
     logger.info(
         "Admin %s force-logged-out user %s from CP %s (%d sessions)",
@@ -575,11 +576,13 @@ async def get_audit_log(
                 """
                 SELECT id, keystone_user_id, control_plane_id, action,
                        resource_type, resource_id, project_id, region_id,
-                       ip_address, success, detail, created_at
+                       ip_address, success,
+                       details::text AS detail,
+                       timestamp     AS created_at
                 FROM tenant_action_log
                 WHERE control_plane_id = %s
                   AND (%s::text IS NULL OR keystone_user_id = %s)
-                ORDER BY created_at DESC
+                ORDER BY timestamp DESC
                 LIMIT %s OFFSET %s
                 """,
                 [cp_id, keystone_user_id, keystone_user_id, limit, offset],
@@ -604,15 +607,15 @@ async def get_audit_log(
 # ---------------------------------------------------------------------------
 
 class BrandingUpsertRequest(BaseModel):
-    company_name: str = "Cloud Portal"
-    logo_url: Optional[str] = None
-    favicon_url: Optional[str] = None
+    company_name: str = Field("Cloud Portal", max_length=100)
+    logo_url: Optional[str] = Field(None, max_length=2048)
+    favicon_url: Optional[str] = Field(None, max_length=2048)
     primary_color: str = "#1A73E8"
     accent_color: str = "#F29900"
-    support_email: Optional[str] = None
-    support_url: Optional[str] = None
-    welcome_message: Optional[str] = None
-    footer_text: Optional[str] = None
+    support_email: Optional[str] = Field(None, max_length=255)
+    support_url: Optional[str] = Field(None, max_length=2048)
+    welcome_message: Optional[str] = Field(None, max_length=1000)
+    footer_text: Optional[str] = Field(None, max_length=500)
 
     @field_validator("primary_color", "accent_color")
     @classmethod
@@ -621,6 +624,27 @@ class BrandingUpsertRequest(BaseModel):
         if not re.fullmatch(r"#[0-9A-Fa-f]{6}", v):
             raise ValueError("must be a 6-digit hex colour e.g. #1A73E8")
         return v.upper()
+
+    @field_validator("logo_url", "favicon_url", "support_url", mode="before")
+    @classmethod
+    def safe_url(cls, v: object) -> object:
+        """Reject non-http(s) schemes to prevent javascript: / data: URI injection."""
+        if v is None:
+            return v
+        import re
+        if not re.match(r"^https?://", str(v)):
+            raise ValueError("URL must start with https:// or http://")
+        return v
+
+    @field_validator("support_email", mode="before")
+    @classmethod
+    def valid_email(cls, v: object) -> object:
+        if v is None:
+            return v
+        s = str(v)
+        if "@" not in s or "." not in s.split("@", 1)[-1]:
+            raise ValueError("must be a valid e-mail address")
+        return s
 
 
 @router.get("/branding/{cp_id}", summary="Get branding config for a CP")

@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.84.12] - 2026-04-15
+## [1.84.13] - 2026-04-16
+
+### Fixed
+- **Tenant Portal — `log_auth_event` wrong first argument** — all three admin endpoints (`PUT /access`, `PUT /access/batch`, `DELETE /sessions/{cp_id}/{user_id}`) were passing the open DB connection as the first positional argument to `log_auth_event`, which expects `username` as its first parameter. Every call raised a `TypeError` server-side that surfaced as an "Internal server error" in the UI. Removed the spurious `conn` argument from all three call sites. The orphaned `with get_connection() as conn:` wrapper around the force-logout audit call (which opened a second connection for no reason) was also removed.
+- **Tenant Portal — Audit Log endpoint error (column not found)** — `GET /api/admin/tenant-portal/audit/{cp_id}` selected columns `detail` and `created_at` which do not exist in `tenant_action_log`; the actual columns are `details` (JSONB) and `timestamp`. The query now uses `details::text AS detail` and `timestamp AS created_at` and orders by `timestamp DESC`. The Audit Log sub-tab now loads correctly.
+- **Tenant Portal — Batch grant transaction poisoning** — if any single row in a `PUT /access/batch` payload caused a DB-level error, PostgreSQL placed the shared connection in an aborted-transaction state, causing all subsequent items in the same batch to silently fail (caught but with an `InFailedSqlTransaction` error). Each item is now wrapped in its own `SAVEPOINT sp_batch_item` / `RELEASE` / `ROLLBACK TO` so a per-item failure is fully isolated and the rest of the batch commits normally.
+
+### Security
+- **Tenant Portal — Stored XSS via branding URL fields** — `BrandingUpsertRequest` accepted arbitrary strings for `logo_url`, `favicon_url`, and `support_url`, allowing a `javascript:` or `data:` URI to be stored and later rendered in the tenant-facing portal. Added a `safe_url` Pydantic validator that rejects any scheme other than `http://` or `https://`.
+- **Tenant Portal — No length limits on free-text fields** — `notes`, `user_name`, `tenant_name` in `AccessUpsertRequest` / `BatchAccessRequest` and `company_name`, `welcome_message`, `footer_text`, `support_email`, `logo_url`, `favicon_url`, `support_url` in `BrandingUpsertRequest` now carry explicit `Field(max_length=…)` constraints (255/500/1000/2048 chars depending on field). Added an e-mail format check for `support_email`.
+- **P8 security test suite extended to S30** — three new tests (`S28`–`S30`) in `tests/test_tenant_portal_security.py` cover `javascript:` URI rejection, `data:` URI rejection, and acceptance of valid `https://` URLs. `S27` assertion strengthened to confirm `detail` and `created_at` keys are present on every returned audit row.
 
 ### Added
 - **Grant Access — 3-step wizard (friendly tenant + user picker)** — completely replaced the raw "Keystone User ID" text input with a guided flow: (1) admin picks a **tenant / project** from pill buttons (each shows how many users already have portal access), (2) checks one or more **users** from that project by name + email, (3) sets MFA + notes. Behind the scenes the system resolves all Keystone UUIDs automatically.

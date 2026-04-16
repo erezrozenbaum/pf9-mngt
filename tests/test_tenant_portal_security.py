@@ -607,3 +607,47 @@ class TestAuditTrail:
         assert "offset" in result
         assert result["total"] == 1
         assert len(result["items"]) == 1
+        # Rows must carry 'detail' and 'created_at' keys (aliased from DB columns)
+        assert "detail"     in result["items"][0]
+        assert "created_at" in result["items"][0]
+
+
+# ============================================================================
+# S28–S30  URL injection / length limits
+# ============================================================================
+
+class TestBrandingURLValidation:
+    """S28-S30: BrandingUpsertRequest rejects javascript: URIs and over-long strings."""
+
+    def _load_model(self):
+        import importlib
+        sys.modules.pop("tenant_portal_routes", None)
+        mod = importlib.import_module("tenant_portal_routes")
+        return mod.BrandingUpsertRequest
+
+    def test_s28_javascript_logo_url_rejected(self):
+        """S28: javascript: URI in logo_url raises ValidationError."""
+        from pydantic import ValidationError
+        model = self._load_model()
+        with pytest.raises(ValidationError):
+            model(company_name="X", logo_url="javascript:alert(1)")
+
+    def test_s29_data_uri_favicon_rejected(self):
+        """S29: data: URI in favicon_url raises ValidationError."""
+        from pydantic import ValidationError
+        model = self._load_model()
+        with pytest.raises(ValidationError):
+            model(company_name="X", favicon_url="data:text/html,<script>evil</script>")
+
+    def test_s30_https_urls_accepted(self):
+        """S30: Valid https:// URLs are accepted for all URL fields."""
+        model = self._load_model()
+        obj = model(
+            company_name="ACME",
+            logo_url="https://cdn.example.com/logo.png",
+            favicon_url="https://cdn.example.com/favicon.ico",
+            support_url="https://support.example.com",
+        )
+        assert obj.logo_url == "https://cdn.example.com/logo.png"
+        assert obj.favicon_url == "https://cdn.example.com/favicon.ico"
+        assert obj.support_url == "https://support.example.com"
