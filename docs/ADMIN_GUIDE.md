@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.23  
+**Version**: 1.84.24  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.24 — Tenant Portal Snapshot Coverage + Restore + Runbooks + Metrics Fixes (✅ Complete)
+
+- **Snapshot Coverage "Last Snapshot: —" / 4% coverage**: Compliance SQL used `status = 'success'`; actual DB value is `'OK'`. Fixed. SKIPPED records (scheduler skips when snapshot already current) no longer inflate the denominator — coverage now computed as `OK / (OK + ERROR)` only.
+- **Restore Center "No restore points available"**: `TENANT_RESTORE_ENABLED` env var missing in K8s Helm — defaults to `false` → all `/tenant/vms/{id}/restore-points` calls returned 503. Added `restoreEnabled: "true"` to `values.yaml` and the env var to the tenant-portal `deployment.yaml`.
+- **Runbooks: 9 admin-only runbooks visible to tenants**: `hypervisor_maintenance_evacuate`, `cluster_capacity_planner`, `tenant_offboarding`, `quota_adjustment`, `image_lifecycle_audit`, `network_isolation_audit`, `cost_leakage_report`, `monthly_executive_snapshot`, `capacity_forecast` are platform-admin operations. Set `is_tenant_visible = false` in `db/init.sql`, `db/migrate_tenant_portal.sql`; 16 tenant-relevant runbooks remain.
+- **Monitoring Current Usage "No metrics available"**: In K8s, the tenant portal and monitoring service run in separate pods — `emptyDir` volumes are not shared. `metrics_routes.py` now falls back to calling the monitoring service HTTP API (`GET pf9-monitoring:8001/metrics/vms`) when the file cache is absent. `MONITORING_SERVICE_URL` env var added to Helm deployment and docker-compose.
 
 ### v1.84.23 — Tenant Portal Inventory Sync Bar + Pre-Restore Snapshot + 15-min RVTools Interval (✅ Complete)
 

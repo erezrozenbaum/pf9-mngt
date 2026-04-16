@@ -81,6 +81,18 @@ GRANT SELECT                  ON projects           TO tenant_portal_role;
 
 -- Make all enabled runbooks visible to tenant portal (idempotent data fix)
 UPDATE runbooks SET is_tenant_visible = true WHERE enabled = true AND is_tenant_visible = false;
+-- Admin-only runbooks that tenants should NOT see (idempotent)
+UPDATE runbooks SET is_tenant_visible = false WHERE name IN (
+    'hypervisor_maintenance_evacuate',
+    'cluster_capacity_planner',
+    'tenant_offboarding',
+    'quota_adjustment',
+    'image_lifecycle_audit',
+    'network_isolation_audit',
+    'cost_leakage_report',
+    'monthly_executive_snapshot',
+    'capacity_forecast'
+);
 GRANT SELECT                  ON users              TO tenant_portal_role;
 GRANT SELECT                  ON runbooks        TO tenant_portal_role;
 GRANT SELECT, INSERT          ON tenant_action_log TO tenant_portal_role;

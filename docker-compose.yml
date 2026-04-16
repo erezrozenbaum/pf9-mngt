@@ -739,6 +739,8 @@ services:
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      TENANT_RESTORE_ENABLED: ${TENANT_RESTORE_ENABLED:-true}
+      MONITORING_SERVICE_URL: http://monitoring:8001
       # tenant_portal_db_password and jwt_secret are read from /run/secrets/ when files exist;
       # env vars above are used as fallback in dev with empty secret files.
     secrets:

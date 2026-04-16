@@ -3843,6 +3843,18 @@ CREATE INDEX IF NOT EXISTS idx_runbooks_tenant_visible
 
 -- All enabled runbooks should be visible to tenant portal by default
 UPDATE runbooks SET is_tenant_visible = true WHERE enabled = true AND is_tenant_visible = false;
+-- Admin-only runbooks that tenants should NOT see
+UPDATE runbooks SET is_tenant_visible = false WHERE name IN (
+    'hypervisor_maintenance_evacuate',
+    'cluster_capacity_planner',
+    'tenant_offboarding',
+    'quota_adjustment',
+    'image_lifecycle_audit',
+    'network_isolation_audit',
+    'cost_leakage_report',
+    'monthly_executive_snapshot',
+    'capacity_forecast'
+);
 
 -- Project-scoped runbook tags (NULL project_id = visible to all CP tenants)
 CREATE TABLE IF NOT EXISTS runbook_project_tags (
