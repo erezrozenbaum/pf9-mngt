@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.17  
+**Version**: 1.84.18  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.18 — DB Grants + K8s Password Fix (✅ Complete)
+
+- **`tenant_action_log` missing `SELECT` grant** — `tenant_portal_role` had `INSERT` but not `SELECT` on this table. All post-login endpoints (`/tenant/events`, `/tenant/dashboard`) SELECT from it; every screen returned 500 immediately after login. Fixed in `db/init.sql` and `db/migrate_tenant_portal.sql` (`GRANT SELECT, INSERT`).
+- **K8s `tenant_portal_role` password mismatch** — `pf9-tenant-portal-db-credentials` secret password was never synced to the DB user. Pod failed to connect at all; login always returned 500. Fixed by `ALTER USER tenant_portal_role WITH PASSWORD '...'` on `pf9-db-0`.
 
 ### v1.84.17 — CI: Add `httpx` to Integration Test Dependencies (✅ Complete)
 
