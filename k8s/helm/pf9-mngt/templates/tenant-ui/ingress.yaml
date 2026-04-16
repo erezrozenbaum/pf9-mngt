@@ -13,6 +13,8 @@ metadata:
     app.kubernetes.io/component: tenant-ui
   annotations:
     nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
     {{- if and .Values.tenantUi.ingress.tls.enabled .Values.tenantUi.ingress.host }}
     cert-manager.io/cluster-issuer: {{ .Values.tenantUi.ingress.tls.clusterIssuer | quote }}
     {{- end }}

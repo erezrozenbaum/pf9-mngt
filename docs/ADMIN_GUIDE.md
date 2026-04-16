@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.14  
+**Version**: 1.84.15  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.15 — Tenant Portal: Fix 504 on Login (✅ Complete)
+
+- **Async Keystone call** — `_keystone_auth()` used synchronous `httpx.Client` inside an `async def` route, blocking the uvicorn event loop. Converted to `httpx.AsyncClient`; login is now fully non-blocking under concurrent load.
+- **Local dev proxy fix** — `docker-compose.override.yml` was missing `VITE_TENANT_API_TARGET`, causing Vite to proxy `/tenant/*` to `localhost:8010` inside the `tenant_ui` container (nothing listening). Added `VITE_TENANT_API_TARGET: "http://tenant_portal:8010"`.
+- **K8s ingress timeouts** — added `proxy-read-timeout: 30s` + `proxy-connect-timeout: 10s` annotations to the tenant-ui Helm ingress template (nginx-ingress default of 60 s was allowing slow connections to pile up).
 
 ### v1.84.14 — Tenant Portal: Domain Field on Login + Security Hardening (✅ Complete)
 

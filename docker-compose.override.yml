@@ -50,6 +50,8 @@ services:
       context: ./tenant-ui
       dockerfile: Dockerfile
       target: build           # Node stage — has npm + Vite installed
+    environment:
+      VITE_TENANT_API_TARGET: "http://tenant_portal:8010"  # Docker service name resolves correctly
     ports:
       - "8082:8080"           # host:8082 → container:8080 (avoids clash with pgadmin on 8080)
     command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "8080"]

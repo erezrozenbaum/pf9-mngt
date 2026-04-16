@@ -185,7 +185,7 @@ def _write_audit(
         logger.error("Failed to write audit log: %s", exc)
 
 
-def _keystone_auth(auth_url: str, username: str, password: str, domain: str = "Default") -> dict:
+async def _keystone_auth(auth_url: str, username: str, password: str, domain: str = "Default") -> dict:
     """
     Authenticate against Keystone v3 and return the response body.
     Raises HTTPException on failure.
@@ -207,8 +207,8 @@ def _keystone_auth(auth_url: str, username: str, password: str, domain: str = "D
         }
     }
     try:
-        with httpx.Client(timeout=15, follow_redirects=False) as client:
-            resp = client.post(
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            resp = await client.post(
                 f"{auth_url.rstrip('/')}/v3/auth/tokens",
                 json=payload,
             )
@@ -285,7 +285,7 @@ async def login(body: LoginRequest, request: Request):
         )
 
     # 2. Keystone authentication — credentials discarded after this call
-    ks_body = _keystone_auth(cp["auth_url"], body.username, body.password, body.domain)
+    ks_body = await _keystone_auth(cp["auth_url"], body.username, body.password, body.domain)
     keystone_user_id = _extract_user_id(ks_body)
     # Credentials and ks_body are no longer needed; Python GC will handle them
 

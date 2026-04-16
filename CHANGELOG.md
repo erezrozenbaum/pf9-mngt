@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.84.14] - 2026-04-17
+## [1.84.15] - 2026-04-16
+
+### Fixed
+- **Tenant Portal — 504 on login (async Keystone call)** — `_keystone_auth()` used the synchronous `httpx.Client` inside an `async def` FastAPI route, blocking the uvicorn event loop thread. Under any concurrent load, login requests piled up and exceeded gateway timeouts. Converted to `httpx.AsyncClient` with `await` so Keystone authentication is fully non-blocking.
+- **Local dev — `/tenant/` requests not reaching tenant portal container** — in Docker Compose dev mode, the Vite dev server's `/tenant` proxy was resolving to `localhost:8010` *inside the `tenant_ui` container* (nothing listening there) because `VITE_TENANT_API_TARGET` was not set in `docker-compose.override.yml`. Added `VITE_TENANT_API_TARGET: "http://tenant_portal:8010"` so the proxy targets the correct Docker service name.
+- **K8s ingress — no proxy timeout annotations on tenant-ui ingress** — the nginx-ingress controller default of 60 s was allowing slow Keystone connections to pile up and trigger gateway timeouts. Added `proxy-read-timeout: 30s` and `proxy-connect-timeout: 10s` annotations to the tenant-ui Helm ingress template.
+
+## [1.84.14] - 2026-04-16
 
 ### Added
 - **Tenant Portal — Keystone Domain field on login page** — the tenant portal login form now includes a **Domain** field (default: `Default`), matching the Domain field present on the Platform9 native Keystone login page. This enables users in non-default Keystone identity domains to authenticate correctly. The field is threaded end-to-end through `LoginRequest` (Pydantic model) → `_keystone_auth()` → Keystone `/v3/auth/tokens` payload.
