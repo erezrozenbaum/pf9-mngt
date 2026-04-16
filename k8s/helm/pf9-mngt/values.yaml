@@ -256,6 +256,7 @@ tenantPortal:
     ipBinding: warn          # TENANT_IP_BINDING: strict | warn | off
     tokenExpireMinutes: "60" # TENANT_TOKEN_EXPIRE_MINUTES
     corsOriginPattern: ""    # TENANT_CORS_ORIGIN_PATTERN (defaults to ingress host pattern)
+    restoreEnabled: "true"   # TENANT_RESTORE_ENABLED: enable self-service restore for tenants
   resources:
     limits:
       cpu: "500m"

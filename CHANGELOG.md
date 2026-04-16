@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.84.23] - 2026-04-16
+## [1.84.24] - 2026-04-16
+
+### Fixed
+- **Snapshot Coverage "Last Snapshot: —"** — compliance endpoint used `status = 'success'` in SQL filter; actual status value is `'OK'`. Fixed to `status = 'OK'`.
+- **Snapshot Coverage 4% coverage (diluted by SKIPPED records)** — `total_runs` denominator included SKIPPED entries (scheduler skips when a snapshot already exists that day). SKIPPED is neither success nor failure — excluded from denominator. Coverage now computed as `OK / (OK + ERROR)`.
+- **Restore Center "No restore points available"** — `TENANT_RESTORE_ENABLED` env var was not set in K8s Helm values; it defaults to `false`, causing 503 on all restore-point requests. Added `restoreEnabled: "true"` to `values.yaml` and the corresponding `TENANT_RESTORE_ENABLED` env var to `templates/tenant-portal/deployment.yaml`.
+- **Runbooks — 9 admin-only runbooks visible to tenants** — `hypervisor_maintenance_evacuate`, `cluster_capacity_planner`, `tenant_offboarding`, `quota_adjustment`, `image_lifecycle_audit`, `network_isolation_audit`, `cost_leakage_report`, `monthly_executive_snapshot`, `capacity_forecast` are platform-admin operations not relevant to individual tenants. Set `is_tenant_visible = false` for these 9 in `db/init.sql`, `db/migrate_tenant_portal.sql`, and applied live to K8s DB (16 tenant-facing runbooks remain).
+
 
 ### Added
 - **Tenant portal — inventory sync status bar** — the Shell header now shows "Inventory synced X min ago" (sourced from a new `GET /tenant/inventory-status` endpoint that queries `inventory_runs`) with a **⟳ Refresh** button that remounts the current screen to reload its data.

@@ -61,6 +61,8 @@ spec:
               value: {{ .Values.tenantPortal.config.ipBinding | quote }}
             - name: TENANT_TOKEN_EXPIRE_MINUTES
               value: {{ .Values.tenantPortal.config.tokenExpireMinutes | quote }}
+            - name: TENANT_RESTORE_ENABLED
+              value: {{ .Values.tenantPortal.config.restoreEnabled | default "true" | quote }}
             {{- if .Values.tenantPortal.config.corsOriginPattern }}
             - name: TENANT_CORS_ORIGIN_PATTERN
               value: {{ .Values.tenantPortal.config.corsOriginPattern | quote }}
@@ -73,6 +75,9 @@ spec:
               value: pf9-redis
             - name: REDIS_PORT
               value: "6379"
+            # --- Internal service URLs ---
+            - name: MONITORING_SERVICE_URL
+              value: "http://pf9-monitoring:8001"
           livenessProbe:
             httpGet:
               path: /tenant/health

@@ -38,13 +38,18 @@ router = APIRouter(tags=["metrics"])
 
 _METRICS_CACHE_PATHS = [
     "/app/monitoring/cache/metrics_cache.json",
-    "/tmp/metrics_cache.json",  # nosec B108 — read-only fallback path, never written by user input
+    "/tmp/cache/metrics_cache.json",   # nosec B108 — read-only; written by monitoring service
+    "/tmp/metrics_cache.json",         # nosec B108 — read-only fallback path
     "metrics_cache.json",
     "/app/metrics_cache.json",
 ]
 
+# Internal monitoring service URL (same cluster, no auth required — not exposed externally)
+_MONITORING_SERVICE_URL = os.getenv("MONITORING_SERVICE_URL", "http://pf9-monitoring:8001")
+
 
 def _load_metrics_cache() -> Optional[Dict[str, Any]]:
+    # 1. Try local file paths (works in Docker Compose with shared volume)
     for path in _METRICS_CACHE_PATHS:
         if os.path.exists(path):
             try:
@@ -52,6 +57,21 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
                     return json.load(f)
             except Exception as exc:
                 logger.warning("Could not read metrics cache %s: %s", path, exc)
+
+    # 2. Fallback: call the monitoring service HTTP API (works in K8s where there is no shared volume)
+    try:
+        import httpx  # already in requirements via restore_routes
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(f"{_MONITORING_SERVICE_URL}/metrics/vms")
+            resp.raise_for_status()
+            data = resp.json()
+            # Normalise to the same shape the file cache uses: {"vms": [...], "timestamp": ...}
+            return {
+                "vms": data.get("data", []),
+                "timestamp": data.get("timestamp"),
+            }
+    except Exception as exc:
+        logger.warning("Could not fetch metrics from monitoring service %s: %s", _MONITORING_SERVICE_URL, exc)
     return None
 
 

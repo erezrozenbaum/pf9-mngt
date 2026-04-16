@@ -371,10 +371,10 @@ async def compliance(ctx: TenantContext = Depends(get_tenant_context)):
                     s.name        AS vm_name,
                     s.project_id,
                     s.region_id,
-                    COUNT(sr.id)                                                  AS total_runs,
+                    COUNT(sr.id) FILTER (WHERE sr.status IN ('OK', 'ERROR'))   AS total_runs,
                     COUNT(sr.id) FILTER (WHERE sr.status = 'OK')                AS success_runs,
                     COUNT(sr.id) FILTER (WHERE sr.status = 'ERROR')             AS failed_runs,
-                    MAX(sr.created_at) FILTER (WHERE sr.status = 'success')      AS last_success_at,
+                    MAX(sr.created_at) FILTER (WHERE sr.status = 'OK')          AS last_success_at,
                     MAX(sr.created_at)                                            AS last_run_at
                 FROM servers s
                 LEFT JOIN snapshot_records sr
