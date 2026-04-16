@@ -74,8 +74,10 @@ GRANT SELECT ON tenant_cp_view TO tenant_portal_role;
 -- Grants on pre-existing tables -----------------------------------------
 GRANT SELECT                  ON servers, volumes, snapshots, snapshot_records TO tenant_portal_role;
 GRANT SELECT, INSERT, UPDATE  ON restore_jobs    TO tenant_portal_role;
-GRANT SELECT                  ON pf9_regions     TO tenant_portal_role;
-GRANT SELECT                  ON users           TO tenant_portal_role;
+GRANT SELECT                  ON pf9_regions        TO tenant_portal_role;
+GRANT SELECT                  ON role_assignments   TO tenant_portal_role;
+GRANT SELECT                  ON projects           TO tenant_portal_role;
+GRANT SELECT                  ON users              TO tenant_portal_role;
 GRANT SELECT                  ON runbooks        TO tenant_portal_role;
 GRANT INSERT                  ON auth_audit_log  TO tenant_portal_role;
 GRANT INSERT                  ON notification_log TO tenant_portal_role;

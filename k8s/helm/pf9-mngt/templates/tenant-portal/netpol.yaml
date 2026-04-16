@@ -1,6 +1,6 @@
 # NetworkPolicy for pf9-tenant-portal
-# Ingress: only from nginx-ingress controller pods (path /tenant/*)
-# Egress:  only to pf9-db (5432) + pf9-redis (6379); all other egress blocked.
+# Ingress: only from the dedicated nginx-tenant ingress controller (ingress-nginx-tenant namespace)
+# Egress:  DB (5432) + Redis (6379) + Keystone HTTPS (443, 5000) + DNS; all other egress blocked.
 # Rationale: tenant_portal_role must never reach the admin API, LDAP, or SMTP.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -20,11 +20,13 @@ spec:
     - Egress
 
   ingress:
-    # Allow HTTP from nginx-ingress controller only
+    # Allow HTTP from the dedicated nginx-tenant ingress controller only.
+    # The tenant controller is deployed into the ingress-nginx-tenant namespace
+    # (helm install nginx-ingress-tenant ... --namespace ingress-nginx-tenant).
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: ingress-nginx
+              kubernetes.io/metadata.name: ingress-nginx-tenant
           podSelector:
             matchLabels:
               app.kubernetes.io/name: ingress-nginx
@@ -51,6 +53,16 @@ spec:
               app.kubernetes.io/component: redis
       ports:
         - port: 6379
+          protocol: TCP
+
+    # Keystone authentication — tenant-portal calls the control plane's Keystone
+    # endpoint to validate credentials. Allow HTTPS (443) and the Keystone
+    # native port (5000) to any destination (the auth_url is user-configured).
+    - to: []
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 5000
           protocol: TCP
 
     # DNS resolution (CoreDNS)
