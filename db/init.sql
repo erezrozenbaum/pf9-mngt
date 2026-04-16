@@ -3950,7 +3950,7 @@ GRANT SELECT ON runbooks, runbook_project_tags TO tenant_portal_role;
 GRANT SELECT ON tenant_cp_view TO tenant_portal_role;
 GRANT SELECT ON tenant_portal_access TO tenant_portal_role;
 GRANT SELECT ON tenant_portal_branding TO tenant_portal_role;
-GRANT INSERT ON tenant_action_log TO tenant_portal_role;
+GRANT SELECT, INSERT ON tenant_action_log TO tenant_portal_role;
 GRANT USAGE, SELECT ON SEQUENCE tenant_action_log_id_seq TO tenant_portal_role;
 GRANT INSERT ON auth_audit_log TO tenant_portal_role;
 GRANT INSERT ON notification_log TO tenant_portal_role;

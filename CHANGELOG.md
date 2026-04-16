@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.18] - 2026-04-16
+
+### Fixed
+- **DB — `tenant_portal_role` missing `SELECT` on `tenant_action_log`** — all post-login endpoints (`/tenant/events`, `/tenant/dashboard`) call `audit_helper.log_action()` which both reads and writes `tenant_action_log`. The role had `INSERT` but not `SELECT`, so `GET /tenant/events` (which explicitly SELECTs from the table) crashed with `permission denied for table tenant_action_log`. Every screen that loads on the dashboard immediately returned 500. Added `SELECT` to the existing `INSERT` grant in `db/init.sql` and `db/migrate_tenant_portal.sql`.
+- **K8s — `tenant_portal_role` password mismatch** — the K8s secret `pf9-tenant-portal-db-credentials` was created with a password that had never been set on the `tenant_portal_role` DB user in `pf9-db-0`. The pod failed to open any DB connection at login time. Fixed by updating the DB role password to match the secret: `ALTER USER tenant_portal_role WITH PASSWORD '...'` applied directly to `pf9-db-0`.
+
 ## [1.84.17] - 2026-04-16
 
 ### Fixed

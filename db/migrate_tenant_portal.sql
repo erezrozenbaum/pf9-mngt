@@ -79,6 +79,7 @@ GRANT SELECT                  ON role_assignments   TO tenant_portal_role;
 GRANT SELECT                  ON projects           TO tenant_portal_role;
 GRANT SELECT                  ON users              TO tenant_portal_role;
 GRANT SELECT                  ON runbooks        TO tenant_portal_role;
+GRANT SELECT, INSERT          ON tenant_action_log TO tenant_portal_role;
 GRANT INSERT                  ON auth_audit_log  TO tenant_portal_role;
 GRANT INSERT                  ON notification_log TO tenant_portal_role;
 
