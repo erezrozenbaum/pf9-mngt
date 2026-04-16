@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.19  
+**Version**: 1.84.20  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.20 — Fix `tenant-ui` Build: `api.ts` Corruption (✅ Complete)
+
+- **`api.ts` corrupted by overlapping replacements** — 10+ TypeScript errors (`TS1005 ',' expected`, `TS1160 Unterminated template literal`) caused `npm run build` to fail in CI. Interface field declarations were injected mid-function body; map callbacks were missing closing parens. Rewrote the entire file from the Dashboard section onward as a single clean replacement.
 
 ### v1.84.19 — Tenant Portal: `restore_jobs` region_id + api.ts Adapter Layer (✅ Complete)
 
