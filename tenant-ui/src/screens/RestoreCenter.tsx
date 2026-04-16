@@ -15,10 +15,11 @@ import {
 
 function JobStatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase();
-  if (s === "completed" || s === "success") return <span className="badge badge-green">Completed</span>;
+  if (s === "completed" || s === "succeeded" || s === "success") return <span className="badge badge-green">Completed</span>;
   if (s === "failed"    || s === "error")   return <span className="badge badge-red">Failed</span>;
   if (s === "running"   || s === "in_progress") return <span className="badge badge-blue">Running</span>;
   if (s === "pending")  return <span className="badge badge-amber">Pending</span>;
+  if (s === "canceled" || s === "cancelled") return <span className="badge badge-grey">Cancelled</span>;
   return <span className="badge badge-grey">{status}</span>;
 }
 
@@ -38,8 +39,10 @@ export function RestoreCenter() {
   const [restorePoints, setRestorePoints] = useState<RestorePoint[]>([]);
   const [rpLoading, setRpLoading] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<RestorePoint | null>(null);
+  const [mode, setMode] = useState<"NEW" | "REPLACE">("NEW");
+  const [safetySnapshot, setSafetySnapshot] = useState(true); // default ON; mandatory for REPLACE
   const [newVmName, setNewVmName] = useState("");
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmVmName, setConfirmVmName] = useState("");  // REPLACE confirmation
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -60,6 +63,10 @@ export function RestoreCenter() {
     setRpLoading(true);
     setRestorePoints([]);
     setSelectedPoint(null);
+    setMode("NEW");
+    setSafetySnapshot(true);
+    setConfirmVmName("");
+    setSubmitError(null);
     try {
       setRestorePoints(await apiRestorePoints(vm.vm_id));
     } finally {
@@ -73,12 +80,14 @@ export function RestoreCenter() {
       `${selectedVm?.vm_name ?? "vm"}-restored-${new Date().toISOString().slice(0, 10)}`
     );
     setStep(3);
-    setConfirmed(false);
+    setConfirmVmName("");
     setSubmitError(null);
   };
 
   const handleExecute = async () => {
-    if (!selectedVm || !selectedPoint || !confirmed) return;
+    if (!selectedVm || !selectedPoint) return;
+    // For REPLACE: require typing the VM name exactly
+    if (mode === "REPLACE" && confirmVmName !== selectedVm.vm_name) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -86,14 +95,16 @@ export function RestoreCenter() {
         vm_id:       selectedVm.vm_id,
         snapshot_id: selectedPoint.snapshot_id,
         region_id:   selectedVm.region_id,
-        new_vm_name: newVmName.trim() || undefined,
+        new_vm_name: mode === "NEW" ? (newVmName.trim() || undefined) : undefined,
+        mode,
       });
       const job = await apiRestoreExecute(plan.plan_id);
-      setSuccessMsg(`Restore started for ${job.vm_name}. Track progress in the jobs panel.`);
+      const modeLabel = mode === "REPLACE" ? "Replace" : "Restore";
+      setSuccessMsg(`${modeLabel} started for ${job.vm_name}. Track progress in the jobs panel.`);
       setStep(1);
       setSelectedVm(null);
       setSelectedPoint(null);
-      setConfirmed(false);
+      setConfirmVmName("");
       refresh();
     } catch (e: unknown) {
       setSubmitError(e instanceof Error ? e.message : "Restore failed. Please try again.");
@@ -116,7 +127,9 @@ export function RestoreCenter() {
     setStep(1);
     setSelectedVm(null);
     setSelectedPoint(null);
-    setConfirmed(false);
+    setMode("NEW");
+    setSafetySnapshot(true);
+    setConfirmVmName("");
     setSubmitError(null);
   };
 
@@ -196,18 +209,65 @@ export function RestoreCenter() {
           </div>
         )}
 
-        {/* Step 2 — Select restore point */}
+        {/* Step 2 — Select restore mode + restore point */}
         {step === 2 && selectedVm && (
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: ".75rem", marginBottom: "1rem" }}>
               <button className="btn btn-secondary" onClick={resetWizard} style={{ padding: ".35rem .65rem" }}>← Back</button>
               <div className="section-title" style={{ marginBottom: 0 }}>
-                Step 2 — Select a restore point for <strong>{selectedVm.vm_name}</strong>
+                Step 2 — Restore <strong>{selectedVm.vm_name}</strong>
               </div>
             </div>
-            <div className="info-banner">
-              A NEW copy of this VM will be created alongside the existing one. Your running VM is unaffected.
+
+            {/* Mode selector */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".75rem", marginBottom: "1.25rem" }}>
+              <button
+                className="card"
+                style={{
+                  textAlign: "left", cursor: "pointer", padding: ".875rem 1rem",
+                  border: `2px solid ${mode === "NEW" ? "var(--brand-primary)" : "var(--color-border)"}`,
+                  background: mode === "NEW" ? "var(--color-surface-active, var(--color-surface))" : "var(--color-surface)",
+                  width: "100%",
+                }}
+                onClick={() => setMode("NEW")}
+              >
+                <div style={{ fontWeight: 600, marginBottom: ".3rem" }}>
+                  {mode === "NEW" ? "✓ " : ""}Restore to New VM
+                </div>
+                <div style={{ fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
+                  Creates a copy alongside the existing VM. Non-destructive.
+                </div>
+              </button>
+              <button
+                className="card"
+                style={{
+                  textAlign: "left", cursor: "pointer", padding: ".875rem 1rem",
+                  border: `2px solid ${mode === "REPLACE" ? "var(--color-error)" : "var(--color-border)"}`,
+                  background: mode === "REPLACE" ? "var(--color-surface-active, var(--color-surface))" : "var(--color-surface)",
+                  width: "100%",
+                }}
+                onClick={() => setMode("REPLACE")}
+              >
+                <div style={{ fontWeight: 600, marginBottom: ".3rem", color: mode === "REPLACE" ? "var(--color-error)" : undefined }}>
+                  {mode === "REPLACE" ? "✓ " : ""}Replace VM In-Place
+                </div>
+                <div style={{ fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
+                  Deletes the existing VM and recreates it from the snapshot. Destructive.
+                </div>
+              </button>
             </div>
+
+            {mode === "NEW" && (
+              <div className="info-banner" style={{ marginBottom: "1rem" }}>
+                A NEW copy of this VM will be created alongside the existing one. Your running VM is unaffected.
+              </div>
+            )}
+            {mode === "REPLACE" && (
+              <div className="error-banner" style={{ marginBottom: "1rem", background: "rgba(255,100,100,.08)" }}>
+                ⚠ <strong>Destructive operation:</strong> The existing VM will be deleted before a new one is created from the snapshot. A safety snapshot is automatically taken first.
+              </div>
+            )}
+
             {rpLoading && <div className="empty-state"><span className="loading-spinner" /></div>}
             {!rpLoading && restorePoints.length === 0 && (
               <div className="empty-state">No restore points available for this VM.</div>
@@ -249,50 +309,107 @@ export function RestoreCenter() {
                 {([
                   ["VM",            selectedVm.vm_name],
                   ["Region",        selectedVm.region_display_name],
+                  ["Mode",          mode === "REPLACE" ? "⚠ Replace In-Place" : "New VM (safe copy)"],
                   ["Snapshot",      selectedPoint.snapshot_name],
                   ["Snapshot date", new Date(selectedPoint.created_at).toLocaleString()],
                 ] as Array<[string, string]>).map(([k, v]) => (
                   <div key={k}>
                     <dt style={{ fontSize: ".7rem", fontWeight: 600, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: ".04em" }}>{k}</dt>
-                    <dd style={{ fontSize: ".875rem" }}>{v}</dd>
+                    <dd style={{ fontSize: ".875rem", color: k === "Mode" && mode === "REPLACE" ? "var(--color-error)" : undefined }}>{v}</dd>
                   </div>
                 ))}
               </dl>
             </div>
 
-            <div className="field">
-              <label htmlFor="new-vm-name">Name for restored VM</label>
-              <input
-                id="new-vm-name"
-                className="input"
-                type="text"
-                value={newVmName}
-                onChange={(e) => setNewVmName(e.target.value)}
-                disabled={submitting}
-                placeholder="my-vm-restored-2026-04-14"
-              />
-            </div>
+            {/* NEW mode: new VM name input */}
+            {mode === "NEW" && (
+              <div className="field">
+                <label htmlFor="new-vm-name">Name for restored VM</label>
+                <input
+                  id="new-vm-name"
+                  className="input"
+                  type="text"
+                  value={newVmName}
+                  onChange={(e) => setNewVmName(e.target.value)}
+                  disabled={submitting}
+                  placeholder="my-vm-restored-2026-04-14"
+                />
+              </div>
+            )}
 
-            <label style={{ display: "flex", alignItems: "flex-start", gap: ".5rem", marginBottom: "1rem", cursor: "pointer", fontWeight: 400, color: "var(--color-text)" }}>
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-                disabled={submitting}
-                style={{ marginTop: ".15rem" }}
-              />
-              I understand this will create an additional VM in my environment.
-            </label>
+            {/* REPLACE mode: safety snapshot notice + VM name confirmation */}
+            {mode === "REPLACE" && (
+              <>
+                <div style={{
+                  background: "rgba(255,80,80,.07)",
+                  border: "1px solid var(--color-error)",
+                  borderRadius: "6px",
+                  padding: ".875rem 1rem",
+                  marginBottom: "1rem",
+                }}>
+                  <div style={{ fontWeight: 600, color: "var(--color-error)", marginBottom: ".4rem" }}>
+                    ⚠ Destructive operation — please read carefully
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: "1.2rem", fontSize: ".875rem", lineHeight: 1.6, color: "var(--color-text)" }}>
+                    <li>A <strong>safety snapshot</strong> will be taken of the current VM before it is deleted.</li>
+                    <li>The existing VM <strong>{selectedVm.vm_name}</strong> will be <strong>permanently deleted</strong>.</li>
+                    <li>A new VM will be created from the selected snapshot with the same name.</li>
+                    <li>IP addresses will be reassigned where possible.</li>
+                  </ul>
+                </div>
+
+                <label style={{ display: "flex", alignItems: "flex-start", gap: ".5rem", marginBottom: "1rem", cursor: "pointer", fontWeight: 400, color: "var(--color-text)" }}>
+                  <input
+                    type="checkbox"
+                    checked={safetySnapshot}
+                    onChange={(e) => setSafetySnapshot(e.target.checked)}
+                    disabled={true} // Safety snapshot is mandatory for tenant REPLACE
+                    style={{ marginTop: ".15rem" }}
+                  />
+                  <span>
+                    <strong>Take a safety snapshot before deleting</strong>
+                    <span style={{ display: "block", fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
+                      Mandatory for self-service replace operations. Cannot be disabled.
+                    </span>
+                  </span>
+                </label>
+
+                <div className="field">
+                  <label htmlFor="confirm-vm-name">
+                    Type <strong>{selectedVm.vm_name}</strong> to confirm the replace
+                  </label>
+                  <input
+                    id="confirm-vm-name"
+                    className="input"
+                    type="text"
+                    value={confirmVmName}
+                    onChange={(e) => setConfirmVmName(e.target.value)}
+                    disabled={submitting}
+                    placeholder={selectedVm.vm_name}
+                    autoComplete="off"
+                  />
+                </div>
+              </>
+            )}
 
             {submitError && <div className="error-banner" style={{ marginBottom: "1rem" }}>{submitError}</div>}
 
             <button
-              className="btn btn-primary"
+              className={`btn ${mode === "REPLACE" ? "btn-danger" : "btn-primary"}`}
               style={{ width: "100%", justifyContent: "center" }}
-              disabled={!confirmed || submitting || !newVmName.trim()}
+              disabled={
+                submitting ||
+                (mode === "NEW" && !newVmName.trim()) ||
+                (mode === "REPLACE" && confirmVmName !== selectedVm.vm_name)
+              }
               onClick={handleExecute}
             >
-              {submitting ? <span className="loading-spinner" /> : "Start Restore"}
+              {submitting
+                ? <span className="loading-spinner" />
+                : mode === "REPLACE"
+                  ? "Replace VM (Destructive)"
+                  : "Start Restore"
+              }
             </button>
           </div>
         )}
@@ -311,10 +428,17 @@ export function RestoreCenter() {
               <div key={job.job_id} className="card" style={{ padding: "1rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: ".35rem" }}>
                   <div style={{ fontWeight: 600, fontSize: ".875rem" }}>{job.vm_name}</div>
-                  <JobStatusBadge status={job.status} />
+                  <div style={{ display: "flex", gap: ".4rem", alignItems: "center" }}>
+                    {job.mode === "REPLACE" && (
+                      <span className="badge badge-red" style={{ fontSize: ".7rem" }}>Replace</span>
+                    )}
+                    <JobStatusBadge status={job.status} />
+                  </div>
                 </div>
                 <div style={{ fontSize: ".8rem", color: "var(--color-text-secondary)", marginBottom: ".5rem" }}>
-                  → {job.new_vm_name} · {job.region_display_name}
+                  {job.mode === "REPLACE"
+                    ? `In-place replace · ${job.region_display_name}`
+                    : `→ ${job.new_vm_name} · ${job.region_display_name}`}
                 </div>
                 <div className="progress-track" style={{ marginBottom: ".35rem" }}>
                   <div className="progress-fill" style={{ width: `${job.progress_pct}%` }} />
@@ -348,13 +472,21 @@ export function RestoreCenter() {
                   <div>
                     <div style={{ fontWeight: 500, fontSize: ".875rem" }}>{job.vm_name}</div>
                     <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)" }}>
-                      {new Date(job.updated_at).toLocaleString()}
-                      {job.error_message && (
-                        <span style={{ color: "var(--color-error)", marginLeft: ".4rem" }}>· {job.error_message}</span>
+                      {job.mode === "REPLACE" ? "Replace in-place" : `→ ${job.new_vm_name}`}
+                      {" · "}{new Date(job.updated_at).toLocaleString()}
+                      {(job.failure_reason || job.error_message) && (
+                        <span style={{ color: "var(--color-error)", marginLeft: ".4rem" }}>
+                          · {job.failure_reason || job.error_message}
+                        </span>
                       )}
                     </div>
                   </div>
-                  <JobStatusBadge status={job.status} />
+                  <div style={{ display: "flex", gap: ".4rem", alignItems: "center", flexShrink: 0 }}>
+                    {job.mode === "REPLACE" && (
+                      <span className="badge badge-red" style={{ fontSize: ".7rem" }}>Replace</span>
+                    )}
+                    <JobStatusBadge status={job.status} />
+                  </div>
                 </div>
               </div>
             ))}

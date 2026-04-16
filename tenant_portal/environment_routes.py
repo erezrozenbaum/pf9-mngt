@@ -52,6 +52,20 @@ def _region_display(cur, region_ids: List[str]) -> dict:
     return {row["id"]: row["display_name"] for row in cur.fetchall()}
 
 
+def _extract_ips(raw_json) -> list:
+    """Extract IP addresses from Nova server raw_json['addresses']."""
+    if not raw_json or not isinstance(raw_json, dict):
+        return []
+    ips = []
+    for net_addrs in raw_json.get("addresses", {}).values():
+        if isinstance(net_addrs, list):
+            for addr_obj in net_addrs:
+                addr = addr_obj.get("addr")
+                if addr:
+                    ips.append(addr)
+    return ips
+
+
 def _check_vm_ownership(cur, vm_id: str, ctx: TenantContext) -> dict:
     """
     Fetch a single VM owned by the tenant; raise 403 if not found.
@@ -63,8 +77,11 @@ def _check_vm_ownership(cur, vm_id: str, ctx: TenantContext) -> dict:
         SELECT s.id, s.name, s.status, s.vm_state,
                s.flavor_id, s.image_id, s.os_distro, s.os_version,
                s.created_at, s.last_seen_at,
-               s.project_id, s.region_id, s.raw_json
+               s.project_id, s.region_id, s.raw_json,
+               COALESCE(f.vcpus, 0)  AS vcpus,
+               COALESCE(f.ram_mb, 0) AS ram_mb
         FROM servers s
+        LEFT JOIN flavors f ON f.id = s.flavor_id
         WHERE s.id = %s
           AND s.project_id = ANY(%s)
           AND s.region_id  = ANY(%s)
@@ -93,12 +110,16 @@ async def list_vms(ctx: TenantContext = Depends(get_tenant_context)):
                        s.flavor_id, s.image_id, s.os_distro, s.os_version,
                        s.created_at, s.last_seen_at,
                        s.project_id, s.region_id,
+                       s.raw_json,
+                       COALESCE(f.vcpus, 0)  AS vcpus,
+                       COALESCE(f.ram_mb, 0) AS ram_mb,
                        (
                            SELECT MAX(sr.created_at)
                            FROM snapshot_records sr
-                           WHERE sr.vm_id = s.id AND sr.status = 'success'
+                           WHERE sr.vm_id = s.id AND sr.status = 'OK'
                        ) AS last_snapshot_at
                 FROM servers s
+                LEFT JOIN flavors f ON f.id = s.flavor_id
                 WHERE s.project_id = ANY(%s)
                   AND s.region_id  = ANY(%s)
                 ORDER BY s.name
@@ -113,6 +134,7 @@ async def list_vms(ctx: TenantContext = Depends(get_tenant_context)):
     for r in rows:
         r = dict(r)
         r["region_display_name"] = region_map.get(r["region_id"], r["region_id"])
+        r["ip_addresses"] = _extract_ips(r.get("raw_json"))
         r.pop("raw_json", None)
         result.append(r)
     return {"vms": result, "total": len(result)}
@@ -129,10 +151,10 @@ async def get_vm(vm_id: str, ctx: TenantContext = Depends(get_tenant_context)):
             cur.execute(
                 """
                 SELECT
-                    MAX(CASE WHEN status = 'success' THEN created_at END) AS last_snapshot_at,
-                    COUNT(*) FILTER (WHERE status = 'success')            AS total_success,
-                    COUNT(*) FILTER (WHERE status = 'failed')             AS total_failed,
-                    COUNT(*)                                               AS total_runs
+                    MAX(CASE WHEN status = 'OK' THEN created_at END) AS last_snapshot_at,
+                    COUNT(*) FILTER (WHERE status = 'OK')            AS total_success,
+                    COUNT(*) FILTER (WHERE status = 'ERROR')         AS total_failed,
+                    COUNT(*)                                          AS total_runs
                 FROM snapshot_records
                 WHERE vm_id = %s
                 """,
@@ -157,6 +179,7 @@ async def get_vm(vm_id: str, ctx: TenantContext = Depends(get_tenant_context)):
             log_action(cur, ctx, "tenant_view_vm_detail", resource_type="vm", resource_id=vm_id)
             conn.commit()
 
+    vm["ip_addresses"] = _extract_ips(vm.get("raw_json"))
     vm.pop("raw_json", None)
     vm["region_display_name"] = region_map.get(vm["region_id"], vm["region_id"])
     vm["snapshot_stats"] = snap_stats
@@ -348,8 +371,8 @@ async def compliance(ctx: TenantContext = Depends(get_tenant_context)):
                     s.project_id,
                     s.region_id,
                     COUNT(sr.id)                                                  AS total_runs,
-                    COUNT(sr.id) FILTER (WHERE sr.status = 'success')            AS success_runs,
-                    COUNT(sr.id) FILTER (WHERE sr.status = 'failed')             AS failed_runs,
+                    COUNT(sr.id) FILTER (WHERE sr.status = 'OK')                AS success_runs,
+                    COUNT(sr.id) FILTER (WHERE sr.status = 'ERROR')             AS failed_runs,
                     MAX(sr.created_at) FILTER (WHERE sr.status = 'success')      AS last_success_at,
                     MAX(sr.created_at)                                            AS last_run_at
                 FROM servers s
@@ -432,7 +455,7 @@ async def dashboard(ctx: TenantContext = Depends(get_tenant_context)):
                 SELECT
                     COUNT(DISTINCT s.id)                                AS total_vms,
                     COUNT(DISTINCT sr.vm_id)
-                        FILTER (WHERE sr.status = 'success'
+                        FILTER (WHERE sr.status = 'OK'
                                   AND sr.created_at >= NOW() - INTERVAL '7 days') AS covered_7d
                 FROM servers s
                 LEFT JOIN snapshot_records sr ON sr.vm_id = s.id
@@ -526,7 +549,7 @@ async def events(
                     snapshot_id      AS resource_id,
                     project_id,
                     region_id,
-                    (status = 'success') AS success,
+                    (status = 'OK') AS success,
                     created_at       AS occurred_at,
                     json_build_object(
                         'vm_name', vm_name,

@@ -1838,6 +1838,7 @@ class _InternalTenantPlanBody(BaseModel):
     region_id: str
     created_by: str          # must start with "tenant:"
     new_vm_name: Optional[str] = None
+    mode: str = "NEW"        # "NEW" (side-by-side) or "REPLACE" (in-place)
 
 
 class _InternalTenantExecuteBody(BaseModel):
@@ -2837,7 +2838,8 @@ def setup_restore_routes(app):
         req: _InternalTenantPlanBody,
         x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
     ):
-        """Build a tenant restore plan (mode=NEW, ip_strategy=NEW_IPS).
+        """Build a tenant restore plan (mode=NEW or REPLACE).
+        For REPLACE: safety_snapshot_before_replace is forced True; cleanup_old_storage is False.
         Called exclusively by the tenant portal service — not a user-facing route."""
         if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(
             x_internal_secret, INTERNAL_SERVICE_SECRET
@@ -2846,13 +2848,21 @@ def setup_restore_routes(app):
         if not req.created_by.startswith("tenant:"):
             raise HTTPException(400, "invalid_created_by")
 
+        # Validate and normalise mode
+        mode = req.mode.upper() if req.mode.upper() in ("NEW", "REPLACE") else "NEW"
+
         plan_req = RestorePlanRequest(
             project_id=req.project_id,
             vm_id=req.vm_id,
             restore_point_id=req.snapshot_id,
-            mode="NEW",                  # FORCED — tenants cannot use REPLACE
+            mode=mode,
             new_vm_name=req.new_vm_name,
-            ip_strategy="NEW_IPS",      # safe default for self-service
+            # For NEW: assign fresh IPs; for REPLACE: try to keep same IPs
+            ip_strategy="NEW_IPS" if mode == "NEW" else "TRY_SAME_IPS",
+            # SAFETY: safety snapshot is MANDATORY for tenant REPLACE — not optional
+            safety_snapshot_before_replace=(mode == "REPLACE"),
+            # SAFETY: tenants cannot auto-delete old volumes
+            cleanup_old_storage=False,
         )
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")

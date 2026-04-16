@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.21  
+**Version**: 1.84.22  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,11 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.22 — Tenant Portal Data Fixes + REPLACE Restore Mode (✅ Complete)
+
+- All 6 data display bugs fixed: `snapshot_records.status` values (`OK`/`ERROR` not `success`/`failed`), vCPUs/RAM via `flavors` JOIN, IPs from `raw_json['addresses']` JSONB, restore-points via direct `server_id` column, runbooks `is_tenant_visible` set true, snapshot history calendar normalisation.
+- Restore Center: **Replace In-Place** mode added matching admin UI. Safety snapshot mandatory, VM-name typed confirmation required, `cleanup_old_storage` locked off for tenant-initiated restores.
 
 ### v1.84.21 — Fix `tenant-ui` Build: `api.ts` Duplicate Content (✅ Complete)
 

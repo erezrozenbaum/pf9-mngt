@@ -5,7 +5,8 @@ Security gates enforced before any OpenStack operation:
   1. VM/snapshot ownership verified via double-scoped DB query
      (project_id = ANY(token.project_ids) AND region_id = ANY(token.region_ids))
   2. RLS on restore_jobs via inject_rls_vars()
-  3. mode=NEW ONLY — REPLACE mode (destructive) is blocked at the API layer
+  3. REPLACE mode requires explicit VM-name confirmation on the frontend;
+     safety_snapshot_before_replace is FORCED True for all tenant REPLACE jobs
   4. created_by = "tenant:<keystone_user_id>" on all jobs created here
   5. TENANT_RESTORE_ENABLED env var gate — 503 when false (default)
   6. Actual OpenStack execution delegated to admin API internal endpoint
@@ -108,6 +109,7 @@ def _call_admin_plan(
     region_id: str,
     created_by: str,
     new_vm_name: Optional[str],
+    mode: str = "NEW",
 ) -> dict:
     """Call POST /internal/tenant-restore/plan on the admin API."""
     if not INTERNAL_SERVICE_SECRET:
@@ -126,6 +128,7 @@ def _call_admin_plan(
                     "region_id": region_id,
                     "created_by": created_by,
                     "new_vm_name": new_vm_name,
+                    "mode": mode,
                 },
                 headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
             )
@@ -172,7 +175,11 @@ class TenantRestorePlanRequest(BaseModel):
     snapshot_id: str = Field(..., description="UUID of the snapshot to restore from")
     new_vm_name: Optional[str] = Field(
         None,
-        description="Name for the restored VM (default: <vm-name>-restored-<date>)",
+        description="Name for the restored VM (NEW mode) or confirmed VM name (REPLACE mode)",
+    )
+    mode: str = Field(
+        "NEW",
+        description="'NEW' creates a side-by-side copy; 'REPLACE' restores in-place (destructive)",
     )
 
 
@@ -295,14 +302,19 @@ async def list_restore_points(
                 FROM volumes v
                 WHERE v.project_id = ANY(%s)
                   AND v.region_id  = ANY(%s)
-                  AND v.raw_json->'attachments' IS NOT NULL
-                  AND EXISTS (
-                      SELECT 1
-                      FROM jsonb_array_elements(v.raw_json->'attachments') elem
-                      WHERE elem->>'server_id' = %s
+                  AND (
+                      v.server_id = %s
+                      OR (
+                          v.raw_json->'attachments' IS NOT NULL
+                          AND EXISTS (
+                              SELECT 1
+                              FROM jsonb_array_elements(v.raw_json->'attachments') elem
+                              WHERE elem->>'server_id' = %s
+                          )
+                      )
                   )
                 """,
-                (ctx.project_ids, ctx.region_ids, vm_id),
+                (ctx.project_ids, ctx.region_ids, vm_id, vm_id),
             )
             volumes = cur.fetchall()
             volume_ids = [v["volume_id"] for v in volumes]
@@ -364,11 +376,15 @@ async def create_restore_plan(
     and store it as a PLANNED job.  The plan does NOT start any execution;
     call /tenant/restore/execute to trigger the actual restore.
 
-    Always uses mode=NEW (side-by-side). REPLACE mode is never available
-    to tenants.
+    Supports mode=NEW (side-by-side copy) and mode=REPLACE (destructive in-place).
+    For REPLACE, the admin API forces safety_snapshot_before_replace=True so a
+    recovery point is always taken before the original VM is deleted.
     """
     if not TENANT_RESTORE_ENABLED:
         raise HTTPException(503, "restore_disabled")
+
+    # Validate mode
+    mode = req.mode.upper() if req.mode.upper() in ("NEW", "REPLACE") else "NEW"
 
     created_by = f"tenant:{ctx.keystone_user_id}"
 
@@ -379,7 +395,7 @@ async def create_restore_plan(
             vm = _check_vm_for_restore(cur, req.vm_id, ctx)
             snap = _check_snapshot_for_restore(cur, req.snapshot_id, ctx)
 
-            # Verify the snapshot belongs to a volume attached to this VM
+            # Verify the snapshot belongs to the same project as the VM
             if snap["project_id"] != vm["project_id"]:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -392,7 +408,7 @@ async def create_restore_plan(
                 resource_id=req.vm_id,
                 project_id=vm["project_id"],
                 region_id=vm["region_id"],
-                details={"snapshot_id": req.snapshot_id},
+                details={"snapshot_id": req.snapshot_id, "mode": mode},
             )
 
     # 2. Call admin API to build the full plan (OpenStack quota check, etc.)
@@ -403,6 +419,7 @@ async def create_restore_plan(
         region_id=vm["region_id"],
         created_by=created_by,
         new_vm_name=req.new_vm_name,
+        mode=mode,
     )
 
     # 3. Strip internal fields before returning to tenant
@@ -419,7 +436,8 @@ async def create_restore_plan(
             "created_at": plan.get("restore_point", {}).get("created_at"),
             "size_gb": plan.get("restore_point", {}).get("size_gb"),
         },
-        "mode": "NEW",
+        "mode": mode,
+        "safety_snapshot": (mode == "REPLACE"),  # always True for REPLACE
         "new_vm_name": plan.get("new_vm_name"),
         "eligible": plan.get("eligible", True),
         "warnings": plan.get("warnings", []),
