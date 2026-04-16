@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.20  
+**Version**: 1.84.21  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,10 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.21 — Fix `tenant-ui` Build: `api.ts` Duplicate Content (✅ Complete)
+
+- **`api.ts` had a second corrupted copy appended** — v1.84.20's replacement only appended clean content after the old corrupted content (1341 lines vs ~661 expected). File had two copies: lines 1–661 clean, 662–1341 corrupted duplicate. Docker build failed again with `TS1005`/`TS1160`. Fixed by truncating to the first 661 lines. Verified with `docker compose build tenant_ui` passing locally.
 
 ### v1.84.20 — Fix `tenant-ui` Build: `api.ts` Corruption (✅ Complete)
 
