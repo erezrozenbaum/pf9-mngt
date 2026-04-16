@@ -244,7 +244,7 @@ tenantPortal:
     tag: ""   # "" → falls back to global.imageTag
   replicaCount: 1
   config:
-    controlPlaneId: ""       # Override: TENANT_PORTAL_CONTROL_PLANE_ID (empty = "default")
+    controlPlaneId: "default" # TENANT_PORTAL_CONTROL_PLANE_ID — must match pf9_control_planes.id
     mfaMode: email_otp       # TENANT_MFA_MODE: email_otp | totp | none
     ipBinding: warn          # TENANT_IP_BINDING: strict | warn | off
     tokenExpireMinutes: "60" # TENANT_TOKEN_EXPIRE_MINUTES

@@ -240,7 +240,23 @@ The admin UI's **Branding** sub-tab provides a form with fields for all branding
 
 ## MFA Configuration
 
-Two MFA methods are supported:
+### MFA decision logic
+
+Whether MFA is required for a given login is decided by **two independent controls**:
+
+| Control | Where set | Effect |
+|---------|-----------|--------|
+| `mfa_required` per-user flag | Admin UI → Tenant Portal → Access Management → Grant/Edit | MFA required for this user when `true` |
+| `TENANT_MFA_MODE` env var on the pod | `values.yaml` → `tenantPortal.config.mfaMode` | Global kill-switch: set to `none` to disable MFA cluster-wide regardless of per-user flags |
+
+The effective rule is: **`mfa_required = access_row.mfa_required AND TENANT_MFA_MODE != "none"`**
+
+This means:
+- An admin can grant a user access *without* MFA by leaving the "Require MFA" checkbox unchecked, even when `TENANT_MFA_MODE=email_otp`.
+- Setting `TENANT_MFA_MODE=none` disables MFA for all users without changing any DB rows.
+- Setting `TENANT_MFA_MODE=email_otp` or `totp` does **not** force MFA on users whose `mfa_required` flag is `false`.
+
+Two MFA methods are supported (when enabled):
 
 ### TOTP (Google Authenticator / Authy)
 - User scans a QR code during first login

@@ -3943,6 +3943,8 @@ GRANT USAGE ON SCHEMA public TO tenant_portal_role;
 GRANT SELECT ON servers, volumes, snapshots, snapshot_records TO tenant_portal_role;
 GRANT SELECT, INSERT, UPDATE ON restore_jobs TO tenant_portal_role;
 GRANT SELECT ON pf9_regions TO tenant_portal_role;
+GRANT SELECT ON role_assignments TO tenant_portal_role;
+GRANT SELECT ON projects TO tenant_portal_role;
 GRANT SELECT ON users TO tenant_portal_role;
 GRANT SELECT ON runbooks, runbook_project_tags TO tenant_portal_role;
 GRANT SELECT ON tenant_cp_view TO tenant_portal_role;

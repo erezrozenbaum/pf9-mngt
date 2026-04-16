@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.16] - 2026-04-16
+
+### Fixed
+- **K8s NetworkPolicy — nginx-tenant controller blocked from tenant-portal** — the `pf9-tenant-portal` NetworkPolicy `ingress.from` rule specified namespace `ingress-nginx`, but the dedicated tenant ingress controller is deployed into `ingress-nginx-tenant` (see `k8s/nginx-ingress-tenant/values.yaml`). All `/tenant/*` requests returned 504 because the nginx-tenant pods were in the wrong namespace for the policy. Fixed by changing the `namespaceSelector` label to `ingress-nginx-tenant`.
+- **K8s NetworkPolicy — no egress rule for Keystone** — the `pf9-tenant-portal` egress policy only allowed DB (5432), Redis (6379), and DNS (53). Keystone authentication requires outbound HTTPS to the control plane host. Added egress rules for port 443 and port 5000 (Keystone public endpoint) to any destination.
+- **Tenant Portal login — generic error message masked real failures** — `Login.tsx` always displayed "Invalid credentials" regardless of the HTTP status code. A 504 (gateway unreachable), 403 (access denied), or 429 (rate limit) all appeared identical. Error banner now shows context-appropriate messages: service unavailable for 5xx, access denied for 403, rate limit for 429, and invalid credentials only for 401.
+- **Keystone auth URL — double `/v3` path** — `auth_url` stored in the DB already ends in `/v3`; `_keystone_auth()` appended `/v3/auth/tokens` without stripping the trailing `/v3`, producing `.../keystone/v3/v3/auth/tokens` → 401. Fixed by stripping a trailing `/v3` before appending the token path.
+- **Keystone auth scope — system-scoped token blocked regular users** — the Keystone token request carried `"scope": {"system": {"all": true}}`, which requires the `admin` system role. Any non-admin tenant user received a 401. Removed the scope entirely; the portal only needs identity verification, so an unscoped token is correct.
+- **MFA — global mode overrode per-user admin setting** — `mfa_required` was computed as `access_row["mfa_required"] OR TENANT_MFA_MODE != "none"`, meaning MFA was mandatory for *all* users whenever the global mode was set (e.g. `email_otp`), ignoring the per-user checkbox set by the admin at grant time. Fixed: MFA is now required only when **both** the per-user `mfa_required` flag is true **and** `TENANT_MFA_MODE != "none"`. The global mode acts as a kill-switch (set it to `none` to disable MFA cluster-wide), while the per-user flag gives the admin fine-grained control.
+- **K8s Helm — `TENANT_PORTAL_CONTROL_PLANE_ID` was empty string** — `values.yaml` set `controlPlaneId: ""` with a comment "empty = default". However `os.getenv("TENANT_PORTAL_CONTROL_PLANE_ID", "default")` only falls back when the variable is *unset*; an explicit empty string bypasses the default, so every login looked up `control_plane_id = ''` and found no access rows → 403. Fixed in two places: `auth_routes.py` uses `os.getenv(...) or "default"` to treat empty strings as unset; `values.yaml` now sets `controlPlaneId: "default"` explicitly.
+- **DB — missing `SELECT` grants for `tenant_portal_role`** — `role_assignments` (needed to resolve a user's project memberships at login) and `projects` (needed by `GET /tenant/auth/me` to return project display names) were not granted to `tenant_portal_role`. Both `db/init.sql` and `db/migrate_tenant_portal.sql` now include `GRANT SELECT ON role_assignments, projects TO tenant_portal_role`.
+
+### Added
+- **Integration test suite `tests/test_tenant_portal_login_integration.py`** — 10 live end-to-end tests (T01–T10) that exercise the full login path against a running stack. Tests: T01/T02 branding reachability (via Vite proxy + direct), T03/T04 happy-path login (via proxy + direct), T05 wrong password → 401, T06 wrong domain → 401, T07 empty domain → 422, T08 overlength domain → 422, T09 injection chars in domain → 422, T10 `/tenant/auth/me` returns correct username. Set `TENANT_TEST_USER`, `TENANT_TEST_PASS`, `TENANT_TEST_DOMAIN` env vars to run credential-dependent tests; branding/validation tests run unconditionally.
+
 ## [1.84.15] - 2026-04-16
 
 ### Fixed

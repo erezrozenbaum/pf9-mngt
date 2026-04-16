@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.15  
+**Version**: 1.84.16  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,18 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.16 — Tenant Portal: Fix K8s NetworkPolicy + Keystone Auth + MFA Logic (✅ Complete)
+
+- **NetworkPolicy ingress namespace** — `pf9-tenant-portal` NetworkPolicy allowed ingress from namespace `ingress-nginx`; the dedicated tenant controller is deployed in `ingress-nginx-tenant`. All `/tenant/*` requests returned 504. Fixed `namespaceSelector` label.
+- **NetworkPolicy egress to Keystone** — no egress rule for Keystone (port 443 or 5000). Login calls `_keystone_auth()` which was silently dropped by the egress policy. Added egress for TCP 443 and 5000 to any destination.
+- **Login error banner** — `Login.tsx` always showed "Invalid credentials" regardless of HTTP status. Fixed to show service-unavailable for 5xx, access-denied for 403, rate-limit for 429, and invalid-credentials only for 401.
+- **Keystone auth URL double `/v3`** — `auth_url` in DB already ends in `/v3`; code appended `/v3/auth/tokens` → double-path → 401. Stripped trailing `/v3` before appending.
+- **Keystone system scope removed** — token request carried `scope: {system: {all: true}}` requiring admin privilege; regular tenant users got 401. Removed scope; unscoped token is sufficient for identity verification.
+- **MFA per-user flag now authoritative** — previously `TENANT_MFA_MODE != "none"` forced MFA on all users regardless of the per-user setting. Now `mfa_required` flag (set by admin at grant time) is the deciding factor; `TENANT_MFA_MODE=none` acts as a global kill-switch only.
+- **K8s Helm `controlPlaneId` empty string** — `values.yaml` had `controlPlaneId: ""` which bypasses Python's `os.getenv()` default → pod used `''` as CP ID → all logins returned 403. Fixed in `auth_routes.py` (`or "default"`) and `values.yaml` (`"default"` explicit).
+- **DB grants** — `role_assignments` and `projects` tables were missing `SELECT` grants for `tenant_portal_role`. Added to both `db/init.sql` and `db/migrate_tenant_portal.sql`.
+- **Integration test suite** — `tests/test_tenant_portal_login_integration.py` with 10 live tests (T01–T10) covering branding, login, bad credentials, domain validation, and `/me` endpoint.
 
 ### v1.84.15 — Tenant Portal: Fix 504 on Login (✅ Complete)
 

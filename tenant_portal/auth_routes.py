@@ -51,8 +51,9 @@ router = APIRouter(prefix="/tenant/auth", tags=["auth"])
 # ---------------------------------------------------------------------------
 # Environment
 # ---------------------------------------------------------------------------
-# The control plane this pod serves — set at pod level, never user-supplied
-TENANT_PORTAL_CP_ID = os.getenv("TENANT_PORTAL_CONTROL_PLANE_ID", "default")
+# The control plane this pod serves — set at pod level, never user-supplied.
+# Treat an empty string the same as unset (Helm sets "" when no override given).
+TENANT_PORTAL_CP_ID = os.getenv("TENANT_PORTAL_CONTROL_PLANE_ID") or "default"
 
 # MFA mode: email_otp | totp | none
 TENANT_MFA_MODE = os.getenv("TENANT_MFA_MODE", "email_otp")
@@ -203,15 +204,23 @@ async def _keystone_auth(auth_url: str, username: str, password: str, domain: st
                     }
                 },
             },
-            "scope": {"system": {"all": True}},
+            # Unscoped auth — any valid user can obtain this regardless of role.
+            # We only need to verify identity and extract the user_id from the token.
+            # A system-scoped or project-scoped token would require admin/member
+            # assignments that regular tenant users may not have.
         }
     }
+    # auth_url may be stored as either:
+    #   https://host/keystone          (bare base)
+    #   https://host/keystone/v3       (already includes /v3)
+    # Strip a trailing /v3 so we always append exactly one /v3/auth/tokens.
+    _base = auth_url.rstrip("/")
+    if _base.endswith("/v3"):
+        _base = _base[:-3]
+    _token_url = f"{_base}/v3/auth/tokens"
     try:
         async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-            resp = await client.post(
-                f"{auth_url.rstrip('/')}/v3/auth/tokens",
-                json=payload,
-            )
+            resp = await client.post(_token_url, json=payload)
     except httpx.RequestError as exc:
         logger.error("Keystone connection error for %s: %s", auth_url, exc)
         raise HTTPException(
@@ -350,7 +359,10 @@ async def login(body: LoginRequest, request: Request):
                 )
 
             # 5. MFA check
-            mfa_required = access_row["mfa_required"] or TENANT_MFA_MODE != "none"
+            # The per-user mfa_required flag (set by the admin at grant time) is the
+            # deciding factor.  TENANT_MFA_MODE="none" acts as a global kill-switch
+            # that disables MFA even when the per-user flag is true.
+            mfa_required = bool(access_row["mfa_required"]) and TENANT_MFA_MODE != "none"
 
             if mfa_required:
                 # Issue short-lived pre-auth token (no data access)
