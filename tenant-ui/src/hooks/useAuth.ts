@@ -40,11 +40,11 @@ export function useAuth() {
     }
   }, []); // run once on mount
 
-  const login = useCallback(async (username: string, password: string) => {
+  const login = useCallback(async (username: string, password: string, domain: string) => {
     setLoading(true);
     setError(null);
     try {
-      const resp: LoginResponse = await apiLogin(username, password);
+      const resp: LoginResponse = await apiLogin(username, password, domain);
       if (resp.requires_mfa && resp.preauth_token) {
         setState({ phase: "mfa", preauthToken: resp.preauth_token, mfaMode: "code" });
       } else {

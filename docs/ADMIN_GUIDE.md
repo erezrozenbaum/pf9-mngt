@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.13  
+**Version**: 1.84.14  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,12 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.14 — Tenant Portal: Domain Field on Login + Security Hardening (✅ Complete)
+
+- **Keystone Domain field on login page** — tenant portal login now accepts a **Domain** field (default `Default`), matching the Platform9 native login page. Required for users in non-default Keystone identity domains. Field is threaded through `LoginRequest` → `_keystone_auth()` → Keystone `/v3/auth/tokens`.
+- **`LoginRequest.domain` hardening** — `Field(max_length=255)` blocks oversized payloads; `^[A-Za-z0-9_.\-]{1,255}$` regex whitelist blocks SQL/script injection, null bytes, and path traversal in the domain parameter.
+- **Security test suite extended to S33** — S31 (default accepted), S32 (injection chars rejected), S33 (256+ char domain rejected).
 
 ### v1.84.13 — Tenant Portal: Bug-Fix & Security Hardening (✅ Complete)
 

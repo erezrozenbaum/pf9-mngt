@@ -25,7 +25,7 @@ export default function App() {
         branding={branding}
         loading={auth.loading}
         error={auth.error}
-        onLogin={auth.login}
+        onLogin={(u, p, d) => auth.login(u, p, d)}
       />
     );
   }

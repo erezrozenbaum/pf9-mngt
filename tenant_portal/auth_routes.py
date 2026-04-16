@@ -27,7 +27,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, field_validator
+import re as _re
+from pydantic import BaseModel, Field, field_validator
 
 from db_pool import get_tenant_connection
 from middleware import (
@@ -60,16 +61,29 @@ TENANT_MFA_MODE = os.getenv("TENANT_MFA_MODE", "email_otp")
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+# Keystone domain names: letters, digits, hyphens, underscores, dots only
+_DOMAIN_RE = _re.compile(r'^[A-Za-z0-9_\-.]{1,255}$')
+
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., max_length=255)
+    password: str = Field(..., max_length=1024)
+    domain: str = Field(default="Default", max_length=255)
 
-    @field_validator("username", "password")
+    @field_validator("username", "password", "domain")
     @classmethod
     def no_empty(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("must not be empty")
+        return v
+
+    @field_validator("domain")
+    @classmethod
+    def valid_domain_name(cls, v: str) -> str:
+        if not _DOMAIN_RE.match(v):
+            raise ValueError(
+                "domain must contain only letters, digits, hyphens, underscores, or dots"
+            )
         return v
 
 
@@ -171,7 +185,7 @@ def _write_audit(
         logger.error("Failed to write audit log: %s", exc)
 
 
-def _keystone_auth(auth_url: str, username: str, password: str) -> dict:
+def _keystone_auth(auth_url: str, username: str, password: str, domain: str = "Default") -> dict:
     """
     Authenticate against Keystone v3 and return the response body.
     Raises HTTPException on failure.
@@ -184,7 +198,7 @@ def _keystone_auth(auth_url: str, username: str, password: str) -> dict:
                 "password": {
                     "user": {
                         "name": username,
-                        "domain": {"name": "Default"},
+                        "domain": {"name": domain},
                         "password": password,
                     }
                 },
@@ -271,7 +285,7 @@ async def login(body: LoginRequest, request: Request):
         )
 
     # 2. Keystone authentication — credentials discarded after this call
-    ks_body = _keystone_auth(cp["auth_url"], body.username, body.password)
+    ks_body = _keystone_auth(cp["auth_url"], body.username, body.password, body.domain)
     keystone_user_id = _extract_user_id(ks_body)
     # Credentials and ks_body are no longer needed; Python GC will handle them
 

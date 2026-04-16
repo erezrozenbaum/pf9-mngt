@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.13-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.84.14-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -606,9 +606,9 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🏢 Tenant Self-Service Portal — v1.84.0 → v1.84.13 *(Complete)*
+### 🏢 Tenant Self-Service Portal — v1.84.0 → v1.84.14 *(Complete)*
 
-**[v1.84.13](CHANGELOG.md)** — Bug-fix & security hardening: `log_auth_event` TypeError crash on every access grant/revoke fixed; Audit Log sub-tab 500 (wrong column names) fixed; batch grant transaction-poisoning fixed (savepoints); stored-XSS via `javascript:` / `data:` URIs in branding URLs blocked; field length limits added; security test suite extended to S30. **[v1.84.12](CHANGELOG.md)** — Grant Access wizard (3-step: tenant picker → user checkboxes → MFA/notes); batch grant API; CP dropdown. **[v1.84.11](CHANGELOG.md)** — Grant Access form gains User Name + Tenant/Org Name fields; access table shows friendly labels; `user_name`/`tenant_name` DB + API. **[v1.84.10](CHANGELOG.md)** — Nav fix: `tenant_portal` tab now appears in Admin Tools; DB migration for live environments; guide corrections. **[v1.84.9](CHANGELOG.md)** — Tenant Portal complete: `GET /tenant/branding` unauthenticated branding endpoint (60 s cache); admin `GET/PUT /branding/{cp_id}` and `DELETE /mfa/{cp_id}/{user_id}` endpoints; Admin UI "🏢 Tenant Portal" tab with 4 sub-tabs; 27 P8 security tests (S01–S27 across 8 categories). → [Tenant Portal Guide](docs/TENANT_PORTAL_GUIDE.md)
+**[v1.84.14](CHANGELOG.md)** — Domain field on login form (Keystone multi-domain support); `domain` field hardened with `max_length` + regex whitelist; security tests extended to S33. **[v1.84.13](CHANGELOG.md)** — Bug-fix & security hardening: `log_auth_event` TypeError crash on every access grant/revoke fixed; Audit Log sub-tab 500 (wrong column names) fixed; batch grant transaction-poisoning fixed (savepoints); stored-XSS via `javascript:` / `data:` URIs in branding URLs blocked; field length limits added; security test suite extended to S30. **[v1.84.12](CHANGELOG.md)** — Grant Access wizard (3-step: tenant picker → user checkboxes → MFA/notes); batch grant API; CP dropdown. **[v1.84.11](CHANGELOG.md)** — Grant Access form gains User Name + Tenant/Org Name fields; access table shows friendly labels; `user_name`/`tenant_name` DB + API. **[v1.84.10](CHANGELOG.md)** — Nav fix: `tenant_portal` tab now appears in Admin Tools; DB migration for live environments; guide corrections. **[v1.84.9](CHANGELOG.md)** — Tenant Portal complete: `GET /tenant/branding` unauthenticated branding endpoint (60 s cache); admin `GET/PUT /branding/{cp_id}` and `DELETE /mfa/{cp_id}/{user_id}` endpoints; Admin UI "🏢 Tenant Portal" tab with 4 sub-tabs; 27 P8 security tests (S01–S27 across 8 categories). → [Tenant Portal Guide](docs/TENANT_PORTAL_GUIDE.md)
 
 **[v1.84.4](CHANGELOG.md)** — Tenant-ui SPA: React + TypeScript, 7 screens (Dashboard, Infrastructure, Snapshot Coverage, Monitoring, Restore Center, Runbooks, Activity Log), MFA login, per-customer branding. Kubernetes stability fixes in v1.84.5–v1.84.8 (dedicated `nginx-ingress-tenant` on separate MetalLB IP).
 
@@ -717,4 +717,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.84.13 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.84.14 | **Last Updated**: April 2026

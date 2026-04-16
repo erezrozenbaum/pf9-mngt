@@ -1,6 +1,6 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.84.13  
+**Version**: 1.84.14  
 **Last Updated**: April 16, 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
@@ -151,7 +151,15 @@ Branding is fetched by the tenant-ui on load from `GET /tenant/branding` (unauth
 | Docker Compose (dev Vite) | `http://localhost:8082/` |
 | Kubernetes | `https://<tenant-portal-domain>/` (your `nginx-ingress-tenant` hostname) |
 
-The customer authenticates with their **Platform9 Keystone credentials** (email + password). MFA is enforced at login if `mfa_required: true` was set in the access config.
+The customer authenticates with their **Platform9 Keystone credentials** (email + password + domain). The login form has three fields:
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| **Username** | Keystone user email (e.g. `org1@org1.com`) | — |
+| **Password** | Keystone password | — |
+| **Domain** | Keystone identity domain (same as the **Domain** field on the Platform9 login page) | `Default` |
+
+> Most users are in the `Default` domain and can leave this field as-is. Users in a non-default Keystone domain must enter their domain name exactly as configured in Keystone (case-sensitive).
 
 ---
 

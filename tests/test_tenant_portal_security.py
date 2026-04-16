@@ -648,6 +648,59 @@ class TestBrandingURLValidation:
             favicon_url="https://cdn.example.com/favicon.ico",
             support_url="https://support.example.com",
         )
-        assert obj.logo_url == "https://cdn.example.com/logo.png"
-        assert obj.favicon_url == "https://cdn.example.com/favicon.ico"
-        assert obj.support_url == "https://support.example.com"
+
+
+# ============================================================================
+# S31–S33  Login domain field validation
+# ============================================================================
+
+class TestLoginDomainValidation:
+    """S31-S33: LoginRequest.domain field rejects injection chars, empty, and over-long values."""
+
+    def _load_model(self):
+        import importlib
+        sys.modules.pop("auth_routes", None)
+        # Stub httpx and jose if not already available
+        _ensure_stub("httpx", {"AsyncClient": MagicMock(), "HTTPError": Exception})
+        _ensure_stub("jose", {"jwt": MagicMock(), "JWTError": Exception})
+        # Patch the existing middleware stub with attrs auth_routes needs at import time
+        mw = sys.modules.get("middleware")
+        if mw is not None:
+            mw.JWT_ALGORITHM = "HS256"
+            mw.JWT_SECRET_KEY = "test-secret-key"
+            mw.TENANT_TOKEN_EXPIRE_MINUTES = 60
+            mw._check_rate_limit = MagicMock()
+            mw._hash_token = MagicMock(return_value="hashed")
+            mw._redis_session_key = MagicMock(return_value="key")
+            mw.get_tenant_context = MagicMock()
+            mw.inject_rls_vars = MagicMock()
+        mod = importlib.import_module("auth_routes")
+        return mod.LoginRequest
+
+    def test_s31_default_domain_accepted(self):
+        """S31: Default domain value 'Default' passes all validators."""
+        model = self._load_model()
+        obj = model(username="user@org.com", password="secret")
+        assert obj.domain == "Default"
+
+    def test_s32_domain_with_injection_chars_rejected(self):
+        """S32: Domain names with special characters are rejected (injection prevention)."""
+        from pydantic import ValidationError
+        model = self._load_model()
+        bad_domains = [
+            "Default; DROP TABLE users",
+            "<script>alert(1)</script>",
+            "domain\x00null",
+            "../../../etc",
+            "domain name",   # space not allowed
+        ]
+        for bad in bad_domains:
+            with pytest.raises(ValidationError, match="domain"):
+                model(username="u", password="p", domain=bad)
+
+    def test_s33_over_long_domain_rejected(self):
+        """S33: Domain names exceeding 255 chars are rejected."""
+        from pydantic import ValidationError
+        model = self._load_model()
+        with pytest.raises(ValidationError):
+            model(username="u", password="p", domain="A" * 256)

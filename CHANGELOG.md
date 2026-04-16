@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.14] - 2026-04-17
+
+### Added
+- **Tenant Portal — Keystone Domain field on login page** — the tenant portal login form now includes a **Domain** field (default: `Default`), matching the Domain field present on the Platform9 native Keystone login page. This enables users in non-default Keystone identity domains to authenticate correctly. The field is threaded end-to-end through `LoginRequest` (Pydantic model) → `_keystone_auth()` → Keystone `/v3/auth/tokens` payload.
+
+### Security
+- **`LoginRequest.domain` field hardening** — the new `domain` field is validated with `Field(max_length=255)` (rejects oversized payloads) and a regex `^[A-Za-z0-9_.\-]{1,255}$` whitelist validator (rejects SQL injection, script injection, null-bytes, and path traversal attempts in the domain parameter).
+- **Security test suite extended to S33** — three new tests (`S31`–`S33`) cover: valid `Default` domain accepted, injection-character domains rejected, over-length (256+ char) domains rejected.
+
 ## [1.84.13] - 2026-04-16
 
 ### Fixed

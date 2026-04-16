@@ -97,10 +97,10 @@ export interface MeResponse {
   regions: string[];
 }
 
-export async function apiLogin(username: string, password: string): Promise<LoginResponse> {
+export async function apiLogin(username: string, password: string, domain: string): Promise<LoginResponse> {
   return tenantFetch<LoginResponse>("/tenant/auth/login", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, domain }),
   });
 }
 

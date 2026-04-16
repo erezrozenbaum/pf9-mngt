@@ -5,12 +5,13 @@ interface Props {
   branding: Branding;
   loading: boolean;
   error: string | null;
-  onLogin: (username: string, password: string) => void;
+  onLogin: (username: string, password: string, domain: string) => void;
 }
 
 export function Login({ branding, loading, error, onLogin }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [domain, setDomain] = useState("Default");
   const [failCount, setFailCount] = useState(0);
   const [cooldown, setCooldown] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -43,7 +44,7 @@ export function Login({ branding, loading, error, onLogin }: Props) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (loading || cooldown > 0) return;
-    onLogin(username.trim(), password);
+    onLogin(username.trim(), password, domain.trim() || "Default");
   };
 
   const isDisabled = loading || cooldown > 0;
@@ -95,6 +96,19 @@ export function Login({ branding, loading, error, onLogin }: Props) {
               disabled={isDisabled}
               required
               aria-label="Password"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="domain">Domain</label>
+            <input
+              id="domain"
+              className="input"
+              type="text"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              disabled={isDisabled}
+              placeholder="Default"
+              aria-label="Domain"
             />
           </div>
 
