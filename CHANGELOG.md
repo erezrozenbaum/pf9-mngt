@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.20] - 2026-04-16
+
+### Fixed
+- **`tenant-ui` build failure — `api.ts` corrupted by overlapping replacements** — the previous multi-replace operation interleaved code fragments (interface fields injected mid-function body, map callbacks missing closing parens, unterminated template literals). The Docker build failed with 10+ TypeScript errors (`TS1005`, `TS1160`). Rewrote `api.ts` in a single clean replacement from the Dashboard section onward. `npx tsc --noEmit` confirms zero type errors.
+
 ## [1.84.19] - 2026-04-16
 
 ### Fixed
