@@ -243,6 +243,13 @@ tenantPortal:
     repository: pf9-mngt-tenant-portal
     tag: ""   # "" → falls back to global.imageTag
   replicaCount: 1
+  # dbPassword: set via ArgoCD parameter override — NEVER commit a real value here.
+  # When non-empty, Helm renders templates/tenant-portal/secret.yaml which creates
+  # (or updates) the pf9-tenant-portal-db-credentials secret.
+  # The same password must be set on the DB role:
+  #   kubectl -n pf9-mngt exec pf9-db-0 -- psql -U pf9 -d pf9_mgmt \
+  #     -c "ALTER USER tenant_portal_role WITH PASSWORD '<value>';"
+  dbPassword: ""  # override via ArgoCD parameter: tenantPortal.dbPassword=<secret>
   config:
     controlPlaneId: "default" # TENANT_PORTAL_CONTROL_PLANE_ID — must match pf9_control_planes.id
     mfaMode: email_otp       # TENANT_MFA_MODE: email_otp | totp | none
@@ -400,7 +407,7 @@ workers:
     metricsEnabled: "true"
     metricsIntervalSeconds: "60"
     rvtoolsEnabled: "true"
-    rvtoolsIntervalMinutes: "60"
+    rvtoolsIntervalMinutes: "15"
     rvtoolsScheduleTime: "03:00"
     rvtoolsRunOnStart: "true"
     rvtoolsRetentionDays: "30"

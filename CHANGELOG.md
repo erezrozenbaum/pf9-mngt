@@ -5,7 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.84.22] - 2026-04-16
+## [1.84.23] - 2026-04-16
+
+### Added
+- **Tenant portal — inventory sync status bar** — the Shell header now shows "Inventory synced X min ago" (sourced from a new `GET /tenant/inventory-status` endpoint that queries `inventory_runs`) with a **⟳ Refresh** button that remounts the current screen to reload its data.
+- **Tenant portal — pre-restore snapshot for NEW mode** — the Restore Center wizard Step 3 now shows an optional "Take a snapshot before restore" checkbox in NEW mode (default ON, can be unchecked). The safety snapshot was already mandatory for REPLACE mode; this extends the choice to non-destructive restores. Threaded `pre_restore_snapshot: bool` from the tenant UI → `tenant_portal/restore_routes.py` → `api/restore_management.py`.
+
+### Fixed
+- **Critical: `tenant_portal_role` missing `SELECT` on `flavors` and `inventory_runs`** — the `LEFT JOIN flavors` added in v1.84.22 threw `permission denied for table flavors` in Kubernetes production (`/tenant/vms` → 500, Restore Center → 500). Applied live grant on K8s DB + fixed in `db/init.sql` + `db/migrate_tenant_portal.sql` for future deployments.
+- **Runbooks showing 0 in tenant portal** — runbooks were seeded with `is_tenant_visible = false` (the column default). The `UPDATE runbooks SET is_tenant_visible = true WHERE enabled = true` applied in v1.84.22 local testing was never applied to K8s. Applied live + added idempotent UPDATE to `db/init.sql` and `db/migrate_tenant_portal.sql` so future deployments get it automatically.
+- **Dashboard "Active Restores" counter inflated** — PLANNED jobs (plans awaiting user execution) were counted alongside RUNNING/PENDING. PLANNED is a pre-execution review state, not an active operation. Dashboard query updated to only count `status IN ('PENDING', 'RUNNING')`.
+
+### Changed
+- **RVTools scan interval: 60 → 15 minutes** — `RVTOOLS_INTERVAL_MINUTES` reduced from 60 to 15 in `.env` and `k8s/helm/pf9-mngt/values.yaml`. New VMs will appear in the tenant portal within 15 minutes of provisioning rather than up to 60 minutes. At 1000+ VMs an RVTools run takes ~15-25 min, so the interval is set to match the upper bound without overlap.
 
 ### Fixed
 - **Tenant portal — all screens showing zero/empty data** — six root causes identified and fixed:

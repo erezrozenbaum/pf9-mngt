@@ -33,6 +33,25 @@ spec:
       valueFiles:
         - values.yaml
         - values.prod.yaml
+      # ---------------------------------------------------------------------------
+      # Secret parameters — DO NOT add real values here (public repo).
+      # In pf9-mngt-deploy (private), override tenantPortal.dbPassword so Helm
+      # renders templates/tenant-portal/secret.yaml with the real password.
+      #
+      # In pf9-mngt-deploy, copy this Application manifest and add:
+      #
+      #   helm:
+      #     parameters:
+      #       - name: tenantPortal.dbPassword
+      #         value: "<tenant_portal_role DB password>"
+      #
+      # Apply the deploy-repo version:
+      #   kubectl apply -f <path-in-pf9-mngt-deploy>/application.yaml
+      #
+      # The DB role must have the same password:
+      #   kubectl -n pf9-mngt exec pf9-db-0 -- psql -U pf9 -d pf9_mgmt \
+      #     -c "ALTER USER tenant_portal_role WITH PASSWORD '<value>';"
+      # ---------------------------------------------------------------------------
 
   destination:
     server: https://kubernetes.default.svc

@@ -73,10 +73,14 @@ GRANT SELECT ON tenant_cp_view TO tenant_portal_role;
 
 -- Grants on pre-existing tables -----------------------------------------
 GRANT SELECT                  ON servers, volumes, snapshots, snapshot_records TO tenant_portal_role;
+GRANT SELECT                  ON flavors, inventory_runs TO tenant_portal_role;
 GRANT SELECT, INSERT, UPDATE  ON restore_jobs    TO tenant_portal_role;
 GRANT SELECT                  ON pf9_regions        TO tenant_portal_role;
 GRANT SELECT                  ON role_assignments   TO tenant_portal_role;
 GRANT SELECT                  ON projects           TO tenant_portal_role;
+
+-- Make all enabled runbooks visible to tenant portal (idempotent data fix)
+UPDATE runbooks SET is_tenant_visible = true WHERE enabled = true AND is_tenant_visible = false;
 GRANT SELECT                  ON users              TO tenant_portal_role;
 GRANT SELECT                  ON runbooks        TO tenant_portal_role;
 GRANT SELECT, INSERT          ON tenant_action_log TO tenant_portal_role;

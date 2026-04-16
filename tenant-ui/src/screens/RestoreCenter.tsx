@@ -92,11 +92,12 @@ export function RestoreCenter() {
     setSubmitError(null);
     try {
       const plan = await apiRestorePlan({
-        vm_id:       selectedVm.vm_id,
-        snapshot_id: selectedPoint.snapshot_id,
-        region_id:   selectedVm.region_id,
-        new_vm_name: mode === "NEW" ? (newVmName.trim() || undefined) : undefined,
+        vm_id:                selectedVm.vm_id,
+        snapshot_id:          selectedPoint.snapshot_id,
+        region_id:            selectedVm.region_id,
+        new_vm_name:          mode === "NEW" ? (newVmName.trim() || undefined) : undefined,
         mode,
+        pre_restore_snapshot: safetySnapshot,
       });
       const job = await apiRestoreExecute(plan.plan_id);
       const modeLabel = mode === "REPLACE" ? "Replace" : "Restore";
@@ -321,20 +322,37 @@ export function RestoreCenter() {
               </dl>
             </div>
 
-            {/* NEW mode: new VM name input */}
+            {/* NEW mode: new VM name input + optional safety snapshot */}
             {mode === "NEW" && (
-              <div className="field">
-                <label htmlFor="new-vm-name">Name for restored VM</label>
-                <input
-                  id="new-vm-name"
-                  className="input"
-                  type="text"
-                  value={newVmName}
-                  onChange={(e) => setNewVmName(e.target.value)}
-                  disabled={submitting}
-                  placeholder="my-vm-restored-2026-04-14"
-                />
-              </div>
+              <>
+                <div className="field">
+                  <label htmlFor="new-vm-name">Name for restored VM</label>
+                  <input
+                    id="new-vm-name"
+                    className="input"
+                    type="text"
+                    value={newVmName}
+                    onChange={(e) => setNewVmName(e.target.value)}
+                    disabled={submitting}
+                    placeholder="my-vm-restored-2026-04-14"
+                  />
+                </div>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: ".5rem", marginBottom: "1rem", cursor: submitting ? "default" : "pointer", fontWeight: 400, color: "var(--color-text)" }}>
+                  <input
+                    type="checkbox"
+                    checked={safetySnapshot}
+                    onChange={(e) => setSafetySnapshot(e.target.checked)}
+                    disabled={submitting}
+                    style={{ marginTop: ".15rem" }}
+                  />
+                  <span>
+                    <strong>Take a snapshot before restore</strong>
+                    <span style={{ display: "block", fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
+                      Recommended. Captures the current VM state as a restore point before creating the new copy.
+                    </span>
+                  </span>
+                </label>
+              </>
             )}
 
             {/* REPLACE mode: safety snapshot notice + VM name confirmation */}

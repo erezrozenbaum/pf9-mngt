@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.22  
+**Version**: 1.84.23  
 **Last Updated**: April 16, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.84.23 — Tenant Portal Inventory Sync Bar + Pre-Restore Snapshot + 15-min RVTools Interval (✅ Complete)
+
+- **Inventory sync status bar**: `GET /tenant/inventory-status` endpoint added; Shell header shows "Inventory synced X min ago" + ⟳ Refresh button. Refresh remounts the current screen to reload data.
+- **Pre-restore snapshot for NEW mode**: Restore Center Step 3 now has an optional "Take a snapshot before restore" checkbox for NEW mode (default ON). Safety snapshot was already mandatory for REPLACE. `pre_restore_snapshot: bool` threaded through all layers: tenant UI → tenant_portal → admin API.
+- **Critical DB grant fix**: `tenant_portal_role` was missing `SELECT ON flavors` (breaks v1.84.22 `LEFT JOIN flavors` in production) and `SELECT ON inventory_runs`. Applied live + fixed in `db/init.sql` + `db/migrate_tenant_portal.sql`.
+- **RVTools interval 60 → 15 min**: New VMs visible in tenant portal within 15 minutes instead of up to 60. Changed in `.env` and `k8s/helm/pf9-mngt/values.yaml`.
 
 ### v1.84.22 — Tenant Portal Data Fixes + REPLACE Restore Mode (✅ Complete)
 

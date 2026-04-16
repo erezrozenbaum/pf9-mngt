@@ -110,6 +110,7 @@ def _call_admin_plan(
     created_by: str,
     new_vm_name: Optional[str],
     mode: str = "NEW",
+    pre_restore_snapshot: bool = True,
 ) -> dict:
     """Call POST /internal/tenant-restore/plan on the admin API."""
     if not INTERNAL_SERVICE_SECRET:
@@ -129,6 +130,7 @@ def _call_admin_plan(
                     "created_by": created_by,
                     "new_vm_name": new_vm_name,
                     "mode": mode,
+                    "pre_restore_snapshot": pre_restore_snapshot,
                 },
                 headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
             )
@@ -180,6 +182,10 @@ class TenantRestorePlanRequest(BaseModel):
     mode: str = Field(
         "NEW",
         description="'NEW' creates a side-by-side copy; 'REPLACE' restores in-place (destructive)",
+    )
+    pre_restore_snapshot: bool = Field(
+        True,
+        description="Take a snapshot of the current VM before restore (recommended; mandatory for REPLACE)",
     )
 
 
@@ -420,6 +426,7 @@ async def create_restore_plan(
         created_by=created_by,
         new_vm_name=req.new_vm_name,
         mode=mode,
+        pre_restore_snapshot=req.pre_restore_snapshot,
     )
 
     # 3. Strip internal fields before returning to tenant
@@ -437,7 +444,7 @@ async def create_restore_plan(
             "size_gb": plan.get("restore_point", {}).get("size_gb"),
         },
         "mode": mode,
-        "safety_snapshot": (mode == "REPLACE"),  # always True for REPLACE
+        "safety_snapshot": True if mode == "REPLACE" else req.pre_restore_snapshot,
         "new_vm_name": plan.get("new_vm_name"),
         "eligible": plan.get("eligible", True),
         "warnings": plan.get("warnings", []),
