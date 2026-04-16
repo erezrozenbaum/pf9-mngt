@@ -148,11 +148,10 @@ async def get_vm(vm_id: str, ctx: TenantContext = Depends(get_tenant_context)):
                 WHERE vm_id = %s
                   AND status IN ('PLANNED', 'PENDING', 'RUNNING')
                   AND project_id = ANY(%s)
-                  AND region_id  = ANY(%s)
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
-                (vm_id, ctx.project_ids, ctx.region_ids),
+                (vm_id, ctx.project_ids),
             )
             active_restore = cur.fetchone()
             log_action(cur, ctx, "tenant_view_vm_detail", resource_type="vm", resource_id=vm_id)
@@ -449,10 +448,9 @@ async def dashboard(ctx: TenantContext = Depends(get_tenant_context)):
                 SELECT COUNT(*) AS cnt
                 FROM restore_jobs
                 WHERE project_id = ANY(%s)
-                  AND region_id  = ANY(%s)
                   AND status IN ('PLANNED', 'PENDING', 'RUNNING')
                 """,
-                (ctx.project_ids, ctx.region_ids),
+                (ctx.project_ids,),
             )
             active_restores = cur.fetchone()["cnt"]
             log_action(cur, ctx, "tenant_view_dashboard")

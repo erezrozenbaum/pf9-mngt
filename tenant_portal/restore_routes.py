@@ -232,14 +232,13 @@ def _check_job_ownership(cur, job_id: str, ctx: TenantContext) -> dict:
         """
         SELECT id, project_id, vm_id, vm_name, status, mode,
                created_by, created_at, started_at, finished_at,
-               failure_reason, region_id
+               failure_reason
         FROM restore_jobs
         WHERE id = %s
           AND project_id = ANY(%s)
-          AND region_id  = ANY(%s)
           AND created_by = %s
         """,
-        (job_id, ctx.project_ids, ctx.region_ids, expected_created_by),
+        (job_id, ctx.project_ids, expected_created_by),
     )
     row = cur.fetchone()
     if row is None:
@@ -503,13 +502,12 @@ async def list_restore_jobs(
             query = """
                 SELECT id, project_id, vm_id, vm_name, status, mode,
                        created_by, created_at, started_at, finished_at,
-                       failure_reason, region_id
+                       failure_reason
                 FROM restore_jobs
                 WHERE project_id = ANY(%s)
-                  AND region_id  = ANY(%s)
                   AND created_by = %s
             """
-            params = [ctx.project_ids, ctx.region_ids, created_by]
+            params = [ctx.project_ids, created_by]
 
             if status_filter:
                 query += " AND status = %s"

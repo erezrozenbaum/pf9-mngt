@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.84.19] - 2026-04-16
+
+### Fixed
+- **`restore_jobs` — `region_id` column does not exist** — 4 queries across `environment_routes.py` and `restore_routes.py` wrongly included `AND region_id = ANY(%s)` in `WHERE` clauses against the `restore_jobs` table, which has no such column. Dashboard `/tenant/dashboard` returned `psycopg2.errors.UndefinedColumn: column "region_id" does not exist` (500). Fixed by removing the `region_id` filter from all 4 queries; the table is already project-scoped via `project_id`.
+- **Frontend API contract mismatch — all tenant screens broken** — every backend endpoint wraps its array responses in `{key: [...], total: N}` envelopes and uses different field names from the TypeScript interfaces (e.g. `id` vs `vm_id`, `name` vs `vm_name`, `occurred_at` vs `timestamp`). All 7 screens crashed immediately (`vms.filter is not a function`, `e.slice is not a function`). Fixed by converting `tenant-ui/src/lib/api.ts` into a proper adapter layer: all 16 API functions now unwrap envelopes and remap field names to match the TypeScript interfaces. Three private helper functions added (`_normaliseMetrics`, `_normaliseJob`, `_normaliseRunbook`) to avoid duplication.
+
 ## [1.84.18] - 2026-04-16
 
 ### Fixed
