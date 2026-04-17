@@ -6,9 +6,12 @@ import {
   apiRestoreExecute,
   apiRestoreJobs,
   apiRestoreCancel,
+  apiSecurityGroups,
+  apiSyncAndSnapshot,
   type Vm,
   type RestorePoint,
   type RestoreJob,
+  type SecurityGroup,
 } from "../lib/api";
 
 // ── Job status badge ─────────────────────────────────────────────────────────
@@ -30,8 +33,11 @@ const ACTIVE_STATUSES = new Set(["pending", "running", "in_progress"]);
 export function RestoreCenter() {
   const [vms, setVms] = useState<Vm[]>([]);
   const [jobs, setJobs] = useState<RestoreJob[]>([]);
+  const [securityGroups, setSecurityGroups] = useState<SecurityGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   // Wizard state
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -40,20 +46,41 @@ export function RestoreCenter() {
   const [rpLoading, setRpLoading] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState<RestorePoint | null>(null);
   const [mode, setMode] = useState<"NEW" | "REPLACE">("NEW");
-  const [safetySnapshot, setSafetySnapshot] = useState(true); // default ON; mandatory for REPLACE
+  const [safetySnapshot, setSafetySnapshot] = useState(true);
   const [newVmName, setNewVmName] = useState("");
-  const [confirmVmName, setConfirmVmName] = useState("");  // REPLACE confirmation
+  const [confirmVmName, setConfirmVmName] = useState("");
+  const [ipStrategy, setIpStrategy] = useState<"NEW_IPS" | "TRY_SAME_IPS">("NEW_IPS");
+  const [selectedSgIds, setSelectedSgIds] = useState<string[]>([]);
+  const [cleanupOldStorage, setCleanupOldStorage] = useState(false);
+  const [deleteSourceSnapshot, setDeleteSourceSnapshot] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    Promise.all([apiVms(), apiRestoreJobs()])
-      .then(([v, j]) => { setVms(v); setJobs(j); })
+    Promise.all([apiVms(), apiRestoreJobs(), apiSecurityGroups()])
+      .then(([v, j, sg]) => { setVms(v); setJobs(j); setSecurityGroups(sg); })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleSyncAndSnapshot = async () => {
+    setSyncLoading(true);
+    setSyncMsg(null);
+    try {
+      const res = await apiSyncAndSnapshot();
+      setSyncMsg(res.message);
+      setTimeout(() => setSyncMsg(null), 8000);
+      refresh();
+    } catch (e: unknown) {
+      setSyncMsg(e instanceof Error ? e.message : "Sync failed");
+    } finally {
+      setSyncLoading(false);
+    }
+  };
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -66,6 +93,10 @@ export function RestoreCenter() {
     setMode("NEW");
     setSafetySnapshot(true);
     setConfirmVmName("");
+    setIpStrategy("NEW_IPS");
+    setSelectedSgIds([]);
+    setCleanupOldStorage(false);
+    setDeleteSourceSnapshot(false);
     setSubmitError(null);
     try {
       setRestorePoints(await apiRestorePoints(vm.vm_id));
@@ -98,6 +129,10 @@ export function RestoreCenter() {
         new_vm_name:          mode === "NEW" ? (newVmName.trim() || undefined) : undefined,
         mode,
         pre_restore_snapshot: safetySnapshot,
+        ip_strategy:          ipStrategy,
+        security_group_ids:   selectedSgIds.length > 0 ? selectedSgIds : undefined,
+        cleanup_old_storage:  mode === "REPLACE" ? cleanupOldStorage : false,
+        delete_source_snapshot: deleteSourceSnapshot,
       });
       const job = await apiRestoreExecute(plan.plan_id);
       const modeLabel = mode === "REPLACE" ? "Replace" : "Restore";
@@ -131,6 +166,10 @@ export function RestoreCenter() {
     setMode("NEW");
     setSafetySnapshot(true);
     setConfirmVmName("");
+    setIpStrategy("NEW_IPS");
+    setSelectedSgIds([]);
+    setCleanupOldStorage(false);
+    setDeleteSourceSnapshot(false);
     setSubmitError(null);
   };
 
@@ -171,7 +210,20 @@ export function RestoreCenter() {
         {/* Step 1 — Select VM */}
         {step === 1 && (
           <div>
-            <div className="section-title">Step 1 — Select a VM to restore</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+              <div className="section-title" style={{ marginBottom: 0 }}>Step 1 — Select a VM to restore</div>
+              <button
+                className="btn btn-secondary"
+                disabled={syncLoading}
+                onClick={handleSyncAndSnapshot}
+                title="Sync inventory and take a snapshot of all VMs now"
+              >
+                {syncLoading ? <span className="loading-spinner" /> : "⟳ Sync & Snapshot Now"}
+              </button>
+            </div>
+            {syncMsg && (
+              <div className="info-banner" style={{ marginBottom: "1rem" }}>{syncMsg}</div>
+            )}
             {sortedVms.length === 0 ? (
               <div className="empty-state">No VMs available.</div>
             ) : (
@@ -372,7 +424,7 @@ export function RestoreCenter() {
                     <li>A <strong>safety snapshot</strong> will be taken of the current VM before it is deleted.</li>
                     <li>The existing VM <strong>{selectedVm.vm_name}</strong> will be <strong>permanently deleted</strong>.</li>
                     <li>A new VM will be created from the selected snapshot with the same name.</li>
-                    <li>IP addresses will be reassigned where possible.</li>
+                    <li>IP addresses will be reassigned according to the IP strategy below.</li>
                   </ul>
                 </div>
 
@@ -381,7 +433,7 @@ export function RestoreCenter() {
                     type="checkbox"
                     checked={safetySnapshot}
                     onChange={(e) => setSafetySnapshot(e.target.checked)}
-                    disabled={true} // Safety snapshot is mandatory for tenant REPLACE
+                    disabled={true}
                     style={{ marginTop: ".15rem" }}
                   />
                   <span>
@@ -394,7 +446,7 @@ export function RestoreCenter() {
 
                 <div className="field">
                   <label htmlFor="confirm-vm-name">
-                    Type <strong>{selectedVm.vm_name}</strong> to confirm the replace
+                    Type <strong>DELETE AND RESTORE {selectedVm.vm_name}</strong> to confirm
                   </label>
                   <input
                     id="confirm-vm-name"
@@ -403,12 +455,94 @@ export function RestoreCenter() {
                     value={confirmVmName}
                     onChange={(e) => setConfirmVmName(e.target.value)}
                     disabled={submitting}
-                    placeholder={selectedVm.vm_name}
+                    placeholder={`DELETE AND RESTORE ${selectedVm.vm_name}`}
                     autoComplete="off"
                   />
                 </div>
               </>
             )}
+
+            {/* Network / IP strategy */}
+            <div className="field" style={{ marginBottom: "1rem" }}>
+              <label htmlFor="ip-strategy">IP Strategy</label>
+              <select
+                id="ip-strategy"
+                className="select"
+                value={ipStrategy}
+                onChange={(e) => setIpStrategy(e.target.value as "NEW_IPS" | "TRY_SAME_IPS")}
+                disabled={submitting}
+              >
+                <option value="NEW_IPS">Allocate new IPs (safest)</option>
+                <option value="TRY_SAME_IPS">Try to keep original IPs (best-effort)</option>
+              </select>
+            </div>
+
+            {/* Security groups */}
+            {securityGroups.length > 0 && (
+              <div style={{ marginBottom: "1rem" }}>
+                <div style={{ fontSize: ".8125rem", fontWeight: 600, marginBottom: ".4rem" }}>Security Groups (optional)</div>
+                <div style={{ border: "1px solid var(--color-border)", borderRadius: "6px", padding: ".5rem", maxHeight: "140px", overflowY: "auto" }}>
+                  {securityGroups.map((sg) => (
+                    <label key={sg.id} style={{ display: "flex", alignItems: "center", gap: ".5rem", padding: ".25rem 0", cursor: "pointer", fontSize: ".875rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedSgIds.includes(sg.id)}
+                        onChange={(e) => {
+                          setSelectedSgIds(prev =>
+                            e.target.checked ? [...prev, sg.id] : prev.filter(id => id !== sg.id)
+                          );
+                        }}
+                        disabled={submitting}
+                      />
+                      <span style={{ fontWeight: 500 }}>{sg.name}</span>
+                      {sg.description && (
+                        <span style={{ color: "var(--color-text-secondary)", fontSize: ".75rem" }}>{sg.description}</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+                <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)", marginTop: ".2rem" }}>
+                  {selectedSgIds.length > 0 ? `${selectedSgIds.length} selected` : "None selected — project default will be used"}
+                </div>
+              </div>
+            )}
+
+            {/* Post-restore storage cleanup */}
+            <div style={{ background: "var(--color-surface-elevated, var(--color-surface))", border: "1px solid var(--color-border)", borderRadius: "6px", padding: ".75rem 1rem", marginBottom: "1rem" }}>
+              <div style={{ fontSize: ".8125rem", fontWeight: 600, marginBottom: ".5rem" }}>Post-Restore Storage Cleanup (optional)</div>
+              {mode === "REPLACE" && (
+                <label style={{ display: "flex", alignItems: "flex-start", gap: ".5rem", marginBottom: ".4rem", cursor: submitting ? "default" : "pointer", fontWeight: 400, fontSize: ".875rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={cleanupOldStorage}
+                    onChange={(e) => setCleanupOldStorage(e.target.checked)}
+                    disabled={submitting}
+                    style={{ marginTop: ".15rem" }}
+                  />
+                  <span>
+                    <strong>Delete original VM's volume after restore</strong>
+                    <span style={{ display: "block", fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
+                      The old root volume becomes orphaned after the VM is deleted. Check this to remove it automatically.
+                    </span>
+                  </span>
+                </label>
+              )}
+              <label style={{ display: "flex", alignItems: "flex-start", gap: ".5rem", cursor: submitting ? "default" : "pointer", fontWeight: 400, fontSize: ".875rem" }}>
+                <input
+                  type="checkbox"
+                  checked={deleteSourceSnapshot}
+                  onChange={(e) => setDeleteSourceSnapshot(e.target.checked)}
+                  disabled={submitting}
+                  style={{ marginTop: ".15rem" }}
+                />
+                <span>
+                  <strong>Delete source snapshot after restore</strong>
+                  <span style={{ display: "block", fontSize: ".8rem", color: "var(--color-text-secondary)" }}>
+                    Remove the Cinder snapshot used for this restore once it completes successfully.
+                  </span>
+                </span>
+              </label>
+            </div>
 
             {submitError && <div className="error-banner" style={{ marginBottom: "1rem" }}>{submitError}</div>}
 
@@ -418,7 +552,7 @@ export function RestoreCenter() {
               disabled={
                 submitting ||
                 (mode === "NEW" && !newVmName.trim()) ||
-                (mode === "REPLACE" && confirmVmName !== selectedVm.vm_name)
+                (mode === "REPLACE" && confirmVmName !== `DELETE AND RESTORE ${selectedVm.vm_name}`)
               }
               onClick={handleExecute}
             >

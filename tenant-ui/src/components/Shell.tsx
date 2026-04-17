@@ -9,6 +9,8 @@ import { Monitoring } from "../screens/Monitoring";
 import { RestoreCenter } from "../screens/RestoreCenter";
 import { Runbooks } from "../screens/Runbooks";
 import { ActivityLog } from "../screens/ActivityLog";
+import { Reports } from "../screens/Reports";
+import { Provision } from "../screens/Provision";
 
 interface Props {
   branding: Branding;
@@ -25,6 +27,8 @@ const NAV_ITEMS: Array<{ id: Screen; label: string; icon: string }> = [
   { id: "monitoring",     label: "Monitoring",           icon: "📊" },
   { id: "restore",        label: "Restore Center",       icon: "↺" },
   { id: "runbooks",       label: "Runbooks",             icon: "📖" },
+  { id: "reports",        label: "Reports",              icon: "📄" },
+  { id: "provision",      label: "New VM",               icon: "🚀" },
   { id: "activity",       label: "Activity Log",         icon: "📋" },
 ];
 
@@ -35,6 +39,8 @@ const SCREEN_TITLES: Record<Screen, string> = {
   monitoring:     "Monitoring & Availability",
   restore:        "Restore Center",
   runbooks:       "Runbooks",
+  reports:        "Reports",
+  provision:      "New VM",
   activity:       "Activity Log",
 };
 
@@ -62,6 +68,8 @@ export function Shell({ branding, me, screen, onNavigate, onLogout }: Props) {
       case "monitoring":     return <Monitoring     key={refreshTick} regionFilter={regionFilter} />;
       case "restore":        return <RestoreCenter  key={refreshTick} />;
       case "runbooks":       return <Runbooks       key={refreshTick} />;
+      case "reports":        return <Reports        key={refreshTick} />;
+      case "provision":      return <Provision      key={refreshTick} />;
       case "activity":       return <ActivityLog    key={refreshTick} />;
     }
   };

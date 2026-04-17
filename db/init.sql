@@ -3845,15 +3845,30 @@ CREATE INDEX IF NOT EXISTS idx_runbooks_tenant_visible
 UPDATE runbooks SET is_tenant_visible = true WHERE enabled = true AND is_tenant_visible = false;
 -- Admin-only runbooks that tenants should NOT see
 UPDATE runbooks SET is_tenant_visible = false WHERE name IN (
+    -- Infrastructure / platform-admin operations
     'hypervisor_maintenance_evacuate',
     'cluster_capacity_planner',
+    'capacity_forecast',
+    'diagnostics_bundle',
+    -- Tenant account management (admin perspective)
     'tenant_offboarding',
     'quota_adjustment',
+    -- Admin-scoped reporting / intelligence tools
+    'upgrade_opportunity_detector',
+    'monthly_executive_snapshot',
+    'cost_leakage_report',
+    'org_usage_report',
+    -- Forecasting tools that scan across all tenants
+    'snapshot_quota_forecast',
+    -- Security / compliance tools that scan ALL tenants/users (not scoped to one project)
     'image_lifecycle_audit',
     'network_isolation_audit',
-    'cost_leakage_report',
-    'monthly_executive_snapshot',
-    'capacity_forecast'
+    'security_compliance_audit',
+    'user_last_login',
+    -- Operational runbooks scoped to admin-level infrastructure actions
+    'disaster_recovery_drill',
+    'orphan_resource_cleanup',
+    'stuck_vm_remediation'
 );
 
 -- Project-scoped runbook tags (NULL project_id = visible to all CP tenants)

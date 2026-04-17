@@ -1,7 +1,7 @@
 # Tenant Self-Service Portal — Operator Guide
 
-**Version**: 1.84.14  
-**Last Updated**: April 16, 2026  
+**Version**: 1.85.0  
+**Last Updated**: April 17, 2026  
 **Audience**: Platform administrators enabling and managing the tenant self-service portal
 
 ---
@@ -12,6 +12,10 @@ The tenant self-service portal is a completely isolated web application that let
 
 **What tenants can do:**
 - View their own VMs, volumes, and snapshots
+- View and manage networks (subnets, CIDRs, DHCP, shared/external flags)
+- View security groups, add / delete inbound and outbound rules inline
+- Explore resource relationships via the SVG Dependency Graph (VM ↔ Network ↔ SG)
+- Provision new VMs (1–10 at a time): select flavor, image, network, security groups, cloud-init data
 - Monitor availability and resource metrics scoped to their projects
 - Initiate side-by-side VM restores (non-destructive — always creates a new VM)
 - View operational runbooks that you have explicitly published to them

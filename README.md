@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.84.24-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.85.0-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -184,7 +184,7 @@ After running Demo Mode you'll find:
 | **Search Worker** | Python / PostgreSQL | — | Incremental full-text indexing for Ops Assistant |
 | **LDAP Sync Worker** | Python / PostgreSQL / OpenLDAP | — | Bi-directional DB ↔ LDAP sync, polls every 30 s |
 | **Tenant Portal API** | FastAPI / Gunicorn / Python | 8010 | Tenant self-service portal — JWT + RLS, MFA, per-user access allowlist |
-| **Tenant Portal UI** | React 19.2+ / TypeScript / nginx | 8083 *(dev: 8082)* | Tenant self-service web interface — 7 screens, MFA login, per-customer branding |
+| **Tenant Portal UI** | React 19.2+ / TypeScript / nginx | 8083 *(dev: 8082)* | Tenant self-service web interface — 9 screens, MFA login, per-customer branding, VM provisioning, SG rule editing, dependency graph |
 
 ![Architecture](docs/images/Architecture.png)
 
@@ -218,6 +218,8 @@ After running Demo Mode you'll find:
 | External LDAP / AD Identity Federation | ✅ Production |
 | Kubernetes Deployment (Helm + ArgoCD + Sealed Secrets) | ✅ Production |
 | Tenant Self-Service Portal | ✅ Production |
+| Tenant VM Provisioning (self-service) | ✅ Production |
+| Tenant Network & Security Group Management | ✅ Production |
 
 ---
 
@@ -717,4 +719,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.84.24 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.85.0 | **Last Updated**: April 2026

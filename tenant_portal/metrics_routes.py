@@ -66,8 +66,9 @@ def _load_metrics_cache() -> Optional[Dict[str, Any]]:
             resp.raise_for_status()
             data = resp.json()
             # Normalise to the same shape the file cache uses: {"vms": [...], "timestamp": ...}
+            # Monitoring service returns {"vms": [...]} (not "data").
             return {
-                "vms": data.get("data", []),
+                "vms": data.get("vms", data.get("data", [])),
                 "timestamp": data.get("timestamp"),
             }
     except Exception as exc:
@@ -253,11 +254,26 @@ async def metrics_availability(ctx: TenantContext = Depends(get_tenant_context))
         days_with_success = vm_days.get(v_id, set())
         up_7 = len(days_with_success & window_7d)
         up_30 = len(days_with_success & window_30d)
+        # Derive VM status from last_seen_at: up if seen within 2 h, down if seen
+        # more than 2 h ago, unknown if never recorded.
+        last_seen = vm.get("last_seen_at")
+        if last_seen is not None:
+            try:
+                last_seen_dt = last_seen if hasattr(last_seen, "tzinfo") else datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+                if last_seen_dt.tzinfo is None:
+                    last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
+                hours_ago = (now - last_seen_dt).total_seconds() / 3600
+                vm_status = "up" if hours_ago < 2 else "down"
+            except Exception:
+                vm_status = "unknown"
+        else:
+            vm_status = "unknown"
         result.append({
             "vm_id": v_id,
             "vm_name": vm["vm_name"],
             "region_display_name": region_map.get(vm["region_id"], vm["region_id"]),
-            "last_seen": vm["last_seen_at"],
+            "last_seen": last_seen,
+            "status": vm_status,
             "uptime_7d_pct": round(up_7 / 7 * 100, 1),
             "uptime_30d_pct": round(up_30 / 30 * 100, 1),
             "successful_days_7d": up_7,

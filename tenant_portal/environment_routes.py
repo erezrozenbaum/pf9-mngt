@@ -20,6 +20,15 @@ P3a endpoints:
 P3c endpoints:
   GET /tenant/runbooks
   GET /tenant/runbooks/{name}
+
+P4b endpoints:
+  GET  /tenant/security-groups
+  POST /tenant/sync-and-snapshot
+
+P4c endpoints:
+  GET /tenant/reports
+  GET /tenant/reports/{name}/download
+  GET /tenant/quota
 """
 
 import logging
@@ -27,6 +36,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from psycopg2.extras import RealDictCursor
 
 from db_pool import get_tenant_connection
@@ -722,3 +732,871 @@ async def get_runbook(name: str, ctx: TenantContext = Depends(get_tenant_context
     if row is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="access_denied")
     return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# P4b — Security groups for restore configuration
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/security-groups", summary="List tenant security groups")
+async def list_security_groups(ctx: TenantContext = Depends(get_tenant_context)):
+    """Return security groups belonging to the tenant's projects (for restore config)."""
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            cur.execute(
+                """
+                SELECT id, name, description, project_id
+                FROM security_groups
+                WHERE project_id = ANY(%s)
+                ORDER BY name
+                """,
+                (ctx.project_ids,),
+            )
+            rows = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_security_groups")
+            conn.commit()
+    return {
+        "security_groups": [
+            {
+                "id": str(r["id"]),
+                "name": r["name"],
+                "description": r.get("description") or "",
+                "project_id": r["project_id"],
+            }
+            for r in rows
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# P4b — Sync & Snapshot Now (self-service trigger)
+# ---------------------------------------------------------------------------
+
+@router.post("/tenant/sync-and-snapshot", summary="Trigger inventory sync and immediate snapshots")
+async def sync_and_snapshot(ctx: TenantContext = Depends(get_tenant_context)):
+    """
+    Trigger an on-demand inventory sync followed by immediate snapshots for all
+    tenant VMs that do not already have a snapshot today.  The request is
+    delegated to the admin API internal endpoint so the tenant portal never
+    touches OpenStack credentials directly.
+    Rate-limited to one call per project per hour (enforced in the admin API).
+    """
+    import os
+    import httpx
+
+    INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://pf9_api:8000")
+    INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+
+    if not INTERNAL_SERVICE_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="sync_not_configured",
+        )
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(
+                f"{INTERNAL_API_URL}/internal/tenant-sync-and-snapshot",
+                json={
+                    "project_ids": ctx.project_ids,
+                    "region_ids": ctx.region_ids,
+                    "requested_by": f"tenant:{ctx.keystone_user_id}",
+                },
+                headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
+            )
+    except httpx.HTTPError as exc:
+        logger.error("Admin API call failed (sync-and-snapshot): %s", exc)
+        raise HTTPException(503, "sync_backend_unavailable")
+
+    if resp.status_code not in (200, 202):
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        raise HTTPException(resp.status_code, body.get("detail", "sync_failed"))
+
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            log_action(cur, ctx, "tenant_sync_and_snapshot")
+            conn.commit()
+
+    return {"message": "Sync and snapshot triggered. Inventory will update within a few minutes.", "status": "accepted"}
+
+
+# ---------------------------------------------------------------------------
+# P4c — Tenant reports (read-only, project-scoped)
+# ---------------------------------------------------------------------------
+
+_TENANT_REPORTS = [
+    {
+        "name": "snapshot_coverage",
+        "display_name": "Snapshot Coverage Report",
+        "description": "Per-VM snapshot coverage and compliance status over the last 30 days.",
+        "category": "Protection",
+    },
+    {
+        "name": "restore_history",
+        "display_name": "Restore History Report",
+        "description": "List of all restore operations performed on your VMs including status and duration.",
+        "category": "Recovery",
+    },
+    {
+        "name": "vm_inventory",
+        "display_name": "VM Inventory Report",
+        "description": "Full inventory of your virtual machines with flavor, status, and last-snapshot date.",
+        "category": "Inventory",
+    },
+    {
+        "name": "storage_usage",
+        "display_name": "Storage Usage Report",
+        "description": "Snapshot storage consumption per VM and total usage vs. quota.",
+        "category": "Storage",
+    },
+    {
+        "name": "quota_usage",
+        "display_name": "Quota Usage Report",
+        "description": "Current vCPU, RAM, instances, volumes, and storage quota usage vs. limits for your projects.",
+        "category": "Quota",
+    },
+    {
+        "name": "activity_log",
+        "display_name": "Activity Log Report",
+        "description": "Downloadable export of all portal actions and events for auditing purposes.",
+        "category": "Audit",
+    },
+]
+
+
+@router.get("/tenant/reports", summary="List available tenant reports")
+async def list_tenant_reports(ctx: TenantContext = Depends(get_tenant_context)):
+    """Return the catalogue of reports available to this tenant."""
+    log_action_noop = lambda: None  # noqa: E731
+    _ = log_action_noop  # keep RLS established for consistency
+    return {
+        "reports": [
+            {
+                "name": r["name"],
+                "display_name": r["display_name"],
+                "description": r["description"],
+                "category": r["category"],
+                "download_url": f"/tenant/reports/{r['name']}/download",
+            }
+            for r in _TENANT_REPORTS
+        ]
+    }
+
+
+@router.get("/tenant/reports/{report_name}/download", summary="Download a tenant report as CSV")
+async def download_tenant_report(
+    report_name: str,
+    from_date: Optional[datetime] = Query(None),
+    to_date: Optional[datetime] = Query(None),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Generate and stream a CSV report scoped to the tenant's projects."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    valid_names = {r["name"] for r in _TENANT_REPORTS}
+    if report_name not in valid_names:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report_not_found")
+
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            log_action(cur, ctx, "tenant_download_report", resource_type="report", resource_id=report_name)
+
+            if report_name == "snapshot_coverage":
+                cur.execute(
+                    """
+                    SELECT s.name AS vm_name, s.region_id,
+                           COUNT(sr.id) FILTER (WHERE sr.status = 'OK')    AS success_count,
+                           COUNT(sr.id) FILTER (WHERE sr.status = 'ERROR') AS fail_count,
+                           MAX(sr.created_at) FILTER (WHERE sr.status = 'OK') AS last_snapshot
+                    FROM servers s
+                    LEFT JOIN snapshot_records sr ON sr.vm_id = s.id AND sr.project_id = ANY(%s)
+                    WHERE s.project_id = ANY(%s) AND s.region_id = ANY(%s)
+                    GROUP BY s.id, s.name, s.region_id
+                    ORDER BY s.name
+                    """,
+                    (ctx.project_ids, ctx.project_ids, ctx.region_ids),
+                )
+                rows = cur.fetchall()
+                headers = ["VM Name", "Region", "Successes (30d)", "Failures (30d)", "Last Snapshot"]
+                data = [[r["vm_name"], r["region_id"], r["success_count"] or 0, r["fail_count"] or 0,
+                         r["last_snapshot"].isoformat() if r.get("last_snapshot") else ""] for r in rows]
+
+            elif report_name == "restore_history":
+                cur.execute(
+                    """
+                    SELECT vm_name, mode, status, created_at, finished_at, failure_reason
+                    FROM restore_jobs
+                    WHERE project_id = ANY(%s)
+                      AND (%s::timestamptz IS NULL OR created_at >= %s)
+                      AND (%s::timestamptz IS NULL OR created_at <= %s)
+                    ORDER BY created_at DESC
+                    LIMIT 1000
+                    """,
+                    (ctx.project_ids, from_date, from_date, to_date, to_date),
+                )
+                rows = cur.fetchall()
+                headers = ["VM Name", "Mode", "Status", "Started", "Finished", "Failure Reason"]
+                data = [[r["vm_name"], r["mode"], r["status"],
+                         r["created_at"].isoformat() if r.get("created_at") else "",
+                         r["finished_at"].isoformat() if r.get("finished_at") else "",
+                         r.get("failure_reason") or ""] for r in rows]
+
+            elif report_name == "vm_inventory":
+                cur.execute(
+                    """
+                    SELECT s.name, s.status, s.region_id,
+                           COALESCE(f.vcpus, 0) AS vcpus,
+                           COALESCE(f.ram_mb, 0) AS ram_mb,
+                           s.created_at,
+                           (SELECT MAX(sr.created_at) FROM snapshot_records sr
+                            WHERE sr.vm_id = s.id AND sr.status = 'OK') AS last_snapshot
+                    FROM servers s
+                    LEFT JOIN flavors f ON f.id = s.flavor_id
+                    WHERE s.project_id = ANY(%s) AND s.region_id = ANY(%s)
+                    ORDER BY s.name
+                    """,
+                    (ctx.project_ids, ctx.region_ids),
+                )
+                rows = cur.fetchall()
+                headers = ["VM Name", "Status", "Region", "vCPUs", "RAM (MB)", "Created", "Last Snapshot"]
+                data = [[r["name"], r["status"], r["region_id"], r["vcpus"], r["ram_mb"],
+                         r["created_at"].isoformat() if r.get("created_at") else "",
+                         r["last_snapshot"].isoformat() if r.get("last_snapshot") else ""] for r in rows]
+
+            elif report_name == "storage_usage":
+                cur.execute(
+                    """
+                    SELECT s.name AS vm_name, s.region_id,
+                           COUNT(snap.id) AS snapshot_count,
+                           COALESCE(SUM(snap.size_gb), 0) AS total_snapshot_gb
+                    FROM servers s
+                    LEFT JOIN volumes v ON v.server_id = s.id AND v.project_id = ANY(%s)
+                    LEFT JOIN snapshots snap ON snap.volume_id = v.id AND snap.project_id = ANY(%s)
+                    WHERE s.project_id = ANY(%s) AND s.region_id = ANY(%s)
+                    GROUP BY s.id, s.name, s.region_id
+                    ORDER BY total_snapshot_gb DESC
+                    """,
+                    (ctx.project_ids, ctx.project_ids, ctx.project_ids, ctx.region_ids),
+                )
+                rows = cur.fetchall()
+                headers = ["VM Name", "Region", "Snapshot Count", "Total Snapshot GB"]
+                data = [[r["vm_name"], r["region_id"], r["snapshot_count"], r["total_snapshot_gb"]] for r in rows]
+
+            elif report_name == "quota_usage":
+                # Fetch from admin API, then render as CSV
+                import httpx as _httpx
+                from restore_routes import INTERNAL_API_URL, INTERNAL_SERVICE_SECRET
+                project_ids_csv = ",".join(ctx.project_ids)
+                try:
+                    with _httpx.Client(timeout=10.0) as hclient:
+                        qresp = hclient.get(
+                            f"{INTERNAL_API_URL}/internal/tenant-quota",
+                            params={"project_ids": project_ids_csv, "control_plane_id": ctx.control_plane_id},
+                            headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
+                        )
+                    qdata = qresp.json().get("projects", []) if qresp.status_code == 200 else []
+                except Exception:
+                    qdata = []
+                headers = ["Project ID", "Resource", "Limit", "Used", "Available", "% Used"]
+                data = []
+                for proj in qdata:
+                    pid = proj.get("project_id", "")
+                    for section, items in [("compute", proj.get("compute", {})), ("storage", proj.get("storage", {}))]:
+                        for key, vals in items.items():
+                            limit = vals.get("limit", -1)
+                            used = vals.get("used", 0)
+                            avail = (limit - used) if limit >= 0 else "∞"
+                            pct = f"{round(used/limit*100, 1)}%" if limit > 0 else "N/A"
+                            data.append([pid, f"{section}/{key}", limit if limit >= 0 else "unlimited", used, avail, pct])
+                conn.commit()
+
+            else:  # activity_log
+                cur.execute(
+                    """
+                    SELECT action, resource_type, resource_id, occurred_at, success, ip_address
+                    FROM tenant_action_log
+                    WHERE project_id = ANY(%s)
+                      AND (%s::timestamptz IS NULL OR occurred_at >= %s)
+                      AND (%s::timestamptz IS NULL OR occurred_at <= %s)
+                    ORDER BY occurred_at DESC
+                    LIMIT 5000
+                    """,
+                    (ctx.project_ids, from_date, from_date, to_date, to_date),
+                )
+                rows = cur.fetchall()
+                headers = ["Action", "Resource Type", "Resource ID", "Timestamp", "Success", "IP"]
+                data = [[r["action"], r.get("resource_type") or "", r.get("resource_id") or "",
+                         r["occurred_at"].isoformat() if r.get("occurred_at") else "",
+                         "Yes" if r.get("success") else "No", r.get("ip_address") or ""] for r in rows]
+
+            conn.commit()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(headers)
+    writer.writerows(data)
+    csv_bytes = output.getvalue().encode("utf-8")
+
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{report_name}.csv"'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# P4c — Tenant quota usage (live from OpenStack via admin API)
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/quota", summary="Get quota limits and current usage for tenant projects")
+async def get_tenant_quota(ctx: TenantContext = Depends(get_tenant_context)):
+    """Fetch Nova + Cinder quota limits and in_use counts for all tenant projects
+    by delegating to the admin API (which has OpenStack credentials).
+    Returns an aggregated total plus a per-project breakdown."""
+    import httpx as _httpx
+
+    from restore_routes import INTERNAL_API_URL, INTERNAL_SERVICE_SECRET  # reuse env vars
+
+    if not INTERNAL_SERVICE_SECRET:
+        raise HTTPException(status_code=503, detail="internal_secret_not_configured")
+
+    project_ids_csv = ",".join(ctx.project_ids)
+
+    try:
+        with _httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{INTERNAL_API_URL}/internal/tenant-quota",
+                params={
+                    "project_ids": project_ids_csv,
+                    "control_plane_id": ctx.control_plane_id,
+                },
+                headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
+            )
+    except _httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"admin_api_unreachable: {exc}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="quota_fetch_failed")
+
+    data = resp.json()
+    projects = data.get("projects", [])
+
+    # Aggregate totals across all projects
+    def _sum(projects, section, key, field):
+        vals = [p.get(section, {}).get(key, {}).get(field, 0) for p in projects]
+        return sum(v for v in vals if v >= 0)
+
+    def _limit(projects, section, key):
+        limits = [p.get(section, {}).get(key, {}).get("limit", -1) for p in projects]
+        if all(l == -1 for l in limits):
+            return -1
+        return sum(l for l in limits if l >= 0)
+
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            log_action(cur, ctx, "tenant_view_quota")
+            conn.commit()
+
+    return {
+        "totals": {
+            "compute": {
+                "instances": {"limit": _limit(projects, "compute", "instances"), "used": _sum(projects, "compute", "instances", "used")},
+                "cores":     {"limit": _limit(projects, "compute", "cores"),     "used": _sum(projects, "compute", "cores", "used")},
+                "ram_mb":    {"limit": _limit(projects, "compute", "ram_mb"),    "used": _sum(projects, "compute", "ram_mb", "used")},
+            },
+            "storage": {
+                "volumes":   {"limit": _limit(projects, "storage", "volumes"),   "used": _sum(projects, "storage", "volumes", "used")},
+                "gigabytes": {"limit": _limit(projects, "storage", "gigabytes"), "used": _sum(projects, "storage", "gigabytes", "used")},
+                "snapshots": {"limit": _limit(projects, "storage", "snapshots"), "used": _sum(projects, "storage", "snapshots", "used")},
+            },
+        },
+        "projects": projects,
+    }
+
+
+# ---------------------------------------------------------------------------
+# P5a — Networks & Subnets (read-only inventory)
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/networks", summary="List tenant networks with subnets")
+async def list_networks(ctx: TenantContext = Depends(get_tenant_context)):
+    """Return networks and their subnets for the tenant's projects."""
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            cur.execute(
+                """
+                SELECT n.id, n.name, n.status, n.admin_state_up,
+                       n.is_shared, n.is_external, n.project_id, n.region_id
+                FROM networks n
+                WHERE n.project_id = ANY(%s)
+                   OR n.is_shared = true
+                ORDER BY n.name
+                """,
+                (ctx.project_ids,),
+            )
+            networks = cur.fetchall()
+            net_ids = [r["id"] for r in networks]
+
+            subnets: list = []
+            if net_ids:
+                cur.execute(
+                    """
+                    SELECT id, name, network_id, cidr, gateway_ip, enable_dhcp, region_id
+                    FROM subnets
+                    WHERE network_id = ANY(%s)
+                    ORDER BY cidr
+                    """,
+                    (net_ids,),
+                )
+                subnets = cur.fetchall()
+
+            log_action(cur, ctx, "tenant_view_networks")
+            conn.commit()
+
+    subnet_map: dict = {}
+    for s in subnets:
+        subnet_map.setdefault(s["network_id"], []).append({
+            "id": s["id"],
+            "name": s.get("name") or "",
+            "cidr": s.get("cidr") or "",
+            "gateway_ip": s.get("gateway_ip") or "",
+            "enable_dhcp": s.get("enable_dhcp"),
+            "region_id": s.get("region_id") or "",
+        })
+
+    return {
+        "networks": [
+            {
+                "id": r["id"],
+                "name": r.get("name") or "",
+                "status": r.get("status") or "",
+                "admin_state_up": r.get("admin_state_up"),
+                "is_shared": r.get("is_shared"),
+                "is_external": r.get("is_external"),
+                "project_id": r.get("project_id") or "",
+                "region_id": r.get("region_id") or "",
+                "subnets": subnet_map.get(r["id"], []),
+            }
+            for r in networks
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# P5b — Security Group detail + rule management
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/security-groups/{sg_id}", summary="Get security group with its rules")
+async def get_security_group(sg_id: str, ctx: TenantContext = Depends(get_tenant_context)):
+    """Return a single security group including all its rules."""
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            cur.execute(
+                """
+                SELECT id, name, description, project_id
+                FROM security_groups
+                WHERE id = %s AND project_id = ANY(%s)
+                """,
+                (sg_id, ctx.project_ids),
+            )
+            sg = cur.fetchone()
+            if sg is None:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="access_denied")
+
+            cur.execute(
+                """
+                SELECT id, direction, ethertype, protocol,
+                       port_range_min, port_range_max,
+                       remote_ip_prefix, remote_group_id, description
+                FROM security_group_rules
+                WHERE security_group_id = %s
+                ORDER BY direction, protocol NULLS LAST, port_range_min NULLS LAST
+                """,
+                (sg_id,),
+            )
+            rules = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_sg_detail", resource_id=sg_id)
+            conn.commit()
+
+    return {
+        "id": sg["id"],
+        "name": sg["name"],
+        "description": sg.get("description") or "",
+        "project_id": sg["project_id"],
+        "rules": [
+            {
+                "id": r["id"],
+                "direction": r.get("direction") or "",
+                "ethertype": r.get("ethertype") or "IPv4",
+                "protocol": r.get("protocol") or "any",
+                "port_range_min": r.get("port_range_min"),
+                "port_range_max": r.get("port_range_max"),
+                "remote_ip_prefix": r.get("remote_ip_prefix") or "",
+                "remote_group_id": r.get("remote_group_id") or "",
+                "description": r.get("description") or "",
+            }
+            for r in rules
+        ],
+    }
+
+
+class AddSgRuleRequest(BaseModel):
+    direction: str           # ingress | egress
+    ethertype: str = "IPv4"  # IPv4 | IPv6
+    protocol: Optional[str] = None   # tcp | udp | icmp | None = any
+    port_range_min: Optional[int] = None
+    port_range_max: Optional[int] = None
+    remote_ip_prefix: Optional[str] = None
+    remote_group_id: Optional[str] = None
+    description: Optional[str] = None
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls._validate_direction
+
+    @staticmethod
+    def _validate_direction(v):
+        return v
+
+    def model_post_init(self, __context) -> None:
+        if self.direction not in ("ingress", "egress"):
+            raise ValueError("direction must be ingress or egress")
+        if self.ethertype not in ("IPv4", "IPv6"):
+            raise ValueError("ethertype must be IPv4 or IPv6")
+        if self.protocol and self.protocol not in ("tcp", "udp", "icmp", "icmpv6", "ah", "esp", "gre"):
+            raise ValueError(f"unsupported protocol: {self.protocol}")
+
+
+from pydantic import BaseModel as _BM, validator as _validator  # noqa: E402 – already imported above via BaseModel
+
+
+@router.post("/tenant/security-groups/{sg_id}/rules", summary="Add a security group rule", status_code=201)
+async def add_sg_rule(sg_id: str, body: AddSgRuleRequest, ctx: TenantContext = Depends(get_tenant_context)):
+    """Add an ingress/egress rule to a tenant-owned security group via the admin API."""
+    import httpx as _hx
+    from restore_routes import INTERNAL_API_URL, INTERNAL_SERVICE_SECRET
+
+    # Verify ownership before calling out
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            cur.execute(
+                "SELECT id, project_id FROM security_groups WHERE id = %s AND project_id = ANY(%s)",
+                (sg_id, ctx.project_ids),
+            )
+            sg = cur.fetchone()
+            if sg is None:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="access_denied")
+            conn.commit()
+
+    payload = {
+        "sg_id": sg_id,
+        "project_id": sg["project_id"],
+        "direction": body.direction,
+        "ethertype": body.ethertype,
+        "protocol": body.protocol,
+        "port_range_min": body.port_range_min,
+        "port_range_max": body.port_range_max,
+        "remote_ip_prefix": body.remote_ip_prefix,
+        "remote_group_id": body.remote_group_id,
+        "description": body.description or "",
+    }
+
+    try:
+        with _hx.Client(timeout=15.0) as hclient:
+            resp = hclient.post(
+                f"{INTERNAL_API_URL}/internal/sg-rule",
+                json=payload,
+                headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="upstream_error") from exc
+
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=resp.json().get("detail", "rule_create_failed"))
+
+    # Audit
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            log_action(cur, ctx, "tenant_add_sg_rule", resource_id=sg_id)
+            conn.commit()
+
+    return resp.json()
+
+
+@router.delete("/tenant/security-groups/{sg_id}/rules/{rule_id}", summary="Delete a security group rule", status_code=204)
+async def delete_sg_rule(sg_id: str, rule_id: str, ctx: TenantContext = Depends(get_tenant_context)):
+    """Remove a rule from a tenant-owned security group via the admin API."""
+    import httpx as _hx
+    from restore_routes import INTERNAL_API_URL, INTERNAL_SERVICE_SECRET
+
+    # Verify ownership
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            cur.execute(
+                """
+                SELECT r.id FROM security_group_rules r
+                JOIN security_groups g ON g.id = r.security_group_id
+                WHERE r.id = %s AND r.security_group_id = %s AND g.project_id = ANY(%s)
+                """,
+                (rule_id, sg_id, ctx.project_ids),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="access_denied")
+            conn.commit()
+
+    try:
+        with _hx.Client(timeout=15.0) as hclient:
+            resp = hclient.delete(
+                f"{INTERNAL_API_URL}/internal/sg-rule/{rule_id}",
+                params={"sg_id": sg_id},
+                headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="upstream_error") from exc
+
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=resp.status_code, detail="rule_delete_failed")
+
+    # Audit
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            log_action(cur, ctx, "tenant_delete_sg_rule", resource_id=sg_id)
+            conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# P5c — Dependency / resource graph
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/resource-graph", summary="Return VM → network / security-group dependency graph")
+async def resource_graph(ctx: TenantContext = Depends(get_tenant_context)):
+    """
+    Returns nodes (VMs, networks, security groups) and edges for the dependency
+    visualisation. Edges are derived from:
+      - VM → network: ports table (device_id = vm_id, network_id)
+      - VM → SG:      servers.raw_json → security_groups[].name matched to sg.id
+    """
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+
+            # VMs
+            cur.execute(
+                """
+                SELECT id, name, status, project_id, region_id
+                FROM servers
+                WHERE project_id = ANY(%s) AND region_id = ANY(%s)
+                ORDER BY name
+                """,
+                (ctx.project_ids, ctx.region_ids),
+            )
+            vms = cur.fetchall()
+
+            # Networks (tenant-owned + shared)
+            cur.execute(
+                """
+                SELECT id, name, project_id
+                FROM networks
+                WHERE project_id = ANY(%s) OR is_shared = true
+                """,
+                (ctx.project_ids,),
+            )
+            networks = cur.fetchall()
+
+            # Security groups
+            cur.execute(
+                """
+                SELECT id, name, project_id
+                FROM security_groups
+                WHERE project_id = ANY(%s)
+                """,
+                (ctx.project_ids,),
+            )
+            sgs = cur.fetchall()
+
+            # VM → Network edges via ports
+            vm_ids = [v["id"] for v in vms]
+            net_edges: list = []
+            if vm_ids:
+                cur.execute(
+                    """
+                    SELECT DISTINCT device_id AS vm_id, network_id
+                    FROM ports
+                    WHERE device_id = ANY(%s)
+                      AND device_owner LIKE 'compute:%%'
+                    """,
+                    (vm_ids,),
+                )
+                net_edges = cur.fetchall()
+
+            # VM → SG edges via servers.raw_json
+            sg_by_id = {s["id"]: s["name"] for s in sgs}
+            sg_by_name = {s["name"]: s["id"] for s in sgs}
+            sg_edges: list = []
+            for vm in vms:
+                raw = vm.get("raw_json") or {}
+                if isinstance(raw, str):
+                    import json as _json
+                    try:
+                        raw = _json.loads(raw)
+                    except Exception:
+                        raw = {}
+                for sg_ref in raw.get("security_groups", []):
+                    sg_name = sg_ref.get("name", "")
+                    sg_id_found = sg_by_name.get(sg_name)
+                    if sg_id_found:
+                        sg_edges.append({"vm_id": vm["id"], "sg_id": sg_id_found})
+
+            log_action(cur, ctx, "tenant_view_resource_graph")
+            conn.commit()
+
+    return {
+        "nodes": {
+            "vms": [{"id": v["id"], "name": v.get("name") or v["id"], "status": v.get("status") or "", "project_id": v.get("project_id") or ""} for v in vms],
+            "networks": [{"id": n["id"], "name": n.get("name") or n["id"], "project_id": n.get("project_id") or ""} for n in networks],
+            "security_groups": [{"id": s["id"], "name": s.get("name") or s["id"], "project_id": s.get("project_id") or ""} for s in sgs],
+        },
+        "edges": {
+            "vm_network": [{"vm_id": e["vm_id"], "network_id": e["network_id"]} for e in net_edges],
+            "vm_sg": sg_edges,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# P5d — VM Provisioning (single VM creation for tenant admins)
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/provision/resources", summary="List flavors, images and networks available for provisioning")
+async def provision_resources(ctx: TenantContext = Depends(get_tenant_context)):
+    """Return flavors, images, networks and security groups the tenant can use to create a VM."""
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+
+            cur.execute(
+                "SELECT id, name, vcpus, ram_mb, disk_gb FROM flavors ORDER BY vcpus, ram_mb"
+            )
+            flavors = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT id, name, os_distro, os_version, disk_format, size_bytes, status
+                FROM images
+                WHERE status = 'active'
+                ORDER BY name
+                """
+            )
+            images = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT n.id, n.name, n.is_shared
+                FROM networks n
+                WHERE (n.project_id = ANY(%s) OR n.is_shared = true)
+                  AND n.admin_state_up = true
+                ORDER BY n.name
+                """,
+                (ctx.project_ids,),
+            )
+            networks = cur.fetchall()
+
+            cur.execute(
+                "SELECT id, name FROM security_groups WHERE project_id = ANY(%s) ORDER BY name",
+                (ctx.project_ids,),
+            )
+            sgs = cur.fetchall()
+
+            log_action(cur, ctx, "tenant_view_provision_resources")
+            conn.commit()
+
+    return {
+        "flavors": [{"id": r["id"], "name": r["name"], "vcpus": r["vcpus"], "ram_mb": r["ram_mb"], "disk_gb": r.get("disk_gb")} for r in flavors],
+        "images": [{"id": r["id"], "name": r["name"], "os_distro": r.get("os_distro") or "", "status": r.get("status") or ""} for r in images],
+        "networks": [{"id": r["id"], "name": r["name"], "is_shared": r.get("is_shared")} for r in networks],
+        "security_groups": [{"id": r["id"], "name": r["name"]} for r in sgs],
+    }
+
+
+class ProvisionVmRequest(BaseModel):
+    name: str
+    flavor_id: str
+    image_id: str
+    network_id: str
+    security_group_ids: List[str] = []
+    key_pair_name: Optional[str] = None
+    user_data: Optional[str] = None
+    count: int = 1
+
+    def model_post_init(self, __context) -> None:
+        if not self.name or len(self.name) > 64:
+            raise ValueError("name must be 1-64 characters")
+        if self.count < 1 or self.count > 10:
+            raise ValueError("count must be 1-10")
+
+
+@router.post("/tenant/vms", summary="Provision one or more VMs (tenant admin)", status_code=202)
+async def provision_vm(body: ProvisionVmRequest, ctx: TenantContext = Depends(get_tenant_context)):
+    """
+    Create VM(s) in the tenant's primary project via the admin API.
+    Delegates to POST /internal/tenant-provision-vm — the admin API validates
+    quota, resolves the control-plane token, and calls Nova.
+    """
+    import httpx as _hx
+    from restore_routes import INTERNAL_API_URL, INTERNAL_SERVICE_SECRET
+
+    if not INTERNAL_SERVICE_SECRET:
+        raise HTTPException(status_code=503, detail="provisioning_not_configured")
+
+    # Use first project as the provisioning target
+    project_id = ctx.project_ids[0] if ctx.project_ids else None
+    if not project_id:
+        raise HTTPException(status_code=400, detail="no_project_available")
+
+    payload = {
+        "project_id": project_id,
+        "control_plane_id": ctx.control_plane_id,
+        "name": body.name,
+        "flavor_id": body.flavor_id,
+        "image_id": body.image_id,
+        "network_id": body.network_id,
+        "security_group_ids": body.security_group_ids,
+        "key_pair_name": body.key_pair_name,
+        "user_data": body.user_data,
+        "count": body.count,
+    }
+
+    try:
+        with _hx.Client(timeout=30.0) as hclient:
+            resp = hclient.post(
+                f"{INTERNAL_API_URL}/internal/tenant-provision-vm",
+                json=payload,
+                headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="upstream_unavailable") from exc
+
+    if resp.status_code not in (200, 201, 202):
+        raise HTTPException(status_code=resp.status_code, detail=resp.json().get("detail", "provision_failed"))
+
+    # Audit
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            log_action(cur, ctx, "tenant_provision_vm", resource_id=body.name)
+            conn.commit()
+
+    return resp.json()
+

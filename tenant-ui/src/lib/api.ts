@@ -360,8 +360,29 @@ export interface SnapshotRecord {
   region_display_name: string;
 }
 
-export async function apiSnapshotHistory(): Promise<SnapshotRecord[]> {
-  const raw = await tenantFetch<Record<string, unknown>>("/tenant/snapshot-history");
+/** Raw snapshot history records for charting (status = OK | ERROR | SKIPPED) */
+export async function apiSnapshotHistoryRaw(limit = 500): Promise<Array<{ created_at: string; status: string }>> {
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/snapshot-history?limit=${limit}`);
+  const list = (Array.isArray(raw) ? raw : ((raw.records ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    created_at: String(r.created_at ?? r.run_date ?? ""),
+    status:     String(r.status ?? "").toUpperCase(),
+  }));
+}
+
+export async function apiSnapshotHistory(
+  vmId?: string,
+  fromDate?: string,
+  toDate?: string,
+  limit?: number,
+): Promise<SnapshotRecord[]> {
+  const q = new URLSearchParams();
+  if (vmId)     q.set("vm_id",     vmId);
+  if (fromDate) q.set("from_date", fromDate);
+  if (toDate)   q.set("to_date",   toDate);
+  if (limit)    q.set("limit",     String(limit));
+  const qs = q.toString() ? `?${q.toString()}` : "";
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/snapshot-history${qs}`);
   const list = (Array.isArray(raw) ? raw : ((raw.records ?? []) as unknown[])) as Record<string, unknown>[];
   return list.map((r) => {
     const rawStatus = String(r.status ?? "").toUpperCase();
@@ -399,15 +420,20 @@ export interface ComplianceRow {
 export async function apiCompliance(): Promise<ComplianceRow[]> {
   const raw = await tenantFetch<Record<string, unknown>>("/tenant/compliance");
   const list = (Array.isArray(raw) ? raw : ((raw.vms ?? []) as unknown[])) as Record<string, unknown>[];
-  return list.map((r) => ({
-    vm_id:               String(r.vm_id ?? ""),
-    vm_name:             String(r.vm_name ?? ""),
-    region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
-    coverage_pct:        typeof r.coverage_pct === "number" ? r.coverage_pct : 0,
-    current_streak:      typeof r.current_streak === "number" ? r.current_streak : 0,
-    last_snapshot_ts:    (r.last_snapshot_ts ?? r.last_success_at ?? null) as string | null,
-    status:              r.is_compliant ? "compliant" : "non_compliant",
-  }));
+  return list.map((r) => {
+    const pct = typeof r.coverage_pct === "number" ? r.coverage_pct : 0;
+    const isCompliant = Boolean(r.is_compliant);
+    const status = isCompliant ? "covered" : pct >= 50 ? "partial" : "uncovered";
+    return {
+      vm_id:               String(r.vm_id ?? ""),
+      vm_name:             String(r.vm_name ?? ""),
+      region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
+      coverage_pct:        pct,
+      current_streak:      typeof r.current_streak === "number" ? r.current_streak : 0,
+      last_snapshot_ts:    (r.last_snapshot_ts ?? r.last_success_at ?? null) as string | null,
+      status,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -559,6 +585,10 @@ export async function apiRestorePlan(body: {
   new_vm_name?: string;
   mode?: "NEW" | "REPLACE";
   pre_restore_snapshot?: boolean;
+  ip_strategy?: "NEW_IPS" | "TRY_SAME_IPS";
+  security_group_ids?: string[];
+  cleanup_old_storage?: boolean;
+  delete_source_snapshot?: boolean;
 }): Promise<RestorePlan> {
   return tenantFetch<RestorePlan>("/tenant/restore/plan", {
     method: "POST",
@@ -695,3 +725,266 @@ export async function apiActivity(params?: {
     details:       (e.details ?? null) as Record<string, unknown> | null,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// Security groups (for restore configuration)
+// ---------------------------------------------------------------------------
+
+export interface SecurityGroup {
+  id: string;
+  name: string;
+  description: string;
+  project_id: string;
+}
+
+export async function apiSecurityGroups(): Promise<SecurityGroup[]> {
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/security-groups");
+  const list = (Array.isArray(raw) ? raw : ((raw.security_groups ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    id:          String(r.id ?? ""),
+    name:        String(r.name ?? ""),
+    description: String(r.description ?? ""),
+    project_id:  String(r.project_id ?? ""),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Sync and snapshot now
+// ---------------------------------------------------------------------------
+
+export async function apiSyncAndSnapshot(): Promise<{ message: string; status: string }> {
+  return tenantFetch("/tenant/sync-and-snapshot", { method: "POST" });
+}
+
+// ---------------------------------------------------------------------------
+// Tenant reports
+// ---------------------------------------------------------------------------
+
+export interface TenantReport {
+  name: string;
+  display_name: string;
+  description: string;
+  category: string;
+  download_url: string | null;
+}
+
+export async function apiTenantReports(): Promise<TenantReport[]> {
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/reports");
+  const list = (Array.isArray(raw) ? raw : ((raw.reports ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    name:         String(r.name ?? ""),
+    display_name: String(r.display_name ?? r.name ?? ""),
+    description:  String(r.description ?? ""),
+    category:     String(r.category ?? "general"),
+    download_url: (r.download_url ?? null) as string | null,
+  }));
+}
+
+export async function apiDownloadTenantReport(reportName: string, params?: { from_date?: string; to_date?: string }): Promise<Blob> {
+  const q = new URLSearchParams();
+  if (params?.from_date) q.set("from_date", params.from_date);
+  if (params?.to_date) q.set("to_date", params.to_date);
+  const qs = q.toString() ? `?${q.toString()}` : "";
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`/tenant/reports/${encodeURIComponent(reportName)}/download${qs}`, { headers });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+  return res.blob();
+}
+
+// ---------------------------------------------------------------------------
+// Quota usage
+// ---------------------------------------------------------------------------
+
+export interface QuotaItem {
+  limit: number;
+  used: number;
+}
+
+export interface QuotaData {
+  totals: {
+    compute: {
+      instances: QuotaItem;
+      cores: QuotaItem;
+      ram_mb: QuotaItem;
+    };
+    storage: {
+      volumes: QuotaItem;
+      gigabytes: QuotaItem;
+      snapshots: QuotaItem;
+    };
+  };
+  projects: Array<{
+    project_id: string;
+    compute: { instances: QuotaItem; cores: QuotaItem; ram_mb: QuotaItem };
+    storage: { volumes: QuotaItem; gigabytes: QuotaItem; snapshots: QuotaItem };
+  }>;
+}
+
+export async function apiQuota(): Promise<QuotaData> {
+  return tenantFetch<QuotaData>("/tenant/quota");
+}
+
+// ---------------------------------------------------------------------------
+// Networks
+// ---------------------------------------------------------------------------
+
+export interface Subnet {
+  id: string;
+  name: string;
+  cidr: string;
+  gateway_ip: string;
+  enable_dhcp: boolean | null;
+  region_id: string;
+}
+
+export interface Network {
+  id: string;
+  name: string;
+  status: string;
+  admin_state_up: boolean | null;
+  is_shared: boolean | null;
+  is_external: boolean | null;
+  project_id: string;
+  region_id: string;
+  subnets: Subnet[];
+}
+
+export async function apiNetworks(): Promise<Network[]> {
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/networks");
+  const list = (Array.isArray(raw) ? raw : ((raw.networks ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((r) => ({
+    id: String(r.id ?? ""),
+    name: String(r.name ?? ""),
+    status: String(r.status ?? ""),
+    admin_state_up: (r.admin_state_up ?? null) as boolean | null,
+    is_shared: (r.is_shared ?? null) as boolean | null,
+    is_external: (r.is_external ?? null) as boolean | null,
+    project_id: String(r.project_id ?? ""),
+    region_id: String(r.region_id ?? ""),
+    subnets: ((r.subnets ?? []) as Record<string, unknown>[]).map((s) => ({
+      id: String(s.id ?? ""),
+      name: String(s.name ?? ""),
+      cidr: String(s.cidr ?? ""),
+      gateway_ip: String(s.gateway_ip ?? ""),
+      enable_dhcp: (s.enable_dhcp ?? null) as boolean | null,
+      region_id: String(s.region_id ?? ""),
+    })),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Security Group detail + rule management
+// ---------------------------------------------------------------------------
+
+export interface SgRule {
+  id: string;
+  direction: string;
+  ethertype: string;
+  protocol: string;
+  port_range_min: number | null;
+  port_range_max: number | null;
+  remote_ip_prefix: string;
+  remote_group_id: string;
+  description: string;
+}
+
+export interface SgDetail {
+  id: string;
+  name: string;
+  description: string;
+  project_id: string;
+  rules: SgRule[];
+}
+
+export async function apiSecurityGroupDetail(sgId: string): Promise<SgDetail> {
+  return tenantFetch<SgDetail>(`/tenant/security-groups/${encodeURIComponent(sgId)}`);
+}
+
+export interface AddRuleRequest {
+  direction: "ingress" | "egress";
+  ethertype?: string;
+  protocol?: string | null;
+  port_range_min?: number | null;
+  port_range_max?: number | null;
+  remote_ip_prefix?: string | null;
+  remote_group_id?: string | null;
+  description?: string;
+}
+
+export async function apiAddSgRule(sgId: string, rule: AddRuleRequest): Promise<SgRule> {
+  return tenantFetch<SgRule>(`/tenant/security-groups/${encodeURIComponent(sgId)}/rules`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(rule),
+  });
+}
+
+export async function apiDeleteSgRule(sgId: string, ruleId: string): Promise<void> {
+  await tenantFetch<void>(`/tenant/security-groups/${encodeURIComponent(sgId)}/rules/${encodeURIComponent(ruleId)}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Resource dependency graph
+// ---------------------------------------------------------------------------
+
+export interface GraphNode { id: string; name: string; project_id: string; }
+export interface GraphVmNode extends GraphNode { status: string; }
+
+export interface ResourceGraph {
+  nodes: {
+    vms: GraphVmNode[];
+    networks: GraphNode[];
+    security_groups: GraphNode[];
+  };
+  edges: {
+    vm_network: Array<{ vm_id: string; network_id: string }>;
+    vm_sg: Array<{ vm_id: string; sg_id: string }>;
+  };
+}
+
+export async function apiResourceGraph(): Promise<ResourceGraph> {
+  return tenantFetch<ResourceGraph>("/tenant/resource-graph");
+}
+
+// ---------------------------------------------------------------------------
+// VM Provisioning
+// ---------------------------------------------------------------------------
+
+export interface FlavorOption { id: string; name: string; vcpus: number; ram_mb: number; disk_gb: number | null; }
+export interface ImageOption  { id: string; name: string; os_distro: string; status: string; }
+export interface NetworkOption { id: string; name: string; is_shared: boolean | null; }
+export interface SgOption { id: string; name: string; }
+
+export interface ProvisionResources {
+  flavors: FlavorOption[];
+  images: ImageOption[];
+  networks: NetworkOption[];
+  security_groups: SgOption[];
+}
+
+export async function apiProvisionResources(): Promise<ProvisionResources> {
+  return tenantFetch<ProvisionResources>("/tenant/provision/resources");
+}
+
+export interface ProvisionVmRequest {
+  name: string;
+  flavor_id: string;
+  image_id: string;
+  network_id: string;
+  security_group_ids?: string[];
+  user_data?: string;
+  count?: number;
+}
+
+export async function apiProvisionVm(body: ProvisionVmRequest): Promise<{ created: Array<{ id: string; name: string; status: string }>; count: number }> {
+  return tenantFetch("/tenant/vms", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+

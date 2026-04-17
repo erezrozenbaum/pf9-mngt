@@ -12,6 +12,8 @@ export type Screen =
   | "monitoring"
   | "restore"
   | "runbooks"
+  | "reports"
+  | "provision"
   | "activity";
 
 export default function App() {
