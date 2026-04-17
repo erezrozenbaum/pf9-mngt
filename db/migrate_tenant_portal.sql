@@ -309,3 +309,13 @@ CREATE POLICY tenant_mfa_isolation ON tenant_portal_mfa
         AND control_plane_id = current_setting('app.tenant_cp_id', true)
     );
 COMMIT;
+
+-- =====================================================================
+-- PART 8 — v1.85.0: grants for new networking / provisioning endpoints
+-- networks, subnets, ports, security_groups, security_group_rules, images
+-- =====================================================================
+BEGIN;
+GRANT SELECT ON networks, subnets, ports TO tenant_portal_role;
+GRANT SELECT ON security_groups, security_group_rules TO tenant_portal_role;
+GRANT SELECT ON images TO tenant_portal_role;
+COMMIT;

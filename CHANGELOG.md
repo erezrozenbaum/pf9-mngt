@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.1] - 2026-04-17
+
+### Fixed
+- **K8s: 500 on `/tenant/networks`, `/tenant/security-groups`, `/tenant/resource-graph`, `/tenant/provision/resources`** — `tenant_portal_role` DB user was missing `SELECT` grants on `networks`, `subnets`, `ports`, `security_groups`, `security_group_rules`, and `images` tables added in v1.85.0. Fixed in `db/init.sql` and `db/migrate_tenant_portal.sql` (PART 8). Apply to live K8s DB: `kubectl -n pf9-mngt exec pf9-db-0 -- psql -U pf9 -d pf9_mgmt -f /tmp/part8.sql` (see runbook below).
+- **K8s: 503 on `/tenant/quota`** — `INTERNAL_SERVICE_SECRET` and `INTERNAL_API_URL` env vars were missing from the tenant-portal K8s deployment; also `INTERNAL_SERVICE_SECRET` was missing from the admin API deployment. Both Helm templates updated. A one-time K8s secret (`pf9-internal-service-secret`) must be created on the cluster before deploying (see runbook below). The secret is **not** stored in this repository.
+
+### Infrastructure
+- **Helm `k8s/helm/pf9-mngt/Chart.yaml`**: bumped `version` and `appVersion` to `1.85.1`.
+- **Helm `values.yaml`**: added `secrets.internalServiceSecret: pf9-internal-service-secret` reference.
+- **K8s secret runbook** (run once per cluster, output stays in private deploy repo):
+  ```bash
+  # 1. Create the shared internal-service secret (if it doesn't exist yet)
+  kubectl -n pf9-mngt create secret generic pf9-internal-service-secret \
+    --from-literal=secret=$(openssl rand -hex 32) --dry-run=client -o yaml \
+    | kubeseal --format yaml > sealed-secrets/pf9-internal-service-secret.yaml
+  # Apply the sealed secret:
+  kubectl apply -f sealed-secrets/pf9-internal-service-secret.yaml
+
+  # 2. Apply DB grants (PART 8 of migrate_tenant_portal.sql)
+  kubectl -n pf9-mngt exec pf9-db-0 -- psql -U pf9 -d pf9_mgmt -c \
+    "GRANT SELECT ON networks, subnets, ports TO tenant_portal_role; \
+     GRANT SELECT ON security_groups, security_group_rules TO tenant_portal_role; \
+     GRANT SELECT ON images TO tenant_portal_role;"
+  ```
+
 ## [1.85.0] - 2026-04-17
 
 ### Fixed
