@@ -110,6 +110,8 @@ export function RestoreCenter() {
     setNewVmName(
       `${selectedVm?.vm_name ?? "vm"}-restored-${new Date().toISOString().slice(0, 10)}`
     );
+    // For REPLACE: always preserve original IPs (backend enforces this too)
+    if (mode === "REPLACE") setIpStrategy("TRY_SAME_IPS");
     setStep(3);
     setConfirmVmName("");
     setSubmitError(null);
@@ -463,19 +465,26 @@ export function RestoreCenter() {
             )}
 
             {/* Network / IP strategy */}
-            <div className="field" style={{ marginBottom: "1rem" }}>
-              <label htmlFor="ip-strategy">IP Strategy</label>
-              <select
-                id="ip-strategy"
-                className="select"
-                value={ipStrategy}
-                onChange={(e) => setIpStrategy(e.target.value as "NEW_IPS" | "TRY_SAME_IPS")}
-                disabled={submitting}
-              >
-                <option value="NEW_IPS">Allocate new IPs (safest)</option>
-                <option value="TRY_SAME_IPS">Try to keep original IPs (best-effort)</option>
-              </select>
-            </div>
+            {mode === "REPLACE" ? (
+              <div style={{ marginBottom: "1rem", padding: ".6rem .875rem", background: "var(--color-surface-elevated, var(--color-surface))", border: "1px solid var(--color-border)", borderRadius: "6px", fontSize: ".875rem" }}>
+                <span style={{ fontWeight: 600 }}>IP Strategy: </span>
+                <span style={{ color: "var(--color-text-secondary)" }}>Original IPs will be preserved where possible (best-effort). This cannot be changed for in-place replace.</span>
+              </div>
+            ) : (
+              <div className="field" style={{ marginBottom: "1rem" }}>
+                <label htmlFor="ip-strategy">IP Strategy</label>
+                <select
+                  id="ip-strategy"
+                  className="select"
+                  value={ipStrategy}
+                  onChange={(e) => setIpStrategy(e.target.value as "NEW_IPS" | "TRY_SAME_IPS")}
+                  disabled={submitting}
+                >
+                  <option value="NEW_IPS">Allocate new IPs (safest)</option>
+                  <option value="TRY_SAME_IPS">Try to keep original IPs (best-effort)</option>
+                </select>
+              </div>
+            )}
 
             {/* Security groups */}
             {securityGroups.length > 0 && (
