@@ -1,0 +1,128 @@
+{
+  "errors": [],
+  "generated_at": "2026-04-17T08:37:42Z",
+  "metrics": {
+    ".\\api/restore_management.py": {
+      "CONFIDENCE.HIGH": 1,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 2,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 1,
+      "SEVERITY.MEDIUM": 2,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 2605,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    ".\\tenant_portal/environment_routes.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 1335,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    ".\\tenant_portal/main.py": {
+      "CONFIDENCE.HIGH": 0,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 0,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 0,
+      "SEVERITY.MEDIUM": 0,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 107,
+      "nosec": 0,
+      "skipped_tests": 0
+    },
+    "_totals": {
+      "CONFIDENCE.HIGH": 1,
+      "CONFIDENCE.LOW": 0,
+      "CONFIDENCE.MEDIUM": 2,
+      "CONFIDENCE.UNDEFINED": 0,
+      "SEVERITY.HIGH": 0,
+      "SEVERITY.LOW": 1,
+      "SEVERITY.MEDIUM": 2,
+      "SEVERITY.UNDEFINED": 0,
+      "loc": 4047,
+      "nosec": 0,
+      "skipped_tests": 0
+    }
+  },
+  "results": [
+    {
+      "code": "1988                                 available.append(ip_str)\n1989                     except Exception:\n1990                         pass\n1991 \n",
+      "col_offset": 20,
+      "end_col_offset": 28,
+      "filename": ".\\api/restore_management.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {
+        "id": 703,
+        "link": "https://cwe.mitre.org/data/definitions/703.html"
+      },
+      "issue_severity": "LOW",
+      "issue_text": "Try, Except, Pass detected.",
+      "line_number": 1989,
+      "line_range": [
+        1989,
+        1990
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b110_try_except_pass.html",
+      "test_id": "B110",
+      "test_name": "try_except_pass"
+    },
+    {
+      "code": "2308             with conn.cursor(cursor_factory=RealDictCursor) as cur:\n2309                 cur.execute(f\"SELECT COUNT(*) as total FROM restore_jobs {where}\", params)\n2310                 total = cur.fetchone()[\"total\"]\n",
+      "col_offset": 30,
+      "end_col_offset": 73,
+      "filename": ".\\api/restore_management.py",
+      "issue_confidence": "MEDIUM",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 2309,
+      "line_range": [
+        2309
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    },
+    {
+      "code": "2312                 cur.execute(\n2313                     f\"\"\"SELECT id, created_by, executed_by, project_id, project_name,\n2314                                vm_id, vm_name, restore_point_id, restore_point_name,\n2315                                mode, ip_strategy, requested_name, boot_mode, status,\n2316                                failure_reason, result_json,\n2317                                created_at, started_at, finished_at\n2318                         FROM restore_jobs {where}\n2319                         ORDER BY created_at DESC\n2320                         LIMIT %s OFFSET %s\"\"\",\n2321                     params + [limit, offset],\n",
+      "col_offset": 24,
+      "end_col_offset": 42,
+      "filename": ".\\api/restore_management.py",
+      "issue_confidence": "MEDIUM",
+      "issue_cwe": {
+        "id": 89,
+        "link": "https://cwe.mitre.org/data/definitions/89.html"
+      },
+      "issue_severity": "MEDIUM",
+      "issue_text": "Possible SQL injection vector through string-based query construction.",
+      "line_number": 2313,
+      "line_range": [
+        2313,
+        2314,
+        2315,
+        2316,
+        2317,
+        2318,
+        2319,
+        2320
+      ],
+      "more_info": "https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html",
+      "test_id": "B608",
+      "test_name": "hardcoded_sql_expressions"
+    }
+  ]
+}

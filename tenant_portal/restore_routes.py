@@ -111,6 +111,10 @@ def _call_admin_plan(
     new_vm_name: Optional[str],
     mode: str = "NEW",
     pre_restore_snapshot: bool = True,
+    ip_strategy: str = "NEW_IPS",
+    security_group_ids: Optional[list] = None,
+    cleanup_old_storage: bool = False,
+    delete_source_snapshot: bool = False,
 ) -> dict:
     """Call POST /internal/tenant-restore/plan on the admin API."""
     if not INTERNAL_SERVICE_SECRET:
@@ -131,6 +135,10 @@ def _call_admin_plan(
                     "new_vm_name": new_vm_name,
                     "mode": mode,
                     "pre_restore_snapshot": pre_restore_snapshot,
+                    "ip_strategy": ip_strategy,
+                    "security_group_ids": security_group_ids or [],
+                    "cleanup_old_storage": cleanup_old_storage,
+                    "delete_source_snapshot": delete_source_snapshot,
                 },
                 headers={"X-Internal-Secret": INTERNAL_SERVICE_SECRET},
             )
@@ -186,6 +194,22 @@ class TenantRestorePlanRequest(BaseModel):
     pre_restore_snapshot: bool = Field(
         True,
         description="Take a snapshot of the current VM before restore (recommended; mandatory for REPLACE)",
+    )
+    ip_strategy: str = Field(
+        "NEW_IPS",
+        description="IP allocation strategy: NEW_IPS (safest), TRY_SAME_IPS (best-effort), MANUAL_IP",
+    )
+    security_group_ids: Optional[list] = Field(
+        None,
+        description="Security group UUIDs to attach to the restored VM's ports (defaults to project default)",
+    )
+    cleanup_old_storage: bool = Field(
+        False,
+        description="Delete the original VM's orphaned root volume after a successful REPLACE restore",
+    )
+    delete_source_snapshot: bool = Field(
+        False,
+        description="Delete the source snapshot after a successful restore",
     )
 
 
@@ -427,6 +451,10 @@ async def create_restore_plan(
         new_vm_name=req.new_vm_name,
         mode=mode,
         pre_restore_snapshot=req.pre_restore_snapshot,
+        ip_strategy=req.ip_strategy if req.ip_strategy in ("NEW_IPS", "TRY_SAME_IPS") else "NEW_IPS",
+        security_group_ids=req.security_group_ids or [],
+        cleanup_old_storage=req.cleanup_old_storage if mode == "REPLACE" else False,
+        delete_source_snapshot=req.delete_source_snapshot,
     )
 
     # 3. Strip internal fields before returning to tenant

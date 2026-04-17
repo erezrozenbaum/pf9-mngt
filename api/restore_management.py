@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from psycopg2.extras import RealDictCursor, Json
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 import requests as http_requests
 
@@ -1840,12 +1840,42 @@ class _InternalTenantPlanBody(BaseModel):
     new_vm_name: Optional[str] = None
     mode: str = "NEW"        # "NEW" (side-by-side) or "REPLACE" (in-place)
     pre_restore_snapshot: bool = True  # NEW mode: optional pre-restore safety snapshot
+    ip_strategy: str = "NEW_IPS"      # IP allocation strategy passed through to planner
+    security_group_ids: Optional[list] = None  # security groups for restored VM ports
+    cleanup_old_storage: bool = False   # delete orphaned root volume after REPLACE
+    delete_source_snapshot: bool = False  # delete source snapshot after restore
 
 
 class _InternalTenantExecuteBody(BaseModel):
     """Request body for internal /internal/tenant-restore/execute endpoint."""
     plan_id: str
     created_by: str          # must start with "tenant:" and match job row
+
+
+class _SgRuleBody(BaseModel):
+    sg_id: str
+    project_id: str
+    direction: str
+    ethertype: str = "IPv4"
+    protocol: Optional[str] = None
+    port_range_min: Optional[int] = None
+    port_range_max: Optional[int] = None
+    remote_ip_prefix: Optional[str] = None
+    remote_group_id: Optional[str] = None
+    description: str = ""
+
+
+class _TenantProvisionVmBody(BaseModel):
+    project_id: str
+    control_plane_id: str
+    name: str
+    flavor_id: str
+    image_id: str
+    network_id: str
+    security_group_ids: list = []
+    key_pair_name: Optional[str] = None
+    user_data: Optional[str] = None
+    count: int = 1
 
 
 def setup_restore_routes(app):
@@ -2859,11 +2889,13 @@ def setup_restore_routes(app):
             mode=mode,
             new_vm_name=req.new_vm_name,
             # For NEW: assign fresh IPs; for REPLACE: try to keep same IPs
-            ip_strategy="NEW_IPS" if mode == "NEW" else "TRY_SAME_IPS",
+            ip_strategy=req.ip_strategy if mode == "NEW" else (req.ip_strategy if req.ip_strategy != "NEW_IPS" else "TRY_SAME_IPS"),
+            security_group_ids=req.security_group_ids or [],
             # SAFETY: safety snapshot — mandatory for REPLACE, opt-in for NEW
             safety_snapshot_before_replace=(mode == "REPLACE") or req.pre_restore_snapshot,
-            # SAFETY: tenants cannot auto-delete old volumes
-            cleanup_old_storage=False,
+            # Tenant-controlled cleanup options (passed through from tenant UI)
+            cleanup_old_storage=req.cleanup_old_storage if mode == "REPLACE" else False,
+            delete_source_snapshot=req.delete_source_snapshot,
         )
         if not RESTORE_ENABLED:
             raise HTTPException(503, "Restore feature is not enabled")
@@ -2925,3 +2957,245 @@ def setup_restore_routes(app):
             "status": "PENDING",
             "message": "Restore execution started.",
         }
+
+    # ------------------------------------------------------------------
+    # GET /internal/tenant-quota  — quota + usage for tenant projects
+    # ------------------------------------------------------------------
+    @app.get("/internal/tenant-quota", include_in_schema=False)
+    async def _internal_tenant_quota(
+        project_ids: str = Query(..., description="Comma-separated project UUIDs"),
+        control_plane_id: str = Query(...),
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        """Return Nova+Cinder quota limits and usage for each requested project.
+        Called exclusively by the tenant portal — not user-facing."""
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(
+            x_internal_secret, INTERNAL_SERVICE_SECRET
+        ):
+            raise HTTPException(403, "Forbidden")
+
+        ids = [p.strip() for p in project_ids.split(",") if p.strip()]
+        if not ids:
+            raise HTTPException(400, "project_ids required")
+        if len(ids) > 20:
+            raise HTTPException(400, "Too many project_ids")
+
+        # Validate control_plane_id is a UUID to prevent injection
+        import re as _re
+        if not _re.match(r"^[0-9a-f-]{36}$", control_plane_id):
+            raise HTTPException(400, "invalid control_plane_id")
+
+        try:
+            from cluster_registry import get_registry as _get_registry
+            client = _get_registry().get_control_plane(control_plane_id)
+        except Exception:
+            raise HTTPException(404, "control_plane_not_found")
+
+        results = []
+        for project_id in ids:
+            try:
+                compute = client.get_compute_quotas(project_id)
+                storage = client.get_storage_quotas(project_id)
+            except Exception:
+                compute, storage = {}, {}
+
+            def _int(d: dict, key: str, default: int = -1) -> int:
+                v = d.get(key, {})
+                if isinstance(v, dict):
+                    return int(v.get("limit", default))
+                return int(v) if v is not None else default
+
+            def _used(d: dict, key: str) -> int:
+                v = d.get(key, {})
+                if isinstance(v, dict):
+                    return int(v.get("in_use", 0))
+                return 0
+
+            results.append({
+                "project_id": project_id,
+                "compute": {
+                    "instances":      {"limit": _int(compute, "instances"),  "used": _used(compute, "instances")},
+                    "cores":          {"limit": _int(compute, "cores"),       "used": _used(compute, "cores")},
+                    "ram_mb":         {"limit": _int(compute, "ram"),         "used": _used(compute, "ram")},
+                },
+                "storage": {
+                    "volumes":        {"limit": _int(storage, "volumes"),     "used": _used(storage, "volumes")},
+                    "gigabytes":      {"limit": _int(storage, "gigabytes"),   "used": _used(storage, "gigabytes")},
+                    "snapshots":      {"limit": _int(storage, "snapshots"),   "used": _used(storage, "snapshots")},
+                },
+            })
+
+        return {"projects": results}
+
+    # ------------------------------------------------------------------
+    # POST /internal/sg-rule  — create a Neutron SG rule on behalf of tenant
+    # DELETE /internal/sg-rule/{rule_id} — delete a rule
+    # ------------------------------------------------------------------
+
+    @app.post("/internal/sg-rule", include_in_schema=False, status_code=201)
+    async def _internal_create_sg_rule(
+        body: _SgRuleBody,
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(x_internal_secret, INTERNAL_SERVICE_SECRET):
+            raise HTTPException(403, "Forbidden")
+
+        # Look up the control plane for this project
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT control_plane_id FROM projects WHERE id = %s LIMIT 1",
+                    (body.project_id,),
+                )
+                proj = cur.fetchone()
+        if not proj:
+            raise HTTPException(404, "project_not_found")
+
+        from cluster_registry import get_registry as _get_registry
+        client = _get_registry().get_control_plane(proj["control_plane_id"])
+
+        rule = client.create_security_group_rule(
+            security_group_id=body.sg_id,
+            direction=body.direction,
+            ethertype=body.ethertype,
+            protocol=body.protocol,
+            port_range_min=body.port_range_min,
+            port_range_max=body.port_range_max,
+            remote_ip_prefix=body.remote_ip_prefix,
+            remote_group_id=body.remote_group_id,
+            description=body.description,
+        )
+        rule_data = rule.get("security_group_rule", rule)
+
+        # Persist to local DB cache
+        with get_connection() as conn2:
+            with conn2.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO security_group_rules
+                       (id, security_group_id, direction, ethertype, protocol,
+                        port_range_min, port_range_max, remote_ip_prefix,
+                        remote_group_id, description, project_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON CONFLICT (id) DO NOTHING""",
+                    (
+                        rule_data.get("id"), body.sg_id, body.direction, body.ethertype,
+                        body.protocol, body.port_range_min, body.port_range_max,
+                        body.remote_ip_prefix, body.remote_group_id,
+                        body.description, body.project_id,
+                    ),
+                )
+        return rule_data
+
+    @app.delete("/internal/sg-rule/{rule_id}", include_in_schema=False)
+    async def _internal_delete_sg_rule(
+        rule_id: str,
+        sg_id: str = Query(...),
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(x_internal_secret, INTERNAL_SERVICE_SECRET):
+            raise HTTPException(403, "Forbidden")
+
+        # Resolve project via SG rule
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT r.project_id FROM security_group_rules r WHERE r.id = %s AND r.security_group_id = %s",
+                    (rule_id, sg_id),
+                )
+                row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "rule_not_found")
+
+        with get_connection() as conn2:
+            with conn2.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT control_plane_id FROM projects WHERE id = %s LIMIT 1", (row["project_id"],))
+                proj = cur.fetchone()
+        if not proj:
+            raise HTTPException(404, "project_not_found")
+
+        from cluster_registry import get_registry as _get_registry
+        client = _get_registry().get_control_plane(proj["control_plane_id"])
+        client.delete_security_group_rule(rule_id)
+
+        # Remove from local cache
+        with get_connection() as conn3:
+            with conn3.cursor() as cur:
+                cur.execute("DELETE FROM security_group_rules WHERE id = %s", (rule_id,))
+
+        return {"deleted": rule_id}
+
+    # ------------------------------------------------------------------
+    # POST /internal/tenant-provision-vm — create VM(s) on behalf of tenant
+    # Flow: look up flavor disk_gb → create boot volume → create server BFV
+    # ------------------------------------------------------------------
+
+    @app.post("/internal/tenant-provision-vm", include_in_schema=False, status_code=202)
+    async def _internal_tenant_provision_vm(
+        body: _TenantProvisionVmBody,
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(x_internal_secret, INTERNAL_SERVICE_SECRET):
+            raise HTTPException(403, "Forbidden")
+
+        from cluster_registry import get_registry as _get_registry
+        client = _get_registry().get_control_plane(body.control_plane_id)
+
+        # Resolve SG IDs → names (Nova BFV requires names)
+        sg_names: list = []
+        if body.security_group_ids:
+            with get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(
+                        "SELECT name FROM security_groups WHERE id = ANY(%s)",
+                        (body.security_group_ids,),
+                    )
+                    sg_names = [r["name"] for r in cur.fetchall()]
+
+        # Look up flavor disk size
+        disk_gb = 20  # safe default
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT disk_gb FROM flavors WHERE id = %s", (body.flavor_id,))
+                fl = cur.fetchone()
+                if fl and fl.get("disk_gb"):
+                    disk_gb = int(fl["disk_gb"])
+
+        created = []
+        for i in range(max(1, min(body.count, 10))):
+            vm_name = body.name if body.count == 1 else f"{body.name}-{i+1:02d}"
+            # Step 1: create boot volume from image
+            vol = client.create_boot_volume(
+                name=f"{vm_name}-root",
+                image_id=body.image_id,
+                size_gb=disk_gb,
+                project_id=body.project_id,
+            )
+            vol_id = vol.get("volume", vol).get("id", vol.get("id"))
+            if not vol_id:
+                raise HTTPException(500, f"Failed to create boot volume for {vm_name}")
+
+            # Step 2: boot VM from volume
+            user_data_b64 = None
+            if body.user_data:
+                import base64 as _b64
+                user_data_b64 = _b64.b64encode(body.user_data.encode()).decode()
+
+            server = client.create_server_bfv(
+                name=vm_name,
+                volume_id=vol_id,
+                flavor_id=body.flavor_id,
+                network_id=body.network_id,
+                security_group_names=sg_names or None,
+                user_data_b64=user_data_b64,
+                project_id=body.project_id,
+            )
+            server_data = server.get("server", server)
+            created.append({
+                "id": server_data.get("id"),
+                "name": vm_name,
+                "status": server_data.get("status", "BUILD"),
+                "volume_id": vol_id,
+            })
+
+        return {"created": created, "count": len(created)}
+

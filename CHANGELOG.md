@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.0] - 2026-04-17
+
+### Fixed
+- **Monitoring Current Usage — "No metrics available" 404** — the HTTP fallback in `metrics_routes.py` that calls the internal monitoring service used `data.get("data", [])` but the monitoring service returns `{"vms": [...]}`. Fixed key to `data.get("vms", data.get("data", []))`. Also added `status` field (`up`/`down`/`unknown`) to availability endpoint computed from `last_seen_at`.
+- **Snapshot Coverage — all VMs showing "Uncovered"** — `apiCompliance()` in `api.ts` returned `status: "compliant"/"non_compliant"` but `SnapshotCoverage.tsx` only renders a green badge for `status === "covered"`. Fixed to return `"covered"/"partial"/"uncovered"`.
+- **Tenant Runbooks — further admin runbooks hidden** — `disaster_recovery_drill`, `orphan_resource_cleanup`, and `stuck_vm_remediation` added to hidden list. Live DB updated via kubectl. Tenant portal now shows **7 runbooks** only (VM Rightsizing, Quota Threshold Check, Security Group Audit, Security Group Hardening, Snapshot Before Escalation, Reset VM Password, VM Health Quick Fix).
+- **Tenant Inventory — Networks, Security Groups + rule editing, Dependency Graph** — the My Infrastructure screen gains 3 new tabs: *Networks* (lists networks and subnets), *Security Groups* (view + add/delete inbound/outbound rules inline), *Dependency Graph* (SVG showing VM → Network and VM → Security Group links). New backend endpoints: `GET /tenant/networks`, `GET/POST/DELETE /tenant/security-groups/{id}/rules`, `GET /tenant/resource-graph`. Internal admin API endpoints: `POST /internal/sg-rule`, `DELETE /internal/sg-rule/{id}` (call Neutron + sync local DB cache).
+- **Tenant VM Provisioning** — new *New VM* screen in the nav (🚀). Tenant admins can create 1–10 VMs at once by selecting flavor, image, network, security groups, and optional cloud-init user data. Backend flow: `POST /tenant/vms` → `POST /internal/tenant-provision-vm` → `create_boot_volume` + `create_server_bfv` on the admin `Pf9Client`.
+
+### Added
+- **Tenant Restore — Sync & Snapshot Now button** — Step 1 of the Restore Center wizard now has a "⟳ Sync & Snapshot Now" button matching the admin UI. Calls new `POST /tenant/sync-and-snapshot` endpoint which delegates to the admin API.
+- **Tenant Restore — full restore configuration options** — Step 3 of the wizard now shows IP strategy selector (Allocate new IPs / Try to keep original IPs), security groups checklist, and post-restore storage cleanup options (delete original volume, delete source snapshot). Confirmation text for REPLACE mode changed to `DELETE AND RESTORE <vm_name>` to match admin UI. Full chain extended: `api.ts` → `restore_routes.py` → `restore_management.py`.
+- **Tenant Reports screen** — new Reports screen in the tenant portal (📄 Reports nav item) with downloadable CSV reports: Snapshot Coverage, Restore History, VM Inventory, Storage Usage, Quota Usage, Activity Log. Date-range filter supported. New backend endpoints: `GET /tenant/reports` and `GET /tenant/reports/{name}/download`.
+- **Tenant Dashboard — resource graphs** — added three pure SVG charts (no external dependency) to the dashboard: 14-day Snapshot Activity bar chart (success vs. fail per day), VM Status donut chart, and live Quota Usage bars showing vCPUs, RAM, instances, volumes, storage, and snapshots vs. limits. Quota data served by new `GET /tenant/quota` endpoint (proxies to `GET /internal/tenant-quota` on admin API → OpenStack Nova + Cinder).
+
 ## [1.84.24] - 2026-04-16
 
 ### Fixed

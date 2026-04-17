@@ -212,18 +212,21 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.0)*
 
-**For MSPs and operators who want to give customers limited, secure, read-only + restore access to their own infrastructure — without exposing the admin panel.**
+**For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning and security group management — without exposing the admin panel.**
 
-A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolated, MFA-protected API and accompanying React SPA (`tenant-ui/`) per customer. Tenants can monitor their VMs, browse snapshots, initiate side-by-side restores, and view operational runbooks — all scoped to their own projects only.
+A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolated, MFA-protected API and accompanying React SPA (`tenant-ui/`) per customer. Tenants can monitor their VMs, browse snapshots, initiate restores, manage security groups, view a dependency graph, and provision new VMs — all scoped to their own projects only.
 
 - **Security isolation**: `tenant_portal_role` PostgreSQL role with Row-Level Security on 5 inventory tables. `role=tenant` JWT namespace (admin tokens explicitly rejected). IP binding + Redis session binding. TOTP + email OTP MFA with 8 bcrypt-hashed backup codes.
 - **Data endpoints (read-only)**: VM inventory, volume list, snapshot list/detail/history, per-VM compliance %, dashboard summary, event feed, Prometheus metrics proxy (scoped to tenant VMs), runbooks catalogue — 14 routes, all with double `project_id + region_id` scoping and RLS.
 - **Restore center**: 6 endpoints (list restore points, dry-run plan, execute, list jobs, progress, cancel). Side-by-side restore always creates a new VM — non-destructive. Ops Slack/Teams alert on execute; tenant email on completion/failure.
+- **Network & SG Management** *(v1.85.0)*: `GET /tenant/networks` (subnets, CIDRs, shared/external); `GET /tenant/security-groups/{id}` (rules); `POST/DELETE /tenant/security-groups/{id}/rules` (add/delete rules via Neutron + local DB sync). Internal endpoints: `POST /internal/sg-rule`, `DELETE /internal/sg-rule/{id}`.
+- **Dependency Graph** *(v1.85.0)*: `GET /tenant/resource-graph` returns VM nodes, network nodes, SG nodes, and VM↔Network + VM↔SG edges. Rendered as a pure SVG 3-column layout in the browser.
+- **VM Provisioning** *(v1.85.0)*: `POST /tenant/vms` → `POST /internal/tenant-provision-vm` → `create_boot_volume` + `create_server_bfv`. Supports 1–10 VMs per request, flavor/image/network/SG selection, cloud-init user data. New *New VM* screen (🚀) in the tenant portal nav.
 - **Audit logging**: every tenant API call writes an immutable `tenant_action_log` entry atomically with the data query.
 - **Branding** *(v1.84.9)*: `GET /tenant/branding` unauthenticated endpoint returns per-CP logo URL, accent colour, portal title, and favicon. 60 s Redis cache; fail-safe defaults when unconfigured.
-- **Web SPA** (`tenant-ui/`): React + TypeScript + nginx — 7 screens: Dashboard, Infrastructure (VMs + volumes), Snapshot Coverage (30-day calendar), Monitoring, Restore Center (3-step wizard + job panel), Runbooks (read-only catalogue), Activity Log. Per-customer branding applied from server. Session token silently re-validates on page reload.
+- **Web SPA** (`tenant-ui/`): React + TypeScript + nginx — 9 screens: Dashboard, Infrastructure (VMs · Volumes · Networks · Security Groups · Dependency Graph), Snapshot Coverage, Monitoring, Restore Center, Runbooks, Reports, New VM (🚀 Provision), Activity Log. Per-customer branding applied from server. Session token silently re-validates on page reload.
 - **Admin API** (`api/tenant_portal_routes.py`): 9 admin endpoints — user listing, access management (grant/revoke projects), session management (list/revoke), audit log review, branding upsert *(v1.84.9)*, MFA reset *(v1.84.9)*. Requires `admin` or `superadmin`.
 - **Admin UI** *(v1.84.9)*: `TenantPortalTab.tsx` — 4 sub-tabs: Access Management, Branding (logo + accent colour editor), Active Sessions, Audit Log.
 - **Kubernetes**: dedicated `nginx-ingress-tenant` Helm release on separate MetalLB IP *(v1.84.8)*; `NetworkPolicy` blocks tenant portal from reaching admin API, LDAP, and SMTP.

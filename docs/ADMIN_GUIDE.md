@@ -1,7 +1,7 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.84.24  
-**Last Updated**: April 16, 2026  
+**Version**: 1.85.0  
+**Last Updated**: April 17, 2026  
 **Audience**: System administrators and platform operators
 
 ---
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.85.0 — Tenant Networking, SG Rule Editing, Dependency Graph, VM Provisioning (✅ Complete)
+
+- **Tenant Inventory expanded**: My Infrastructure screen adds *Networks* tab (lists all tenant + shared networks, subnets, CIDRs, gateway, DHCP, shared/external flags), *Security Groups* tab (view all rules, add ingress/egress rules by protocol/port/CIDR, delete rules inline), *🕸 Dependency Graph* tab (pure SVG, VM↔Network↔SG edges, auto-layout).
+- **New VM Provisioning screen** (🚀 nav item): tenant admins can create 1–10 VMs in one operation — select flavor (card grid), image, network, security groups, optional cloud-init user data. Backend flow: `POST /tenant/vms` → `POST /internal/tenant-provision-vm` → `create_boot_volume` + `create_server_bfv` on admin `Pf9Client`.
+- **Runbook fix (live DB)**: `disaster_recovery_drill`, `orphan_resource_cleanup`, `stuck_vm_remediation` added to hidden list. `UPDATE 18` applied via `kubectl exec` to `pf9-db-0`. Tenant portal now shows exactly **7 runbooks**.
+- **Monitoring + Snapshot Coverage fixes**: monitoring HTTP fallback key corrected (`vms` not `data`); snapshot coverage badge now returns `covered`/`partial`/`uncovered` to match UI expectations.
+- **New backend endpoints**: `GET /tenant/networks`, `GET /tenant/security-groups/{id}`, `POST/DELETE /tenant/security-groups/{id}/rules`, `GET /tenant/resource-graph`, `GET /tenant/provision/resources`, `POST /tenant/vms`; internal: `POST /internal/sg-rule`, `DELETE /internal/sg-rule/{id}`, `POST /internal/tenant-provision-vm`.
 
 ### v1.84.24 — Tenant Portal Snapshot Coverage + Restore + Runbooks + Metrics Fixes (✅ Complete)
 
