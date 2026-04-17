@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.2] - 2026-04-17
+
+### Fixed
+- **K8s: Monitoring "No metrics available"** — `PF9_HOSTS` env var was empty in the monitoring pod; the Prometheus scraper had no hosts to collect from so the metrics cache stayed empty. Added `monitoring.pf9Hosts` to `values.prod.yaml` in the deploy repo with the four hypervisor IPs.
+- **Tenant portal: Replace In-Place IP strategy misleading** — the IP strategy dropdown was shown for REPLACE mode but the backend always forces `TRY_SAME_IPS` regardless of selection. The dropdown is now replaced with a locked info line for REPLACE; IP is always preserved best-effort as intended.
+
+### Infrastructure
+- **Helm `k8s/helm/pf9-mngt/Chart.yaml`**: bumped `version` and `appVersion` to `1.85.2`.
+
+---
+
 ## [1.85.1] - 2026-04-17
 
 ### Fixed
