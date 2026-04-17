@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.85.2  
+**Version**: 1.85.3  
 **Last Updated**: April 17, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,15 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.85.3 — Runbook Execute, VM Provisioning UX, Dependency Graph Expansion, Activity Log, Dashboard (✅ Complete)
+
+- **Runbook execution from tenant portal**: Execute button on each runbook card; parameter form from `parameters_schema`; dry-run toggle (pre-checked for non-low-risk); high-risk warning banner; execution history tab. New endpoints: `POST /tenant/runbooks/{name}/execute`, `GET /tenant/runbook-executions`; admin internal: `POST /internal/tenant-runbook-execute`, `GET /internal/tenant-runbook-executions`.
+- **Create VM improvements**: RFC-1123 name validation (lowercase, hyphens, max 63 chars) with real-time coercion; Fixed IP input with CIDR hint from selected subnet; cloud-init Initial User + Initial Password fields generate `#cloud-config` YAML (overridden if raw user_data filled); flavor cards show boot volume size.
+- **Dependency graph expanded**: 5 node types (VM, Network, Subnet, Security Group, Volume), 4 edge types (`vm_network`, `vm_sg`, `network_subnet`, `vm_volume`), 5-column SVG layout with colored nodes and legend.
+- **VM list and inventory CSV**: `disk_gb` added via `flavors` JOIN; IP addresses extracted from `raw_json`; both displayed in Infrastructure table and exported to CSV.
+- **Activity Log**: Added *User* column — `username` (bold) + truncated `keystone_user_id` (12 chars + …); system events show "system".
+- **Dashboard**: Skipped snapshot events shown as amber "Skipped" instead of red "Failed".
 
 ### v1.85.0 — Tenant Networking, SG Rule Editing, Dependency Graph, VM Provisioning (✅ Complete)
 

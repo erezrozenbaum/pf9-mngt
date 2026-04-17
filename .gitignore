@@ -54,6 +54,9 @@ reports/
 *~
 .DS_Store
 
+# Downloaded binaries (local tools — not for committing)
+*.exe
+
 # Internal planning documents (not for public repo)
 _plans/
 improvements_plan.md

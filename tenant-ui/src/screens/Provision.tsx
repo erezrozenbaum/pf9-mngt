@@ -1,13 +1,37 @@
 import { useEffect, useState } from "react";
 import {
   apiProvisionResources, apiProvisionVm,
-  type ProvisionResources, type FlavorOption, type ImageOption,
+  type ProvisionResources, type FlavorOption, type ImageOption, type NetworkOption,
 } from "../lib/api";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmtRam(mb: number) {
   return mb >= 1024 ? `${(mb / 1024).toFixed(0)} GB` : `${mb} MB`;
+}
+
+/** Validate VM name: lowercase, digits, hyphens, start with letter/digit, max 63 chars */
+function validateVmName(name: string): string | null {
+  if (!name) return null;
+  if (name.length > 63) return "Max 63 characters";
+  if (!/^[a-z0-9]/.test(name)) return "Must start with a letter or digit";
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) return "Only lowercase letters, numbers, and hyphens allowed";
+  return null;
+}
+
+/** Generate cloud-config YAML for initial user */
+function buildCloudInit(user: string, password: string, existingData: string): string {
+  if (!user && !password) return existingData;
+  const lines = ["#cloud-config", "users:"];
+  lines.push(`  - name: ${user || "cloud-user"}`);
+  if (password) {
+    lines.push(`    lock_passwd: false`);
+    lines.push(`    plain_text_passwd: '${password}'`);
+  }
+  lines.push("    sudo: ALL=(ALL) NOPASSWD:ALL");
+  lines.push("chpasswd:");
+  lines.push("  expire: false");
+  return lines.join("\n");
 }
 
 // ── Main component ───────────────────────────────────────────────────────────
@@ -26,6 +50,10 @@ export function Provision() {
   const [userData, setUserData]     = useState("");
   const [count, setCount]           = useState(1);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // New fields
+  const [fixedIp, setFixedIp]               = useState("");
+  const [cloudInitUser, setCloudInitUser]   = useState("");
+  const [cloudInitPass, setCloudInitPass]   = useState("");
 
   // Submission state
   const [submitting, setSubmitting] = useState(false);
@@ -45,18 +73,27 @@ export function Provision() {
       .finally(() => setLoading(false));
   }, []);
 
+  const nameError = validateVmName(vmName);
+
   const selectedFlavor: FlavorOption | undefined = resources?.flavors.find((f) => f.id === flavorId);
   const selectedImage:  ImageOption  | undefined = resources?.images.find((i) => i.id === imageId);
+  const selectedNetwork: NetworkOption | undefined = resources?.networks.find((n) => n.id === networkId);
 
   const toggleSg = (id: string) => {
     setSgIds((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
   };
 
   const handleSubmit = async () => {
-    if (!vmName.trim()) { setSubmitError("VM name is required"); return; }
-    if (!flavorId)      { setSubmitError("Select a flavor"); return; }
-    if (!imageId)       { setSubmitError("Select an image"); return; }
-    if (!networkId)     { setSubmitError("Select a network"); return; }
+    if (!vmName.trim())  { setSubmitError("VM name is required"); return; }
+    if (nameError)       { setSubmitError(nameError); return; }
+    if (!flavorId)       { setSubmitError("Select a flavor"); return; }
+    if (!imageId)        { setSubmitError("Select an image"); return; }
+    if (!networkId)      { setSubmitError("Select a network"); return; }
+
+    // Build cloud-init user data
+    const finalUserData = cloudInitUser || cloudInitPass
+      ? buildCloudInit(cloudInitUser, cloudInitPass, userData)
+      : userData || undefined;
 
     setSubmitting(true);
     setSubmitError(null);
@@ -67,7 +104,8 @@ export function Provision() {
         image_id: imageId,
         network_id: networkId,
         security_group_ids: sgIds,
-        user_data: userData || undefined,
+        user_data: finalUserData,
+        fixed_ip: fixedIp || undefined,
         count,
       });
       setCreated(result.created);
@@ -119,11 +157,26 @@ export function Provision() {
 
         {/* VM Name + Count */}
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1rem", marginBottom: "1.25rem" }}>
-          <label style={{ fontSize: ".85rem", fontWeight: 600 }}>
-            VM Name *
-            <input className="input" type="text" placeholder="my-vm" maxLength={64}
-              value={vmName} onChange={(e) => setVmName(e.target.value)} />
-          </label>
+          <div>
+            <label style={{ fontSize: ".85rem", fontWeight: 600 }}>
+              VM Name *
+              <input
+                className={`input${nameError ? " input-error" : ""}`}
+                type="text"
+                placeholder="my-web-server"
+                maxLength={63}
+                value={vmName}
+                onChange={(e) => setVmName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+              />
+            </label>
+            {nameError ? (
+              <div style={{ fontSize: ".73rem", color: "var(--color-danger)", marginTop: ".2rem" }}>{nameError}</div>
+            ) : (
+              <div style={{ fontSize: ".73rem", color: "var(--color-text-secondary)", marginTop: ".2rem" }}>
+                Lowercase letters, numbers and hyphens only — max 63 chars
+              </div>
+            )}
+          </div>
           <label style={{ fontSize: ".85rem", fontWeight: 600 }}>
             Count (1–10)
             <input className="input" type="number" min={1} max={10}
@@ -148,8 +201,13 @@ export function Provision() {
                 }}>
                 <div style={{ fontWeight: 600, fontSize: ".85rem" }}>{f.name}</div>
                 <div style={{ fontSize: ".75rem", color: "var(--color-text-secondary)" }}>
-                  {f.vcpus} vCPU · {fmtRam(f.ram_mb)}{f.disk_gb ? ` · ${f.disk_gb} GB` : ""}
+                  {f.vcpus} vCPU · {fmtRam(f.ram_mb)}
                 </div>
+                {f.disk_gb ? (
+                  <div style={{ fontSize: ".7rem", color: "var(--color-text-secondary)", marginTop: ".1rem" }}>
+                    {f.disk_gb} GB boot volume
+                  </div>
+                ) : null}
               </button>
             ))}
           </div>
@@ -173,17 +231,38 @@ export function Provision() {
           )}
         </div>
 
-        {/* Network */}
+        {/* Network + Fixed IP */}
         <div style={{ marginBottom: "1.25rem" }}>
           <label style={{ fontSize: ".85rem", fontWeight: 600 }}>
             Network *
-            <select className="select" value={networkId} onChange={(e) => setNetworkId(e.target.value)}>
+            <select className="select" value={networkId} onChange={(e) => { setNetworkId(e.target.value); setFixedIp(""); }}>
               <option value="">— Select network —</option>
               {resources.networks.map((n) => (
                 <option key={n.id} value={n.id}>{n.name}{n.is_shared ? " (shared)" : ""}</option>
               ))}
             </select>
           </label>
+          {selectedNetwork && (
+            <div style={{ marginTop: ".5rem" }}>
+              <label style={{ fontSize: ".85rem", fontWeight: 600 }}>
+                Fixed IP (optional)
+                <input
+                  className="input"
+                  type="text"
+                  placeholder={selectedNetwork.subnets && selectedNetwork.subnets.length > 0
+                    ? `e.g. within ${selectedNetwork.subnets[0].cidr}`
+                    : "Leave blank for auto-assign"}
+                  value={fixedIp}
+                  onChange={(e) => setFixedIp(e.target.value.trim())}
+                />
+              </label>
+              {selectedNetwork.subnets && selectedNetwork.subnets.length > 0 && (
+                <div style={{ fontSize: ".73rem", color: "var(--color-text-secondary)", marginTop: ".2rem" }}>
+                  Subnets: {selectedNetwork.subnets.map((s) => `${s.name} (${s.cidr})`).join(", ")}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Security Groups */}
@@ -201,15 +280,36 @@ export function Provision() {
           </div>
         )}
 
-        {/* Advanced / User Data */}
+        {/* Cloud-init + Advanced */}
         <div style={{ marginBottom: "1.25rem" }}>
           <button className="btn btn-ghost btn-sm" onClick={() => setShowAdvanced((v) => !v)}>
-            {showAdvanced ? "▲ Hide advanced" : "▼ Advanced (user data)"}
+            {showAdvanced ? "▲ Hide advanced" : "▼ Advanced (cloud-init / user data)"}
           </button>
           {showAdvanced && (
-            <div style={{ marginTop: ".5rem" }}>
+            <div style={{ marginTop: ".75rem", display: "flex", flexDirection: "column", gap: ".75rem" }}>
+              {/* Cloud-init user/password */}
+              <div>
+                <div style={{ fontSize: ".85rem", fontWeight: 600, marginBottom: ".5rem" }}>Initial User (cloud-init)</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".75rem" }}>
+                  <label style={{ fontSize: ".85rem" }}>
+                    Username
+                    <input className="input" type="text" placeholder="e.g. admin"
+                      value={cloudInitUser} onChange={(e) => setCloudInitUser(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))} />
+                  </label>
+                  <label style={{ fontSize: ".85rem" }}>
+                    Password
+                    <input className="input" type="password" placeholder="Leave blank to skip"
+                      value={cloudInitPass} onChange={(e) => setCloudInitPass(e.target.value)} autoComplete="new-password" />
+                  </label>
+                </div>
+                <div style={{ fontSize: ".73rem", color: "var(--color-text-secondary)", marginTop: ".25rem" }}>
+                  Creates a sudo user on first boot. Leave blank to use the image default.
+                </div>
+              </div>
+
+              {/* Raw user-data override */}
               <label style={{ fontSize: ".85rem", fontWeight: 600 }}>
-                Cloud-init / user data
+                Custom user data (overrides above if filled)
                 <textarea className="input" rows={4} placeholder="#cloud-config&#10;..." style={{ fontFamily: "monospace", fontSize: ".8rem", resize: "vertical" }}
                   value={userData} onChange={(e) => setUserData(e.target.value)} />
               </label>
@@ -221,9 +321,12 @@ export function Provision() {
         {selectedFlavor && selectedImage && networkId && (
           <div style={{ background: "var(--color-surface-raised)", borderRadius: ".5rem", padding: ".75rem 1rem", marginBottom: "1rem", fontSize: ".85rem" }}>
             <strong>{count}× {vmName || "vm"}</strong>
-            {" · "}{selectedFlavor.name} ({selectedFlavor.vcpus} vCPU / {fmtRam(selectedFlavor.ram_mb)})
+            {" · "}{selectedFlavor.name} ({selectedFlavor.vcpus} vCPU / {fmtRam(selectedFlavor.ram_mb)}
+            {selectedFlavor.disk_gb ? ` / ${selectedFlavor.disk_gb} GB boot volume` : ""})
             {" · "}{selectedImage.name}
+            {fixedIp && ` · IP: ${fixedIp}`}
             {sgIds.length > 0 && ` · ${sgIds.length} SG(s)`}
+            {(cloudInitUser || userData) && " · cloud-init configured"}
           </div>
         )}
 

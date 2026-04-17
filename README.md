@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.85.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.85.3-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -205,7 +205,7 @@ After running Demo Mode you'll find:
 | Notifications (SMTP + Slack + Teams) | ✅ Production |
 | Drift Detection | ✅ Production |
 | Ops Assistant — Full-Text Search & Smart Queries | ✅ Production |
-| Runbooks (25 built-in, dept visibility, approval workflows) | ✅ Production |
+| Runbooks (25 built-in, dept visibility, approval workflows, **tenant execution**) | ✅ Production |
 | External Integrations Framework (billing gate, CRM, webhooks) | ✅ Production |
 | Dependency Graph: Health Scores, Blast Radius, Delete Impact | ✅ Production |
 | Backup & Restore (DB) with Integrity Validation | ✅ Production |
@@ -302,7 +302,7 @@ Not just an LLM integration — a purpose-built operator assistant that queries 
 A completely isolated, MFA-protected web portal that gives your customers read and restore access to their own infrastructure — without exposing your admin panel.
 
 - **Security by design**: data isolated at the PostgreSQL Row-Level Security layer (not just application code); separate JWT namespace; IP-bound Redis sessions; per-user rate limiting.
-- **7 self-service screens**: Dashboard, Infrastructure (VMs + volumes), Snapshot Coverage (30-day calendar), Monitoring, Restore Center (side-by-side restore wizard — non-destructive), Runbooks (operator-published catalogue), Activity Log.
+- **7 self-service screens**: Dashboard, Infrastructure (VMs + disk + IPs + dependency graph), Snapshot Coverage (30-day calendar), Monitoring, Restore Center (side-by-side restore wizard — non-destructive), Runbooks (execute tenant-visible runbooks, dry-run, execution history), Activity Log (with username).
 - **Controlled access**: opt-in per Keystone user; you define which OpenStack projects are visible; set expiry, MFA policy, and runbook visibility per customer.
 - **Admin controls**: grant/revoke access, view active sessions, force-revoke, reset MFA, configure per-customer branding (logo, accent colour, portal title), review full audit log — all from the Admin → 🏢 Tenant Portal UI or REST API.
 - **Kubernetes-native**: dedicated `nginx-ingress-tenant` Helm controller on its own MetalLB IP — TLS, WAF rules, and rate limits are isolated from the admin ingress.
@@ -608,6 +608,12 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
+### 🔧 Tenant Portal Enhancements — v1.85.3
+
+**[v1.85.3](CHANGELOG.md)** — Runbook execution from tenant portal (execute button, parameter form, dry-run toggle, execution history tab); Create VM: RFC-1123 name validation, fixed IP picker, cloud-init user/password; Dependency graph expanded to 5 node types (VM, Network, Subnet, Security Group, Volume) and 4 edge types; VM list and inventory CSV now include disk size and IP addresses; Activity Log shows username + truncated Keystone user ID; Dashboard correctly shows amber "Skipped" for skipped snapshot events.
+
+---
+
 ### 🏢 Tenant Self-Service Portal — v1.84.0 → v1.84.19 *(Complete)*
 
 **[v1.84.21](CHANGELOG.md)** — Fix `tenant-ui` build: `api.ts` had a second corrupted copy appended after the first clean copy (1341 lines instead of ~661) — prior replace_string_in_file left old interleaved fragments in place. Truncated file to first clean copy; Docker build now passes. **[v1.84.20](CHANGELOG.md)** — Fix `tenant-ui` build: `api.ts` was corrupted by overlapping replacements (code fragments interleaved, missing closing parens, unterminated template literals) → Docker `npm run build` failed with 10+ `TS1005`/`TS1160` errors. Rewrote file cleanly; `tsc --noEmit` passes. **[v1.84.19](CHANGELOG.md)** — Tenant portal crash-fix: `restore_jobs` table has no `region_id` column — 4 queries wrongly filtered by it → dashboard 500 `UndefinedColumn`; full `api.ts` adapter layer rewrite — all 16 API functions now unwrap backend `{key:[...],total:N}` envelopes and remap field names to match TypeScript interfaces, fixing `vms.filter is not a function` crash on every tenant screen. **[v1.84.18](CHANGELOG.md)** — DB/K8s fixes: `tenant_portal_role` had `INSERT` but not `SELECT` on `tenant_action_log` → every post-login endpoint returned 500; K8s secret password never set on DB user `tenant_portal_role` in `pf9-db-0` → login returned 500 immediately. **[v1.84.17](CHANGELOG.md)** — CI fix: `httpx` was missing from the integration test job `pip install` step; `test_tenant_portal_login_integration.py` imports it for live HTTP calls, causing `ModuleNotFoundError` at collection time and aborting the entire CI run. Added `httpx` to `.github/workflows/ci.yml`. **[v1.84.16](CHANGELOG.md)** — Fix K8s 504: NetworkPolicy ingress namespace was `ingress-nginx` but nginx-tenant controller deploys to `ingress-nginx-tenant`; egress had no Keystone (443/5000) rule; login error banner now shows context-aware messages (was always "Invalid credentials" for any error including 504/403). **[v1.84.15](CHANGELOG.md)** — Fix 504 on tenant portal login: async Keystone call (was blocking uvicorn event loop); `VITE_TENANT_API_TARGET` added to docker-compose override (dev proxy was hitting localhost inside container); K8s ingress proxy-read/connect-timeout annotations added. **[v1.84.14](CHANGELOG.md)** — Domain field on login form (Keystone multi-domain support); `domain` field hardened with `max_length` + regex whitelist; security tests extended to S33. **[v1.84.13](CHANGELOG.md)** — Bug-fix & security hardening: `log_auth_event` TypeError crash on every access grant/revoke fixed; Audit Log sub-tab 500 (wrong column names) fixed; batch grant transaction-poisoning fixed (savepoints); stored-XSS via `javascript:` / `data:` URIs in branding URLs blocked; field length limits added; security test suite extended to S30. **[v1.84.12](CHANGELOG.md)** — Grant Access wizard (3-step: tenant picker → user checkboxes → MFA/notes); batch grant API; CP dropdown. **[v1.84.11](CHANGELOG.md)** — Grant Access form gains User Name + Tenant/Org Name fields; access table shows friendly labels; `user_name`/`tenant_name` DB + API. **[v1.84.10](CHANGELOG.md)** — Nav fix: `tenant_portal` tab now appears in Admin Tools; DB migration for live environments; guide corrections. **[v1.84.9](CHANGELOG.md)** — Tenant Portal complete: `GET /tenant/branding` unauthenticated branding endpoint (60 s cache); admin `GET/PUT /branding/{cp_id}` and `DELETE /mfa/{cp_id}/{user_id}` endpoints; Admin UI "🏢 Tenant Portal" tab with 4 sub-tabs; 27 P8 security tests (S01–S27 across 8 categories). → [Tenant Portal Guide](docs/TENANT_PORTAL_GUIDE.md)
@@ -719,4 +725,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.85.2 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.85.3 | **Last Updated**: April 2026

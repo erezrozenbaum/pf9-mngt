@@ -26,7 +26,7 @@ import secrets
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import Header, HTTPException, Depends, Query
@@ -1875,7 +1875,17 @@ class _TenantProvisionVmBody(BaseModel):
     security_group_ids: list = []
     key_pair_name: Optional[str] = None
     user_data: Optional[str] = None
+    fixed_ip: Optional[str] = None
     count: int = 1
+
+
+class _TenantRunbookExecuteBody(BaseModel):
+    runbook_name: str
+    parameters: dict = {}
+    dry_run: bool = False
+    project_ids: List[str] = []
+    region_ids: List[str] = []
+    triggered_by: str = "tenant"
 
 
 def setup_restore_routes(app):
@@ -3187,6 +3197,7 @@ def setup_restore_routes(app):
                 network_id=body.network_id,
                 security_group_names=sg_names or None,
                 user_data_b64=user_data_b64,
+                fixed_ip=body.fixed_ip or None,
                 project_id=body.project_id,
             )
             server_data = server.get("server", server)
@@ -3198,4 +3209,124 @@ def setup_restore_routes(app):
             })
 
         return {"created": created, "count": len(created)}
+
+    # ------------------------------------------------------------------
+    # POST /internal/tenant-runbook-execute — execute a runbook on behalf
+    # of a tenant (only tenant-visible, enabled runbooks are allowed)
+    # ------------------------------------------------------------------
+
+    @app.post("/internal/tenant-runbook-execute", include_in_schema=False, status_code=202)
+    async def _internal_tenant_runbook_execute(
+        body: _TenantRunbookExecuteBody,
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(x_internal_secret, INTERNAL_SERVICE_SECRET):
+            raise HTTPException(403, "Forbidden")
+
+        # Import runbook engine machinery
+        from runbook_routes import RUNBOOK_ENGINES, _execute_runbook
+
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM runbooks WHERE name = %s AND is_tenant_visible = true AND enabled = true",
+                    (body.runbook_name,),
+                )
+                rb = cur.fetchone()
+                if not rb:
+                    raise HTTPException(404, f"Runbook '{body.runbook_name}' is not available for tenant execution")
+
+                if body.runbook_name not in RUNBOOK_ENGINES:
+                    raise HTTPException(501, f"No execution engine for runbook '{body.runbook_name}'")
+
+                # Inject project/region context into parameters
+                params = dict(body.parameters)
+                if body.project_ids:
+                    params.setdefault("target_project", body.project_ids[0])
+                if body.region_ids:
+                    params.setdefault("region_id", body.region_ids[0])
+
+                import json as _json
+                cur.execute(
+                    """
+                    INSERT INTO runbook_executions
+                        (runbook_name, status, dry_run, parameters, triggered_by)
+                    VALUES (%s, 'approved', %s, %s, %s)
+                    RETURNING execution_id
+                    """,
+                    (body.runbook_name, body.dry_run, _json.dumps(params), body.triggered_by),
+                )
+                execution_id = cur.fetchone()["execution_id"]
+
+                cur.execute(
+                    """
+                    INSERT INTO runbook_approvals (execution_id, approver, decision, comment)
+                    VALUES (%s, 'system', 'approved', 'Auto-approved for tenant execution')
+                    """,
+                    (execution_id,),
+                )
+                cur.execute(
+                    "UPDATE runbook_executions SET approved_by = 'system', approved_at = now() WHERE execution_id = %s",
+                    (execution_id,),
+                )
+                conn.commit()
+
+        # Execute synchronously (outside transaction)
+        _execute_runbook(execution_id, body.runbook_name, params, body.dry_run, body.triggered_by)
+
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM runbook_executions WHERE execution_id = %s", (execution_id,))
+                execution = cur.fetchone()
+
+        return dict(execution)
+
+    # ------------------------------------------------------------------
+    # GET /internal/tenant-runbook-executions — list recent executions
+    # triggered by a tenant user
+    # ------------------------------------------------------------------
+
+    @app.get("/internal/tenant-runbook-executions", include_in_schema=False)
+    async def _internal_tenant_runbook_executions(
+        triggered_by: str,
+        limit: int = 20,
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(x_internal_secret, INTERNAL_SERVICE_SECRET):
+            raise HTTPException(403, "Forbidden")
+
+        import json as _json
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT e.execution_id, e.runbook_name, e.status, e.dry_run,
+                           e.parameters, e.result, e.triggered_by,
+                           e.triggered_at, e.completed_at, e.error_message,
+                           r.display_name, r.risk_level
+                    FROM runbook_executions e
+                    JOIN runbooks r ON r.name = e.runbook_name AND r.is_tenant_visible = true
+                    WHERE e.triggered_by = %s
+                    ORDER BY e.triggered_at DESC
+                    LIMIT %s
+                    """,
+                    (triggered_by, limit),
+                )
+                rows = cur.fetchall()
+
+        result = []
+        for row in rows:
+            d = dict(row)
+            if isinstance(d.get("parameters"), str):
+                try:
+                    d["parameters"] = _json.loads(d["parameters"])
+                except Exception:
+                    pass
+            if isinstance(d.get("result"), str):
+                try:
+                    d["result"] = _json.loads(d["result"])
+                except Exception:
+                    pass
+            result.append(d)
+        return {"executions": result}
 

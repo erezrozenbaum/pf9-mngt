@@ -227,6 +227,7 @@ export interface Vm {
   status: string;
   vcpus: number;
   ram_mb: number;
+  disk_gb: number;
   project_id: string;
   region_id: string;
   region_display_name: string;
@@ -245,6 +246,7 @@ export async function apiVms(regionId?: string): Promise<Vm[]> {
     status:              String(r.status ?? ""),
     vcpus:               Number(r.vcpus ?? 0),
     ram_mb:              Number(r.ram_mb ?? 0),
+    disk_gb:             Number(r.disk_gb ?? 0),
     project_id:          String(r.project_id ?? ""),
     region_id:           String(r.region_id ?? ""),
     region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
@@ -262,6 +264,7 @@ export async function apiVm(vmId: string): Promise<Vm> {
     status:              String(r.status ?? ""),
     vcpus:               Number(r.vcpus ?? 0),
     ram_mb:              Number(r.ram_mb ?? 0),
+    disk_gb:             Number(r.disk_gb ?? 0),
     project_id:          String(r.project_id ?? ""),
     region_id:           String(r.region_id ?? ""),
     region_display_name: String(r.region_display_name ?? r.region_id ?? ""),
@@ -655,20 +658,24 @@ export interface Runbook {
   steps: string[];
   prerequisites: string | null;
   expected_outcome: string | null;
+  supports_dry_run: boolean;
+  parameters_schema: Record<string, unknown> | null;
   updated_at: string;
 }
 
 function _normaliseRunbook(r: Record<string, unknown>): Runbook {
   return {
-    name:             String(r.name ?? ""),
-    display_name:     String(r.display_name ?? r.name ?? ""),
-    description:      String(r.description ?? ""),
-    category:         String(r.category ?? "general"),
-    risk_level:       String(r.risk_level ?? "low"),
-    steps:            Array.isArray(r.steps) ? r.steps as string[] : [],
-    prerequisites:    (r.prerequisites    ?? null) as string | null,
-    expected_outcome: (r.expected_outcome ?? null) as string | null,
-    updated_at:       String(r.updated_at ?? ""),
+    name:              String(r.name ?? ""),
+    display_name:      String(r.display_name ?? r.name ?? ""),
+    description:       String(r.description ?? ""),
+    category:          String(r.category ?? "general"),
+    risk_level:        String(r.risk_level ?? "low"),
+    steps:             Array.isArray(r.steps) ? r.steps as string[] : [],
+    prerequisites:     (r.prerequisites    ?? null) as string | null,
+    expected_outcome:  (r.expected_outcome ?? null) as string | null,
+    supports_dry_run:  Boolean(r.supports_dry_run ?? false),
+    parameters_schema: (r.parameters_schema ?? null) as Record<string, unknown> | null,
+    updated_at:        String(r.updated_at ?? ""),
   };
 }
 
@@ -681,6 +688,52 @@ export async function apiRunbooks(): Promise<Runbook[]> {
 export async function apiRunbook(name: string): Promise<Runbook> {
   const raw = await tenantFetch<Record<string, unknown>>(`/tenant/runbooks/${encodeURIComponent(name)}`);
   return _normaliseRunbook(raw);
+}
+
+export interface RunbookExecution {
+  execution_id: string;
+  runbook_name: string;
+  display_name: string;
+  status: string;
+  dry_run: boolean;
+  parameters: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  triggered_by: string;
+  triggered_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+  risk_level: string;
+}
+
+export async function apiExecuteRunbook(
+  name: string,
+  params: Record<string, unknown> = {},
+  dryRun = false,
+): Promise<RunbookExecution> {
+  return tenantFetch<RunbookExecution>(`/tenant/runbooks/${encodeURIComponent(name)}/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parameters: params, dry_run: dryRun }),
+  });
+}
+
+export async function apiRunbookExecutions(): Promise<RunbookExecution[]> {
+  const raw = await tenantFetch<Record<string, unknown>>("/tenant/runbook-executions");
+  const list = (Array.isArray(raw) ? raw : ((raw.executions ?? []) as unknown[])) as Record<string, unknown>[];
+  return list.map((e) => ({
+    execution_id:  String(e.execution_id ?? ""),
+    runbook_name:  String(e.runbook_name ?? ""),
+    display_name:  String(e.display_name ?? e.runbook_name ?? ""),
+    status:        String(e.status ?? ""),
+    dry_run:       Boolean(e.dry_run),
+    parameters:    (e.parameters ?? {}) as Record<string, unknown>,
+    result:        (e.result ?? null) as Record<string, unknown> | null,
+    triggered_by:  String(e.triggered_by ?? ""),
+    triggered_at:  String(e.triggered_at ?? ""),
+    completed_at:  (e.completed_at ?? null) as string | null,
+    error_message: (e.error_message ?? null) as string | null,
+    risk_level:    String(e.risk_level ?? "low"),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -698,6 +751,8 @@ export interface ActivityRow {
   timestamp: string;
   success: boolean;
   details: Record<string, unknown> | null;
+  username: string | null;
+  keystone_user_id: string | null;
 }
 
 export async function apiActivity(params?: {
@@ -723,6 +778,8 @@ export async function apiActivity(params?: {
     timestamp:     String(e.timestamp ?? e.occurred_at ?? ""),
     success:       Boolean(e.success ?? true),
     details:       (e.details ?? null) as Record<string, unknown> | null,
+    username:      (e.username ?? null) as string | null,
+    keystone_user_id: (e.keystone_user_id ?? null) as string | null,
   }));
 }
 
@@ -933,16 +990,22 @@ export async function apiDeleteSgRule(sgId: string, ruleId: string): Promise<voi
 
 export interface GraphNode { id: string; name: string; project_id: string; }
 export interface GraphVmNode extends GraphNode { status: string; }
+export interface GraphSubnetNode { id: string; name: string; network_id: string; cidr: string; }
+export interface GraphVolumeNode { id: string; name: string; server_id: string; size_gb: number; }
 
 export interface ResourceGraph {
   nodes: {
     vms: GraphVmNode[];
     networks: GraphNode[];
+    subnets: GraphSubnetNode[];
     security_groups: GraphNode[];
+    volumes: GraphVolumeNode[];
   };
   edges: {
     vm_network: Array<{ vm_id: string; network_id: string }>;
+    network_subnet: Array<{ network_id: string; subnet_id: string }>;
     vm_sg: Array<{ vm_id: string; sg_id: string }>;
+    vm_volume: Array<{ vm_id: string; volume_id: string }>;
   };
 }
 
@@ -956,7 +1019,7 @@ export async function apiResourceGraph(): Promise<ResourceGraph> {
 
 export interface FlavorOption { id: string; name: string; vcpus: number; ram_mb: number; disk_gb: number | null; }
 export interface ImageOption  { id: string; name: string; os_distro: string; status: string; }
-export interface NetworkOption { id: string; name: string; is_shared: boolean | null; }
+export interface NetworkOption { id: string; name: string; is_shared: boolean | null; subnets?: Array<{ id: string; name: string; cidr: string }>; }
 export interface SgOption { id: string; name: string; }
 
 export interface ProvisionResources {
@@ -977,6 +1040,7 @@ export interface ProvisionVmRequest {
   network_id: string;
   security_group_ids?: string[];
   user_data?: string;
+  fixed_ip?: string;
   count?: number;
 }
 

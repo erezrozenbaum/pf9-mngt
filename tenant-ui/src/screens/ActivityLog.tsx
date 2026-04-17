@@ -125,6 +125,7 @@ export function ActivityLog() {
             <thead>
               <tr>
                 <th>Timestamp</th>
+                <th>User</th>
                 <th>Action</th>
                 <th>Resource</th>
                 <th>IP Address</th>
@@ -136,6 +137,20 @@ export function ActivityLog() {
                 <tr key={row.id}>
                   <td style={{ fontFamily: "monospace", fontSize: ".8rem", whiteSpace: "nowrap" }}>
                     {new Date(row.timestamp).toLocaleString()}
+                  </td>
+                  <td>
+                    {row.username ? (
+                      <div>
+                        <div style={{ fontSize: ".8125rem", fontWeight: 500 }}>{row.username}</div>
+                        {row.keystone_user_id && (
+                          <div style={{ fontSize: ".7rem", color: "var(--color-text-secondary)", fontFamily: "monospace" }}>
+                            {row.keystone_user_id.slice(0, 12)}…
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span style={{ color: "var(--color-text-secondary)", fontSize: ".8rem" }}>system</span>
+                    )}
                   </td>
                   <td>{labelFor(row.action)}</td>
                   <td>

@@ -82,6 +82,7 @@ function VmDetailPanel({ vm, onClose }: { vm: Vm; onClose: () => void }) {
             ["Status",        null],
             ["vCPUs",         String(vm.vcpus)],
             ["RAM",           `${(vm.ram_mb / 1024).toFixed(0)} GB`],
+            ["Disk",          vm.disk_gb > 0 ? `${vm.disk_gb} GB` : "—"],
             ["Last Snapshot", fmt(vm.last_snapshot_ts)],
             ["Coverage",      vm.compliance_pct !== null ? `${vm.compliance_pct.toFixed(0)}%` : "—"],
           ] as Array<[string, string | null]>).map(([k, v]) => (
@@ -271,7 +272,7 @@ export function Infrastructure({ regionFilter }: Props) {
           {filteredVms.length === 0 ? (
             <div className="empty-state">No VMs found.</div>
           ) : (
-            <div className="card table-wrap" style={{ padding: 0 }}>
+              <div className="card table-wrap" style={{ padding: 0 }}>
               <table>
                 <thead>
                   <tr>
@@ -280,6 +281,8 @@ export function Infrastructure({ regionFilter }: Props) {
                     <th>Status</th>
                     <th>vCPUs</th>
                     <th>RAM</th>
+                    <th>Disk</th>
+                    <th>IPs</th>
                     <th>Last Snapshot</th>
                     <th>Coverage</th>
                   </tr>
@@ -292,6 +295,10 @@ export function Infrastructure({ regionFilter }: Props) {
                       <td><StatusBadge status={vm.status} /></td>
                       <td>{vm.vcpus}</td>
                       <td>{(vm.ram_mb / 1024).toFixed(0)} GB</td>
+                      <td>{vm.disk_gb > 0 ? `${vm.disk_gb} GB` : "—"}</td>
+                      <td style={{ fontFamily: "monospace", fontSize: ".8rem" }}>
+                        {vm.ip_addresses.length > 0 ? vm.ip_addresses.join(", ") : "—"}
+                      </td>
                       <td>{fmtDate(vm.last_snapshot_ts)}</td>
                       <td><ComplianceBadge pct={vm.compliance_pct} /></td>
                     </tr>
@@ -528,73 +535,142 @@ export function Infrastructure({ regionFilter }: Props) {
 
 // ── Dependency Graph SVG component ─────────────────────────────────────────
 
+type NodeType = "vm" | "net" | "subnet" | "sg" | "vol";
+interface PosEntry { x: number; y: number; label: string; type: NodeType; sub?: string }
+
+const GRAPH_COLORS: Record<NodeType, string> = {
+  vm:     "#4f7cf7",
+  net:    "#2db47d",
+  subnet: "#1aaa72",
+  sg:     "#f5a623",
+  vol:    "#9b59b6",
+};
+
+const GRAPH_LABELS: Record<NodeType, string> = {
+  vm:     "VM",
+  net:    "Network",
+  subnet: "Subnet",
+  sg:     "Security Group",
+  vol:    "Volume",
+};
+
+const GRAPH_ABBR: Record<NodeType, string> = {
+  vm: "VM", net: "NET", subnet: "SUB", sg: "SG", vol: "VOL",
+};
+
 function DependencyGraphView({ graph }: { graph: ResourceGraph }) {
   const { nodes, edges } = graph;
-  const allVms = nodes.vms;
-  const allNets = nodes.networks;
-  const allSgs  = nodes.security_groups;
+  const allVms     = nodes.vms     ?? [];
+  const allNets    = nodes.networks ?? [];
+  const allSubnets = nodes.subnets  ?? [];
+  const allSgs     = nodes.security_groups ?? [];
+  const allVols    = nodes.volumes  ?? [];
 
   if (allVms.length === 0 && allNets.length === 0 && allSgs.length === 0) {
     return <div className="empty-state">No resources to display.</div>;
   }
 
-  // Simple grid layout: VMs centre column, Networks left, SGs right
-  const W = 900, H = Math.max(400, (Math.max(allVms.length, allNets.length, allSgs.length) + 1) * 80);
-  const xNet = 90, xVm = W / 2, xSg = W - 90;
-  const yStart = 60, yStep = 80;
+  const R = 18;         // node circle radius
+  const xStep = 160;    // column spacing
+  const yStep = 76;
+  const yStart = 60;
 
-  const posMap: Record<string, { x: number; y: number; label: string; type: "vm" | "net" | "sg" }> = {};
-  allVms.forEach((v, i)  => { posMap[v.id]  = { x: xVm,  y: yStart + i * yStep, label: v.name  || v.id.slice(0, 8), type: "vm"  }; });
-  allNets.forEach((n, i) => { posMap[n.id]  = { x: xNet, y: yStart + i * yStep, label: n.name  || n.id.slice(0, 8), type: "net" }; });
-  allSgs.forEach((s, i)  => { posMap[s.id]  = { x: xSg,  y: yStart + i * yStep, label: s.name  || s.id.slice(0, 8), type: "sg"  }; });
+  // Layout columns (left→right): Subnets | Networks | VMs | SGs | Volumes
+  const xSub = 90;
+  const xNet = xSub + xStep;
+  const xVm  = xNet + xStep + 20;
+  const xSg  = xVm  + xStep + 20;
+  const xVol = xSg  + xStep;
 
-  const colors = { vm: "#4f7cf7", net: "#2db47d", sg: "#f5a623" };
-  const labels = { vm: "VM", net: "Network", sg: "Security Group" };
+  const W = xVol + 90;
+
+  // Position each node
+  const posMap: Record<string, PosEntry> = {};
+  allVms.forEach((v, i)     => { posMap[v.id] = { x: xVm,  y: yStart + i * yStep, label: v.name || v.id.slice(0,8), type: "vm" }; });
+  allNets.forEach((n, i)    => { posMap[n.id] = { x: xNet, y: yStart + i * yStep, label: n.name || n.id.slice(0,8), type: "net" }; });
+  allSubnets.forEach((s, i) => { posMap[s.id] = { x: xSub, y: yStart + i * yStep, label: s.name || s.cidr || s.id.slice(0,8), type: "subnet", sub: s.cidr }; });
+  allSgs.forEach((s, i)     => { posMap[s.id] = { x: xSg,  y: yStart + i * yStep, label: s.name || s.id.slice(0,8), type: "sg" }; });
+  allVols.forEach((v, i)    => { posMap[v.id] = { x: xVol, y: yStart + i * yStep, label: v.name || v.id.slice(0,8), type: "vol", sub: v.size_gb ? `${v.size_gb}GB` : "" }; });
+
+  const maxRows = Math.max(allVms.length, allNets.length, allSubnets.length, allSgs.length, allVols.length, 1);
+  const H = Math.max(380, (maxRows + 1) * yStep + 60);
+
+  // Column headers
+  const colHeaders = [
+    { x: xSub, label: "SUBNETS",         show: allSubnets.length > 0 },
+    { x: xNet, label: "NETWORKS",         show: allNets.length > 0 },
+    { x: xVm,  label: "VMs",             show: true },
+    { x: xSg,  label: "SECURITY GROUPS", show: allSgs.length > 0 },
+    { x: xVol, label: "VOLUMES",         show: allVols.length > 0 },
+  ];
 
   return (
     <div>
       {/* Legend */}
-      <div style={{ display: "flex", gap: "1.5rem", marginBottom: ".75rem", flexWrap: "wrap" }}>
-        {(["net", "vm", "sg"] as const).map((t) => (
-          <div key={t} style={{ display: "flex", alignItems: "center", gap: ".4rem", fontSize: ".8rem" }}>
-            <svg width={14} height={14}><circle cx={7} cy={7} r={6} fill={colors[t]} opacity={0.85} /></svg>
-            <span style={{ color: "var(--color-text-secondary)" }}>{labels[t]}</span>
+      <div style={{ display: "flex", gap: "1.25rem", marginBottom: ".75rem", flexWrap: "wrap" }}>
+        {(["net", "subnet", "vm", "sg", "vol"] as NodeType[]).map((t) => (
+          <div key={t} style={{ display: "flex", alignItems: "center", gap: ".35rem", fontSize: ".78rem" }}>
+            <svg width={12} height={12}><circle cx={6} cy={6} r={5} fill={GRAPH_COLORS[t]} opacity={0.9} /></svg>
+            <span style={{ color: "var(--color-text-secondary)" }}>{GRAPH_LABELS[t]}</span>
           </div>
         ))}
       </div>
+
       <div style={{ overflowX: "auto" }}>
         <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ fontFamily: "inherit", maxWidth: "100%" }}>
           {/* Column headers */}
-          {[{x: xNet, label: "Networks"}, {x: xVm, label: "VMs"}, {x: xSg, label: "Security Groups"}].map(({ x, label }) => (
-            <text key={label} x={x} y={24} textAnchor="middle" fontSize={11} fontWeight={600}
-              fill="var(--color-text-secondary)" letterSpacing={0.5}>{label.toUpperCase()}</text>
+          {colHeaders.filter((c) => c.show).map(({ x, label }) => (
+            <text key={label} x={x} y={22} textAnchor="middle" fontSize={9} fontWeight={700}
+              fill="var(--color-text-secondary)" letterSpacing={0.6}>{label}</text>
           ))}
 
-          {/* Edges */}
-          {edges.vm_network.map((e, i) => {
+          {/* Edges: subnet → network */}
+          {(edges.network_subnet ?? []).map((e, i) => {
+            const sub = posMap[e.subnet_id]; const net = posMap[e.network_id];
+            if (!sub || !net) return null;
+            return <line key={`sn${i}`} x1={sub.x + R} y1={sub.y} x2={net.x - R} y2={net.y}
+              stroke={GRAPH_COLORS.subnet} strokeWidth={1.2} strokeOpacity={0.35} strokeDasharray="3 3" />;
+          })}
+
+          {/* Edges: vm → network */}
+          {(edges.vm_network ?? []).map((e, i) => {
             const vm = posMap[e.vm_id]; const net = posMap[e.network_id];
             if (!vm || !net) return null;
-            return <line key={`vn${i}`} x1={net.x + 20} y1={net.y} x2={vm.x - 20} y2={vm.y}
-              stroke={colors.net} strokeWidth={1.5} strokeOpacity={0.4} strokeDasharray="4 3" />;
+            return <line key={`vn${i}`} x1={net.x + R} y1={net.y} x2={vm.x - R} y2={vm.y}
+              stroke={GRAPH_COLORS.net} strokeWidth={1.5} strokeOpacity={0.4} strokeDasharray="4 3" />;
           })}
-          {edges.vm_sg.map((e, i) => {
+
+          {/* Edges: vm → sg */}
+          {(edges.vm_sg ?? []).map((e, i) => {
             const vm = posMap[e.vm_id]; const sg = posMap[e.sg_id];
             if (!vm || !sg) return null;
-            return <line key={`vs${i}`} x1={vm.x + 20} y1={vm.y} x2={sg.x - 20} y2={sg.y}
-              stroke={colors.sg} strokeWidth={1.5} strokeOpacity={0.4} strokeDasharray="4 3" />;
+            return <line key={`vs${i}`} x1={vm.x + R} y1={vm.y} x2={sg.x - R} y2={sg.y}
+              stroke={GRAPH_COLORS.sg} strokeWidth={1.5} strokeOpacity={0.4} strokeDasharray="4 3" />;
+          })}
+
+          {/* Edges: vm → volume */}
+          {(edges.vm_volume ?? []).map((e, i) => {
+            const vm = posMap[e.vm_id]; const vol = posMap[e.volume_id];
+            if (!vm || !vol) return null;
+            return <line key={`vv${i}`} x1={vm.x + R} y1={vm.y} x2={vol.x - R} y2={vol.y}
+              stroke={GRAPH_COLORS.vol} strokeWidth={1.2} strokeOpacity={0.35} strokeDasharray="4 3" />;
           })}
 
           {/* Nodes */}
-          {Object.values(posMap).map((n) => (
-            <g key={`${n.type}-${n.x}-${n.y}`} transform={`translate(${n.x},${n.y})`}>
-              <circle r={18} fill={colors[n.type]} opacity={0.85} />
-              <text y={4} textAnchor="middle" fontSize={9} fill="white" fontWeight={600}>
-                {n.type === "vm" ? "VM" : n.type === "net" ? "NET" : "SG"}
+          {Object.values(posMap).map((n, idx) => (
+            <g key={`${n.type}-${idx}`} transform={`translate(${n.x},${n.y})`}>
+              <circle r={R} fill={GRAPH_COLORS[n.type]} opacity={0.88} />
+              <text y={4} textAnchor="middle" fontSize={8} fill="white" fontWeight={700}>
+                {GRAPH_ABBR[n.type]}
               </text>
-              <text y={32} textAnchor="middle" fontSize={10} fill="var(--color-text-primary)"
-                style={{ maxWidth: "80px" }}>
-                {n.label.length > 14 ? n.label.slice(0, 13) + "…" : n.label}
+              <text y={R + 14} textAnchor="middle" fontSize={9.5} fill="var(--color-text-primary)">
+                {n.label.length > 13 ? n.label.slice(0, 12) + "…" : n.label}
               </text>
+              {n.sub && (
+                <text y={R + 25} textAnchor="middle" fontSize={8} fill="var(--color-text-secondary)">
+                  {n.sub}
+                </text>
+              )}
             </g>
           ))}
         </svg>

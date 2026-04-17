@@ -122,8 +122,9 @@ async def list_vms(ctx: TenantContext = Depends(get_tenant_context)):
                        s.created_at, s.last_seen_at,
                        s.project_id, s.region_id,
                        s.raw_json,
-                       COALESCE(f.vcpus, 0)  AS vcpus,
-                       COALESCE(f.ram_mb, 0) AS ram_mb,
+                       COALESCE(f.vcpus, 0)    AS vcpus,
+                       COALESCE(f.ram_mb, 0)   AS ram_mb,
+                       COALESCE(f.disk_gb, 0)  AS disk_gb,
                        (
                            SELECT MAX(sr.created_at)
                            FROM snapshot_records sr
@@ -579,7 +580,10 @@ async def events(
                     region_id,
                     success,
                     timestamp        AS occurred_at,
-                    details
+                    details,
+                    keystone_user_id,
+                    username,
+                    ip_address
                 FROM tenant_action_log
                 WHERE keystone_user_id = %s
                   AND control_plane_id = %s
@@ -732,6 +736,90 @@ async def get_runbook(name: str, ctx: TenantContext = Depends(get_tenant_context
     if row is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="access_denied")
     return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# P3d — Runbook execution (tenant-initiated, tenant-visible runbooks only)
+# ---------------------------------------------------------------------------
+
+class _TenantRunbookExecuteRequest(BaseModel):
+    parameters: dict = {}
+    dry_run: bool = False
+
+
+@router.post("/tenant/runbooks/{name}/execute", summary="Execute a tenant-visible runbook", status_code=202)
+async def execute_runbook(
+    name: str,
+    body: _TenantRunbookExecuteRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Execute a tenant-visible runbook via the admin API internal endpoint."""
+    import os
+    import httpx as _hx
+
+    _INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://pf9_api:8000")
+    _INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+
+    if not _INTERNAL_SERVICE_SECRET:
+        raise HTTPException(status_code=503, detail="execution_not_configured")
+
+    try:
+        with _hx.Client(timeout=120.0) as hclient:
+            resp = hclient.post(
+                f"{_INTERNAL_API_URL}/internal/tenant-runbook-execute",
+                json={
+                    "runbook_name": name,
+                    "parameters": body.parameters,
+                    "dry_run": body.dry_run,
+                    "project_ids": ctx.project_ids,
+                    "region_ids": ctx.region_ids,
+                    "triggered_by": f"tenant:{ctx.username}",
+                },
+                headers={"X-Internal-Secret": _INTERNAL_SERVICE_SECRET},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="execution_backend_unavailable") from exc
+
+    if resp.status_code not in (200, 201, 202):
+        body_json = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        raise HTTPException(resp.status_code, body_json.get("detail", "execution_failed"))
+
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            log_action(cur, ctx, "tenant_execute_runbook", resource_type="runbook", resource_id=name)
+            conn.commit()
+
+    return resp.json()
+
+
+@router.get("/tenant/runbook-executions", summary="List my runbook executions")
+async def list_runbook_executions(
+    limit: int = Query(20, ge=1, le=100),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Return recent runbook executions triggered by this tenant user."""
+    import os
+    import httpx as _hx
+
+    _INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://pf9_api:8000")
+    _INTERNAL_SERVICE_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
+
+    if not _INTERNAL_SERVICE_SECRET:
+        return {"executions": []}
+
+    try:
+        with _hx.Client(timeout=10.0) as hclient:
+            resp = hclient.get(
+                f"{_INTERNAL_API_URL}/internal/tenant-runbook-executions",
+                params={"triggered_by": f"tenant:{ctx.username}", "limit": limit},
+                headers={"X-Internal-Secret": _INTERNAL_SERVICE_SECRET},
+            )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return {"executions": []}
 
 
 # ---------------------------------------------------------------------------
@@ -950,8 +1038,10 @@ async def download_tenant_report(
                 cur.execute(
                     """
                     SELECT s.name, s.status, s.region_id,
-                           COALESCE(f.vcpus, 0) AS vcpus,
-                           COALESCE(f.ram_mb, 0) AS ram_mb,
+                           COALESCE(f.vcpus, 0)   AS vcpus,
+                           COALESCE(f.ram_mb, 0)  AS ram_mb,
+                           COALESCE(f.disk_gb, 0) AS disk_gb,
+                           s.raw_json,
                            s.created_at,
                            (SELECT MAX(sr.created_at) FROM snapshot_records sr
                             WHERE sr.vm_id = s.id AND sr.status = 'OK') AS last_snapshot
@@ -963,10 +1053,17 @@ async def download_tenant_report(
                     (ctx.project_ids, ctx.region_ids),
                 )
                 rows = cur.fetchall()
-                headers = ["VM Name", "Status", "Region", "vCPUs", "RAM (MB)", "Created", "Last Snapshot"]
-                data = [[r["name"], r["status"], r["region_id"], r["vcpus"], r["ram_mb"],
-                         r["created_at"].isoformat() if r.get("created_at") else "",
-                         r["last_snapshot"].isoformat() if r.get("last_snapshot") else ""] for r in rows]
+                headers = ["VM Name", "Status", "Region", "vCPUs", "RAM (MB)", "Disk (GB)", "IP Addresses", "Created", "Last Snapshot"]
+                data = []
+                for r in rows:
+                    ips = ", ".join(_extract_ips(r.get("raw_json")))
+                    data.append([
+                        r["name"], r["status"], r["region_id"],
+                        r["vcpus"], r["ram_mb"], r["disk_gb"],
+                        ips,
+                        r["created_at"].isoformat() if r.get("created_at") else "",
+                        r["last_snapshot"].isoformat() if r.get("last_snapshot") else "",
+                    ])
 
             elif report_name == "storage_usage":
                 cur.execute(
@@ -1383,10 +1480,12 @@ async def delete_sg_rule(sg_id: str, rule_id: str, ctx: TenantContext = Depends(
 @router.get("/tenant/resource-graph", summary="Return VM → network / security-group dependency graph")
 async def resource_graph(ctx: TenantContext = Depends(get_tenant_context)):
     """
-    Returns nodes (VMs, networks, security groups) and edges for the dependency
-    visualisation. Edges are derived from:
+    Returns nodes (VMs, networks, subnets, security groups, volumes) and edges for
+    the dependency visualisation. Edges are derived from:
       - VM → network: ports table (device_id = vm_id, network_id)
       - VM → SG:      servers.raw_json → security_groups[].name matched to sg.id
+      - network → subnet: subnets.network_id
+      - VM → volume: volumes.server_id
     """
     with get_tenant_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1415,6 +1514,21 @@ async def resource_graph(ctx: TenantContext = Depends(get_tenant_context)):
             )
             networks = cur.fetchall()
 
+            # Subnets for those networks
+            net_ids = [n["id"] for n in networks]
+            subnets: list = []
+            if net_ids:
+                cur.execute(
+                    """
+                    SELECT id, name, network_id, cidr
+                    FROM subnets
+                    WHERE network_id = ANY(%s)
+                    ORDER BY cidr
+                    """,
+                    (net_ids,),
+                )
+                subnets = cur.fetchall()
+
             # Security groups
             cur.execute(
                 """
@@ -1426,8 +1540,23 @@ async def resource_graph(ctx: TenantContext = Depends(get_tenant_context)):
             )
             sgs = cur.fetchall()
 
-            # VM → Network edges via ports
+            # Volumes attached to tenant VMs
             vm_ids = [v["id"] for v in vms]
+            volumes: list = []
+            if vm_ids:
+                cur.execute(
+                    """
+                    SELECT id, name, server_id, size_gb
+                    FROM volumes
+                    WHERE server_id = ANY(%s)
+                      AND project_id = ANY(%s)
+                    ORDER BY name
+                    """,
+                    (vm_ids, ctx.project_ids),
+                )
+                volumes = cur.fetchall()
+
+            # VM → Network edges via ports
             net_edges: list = []
             if vm_ids:
                 cur.execute(
@@ -1442,7 +1571,6 @@ async def resource_graph(ctx: TenantContext = Depends(get_tenant_context)):
                 net_edges = cur.fetchall()
 
             # VM → SG edges via servers.raw_json
-            sg_by_id = {s["id"]: s["name"] for s in sgs}
             sg_by_name = {s["name"]: s["id"] for s in sgs}
             sg_edges: list = []
             for vm in vms:
@@ -1466,11 +1594,15 @@ async def resource_graph(ctx: TenantContext = Depends(get_tenant_context)):
         "nodes": {
             "vms": [{"id": v["id"], "name": v.get("name") or v["id"], "status": v.get("status") or "", "project_id": v.get("project_id") or ""} for v in vms],
             "networks": [{"id": n["id"], "name": n.get("name") or n["id"], "project_id": n.get("project_id") or ""} for n in networks],
+            "subnets": [{"id": s["id"], "name": s.get("name") or s.get("cidr") or s["id"], "network_id": s["network_id"], "cidr": s.get("cidr") or ""} for s in subnets],
             "security_groups": [{"id": s["id"], "name": s.get("name") or s["id"], "project_id": s.get("project_id") or ""} for s in sgs],
+            "volumes": [{"id": v["id"], "name": v.get("name") or v["id"], "server_id": v.get("server_id") or "", "size_gb": v.get("size_gb") or 0} for v in volumes],
         },
         "edges": {
             "vm_network": [{"vm_id": e["vm_id"], "network_id": e["network_id"]} for e in net_edges],
+            "network_subnet": [{"network_id": s["network_id"], "subnet_id": s["id"]} for s in subnets],
             "vm_sg": sg_edges,
+            "vm_volume": [{"vm_id": v["server_id"], "volume_id": v["id"]} for v in volumes if v.get("server_id")],
         },
     }
 
@@ -1513,6 +1645,21 @@ async def provision_resources(ctx: TenantContext = Depends(get_tenant_context)):
             )
             networks = cur.fetchall()
 
+            # Attach subnets to each network
+            subnets_by_net: dict = {}
+            if networks:
+                net_ids = [n["id"] for n in networks]
+                cur.execute(
+                    "SELECT id, name, network_id, cidr FROM subnets WHERE network_id = ANY(%s) ORDER BY name",
+                    (net_ids,),
+                )
+                subnet_rows = cur.fetchall()
+                subnets_by_net: dict = {}
+                for srow in subnet_rows:
+                    subnets_by_net.setdefault(srow["network_id"], []).append(
+                        {"id": srow["id"], "name": srow["name"], "cidr": srow["cidr"]}
+                    )
+
             cur.execute(
                 "SELECT id, name FROM security_groups WHERE project_id = ANY(%s) ORDER BY name",
                 (ctx.project_ids,),
@@ -1525,7 +1672,7 @@ async def provision_resources(ctx: TenantContext = Depends(get_tenant_context)):
     return {
         "flavors": [{"id": r["id"], "name": r["name"], "vcpus": r["vcpus"], "ram_mb": r["ram_mb"], "disk_gb": r.get("disk_gb")} for r in flavors],
         "images": [{"id": r["id"], "name": r["name"], "os_distro": r.get("os_distro") or "", "status": r.get("status") or ""} for r in images],
-        "networks": [{"id": r["id"], "name": r["name"], "is_shared": r.get("is_shared")} for r in networks],
+        "networks": [{"id": r["id"], "name": r["name"], "is_shared": r.get("is_shared"), "subnets": subnets_by_net.get(r["id"], []) if networks else []} for r in networks],
         "security_groups": [{"id": r["id"], "name": r["name"]} for r in sgs],
     }
 
@@ -1540,9 +1687,14 @@ class ProvisionVmRequest(BaseModel):
     user_data: Optional[str] = None
     count: int = 1
 
+    fixed_ip: Optional[str] = None
+
     def model_post_init(self, __context) -> None:
-        if not self.name or len(self.name) > 64:
-            raise ValueError("name must be 1-64 characters")
+        import re as _re
+        if not self.name or len(self.name) > 63:
+            raise ValueError("name must be 1-63 characters")
+        if not _re.match(r'^[a-z0-9][a-z0-9-]*$', self.name):
+            raise ValueError("name must start with a letter or digit and contain only lowercase letters, numbers, and hyphens")
         if self.count < 1 or self.count > 10:
             raise ValueError("count must be 1-10")
 
@@ -1575,6 +1727,7 @@ async def provision_vm(body: ProvisionVmRequest, ctx: TenantContext = Depends(ge
         "security_group_ids": body.security_group_ids,
         "key_pair_name": body.key_pair_name,
         "user_data": body.user_data,
+        "fixed_ip": body.fixed_ip,
         "count": body.count,
     }
 

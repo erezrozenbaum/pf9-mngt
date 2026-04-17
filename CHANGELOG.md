@@ -5,7 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.85.2] - 2026-04-17
+## [1.85.3] - 2026-04-18
+
+### Fixed
+- **Dashboard: Skipped snapshots shown as red "Failed"** — `dotColor()` and event label now return amber "Skipped" when `event.details.status === 'SKIPPED'`, matching the actual snapshot lifecycle state.
+- **Activity Log: missing "who did the action"** — added `keystone_user_id`, `username`, and `ip_address` to the audit events query. New "User" column shows the friendly username and truncated user ID for every audit row.
+- **VM list / Inventory CSV: missing IP addresses and Disk column** — `COALESCE(f.disk_gb, 0)` added to the VM list query; IP addresses extracted from `raw_json` in the inventory report. Frontend VM table now shows Disk and IPs columns; detail panel shows Disk field. CSV export headers include Disk (GB) and IP Addresses.
+- **Dependency graph: incomplete (no subnets, volumes, or connections)** — `resource_graph` backend now also queries `subnets` and `volumes` tables and returns 5 node types (VM, Network, Subnet, Security Group, Volume) with 4 edge types. Frontend replaced with 5-column layout using colored node circles, proper edge rendering, and a legend.
+- **Runbooks: no execute button, no results view** — Runbooks screen now has two tabs: *Catalog* (with an Execute button per runbook) and *My Executions* (history of past runs). Execute opens a dialog with parameter inputs, dry-run toggle (pre-checked for medium/high risk), and risk warning. Result panel shows status, items found/actioned, and nested result data. New backend endpoints: `POST /tenant/runbooks/{name}/execute`, `GET /tenant/runbook-executions`. Internal admin API endpoints: `POST /internal/tenant-runbook-execute`, `GET /internal/tenant-runbook-executions`.
+- **Create VM: missing naming convention, IP picker, cloud-init user/password, volume size** — VM name field auto-coerces input to lowercase and rejects invalid characters in real-time; hint text shows naming rules. Fixed IP field appears after network selection with subnet CIDR hint. Advanced section adds Initial User + Password fields that generate `#cloud-config` YAML on submit. Flavor cards now show boot volume size prominently. Name length limited to 63 chars with matching backend validation.
+
+### Infrastructure
+- `tenant_portal/environment_routes.py`: new runbook execute + executions endpoints; provision/resources now includes subnet CIDRs per network; `ProvisionVmRequest` name validation tightened to RFC-1123 label rules.
+- `api/restore_management.py`: `_TenantProvisionVmBody` gains `fixed_ip`; new `_TenantRunbookExecuteBody` + internal runbook endpoints.
+- `api/pf9_control.py`: `create_server_bfv` already accepted `fixed_ip` — now wired end-to-end.
+
+
 
 ### Fixed
 - **K8s: Monitoring "No metrics available"** — `PF9_HOSTS` env var was empty in the monitoring pod; the Prometheus scraper had no hosts to collect from so the metrics cache stayed empty. Added `monitoring.pf9Hosts` to `values.prod.yaml` in the deploy repo with the four hypervisor IPs.

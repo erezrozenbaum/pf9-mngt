@@ -30,7 +30,12 @@ function actionLabel(action: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function isSkipped(ev: TenantEvent): boolean {
+  return !ev.success && (ev.details as Record<string, unknown> | null)?.status === "SKIPPED";
+}
+
 function dotColor(ev: TenantEvent): string {
+  if (isSkipped(ev)) return "var(--color-warning)";
   if (!ev.success) return "var(--color-error)";
   if (ev.action.includes("restore")) return "var(--brand-primary)";
   if (ev.action.includes("snapshot")) return "var(--color-success)";
@@ -282,7 +287,9 @@ export function Dashboard({ regionFilter }: Props) {
                     </span>
                   </div>
                   {!ev.success && (
-                    <div style={{ fontSize: ".75rem", color: "var(--color-error)", marginTop: ".1rem" }}>Failed</div>
+                    isSkipped(ev)
+                      ? <div style={{ fontSize: ".75rem", color: "var(--color-warning)", marginTop: ".1rem" }}>Skipped</div>
+                      : <div style={{ fontSize: ".75rem", color: "var(--color-error)", marginTop: ".1rem" }}>Failed</div>
                   )}
                 </div>
               </div>

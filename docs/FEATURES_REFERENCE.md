@@ -212,7 +212,7 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.0)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.3)*
 
 **For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning and security group management — without exposing the admin panel.**
 
@@ -222,8 +222,12 @@ A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolat
 - **Data endpoints (read-only)**: VM inventory, volume list, snapshot list/detail/history, per-VM compliance %, dashboard summary, event feed, Prometheus metrics proxy (scoped to tenant VMs), runbooks catalogue — 14 routes, all with double `project_id + region_id` scoping and RLS.
 - **Restore center**: 6 endpoints (list restore points, dry-run plan, execute, list jobs, progress, cancel). Side-by-side restore always creates a new VM — non-destructive. Ops Slack/Teams alert on execute; tenant email on completion/failure.
 - **Network & SG Management** *(v1.85.0)*: `GET /tenant/networks` (subnets, CIDRs, shared/external); `GET /tenant/security-groups/{id}` (rules); `POST/DELETE /tenant/security-groups/{id}/rules` (add/delete rules via Neutron + local DB sync). Internal endpoints: `POST /internal/sg-rule`, `DELETE /internal/sg-rule/{id}`.
-- **Dependency Graph** *(v1.85.0)*: `GET /tenant/resource-graph` returns VM nodes, network nodes, SG nodes, and VM↔Network + VM↔SG edges. Rendered as a pure SVG 3-column layout in the browser.
-- **VM Provisioning** *(v1.85.0)*: `POST /tenant/vms` → `POST /internal/tenant-provision-vm` → `create_boot_volume` + `create_server_bfv`. Supports 1–10 VMs per request, flavor/image/network/SG selection, cloud-init user data. New *New VM* screen (🚀) in the tenant portal nav.
+- **Dependency Graph** *(v1.85.0, expanded v1.85.3)*: `GET /tenant/resource-graph` returns VM, network, subnet, SG, and volume nodes with 4 edge types (`vm_network`, `vm_sg`, `network_subnet`, `vm_volume`). Rendered as a 5-column SVG layout with colored nodes and legend.
+- **VM Provisioning** *(v1.85.0, enhanced v1.85.3)*: `POST /tenant/vms` → `POST /internal/tenant-provision-vm` → `create_boot_volume` + `create_server_bfv`. RFC-1123 name validation, fixed IP picker (subnet CIDR hint), cloud-init user/password fields, boot volume size display. New *New VM* screen (🚀) in the tenant portal nav.
+- **Runbook Execution** *(v1.85.3)*: `POST /tenant/runbooks/{name}/execute`, `GET /tenant/runbook-executions`; internal `POST /internal/tenant-runbook-execute`, `GET /internal/tenant-runbook-executions`. Execute dialog with dynamic parameter form, dry-run toggle, risk warning banner, execution history tab.
+- **VM List & Inventory** *(v1.85.3)*: `disk_gb` via `flavors` JOIN; IP addresses from `raw_json`; both in Infrastructure table and inventory CSV export.
+- **Activity Log** *(v1.85.3)*: *User* column — `username` + truncated `keystone_user_id` from `GET /tenant/events`; system events show "system".
+- **Dashboard** *(v1.85.3)*: Skipped snapshot events display amber "Skipped" badge instead of red "Failed".
 - **Audit logging**: every tenant API call writes an immutable `tenant_action_log` entry atomically with the data query.
 - **Branding** *(v1.84.9)*: `GET /tenant/branding` unauthenticated endpoint returns per-CP logo URL, accent colour, portal title, and favicon. 60 s Redis cache; fail-safe defaults when unconfigured.
 - **Web SPA** (`tenant-ui/`): React + TypeScript + nginx — 9 screens: Dashboard, Infrastructure (VMs · Volumes · Networks · Security Groups · Dependency Graph), Snapshot Coverage, Monitoring, Restore Center, Runbooks, Reports, New VM (🚀 Provision), Activity Log. Per-customer branding applied from server. Session token silently re-validates on page reload.
