@@ -78,6 +78,14 @@ spec:
             # --- Internal service URLs ---
             - name: MONITORING_SERVICE_URL
               value: "http://pf9-monitoring:8001"
+            - name: INTERNAL_API_URL
+              value: "http://pf9-api:8000"
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.internalServiceSecret }}
+                  key: secret
+                  optional: true
           livenessProbe:
             httpGet:
               path: /tenant/health
