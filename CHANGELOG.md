@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.6] - 2026-04-20
+
+### Fixed
+- **Tenant Portal admin: Active Sessions tab → 500** — the `list_sessions` and `force_logout` endpoints called `_get_redis()` without any error handling; if Redis was unreachable the unhandled exception produced a 500. Both handlers now catch all Redis exceptions — `force_logout` returns 503, `list_sessions` degrades gracefully to an empty list so the page still loads. Individual key-read errors inside the scan loop are also swallowed to skip expired/malformed keys.
+- **Tenant Portal admin: Branding tab shows raw `branding_not_found` banner** — `apiFetch` throws the backend `detail` string (`"branding_not_found"`) rather than a string containing `"404"`. The `fetchBranding` handler now also tests for the backend detail string so a missing branding row correctly falls back to defaults without displaying an error.
+
+### Added
+- **Per-tenant branding overrides** — `tenant_portal_branding` table gains a `project_id` column (empty string = global CP-level default; Keystone project UUID = per-tenant override). The admin Branding tab now shows a **Branding scope** dropdown listing all tenant organisations for the selected control plane; selecting a tenant loads and saves its own branding while leaving all other tenants' branding unchanged. The global CP-level row is the fallback when no per-tenant row exists. Migration: `db/migrate_per_tenant_branding.sql`.
+- **Tenant-ui: loads per-tenant branding after login** — `useBranding` now accepts an optional `projectId` and re-fetches after the user logs in, so tenant-specific logos, colours and welcome messages are applied to the portal shell immediately on login.
+
+## [1.85.5] - 2026-04-18
+
+### Fixed
+- **Quota / Runbooks execute → 401 Unauthorized** — the admin API's `rbac_middleware` was intercepting all `/internal/*` paths (including `/internal/tenant-quota`, `/internal/tenant-runbook-execute`) before they reached their route handlers, returning 401 because there was no admin Bearer token. Added `/internal` to the middleware exclusion list so service-to-service calls authenticated via `X-Internal-Secret` are passed through directly. This unblocks Monitoring Current Usage, Runbook execution, and the Quota Usage report.
+- **Volumes: "Attached To" always shows "—"** — the volumes query returned `server_id` but no VM name; added `LEFT JOIN servers` to return `attached_vm_name` alongside each volume row.
+- **VM list/detail: Coverage always shows "—"** — the `/tenant/vms` list query did not include `compliance_pct`; added a correlated subquery against `snapshot_records` to compute the all-time OK-snapshot percentage per VM so the Coverage column and VM detail panel both populate correctly.
+- **New VM fixed-IP picker: shows IPs from all networks** — the `/tenant/networks/{id}/used-ips` endpoint was extracting all IPs from all VMs regardless of network. Now filters by network name key in `raw_json["addresses"]` (how Nova groups IPs) with a CIDR-range fallback using the network's subnets, so only IPs actually in the selected network are shown.
+
 ## [1.85.4] - 2026-04-18
 
 ### Fixed

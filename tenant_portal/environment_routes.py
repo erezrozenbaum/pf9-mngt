@@ -135,7 +135,16 @@ async def list_vms(ctx: TenantContext = Depends(get_tenant_context)):
                            SELECT MAX(sr.created_at)
                            FROM snapshot_records sr
                            WHERE sr.vm_id = s.id AND sr.status = 'OK'
-                       ) AS last_snapshot_at
+                       ) AS last_snapshot_at,
+                       (
+                           SELECT ROUND(
+                               COUNT(*) FILTER (WHERE sr2.status = 'OK') * 100.0
+                               / NULLIF(COUNT(*), 0),
+                               1
+                           )
+                           FROM snapshot_records sr2
+                           WHERE sr2.vm_id = s.id
+                       ) AS compliance_pct
                 FROM servers s
                 LEFT JOIN flavors f ON f.id = s.flavor_id
                 WHERE s.project_id = ANY(%s)
@@ -220,12 +229,14 @@ async def list_volumes(ctx: TenantContext = Depends(get_tenant_context)):
                 SELECT v.id, v.name, v.project_id, v.size_gb, v.status,
                        v.volume_type, v.bootable, v.created_at,
                        v.server_id, v.region_id,
+                       srv.name AS attached_vm_name,
                        (
                            SELECT MAX(sr.created_at)
                            FROM snapshot_records sr
                            WHERE sr.vm_id = v.server_id AND sr.status = 'OK'
                        ) AS last_snapshot_ts
                 FROM volumes v
+                LEFT JOIN servers srv ON srv.id = v.server_id
                 WHERE v.project_id = ANY(%s)
                   AND v.region_id  = ANY(%s)
                 ORDER BY v.name
@@ -1306,20 +1317,31 @@ async def get_network_used_ips(network_id: str, ctx: TenantContext = Depends(get
     """Return IPs currently assigned to VMs in this network, derived from
     servers.raw_json.  Used by the tenant New VM screen to show which IPs are
     already taken so the operator can pick a free one."""
+    import ipaddress as _ipaddress
+
     with get_tenant_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             inject_rls_vars(cur, ctx)
-            # Verify network is accessible by this tenant
+            # Verify network is accessible by this tenant and get its name
             cur.execute(
                 """
-                SELECT id FROM networks
+                SELECT id, name FROM networks
                 WHERE id = %s AND (project_id = ANY(%s) OR is_shared = true)
                 LIMIT 1
                 """,
                 (network_id, ctx.project_ids),
             )
-            if cur.fetchone() is None:
+            net_row = cur.fetchone()
+            if net_row is None:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="access_denied")
+            network_name = net_row["name"] or ""
+
+            # Get subnet CIDRs for this network (used as fallback IP filter)
+            cur.execute(
+                "SELECT cidr FROM subnets WHERE network_id = %s",
+                (network_id,),
+            )
+            subnet_cidrs = [r["cidr"] for r in cur.fetchall() if r.get("cidr")]
 
             # Fetch raw_json for all running servers in tenant projects
             cur.execute(
@@ -1336,9 +1358,49 @@ async def get_network_used_ips(network_id: str, ctx: TenantContext = Depends(get
             log_action(cur, ctx, "tenant_view_used_ips")
             conn.commit()
 
+    # Pre-compute CIDR network objects for fallback matching
+    cidr_nets: list = []
+    for cidr in subnet_cidrs:
+        try:
+            cidr_nets.append(_ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            pass
+
+    def _ips_for_network(raw_json) -> list:
+        """Extract IPs that belong to the requested network from Nova raw_json."""
+        if not raw_json or not isinstance(raw_json, dict):
+            return []
+        addresses = raw_json.get("addresses", {})
+
+        # Primary: match by network name key (Nova groups addresses by net name)
+        if network_name and network_name in addresses:
+            net_addrs = addresses[network_name]
+            if isinstance(net_addrs, list):
+                return [a.get("addr") for a in net_addrs if a.get("addr")]
+
+        # Fallback: check every IP against the network's subnet CIDRs
+        if cidr_nets:
+            matched: list = []
+            for net_addrs in addresses.values():
+                if not isinstance(net_addrs, list):
+                    continue
+                for addr_obj in net_addrs:
+                    addr = addr_obj.get("addr")
+                    if not addr:
+                        continue
+                    try:
+                        ip_obj = _ipaddress.ip_address(addr)
+                        if any(ip_obj in net for net in cidr_nets):
+                            matched.append(addr)
+                    except ValueError:
+                        pass
+            return matched
+
+        return []
+
     used: list = []
     for srv in servers:
-        ips = _extract_ips(srv.get("raw_json"))
+        ips = _ips_for_network(srv.get("raw_json"))
         if ips:
             used.append({"vm_id": srv["id"], "vm_name": srv["name"], "ips": ips})
 

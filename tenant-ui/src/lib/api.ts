@@ -149,8 +149,9 @@ export interface Branding {
   footer_text: string | null;
 }
 
-export async function apiBranding(): Promise<Branding> {
-  return tenantFetch<Branding>("/tenant/branding");
+export async function apiBranding(projectId?: string): Promise<Branding> {
+  const qs = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+  return tenantFetch<Branding>(`/tenant/branding${qs}`);
 }
 
 // ---------------------------------------------------------------------------

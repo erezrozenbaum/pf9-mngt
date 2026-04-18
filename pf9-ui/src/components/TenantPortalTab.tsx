@@ -167,6 +167,9 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
     primary_color: "#1A73E8",
     accent_color: "#F29900",
   });
+  // '' = global CP-level branding; a project id = per-tenant override
+  const [brandingProjectId, setBrandingProjectId] = useState<string>("");
+  const [brandingProjects, setBrandingProjects] = useState<Project[]>([]);
 
   // ── Sessions tab ──
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -245,10 +248,11 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
     if (!cpId.trim()) return;
     setLoading(true); clearMessages();
     try {
-      const data = await apiFetch<BrandingRow>(`/api/admin/tenant-portal/branding/${encodeURIComponent(cpId)}`);
+      const qs = brandingProjectId ? `?project_id=${encodeURIComponent(brandingProjectId)}` : "";
+      const data = await apiFetch<BrandingRow>(`/api/admin/tenant-portal/branding/${encodeURIComponent(cpId)}${qs}`);
       setBranding(data);
     } catch (e: any) {
-      if (e.message?.includes("404")) {
+      if (e.message?.includes("404") || e.message === "branding_not_found") {
         // No row yet — keep defaults
         setBranding({ company_name: "Cloud Portal", primary_color: "#1A73E8", accent_color: "#F29900" });
       } else {
@@ -257,7 +261,7 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
     } finally {
       setLoading(false);
     }
-  }, [cpId]);
+  }, [cpId, brandingProjectId]);
 
   const fetchSessions = useCallback(async () => {
     if (!cpId.trim()) return;
@@ -293,10 +297,21 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
   useEffect(() => {
     if (!cpId.trim()) return;
     if (subTab === "access")   fetchAccess();
-    if (subTab === "branding") fetchBranding();
+    if (subTab === "branding") {
+      // Load project list for the branding scope selector
+      apiFetch<Project[]>(`/api/admin/tenant-portal/projects/${encodeURIComponent(cpId)}`)
+        .then((data) => setBrandingProjects(data))
+        .catch(() => setBrandingProjects([]));
+      fetchBranding();
+    }
     if (subTab === "sessions") fetchSessions();
     if (subTab === "audit")    fetchAudit(0);
   }, [cpId, subTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload branding when the project scope selector changes
+  useEffect(() => {
+    if (subTab === "branding" && cpId.trim()) fetchBranding();
+  }, [brandingProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -394,7 +409,8 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
     clearMessages();
     setLoading(true);
     try {
-      await apiFetch(`/api/admin/tenant-portal/branding/${encodeURIComponent(cpId)}`, {
+      const qs = brandingProjectId ? `?project_id=${encodeURIComponent(brandingProjectId)}` : "";
+      await apiFetch(`/api/admin/tenant-portal/branding/${encodeURIComponent(cpId)}${qs}`, {
         method: "PUT",
         body: JSON.stringify(branding),
       });
@@ -727,6 +743,28 @@ const TenantPortalTab: React.FC<Props> = ({ userRole }) => {
       {/* ── BRANDING TAB ── */}
       {subTab === "branding" && (
         <div style={{ maxWidth: 620 }}>
+          {/* Tenant scope selector */}
+          <div style={{ marginBottom: "1rem" }}>
+            <label style={{ fontWeight: 600, fontSize: "0.85rem", display: "block", marginBottom: "0.35rem" }}>
+              Branding scope — applies to:
+            </label>
+            <select
+              value={brandingProjectId}
+              onChange={(e) => { setBrandingProjectId(e.target.value); }}
+              style={{ padding: "0.35rem 0.6rem", borderRadius: 6, border: "1px solid var(--pf9-border)", minWidth: 280 }}
+            >
+              <option value="">🌐 Global (all tenants — default)</option>
+              {brandingProjects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <span style={{ marginLeft: "0.75rem", fontSize: "0.78rem", color: "var(--pf9-text-muted)" }}>
+              {brandingProjectId
+                ? "Per-tenant override — displayed only for this org"
+                : "Shown to all tenants unless a per-tenant override exists"}
+            </span>
+          </div>
+
           <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
             <button className="pf9-btn" onClick={fetchBranding} disabled={loading || !cpId.trim()}>
               Load Current Branding

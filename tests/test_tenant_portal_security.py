@@ -550,6 +550,7 @@ class TestAuditTrail:
         mock_cur.__exit__  = MagicMock(return_value=False)
         mock_cur.fetchone  = MagicMock(return_value={
             "control_plane_id": "cp-1",
+            "project_id": "",
             "updated_at": datetime.now(timezone.utc),
         })
         mock_conn.__enter__ = MagicMock(return_value=mock_conn)
@@ -564,7 +565,7 @@ class TestAuditTrail:
         with patch("tenant_portal_routes.get_connection", return_value=mock_conn):
             with patch.object(mod.logger, "info") as mock_log:
                 asyncio.get_event_loop().run_until_complete(
-                    mod.upsert_branding("cp-1", body, mock_request, admin_user)
+                    mod.upsert_branding("cp-1", body, mock_request, current_user=admin_user)
                 )
         logged_messages = " ".join(str(c) for c in mock_log.call_args_list)
         assert "cp-1" in logged_messages

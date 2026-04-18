@@ -17,9 +17,17 @@ export type Screen =
   | "activity";
 
 export default function App() {
-  const branding = useBranding();
   const auth = useAuth();
   const [screen, setScreen] = useState<Screen>("dashboard");
+
+  // After login, re-fetch branding scoped to the user's first project so
+  // per-tenant colour/logo overrides are applied immediately.
+  const projectId =
+    auth.state.phase === "authenticated" && auth.state.me.projects.length > 0
+      ? auth.state.me.projects[0].id
+      : undefined;
+
+  const branding = useBranding(projectId);
 
   if (auth.state.phase === "unauthenticated") {
     return (

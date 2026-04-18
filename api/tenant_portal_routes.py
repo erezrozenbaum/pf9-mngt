@@ -495,21 +495,25 @@ async def force_logout(
     Effective immediately — the user's next request returns 401.
     """
     ip = get_request_ip(request)
-    r = _get_redis()
     deleted = 0
 
-    # Scan all tenant session keys and check if they belong to this user
-    cursor = 0
-    while True:
-        cursor, keys = r.scan(cursor, match="tenant:session:*", count=100)
-        for key in keys:
-            stored_uid = r.hget(key, "keystone_user_id")
-            stored_cp = r.hget(key, "control_plane_id")
-            if stored_uid == keystone_user_id and stored_cp == cp_id:
-                r.delete(key)
-                deleted += 1
-        if cursor == 0:
-            break
+    try:
+        r = _get_redis()
+        # Scan all tenant session keys and check if they belong to this user
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match="tenant:session:*", count=100)
+            for key in keys:
+                stored_uid = r.hget(key, "keystone_user_id")
+                stored_cp = r.hget(key, "control_plane_id")
+                if stored_uid == keystone_user_id and stored_cp == cp_id:
+                    r.delete(key)
+                    deleted += 1
+            if cursor == 0:
+                break
+    except Exception as exc:
+        logger.error("Redis unavailable during force_logout for user %s: %s", keystone_user_id, exc)
+        raise HTTPException(status_code=503, detail="redis_unavailable")
 
     log_auth_event(
         username=current_user.username,
@@ -534,27 +538,34 @@ async def list_sessions(
     Scans Redis for all active tenant sessions belonging to this CP.
     Returns a summary: user, login time, IP, last activity inferred from TTL.
     """
-    r = _get_redis()
     sessions = []
 
-    cursor = 0
-    while True:
-        cursor, keys = r.scan(cursor, match="tenant:session:*", count=100)
-        for key in keys:
-            data = r.hgetall(key)
-            if data.get("control_plane_id") == cp_id:
-                ttl = r.ttl(key)
-                sessions.append(
-                    {
-                        "keystone_user_id": data.get("keystone_user_id"),
-                        "username": data.get("username"),
-                        "ip_address": data.get("ip_address"),
-                        "created_at": data.get("created_at"),
-                        "ttl_seconds_remaining": ttl,
-                    }
-                )
-        if cursor == 0:
-            break
+    try:
+        r = _get_redis()
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor, match="tenant:session:*", count=100)
+            for key in keys:
+                try:
+                    data = r.hgetall(key)
+                except Exception:
+                    continue  # skip malformed / deleted keys
+                if data.get("control_plane_id") == cp_id:
+                    ttl = r.ttl(key)
+                    sessions.append(
+                        {
+                            "keystone_user_id": data.get("keystone_user_id"),
+                            "username": data.get("username"),
+                            "ip_address": data.get("ip_address"),
+                            "created_at": data.get("created_at"),
+                            "ttl_seconds_remaining": ttl,
+                        }
+                    )
+            if cursor == 0:
+                break
+    except Exception as exc:
+        logger.warning("Redis unavailable for session listing (cp=%s): %s", cp_id, exc)
+        return []  # degrade gracefully — no sessions visible
 
     return sessions
 
@@ -647,45 +658,64 @@ class BrandingUpsertRequest(BaseModel):
         return s
 
 
-@router.get("/branding/{cp_id}", summary="Get branding config for a CP")
+@router.get("/branding/{cp_id}", summary="Get branding config for a CP (optionally per-tenant)")
 async def get_branding_admin(
     cp_id: str,
+    project_id: str = Query(default="", description="Keystone project UUID for per-tenant branding; empty = global CP default"),
     current_user: User = Depends(_require_admin),
 ):
-    """Return the tenant_portal_branding row for a control plane, or 404."""
+    """
+    Return the tenant_portal_branding row for a control plane.
+    If project_id is given, returns that per-tenant override; falls back to the
+    global CP-level row (project_id='') if no per-tenant row exists.
+    Returns 404 if neither exists.
+    """
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT control_plane_id, company_name, logo_url, favicon_url, "
+                "SELECT control_plane_id, project_id, company_name, logo_url, favicon_url, "
                 "primary_color, accent_color, support_email, support_url, "
                 "welcome_message, footer_text, updated_at "
-                "FROM tenant_portal_branding WHERE control_plane_id = %s",
-                [cp_id],
+                "FROM tenant_portal_branding "
+                "WHERE control_plane_id = %s AND project_id = %s",
+                [cp_id, project_id],
             )
             row = cur.fetchone()
+            # If looking for per-tenant and not found, fall back to global
+            if row is None and project_id:
+                cur.execute(
+                    "SELECT control_plane_id, project_id, company_name, logo_url, favicon_url, "
+                    "primary_color, accent_color, support_email, support_url, "
+                    "welcome_message, footer_text, updated_at "
+                    "FROM tenant_portal_branding "
+                    "WHERE control_plane_id = %s AND project_id = ''",
+                    [cp_id],
+                )
+                row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="branding_not_found")
     return dict(row)
 
 
-@router.put("/branding/{cp_id}", summary="Upsert branding config for a CP")
+@router.put("/branding/{cp_id}", summary="Upsert branding config for a CP (optionally per-tenant)")
 async def upsert_branding(
     cp_id: str,
     body: BrandingUpsertRequest,
     request: Request,
+    project_id: str = Query(default="", description="Keystone project UUID for per-tenant branding; empty = global CP default"),
     current_user: User = Depends(_require_admin),
 ):
-    """Create or replace the tenant_portal_branding row for a control plane."""
+    """Create or replace the tenant_portal_branding row for a control plane / project."""
     with get_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 INSERT INTO tenant_portal_branding (
-                    control_plane_id, company_name, logo_url, favicon_url,
+                    control_plane_id, project_id, company_name, logo_url, favicon_url,
                     primary_color, accent_color, support_email, support_url,
                     welcome_message, footer_text, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
-                ON CONFLICT (control_plane_id) DO UPDATE SET
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (control_plane_id, project_id) DO UPDATE SET
                     company_name    = EXCLUDED.company_name,
                     logo_url        = EXCLUDED.logo_url,
                     favicon_url     = EXCLUDED.favicon_url,
@@ -696,10 +726,11 @@ async def upsert_branding(
                     welcome_message = EXCLUDED.welcome_message,
                     footer_text     = EXCLUDED.footer_text,
                     updated_at      = now()
-                RETURNING control_plane_id, updated_at
+                RETURNING control_plane_id, project_id, updated_at
                 """,
                 [
                     cp_id,
+                    project_id,
                     body.company_name,
                     body.logo_url,
                     body.favicon_url,
@@ -713,8 +744,9 @@ async def upsert_branding(
             )
             result = cur.fetchone()
     logger.info(
-        "Branding upserted for CP %s by %s from %s",
+        "Branding upserted for CP %s / project '%s' by %s from %s",
         cp_id,
+        project_id or "(global)",
         current_user.username,
         get_request_ip(request),
     )

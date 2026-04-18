@@ -14,9 +14,9 @@ reduce DB round-trips on the login page.
 import logging
 import os
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from psycopg2.extras import RealDictCursor
 
 from db_pool import get_tenant_connection
@@ -52,15 +52,15 @@ _CACHE: Dict[str, Any] = {}
 _CACHE_TTL = 60  # seconds
 
 
-def _get_cached_branding() -> Dict[str, Any] | None:
-    entry = _CACHE.get("branding")
+def _get_cached_branding(cache_key: str) -> Dict[str, Any] | None:
+    entry = _CACHE.get(cache_key)
     if entry and time.monotonic() - entry["ts"] < _CACHE_TTL:
         return entry["data"]
     return None
 
 
-def _set_cached_branding(data: Dict[str, Any]) -> None:
-    _CACHE["branding"] = {"data": data, "ts": time.monotonic()}
+def _set_cached_branding(cache_key: str, data: Dict[str, Any]) -> None:
+    _CACHE[cache_key] = {"data": data, "ts": time.monotonic()}
 
 
 # ---------------------------------------------------------------------------
@@ -72,31 +72,53 @@ def _set_cached_branding(data: Dict[str, Any]) -> None:
     summary="Public branding config for this control plane (unauthenticated)",
     response_description="Branding fields: company name, logo/favicon URLs, colours, support links, text.",
 )
-async def get_branding() -> Dict[str, Any]:
+async def get_branding(
+    project_id: Optional[str] = Query(
+        default=None,
+        description="Keystone project UUID for per-tenant branding. "
+                    "If omitted or not found, falls back to the CP-level default.",
+    ),
+) -> Dict[str, Any]:
     """
     Return the branding configuration for the control plane this pod serves.
 
     Called by the tenant-ui SPA on every page load (before login) to apply
-    the customer's logo, colours and welcome text. Falls back to defaults
-    gracefully if the DB is unavailable or no row has been configured yet.
+    the customer's logo, colours and welcome text. Falls back gracefully:
+      1. Per-tenant row (control_plane_id, project_id) if project_id given
+      2. Global CP row  (control_plane_id, '')
+      3. Hard-coded defaults if DB is unavailable or no row configured
     """
-    cached = _get_cached_branding()
+    cache_key = f"branding:{project_id or ''}"
+    cached = _get_cached_branding(cache_key)
     if cached is not None:
         return cached
 
     try:
         with get_tenant_connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Static parameterized query — no user input, no injection surface.
-                cur.execute(
-                    "SELECT company_name, logo_url, favicon_url, primary_color, "
-                    "accent_color, support_email, support_url, "
-                    "welcome_message, footer_text "
-                    "FROM tenant_portal_branding "
-                    "WHERE control_plane_id = %s",
-                    [_CP_ID],
-                )
-                row = cur.fetchone()
+                row = None
+                # Try per-tenant row first when project_id supplied
+                if project_id:
+                    cur.execute(
+                        "SELECT company_name, logo_url, favicon_url, primary_color, "
+                        "accent_color, support_email, support_url, "
+                        "welcome_message, footer_text "
+                        "FROM tenant_portal_branding "
+                        "WHERE control_plane_id = %s AND project_id = %s",
+                        [_CP_ID, project_id],
+                    )
+                    row = cur.fetchone()
+                # Fall back to global CP-level row
+                if row is None:
+                    cur.execute(
+                        "SELECT company_name, logo_url, favicon_url, primary_color, "
+                        "accent_color, support_email, support_url, "
+                        "welcome_message, footer_text "
+                        "FROM tenant_portal_branding "
+                        "WHERE control_plane_id = %s AND project_id = ''",
+                        [_CP_ID],
+                    )
+                    row = cur.fetchone()
 
         if row:
             data = dict(row)
@@ -104,7 +126,7 @@ async def get_branding() -> Dict[str, Any]:
             logger.info("No branding row for CP %s — returning defaults", _CP_ID)
             data = dict(_DEFAULTS)
 
-        _set_cached_branding(data)
+        _set_cached_branding(cache_key, data)
         return data
 
     except Exception as exc:

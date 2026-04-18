@@ -457,6 +457,7 @@ async def rbac_middleware(request: Request, call_next):
         path.startswith("/auth") or
         path.startswith("/settings/") or
         path.startswith("/static/") or
+        path.startswith("/internal") or   # internal service-to-service endpoints use X-Internal-Secret
         path in ["/health", "/metrics", "/api/openapi.json", "/api/docs", "/api/redoc", "/demo-mode"]
     ):
         return await call_next(request)

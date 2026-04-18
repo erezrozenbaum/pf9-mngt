@@ -3807,9 +3807,12 @@ CREATE TABLE IF NOT EXISTS tenant_portal_access (
 CREATE INDEX IF NOT EXISTS idx_tenant_portal_access_cp_enabled
     ON tenant_portal_access (control_plane_id, enabled);
 
--- Per-CP branding (served unauthenticated; runtime-configurable)
+-- Per-CP / per-project branding (served unauthenticated; runtime-configurable)
+-- project_id = '' means global CP-level default; a Keystone project UUID
+-- means an override for that specific tenant organisation.
 CREATE TABLE IF NOT EXISTS tenant_portal_branding (
-    control_plane_id TEXT         PRIMARY KEY REFERENCES pf9_control_planes(id),
+    control_plane_id TEXT         NOT NULL REFERENCES pf9_control_planes(id),
+    project_id       TEXT         NOT NULL DEFAULT '',
     company_name     VARCHAR(255) NOT NULL DEFAULT 'Cloud Portal',
     logo_url         TEXT,
     favicon_url      TEXT,
@@ -3819,7 +3822,8 @@ CREATE TABLE IF NOT EXISTS tenant_portal_branding (
     support_url      TEXT,
     welcome_message  TEXT,
     footer_text      TEXT,
-    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now()
+    updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    PRIMARY KEY (control_plane_id, project_id)
 );
 
 -- Tenant TOTP MFA secrets (separate from staff user_mfa; RLS-protected)

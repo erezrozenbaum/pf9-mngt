@@ -13,11 +13,19 @@ const DEFAULTS: Branding = {
   footer_text: null,
 };
 
-export function useBranding(): Branding {
+/**
+ * Fetches branding from the tenant portal backend.
+ *
+ * @param projectId  Optional Keystone project UUID.  When supplied (after
+ *                   login) the hook re-fetches to pick up per-tenant
+ *                   overrides.  Falls back to the global CP branding if
+ *                   no per-tenant row exists.
+ */
+export function useBranding(projectId?: string): Branding {
   const [branding, setBranding] = useState<Branding>(DEFAULTS);
 
   useEffect(() => {
-    apiBranding()
+    apiBranding(projectId)
       .then((b) => {
         setBranding(b);
         applyBrandingToDom(b);
@@ -26,7 +34,7 @@ export function useBranding(): Branding {
         // Use defaults on error — the portal still loads
         applyBrandingToDom(DEFAULTS);
       });
-  }, []);
+  }, [projectId]);
 
   return branding;
 }
