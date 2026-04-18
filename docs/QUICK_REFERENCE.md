@@ -162,7 +162,8 @@ The Platform9 Management System is a enterprise-grade infrastructure management 
 - **K8s bug-fixes** (v1.85.4 — NEW ✨): VM Disk column shows boot-volume size for BFV VMs. Volumes table shows last snapshot date. Monitoring/Runbooks 502 fixed (NetworkPolicy egress to API+monitoring pods). New VM Fixed IP picker shows IPs already in use in the selected network.
 - **K8s bug-fixes round 2** (v1.85.5): Monitoring/Runbooks 401 fixed (added /internal to admin API middleware exclusions). Volumes "Attached To" column now shows VM name. VM list Coverage column populated. Fixed IP picker only shows IPs from the selected network.
 - **K8s bug-fixes round 3** (v1.85.6): Active Sessions 500 fixed. Branding 404 banner fixed. Per-tenant branding overrides added.
-- **K8s bug-fixes round 4** (v1.85.7 — NEW ✨): "Connection lost" banner on Branding tab eliminated. `/tenant/quota` 400 fixed (slug CP IDs). Snapshot calendar realigned + today marker. Runbooks crash fixed (`risk_level` undefined). Monitoring empty-state shows actionable message.
+- **K8s bug-fixes round 4** (v1.85.7): "Connection lost" banner on Branding tab eliminated. `/tenant/quota` 400 fixed (slug CP IDs). Snapshot calendar realigned + today marker. Runbooks crash fixed (`risk_level` undefined). Monitoring empty-state shows actionable message.
+- **Quota usage, runbook VM picker, monitoring host discovery** (v1.85.8 — NEW ✨): Dashboard Quota Usage bars now show real in-use figures (Nova/Cinder `?usage=true` fix). `vm_health_quickfix` + `snapshot_before_escalation` Execute dialogs now show the Target VM dropdown (`server_id` field detected via `x-lookup: vms`). Monitoring service auto-discovers hypervisor IPs from DB at startup when `PF9_HOSTS` is empty (new `/internal/prometheus-targets` endpoint).
 - **Snapshot coverage, restore, runbooks, metrics fixes** (v1.84.24): Snapshot coverage now counts `OK/(OK+ERROR)` only (SKIPPED excluded). Restore enabled via Helm flag. 9 admin-only runbooks hidden from tenant portal. Monitoring Current Usage now fetches from monitoring service HTTP API when file cache unavailable (K8s).
 - **Inventory sync bar + pre-restore snapshot + 15-min RVTools interval** (v1.84.23): Shell header shows "Inventory synced X min ago" + Refresh button. NEW mode restore now has optional pre-restore snapshot checkbox. Critical `tenant_portal_role` DB grants fixed (flavors + inventory_runs). RVTools interval: 60 → 15 min.
 - **Tenant portal data fixes + REPLACE restore mode** (v1.84.22): 6 data display bugs fixed (status `OK`/`ERROR`, vCPUs from flavors JOIN, IPs from JSONB, restore-points via `server_id`, runbooks visibility, calendar normalisation). Restore Center adds Replace In-Place mode: mandatory safety snapshot + VM-name confirmation.
@@ -1207,6 +1208,8 @@ PF9_PROJECT_NAME=service
 PF9_REGION_NAME=region-one
 
 # Monitoring Configuration
+# Monitoring Configuration
+# PF9_HOSTS: comma-separated IPs. Leave empty in K8s — auto-discovered from DB.
 PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
 METRICS_CACHE_TTL=60
 WATCHDOG_INTERVAL=60      # Docker container poll interval (seconds)

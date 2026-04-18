@@ -3004,8 +3004,8 @@ def setup_restore_routes(app):
         results = []
         for project_id in ids:
             try:
-                compute = client.get_compute_quotas(project_id)
-                storage = client.get_storage_quotas(project_id)
+                compute = client.get_compute_quotas_with_usage(project_id)
+                storage = client.get_storage_quotas_with_usage(project_id)
             except Exception:
                 compute, storage = {}, {}
 
@@ -3329,4 +3329,32 @@ def setup_restore_routes(app):
                     pass
             result.append(d)
         return {"executions": result}
+
+    # ------------------------------------------------------------------
+    # GET /internal/prometheus-targets — hypervisor IPs for monitoring
+    # ------------------------------------------------------------------
+    @app.get("/internal/prometheus-targets", include_in_schema=False)
+    async def _internal_prometheus_targets(
+        port: int = 9100,
+        x_internal_secret: str = Header(alias="X-Internal-Secret", default=""),
+    ):
+        """Return Prometheus scrape targets (host:port) from the hypervisors table.
+        Called by the monitoring service at startup when PF9_HOSTS is not configured."""
+        if not INTERNAL_SERVICE_SECRET or not secrets.compare_digest(x_internal_secret, INTERNAL_SERVICE_SECRET):
+            raise HTTPException(403, "Forbidden")
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COALESCE(raw_json->>'host_ip', hostname) AS host_ip
+                    FROM hypervisors
+                    WHERE status = 'enabled'
+                      AND (raw_json->>'host_ip' IS NOT NULL OR hostname IS NOT NULL)
+                    """
+                )
+                rows = cur.fetchall()
+
+        targets = [f"{row[0]}:{port}" for row in rows if row[0]]
+        return {"targets": targets, "count": len(targets)}
 

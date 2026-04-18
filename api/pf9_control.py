@@ -1236,6 +1236,16 @@ class Pf9Client:
         r.raise_for_status()
         return r.json().get("quota_set", {})
 
+    @cached(ttl=60, key_prefix="pf9:compute_quotas_usage")
+    def get_compute_quotas_with_usage(self, project_id: str) -> Dict[str, Any]:
+        """Return compute quotas with in_use counts (Nova ?usage=true)."""
+        self.authenticate()
+        assert self.nova_endpoint
+        url = f"{self.nova_endpoint}/os-quota-sets/{project_id}?usage=true"
+        r = self.session.get(url, headers=self._headers())
+        r.raise_for_status()
+        return r.json().get("quota_set", {})
+
     def update_compute_quotas(
         self, project_id: str, quotas: Dict[str, int]
     ) -> Dict[str, Any]:
@@ -1289,6 +1299,16 @@ class Pf9Client:
         if not self.cinder_endpoint:
             return {}
         url = f"{self.cinder_endpoint}/os-quota-sets/{project_id}"
+        r = self.session.get(url, headers=self._headers())
+        r.raise_for_status()
+        return r.json().get("quota_set", {})
+
+    def get_storage_quotas_with_usage(self, project_id: str) -> Dict[str, Any]:
+        """Return Cinder quotas with in_use counts (?usage=true)."""
+        self.authenticate()
+        if not self.cinder_endpoint:
+            return {}
+        url = f"{self.cinder_endpoint}/os-quota-sets/{project_id}?usage=true"
         r = self.session.get(url, headers=self._headers())
         r.raise_for_status()
         return r.json().get("quota_set", {})

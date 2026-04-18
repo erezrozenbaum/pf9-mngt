@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.85.7] - 2026-04-18
+## [1.85.8] - 2026-04-18
+
+### Fixed
+- **Dashboard Quota Usage shows all 0** — `get_compute_quotas()` and `get_storage_quotas()` called the Nova/Cinder API without `?usage=true`, returning flat integers (limits only). The `_used()` helper in `_internal_tenant_quota` expects a `{limit, in_use, reserved}` dict and returned 0 for flat ints. Added `get_compute_quotas_with_usage()` and `get_storage_quotas_with_usage()` methods (cached separately, call `?usage=true`) and switched `_internal_tenant_quota` to use them. Usage figures (vCPUs, RAM, instances, etc.) now reflect actual consumption.
+- **Runbooks: VM selector missing for `vm_health_quickfix` and `snapshot_before_escalation`** — the Execute dialog detected the VM picker field by checking for `"vm_id"` or `"vm_name"` keys in the `parameters_schema` properties. Both runbooks define the VM parameter as `server_id` (with `"x-lookup": "vms"`). The detection logic now scans for any property where `x-lookup === "vms"` or the key is `vm_id` / `vm_name` / `server_id`, and uses that field's key as the parameter name. Running either runbook now shows the VM dropdown and correctly populates the `server_id` parameter.
+- **Monitoring: "No metrics collected yet" when PF9_HOSTS is not configured in K8s** — the monitoring service was initialised with `PF9_HOSTS=""` in the Helm chart, falling back to `"localhost"` which scrapes nothing. `startup_event()` now checks whether `PF9_HOSTS` is empty; if so, it queries the new admin API endpoint `GET /internal/prometheus-targets` (returns enabled hypervisor IPs from the `hypervisors` DB table) and reinitialises `PrometheusClient.hosts` with the discovered IPs before starting collection. The monitoring K8s deployment template now mounts `INTERNAL_SERVICE_SECRET` from the cluster secret so the call is authenticated.
+
+### Added
+- **Admin API: `GET /internal/prometheus-targets`** — internal endpoint (protected by `X-Internal-Secret`) that returns a list of `host:port` Prometheus scrape targets derived from the `hypervisors` table (`raw_json->>'host_ip'` falling back to `hostname`, filtered to `status = 'enabled'`). Port defaults to `9100` (node_exporter). Used by the monitoring service for host auto-discovery.
+
+
 
 ### Fixed
 - **Admin UI: "Connection lost" banner on Branding tab** — `apiFetch` was retrying GET requests on any error whose `detail` string didn't start with `"API error "`. Errors like `"branding_not_found"` triggered three retries, exhausted the retry budget, and fired `pf9:connection:offline`, showing the "Connection lost" banner. Fixed by adding an `isHttpError` flag: any HTTP 4xx/5xx now throws immediately without retry; only genuine network/timeout failures are retried.

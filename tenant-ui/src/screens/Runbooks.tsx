@@ -132,12 +132,16 @@ function ExecuteDialog({
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Determine if this runbook needs a vm_id param from the schema
+  // Determine if this runbook needs a VM param from the schema.
+  // Match: any property with x-lookup="vms", or named vm_id / vm_name / server_id.
   const schema = runbook.parameters_schema ?? {};
   const props = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
-  const needsVm = "vm_id" in props || "vm_name" in props;
-  const vmParamKey = "vm_id" in props ? "vm_id" : "vm_name";
-  const extraParams = Object.entries(props).filter(([k]) => k !== "vm_id" && k !== "vm_name" && k !== "target_project" && k !== "region_id");
+  const vmPropEntry = Object.entries(props).find(
+    ([k, def]) => def["x-lookup"] === "vms" || k === "vm_id" || k === "vm_name" || k === "server_id"
+  );
+  const needsVm = Boolean(vmPropEntry);
+  const vmParamKey = vmPropEntry ? vmPropEntry[0] : "vm_id";
+  const extraParams = Object.entries(props).filter(([k]) => k !== vmParamKey && k !== "target_project" && k !== "region_id");
 
   const handleRun = async () => {
     setRunning(true);

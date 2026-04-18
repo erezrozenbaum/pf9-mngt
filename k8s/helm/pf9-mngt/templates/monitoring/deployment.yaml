@@ -45,6 +45,13 @@ spec:
             # No Docker socket in Kubernetes — watchdog uses k8s events instead.
             - name: DOCKER_SOCKET
               value: ""
+            # Internal service secret — used for /internal/prometheus-targets host auto-discovery
+            - name: INTERNAL_SERVICE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.internalServiceSecret }}
+                  key: secret
+                  optional: true
             - name: SMTP_ENABLED
               value: {{ .Values.smtp.enabled | quote }}
             - name: SMTP_HOST

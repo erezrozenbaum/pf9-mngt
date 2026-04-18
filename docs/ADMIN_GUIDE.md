@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.85.7  
+**Version**: 1.85.8  
 **Last Updated**: April 18, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,13 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.85.8 — Quota Usage, Runbook VM Selector, Monitoring Host Discovery (✅ Complete)
+
+- **Dashboard Quota Usage shows all 0 — fixed**: `get_compute_quotas()` / `get_storage_quotas()` called Nova/Cinder without `?usage=true`, returning flat integers with no consumption data. New `get_compute_quotas_with_usage()` / `get_storage_quotas_with_usage()` methods append `?usage=true`, returning `{limit, in_use, reserved}` dicts. `_internal_tenant_quota` now calls the `_with_usage` variants — vCPUs, RAM, instances, volumes, and storage bars now show real in-use figures.
+- **Runbooks: VM dropdown missing for `vm_health_quickfix` / `snapshot_before_escalation` — fixed**: Execute dialog previously checked for `vm_id` or `vm_name` keys only. Both runbooks define the VM parameter as `server_id` with `"x-lookup": "vms"`. Detection now scans all properties for `x-lookup == 'vms'` or key in `{vm_id, vm_name, server_id}` and uses that key as the parameter name — Target VM picker now appears and populates `server_id` correctly.
+- **Monitoring: "No metrics collected yet" when `PF9_HOSTS` unconfigured in K8s — fixed**: Monitoring service `startup_event()` now auto-discovers hypervisor IPs from the admin API `GET /internal/prometheus-targets` (returns `host:port` targets from the `hypervisors` table, filtered to `status='enabled'`) when `PF9_HOSTS` env var is empty. The monitoring K8s deployment template now mounts `INTERNAL_SERVICE_SECRET`. See [Monitoring auto-discovery](#monitoring-host-auto-discovery) below.
+- **New internal endpoint `GET /internal/prometheus-targets`**: Returns Prometheus scrape targets (`host:port`) from hypervisors DB table. Protected by `X-Internal-Secret`. Port defaults to 9100.
 
 ### v1.85.7 — K8s Bug-Fix Batch (✅ Complete)
 
@@ -2118,7 +2125,9 @@ POSTGRES_USER=pf9
 POSTGRES_PASSWORD=generate-secure-password
 POSTGRES_DB=pf9_mgmt
 
-# Monitoring Configuration (NEW)
+# Monitoring Configuration
+# PF9_HOSTS: comma-separated hypervisor IPs. Leave empty in K8s —
+# the service auto-discovers from the admin API /internal/prometheus-targets.
 PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
 # PF9_HOST_MAP=203.0.113.10:host-01,203.0.113.11:host-02
 METRICS_CACHE_TTL=60
@@ -3095,6 +3104,7 @@ The Platform9 Management System now includes a comprehensive real-time monitorin
 **Environment Variables** (add to .env):
 ```bash
 # Monitoring Configuration
+# PF9_HOSTS: comma-separated IPs. Empty in K8s = auto-discovered from DB.
 PF9_HOSTS=203.0.113.10,203.0.113.11,203.0.113.12,203.0.113.13
 # Map host IPs to friendly hostnames for monitoring display
 # PF9_HOST_MAP=203.0.113.10:host-01,203.0.113.11:host-02
@@ -3102,9 +3112,15 @@ METRICS_CACHE_TTL=60
 ```
 
 **PF9 Host Requirements**:
-- node_exporter running on port 9388 (standard Platform9 deployment)
+- node_exporter running on port 9100 (standard node_exporter default) or 9388 (Platform9-specific). The auto-discovery endpoint defaults to port 9100.
 - Network connectivity from management server to compute nodes
 - No additional configuration required on PF9 hosts
+
+#### Monitoring Host Auto-Discovery
+
+In Kubernetes, leave `pf9Hosts: ""` in `values.yaml` (the default). On startup, the monitoring service calls `GET /internal/prometheus-targets` on the admin API, which queries the `hypervisors` table (`raw_json->>'host_ip'` falling back to `hostname`, status=enabled) and returns `host:9100` targets. The monitoring service reinitialises its Prometheus client with those IPs before starting collection.
+
+The `INTERNAL_SERVICE_SECRET` is automatically mounted from the `pf9-internal-service-secret` cluster secret (same secret used by the tenant portal). No additional K8s configuration is required beyond what is already in place for the tenant portal.
 
 #### Monitoring Operations
 

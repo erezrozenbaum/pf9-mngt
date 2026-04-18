@@ -143,7 +143,35 @@ async def startup_event():
         except Exception as e:
             logger.error("Could not create cache file", extra={"context": {"error": str(e)}})
 
-    # Start background metrics collection from PF9 host Prometheus endpoints
+    # Start background metrics collection from PF9 host Prometheus endpoints.
+    # If PF9_HOSTS is not configured, attempt to discover hypervisor IPs from
+    # the admin API's /internal/prometheus-targets endpoint.
+    pf9_hosts_env = os.getenv("PF9_HOSTS", "").strip()
+    if not pf9_hosts_env:
+        try:
+            import httpx as _httpx
+            _api_url = os.getenv("API_BASE_URL", "http://pf9-api:8000")
+            _secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
+            _r = _httpx.get(
+                f"{_api_url}/internal/prometheus-targets",
+                headers={"X-Internal-Secret": _secret},
+                timeout=5.0,
+            )
+            if _r.status_code == 200:
+                _targets = _r.json().get("targets", [])
+                if _targets:
+                    # Extract just host IPs from host:port strings
+                    _ips = [t.split(":")[0] for t in _targets if t]
+                    prometheus_client.hosts = _ips
+                    logger.info(
+                        "Auto-discovered hypervisor hosts from admin API",
+                        extra={"context": {"hosts": _ips, "count": len(_ips)}},
+                    )
+        except Exception as _e:
+            logger.warning(
+                "Could not auto-discover Prometheus targets from admin API: %s", _e,
+                extra={"context": {"error": str(_e)}},
+            )
     await prometheus_client.start_collection()
 
 async def shutdown_event():
