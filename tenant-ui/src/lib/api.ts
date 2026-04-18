@@ -486,10 +486,13 @@ function _normaliseMetrics(r: Record<string, unknown>): VmMetrics {
   };
 }
 
-export async function apiMetricsVms(): Promise<VmMetrics[]> {
+export async function apiMetricsVms(): Promise<{ vms: VmMetrics[]; cacheAvailable: boolean }> {
   const raw = await tenantFetch<Record<string, unknown>>("/tenant/metrics/vms");
   const list = (Array.isArray(raw) ? raw : ((raw.vms ?? []) as unknown[])) as Record<string, unknown>[];
-  return list.map(_normaliseMetrics);
+  return {
+    vms: list.map(_normaliseMetrics),
+    cacheAvailable: raw.cache_available !== false,
+  };
 }
 
 export async function apiMetricsVm(vmId: string): Promise<VmMetrics> {
@@ -711,11 +714,26 @@ export async function apiExecuteRunbook(
   params: Record<string, unknown> = {},
   dryRun = false,
 ): Promise<RunbookExecution> {
-  return tenantFetch<RunbookExecution>(`/tenant/runbooks/${encodeURIComponent(name)}/execute`, {
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/runbooks/${encodeURIComponent(name)}/execute`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ parameters: params, dry_run: dryRun }),
   });
+  // Normalise to ensure all required string fields are present
+  return {
+    execution_id:  String(raw.execution_id ?? ""),
+    runbook_name:  String(raw.runbook_name ?? name),
+    display_name:  String(raw.display_name ?? raw.runbook_name ?? name),
+    status:        String(raw.status ?? "executing"),
+    dry_run:       Boolean(raw.dry_run ?? dryRun),
+    parameters:    (raw.parameters ?? params) as Record<string, unknown>,
+    result:        (raw.result ?? null) as Record<string, unknown> | null,
+    triggered_by:  String(raw.triggered_by ?? ""),
+    triggered_at:  String(raw.triggered_at ?? new Date().toISOString()),
+    completed_at:  (raw.completed_at ?? null) as string | null,
+    error_message: (raw.error_message ?? null) as string | null,
+    risk_level:    String(raw.risk_level ?? "low"),
+  };
 }
 
 export async function apiRunbookExecutions(): Promise<RunbookExecution[]> {

@@ -1,6 +1,6 @@
 # Platform9 Management System — Administrator Guide
 
-**Version**: 1.85.5  
+**Version**: 1.85.7  
 **Last Updated**: April 18, 2026  
 **Audience**: System administrators and platform operators
 
@@ -660,6 +660,14 @@ Each control plane row has `allow_private_network BOOLEAN NOT NULL DEFAULT FALSE
 ---
 
 ## Appendix: Feature History by Version
+
+### v1.85.7 — K8s Bug-Fix Batch (✅ Complete)
+
+- **apiFetch no-retry-on-HTTP**: `isHttpError` flag added; any 4xx/5xx throws immediately without retrying — prevents "Connection lost" banners for branding 404 and similar server errors.
+- **Quota 400 fixed**: `/internal/tenant-quota` CP ID regex relaxed from UUID-only (`^[0-9a-f-]{36}$`) to alphanumeric slug (`^[A-Za-z0-9_-]{1,100}$`); fixes quota page when `TENANT_PORTAL_CONTROL_PLANE_ID=default`.
+- **Snapshot calendar realigned**: header labels now render one per 5-day group (6 × 85 px = 510 px); today's cell highlighted with a brand-colour outline.
+- **Runbooks crash fixed**: `apiExecuteRunbook` normalises all string fields; `RiskBadge`/`statusBadge` guard against `undefined` input — eliminates blank page + `TypeError: Cannot read properties of undefined (reading 'toLowerCase')`.
+- **Monitoring empty-state improved**: `/tenant/metrics/vms` response includes `cache_available` flag; UI distinguishes service-unreachable from no-data-yet.
 
 ### v1.85.3 — Runbook Execute, VM Provisioning UX, Dependency Graph Expansion, Activity Log, Dashboard (✅ Complete)
 

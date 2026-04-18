@@ -212,7 +212,7 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.5)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.7)*
 
 **For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning and security group management — without exposing the admin panel.**
 
@@ -224,6 +224,8 @@ A separate FastAPI service on port 8010 (`tenant_portal/`) provides a JWT-isolat
 - **Network & SG Management** *(v1.85.0)*: `GET /tenant/networks` (subnets, CIDRs, shared/external); `GET /tenant/security-groups/{id}` (rules); `POST/DELETE /tenant/security-groups/{id}/rules` (add/delete rules via Neutron + local DB sync). Internal endpoints: `POST /internal/sg-rule`, `DELETE /internal/sg-rule/{id}`.
 - **Dependency Graph** *(v1.85.0, expanded v1.85.3)*: `GET /tenant/resource-graph` returns VM, network, subnet, SG, and volume nodes with 4 edge types (`vm_network`, `vm_sg`, `network_subnet`, `vm_volume`). Rendered as a 5-column SVG layout with colored nodes and legend.
 - **VM Provisioning** *(v1.85.0, enhanced v1.85.3)*: `POST /tenant/vms` → `POST /internal/tenant-provision-vm` → `create_boot_volume` + `create_server_bfv`. RFC-1123 name validation, fixed IP picker (subnet CIDR hint), cloud-init user/password fields, boot volume size display. New *New VM* screen (🚀) in the tenant portal nav.
+- **K8s stability (v1.85.7)**: `apiFetch` no-retry-on-HTTP; quota CP ID slug support; snapshot calendar today-cell highlight; `apiExecuteRunbook` normalised + `RiskBadge`/`statusBadge` null-guarded; monitoring `cache_available` flag in API response + improved empty-state.
+- **Per-tenant branding** *(v1.85.6)*: `tenant_portal_branding` table gains `project_id` column (empty = CP-level default); admin scope dropdown to select per-tenant override; `useBranding` re-fetches after login.
 - **Runbook Execution** *(v1.85.3)*: `POST /tenant/runbooks/{name}/execute`, `GET /tenant/runbook-executions`; internal `POST /internal/tenant-runbook-execute`, `GET /internal/tenant-runbook-executions`. Execute dialog with dynamic parameter form, dry-run toggle, risk warning banner, execution history tab.
 - **VM List & Inventory** *(v1.85.3)*: `disk_gb` via `flavors` JOIN; IP addresses from `raw_json`; both in Infrastructure table and inventory CSV export.
 - **Activity Log** *(v1.85.3)*: *User* column — `username` + truncated `keystone_user_id` from `GET /tenant/events`; system events show "system".

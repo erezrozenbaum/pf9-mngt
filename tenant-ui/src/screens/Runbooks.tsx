@@ -6,16 +6,16 @@ import {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function RiskBadge({ level }: { level: string }) {
-  const l = level.toLowerCase();
+function RiskBadge({ level }: { level: string | undefined }) {
+  const l = (level ?? "low").toLowerCase();
   if (l === "low")    return <span className="badge badge-green">Low risk</span>;
   if (l === "medium") return <span className="badge badge-amber">Medium risk</span>;
   if (l === "high")   return <span className="badge badge-red">High risk</span>;
   return <span className="badge badge-grey">{level}</span>;
 }
 
-function statusBadge(s: string) {
-  const l = s.toLowerCase();
+function statusBadge(s: string | undefined) {
+  const l = (s ?? "").toLowerCase();
   if (l === "completed")  return <span className="badge badge-green">Completed</span>;
   if (l === "failed")     return <span className="badge badge-red">Failed</span>;
   if (l === "executing")  return <span className="badge badge-amber">Running…</span>;

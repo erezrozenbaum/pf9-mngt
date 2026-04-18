@@ -66,6 +66,7 @@ interface Props {
 export function Monitoring({ regionFilter }: Props) {
   const [availability, setAvailability] = useState<AvailabilityRow[]>([]);
   const [metrics, setMetrics] = useState<VmMetrics[]>([]);
+  const [cacheAvailable, setCacheAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"availability" | "usage">("availability");
@@ -77,7 +78,8 @@ export function Monitoring({ regionFilter }: Props) {
       .then(([a, m]) => {
         if (!active) return;
         setAvailability(a);
-        setMetrics(m);
+        setMetrics(m.vms);
+        setCacheAvailable(m.cacheAvailable);
       })
       .catch((e: unknown) => { if (active) setError(e instanceof Error ? e.message : "Failed to load"); })
       .finally(() => { if (active) setLoading(false); });
@@ -161,7 +163,11 @@ export function Monitoring({ regionFilter }: Props) {
       {/* ── Usage tab ── */}
       {tab === "usage" && (
         filteredMetrics.length === 0 ? (
-          <div className="empty-state">No metrics available.</div>
+          <div className="empty-state">
+            {!cacheAvailable
+              ? "Monitoring service is unreachable. Check that the pf9-monitoring pod is running."
+              : "No metrics collected yet. Ensure PF9_HOSTS is configured and the monitoring service can reach the hypervisor nodes."}
+          </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "1rem" }}>
             {filteredMetrics.map((m) => <VmMetricsCard key={m.vm_id} m={m} />)}

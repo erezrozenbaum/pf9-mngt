@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.7] - 2026-04-18
+
+### Fixed
+- **Admin UI: "Connection lost" banner on Branding tab** — `apiFetch` was retrying GET requests on any error whose `detail` string didn't start with `"API error "`. Errors like `"branding_not_found"` triggered three retries, exhausted the retry budget, and fired `pf9:connection:offline`, showing the "Connection lost" banner. Fixed by adding an `isHttpError` flag: any HTTP 4xx/5xx now throws immediately without retry; only genuine network/timeout failures are retried.
+- **Tenant Portal: `/tenant/quota` → 400 Bad Request** — the `_internal_tenant_quota` endpoint validated `control_plane_id` against a strict UUID-only regex (`^[0-9a-f-]{36}$`). The K8s deployment sets `TENANT_PORTAL_CONTROL_PLANE_ID=default` (a slug, not a UUID), causing every quota request to fail with 400. Regex relaxed to `^[A-Za-z0-9_\-]{1,100}$` to allow alphanumeric slugs.
+- **Snapshot calendar: header labels misaligned** — `CalendarGrid` was rendering both a label div (85 px) **and** four spacer divs (17 px × 4) per 5-day group, making the header 850 px wide while the cell row was 510 px. Fixed by filtering to only the label divs (one per 5-day group: 6 × 85 px = 510 px). Also added a `today` constant so the current day is highlighted with an outline in the cell row.
+- **Runbooks: blank page + `TypeError: Cannot read properties of undefined (reading 'toLowerCase')`** — `apiExecuteRunbook` returned the raw backend JSON without field normalisation, so `risk_level` and `status` could be `undefined`. `RiskBadge` and `statusBadge` then called `.toLowerCase()` on `undefined`, crashing the React render tree. Fixed by normalising all string fields in `apiExecuteRunbook` (with sensible defaults) and adding `undefined` guards to both badge helpers.
+- **Monitoring: unhelpful "No metrics available" empty state** — the Current Usage tab showed a generic message whenever the metrics cache was empty, with no indication of whether the monitoring service was reachable. The `/tenant/metrics/vms` response now includes `cache_available: false` when the monitoring service is unreachable, and the UI surfaces a distinct message for each case (service down vs. no data collected yet).
+
 ## [1.85.6] - 2026-04-20
 
 ### Fixed

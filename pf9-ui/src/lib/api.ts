@@ -105,6 +105,7 @@ export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), _timeoutMs(path));
 
+    let isHttpError = false;
     try {
       const res = await fetch(`${API_BASE}${path}`, {
         ...opts,
@@ -115,6 +116,7 @@ export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> 
       clearTimeout(timeoutId);
 
       if (!res.ok) {
+        isHttpError = true;
         const err = await res.json().catch(() => ({})) as { detail?: string };
         throw new Error(err.detail ?? `API error ${res.status}`);
       }
@@ -130,8 +132,8 @@ export async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> 
       clearTimeout(timeoutId);
       lastError = err instanceof Error ? err : new Error(String(err));
 
-      // Don't retry on HTTP errors (4xx / 5xx) — only on network/timeout failures
-      if (lastError.message.startsWith('API error ')) {
+      // Never retry HTTP errors (4xx/5xx) — only network/timeout failures warrant a retry
+      if (isHttpError || lastError.message.startsWith('API error ')) {
         throw lastError;
       }
     }

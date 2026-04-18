@@ -49,19 +49,19 @@ const STATUS_CELL_CLASS: Record<DayStatus | "none", string> = {
 interface CalRow { label: string; vmId: string; data: Map<string, DayStatus>; }
 
 function CalendarGrid({ rows, days }: { rows: CalRow[]; days: string[] }) {
+  const today = new Date().toISOString().slice(0, 10);
+
   return (
     <div style={{ overflowX: "auto" }}>
-      {/* Date header — every 5 days */}
+      {/* Date header — one label per 5-day group (each group = 5 × 17px = 85px) */}
       <div style={{ display: "flex", paddingLeft: "124px", marginBottom: "4px" }}>
-        {days.map((d, i) => (
-          i % 5 === 0 ? (
+        {days
+          .filter((_, i) => i % 5 === 0)
+          .map((d) => (
             <div key={d} style={{ width: "85px", fontSize: ".65rem", color: "var(--color-text-secondary)", flexShrink: 0 }}>
               {new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
             </div>
-          ) : (
-            <div key={d} style={{ width: "17px", flexShrink: 0 }} />
-          )
-        ))}
+          ))}
       </div>
 
       {rows.map(({ label, vmId, data }) => (
@@ -81,11 +81,13 @@ function CalendarGrid({ rows, days }: { rows: CalRow[]; days: string[] }) {
           <div style={{ display: "flex", gap: "3px" }}>
             {days.map((d) => {
               const val: DayStatus = data.get(d) ?? "none";
+              const isToday = d === today;
               return (
                 <div
                   key={d}
                   className={STATUS_CELL_CLASS[val]}
-                  title={`${d}: ${val === "ok" ? "Snapshot OK" : val === "fail" ? "Snapshot failed" : "No snapshot"}`}
+                  title={`${d}${isToday ? " (today)" : ""}: ${val === "ok" ? "Snapshot OK" : val === "fail" ? "Snapshot failed" : "No snapshot"}`}
+                  style={isToday ? { outline: "2px solid var(--brand-primary, #1A73E8)", outlineOffset: "1px", borderRadius: "2px" } : undefined}
                 />
               );
             })}

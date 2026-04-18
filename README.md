@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.85.5-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.85.7-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -608,7 +608,13 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🔧 Tenant Portal Enhancements — v1.85.3–v1.85.4
+### 🔧 Tenant Portal Bug-Fixes — v1.85.5–v1.85.7
+
+**[v1.85.7](CHANGELOG.md)** — K8s bug-fix release: "Connection lost" banner on Branding tab eliminated (apiFetch now throws immediately on any HTTP error without retrying); `/tenant/quota` 400 fixed (CP ID regex now accepts slugs like `default`); snapshot calendar header labels realigned with cells + today marker added; Runbooks blank page / `TypeError` on `risk_level.toLowerCase()` fixed (normalised `apiExecuteRunbook` response + null guards); Monitoring empty-state now shows distinct message for service-unreachable vs no-data-collected.
+
+**[v1.85.6](CHANGELOG.md)** — K8s bug-fix release: Active Sessions tab 500 fixed (Redis errors handled gracefully); Branding tab "branding_not_found" error banner fixed (detail string caught alongside HTTP 404); per-tenant branding overrides added (project-scoped rows, admin scope dropdown, `useBranding` re-fetches on login).
+
+**[v1.85.5](CHANGELOG.md)** — K8s bug-fix release: Monitoring/Runbooks 401 fixed (added `/internal` to admin API RBAC exclusions); Volumes "Attached To" column shows VM name; VM list Coverage column populated; Fixed IP picker filters by selected network.
 
 **[v1.85.4](CHANGELOG.md)** — K8s bug-fix release: VM Disk column now shows boot-volume size for BFV VMs; Volumes table shows last snapshot date; Monitoring/Runbooks 502 fixed by adding NetworkPolicy egress to admin API + monitoring pods; New VM Fixed IP picker shows IPs already in use in the selected network.
 
@@ -727,4 +733,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.85.5 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.85.7 | **Last Updated**: April 2026

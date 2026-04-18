@@ -2990,9 +2990,9 @@ def setup_restore_routes(app):
         if len(ids) > 20:
             raise HTTPException(400, "Too many project_ids")
 
-        # Validate control_plane_id is a UUID to prevent injection
+        # Validate control_plane_id to prevent injection — allow UUID or slug (e.g. "default")
         import re as _re
-        if not _re.match(r"^[0-9a-f-]{36}$", control_plane_id):
+        if not _re.match(r"^[A-Za-z0-9_\-]{1,100}$", control_plane_id):
             raise HTTPException(400, "invalid control_plane_id")
 
         try:
