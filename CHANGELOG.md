@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.85.4] - 2026-04-18
+
+### Fixed
+- **VM Disk column shows "—" for boot-from-volume VMs** — BFV flavors have `disk = 0` in Nova; the `/tenant/vms` query now falls back to the attached boot volume's `size_gb` when the flavor disk is 0, so the correct volume size is displayed.
+- **Volumes: Last Snapshot always blank** — the volumes query was missing a join to `snapshot_records`; added a correlated subquery on `server_id` to return the most recent OK snapshot taken of the attached VM.
+- **Monitoring Current Usage / Runbooks Execute stuck → 502** — the Kubernetes NetworkPolicy for `pf9-tenant-portal` had no egress rule to the admin API (port 8000) or monitoring service (port 8001); added both egress rules (scoped to the `pf9-api` and `pf9-monitoring` pods by label selector). This also unblocks runbook execution and any other `/tenant/*` endpoint that delegates to the internal API.
+- **New VM: no visible IPs in network** — added `GET /tenant/networks/{id}/used-ips` endpoint that returns IPs already assigned to VMs in the network (from `servers.raw_json`); Provision.tsx now fetches and displays used IPs as monospace badges under the Fixed IP input so operators can see which addresses are taken.
+
 ## [1.85.3] - 2026-04-18
 
 ### Fixed

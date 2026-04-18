@@ -124,7 +124,13 @@ async def list_vms(ctx: TenantContext = Depends(get_tenant_context)):
                        s.raw_json,
                        COALESCE(f.vcpus, 0)    AS vcpus,
                        COALESCE(f.ram_mb, 0)   AS ram_mb,
-                       COALESCE(f.disk_gb, 0)  AS disk_gb,
+                       COALESCE(
+                           NULLIF(f.disk_gb, 0),
+                           (SELECT v.size_gb FROM volumes v
+                            WHERE v.server_id = s.id AND v.bootable = true
+                            ORDER BY v.created_at LIMIT 1),
+                           0
+                       )                        AS disk_gb,
                        (
                            SELECT MAX(sr.created_at)
                            FROM snapshot_records sr
@@ -211,13 +217,18 @@ async def list_volumes(ctx: TenantContext = Depends(get_tenant_context)):
             region_map = _region_display(cur, ctx.region_ids)
             cur.execute(
                 """
-                SELECT id, name, project_id, size_gb, status,
-                       volume_type, bootable, created_at,
-                       server_id, region_id
-                FROM volumes
-                WHERE project_id = ANY(%s)
-                  AND region_id  = ANY(%s)
-                ORDER BY name
+                SELECT v.id, v.name, v.project_id, v.size_gb, v.status,
+                       v.volume_type, v.bootable, v.created_at,
+                       v.server_id, v.region_id,
+                       (
+                           SELECT MAX(sr.created_at)
+                           FROM snapshot_records sr
+                           WHERE sr.vm_id = v.server_id AND sr.status = 'OK'
+                       ) AS last_snapshot_ts
+                FROM volumes v
+                WHERE v.project_id = ANY(%s)
+                  AND v.region_id  = ANY(%s)
+                ORDER BY v.name
                 """,
                 (ctx.project_ids, ctx.region_ids),
             )
@@ -1284,6 +1295,54 @@ async def list_networks(ctx: TenantContext = Depends(get_tenant_context)):
             for r in networks
         ]
     }
+
+
+# ---------------------------------------------------------------------------
+# P5a-2 — Used IPs in a network (for Fixed IP picker in New VM)
+# ---------------------------------------------------------------------------
+
+@router.get("/tenant/networks/{network_id}/used-ips", summary="List IPs already assigned in a network")
+async def get_network_used_ips(network_id: str, ctx: TenantContext = Depends(get_tenant_context)):
+    """Return IPs currently assigned to VMs in this network, derived from
+    servers.raw_json.  Used by the tenant New VM screen to show which IPs are
+    already taken so the operator can pick a free one."""
+    with get_tenant_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            inject_rls_vars(cur, ctx)
+            # Verify network is accessible by this tenant
+            cur.execute(
+                """
+                SELECT id FROM networks
+                WHERE id = %s AND (project_id = ANY(%s) OR is_shared = true)
+                LIMIT 1
+                """,
+                (network_id, ctx.project_ids),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="access_denied")
+
+            # Fetch raw_json for all running servers in tenant projects
+            cur.execute(
+                """
+                SELECT id, name, raw_json
+                FROM servers
+                WHERE project_id = ANY(%s)
+                  AND region_id  = ANY(%s)
+                  AND status NOT IN ('DELETED', 'ERROR')
+                """,
+                (ctx.project_ids, ctx.region_ids),
+            )
+            servers = cur.fetchall()
+            log_action(cur, ctx, "tenant_view_used_ips")
+            conn.commit()
+
+    used: list = []
+    for srv in servers:
+        ips = _extract_ips(srv.get("raw_json"))
+        if ips:
+            used.append({"vm_id": srv["id"], "vm_name": srv["name"], "ips": ips})
+
+    return {"network_id": network_id, "used": used}
 
 
 # ---------------------------------------------------------------------------

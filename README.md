@@ -13,7 +13,7 @@
 <p align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.85.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.85.4-blue.svg)](CHANGELOG.md)
 [![CI](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml/badge.svg)](https://github.com/erezrozenbaum/pf9-mngt/actions/workflows/ci.yml)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Helm%20%7C%20ArgoCD-326CE5?logo=kubernetes&logoColor=white)](docs/KUBERNETES_GUIDE.md)
 [![Demo Mode](https://img.shields.io/badge/Try%20Demo%20Mode-no%20Platform9%20needed-brightgreen.svg)](#-try-it-now--demo-mode-no-platform9-required)
@@ -608,7 +608,9 @@ For questions on authentication, RBAC, LDAP/AD, snapshots, and restore see [docs
 
 ## 🕐 Recent Major Releases
 
-### 🔧 Tenant Portal Enhancements — v1.85.3
+### 🔧 Tenant Portal Enhancements — v1.85.3–v1.85.4
+
+**[v1.85.4](CHANGELOG.md)** — K8s bug-fix release: VM Disk column now shows boot-volume size for BFV VMs; Volumes table shows last snapshot date; Monitoring/Runbooks 502 fixed by adding NetworkPolicy egress to admin API + monitoring pods; New VM Fixed IP picker shows IPs already in use in the selected network.
 
 **[v1.85.3](CHANGELOG.md)** — Runbook execution from tenant portal (execute button, parameter form, dry-run toggle, execution history tab); Create VM: RFC-1123 name validation, fixed IP picker, cloud-init user/password; Dependency graph expanded to 5 node types (VM, Network, Subnet, Security Group, Volume) and 4 edge types; VM list and inventory CSV now include disk size and IP addresses; Activity Log shows username + truncated Keystone user ID; Dashboard correctly shows amber "Skipped" for skipped snapshot events.
 
@@ -725,4 +727,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Project Status**: Production Ready | **Version**: 1.85.3 | **Last Updated**: April 2026
+**Project Status**: Production Ready | **Version**: 1.85.4 | **Last Updated**: April 2026

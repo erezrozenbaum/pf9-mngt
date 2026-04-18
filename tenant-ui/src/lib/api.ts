@@ -931,6 +931,21 @@ export async function apiNetworks(): Promise<Network[]> {
   }));
 }
 
+export interface UsedIpEntry {
+  vm_id: string;
+  vm_name: string;
+  ips: string[];
+}
+
+export async function apiNetworkUsedIps(networkId: string): Promise<UsedIpEntry[]> {
+  const raw = await tenantFetch<Record<string, unknown>>(`/tenant/networks/${encodeURIComponent(networkId)}/used-ips`);
+  return ((raw.used ?? []) as Record<string, unknown>[]).map((r) => ({
+    vm_id: String(r.vm_id ?? ""),
+    vm_name: String(r.vm_name ?? ""),
+    ips: ((r.ips ?? []) as unknown[]).map(String),
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Security Group detail + rule management
 // ---------------------------------------------------------------------------

@@ -212,7 +212,7 @@ A single pf9-mngt instance can connect to any number of Platform9 installations 
 - **5 DB Tables**: `support_tickets`, `ticket_comments`, `ticket_sla_policies`, `ticket_email_templates`, `ticket_sequence`; 17 seeded SLA policies, 6 HTML email templates
 - **Navigation**: New "Operations & Support" group (🎫) with Tickets and My Queue items
 
-### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.3)*
+### 🏢 Tenant Self-Service Portal *(v1.84.0+, latest v1.85.4)*
 
 **For MSPs and operators who want to give customers limited, secure access to their own infrastructure — with self-service VM provisioning and security group management — without exposing the admin panel.**
 

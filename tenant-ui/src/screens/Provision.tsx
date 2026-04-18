@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
-  apiProvisionResources, apiProvisionVm,
-  type ProvisionResources, type FlavorOption, type ImageOption, type NetworkOption,
+  apiProvisionResources, apiProvisionVm, apiNetworkUsedIps,
+  type ProvisionResources, type FlavorOption, type ImageOption, type NetworkOption, type UsedIpEntry,
 } from "../lib/api";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -54,6 +54,13 @@ export function Provision() {
   const [fixedIp, setFixedIp]               = useState("");
   const [cloudInitUser, setCloudInitUser]   = useState("");
   const [cloudInitPass, setCloudInitPass]   = useState("");
+  const [usedIps, setUsedIps]               = useState<UsedIpEntry[]>([]);
+
+  // Fetch used IPs whenever the selected network changes
+  useEffect(() => {
+    if (!networkId) { setUsedIps([]); return; }
+    apiNetworkUsedIps(networkId).then(setUsedIps).catch(() => setUsedIps([]));
+  }, [networkId]);
 
   // Submission state
   const [submitting, setSubmitting] = useState(false);
@@ -259,6 +266,19 @@ export function Provision() {
               {selectedNetwork.subnets && selectedNetwork.subnets.length > 0 && (
                 <div style={{ fontSize: ".73rem", color: "var(--color-text-secondary)", marginTop: ".2rem" }}>
                   Subnets: {selectedNetwork.subnets.map((s) => `${s.name} (${s.cidr})`).join(", ")}
+                </div>
+              )}
+              {usedIps.length > 0 && (
+                <div style={{ fontSize: ".73rem", marginTop: ".4rem", background: "var(--color-surface-2, #f3f4f6)", borderRadius: "6px", padding: ".4rem .6rem" }}>
+                  <span style={{ fontWeight: 600, color: "var(--color-text-secondary)" }}>IPs in use:</span>{" "}
+                  {usedIps.flatMap((e) => e.ips.map((ip) => (
+                    <span key={`${e.vm_id}-${ip}`} title={e.vm_name}
+                      style={{ display: "inline-block", marginRight: ".4rem", padding: ".05rem .35rem",
+                               background: "var(--color-surface-3, #e5e7eb)", borderRadius: "4px",
+                               fontFamily: "monospace", fontSize: ".72rem", cursor: "default" }}>
+                      {ip}
+                    </span>
+                  )))}
                 </div>
               )}
             </div>

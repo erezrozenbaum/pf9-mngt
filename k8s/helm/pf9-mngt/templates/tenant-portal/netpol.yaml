@@ -75,3 +75,26 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+
+    # Admin API — internal delegation calls only (tenant-quota, runbook-execute,
+    # sg-rule, provision-vm, etc.).  The shared secret in every request prevents
+    # unauthenticated use; the NetworkPolicy further restricts the destination to
+    # the pf9-api pod only.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - port: 8000
+          protocol: TCP
+
+    # Monitoring service — metrics proxy for Current Usage tab
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "pf9mngt.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: monitoring
+      ports:
+        - port: 8001
+          protocol: TCP
